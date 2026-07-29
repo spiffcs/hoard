@@ -2,6 +2,8 @@ package store
 
 import (
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cphillips918/hoard/internal/scryfall"
@@ -168,6 +170,80 @@ func TestRemoveFromCollection(t *testing.T) {
 	if c, _ := s.FindCollectionCard("uma", "7"); c != nil {
 		t.Errorf("card still present after remove: %+v", c)
 	}
+}
+
+func TestDeckByRef(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.UpsertCatalogCards([]scryfall.Card{solRing()}); err != nil {
+		t.Fatalf("UpsertCatalogCards: %v", err)
+	}
+	entries := []Entry{{ScryfallID: "sol-id", Finish: "normal", Board: "main", Quantity: 1}}
+	var ids []int64
+	for _, name := range []string{
+		"Vampiric Bloodlust (Commander 2017)",
+		"Duel Decks Anthology: Elves vs. Goblins (Elves)",
+		"Duel Decks Anthology: Elves vs. Goblins (Goblins)",
+		"Elves", // an exact name that is also a fragment of the two above
+		"50% Off (Weird_Name)",
+	} {
+		id, err := s.UpsertDeck(DeckMeta{Name: name, Source: "text", SourceID: name}, entries)
+		if err != nil {
+			t.Fatalf("UpsertDeck %q: %v", name, err)
+		}
+		ids = append(ids, id)
+	}
+
+	t.Run("by id", func(t *testing.T) {
+		got, err := s.DeckByRef(strconv.FormatInt(ids[0], 10))
+		if err != nil || got.Name != "Vampiric Bloodlust (Commander 2017)" {
+			t.Fatalf("DeckByRef(id) = %v, %v", got, err)
+		}
+	})
+
+	t.Run("unique fragment", func(t *testing.T) {
+		got, err := s.DeckByRef("vampiric")
+		if err != nil || got.Name != "Vampiric Bloodlust (Commander 2017)" {
+			t.Fatalf("DeckByRef(fragment) = %v, %v", got, err)
+		}
+	})
+
+	// An exact name must win even though it also appears inside two other names.
+	t.Run("exact name beats fragment", func(t *testing.T) {
+		got, err := s.DeckByRef("elves")
+		if err != nil {
+			t.Fatalf("DeckByRef(exact) error: %v", err)
+		}
+		if got.Name != "Elves" {
+			t.Errorf("DeckByRef(%q) = %q, want the exact match", "elves", got.Name)
+		}
+	})
+
+	t.Run("ambiguous fragment lists the candidates", func(t *testing.T) {
+		_, err := s.DeckByRef("Goblins")
+		if err == nil {
+			t.Fatal("want an error for an ambiguous fragment")
+		}
+		if !strings.Contains(err.Error(), "matches 2 decks") {
+			t.Errorf("error = %q, want a count of the matches", err)
+		}
+	})
+
+	// % and _ are LIKE wildcards; a name containing them must match literally.
+	t.Run("wildcards are escaped", func(t *testing.T) {
+		got, err := s.DeckByRef("50% Off")
+		if err != nil || got.Name != "50% Off (Weird_Name)" {
+			t.Fatalf("DeckByRef(wildcard) = %v, %v", got, err)
+		}
+		if _, err := s.DeckByRef("50%%%Off"); err == nil {
+			t.Error("a literal wildcard string should not match")
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		if _, err := s.DeckByRef("nothing-like-this"); err == nil {
+			t.Error("want an error for an unmatched ref")
+		}
+	})
 }
 
 func TestDeckUpsertReplaceAndCascade(t *testing.T) {

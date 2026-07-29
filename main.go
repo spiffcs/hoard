@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -33,20 +32,21 @@ Usage:
   hoard [--db PATH] <command> [args]
 
 Collection commands:
-  add <scryfall-url> [--foil] [--qty N]            Add a loose card by URL
-  add <card name>                                  Add a loose card interactively (TUI)
+  add                                              Add cards interactively — search by
+                                                   name, pick the printing and finish,
+                                                   repeat. Start here.
   list                                             List loose cards and total value
-  set-qty <scryfall-url> [--normal N] [--foil N]   Set exact loose quantities
-  remove <scryfall-url>                            Remove a loose card
   update-prices                                    Refresh prices for all cards
   summary                                          Value of collection + each deck
 
 Deck commands:
   deck add <archidekt-url>                         Import/refresh a deck from a link
   deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
-  deck list                                        List decks with card counts + value
-  deck show <id|name>                              Show a deck's cards by board
-  deck remove <id|name>                            Delete a deck
+  deck list                                        List decks by value, with card counts
+  deck show <name>                                 Show a deck's cards by board
+  deck remove <name>                               Delete a deck
+
+A deck <name> can be any part of its name, as long as it matches one deck.
 
 The database lives in a per-user data directory by default (e.g. on macOS
 ~/Library/Application Support/hoard/hoard.db, on Linux $XDG_DATA_HOME/hoard/hoard.db)
@@ -62,21 +62,14 @@ func main() {
 }
 
 func run(args []string) error {
-	defDB, err := defaultDBPath()
+	rest, dbFlag, err := extractDBFlag(args)
 	if err != nil {
-		return err
-	}
-	fs := flag.NewFlagSet("hoard", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", defDB, "path to the SQLite database file")
-	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	if err := fs.Parse(args); err != nil {
+		fmt.Fprint(os.Stderr, usage)
 		return err
 	}
 
-	rest := fs.Args()
 	if len(rest) == 0 {
-		fs.Usage()
+		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("no command given")
 	}
 	cmd, cmdArgs := rest[0], rest[1:]
@@ -86,18 +79,26 @@ func run(args []string) error {
 		return nil
 	}
 
+	// --db wins over $HOARD_DB, which in turn wins over the per-user default.
+	dbPath := dbFlag
+	if dbPath == "" {
+		if dbPath, err = defaultDBPath(); err != nil {
+			return err
+		}
+	}
+
 	// Note whether we're about to create the database, so we can tell the user
 	// where it lives the first time.
-	_, statErr := os.Stat(*dbPath)
+	_, statErr := os.Stat(dbPath)
 	newDB := os.IsNotExist(statErr)
 
-	st, err := store.Open(*dbPath)
+	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	if newDB {
-		fmt.Fprintf(os.Stderr, "Initialized hoard database at %s\n", *dbPath)
+		fmt.Fprintf(os.Stderr, "Initialized hoard database at %s\n", dbPath)
 	}
 
 	ctx := context.Background()
@@ -108,18 +109,58 @@ func run(args []string) error {
 		return cmdList(st)
 	case "update-prices":
 		return cmdUpdatePrices(ctx, st)
-	case "set-qty":
-		return cmdSetQty(st, cmdArgs)
-	case "remove":
-		return cmdRemove(st, cmdArgs)
 	case "summary":
 		return cmdSummary(st)
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:
-		fs.Usage()
+		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// extractDBFlag pulls the global --db flag out of args wherever it appears and
+// returns the arguments with it removed.
+//
+// The standard library's flag package stops parsing at the first positional, so
+// a --db written after the command name would be handed on to the subcommand
+// instead — and the subcommands that take no flags of their own (list, summary,
+// update-prices) would ignore it silently and open the default database. That
+// failure is invisible: you get a perfectly good report about the wrong hoard.
+// Extracting the flag up front means `hoard --db X summary` and
+// `hoard summary --db X` are the same command.
+//
+// Only --db is global; every other flag is left in place for the subcommand.
+func extractDBFlag(args []string) (rest []string, db string, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// By convention everything after a bare "--" is positional.
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+
+		name, value, hasValue := strings.Cut(arg, "=")
+		if name != "-db" && name != "--db" {
+			rest = append(rest, arg)
+			continue
+		}
+
+		if !hasValue {
+			if i+1 >= len(args) {
+				return nil, "", fmt.Errorf("flag needs an argument: %s", arg)
+			}
+			i++
+			value = args[i]
+		}
+		if value == "" {
+			return nil, "", fmt.Errorf("flag needs an argument: %s", arg)
+		}
+		db = value // a repeated --db keeps the last, as the flag package does
+	}
+	return rest, db, nil
 }
 
 // defaultDBPath resolves where the hoard database lives when --db is not given.
@@ -444,91 +485,6 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
 	return nil
 }
 
-func cmdSetQty(st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("set-qty", flag.ContinueOnError)
-	normal := fs.Int("normal", -1, "exact normal (non-foil) quantity")
-	foil := fs.Int("foil", -1, "exact foil quantity")
-	pos, err := parsePositionals(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) != 1 {
-		return fmt.Errorf("set-qty requires exactly one Scryfall URL")
-	}
-	if *normal < 0 && *foil < 0 {
-		return fmt.Errorf("set at least one of --normal or --foil")
-	}
-
-	set, number, err := scryfall.ParseCardURL(pos[0])
-	if err != nil {
-		return err
-	}
-	existing, err := st.FindCollectionCard(set, number)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return fmt.Errorf("card %s/%s is not in your collection", set, number)
-	}
-
-	// Load current counts so an unspecified flag leaves that finish unchanged.
-	cur, err := currentCollectionQty(st, existing.ScryfallID)
-	if err != nil {
-		return err
-	}
-	newNormal, newFoil := cur.normal, cur.foil
-	if *normal >= 0 {
-		newNormal = *normal
-	}
-	if *foil >= 0 {
-		newFoil = *foil
-	}
-
-	if _, err := st.SetCollectionQuantities(existing.ScryfallID, newNormal, newFoil); err != nil {
-		return err
-	}
-	fmt.Printf("Set %s (%s/%s) to normal=%d foil=%d\n",
-		existing.Name, existing.SetCode, existing.CollectorNumber, newNormal, newFoil)
-	return nil
-}
-
-type qtyPair struct{ normal, foil int }
-
-func currentCollectionQty(st *store.Store, scryfallID string) (qtyPair, error) {
-	cards, err := st.ListCollection()
-	if err != nil {
-		return qtyPair{}, err
-	}
-	for _, c := range cards {
-		if c.ScryfallID == scryfallID {
-			return qtyPair{c.QtyNormal, c.QtyFoil}, nil
-		}
-	}
-	return qtyPair{}, nil
-}
-
-func cmdRemove(st *store.Store, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("remove requires exactly one Scryfall URL")
-	}
-	set, number, err := scryfall.ParseCardURL(args[0])
-	if err != nil {
-		return err
-	}
-	existing, err := st.FindCollectionCard(set, number)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return fmt.Errorf("card %s/%s is not in your collection", set, number)
-	}
-	if _, err := st.RemoveFromCollection(existing.ScryfallID); err != nil {
-		return err
-	}
-	fmt.Printf("Removed %s (%s/%s)\n", existing.Name, existing.SetCode, existing.CollectorNumber)
-	return nil
-}
-
 func cmdSummary(st *store.Store) error {
 	coll, err := st.CollectionTotals()
 	if err != nil {
@@ -545,6 +501,24 @@ func cmdSummary(st *store.Store) error {
 // barCells is the width of the summary's share-bar column.
 const barCells = 10
 
+// decksByValue returns a copy of decks ordered most-valuable-first.
+//
+// Both deck listings rank by value rather than name: what you want from either
+// is "where is the money", and the store's ORDER BY ct.name is only a stable
+// base to sort from. Ties fall back to name so that a hoard whose prices have
+// never been fetched — every deck at $0.00 — still lists in a predictable
+// order instead of an arbitrary one.
+func decksByValue(decks []store.DeckSummary) []store.DeckSummary {
+	sorted := slices.Clone(decks)
+	slices.SortFunc(sorted, func(a, b store.DeckSummary) int {
+		if c := cmp.Compare(b.Value, a.Value); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return sorted
+}
+
 // summaryTable lays out the hoard as two labelled sections — the loose
 // collection and the decks — rather than a flat list distinguished by a
 // repeated "Deck: " prefix.
@@ -552,13 +526,7 @@ const barCells = 10
 // It is pure so the whole layout can be tested at any terminal width without a
 // database.
 func summaryTable(env ui.Env, coll store.CollectionTotals, decks []store.DeckSummary) ui.Table {
-	sorted := slices.Clone(decks)
-	slices.SortFunc(sorted, func(a, b store.DeckSummary) int {
-		if c := cmp.Compare(b.Value, a.Value); c != 0 {
-			return c // most valuable first: a summary is about where the value sits
-		}
-		return strings.Compare(a.Name, b.Name) // stable when prices are unfetched
-	})
+	sorted := decksByValue(decks)
 
 	var deckCopies int
 	var deckValue float64
@@ -739,16 +707,13 @@ func cmdDeckList(st *store.Store) error {
 		Env:    env,
 		Header: true,
 		Cols: []ui.Col{
-			{Title: "ID", Align: ui.Right},
 			{Title: "NAME", Align: ui.Left},
-			{Title: "SOURCE", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "CARDS", Align: ui.Right},
 			{Title: "VALUE", Align: ui.Right},
 		},
 	}
-	for _, d := range decks {
-		t.Add(ui.C(strconv.FormatInt(d.ID, 10)), ui.C(d.Name), ui.C(d.Source),
-			ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)))
+	for _, d := range decksByValue(decks) {
+		t.Add(ui.C(d.Name), ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)))
 	}
 	_, err = t.WriteTo(os.Stdout)
 	return err

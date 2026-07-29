@@ -10,6 +10,8 @@
 	<string>dev.cphillips918.hoard.scan</string>
 	<key>CFBundleExecutable</key>
 	<string>hoard-scan</string>
+	<key>CFBundleIconFile</key>
+	<string>hoard-scan</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

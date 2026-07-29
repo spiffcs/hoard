@@ -13,12 +13,20 @@ fi
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$ROOT/scan/hoard-scan/main.swift"
 PLIST="$ROOT/scan/hoard-scan/Info.plist"
+ICON="$ROOT/scan/hoard-scan/hoard-scan.icns"
 APP="$ROOT/bin/hoard-scan.app"
 MACOS="$APP/Contents/MacOS"
+RESOURCES="$APP/Contents/Resources"
 
 rm -rf "$APP"
-mkdir -p "$MACOS"
+mkdir -p "$MACOS" "$RESOURCES"
 cp "$PLIST" "$APP/Contents/Info.plist"
+
+# The Dock icon. Optional: without it the app still runs, just with the generic
+# executable icon (CFBundleIconFile simply finds nothing).
+if [[ -f "$ICON" ]]; then
+	cp "$ICON" "$RESOURCES/hoard-scan.icns"
+fi
 
 echo "Compiling hoard-scan…" >&2
 swiftc -O \

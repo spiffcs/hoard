@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cphillips918/hoard/internal/scryfall"
@@ -532,27 +533,91 @@ ORDER BY ct.name`, KindDeck)
 	return out, rows.Err()
 }
 
-// DeckByRef resolves a deck by numeric id or (case-insensitive) exact name.
-func (s *Store) DeckByRef(ref string) (*Container, error) {
-	var row *sql.Row
-	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-		row = s.db.QueryRow(`
+const deckSelect = `
 SELECT id, kind, name, source, COALESCE(source_id,''), COALESCE(source_url,''), COALESCE(format,'')
-FROM containers WHERE kind=? AND id=?`, KindDeck, id)
-	} else {
-		row = s.db.QueryRow(`
-SELECT id, kind, name, source, COALESCE(source_id,''), COALESCE(source_url,''), COALESCE(format,'')
-FROM containers WHERE kind=? AND name=? COLLATE NOCASE`, KindDeck, ref)
-	}
+FROM containers WHERE kind=?`
+
+func scanContainer(sc interface{ Scan(...any) error }) (*Container, error) {
 	var c Container
-	err := row.Scan(&c.ID, &c.Kind, &c.Name, &c.Source, &c.SourceID, &c.SourceURL, &c.Format)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("no deck matching %q", ref)
-	}
-	if err != nil {
+	if err := sc.Scan(&c.ID, &c.Kind, &c.Name, &c.Source, &c.SourceID, &c.SourceURL, &c.Format); err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// DeckByRef resolves a deck by numeric id, exact name, or a case-insensitive
+// fragment of its name.
+//
+// Deck names are long ("Duel Decks Anthology: Divine vs. Demonic (Demonic)"),
+// so requiring the full string makes them impractical to type. A fragment is
+// accepted whenever it names exactly one deck; when it names several the error
+// lists them rather than picking one, since silently acting on the wrong deck is
+// the worst outcome for `deck remove`.
+func (s *Store) DeckByRef(ref string) (*Container, error) {
+	// A bare integer is an id, never a name fragment.
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		c, err := scanContainer(s.db.QueryRow(deckSelect+` AND id=?`, KindDeck, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no deck matching %q", ref)
+		}
+		return c, err
+	}
+
+	// An exact name wins outright, so a deck whose whole name is a fragment of
+	// another's stays reachable.
+	c, err := scanContainer(s.db.QueryRow(deckSelect+` AND name=? COLLATE NOCASE`, KindDeck, ref))
+	if err == nil {
+		return c, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	// Otherwise accept a fragment, as long as it picks out exactly one deck.
+	// LIKE is already case-insensitive for ASCII in SQLite.
+	rows, err := s.db.Query(deckSelect+` AND name LIKE ? ESCAPE '\' ORDER BY name`,
+		KindDeck, "%"+escapeLike(ref)+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []*Container
+	for rows.Next() {
+		m, err := scanContainer(rows)
+		if err != nil {
+			return nil, err
+		}
+		matches = append(matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("no deck matching %q", ref)
+	case 1:
+		return matches[0], nil
+	default:
+		var b strings.Builder
+		fmt.Fprintf(&b, "%q matches %d decks:", ref, len(matches))
+		for _, m := range matches[:min(len(matches), 5)] {
+			fmt.Fprintf(&b, "\n  %s", m.Name)
+		}
+		if len(matches) > 5 {
+			fmt.Fprintf(&b, "\n  … and %d more", len(matches)-5)
+		}
+		b.WriteString("\nUse a longer fragment or the full name.")
+		return nil, errors.New(b.String())
+	}
+}
+
+// escapeLike neutralizes the wildcards in a user-supplied LIKE pattern, so a
+// deck name containing % or _ is matched literally.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 // DeckEntries returns a deck's entries joined to catalog cards, ordered by

@@ -1,12 +1,74 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cphillips918/hoard/internal/store"
 	"github.com/cphillips918/hoard/internal/ui"
 )
+
+func TestExtractDBFlag(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantRest []string
+		wantDB   string
+	}{
+		{"absent", []string{"summary"}, []string{"summary"}, ""},
+		{"before the command", []string{"--db", "x.db", "summary"}, []string{"summary"}, "x.db"},
+		// The case this function exists for: previously silently ignored.
+		{"after the command", []string{"summary", "--db", "x.db"}, []string{"summary"}, "x.db"},
+		{"equals form", []string{"summary", "--db=x.db"}, []string{"summary"}, "x.db"},
+		{"single dash", []string{"-db", "x.db", "list"}, []string{"list"}, "x.db"},
+		{"repeated keeps the last", []string{"--db", "a.db", "list", "--db", "b.db"}, []string{"list"}, "b.db"},
+		{
+			"subcommand flags are left alone",
+			[]string{"add", "--qty", "2", "--db", "x.db", "--foil", "url"},
+			[]string{"add", "--qty", "2", "--foil", "url"}, "x.db",
+		},
+		{
+			"a value that looks like a flag is still a value",
+			[]string{"--db", "--weird.db", "list"},
+			[]string{"list"}, "--weird.db",
+		},
+		{
+			"nothing is extracted after a bare --",
+			[]string{"add", "--", "--db", "x.db"},
+			[]string{"add", "--", "--db", "x.db"}, "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rest, db, err := extractDBFlag(c.args)
+			if err != nil {
+				t.Fatalf("extractDBFlag(%q): %v", c.args, err)
+			}
+			if db != c.wantDB {
+				t.Errorf("db = %q, want %q", db, c.wantDB)
+			}
+			if !slices.Equal(rest, c.wantRest) {
+				t.Errorf("rest = %q, want %q", rest, c.wantRest)
+			}
+		})
+	}
+}
+
+// A --db with no usable value must fail loudly rather than fall back to the
+// default database, which is the whole point of handling it explicitly.
+func TestExtractDBFlagErrors(t *testing.T) {
+	for _, args := range [][]string{
+		{"summary", "--db"},
+		{"--db"},
+		{"summary", "--db="},
+		{"summary", "--db", ""},
+	} {
+		if _, _, err := extractDBFlag(args); err == nil {
+			t.Errorf("extractDBFlag(%q) = nil error, want one", args)
+		}
+	}
+}
 
 func testCollection() store.CollectionTotals {
 	return store.CollectionTotals{DistinctCards: 2, TotalCopies: 10, Value: 100}
@@ -74,6 +136,39 @@ func TestSummaryTableTieBreaksByName(t *testing.T) {
 	if !(a < m && m < z) {
 		t.Errorf("equal-value decks not name-ordered:\n%s", out)
 	}
+}
+
+func TestDecksByValue(t *testing.T) {
+	mk := func(name string, value float64) store.DeckSummary {
+		d := store.DeckSummary{Value: value}
+		d.Name = name
+		return d
+	}
+	in := []store.DeckSummary{
+		mk("cheap", 1), mk("rich", 300), mk("zero-b", 0), mk("mid", 50), mk("zero-a", 0),
+	}
+	got := decksByValue(in)
+
+	want := []string{"rich", "mid", "cheap", "zero-a", "zero-b"}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("position %d = %q, want %q (full order: %v)", i, got[i].Name, name, names(got))
+		}
+	}
+
+	// The caller's slice must be left alone: cmdDeckList and summaryTable both
+	// sort the same result of ListDecks.
+	if in[0].Name != "cheap" {
+		t.Errorf("decksByValue mutated its argument: %v", names(in))
+	}
+}
+
+func names(decks []store.DeckSummary) []string {
+	out := make([]string, len(decks))
+	for i, d := range decks {
+		out[i] = d.Name
+	}
+	return out
 }
 
 // The non-terminal profile is the scriptable one: whole names, no bars, and
