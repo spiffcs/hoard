@@ -6,6 +6,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -13,15 +14,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
-	"text/tabwriter"
 
 	"github.com/cphillips918/hoard/internal/decksource"
 	"github.com/cphillips918/hoard/internal/scan"
 	"github.com/cphillips918/hoard/internal/scryfall"
 	"github.com/cphillips918/hoard/internal/store"
 	"github.com/cphillips918/hoard/internal/tui"
+	"github.com/cphillips918/hoard/internal/ui"
 )
 
 const usage = `hoard — catalog valuable MTG cards and decks in SQLite
@@ -231,7 +234,7 @@ func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty i
 		price = card.PriceUSDFoil
 	}
 	fmt.Printf("Added %d× %s (%s/%s) as %s — %s\n",
-		qty, card.Name, card.Set, card.CollectorNumber, finish, formatPrice(price))
+		qty, card.Name, card.Set, card.CollectorNumber, finish, ui.MoneyPtr(price))
 	return nil
 }
 
@@ -373,24 +376,44 @@ func cmdList(st *store.Store) error {
 	if err != nil {
 		return err
 	}
+	env := ui.Detect(os.Stdout)
 	if len(cards) == 0 {
-		fmt.Println("Collection is empty. Add a card with: hoard add <scryfall-url>")
+		fmt.Println(env.Dim()("Collection is empty. Add a card with: hoard add <scryfall-url>"))
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSET/NUM\tNORMAL\tFOIL\tUSD\tUSD FOIL\tVALUE")
+	// The unit-price columns are dropped before names are truncated: once VALUE
+	// is present they are the least useful thing on the row.
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "NORMAL", Align: ui.Right},
+			{Title: "FOIL", Align: ui.Right},
+			{Title: "USD", Align: ui.Right, Priority: 6, Style: env.Dim()},
+			{Title: "USD FOIL", Align: ui.Right, Priority: 5, Style: env.Dim()},
+			{Title: "VALUE", Align: ui.Right},
+		},
+	}
 
 	var total float64
 	for _, c := range cards {
 		value := collectionLineValue(c)
 		total += value
-		fmt.Fprintf(tw, "%s\t%s/%s\t%d\t%d\t%s\t%s\t%s\n",
-			c.Name, c.SetCode, c.CollectorNumber, c.QtyNormal, c.QtyFoil,
-			formatPrice(c.PriceUSD), formatPrice(c.PriceUSDFoil), formatUSD(value))
+		t.Add(
+			ui.C(c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber),
+			ui.C(ui.Count(c.QtyNormal)), ui.C(ui.Count(c.QtyFoil)),
+			ui.C(ui.MoneyPtr(c.PriceUSD)), ui.C(ui.MoneyPtr(c.PriceUSDFoil)),
+			ui.C(ui.Money(value)))
 	}
-	fmt.Fprintf(tw, "\t\t\t\t\tTOTAL\t%s\n", formatUSD(total))
-	return tw.Flush()
+	t.AddSpacer()
+	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
+		ui.C(ui.Money(total)))
+
+	_, err = t.WriteTo(os.Stdout)
+	return err
 }
 
 func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
@@ -507,7 +530,7 @@ func cmdRemove(st *store.Store, args []string) error {
 }
 
 func cmdSummary(st *store.Store) error {
-	collVal, err := st.CollectionValue()
+	coll, err := st.CollectionTotals()
 	if err != nil {
 		return err
 	}
@@ -515,18 +538,80 @@ func cmdSummary(st *store.Store) error {
 	if err != nil {
 		return err
 	}
+	_, err = summaryTable(ui.Detect(os.Stdout), coll, decks).WriteTo(os.Stdout)
+	return err
+}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "BUCKET\tCARDS\tVALUE")
-	fmt.Fprintf(tw, "Collection (loose)\t\t%s\n", formatUSD(collVal))
-	grand := collVal
-	for _, d := range decks {
-		fmt.Fprintf(tw, "Deck: %s\t%d\t%s\n", d.Name, d.TotalCopies, formatUSD(d.Value))
-		grand += d.Value
+// barCells is the width of the summary's share-bar column.
+const barCells = 10
+
+// summaryTable lays out the hoard as two labelled sections — the loose
+// collection and the decks — rather than a flat list distinguished by a
+// repeated "Deck: " prefix.
+//
+// It is pure so the whole layout can be tested at any terminal width without a
+// database.
+func summaryTable(env ui.Env, coll store.CollectionTotals, decks []store.DeckSummary) ui.Table {
+	sorted := slices.Clone(decks)
+	slices.SortFunc(sorted, func(a, b store.DeckSummary) int {
+		if c := cmp.Compare(b.Value, a.Value); c != 0 {
+			return c // most valuable first: a summary is about where the value sits
+		}
+		return strings.Compare(a.Name, b.Name) // stable when prices are unfetched
+	})
+
+	var deckCopies int
+	var deckValue float64
+	for _, d := range sorted {
+		deckCopies += d.TotalCopies
+		deckValue += d.Value
 	}
-	fmt.Fprintf(tw, "\t\t\n")
-	fmt.Fprintf(tw, "GRAND TOTAL\t\t%s\n", formatUSD(grand))
-	return tw.Flush()
+	grand := coll.Value + deckValue
+
+	// Shares are fractions of the grand total, so the two section bars tile the
+	// column and calibrate the deck bars below them.
+	share := func(v float64) string {
+		if !env.Bars || grand <= 0 {
+			return ""
+		}
+		return ui.Bar(v/grand, barCells)
+	}
+
+	t := ui.Table{
+		Env: env,
+		Cols: []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
+			{Title: "CARDS", Align: ui.Right, Priority: 2},
+			{Title: "VALUE", Align: ui.Right},
+			{Align: ui.Left, Min: 6, Max: barCells, Priority: 3, Style: env.Dim()},
+		},
+	}
+
+	// The section rows are bold throughout, bars included: the two of them tile
+	// the bar column and so double as the scale legend for the deck rows below.
+	t.AddStyled(env.Bold(),
+		ui.C("COLLECTION"), ui.C(ui.Count(coll.TotalCopies)), ui.C(ui.Money(coll.Value)),
+		ui.C(share(coll.Value)))
+	t.AddStyled(env.Bold(),
+		ui.C(fmt.Sprintf("DECKS · %d", len(sorted))), ui.C(ui.Count(deckCopies)),
+		ui.C(ui.Money(deckValue)), ui.C(share(deckValue)))
+
+	if len(sorted) > 0 {
+		t.AddSpacer()
+		for _, d := range sorted {
+			// The indent is part of the name cell, so every column to its right
+			// stays aligned with the section rows above.
+			t.Add(ui.C("  "+d.Name), ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)),
+				ui.C(share(d.Value)))
+		}
+	}
+
+	t.AddSpacer()
+	// The total's bar cell is left empty: a full bar there is ink for no information.
+	t.AddStyled(env.Bold(),
+		ui.C("TOTAL"), ui.C(ui.Count(coll.TotalCopies+deckCopies)), ui.C(ui.Money(grand)), ui.C(""))
+
+	return t
 }
 
 // --- Deck commands ---
@@ -642,16 +727,31 @@ func cmdDeckList(st *store.Store) error {
 	if err != nil {
 		return err
 	}
+	env := ui.Detect(os.Stdout)
 	if len(decks) == 0 {
-		fmt.Println("No decks yet. Import one with: hoard deck add <archidekt-url>")
+		fmt.Println(env.Dim()("No decks yet. Import one with: hoard deck add <archidekt-url>"))
 		return nil
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tCARDS\tVALUE")
-	for _, d := range decks {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", d.ID, d.Name, d.Source, d.TotalCopies, formatUSD(d.Value))
+
+	// NAME is deliberately not flexible here: this is the reference view where
+	// deck names are shown in full, so `summary` is free to truncate them.
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "ID", Align: ui.Right},
+			{Title: "NAME", Align: ui.Left},
+			{Title: "SOURCE", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "CARDS", Align: ui.Right},
+			{Title: "VALUE", Align: ui.Right},
+		},
 	}
-	return tw.Flush()
+	for _, d := range decks {
+		t.Add(ui.C(strconv.FormatInt(d.ID, 10)), ui.C(d.Name), ui.C(d.Source),
+			ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)))
+	}
+	_, err = t.WriteTo(os.Stdout)
+	return err
 }
 
 func cmdDeckShow(st *store.Store, args []string) error {
@@ -667,17 +767,29 @@ func cmdDeckShow(st *store.Store, args []string) error {
 		return err
 	}
 
+	env := ui.Detect(os.Stdout)
 	header := deck.Name
 	if deck.Format != "" {
 		header += " — " + deck.Format
 	}
-	fmt.Println(header)
+	fmt.Println(env.Bold()(header))
 	if deck.SourceURL != "" {
-		fmt.Println(deck.SourceURL)
+		fmt.Println(env.Dim()(deck.SourceURL))
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "BOARD\tQTY\tNAME\tSET/NUM\tFINISH\tPRICE\tVALUE")
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "BOARD", Align: ui.Left, Style: env.Dim()},
+			{Title: "QTY", Align: ui.Right},
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
+			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
+			{Title: "VALUE", Align: ui.Right},
+		},
+	}
 	var total float64
 	for _, e := range entries {
 		total += e.Value()
@@ -685,12 +797,16 @@ func cmdDeckShow(st *store.Store, args []string) error {
 		if finish == "normal" {
 			finish = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s/%s\t%s\t%s\t%s\n",
-			e.Board, e.Quantity, e.Card.Name, e.Card.SetCode, e.Card.CollectorNumber,
-			finish, formatPrice(e.Price()), formatUSD(e.Value()))
+		t.Add(ui.C(e.Board), ui.C(ui.Count(e.Quantity)), ui.C(e.Card.Name),
+			ui.C(e.Card.SetCode+"/"+e.Card.CollectorNumber), ui.C(finish),
+			ui.C(ui.MoneyPtr(e.Price())), ui.C(ui.Money(e.Value())))
 	}
-	fmt.Fprintf(tw, "\t\t\t\t\tTOTAL\t%s\n", formatUSD(total))
-	return tw.Flush()
+	t.AddSpacer()
+	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
+		ui.C(ui.Money(total)))
+
+	_, err = t.WriteTo(os.Stdout)
+	return err
 }
 
 func cmdDeckRemove(st *store.Store, args []string) error {
@@ -758,8 +874,10 @@ func identLabel(id scryfall.Identifier) string {
 	}
 }
 
-// --- Formatting ---
+// --- Valuation ---
 
+// collectionLineValue is the worth of one loose-collection row across both
+// finishes. Money formatting itself lives in internal/ui.
 func collectionLineValue(c store.CollectionCard) float64 {
 	var v float64
 	if c.PriceUSD != nil {
@@ -769,15 +887,4 @@ func collectionLineValue(c store.CollectionCard) float64 {
 		v += float64(c.QtyFoil) * *c.PriceUSDFoil
 	}
 	return v
-}
-
-func formatPrice(p *float64) string {
-	if p == nil {
-		return "—"
-	}
-	return formatUSD(*p)
-}
-
-func formatUSD(v float64) string {
-	return fmt.Sprintf("$%.2f", v)
 }

@@ -76,6 +76,26 @@ func TestCollectionAddAndIncrement(t *testing.T) {
 	if val != 75.0 {
 		t.Errorf("CollectionValue = %v, want 75", val)
 	}
+
+	totals, err := s.CollectionTotals()
+	if err != nil {
+		t.Fatalf("CollectionTotals: %v", err)
+	}
+	// One printing, six copies across both finishes, valued like CollectionValue.
+	if totals.DistinctCards != 1 || totals.TotalCopies != 6 || totals.Value != 75.0 {
+		t.Errorf("CollectionTotals = %+v, want {1 6 75}", totals)
+	}
+}
+
+func TestCollectionTotalsEmpty(t *testing.T) {
+	s := newTestStore(t)
+	totals, err := s.CollectionTotals()
+	if err != nil {
+		t.Fatalf("CollectionTotals on empty collection: %v", err)
+	}
+	if totals != (CollectionTotals{}) {
+		t.Errorf("CollectionTotals = %+v, want all zeros", totals)
+	}
 }
 
 func TestAddCardFinishEtched(t *testing.T) {

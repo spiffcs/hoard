@@ -74,6 +74,26 @@ hoard remove https://scryfall.com/card/uma/7/...
 hoard summary
 ```
 
+`summary` groups the hoard into two sections and ranks decks by value, with a bar
+showing each one's share of the grand total:
+
+```
+COLLECTION                                           100  $1,901.70  ████▉
+DECKS · 22                                         1,878  $1,987.58  █████
+
+  Vampiric Bloodlust (Commander 2017)                100    $198.12  ▌
+  Draconic Domination (Commander 2017 Precon)        100    $172.41  ▍
+  Tricky Terrain Collector's Edition (Modern Hori…   100    $164.59  ▍
+  …
+  Duel Decks Anthology: Jace vs. Chandra (Chandra)    60     $15.05  ▏
+
+TOTAL                                              1,978  $3,889.28
+```
+
+The two section bars tile the column exactly, so they double as the scale for the
+deck bars beneath them. A blank bar means a deck is worth $0.00 — usually one
+whose prices haven't been fetched yet; run `hoard update-prices`.
+
 ### Scanning a card
 
 Inside an add session (`hoard add`), press **`ctrl+o`** to identify a card with your
@@ -182,6 +202,23 @@ default):
 hoard --db ~/hoard/collection.db list
 export HOARD_DB=~/hoard/collection.db
 ```
+
+### Output width and color
+
+Tables are laid out to fit the terminal exactly, truncating long names with `…`
+rather than letting rows wrap. Widen the terminal and names un-truncate on their
+own; `hoard deck list` always shows deck names in full.
+
+Two environment variables override the defaults:
+
+```sh
+HOARD_WIDTH=100 hoard summary   # lay out for a specific width
+HOARD_WIDTH=0   hoard summary   # never truncate, whatever the terminal size
+NO_COLOR=1      hoard summary   # same layout, no bold/faint styling
+```
+
+Piping or redirecting turns off styling, truncation, and bars automatically, so
+`hoard summary | grep` sees whole names and no escape sequences.
 
 ## Development
 

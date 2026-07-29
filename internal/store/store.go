@@ -648,6 +648,39 @@ WHERE e.container_id = ?`, cid).Scan(&v)
 	return v.Float64, nil
 }
 
+// CollectionTotals rolls the loose collection up the same way DeckSummary rolls
+// up a deck, so `summary` can present the two alike.
+type CollectionTotals struct {
+	DistinctCards int
+	TotalCopies   int
+	Value         float64
+}
+
+// CollectionTotals returns the loose collection's distinct printings, total
+// copies, and market value in one pass.
+//
+// Copies are counted with the same COALESCE(SUM(quantity), 0) as ListDecks, and
+// valued with the same foil/etched CASE as CollectionValue, so the collection
+// and the decks stay directly comparable once they're summed into one total.
+func (s *Store) CollectionTotals() (CollectionTotals, error) {
+	cid, err := s.collectionID()
+	if err != nil {
+		return CollectionTotals{}, err
+	}
+	var t CollectionTotals
+	err = s.db.QueryRow(`
+SELECT COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
+       COALESCE(SUM(e.quantity), 0) AS total_copies,
+       COALESCE(SUM(e.quantity * COALESCE(
+           CASE WHEN e.finish IN ('foil','etched') THEN c.price_usd_foil ELSE c.price_usd END, 0)), 0) AS value
+FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+WHERE e.container_id = ?`, cid).Scan(&t.DistinctCards, &t.TotalCopies, &t.Value)
+	if err != nil {
+		return CollectionTotals{}, fmt.Errorf("collection totals: %w", err)
+	}
+	return t, nil
+}
+
 // --- Legacy migration ---
 
 // migrateLegacy upgrades a database created by the original single-table build
