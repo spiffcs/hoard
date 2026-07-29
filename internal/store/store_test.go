@@ -618,6 +618,13 @@ func TestLegacyMigration(t *testing.T) {
 	}
 	// Drop the modern schema and recreate the old one with a row.
 	for _, stmt := range []string{
+		// card_price_history goes first, and not only because the fixture is
+		// meant to be the old shape: it carries a foreign key to cards, and
+		// migrateLegacy renames that table out from under it. SQLite rewrites
+		// the reference to follow the rename, leaving a key pointing at a table
+		// the migration then drops — a state no real legacy database can reach,
+		// since it predates the history table entirely.
+		`DROP TABLE card_price_history`,
 		`DROP TABLE card_entries`, `DROP TABLE containers`, `DROP TABLE cards`,
 		`CREATE TABLE cards (
             scryfall_id TEXT PRIMARY KEY, set_code TEXT NOT NULL, collector_number TEXT NOT NULL,

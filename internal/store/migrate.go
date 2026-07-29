@@ -29,6 +29,7 @@ var migrations = []migration{
 	{1, schemaV1},
 	{2, splitAltPriceSources},
 	{3, cacheMTGJSONIDs},
+	{4, keepPriceHistory},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -128,6 +129,55 @@ UPDATE cards SET mtgjson_uuid = (
 );
 
 CREATE INDEX IF NOT EXISTS cards_mtgjson_uuid ON cards(mtgjson_uuid);`
+
+// keepPriceHistory remembers what a printing used to cost.
+//
+// Every price write before this was destructive: upsertCatalogTx and
+// UpsertAltPrices both overwrite in place, so the moment a refresh committed,
+// the old number was gone and nothing could say what had moved. cards.updated_at
+// records when a price was last written, never what it was.
+//
+// Rows are appended only when the price actually differs from the last one
+// observed, which is what keeps the table small: most of a collection does not
+// move on a given day, and a row per card per refresh would grow the database by
+// the size of the catalog every time.
+//
+// The finish here is the price's finish — 'normal' or 'foil' — not the finish a
+// card is held in. Etched copies are valued from the foil price (see
+// entryValue), so they share its history rather than getting a third series that
+// would always duplicate it.
+//
+// The seed backfills one observation per priced card from the prices already
+// stored, timestamped when they were actually written. Without it the first
+// refresh after upgrading would have nothing to compare against and would report
+// no movement at all; with it, the numbers already on disk become the baseline.
+const keepPriceHistory = `
+CREATE TABLE IF NOT EXISTS card_price_history (
+    scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    finish      TEXT NOT NULL,
+    price_usd   REAL NOT NULL,
+    source      TEXT NOT NULL,
+    as_of       TEXT NOT NULL,
+    PRIMARY KEY (scryfall_id, finish, as_of)
+);
+
+INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
+SELECT c.scryfall_id, 'normal',
+       COALESCE(c.price_usd, a.price_usd),
+       CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
+            ELSE COALESCE(a.source_usd, 'fallback') END,
+       CASE WHEN c.price_usd IS NOT NULL THEN c.updated_at ELSE a.as_of END
+FROM cards c LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
+WHERE COALESCE(c.price_usd, a.price_usd) IS NOT NULL;
+
+INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
+SELECT c.scryfall_id, 'foil',
+       COALESCE(c.price_usd_foil, a.price_usd_foil),
+       CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
+            ELSE COALESCE(a.source_usd_foil, 'fallback') END,
+       CASE WHEN c.price_usd_foil IS NOT NULL THEN c.updated_at ELSE a.as_of END
+FROM cards c LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
+WHERE COALESCE(c.price_usd_foil, a.price_usd_foil) IS NOT NULL;`
 
 // migrate brings the database up to schemaVersion, backing it up first.
 func (s *Store) migrate(path string) error {

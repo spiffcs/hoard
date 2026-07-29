@@ -69,6 +69,9 @@ hoard summary
 # Refresh market prices for every card in the catalog
 hoard update-prices
 
+# What has risen and fallen since a month ago
+hoard movers --since 30d
+
 # Cards counting as $0.00 in your totals, and where they are held
 hoard unpriced
 
@@ -80,6 +83,49 @@ Scryfall recalculates its price data roughly once a day, so `update-prices` is
 worth running about that often. Running it several times in a day re-fetches the
 entire catalog to arrive at the same numbers: it is the only command that talks
 to Scryfall about every card you own, in batches of 75.
+
+### What moved
+
+Every refresh records the prices it sees, so `update-prices` ends by saying what
+changed since the last one:
+
+```
+Updated prices for 1,256 of 1,256 cards.
+
+NAME                     SET/NUM  FINISH    WAS       NOW  CHANGE  QTY   IMPACT
+RISERS
+  Breena, the Demagogue  c21/1    foil    $3.00  →  $4.32  +44.0%   ×2   +$2.64
+  Sol Ring               c21/1    -       $1.00  →  $1.10  +10.0%  ×40   +$4.00
+
+SINKERS
+  Flame Discharge        neo/142  -       $0.25  →  $0.10  -60.0%   ×1   -$0.15
+
+2 printings moved since the last refresh. Net change: +$6.49
+```
+
+The list is ordered by **impact** — the move multiplied by how many copies you
+hold, across the loose collection and every deck — not by the change in sticker
+price. Forty commons that each gained a dime moved the hoard more than one mythic
+that gained a dollar, and sorting on the per-card figure buries that.
+
+`hoard movers` asks the same question over a longer window:
+
+```sh
+hoard movers                 # since 30 days ago
+hoard movers --since 7d      # or 2w, or 48h
+hoard movers --limit 25      # more than the default 10 per section
+```
+
+The window names a date, not a period, because prices are observed when a refresh
+runs rather than continuously: `--since 7d` compares today's price against the
+last one recorded *on or before* a week ago. On a hoard refreshed every few
+weeks, that baseline may itself be older than the window, and the footer says so
+when history does not reach back as far as the question.
+
+Only prices that actually changed are stored, so the table stays small — most of
+a collection does not move on a given day. A card added between refreshes gets
+its first observation on the next one, as a baseline rather than as a rise from
+nothing.
 
 ### When Scryfall has no price
 

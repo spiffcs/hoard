@@ -36,7 +36,8 @@ Usage:
 Collection commands:
   add                                              Add cards interactively by name
   list                                             List loose cards by value, with total
-  update-prices                                    Refresh prices (Scryfall updates daily)
+  update-prices [--limit N]                        Refresh prices (Scryfall updates daily)
+  movers [--since 30d] [--limit N]                 Biggest risers and sinkers you hold
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
   arbitrage [--min N] [--limit N]                  Where vendors disagree on price
@@ -111,7 +112,9 @@ func run(args []string) error {
 	case "list":
 		return cmdList(st)
 	case "update-prices":
-		return cmdUpdatePrices(ctx, st)
+		return cmdUpdatePrices(ctx, st, cmdArgs)
+	case "movers":
+		return cmdMovers(st, cmdArgs)
 	case "unpriced":
 		return cmdUnpriced(st)
 	case "repair-finishes":
@@ -650,7 +653,13 @@ func cmdUnpriced(st *store.Store) error {
 	return nil
 }
 
-func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
+func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("update-prices", flag.ContinueOnError)
+	limit := fs.Int("limit", defaultMoverRows, "risers/sinkers to list")
+	if _, err := parsePositionals(fs, args); err != nil {
+		return err
+	}
+
 	ids, err := st.AllCatalogIDs()
 	if err != nil {
 		return err
@@ -677,7 +686,20 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
 	}
 	// Scryfall's results are already committed above, so a failure in the
 	// fallback pass costs nothing that was just fetched.
-	return fillPriceGaps(ctx, st)
+	if err := fillPriceGaps(ctx, st); err != nil {
+		return err
+	}
+
+	// After the gap fill, not before: a card priced from MTGJSON this run has
+	// its effective price only once that pass has committed, and recording
+	// first would log the gap and call the fill a change on the next run.
+	changes, err := st.RecordPrices()
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	printMovers(ui.Detect(os.Stdout), changes, *limit, "since the last refresh")
+	return nil
 }
 
 // cardRef is a printing needing an MTGJSON id, and the set whose file holds it.
