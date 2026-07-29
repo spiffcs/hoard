@@ -380,6 +380,10 @@ printing list and marked `← scanned`, with the cursor already on it. This matt
 for reprinted cards: Sol Ring has over a hundred printings, and the number in
 your hand says which one it is.
 
+The card is located in the frame first, and the border is then read relative to the
+card's own bottom edge, so the card does not need to fill the shot or sit at any
+particular height — anywhere in frame, roughly upright, is enough.
+
 It is deliberately a suggestion rather than a decision. A misread digit is visible
 before you commit, and enter is all it takes to accept. If the number matches none
 of the printings, the list is left in its normal order and hoard says so rather

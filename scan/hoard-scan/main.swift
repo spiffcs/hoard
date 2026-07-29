@@ -105,21 +105,72 @@ struct CardRead {
     var bottomLines: [String] = []
 }
 
-/// bottomBandHeight is the fraction of the frame searched for collector info.
+/// collectorBandFraction is how far up the *card* the collector band reaches, as a
+/// fraction of the card's own height.
 ///
-/// It is generous on purpose. The frame is a camera capture, not a cropped card,
-/// so the card's bottom border sits at no fixed offset — and nothing here detects
-/// card edges. A wide band plus pattern matching tolerates loose framing better
-/// than a tight crop would.
-let bottomBandHeight: CGFloat = 0.30
+/// The card's own height is the only sane reference. An earlier version measured
+/// the band against the frame instead, which fails the moment the card doesn't
+/// reach the bottom of the frame: a card resting mid-frame with desk below it puts
+/// its collector block ~38% up, well outside any plausible frame-relative band, and
+/// the read comes back completely empty. See findCard.
+///
+/// 0.15 covers the collector block, which lives in the bottom ~6%, with enough room
+/// left over for the tilt of a hand-held card. It does not reliably exclude the
+/// lowest line of rules text or a creature's power/toughness — past roughly 8° of
+/// turn those come along too — so parseCollectorInfo, not this band, is what has to
+/// tell a collector number from a "2/2" printed above it.
+let collectorBandFraction: CGFloat = 0.15
+
+/// frameBandFallback is the frame-relative band used only when no card rectangle
+/// could be found. It is deliberately the whole lower half: without card bounds
+/// there is no way to know where the border sits, and a band that is too tall
+/// merely adds lines for the patterns below to reject, while one that is too short
+/// silently reads nothing at all.
+let frameBandFallback: CGFloat = 0.5
 
 // Collector info as printed. "123/264" is the common form; the solo form covers
 // cards that print the number without a set total, optionally with a trailing
 // rarity letter. The set/language pair is the M15-frame second line, e.g. "MH3 • EN".
+//
+// The separator in the set/language line is matched loosely: at this glyph size
+// Vision reports the printed bullet as "-", ".", "|" and friends about as often as
+// "•", so requiring a real bullet drops perfectly good reads. A bare space counts
+// too.
+//
+// What keeps that looseness safe is the trailing token: it must be one of the
+// language codes Magic actually prints. Accepting any two letters there matches
+// ordinary prose — "cards equal to the sacrificed" uppercases to a tidy
+// "EQUAL TO" and yields a set code of "EQUAL".
+let cardLanguages = "EN|DE|FR|IT|ES|PT|JA|JP|KO|RU|ZH|ZHS|ZHT|CS|CT|HE|LA|AR|SA|PH"
 let collectorPairRE = try! NSRegularExpression(pattern: #"(\d{1,5})\s*/\s*\d{1,5}"#)
 let collectorSoloRE = try! NSRegularExpression(pattern: #"^#?\s*(\d{1,5})\s*[A-Z]?$"#)
 let setLangRE = try! NSRegularExpression(
-    pattern: #"\b([0-9A-Z]{3,5})\s*[•·∙*★]\s*[A-Z]{2}\b"#)
+    pattern: #"\b([0-9A-Z]{3,5})(?:\s*[•·∙*★+.,:;|/\\―—–-]\s*|\s+)(?:"# + cardLanguages + #")\b"#)
+
+/// confusables maps the non-ASCII lookalikes Vision returns for this text to the
+/// ASCII the patterns expect. With language correction off and glyphs barely 1% of
+/// the frame tall, it will happily report a set code as "MHЗ" with a Cyrillic З, or
+/// a Greek Ο for a zero — which then fails an [0-9A-Z] match for reasons invisible
+/// in the emitted bottomLines.
+let confusables: [Character: Character] = [
+    // Cyrillic
+    "А": "A", "В": "B", "Е": "E", "З": "3", "К": "K", "М": "M", "Н": "H", "О": "O",
+    "Р": "P", "С": "C", "Т": "T", "У": "Y", "Х": "X", "І": "I", "Ѕ": "S", "Ј": "J",
+    // Greek
+    "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M",
+    "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+    // Fullwidth / typographic digits and slashes
+    "０": "0", "１": "1", "２": "2", "３": "3", "４": "4", "５": "5", "６": "6",
+    "７": "7", "８": "8", "９": "9", "⁄": "/", "∕": "/", "／": "/",
+]
+
+/// asciify folds lookalike glyphs to ASCII and uppercases the result, so the
+/// patterns can stay strict about shape without also being strict about which
+/// codepoint Vision happened to pick. Uppercasing is what lets a lowercase read
+/// ("mh3 • en") still yield a set code.
+func asciify(_ s: String) -> String {
+    String(s.uppercased().map { confusables[$0] ?? $0 })
+}
 
 /// group returns a capture group of the first match, if any.
 func group(_ re: NSRegularExpression, _ s: String, _ n: Int = 1) -> String? {
@@ -136,13 +187,44 @@ func normalizeNumber(_ s: String) -> String {
     return trimmed.isEmpty ? "0" : String(trimmed)
 }
 
+/// looksLikeAYear reports whether a bare number is really a printing year. Every
+/// card carries a copyright year in the same block as the collector number, and on
+/// its own line it is indistinguishable from a collector number by shape alone.
+/// Magic has no four-digit collector numbers in this range, so the range is safe
+/// to exclude outright.
+func looksLikeAYear(_ s: String) -> Bool {
+    guard s.count == 4, let n = Int(s) else { return false }
+    return n >= 1993 && n <= 2035
+}
+
+/// lowercaseCount is how many lowercase letters a line holds, which is how the
+/// collector block is told apart from rules text. The border block is set in caps,
+/// digits and small caps, so it reads as all-uppercase; prose does not. It matters
+/// because a card's rules text can carry a collector-number shape of its own —
+/// "Create a 2/2 white Cat creature token" — and the band cannot always exclude it.
+func lowercaseCount(_ s: String) -> Int {
+    s.filter { $0.isLowercase }.count
+}
+
 /// parseCollectorInfo pulls a collector number and set code out of the bottom
-/// band's text, matching on shape rather than position. That covers both places
-/// the number appears: the bottom-left block on M15-frame cards (2014 onward) and
-/// the bottom centre on older ones.
+/// band's text. That covers both places the number appears: the bottom-left block
+/// on M15-frame cards (2014 onward) and the bottom centre on older ones.
+///
+/// `lines` should arrive bottom-most first. Candidates are then tried in order of
+/// how little prose they contain, falling back to that bottom-up order for ties, so
+/// the real border block always outranks rules text that merely looks like it. This
+/// is a preference and not a filter: when the only line on offer is a messy one, it
+/// is still used rather than nothing.
 func parseCollectorInfo(_ lines: [String]) -> (number: String, set: String) {
+    let ranked = lines.enumerated()
+        .sorted { a, b in
+            let (la, lb) = (lowercaseCount(a.element), lowercaseCount(b.element))
+            return la == lb ? a.offset < b.offset : la < lb
+        }
+        .map { asciify($0.element) }
+
     var number = "", set = ""
-    for line in lines {
+    for line in ranked {
         if number.isEmpty, let n = group(collectorPairRE, line) {
             number = normalizeNumber(n)
         }
@@ -151,17 +233,78 @@ func parseCollectorInfo(_ lines: [String]) -> (number: String, set: String) {
         }
     }
     // Only fall back to a bare number once the "x/y" form has been ruled out —
-    // a lone number is much easier to confuse with power/toughness or a year.
+    // a lone number is much easier to confuse with a planeswalker's loyalty or a
+    // copyright year.
     if number.isEmpty {
-        for line in lines {
+        for line in ranked {
             let t = line.trimmingCharacters(in: .whitespaces)
-            if let n = group(collectorSoloRE, t) {
+            if let n = group(collectorSoloRE, t), !looksLikeAYear(n) {
                 number = normalizeNumber(n)
                 break
             }
         }
     }
     return (number, set)
+}
+
+/// findCard locates the card in the frame, so the collector band can be anchored
+/// to the card's own bottom edge instead of the frame's.
+///
+/// Returns nil when nothing card-shaped stands out — a card on a same-coloured
+/// surface, or one held at too steep an angle — which is the cue to fall back to
+/// frameBandFallback.
+func findCard(_ cg: CGImage) -> VNRectangleObservation? {
+    let req = VNDetectRectanglesRequest()
+    // A Magic card is 63x88mm, so 0.716 dead on. The tolerance either side absorbs
+    // the perspective foreshortening of a hand-held phone; the helper never asks
+    // the user to square the card up.
+    req.minimumAspectRatio = 0.55
+    req.maximumAspectRatio = 0.9
+    // A framed card dominates the shot. This rejects specks and, more usefully,
+    // the rectangles inside the card — the art box and the text box.
+    req.minimumSize = 0.15
+    req.minimumConfidence = 0.5
+    req.quadratureTolerance = 25
+    req.maximumObservations = 10
+
+    do {
+        try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
+    } catch {
+        return nil
+    }
+    // The tallest candidate is the card itself rather than one of its inner boxes.
+    return (req.results ?? []).max { $0.boundingBox.height < $1.boundingBox.height }
+}
+
+/// collectorBand returns the region of interest to search for collector info: the
+/// frame up to a ceiling set just above the detected card's bottom border, or the
+/// frame's lower half when no card could be located.
+func collectorBand(_ cg: CGImage) -> CGRect {
+    guard let card = findCard(cg) else {
+        return CGRect(x: 0, y: 0, width: 1, height: frameBandFallback)
+    }
+    // Work from the corner points, not the axis-aligned bounding box. A card is
+    // never perfectly square to the camera, and for a tilted one the bounding box
+    // bottom is its lowest *corner* — below the collector text, which runs on the
+    // same tilt. The band therefore has to span the tilt as well as reach up the
+    // card, or it misses the text entirely at around 8° of turn.
+    let top = max(card.bottomLeft.y, card.bottomRight.y)
+    // The card's height along its own edge, so the fraction stays a fraction of
+    // the card however it is turned.
+    let edge = hypot(card.topLeft.x - card.bottomLeft.x,
+                     card.topLeft.y - card.bottomLeft.y)
+    // Pad a little: the detected edge can sit just inside the printed border, and
+    // the collector text runs very close to that border.
+    let pad: CGFloat = 0.01
+
+    // Only the *top* of the band is anchored to the card. It runs to the frame's
+    // bottom edge and full width because whatever lies below and beside the card is
+    // desk, which costs nothing to include and keeps this a superset of the region
+    // a frame-relative band would have covered. Vision's recognition of text this
+    // small is sensitive to the shape of the region it is given, and the wider strip
+    // reads marginal borders more reliably than a tight crop does.
+    let height = top + edge * collectorBandFraction + pad
+    return CGRect(x: 0, y: 0, width: 1, height: min(1, height))
 }
 
 /// readCard runs Vision text recognition on a CGImage and returns the best guess
@@ -177,17 +320,17 @@ func readCard(_ cg: CGImage) -> CardRead {
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
 
-    // A second pass over the bottom border only. Language correction is off here
-    // and that is not incidental: with it on, Vision "corrects" "123/264" and set
-    // codes like "MH3" into dictionary words, which is the quietest possible way
-    // for this to stop working.
+    // A second pass over the card's bottom border only. Language correction is off
+    // here and that is not incidental: with it on, Vision "corrects" "123/264" and
+    // set codes like "MH3" into dictionary words, which is the quietest possible
+    // way for this to stop working.
     let bottom = VNRecognizeTextRequest()
     bottom.recognitionLevel = .accurate
     bottom.usesLanguageCorrection = false
     bottom.recognitionLanguages = ["en-US"]
     // Normalized, origin bottom-left. The frame is already upright and
     // rotation-normalized by this point, so the band is stable across orientations.
-    bottom.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: bottomBandHeight)
+    bottom.regionOfInterest = collectorBand(cg)
 
     let handler = VNImageRequestHandler(cgImage: cg, options: [:])
     do {
@@ -199,13 +342,16 @@ func readCard(_ cg: CGImage) -> CardRead {
     var read = CardRead()
 
     // Bottom band first: it stands alone, so a title failure doesn't cost us the
-    // collector number.
-    var bottomLines: [String] = []
-    for obs in bottom.results ?? [] {
-        guard let cand = obs.topCandidates(1).first else { continue }
-        let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !t.isEmpty { bottomLines.append(t) }
-    }
+    // collector number. Sorted bottom-most first, which is what parseCollectorInfo
+    // relies on to prefer the border block over anything printed above it.
+    let bottomLines = (bottom.results ?? [])
+        .compactMap { obs -> (CGFloat, String)? in
+            guard let cand = obs.topCandidates(1).first else { return nil }
+            let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : (obs.boundingBox.minY, t)
+        }
+        .sorted { $0.0 < $1.0 }
+        .map { $0.1 }
     read.bottomLines = bottomLines
     (read.collectorNumber, read.setCode) = parseCollectorInfo(bottomLines)
 
@@ -424,6 +570,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         deviceName = device.localizedName
         guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
             fail("could not configure capture session")
+        }
+        // Ask for full-resolution stills. The default preset is .high, which caps
+        // the capture at video resolution (1080p on Continuity Camera) and leaves
+        // the collector number under 1% of the frame height — right at the edge of
+        // what Vision can resolve. .photo gives the sensor's full frame instead.
+        if session.canSetSessionPreset(.photo) {
+            session.sessionPreset = .photo
         }
         session.addInput(input)
         session.addOutput(photoOutput)
