@@ -28,7 +28,13 @@ Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
 ## Usage
 
 ```sh
-# Add two non-foil copies of Ulamog (fetches current prices)
+# Add a card interactively by name — no link needed. Launches a TUI that
+# looks the card up on Scryfall and asks only the questions needed to pinpoint
+# one exact entry: which card (if the name is ambiguous), which printing,
+# which finish, and how many. Type to filter long printing lists.
+mtg add Ulamog, the Infinite Gyre
+
+# Add two non-foil copies of Ulamog by URL (non-interactive)
 mtg add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --qty 2
 
 # Add a foil copy of the same card

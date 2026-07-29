@@ -78,6 +78,24 @@ func TestCollectionAddAndIncrement(t *testing.T) {
 	}
 }
 
+func TestAddCardFinishEtched(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "etched", 2); err != nil {
+		t.Fatalf("AddCardFinish etched: %v", err)
+	}
+	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish foil: %v", err)
+	}
+	// etched + foil are distinct entry rows but pivot together into QtyFoil.
+	cards, _ := s.ListCollection()
+	if len(cards) != 1 || cards[0].QtyFoil != 3 || cards[0].QtyNormal != 0 {
+		t.Fatalf("pivot wrong: %+v", cards)
+	}
+	if err := s.AddCardFinish(ulamog(), "bogus", 1); err == nil {
+		t.Error("expected error for invalid finish")
+	}
+}
+
 func TestSetCollectionQuantities(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.AddCard(ulamog(), false, 1); err != nil {

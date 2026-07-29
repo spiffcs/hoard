@@ -278,12 +278,23 @@ func (s *Store) UpdatePrices(cards []scryfall.Card) error {
 
 // --- Collection operations (operate on the singleton collection container) ---
 
-// AddCard ensures the card is in the catalog and adds qty copies of the given
-// finish to the loose collection.
+// AddCard ensures the card is in the catalog and adds qty copies to the loose
+// collection as normal or foil.
 func (s *Store) AddCard(c scryfall.Card, foil bool, qty int) error {
 	finish := "normal"
 	if foil {
 		finish = "foil"
+	}
+	return s.AddCardFinish(c, finish, qty)
+}
+
+// AddCardFinish ensures the card is in the catalog and adds qty copies of the
+// given finish ("normal", "foil", or "etched") to the loose collection.
+func (s *Store) AddCardFinish(c scryfall.Card, finish string, qty int) error {
+	switch finish {
+	case "normal", "foil", "etched":
+	default:
+		return fmt.Errorf("invalid finish %q", finish)
 	}
 	cid, err := s.collectionID()
 	if err != nil {

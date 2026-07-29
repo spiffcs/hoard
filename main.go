@@ -17,6 +17,7 @@ import (
 	"github.com/cphillips918/mtg_index/internal/decksource"
 	"github.com/cphillips918/mtg_index/internal/scryfall"
 	"github.com/cphillips918/mtg_index/internal/store"
+	"github.com/cphillips918/mtg_index/internal/tui"
 )
 
 const usage = `mtg — catalog valuable MTG cards and decks in SQLite
@@ -25,7 +26,8 @@ Usage:
   mtg [--db PATH] <command> [args]
 
 Collection commands:
-  add <scryfall-url> [--foil] [--qty N]            Add a loose card (fetches prices)
+  add <scryfall-url> [--foil] [--qty N]            Add a loose card by URL
+  add <card name>                                  Add a loose card interactively (TUI)
   list                                             List loose cards and total value
   set-qty <scryfall-url> [--normal N] [--foil N]   Set exact loose quantities
   remove <scryfall-url>                            Remove a loose card
@@ -138,36 +140,82 @@ func resolveCard(ctx context.Context, url string) (*scryfall.Card, error) {
 
 func cmdAdd(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	foil := fs.Bool("foil", false, "add the card as foil")
-	qty := fs.Int("qty", 1, "quantity to add")
+	foil := fs.Bool("foil", false, "add the card as foil (URL form only)")
+	qty := fs.Int("qty", 1, "quantity to add (URL form only)")
 	pos, err := parsePositionals(fs, args)
 	if err != nil {
 		return err
-	}
-	if len(pos) != 1 {
-		return fmt.Errorf("add requires exactly one Scryfall URL")
 	}
 	if *qty < 1 {
 		return fmt.Errorf("--qty must be at least 1")
 	}
 
-	card, err := resolveCard(ctx, pos[0])
+	// A Scryfall URL takes the fast non-interactive path; anything else (a card
+	// name, or no argument) launches the interactive picker.
+	if len(pos) == 1 && looksLikeURL(pos[0]) {
+		return addByURL(ctx, st, pos[0], *foil, *qty)
+	}
+	return addByName(ctx, st, strings.Join(pos, " "))
+}
+
+// looksLikeURL reports whether an argument is a Scryfall card link rather than a
+// card name.
+func looksLikeURL(arg string) bool {
+	return strings.Contains(arg, "://") || strings.Contains(arg, "scryfall.com")
+}
+
+func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty int) error {
+	card, err := resolveCard(ctx, url)
 	if err != nil {
 		return err
 	}
-	if err := st.AddCard(*card, *foil, *qty); err != nil {
+	if err := st.AddCard(*card, foil, qty); err != nil {
 		return err
 	}
-
 	finish := "normal"
 	price := card.PriceUSD
-	if *foil {
+	if foil {
 		finish = "foil"
 		price = card.PriceUSDFoil
 	}
 	fmt.Printf("Added %d× %s (%s/%s) as %s — %s\n",
-		*qty, card.Name, card.Set, card.CollectorNumber, finish, formatPrice(price))
+		qty, card.Name, card.Set, card.CollectorNumber, finish, formatPrice(price))
 	return nil
+}
+
+func addByName(ctx context.Context, st *store.Store, name string) error {
+	if !stdinIsTTY() {
+		return fmt.Errorf("adding by name needs an interactive terminal; " +
+			"pass a Scryfall URL instead (e.g. mtg add https://scryfall.com/card/uma/7/...)")
+	}
+	res, err := tui.Run(ctx, tui.NewScryfallSearcher(), name)
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		fmt.Println("Cancelled; nothing added.")
+		return nil
+	}
+	if err := st.AddCardFinish(res.Card, res.Finish, res.Qty); err != nil {
+		return err
+	}
+	price := res.Card.PriceUSD
+	if res.Finish == "foil" || res.Finish == "etched" {
+		price = res.Card.PriceUSDFoil
+	}
+	fmt.Printf("Added %d× %s (%s/%s) as %s — %s\n",
+		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber, res.Finish, formatPrice(price))
+	return nil
+}
+
+// stdinIsTTY reports whether stdin is an interactive terminal (a character
+// device), which the TUI requires.
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func cmdList(st *store.Store) error {

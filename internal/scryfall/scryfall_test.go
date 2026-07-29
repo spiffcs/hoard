@@ -114,6 +114,98 @@ func TestIdentifierMarshalOmitsEmpty(t *testing.T) {
 	}
 }
 
+func TestAutocomplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("q"); got != "Ulamog" {
+			t.Errorf("q = %q, want Ulamog", got)
+		}
+		w.Write([]byte(`{"object":"catalog","total_values":2,"data":["Ulamog, the Infinite Gyre","Ulamog, the Ceaseless Hunger"]}`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	names, err := Autocomplete(context.Background(), "Ulamog")
+	if err != nil {
+		t.Fatalf("Autocomplete: %v", err)
+	}
+	if len(names) != 2 || names[0] != "Ulamog, the Infinite Gyre" {
+		t.Errorf("names = %v", names)
+	}
+}
+
+func TestSearchPrintsPaginatesAndDecodes(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "" || page == "1" {
+			// First page: exact-name query present, has_more true.
+			if q := r.URL.Query().Get("q"); q != `!"Sol Ring" game:paper` {
+				t.Errorf("q = %q", q)
+			}
+			w.Write([]byte(`{"object":"list","has_more":true,"next_page":"` + srv.URL + `/cards/search?page=2",
+				"data":[{"id":"a","name":"Sol Ring","set":"c21","set_name":"Commander 2021","collector_number":"1",
+				"finishes":["nonfoil","foil"],"prices":{"usd":"2.00","usd_foil":"5.00"}}]}`))
+			return
+		}
+		// Second page: no more.
+		w.Write([]byte(`{"object":"list","has_more":false,
+			"data":[{"id":"b","name":"Sol Ring","set":"mps","set_name":"Masterpiece","collector_number":"1",
+			"finishes":["foil"],"prices":{"usd":null,"usd_foil":"120.00"}}]}`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	cards, err := SearchPrints(context.Background(), "Sol Ring")
+	if err != nil {
+		t.Fatalf("SearchPrints: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards = %d, want 2 (paginated)", len(cards))
+	}
+	if cards[0].SetName != "Commander 2021" || len(cards[0].Finishes) != 2 {
+		t.Errorf("card[0] fields wrong: %+v", cards[0])
+	}
+	if cards[1].PriceUSD != nil {
+		t.Errorf("card[1] usd should be nil")
+	}
+	if cards[1].PriceUSDFoil == nil || *cards[1].PriceUSDFoil != 120.0 {
+		t.Errorf("card[1] foil price wrong: %+v", cards[1].PriceUSDFoil)
+	}
+}
+
+func TestSearchPrintsNoMatchReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"object":"error","status":404,"details":"No cards found"}`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	cards, err := SearchPrints(context.Background(), "Nonexistent Card Xyz")
+	if err != nil {
+		t.Fatalf("SearchPrints no-match returned error: %v", err)
+	}
+	if cards != nil {
+		t.Errorf("want nil cards, got %v", cards)
+	}
+}
+
+func TestEtchedFallbackPrice(t *testing.T) {
+	ac := apiCard{ID: "x", Name: "Etched Card"}
+	ac.Prices.USDFoil = ""
+	ac.Prices.USDEtched = "42.00"
+	c := ac.toCard()
+	if c.PriceUSDFoil == nil || *c.PriceUSDFoil != 42.0 {
+		t.Errorf("etched fallback: want 42, got %v", c.PriceUSDFoil)
+	}
+}
+
 func TestFetchCollectionChunksAndAggregates(t *testing.T) {
 	// Build 80 identifiers so the client must split into two chunks (75 + 5).
 	ids := make([]Identifier, 80)
