@@ -164,23 +164,20 @@ func TestDecksByValue(t *testing.T) {
 }
 
 func TestCollectionByValue(t *testing.T) {
-	price := func(v float64) *float64 { return &v }
-	mk := func(name string, normal int, usd *float64, foil int, usdFoil *float64) store.CollectionCard {
-		c := store.CollectionCard{QtyNormal: normal, QtyFoil: foil}
-		c.Name = name
-		c.PriceUSD = usd
-		c.PriceUSDFoil = usdFoil
-		return c
+	mk := func(name, finish string, qty int, value float64) store.CollectionRow {
+		r := store.CollectionRow{Finish: finish, Quantity: qty, Value: value}
+		r.Name = name
+		return r
 	}
-	in := []store.CollectionCard{
-		mk("cheap", 1, price(1), 0, nil),
-		// Quantity counts: 10 × $5 outranks a single $30 card.
-		mk("bulk-but-many", 10, price(5), 0, nil),
-		mk("unpriced-b", 3, nil, 0, nil),
-		mk("one-expensive", 1, price(30), 0, nil),
-		mk("unpriced-a", 1, nil, 0, nil),
-		// Foil value must be counted alongside normal.
-		mk("foil-heavy", 0, nil, 2, price(60)),
+	in := []store.CollectionRow{
+		mk("cheap", "normal", 1, 1),
+		// Quantity is already folded into Value by the store.
+		mk("bulk-but-many", "normal", 10, 50),
+		mk("unpriced-b", "normal", 3, 0),
+		mk("one-expensive", "normal", 1, 30),
+		mk("unpriced-a", "normal", 1, 0),
+		// A foil holding is its own row now, not a second column.
+		mk("foil-heavy", "foil", 2, 120),
 	}
 	got := collectionByValue(in)
 
@@ -232,10 +229,10 @@ func TestEntriesByValue(t *testing.T) {
 	}
 }
 
-func cardNames(cards []store.CollectionCard) []string {
-	out := make([]string, len(cards))
-	for i, c := range cards {
-		out[i] = c.Name
+func cardNames(rows []store.CollectionRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Name
 	}
 	return out
 }

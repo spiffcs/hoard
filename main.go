@@ -435,14 +435,13 @@ func stdinIsTTY() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// collectionByValue returns a copy of cards ordered most-valuable-first, the same
-// way `deck list` and `summary` rank decks. The store returns them by name, which
-// is only a stable base to sort from. Ties fall back to name so a collection whose
-// prices have never been fetched still lists predictably rather than arbitrarily.
-func collectionByValue(cards []store.CollectionCard) []store.CollectionCard {
-	sorted := slices.Clone(cards)
-	slices.SortFunc(sorted, func(a, b store.CollectionCard) int {
-		if c := cmp.Compare(collectionLineValue(b), collectionLineValue(a)); c != 0 {
+// collectionByValue returns a copy ordered most-valuable-first, the same way
+// `deck list` and `summary` rank decks. Ties fall back to name so a collection
+// whose prices have never been fetched still lists predictably.
+func collectionByValue(rows []store.CollectionRow) []store.CollectionRow {
+	sorted := slices.Clone(rows)
+	slices.SortFunc(sorted, func(a, b store.CollectionRow) int {
+		if c := cmp.Compare(b.Value, a.Value); c != 0 {
 			return c
 		}
 		return strings.Compare(a.Name, b.Name)
@@ -451,48 +450,50 @@ func collectionByValue(cards []store.CollectionCard) []store.CollectionCard {
 }
 
 func cmdList(st *store.Store) error {
-	cards, err := st.ListCollection()
+	rows, err := st.ListCollectionByFinish()
 	if err != nil {
 		return err
 	}
 	env := ui.Detect(os.Stdout)
-	if len(cards) == 0 {
+	if len(rows) == 0 {
 		fmt.Println(env.Dim()("Collection is empty. Add a card with: hoard add <scryfall-url>"))
 		return nil
 	}
 
-	// The unit-price columns are dropped before names are truncated: once VALUE
-	// is present they are the least useful thing on the row.
+	// One row per finish held, matching deck show. The pivoted alternative needs
+	// a NORMAL/FOIL pair and a USD/USD FOIL pair to say the same thing, and
+	// prints a price for a finish you do not own on every row.
 	t := ui.Table{
 		Env:    env,
 		Header: true,
 		Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "NORMAL", Align: ui.Right},
-			{Title: "FOIL", Align: ui.Right},
-			{Title: "USD", Align: ui.Right, Priority: 6, Style: env.Dim()},
-			{Title: "USD FOIL", Align: ui.Right, Priority: 5, Style: env.Dim()},
+			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
+			{Title: "QTY", Align: ui.Right},
+			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
 			{Title: "VALUE", Align: ui.Right},
 		},
 	}
 
 	var total float64
 	sources := map[string]bool{}
-	for _, c := range collectionByValue(cards) {
-		value := collectionLineValue(c)
-		total += value
-		if c.AltSource != "" {
-			sources[c.AltSource] = true
+	for _, r := range collectionByValue(rows) {
+		total += r.Value
+		if r.AltSource != "" {
+			sources[r.AltSource] = true
+		}
+		finish := r.Finish
+		if finish == "normal" {
+			finish = "-"
 		}
 		t.Add(
-			ui.C(c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber),
-			ui.C(ui.Count(c.QtyNormal)), ui.C(ui.Count(c.QtyFoil)),
-			ui.C(ui.MoneyPtr(c.PriceUSD)), ui.C(ui.MoneyPtr(c.PriceUSDFoil)),
-			ui.C(estimated(ui.Money(value), c.AltSource)))
+			ui.C(r.Name), ui.C(r.SetCode+"/"+r.CollectorNumber), ui.C(finish),
+			ui.C(ui.Count(r.Quantity)), ui.C(ui.MoneyPtr(r.Price())),
+			ui.C(estimated(ui.Money(r.Value), r.AltSource)))
 	}
 	t.AddSpacer()
-	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
+	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
 		ui.C(ui.Money(total)))
 
 	if _, err := t.WriteTo(os.Stdout); err != nil {

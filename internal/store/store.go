@@ -866,6 +866,65 @@ ORDER BY c.name`, cid)
 	return out, rows.Err()
 }
 
+// CollectionRow is one loose-collection holding: a printing in one finish.
+type CollectionRow struct {
+	Card
+	Finish   string
+	Quantity int
+	Value    float64
+}
+
+// ListCollectionByFinish returns the loose collection one row per finish held,
+// matching how deck show and unpriced present cards.
+//
+// The pivoted view ListCollection returns needs four columns to say what two
+// can, since a row shows a normal price and a foil price whether or not either
+// finish is owned. Splitting by finish also keeps etched distinct, which the
+// pivot folds into foil.
+func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
+	cid, err := s.collectionID()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`
+SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
+       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
+       `+altSourceForEntry+`,
+       e.finish,
+       SUM(e.quantity) AS quantity,
+       SUM(e.quantity * `+entryValue+`) AS value
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinCards+`
+WHERE e.container_id = ?
+GROUP BY c.scryfall_id, e.finish
+ORDER BY value DESC, c.name`, cid)
+	if err != nil {
+		return nil, fmt.Errorf("listing collection: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CollectionRow
+	for rows.Next() {
+		var r CollectionRow
+		if err := rows.Scan(&r.ScryfallID, &r.SetCode, &r.CollectorNumber, &r.Name,
+			&r.PriceUSD, &r.PriceUSDFoil, &r.ScryfallURL, &r.UpdatedAt, &r.AltSource,
+			&r.Finish, &r.Quantity, &r.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Price is the market price for this row's finish.
+func (r CollectionRow) Price() *float64 {
+	if r.Finish == "foil" || r.Finish == "etched" {
+		return r.PriceUSDFoil
+	}
+	return r.PriceUSD
+}
+
 // --- Deck operations ---
 
 // UpsertDeck inserts or updates a deck by (source, source_id) and replaces its
