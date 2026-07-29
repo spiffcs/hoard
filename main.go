@@ -32,11 +32,9 @@ Usage:
   hoard [--db PATH] <command> [args]
 
 Collection commands:
-  add                                              Add cards interactively — search by
-                                                   name, pick the printing and finish,
-                                                   repeat. Start here.
+  add                                              Add cards interactively by name
   list                                             List loose cards and total value
-  update-prices                                    Refresh prices for all cards
+  update-prices                                    Refresh prices (Scryfall updates daily)
   summary                                          Value of collection + each deck
 
 Deck commands:
