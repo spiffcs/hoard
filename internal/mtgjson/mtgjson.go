@@ -195,18 +195,123 @@ func SetIdentifiers(ctx context.Context, setCode string) (map[string]string, err
 	return out, nil
 }
 
+// byFinish is a provider's prices for one side of the counter, keyed by date.
+type byFinish struct {
+	Normal map[string]float64 `json:"normal"`
+	Foil   map[string]float64 `json:"foil"`
+}
+
 // vendor is one provider's prices for a card, as MTGJSON nests them:
-// data[uuid].paper.<vendor>.retail.{normal,foil}.<date> = price
+// data[uuid].paper.<vendor>.{retail,buylist}.{normal,foil}.<date> = price
+//
+// Buylist is what the shop pays you, retail what it charges. Only Card Kingdom
+// publishes a buylist through MTGJSON, so the sell side is one shop's offer
+// rather than a market.
 type vendor struct {
-	Currency string `json:"currency"`
-	Retail   struct {
-		Normal map[string]float64 `json:"normal"`
-		Foil   map[string]float64 `json:"foil"`
-	} `json:"retail"`
+	Currency string   `json:"currency"`
+	Retail   byFinish `json:"retail"`
+	Buylist  byFinish `json:"buylist"`
 }
 
 type priceRecord struct {
 	Paper map[string]vendor `json:"paper"`
+}
+
+// Quote is one vendor's price for one finish, on one side of the counter.
+type Quote struct {
+	Provider string // tcgplayer | cardkingdom | manapool
+	Kind     string // retail (what it charges) | buylist (what it pays)
+	Finish   string // normal | foil
+	Price    float64
+}
+
+// Quote kinds.
+const (
+	Retail  = "retail"
+	Buylist = "buylist"
+)
+
+// TodayQuotes returns every USD paper quote for the requested UUIDs, rather than
+// the single best price TodayPrices settles on.
+//
+// Comparing vendors is the whole point here, so nothing is collapsed: a card
+// with three retail quotes and a buylist offer yields four Quotes. Cardmarket is
+// still excluded, since a euro price cannot be compared against dollar ones.
+func TodayQuotes(ctx context.Context, want map[string]bool) (map[string][]Quote, error) {
+	out := map[string][]Quote{}
+	err := streamPrices(ctx, want, func(uuid string, rec priceRecord) {
+		var qs []Quote
+		for _, name := range providerOrder {
+			v, ok := rec.Paper[name]
+			if !ok || v.Currency != "USD" {
+				continue
+			}
+			for kind, side := range map[string]byFinish{Retail: v.Retail, Buylist: v.Buylist} {
+				for finish, byDate := range map[string]map[string]float64{
+					"normal": side.Normal, "foil": side.Foil,
+				} {
+					if p := latest(byDate); p != nil {
+						qs = append(qs, Quote{
+							Provider: name, Kind: kind, Finish: finish, Price: *p,
+						})
+					}
+				}
+			}
+		}
+		if len(qs) > 0 {
+			out[uuid] = qs
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// streamPrices walks AllPricesToday, handing each wanted record to visit.
+//
+// The document is ~50 MB decoded and covers every card in Magic, so records not
+// asked for are skipped without being built. Scan cost is the same whether one
+// card is wanted or every card is, which is why callers need not keep want small.
+func streamPrices(ctx context.Context, want map[string]bool, visit func(string, priceRecord)) error {
+	if len(want) == 0 {
+		return nil
+	}
+	body, err := fetch(ctx, "AllPricesToday.json.gz")
+	if err != nil {
+		return fmt.Errorf("fetching prices: %w", err)
+	}
+	defer body.Close()
+
+	zr, err := gzip.NewReader(body)
+	if err != nil {
+		return fmt.Errorf("decompressing prices: %w", err)
+	}
+	defer zr.Close()
+
+	dec := json.NewDecoder(zr)
+	if err := seekToData(dec); err != nil {
+		return err
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading price key: %w", err)
+		}
+		uuid, _ := keyTok.(string)
+		if !want[uuid] {
+			if err := skipValue(dec); err != nil {
+				return err
+			}
+			continue
+		}
+		var rec priceRecord
+		if err := dec.Decode(&rec); err != nil {
+			return fmt.Errorf("decoding prices for %s: %w", uuid, err)
+		}
+		visit(uuid, rec)
+	}
+	return nil
 }
 
 // TodayPrices returns USD paper retail prices for the requested UUIDs.
@@ -215,48 +320,17 @@ type priceRecord struct {
 // in Magic, so it is streamed and filtered against `want` rather than decoded
 // whole. Only UUIDs asked for are retained.
 func TodayPrices(ctx context.Context, want map[string]bool) (map[string]Price, error) {
-	if len(want) == 0 {
-		return nil, nil
-	}
-	body, err := fetch(ctx, "AllPricesToday.json.gz")
-	if err != nil {
-		return nil, fmt.Errorf("fetching prices: %w", err)
-	}
-	defer body.Close()
-
-	zr, err := gzip.NewReader(body)
-	if err != nil {
-		return nil, fmt.Errorf("decompressing prices: %w", err)
-	}
-	defer zr.Close()
-
-	dec := json.NewDecoder(zr)
-	if err := seekToData(dec); err != nil {
-		return nil, err
-	}
-
 	out := make(map[string]Price, len(want))
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return nil, fmt.Errorf("reading price key: %w", err)
-		}
-		uuid, _ := keyTok.(string)
-		if !want[uuid] {
-			// Skip the value without building it; this is what keeps a
-			// 50 MB document from being materialized.
-			if err := skipValue(dec); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		var rec priceRecord
-		if err := dec.Decode(&rec); err != nil {
-			return nil, fmt.Errorf("decoding prices for %s: %w", uuid, err)
-		}
+	err := streamPrices(ctx, want, func(uuid string, rec priceRecord) {
 		if p, ok := bestUSD(uuid, rec); ok {
 			out[uuid] = p
 		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
 	}
 	return out, nil
 }

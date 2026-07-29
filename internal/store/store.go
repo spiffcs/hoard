@@ -443,6 +443,51 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 	return tx.Commit()
 }
 
+// OwnedFinish is a printing you hold, in one specific finish.
+//
+// Per finish rather than per card because vendor quotes are per finish: a shop
+// buying the non-foil says nothing about what it pays for the foil.
+type OwnedFinish struct {
+	ScryfallID      string
+	MTGJSONUUID     string
+	Name            string
+	SetCode         string
+	CollectorNumber string
+	Finish          string
+	Copies          int
+	// Value is what hoard currently thinks these copies are worth, so a caller
+	// can compare a vendor quote against the figure `summary` reports.
+	Value float64
+}
+
+// OwnedByFinish returns every printing held, split by finish.
+func (s *Store) OwnedByFinish() ([]OwnedFinish, error) {
+	rows, err := s.db.Query(`
+SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
+       c.collector_number, e.finish,
+       SUM(e.quantity) AS copies,
+       SUM(e.quantity * ` + entryValue + `) AS value
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+` + altJoinCards + `
+GROUP BY c.scryfall_id, e.finish
+ORDER BY value DESC, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("listing owned cards: %w", err)
+	}
+	defer rows.Close()
+	var out []OwnedFinish
+	for rows.Next() {
+		var o OwnedFinish
+		if err := rows.Scan(&o.ScryfallID, &o.MTGJSONUUID, &o.Name, &o.SetCode,
+			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // FinishFix is one entry recorded in a finish its printing does not come in.
 type FinishFix struct {
 	Name            string
@@ -463,6 +508,34 @@ func hoardFinish(scryfallFinish string) string {
 		return "normal"
 	}
 	return scryfallFinish
+}
+
+// FinishIsAvailable reports whether a printing comes in the given finish.
+// available is Scryfall's finishes list for that printing; an empty list means
+// unknown, which counts as available since there is nothing to contradict it.
+func FinishIsAvailable(finish string, available []string) bool {
+	if len(available) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(available, func(sf string) bool {
+		return hoardFinish(sf) == finish
+	})
+}
+
+// CorrectFinish returns the finish an entry should use and whether that differs
+// from what was asked for.
+//
+// It only corrects when the printing comes in exactly one finish, since that is
+// the only case with a single right answer. A printing available in several
+// finishes where the recorded one is not among them is left alone: guessing
+// there would be worse than reporting it.
+//
+// Shared by deck import and repair-finishes so both apply the same rule.
+func CorrectFinish(finish string, available []string) (string, bool) {
+	if FinishIsAvailable(finish, available) || len(available) != 1 {
+		return finish, false
+	}
+	return hoardFinish(available[0]), true
 }
 
 // RepairFinishes corrects entries whose finish does not exist for that printing.
@@ -508,18 +581,18 @@ ORDER BY c.name`)
 		if !known || len(finishes) == 0 {
 			continue // nothing to judge against
 		}
-		if slices.ContainsFunc(finishes, func(sf string) bool { return hoardFinish(sf) == t.from }) {
+		if FinishIsAvailable(t.from, finishes) {
 			continue // the recorded finish is real
 		}
 
 		f.Board, f.From, f.Quantity = t.board, t.from, t.quantity
-		if len(finishes) != 1 {
+		to, ok := CorrectFinish(t.from, finishes)
+		if !ok {
 			f.To = strings.Join(finishes, "|")
 			ambiguous = append(ambiguous, f)
 			continue
 		}
-		t.to = hoardFinish(finishes[0])
-		f.To = t.to
+		t.to, f.To = to, to
 		fixed = append(fixed, f)
 		todo = append(todo, t)
 	}
@@ -571,8 +644,14 @@ func nullable(s string) any {
 
 // KnownMTGJSONUUIDs returns the Scryfall-ID-to-UUID pairs already resolved, so a
 // set file is downloaded at most once ever.
+//
+// The ids live on the card rather than beside a price, because resolving one
+// costs a whole set-file download and the answer never changes. Keeping them
+// only for cards that happened to need a fallback price would make any
+// collection-wide price read re-download most of the catalog's set files.
 func (s *Store) KnownMTGJSONUUIDs() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT scryfall_id, mtgjson_uuid FROM card_prices_alt`)
+	rows, err := s.db.Query(`
+SELECT scryfall_id, mtgjson_uuid FROM cards WHERE mtgjson_uuid IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -586,6 +665,33 @@ func (s *Store) KnownMTGJSONUUIDs() (map[string]string, error) {
 		out[sid] = uuid
 	}
 	return out, rows.Err()
+}
+
+// SaveMTGJSONUUIDs records resolved ids so their set files are never fetched
+// again.
+func (s *Store) SaveMTGJSONUUIDs(ids map[string]string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE cards SET mtgjson_uuid = ? WHERE scryfall_id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for sid, uuid := range ids {
+		if uuid == "" {
+			continue
+		}
+		if _, err := stmt.Exec(uuid, sid); err != nil {
+			return fmt.Errorf("caching mtgjson id for %s: %w", sid, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdatePrices refreshes stored prices for the given catalog cards.

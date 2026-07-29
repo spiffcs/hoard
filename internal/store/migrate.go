@@ -28,6 +28,7 @@ type migration struct {
 var migrations = []migration{
 	{1, schemaV1},
 	{2, splitAltPriceSources},
+	{3, cacheMTGJSONIDs},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -106,6 +107,27 @@ UPDATE card_prices_alt SET
   END;
 
 ALTER TABLE card_prices_alt DROP COLUMN source;`
+
+// cacheMTGJSONIDs keeps the Scryfall-to-MTGJSON id map on the card itself.
+//
+// The map previously existed only as a side effect of card_prices_alt, which is
+// written solely for cards that had a price gap, so most owned cards had no id
+// cached. Resolving one means downloading that card's whole set file, and the
+// download cache is pruned daily, so anything reading prices across the entire
+// collection would re-fetch dozens of set files every day it ran.
+//
+// The id is a property of the printing and never changes, so it belongs beside
+// the printing and is worth keeping forever.
+const cacheMTGJSONIDs = `
+ALTER TABLE cards ADD COLUMN mtgjson_uuid TEXT;
+
+UPDATE cards SET mtgjson_uuid = (
+    SELECT a.mtgjson_uuid FROM card_prices_alt a WHERE a.scryfall_id = cards.scryfall_id
+) WHERE EXISTS (
+    SELECT 1 FROM card_prices_alt a WHERE a.scryfall_id = cards.scryfall_id
+);
+
+CREATE INDEX IF NOT EXISTS cards_mtgjson_uuid ON cards(mtgjson_uuid);`
 
 // migrate brings the database up to schemaVersion, backing it up first.
 func (s *Store) migrate(path string) error {

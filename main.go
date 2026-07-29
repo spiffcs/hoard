@@ -39,6 +39,7 @@ Collection commands:
   update-prices                                    Refresh prices (Scryfall updates daily)
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
+  arbitrage [--min N] [--limit N]                  Where vendors disagree on price
   summary                                          Value of collection + each deck
 
 Deck commands:
@@ -115,6 +116,8 @@ func run(args []string) error {
 		return cmdUnpriced(st)
 	case "repair-finishes":
 		return cmdRepairFinishes(ctx, st)
+	case "arbitrage":
+		return cmdArbitrage(ctx, st, cmdArgs)
 	case "summary":
 		return cmdSummary(st)
 	case "deck":
@@ -676,6 +679,60 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
 	return fillPriceGaps(ctx, st)
 }
 
+// cardRef is a printing needing an MTGJSON id, and the set whose file holds it.
+type cardRef struct {
+	ScryfallID string
+	SetCode    string
+}
+
+// resolveMTGJSONIDs maps Scryfall IDs to MTGJSON UUIDs, downloading only the set
+// files it must and remembering everything it learns.
+//
+// Resolving one id costs a whole set-file download, the answer never changes,
+// and the download cache is pruned nightly. Writing results back to the catalog
+// is what stops a collection-wide price read from re-fetching most of the
+// catalog's set files every day it runs.
+func resolveMTGJSONIDs(ctx context.Context, st *store.Store, need []cardRef) (map[string]string, error) {
+	known, err := st.KnownMTGJSONUUIDs()
+	if err != nil {
+		return nil, err
+	}
+	bySet := map[string][]string{}
+	for _, r := range need {
+		if _, ok := known[r.ScryfallID]; !ok {
+			bySet[r.SetCode] = append(bySet[r.SetCode], r.ScryfallID)
+		}
+	}
+	if len(bySet) == 0 {
+		return known, nil
+	}
+	mtgjson.CacheDir = priceCacheDir()
+	if len(bySet) > 3 {
+		fmt.Printf("  resolving card ids from %d sets (once only)...\n", len(bySet))
+	}
+
+	learned := make(map[string]string)
+	for setCode, sids := range bySet {
+		ids, err := mtgjson.SetIdentifiers(ctx, setCode)
+		if err != nil {
+			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
+			// rather than abandon every other card.
+			fmt.Fprintf(os.Stderr, "  skipping set %s: %v\n", setCode, err)
+			continue
+		}
+		for _, sid := range sids {
+			if uuid, ok := ids[sid]; ok {
+				known[sid] = uuid
+				learned[sid] = uuid
+			}
+		}
+	}
+	if err := st.SaveMTGJSONUUIDs(learned); err != nil {
+		return nil, err
+	}
+	return known, nil
+}
+
 // fillPriceGaps looks up prices Scryfall does not have.
 //
 // Scryfall's USD figures come from TCGplayer alone, so a printing TCGplayer has
@@ -695,31 +752,13 @@ func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	mtgjson.CacheDir = priceCacheDir()
 	fmt.Printf("  %d cards have no price for a finish you own; checking MTGJSON...\n", len(gaps))
 
-	// Scryfall ID to MTGJSON UUID, reusing anything already resolved so a set
-	// file is fetched at most once ever.
-	uuids, err := st.KnownMTGJSONUUIDs()
+	need := make([]cardRef, len(gaps))
+	for i, g := range gaps {
+		need[i] = cardRef{ScryfallID: g.ScryfallID, SetCode: g.SetCode}
+	}
+	uuids, err := resolveMTGJSONIDs(ctx, st, need)
 	if err != nil {
 		return err
-	}
-	bySet := map[string][]store.PriceGap{}
-	for _, g := range gaps {
-		if _, ok := uuids[g.ScryfallID]; !ok {
-			bySet[g.SetCode] = append(bySet[g.SetCode], g)
-		}
-	}
-	for setCode := range bySet {
-		ids, err := mtgjson.SetIdentifiers(ctx, setCode)
-		if err != nil {
-			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
-			// rather than abandon every other card.
-			fmt.Fprintf(os.Stderr, "  skipping set %s: %v\n", setCode, err)
-			continue
-		}
-		for _, g := range bySet[setCode] {
-			if uuid, ok := ids[g.ScryfallID]; ok {
-				uuids[g.ScryfallID] = uuid
-			}
-		}
 	}
 
 	want := make(map[string]bool, len(gaps))
@@ -927,18 +966,35 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
+	// Finishes, keyed by the id the resolver hands back, so an entry can be
+	// checked against the finishes its printing actually comes in.
+	finishes := make(map[string][]string, len(found))
+	for _, c := range found {
+		finishes[c.ID] = c.Finishes
+	}
+
 	resolver := newResolver(found)
 	var entries []store.Entry
 	var unresolved []string
+	var refinished int
 	for _, e := range deck.Entries {
 		id, ok := resolver.lookup(e.Ident)
 		if !ok {
 			unresolved = append(unresolved, identLabel(e.Ident))
 			continue
 		}
+		// A decklist line with no *F* marker parses as non-foil, but precon
+		// commanders and Duel Decks reprints are frequently foil-only. Storing
+		// the finish the list claimed would ask for a price that cannot exist,
+		// leaving the card at $0.00 no matter how often prices are refreshed.
+		finish := e.Finish
+		if corrected, changed := store.CorrectFinish(finish, finishes[id]); changed {
+			finish = corrected
+			refinished++
+		}
 		entries = append(entries, store.Entry{
 			ScryfallID: id,
-			Finish:     e.Finish,
+			Finish:     finish,
 			Board:      e.Board,
 			Quantity:   e.Quantity,
 		})
@@ -955,15 +1011,23 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Imported deck #%d %q (%s) — %d cards resolved.\n",
+	fmt.Printf("Imported deck #%d %q (%s): %d cards resolved.\n",
 		id, deck.Name, deck.Source, len(entries))
+	if refinished > 0 {
+		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
+			refinished)
+	}
 	if len(unresolved) > 0 {
 		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(unresolved))
 		for _, u := range unresolved {
 			fmt.Printf("    - %s\n", u)
 		}
 	}
-	return nil
+
+	// Price what Scryfall could not, now rather than on some later
+	// update-prices, so a freshly imported deck is worth what it is worth. This
+	// only downloads when the import actually left a gap.
+	return fillPriceGaps(ctx, st)
 }
 
 func importTextDeck(path, name, source string) (*decksource.Deck, error) {

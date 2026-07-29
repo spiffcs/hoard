@@ -71,6 +71,9 @@ hoard update-prices
 
 # Cards counting as $0.00 in your totals, and where they are held
 hoard unpriced
+
+# Where vendors disagree about what your cards are worth
+hoard arbitrage
 ```
 
 Scryfall recalculates its price data roughly once a day, so `update-prices` is
@@ -124,6 +127,43 @@ Angelic Protector     tpr/2    -            1  Duel Decks Anthology: Divine vs.â
 19 copies across 15 cards count as $0.00.
 Try: hoard repair-finishes, then hoard update-prices
 ```
+
+### Where vendors disagree
+
+`summary` reports one price per card as though it were the truth. It isn't: the
+same card is quoted by three US vendors at once, on both sides of the counter,
+and they disagree more than a single figure suggests. `hoard arbitrage` shows
+where, in three sections:
+
+```
+ARBITRAGE  a shop pays more than the cheapest retail
+Graveborn Muse     lgn/73   -   $11.17 manapool   $13.50 cardkingdom  +$2.33
+Ugin's Labyrinth   mh3/359  -   $14.43 manapool   $16.50 cardkingdom  +$2.07
+
+EASY TO SELL  buylist is close to retail
+Arcane Denial      msc/147  -    $1.37 retail      $1.35 cardkingdom   98.5%
+Living Death       tdc/185  -    $2.83 retail      $2.75 cardkingdom   97.2%
+
+CHEAPEST VS DEAREST  where the vendors disagree
+Siege-Gang Lieut.  m3c/61  foil  $4.49 cardkingdom $41.68 manapool   +828.3%
+Copy Land          m3c/47  foil  $2.49 cardkingdom $11.95 manapool   +379.9%
+```
+
+The first section is the only unambiguous one: a shop offering more than the
+cheapest asking price is free money, though in practice a couple of dollars a
+card. The second tells you what you could turn into cash near sticker price,
+against a median card that fetches about half. The third is where to buy, and
+where a copy you own is being sold for more than you would guess.
+
+`--min` sets the floor on what you would pay (default `$1`), because a 900%
+spread between $0.20 and $1.99 is arithmetic rather than an opportunity.
+`--limit` sets rows per section.
+
+One listing in every few hundred is simply wrong. Manapool quotes one card at
+over $138,000 against Card Kingdom's $2.49, so a price no other vendor comes
+within 20x of is discarded and counted in the footer rather than shown as the
+find of the century. Everything here is a vendor's asking or offering price on
+one day, not a guaranteed sale.
 
 Often the cause is not a missing price but a wrong finish. A decklist with no
 `*F*` marker imports as non-foil, and plenty of printings are foil-only: precon
@@ -238,6 +278,23 @@ Re-importing the same deck link updates it in place (no duplicates). Cards a dec
 references are added to the shared catalog, so `update-prices` refreshes prices for
 loose cards and decks together. Any card that can't be resolved on import is reported
 and skipped, never silently dropped.
+
+An imported deck is priced immediately, including the two cases that would
+otherwise leave it looking worthless. A line with no `*F*` marker parses as
+non-foil, but precon commanders and Duel Decks reprints are often foil-only, so
+the finish is corrected to the one the printing actually comes in. Anything
+Scryfall still cannot price is then looked up in MTGJSON, exactly as
+`update-prices` would:
+
+```
+$ hoard deck add --file precon.txt --name "Vampiric Bloodlust"
+Imported deck #27 "Vampiric Bloodlust" (text): 100 cards resolved.
+  4 recorded as foil: the list said otherwise but the printing has no non-foil.
+  9 cards have no price for a finish you own; checking MTGJSON...
+  filled 9 from cardkingdom.
+```
+
+Nothing extra is downloaded when the import leaves no gaps.
 
 The text importer understands common decklist formats such as `2 Sol Ring`,
 `1x Lightning Bolt`, `1 Ulamog, the Infinite Gyre (UMA) 7 *F*`, and section headers

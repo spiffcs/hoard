@@ -53,26 +53,66 @@ func freshDB(t *testing.T) *Store {
 	return s
 }
 
-// unstampedDB is the state of every hoard that existed before versioning: the
-// current tables, but no user_version and no card_prices_alt.
+// preVersioningDDL is the schema as it stood before any of this existed: three
+// tables, no card_prices_alt, no user_version.
+//
+// Frozen here on purpose. Building the fixture by degrading a current database
+// produces states that never occurred in the wild, such as a cards table
+// already carrying a column added by a migration it has not run yet.
+const preVersioningDDL = `
+CREATE TABLE cards (
+    scryfall_id      TEXT PRIMARY KEY,
+    set_code         TEXT NOT NULL,
+    collector_number TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    price_usd        REAL,
+    price_usd_foil   REAL,
+    scryfall_url     TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+CREATE TABLE containers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'manual',
+    source_id  TEXT,
+    source_url TEXT,
+    format     TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(source, source_id)
+);
+CREATE TABLE card_entries (
+    container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
+    finish       TEXT NOT NULL DEFAULT 'normal',
+    board        TEXT NOT NULL DEFAULT 'main',
+    quantity     INTEGER NOT NULL,
+    PRIMARY KEY (container_id, scryfall_id, finish, board)
+);
+PRAGMA user_version = 0;`
+
+// seedRawDB writes DDL straight to a new file, bypassing Open so no migration
+// runs.
+func seedRawDB(t *testing.T, path, ddl string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ddl); err != nil {
+		t.Fatalf("seeding fixture: %v", err)
+	}
+}
+
+// unstampedDB is a hoard from before versioning, migrated forward by Open.
 func unstampedDB(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "unstamped.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	for _, stmt := range []string{
-		`DROP TABLE card_prices_alt`,
-		`PRAGMA user_version = 0`,
-	} {
-		if _, err := s.db.Exec(stmt); err != nil {
-			t.Fatalf("unstamping: %v", err)
-		}
-	}
-	s.Close()
+	seedRawDB(t, path, preVersioningDDL)
 
-	s, err = Open(path)
+	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen unstamped: %v", err)
 	}
@@ -111,6 +151,45 @@ func TestMigrationsConverge(t *testing.T) {
 		if cols["source"] {
 			t.Errorf("the combined source column should have been dropped; has %v", cols)
 		}
+	}
+}
+
+// v3 moves the Scryfall-to-MTGJSON id map onto the card, where it survives the
+// nightly cache prune. Losing an id in the migration would mean re-downloading
+// that card's whole set file.
+func TestMTGJSONIDBackfill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hoard.db")
+	seedRawDB(t, path, schemaV1+`
+INSERT INTO cards VALUES ('has-id','m3c','218','Acidic Slime',0.34,NULL,'http://x','x');
+INSERT INTO cards VALUES ('no-id','c21','1','Sol Ring',2.0,5.0,'http://x','x');
+INSERT INTO card_prices_alt VALUES ('has-id','uuid-abc',0.34,0.49,'cardkingdom','x');
+PRAGMA user_version = 1;`)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	defer s.Close()
+
+	ids, err := s.KnownMTGJSONUUIDs()
+	if err != nil {
+		t.Fatalf("KnownMTGJSONUUIDs: %v", err)
+	}
+	if ids["has-id"] != "uuid-abc" {
+		t.Errorf("ids = %v, want the id carried over from card_prices_alt", ids)
+	}
+	// A card that never needed a fallback price simply has no id yet.
+	if _, ok := ids["no-id"]; ok {
+		t.Errorf("ids = %v, want no entry for a card that never had one", ids)
+	}
+
+	// Newly resolved ids must stick, so the set file is fetched once ever.
+	if err := s.SaveMTGJSONUUIDs(map[string]string{"no-id": "uuid-def", "": "ignored"}); err != nil {
+		t.Fatalf("SaveMTGJSONUUIDs: %v", err)
+	}
+	ids, _ = s.KnownMTGJSONUUIDs()
+	if ids["no-id"] != "uuid-def" || len(ids) != 2 {
+		t.Errorf("ids = %v, want both cards resolved", ids)
 	}
 }
 
@@ -168,22 +247,16 @@ func TestMigrationIsIdempotent(t *testing.T) {
 func TestMigrationBacksUpExistingData(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hoard.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := s.AddCard(ulamog(), false, 2); err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
-	// Wind it back to the pre-versioning state so reopening has work to do.
-	for _, stmt := range []string{`DROP TABLE card_prices_alt`, `PRAGMA user_version = 0`} {
-		if _, err := s.db.Exec(stmt); err != nil {
-			t.Fatalf("unstamping: %v", err)
-		}
-	}
-	s.Close()
+	// A pre-versioning hoard with data in it, so migrating has something to
+	// protect.
+	seedRawDB(t, path, preVersioningDDL+`
+INSERT INTO cards VALUES ('ulamog-id','uma','7','Ulamog, the Infinite Gyre',
+                          10.0,25.0,'http://x','2020-01-01T00:00:00Z');
+INSERT INTO containers (kind,name,source,source_id,created_at,updated_at)
+  VALUES ('collection','Collection','manual','__collection__','x','x');
+INSERT INTO card_entries VALUES (1,'ulamog-id','normal','main',2);`)
 
-	s, err = Open(path)
+	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -210,38 +283,19 @@ func TestMigrationBacksUpExistingData(t *testing.T) {
 // backfill has to read labels written by v1, including the single-vendor form.
 func TestSplitAltSourceBackfill(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
-		t.Fatalf("AddCardFinish: %v", err)
-	}
-	if err := s.AddCard(solRing(), false, 1); err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
+	// A database frozen at v1, built from the frozen v1 schema rather than by
+	// degrading a current one, so it stays a valid fixture as migrations pile up.
+	seedRawDB(t, path, schemaV1+`
+INSERT INTO cards VALUES ('ripple-id','m3c','218','Acidic Slime',
+                          0.34,NULL,'http://x','x');
+INSERT INTO cards VALUES ('sol-id','c21','1','Sol Ring',2.0,5.0,'http://x','x');
+-- Two shops, one per finish, written the way v1 wrote them.
+INSERT INTO card_prices_alt VALUES ('ripple-id','u1',0.34,0.49,'tcgplayer/cardkingdom','x');
+-- One shop for both.
+INSERT INTO card_prices_alt VALUES ('sol-id','u2',1.00,2.00,'manapool','x');
+PRAGMA user_version = 1;`)
 
-	// Rebuild card_prices_alt in its v1 shape and seed it the way v1 wrote.
-	seed := []string{
-		`DROP TABLE card_prices_alt`,
-		`CREATE TABLE card_prices_alt (
-            scryfall_id TEXT PRIMARY KEY REFERENCES cards(scryfall_id) ON DELETE CASCADE,
-            mtgjson_uuid TEXT NOT NULL, price_usd REAL, price_usd_foil REAL,
-            source TEXT NOT NULL, as_of TEXT NOT NULL)`,
-		// Two shops, one per finish.
-		`INSERT INTO card_prices_alt VALUES ('ripple-id','u1',0.34,0.49,'tcgplayer/cardkingdom','x')`,
-		// One shop for both.
-		`INSERT INTO card_prices_alt VALUES ('sol-id','u2',1.00,2.00,'manapool','x')`,
-		`PRAGMA user_version = 1`,
-	}
-	for _, stmt := range seed {
-		if _, err := s.db.Exec(stmt); err != nil {
-			t.Fatalf("seeding v1 rows: %v", err)
-		}
-	}
-	s.Close()
-
-	s, err = Open(path) // runs v2
+		s, err := Open(path) // runs v2 and v3
 	if err != nil {
 		t.Fatalf("reopen (migrate to v2): %v", err)
 	}

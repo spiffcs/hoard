@@ -170,6 +170,40 @@ func TestUnpricedListing(t *testing.T) {
 	}
 }
 
+// One rule, applied both at deck import and by repair-finishes, so a freshly
+// imported deck cannot need repairing.
+func TestCorrectFinish(t *testing.T) {
+	cases := []struct {
+		name      string
+		finish    string
+		available []string
+		want      string
+		changed   bool
+	}{
+		// The bug this exists for: a decklist with no *F* marker parses as
+		// normal, but the printing has no non-foil.
+		{"foil-only printing listed as normal", "normal", []string{"foil"}, "foil", true},
+		{"nonfoil-only listed as foil", "foil", []string{"nonfoil"}, "normal", true},
+		// Scryfall says "nonfoil" where entries say "normal".
+		{"already valid", "normal", []string{"nonfoil", "foil"}, "normal", false},
+		{"foil is valid", "foil", []string{"nonfoil", "foil"}, "foil", false},
+		{"etched is valid", "etched", []string{"nonfoil", "etched"}, "etched", false},
+		// Several finishes and none matches: no single right answer, so leave it.
+		{"ambiguous", "etched", []string{"nonfoil", "foil"}, "etched", false},
+		// Nothing to check against.
+		{"unknown printing", "normal", nil, "normal", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, changed := CorrectFinish(c.finish, c.available)
+			if got != c.want || changed != c.changed {
+				t.Errorf("CorrectFinish(%q, %v) = %q, %v; want %q, %v",
+					c.finish, c.available, got, changed, c.want, c.changed)
+			}
+		})
+	}
+}
+
 func TestRepairFinishes(t *testing.T) {
 	s := newTestStore(t)
 	// A foil-only printing imported as "normal", which is the bug: a decklist

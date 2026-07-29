@@ -138,6 +138,76 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 	}
 }
 
+// quoteFile carries what TodayPrices deliberately throws away: every vendor,
+// both sides of the counter. Modelled on the real Legion Loyalty record.
+const quoteFile = `{
+ "meta": {"date": "2026-07-28"},
+ "data": {
+  "uuid-legion": {"paper": {
+    "cardkingdom": {"currency": "USD",
+      "retail":  {"normal": {"2026-07-28": 0.99}, "foil": {"2026-07-28": 2.49}},
+      "buylist": {"foil": {"2026-07-28": 0.75}}},
+    "tcgplayer":  {"currency": "USD", "retail": {"normal": {"2026-07-28": 0.42}}},
+    "manapool":   {"currency": "USD",
+      "retail": {"normal": {"2026-07-28": 0.20}, "foil": {"2026-07-28": 138518.78}}},
+    "cardmarket": {"currency": "EUR",
+      "retail": {"normal": {"2026-07-28": 0.25}, "foil": {"2026-07-28": 0.46}}}
+  }}
+ }
+}`
+
+func TestTodayQuotesReturnsEveryVendorAndSide(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, quoteFile)})
+
+	got, err := TodayQuotes(context.Background(), map[string]bool{"uuid-legion": true})
+	if err != nil {
+		t.Fatalf("TodayQuotes: %v", err)
+	}
+	qs := got["uuid-legion"]
+
+	// Nothing is collapsed: comparing vendors is the point.
+	byKey := map[string]float64{}
+	for _, q := range qs {
+		byKey[q.Provider+"/"+q.Kind+"/"+q.Finish] = q.Price
+	}
+	for key, want := range map[string]float64{
+		"cardkingdom/retail/normal": 0.99,
+		"cardkingdom/retail/foil":   2.49,
+		"cardkingdom/buylist/foil":  0.75,
+		"tcgplayer/retail/normal":   0.42,
+		"manapool/retail/normal":    0.20,
+		"manapool/retail/foil":      138518.78,
+	} {
+		if byKey[key] != want {
+			t.Errorf("%s = %v, want %v", key, byKey[key], want)
+		}
+	}
+	// Buylist is what TodayPrices could never report.
+	if byKey["cardkingdom/buylist/foil"] == 0 {
+		t.Error("buylist quotes must be included")
+	}
+	// Cardmarket quotes euros, which cannot be compared against dollars.
+	for _, q := range qs {
+		if q.Provider == "cardmarket" {
+			t.Errorf("cardmarket must be excluded, got %+v", q)
+		}
+	}
+	if len(qs) != 6 {
+		t.Errorf("got %d quotes, want 6: %+v", len(qs), qs)
+	}
+}
+
+func TestTodayQuotesEmptyRequestSkipsDownload(t *testing.T) {
+	old := apiBase
+	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
+	defer func() { apiBase = old }()
+
+	got, err := TodayQuotes(context.Background(), nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("TodayQuotes(nil) = %v, %v; want empty with no request", got, err)
+	}
+}
+
 func TestTodayPricesEmptyRequestSkipsDownload(t *testing.T) {
 	// No server at all: an empty request must not make one.
 	old := apiBase
