@@ -25,13 +25,13 @@ const (
 	stateFinishPick
 	stateQty
 	stateConfirm
-	stateError
 )
 
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true)
 	helpStyle   = lipgloss.NewStyle().Faint(true)
 	errStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	promptStyle = lipgloss.NewStyle().Bold(true)
 )
 
@@ -82,6 +82,7 @@ func (f finishItem) FilterValue() string { return string(f) }
 type model struct {
 	ctx      context.Context
 	searcher Searcher
+	adder    Adder
 
 	state state
 
@@ -98,11 +99,15 @@ type model struct {
 	finish string
 
 	qtyErr string
-	result *Result
-	err    error
+
+	// session state
+	status     string // banner shown on the name prompt (last add / error / cancel)
+	statusErr  bool   // style the banner as an error
+	addedCount int
+	err        error // fatal program error (rare)
 }
 
-func newModel(ctx context.Context, s Searcher, initialName string) model {
+func newModel(ctx context.Context, s Searcher, add Adder, initialName string) model {
 	ni := textinput.New()
 	ni.Placeholder = "Card name, e.g. Ulamog, the Infinite Gyre"
 	ni.Focus()
@@ -124,6 +129,7 @@ func newModel(ctx context.Context, s Searcher, initialName string) model {
 	m := model{
 		ctx:       ctx,
 		searcher:  s,
+		adder:     add,
 		nameInput: ni,
 		qtyInput:  qi,
 		spinner:   sp,
@@ -180,7 +186,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
-			m.result = nil
 			return m, tea.Quit
 		}
 		return m.handleKey(msg)
@@ -192,9 +197,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onNames(msg)
 
 	case errMsg:
-		m.err = msg.err
-		m.state = stateError
-		return m, nil
+		return m.failToName(msg.err.Error())
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -209,17 +212,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case stateName:
-		if msg.Type == tea.KeyEnter {
+		switch msg.Type {
+		case tea.KeyEsc:
+			return m, tea.Quit
+		case tea.KeyEnter:
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
 				return m, nil
 			}
+			m.status = ""
 			m.state = stateLoading
 			return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(name))
 		}
 	case stateNamePick:
-		if msg.Type == tea.KeyEsc {
-			return m, tea.Quit
+		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
+			return m.cancelToName()
 		}
 		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
 			if it, ok := m.list.SelectedItem().(nameItem); ok {
@@ -228,8 +235,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case statePrintPick:
-		if msg.Type == tea.KeyEsc {
-			return m, tea.Quit
+		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
+			return m.cancelToName()
 		}
 		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
 			if it, ok := m.list.SelectedItem().(printItem); ok {
@@ -239,8 +246,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case stateFinishPick:
-		if msg.Type == tea.KeyEsc {
-			return m, tea.Quit
+		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
+			return m.cancelToName()
 		}
 		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
 			if it, ok := m.list.SelectedItem().(finishItem); ok {
@@ -249,20 +256,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case stateQty:
+		if msg.Type == tea.KeyEsc {
+			return m.cancelToName()
+		}
 		if msg.Type == tea.KeyEnter {
 			return m.submitQty()
 		}
 	case stateConfirm:
 		switch msg.Type {
 		case tea.KeyEnter:
-			m.result = &Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue()}
-			return m, tea.Quit
+			return m.confirmAdd()
 		case tea.KeyEsc:
-			m.result = nil
-			return m, tea.Quit
+			return m.cancelToName()
 		}
-	case stateError:
-		return m, tea.Quit
 	}
 	return m.updateActive(msg)
 }
@@ -308,9 +314,7 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 func (m model) onNames(msg namesMsg) (tea.Model, tea.Cmd) {
 	switch len(msg.names) {
 	case 0:
-		m.err = fmt.Errorf("no cards found matching %q", m.nameInput.Value())
-		m.state = stateError
-		return m, nil
+		return m.failToName(fmt.Sprintf("no cards found matching %q", m.nameInput.Value()))
 	case 1:
 		m.state = stateLoading
 		return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.names[0]))
@@ -344,6 +348,47 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 	m.setListItems("Select a finish", items)
 	m.state = stateFinishPick
 	return m, nil
+}
+
+// confirmAdd persists the pinpointed selection via the adder, records a banner,
+// and loops back to the name prompt for the next card.
+func (m model) confirmAdd() (tea.Model, tea.Cmd) {
+	res := Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue()}
+	if err := m.adder(res); err != nil {
+		return m.failToName(err.Error())
+	}
+	m.addedCount++
+	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s — %s",
+		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
+		res.Finish, priceForFinish(res.Card, res.Finish))
+	m.statusErr = false
+	return m.resetForNext()
+}
+
+// cancelToName abandons the in-progress add and returns to the name prompt.
+func (m model) cancelToName() (tea.Model, tea.Cmd) {
+	m.status = ""
+	return m.resetForNext()
+}
+
+// failToName shows an error banner and returns to the name prompt, keeping the
+// session alive.
+func (m model) failToName(msg string) (tea.Model, tea.Cmd) {
+	m.status = msg
+	m.statusErr = true
+	return m.resetForNext()
+}
+
+// resetForNext clears the cascade selections and refocuses the name input.
+func (m model) resetForNext() (tea.Model, tea.Cmd) {
+	m.prints = nil
+	m.chosen = nil
+	m.finish = ""
+	m.qtyErr = ""
+	m.nameInput.SetValue("")
+	m.nameInput.Focus()
+	m.state = stateName
+	return m, textinput.Blink
 }
 
 func (m model) toQty() (tea.Model, tea.Cmd) {
@@ -390,27 +435,37 @@ func (m *model) setListItems(title string, items []list.Item) {
 func (m model) View() string {
 	switch m.state {
 	case stateName:
-		return titleStyle.Render("Add a card by name") + "\n\n" +
-			m.nameInput.View() + "\n\n" +
-			helpStyle.Render("enter to search · ctrl+c to cancel")
+		var b strings.Builder
+		b.WriteString(titleStyle.Render("Add cards to your collection") + "\n\n")
+		if m.status != "" {
+			style := okStyle
+			if m.statusErr {
+				style = errStyle
+			}
+			b.WriteString(style.Render(m.status) + "\n\n")
+		}
+		b.WriteString(m.nameInput.View() + "\n\n")
+		help := "enter search · esc quit · ctrl+c quit"
+		if m.addedCount > 0 {
+			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
+		}
+		b.WriteString(helpStyle.Render(help))
+		return b.String()
 	case stateLoading:
 		return fmt.Sprintf("%s searching Scryfall…\n\n%s",
-			m.spinner.View(), helpStyle.Render("ctrl+c to cancel"))
+			m.spinner.View(), helpStyle.Render("ctrl+c to quit"))
 	case stateNamePick, statePrintPick, stateFinishPick:
 		return m.list.View() + "\n" +
-			helpStyle.Render("↑/↓ move · / filter · enter select · esc back · ctrl+c cancel")
+			helpStyle.Render("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit")
 	case stateQty:
 		out := promptStyle.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
 			out += "\n" + errStyle.Render(m.qtyErr)
 		}
-		return out + "\n\n" + helpStyle.Render("enter to continue · ctrl+c to cancel")
+		return out + "\n\n" + helpStyle.Render("enter to continue · esc cancel · ctrl+c quit")
 	case stateConfirm:
 		return titleStyle.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
-			helpStyle.Render("enter to add · esc to cancel")
-	case stateError:
-		return errStyle.Render("Error: "+m.err.Error()) + "\n\n" +
-			helpStyle.Render("press any key to exit")
+			helpStyle.Render("enter to add · esc cancel · ctrl+c quit")
 	}
 	return ""
 }

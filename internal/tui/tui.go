@@ -26,6 +26,11 @@ type Result struct {
 	Qty    int
 }
 
+// Adder persists a confirmed selection. It is called once per card the user
+// confirms during a session; returning an error surfaces a banner but keeps the
+// session open.
+type Adder func(Result) error
+
 // scryfallSearcher adapts the package-level scryfall functions to Searcher.
 type scryfallSearcher struct{}
 
@@ -39,19 +44,16 @@ func (scryfallSearcher) SearchPrints(ctx context.Context, name string) ([]scryfa
 // NewScryfallSearcher returns a Searcher backed by the live Scryfall API.
 func NewScryfallSearcher() Searcher { return scryfallSearcher{} }
 
-// Run launches the interactive cascade, optionally pre-seeded with a name typed
-// on the command line. It returns the confirmed selection, or (nil, nil) if the
-// user cancelled.
-func Run(ctx context.Context, s Searcher, initialName string) (*Result, error) {
-	m := newModel(ctx, s, initialName)
+// Run launches an interactive add session: the user searches for a card, walks
+// the cascade, and confirms; each confirmed card is persisted via add and the
+// session loops back for the next card until the user exits. initialName
+// optionally pre-seeds the first search.
+func Run(ctx context.Context, s Searcher, add Adder, initialName string) error {
+	m := newModel(ctx, s, add, initialName)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	fm := final.(model)
-	if fm.err != nil {
-		return nil, fm.err
-	}
-	return fm.result, nil
+	return final.(model).err
 }

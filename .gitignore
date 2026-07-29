@@ -1,0 +1,39 @@
+# --- Standard Go (github.com/github/gitignore Go.gitignore) ---
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# --- Project-specific ---
+
+# Compiled binary (produced by `go build -o hoard .`)
+/hoard
+
+# Local SQLite database(s) — the real hoard lives in a per-user data dir
+hoard.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# macOS folder cruft
+.DS_Store

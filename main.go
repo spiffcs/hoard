@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 
@@ -41,7 +42,9 @@ Deck commands:
   deck show <id|name>                              Show a deck's cards by board
   deck remove <id|name>                            Delete a deck
 
-The database path defaults to ./hoard.db (override with --db or $HOARD_DB).
+The database lives in a per-user data directory by default (e.g. on macOS
+~/Library/Application Support/hoard/hoard.db, on Linux $XDG_DATA_HOME/hoard/hoard.db)
+— so it's the same hoard from any directory. Override with --db or $HOARD_DB.
 Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
 `
 
@@ -53,9 +56,13 @@ func main() {
 }
 
 func run(args []string) error {
+	defDB, err := defaultDBPath()
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("hoard", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", defaultDBPath(), "path to the SQLite database file")
+	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -73,11 +80,19 @@ func run(args []string) error {
 		return nil
 	}
 
+	// Note whether we're about to create the database, so we can tell the user
+	// where it lives the first time.
+	_, statErr := os.Stat(*dbPath)
+	newDB := os.IsNotExist(statErr)
+
 	st, err := store.Open(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+	if newDB {
+		fmt.Fprintf(os.Stderr, "Initialized hoard database at %s\n", *dbPath)
+	}
 
 	ctx := context.Background()
 	switch cmd {
@@ -101,12 +116,46 @@ func run(args []string) error {
 	}
 }
 
-// defaultDBPath returns $HOARD_DB if set, else ./hoard.db.
-func defaultDBPath() string {
+// defaultDBPath resolves where the hoard database lives when --db is not given.
+// Precedence: $HOARD_DB, else a per-user application-data directory so the same
+// hoard is used regardless of the current working directory.
+func defaultDBPath() (string, error) {
 	if p := os.Getenv("HOARD_DB"); p != "" {
-		return p
+		return p, nil
 	}
-	return "hoard.db"
+	dir, err := dataDir()
+	if err != nil {
+		return "", fmt.Errorf("locating data directory (set --db or $HOARD_DB): %w", err)
+	}
+	return filepath.Join(dir, "hoard", "hoard.db"), nil
+}
+
+// dataDir returns the platform's per-user data directory: the conventional
+// location on macOS/Windows and the XDG Base Directory spec elsewhere. Unlike a
+// cache directory, this holds data that must not be evicted — the hoard is not
+// re-downloadable.
+func dataDir() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "Library", "Application Support"), nil
+	case "windows":
+		if p := os.Getenv("AppData"); p != "" {
+			return p, nil
+		}
+	default: // linux, bsd, etc.
+		if p := os.Getenv("XDG_DATA_HOME"); p != "" {
+			return p, nil
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share"), nil
 }
 
 // parsePositionals parses args, allowing flags and positional arguments to be
@@ -188,24 +237,12 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 		return fmt.Errorf("adding by name needs an interactive terminal; " +
 			"pass a Scryfall URL instead (e.g. hoard add https://scryfall.com/card/uma/7/...)")
 	}
-	res, err := tui.Run(ctx, tui.NewScryfallSearcher(), name)
-	if err != nil {
-		return err
+	// Each confirmed card is persisted immediately; the session loops until the
+	// user exits.
+	add := func(res tui.Result) error {
+		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
 	}
-	if res == nil {
-		fmt.Println("Cancelled; nothing added.")
-		return nil
-	}
-	if err := st.AddCardFinish(res.Card, res.Finish, res.Qty); err != nil {
-		return err
-	}
-	price := res.Card.PriceUSD
-	if res.Finish == "foil" || res.Finish == "etched" {
-		price = res.Card.PriceUSDFoil
-	}
-	fmt.Printf("Added %d× %s (%s/%s) as %s — %s\n",
-		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber, res.Finish, formatPrice(price))
-	return nil
+	return tui.Run(ctx, tui.NewScryfallSearcher(), add, name)
 }
 
 // stdinIsTTY reports whether stdin is an interactive terminal (a character

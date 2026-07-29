@@ -28,11 +28,14 @@ Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
 ## Usage
 
 ```sh
-# Add a card interactively by name — no link needed. Launches a TUI that
-# looks the card up on Scryfall and asks only the questions needed to pinpoint
-# one exact entry: which card (if the name is ambiguous), which printing,
-# which finish, and how many. Type to filter long printing lists.
-hoard add Ulamog, the Infinite Gyre
+# Add cards interactively by name — no link needed. Opens an interactive add
+# session (TUI): look a card up on Scryfall, answer only the questions needed to
+# pinpoint one exact entry (which card if the name is ambiguous, which printing,
+# which finish, how many), confirm — then it loops back so you can add another
+# card without restarting. Type to filter long printing lists. Press esc at the
+# name prompt (or ctrl+c anytime) to exit.
+hoard add                         # start an empty add session
+hoard add Ulamog, the Infinite Gyre   # pre-seed the first search
 
 # Add two non-foil copies of Ulamog by URL (non-interactive)
 hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --qty 2
@@ -88,11 +91,23 @@ like `Commander` / `Sideboard` / `Maybeboard`.
 
 ### Database location
 
-Defaults to `./hoard.db`. Override with the `--db` flag or the
-`HOARD_DB` environment variable:
+The database lives in a per-user data directory, so the same hoard is used no
+matter which directory you run the command from:
+
+| OS      | Default location                                       |
+|---------|--------------------------------------------------------|
+| macOS   | `~/Library/Application Support/hoard/hoard.db`          |
+| Linux   | `$XDG_DATA_HOME/hoard/hoard.db` (else `~/.local/share/hoard/hoard.db`) |
+| Windows | `%AppData%\hoard\hoard.db`                              |
+
+The directory is created on first run, and the resolved path is printed the
+first time the database is initialized. Override the location with the `--db`
+flag or the `HOARD_DB` environment variable (both take precedence over the
+default):
 
 ```sh
 hoard --db ~/hoard/collection.db list
+export HOARD_DB=~/hoard/collection.db
 ```
 
 ## Development

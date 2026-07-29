@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +23,22 @@ func (f fakeSearcher) SearchPrints(_ context.Context, name string) ([]scryfall.C
 	return f.prints[name], nil
 }
 
+// recordingAdder captures confirmed results and can be made to fail.
+type recordingAdder struct {
+	got []Result
+	err error
+}
+
+func (r *recordingAdder) add(res Result) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.got = append(r.got, res)
+	return nil
+}
+
+func noopAdder(Result) error { return nil }
+
 func fp(v float64) *float64 { return &v }
 
 // step executes a single (non-batched) command and feeds its message back into
@@ -34,13 +51,22 @@ func step(t *testing.T, m tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m.Update(cmd())
 }
 
+// isQuit reports whether running cmd yields a tea.QuitMsg.
+func isQuit(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
 func TestExactNameSkipsNamePick(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog, the Infinite Gyre", Set: "uma",
 		CollectorNumber: "7", Finishes: []string{"nonfoil", "foil"}}
 	fs := fakeSearcher{
 		prints: map[string][]scryfall.Card{"Ulamog, the Infinite Gyre": {card}},
 	}
-	m := newModel(context.Background(), fs, "Ulamog, the Infinite Gyre")
+	m := newModel(context.Background(), fs, noopAdder, "Ulamog, the Infinite Gyre")
 
 	// Init fires the prints search; deliver its message.
 	mm, _ := m.Update(printsMsg{name: "Ulamog, the Infinite Gyre", cards: []scryfall.Card{card}})
@@ -58,7 +84,7 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 	fs := fakeSearcher{
 		auto: map[string][]string{"Ulamog": {"Ulamog, the Infinite Gyre", "Ulamog, the Ceaseless Hunger"}},
 	}
-	m := newModel(context.Background(), fs, "Ulamog")
+	m := newModel(context.Background(), fs, noopAdder, "Ulamog")
 
 	// Prints for "Ulamog" come back empty → triggers autocomplete.
 	mm, cmd := m.Update(printsMsg{name: "Ulamog", cards: nil})
@@ -76,7 +102,7 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
 		Finishes: []string{"foil"}} // one printing, one finish
-	m := newModel(context.Background(), fakeSearcher{}, "Foily")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, "Foily")
 
 	mm, _ := m.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
 	got := mm.(model)
@@ -88,27 +114,29 @@ func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 	}
 }
 
-func TestNoMatchGoesToError(t *testing.T) {
-	// Empty prints AND empty autocomplete → error state.
-	m := newModel(context.Background(), fakeSearcher{}, "Zzz Nonexistent")
+func TestNoMatchKeepsSession(t *testing.T) {
+	// Empty prints AND empty autocomplete → error banner, back on the name prompt.
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, "Zzz Nonexistent")
 	mm, cmd := m.Update(printsMsg{name: "Zzz Nonexistent", cards: nil})
 	mm, _ = step(t, mm, cmd) // run autocomplete → namesMsg{nil}
 	got := mm.(model)
-	if got.state != stateError || got.err == nil {
-		t.Fatalf("state = %v err = %v, want stateError with an error", got.state, got.err)
+	if got.state != stateName || !got.statusErr || got.status == "" {
+		t.Fatalf("want stateName with an error banner, got state=%v statusErr=%v status=%q",
+			got.state, got.statusErr, got.status)
 	}
 }
 
-func TestConfirmAssemblesResult(t *testing.T) {
+func TestConfirmAddsAndLoopsBack(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
 		Finishes: []string{"nonfoil"}, PriceUSD: fp(37.20)}
-	m := newModel(context.Background(), fakeSearcher{}, "Ulamog")
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, "Ulamog")
 	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
 	got := mm.(model)
 	if got.state != stateQty {
 		t.Fatalf("expected stateQty, got %v", got.state)
 	}
-	// Enter a quantity and submit.
+	// Enter a quantity and submit → confirm screen.
 	got.qtyInput.SetValue("3")
 	mm, _ = got.submitQty()
 	got = mm.(model)
@@ -118,19 +146,82 @@ func TestConfirmAssemblesResult(t *testing.T) {
 	// Confirm.
 	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
-	if got.result == nil {
-		t.Fatal("result is nil after confirm")
+
+	// The adder received the right result.
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1", len(ra.got))
 	}
-	if got.result.Qty != 3 || got.result.Finish != "normal" || got.result.Card.ID != "u1" {
-		t.Errorf("result wrong: %+v", got.result)
+	r := ra.got[0]
+	if r.Qty != 3 || r.Finish != "normal" || r.Card.ID != "u1" {
+		t.Errorf("result wrong: %+v", r)
 	}
-	if cmd == nil {
-		t.Error("expected tea.Quit command on confirm")
+	// Session loops back to the name prompt (not quit) with a success banner.
+	if got.state != stateName {
+		t.Errorf("state = %v, want stateName after confirm", got.state)
+	}
+	if got.addedCount != 1 || got.status == "" || got.statusErr {
+		t.Errorf("session state wrong: count=%d status=%q err=%v", got.addedCount, got.status, got.statusErr)
+	}
+	if isQuit(cmd) {
+		t.Error("confirm should NOT quit in add-mode")
+	}
+	if got.chosen != nil || got.nameInput.Value() != "" {
+		t.Error("cascade selections/name not reset for next add")
+	}
+}
+
+func TestAdderErrorKeepsSession(t *testing.T) {
+	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
+		Finishes: []string{"nonfoil"}}
+	ra := &recordingAdder{err: errors.New("disk full")}
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, "Ulamog")
+	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
+	got := mm.(model) // stateQty
+	mm, _ = got.submitQty()
+	got = mm.(model) // stateConfirm
+	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm2.(model)
+
+	if got.state != stateName || !got.statusErr {
+		t.Fatalf("want stateName with error banner, got state=%v statusErr=%v", got.state, got.statusErr)
+	}
+	if got.addedCount != 0 {
+		t.Errorf("addedCount = %d, want 0 on failed add", got.addedCount)
+	}
+	if isQuit(cmd) {
+		t.Error("a failed add should not quit the session")
+	}
+}
+
+func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
+	card := scryfall.Card{ID: "a", Name: "A", Set: "x", CollectorNumber: "1", Finishes: []string{"nonfoil", "foil"}}
+	// esc mid-cascade (print pick) → back to name prompt, not quit.
+	fs := fakeSearcher{prints: map[string][]scryfall.Card{"A": {card,
+		{ID: "b", Name: "A", Set: "y", CollectorNumber: "2", Finishes: []string{"nonfoil"}}}}}
+	m := newModel(context.Background(), fs, noopAdder, "A")
+	mm, _ := m.Update(printsMsg{name: "A", cards: fs.prints["A"]})
+	got := mm.(model)
+	if got.state != statePrintPick {
+		t.Fatalf("setup: want statePrintPick, got %v", got.state)
+	}
+	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm2.(model)
+	if got.state != stateName {
+		t.Errorf("esc mid-cascade: state = %v, want stateName", got.state)
+	}
+	if isQuit(cmd) {
+		t.Error("esc mid-cascade should not quit")
+	}
+
+	// esc at the name prompt → quit.
+	_, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !isQuit(cmd) {
+		t.Error("esc at name prompt should quit")
 	}
 }
 
 func TestQtyValidation(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, "x")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, "x")
 	m.state = stateQty
 	m.qtyInput.SetValue("0")
 	mm, _ := m.submitQty()

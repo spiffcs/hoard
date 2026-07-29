@@ -14,6 +14,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -160,6 +162,13 @@ type Store struct {
 // Open opens (creating if needed) the SQLite database at path, migrates any
 // legacy schema, ensures the current schema and the singleton collection exist.
 func Open(path string) (*Store, error) {
+	// Ensure the parent directory exists (e.g. the per-user data directory on
+	// first run).
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("creating database directory %q: %w", dir, err)
+		}
+	}
 	// Enable foreign-key enforcement so ON DELETE CASCADE works.
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
 	if err != nil {
