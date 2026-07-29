@@ -20,10 +20,23 @@ Storage is normalized and provider-agnostic (no deck-site is referenced structur
 ## Build
 
 ```sh
-go build -o hoard .
+go build -o hoard .        # or: make build
 ```
 
-Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
+The core is pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
+
+### Optional: camera scan helper (macOS)
+
+To enable scanning cards with your iPhone camera (see [Scanning a card](#scanning-a-card)),
+build the small native helper (requires macOS + Xcode's Swift toolchain):
+
+```sh
+make scan                  # builds bin/hoard-scan.app via swiftc
+# or: make all             # binary + scan helper together
+```
+
+Everything else works without it; if the helper isn't built, the in-app scan action
+simply reports that it's unavailable.
 
 ## Usage
 
@@ -36,6 +49,8 @@ Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
 # name prompt (or ctrl+c anytime) to exit.
 hoard add                         # start an empty add session
 hoard add Ulamog, the Infinite Gyre   # pre-seed the first search
+# In the session, press ctrl+o to scan a card with your camera (macOS, see below);
+# ctrl+r switches which camera it uses.
 
 # Add two non-foil copies of Ulamog by URL (non-interactive)
 hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --qty 2
@@ -58,6 +73,64 @@ hoard remove https://scryfall.com/card/uma/7/...
 # Grand total value: loose collection + each deck
 hoard summary
 ```
+
+### Scanning a card
+
+Inside an add session (`hoard add`), press **`ctrl+o`** to identify a card with your
+iPhone instead of typing its name.
+
+Scanning uses **Continuity Camera only** — your iPhone, never the Mac's built-in webcam.
+A fixed, user-facing camera can't be aimed at a card on the desk, so rather than fall back
+to one and produce unreadable captures, hoard tells you no iPhone is connected. If you
+have more than one iPhone paired you're asked which to use; the choice is remembered for
+the session so bulk scanning doesn't ask again, and **`ctrl+r`** at the prompt re-runs
+detection or switches phones.
+
+A window then opens with the live feed **and stays open**. Frame a card, press **space**,
+and the cascade runs in the terminal; once the card is saved you're back at framing for
+the next one — no reopening the camera per card. Space and ←/→ work in either window, so
+you can leave focus in the terminal. **Esc** closes the camera and returns to the name
+prompt; the add session keeps going either way.
+
+The preview starts rotated a quarter-turn clockwise, which is what a
+portrait-held iPhone needs — Continuity Camera hands over a landscape frame and macOS
+often can't tell how the phone is being held. If the framing is still wrong, **←/→**
+rotate the preview, and the corrected angle is saved to `scan.json` beside the database,
+so you only fix it once. The window title always shows the current angle and how much of
+it came from macOS's automatic correction.
+
+Press **`ctrl+r`** at either the prompt or the capture step to switch phones, and
+**`ctrl+o`** at the prompt to jump back to a camera that's already open.
+
+The card's title is read on-device with Apple's Vision OCR, matched to a
+real card via Scryfall's fuzzy name search, and dropped into the normal printing → finish
+→ quantity flow — with the identified card name pinned as a header the rest of the way, so
+you can confirm the read was correct before adding.
+
+Requirements and notes:
+- macOS only, and the `hoard-scan.app` helper must be built (`make scan`).
+- Continuity Camera needs an iPhone signed into the same Apple ID, nearby and unlocked-then-
+  locked, with Continuity Camera enabled (Settings › General › AirPlay & Continuity). A USB
+  cable is the most reliable way to get it connected.
+- If you tapped **Disconnect** on the phone during a previous session, toggle that same
+  Continuity Camera setting off and on to make it offer itself again.
+- Detection waits up to 2.5s for a phone to publish itself; `HOARD_SCAN_WAIT=5` raises it.
+- To confirm what the helper can see, independent of the TUI:
+  `./bin/hoard-scan.app/Contents/MacOS/hoard-scan --list-devices`
+- To debug OCR without a camera, run it against a photo of a card at a given rotation —
+  it takes the same code path as a live capture:
+  `./bin/hoard-scan.app/Contents/MacOS/hoard-scan --image card.heic --rotate 90`
+  If the reported name is rules text or the copyright line, the image reached Vision
+  rotated the wrong way.
+- To capture what a real scan actually sent to OCR, set `HOARD_SCAN_DEBUG_DIR=/some/dir`
+  before running `hoard add`. Each capture writes `capture-raw.png` (straight off the
+  camera) and `capture-ocr.png` (after rotation, exactly what Vision read).
+- The first scan prompts for camera permission (System Settings › Privacy & Security ›
+  Camera). On-device OCR only — no images leave your machine.
+- Backing out is always available: **Esc** in the capture window, or **esc** in the
+  terminal, cancels the scan and returns to the prompt without ending the session.
+- If OCR misreads the name, you land back at the prompt with the recognized text
+  pre-filled, so you can fix it and search manually — never a dead end.
 
 ### Decks
 

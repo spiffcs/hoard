@@ -28,6 +28,9 @@ go.work.sum
 # Compiled binary (produced by `go build -o hoard .`)
 /hoard
 
+# Native scan helper build output (produced by `make scan`); Swift source is tracked
+/bin/
+
 # Local SQLite database(s) — the real hoard lives in a per-user data dir
 hoard.db
 *.db

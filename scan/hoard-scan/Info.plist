@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>hoard-scan</string>
+	<key>CFBundleDisplayName</key>
+	<string>hoard scan</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.cphillips918.hoard.scan</string>
+	<key>CFBundleExecutable</key>
+	<string>hoard-scan</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<!-- 14.0: the helper uses .continuityCamera, AVCaptureDevice.RotationCoordinator,
+	     and AVCaptureConnection.videoRotationAngle, all introduced in macOS 14. -->
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>hoard uses the camera (including your iPhone via Continuity Camera) to scan and identify Magic cards.</string>
+	<key>NSCameraUseContinuityCameraDeviceType</key>
+	<true/>
+</dict>
+</plist>

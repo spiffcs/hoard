@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/cphillips918/hoard/internal/scan"
 	"github.com/cphillips918/hoard/internal/scryfall"
 )
 
@@ -19,6 +21,10 @@ type state int
 
 const (
 	stateName state = iota
+	stateCameraList
+	stateCameraPick
+	stateCapture   // camera window live, waiting for the user to frame and capture
+	stateCapturing // shutter pressed, waiting on the OCR result
 	stateLoading
 	stateNamePick
 	statePrintPick
@@ -31,6 +37,7 @@ var (
 	titleStyle  = lipgloss.NewStyle().Bold(true)
 	helpStyle   = lipgloss.NewStyle().Faint(true)
 	errStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	scanStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	promptStyle = lipgloss.NewStyle().Bold(true)
 )
@@ -44,12 +51,43 @@ type printsMsg struct {
 type namesMsg struct{ names []string }
 type errMsg struct{ err error }
 
+// camerasMsg carries the list of cameras available to scan with.
+type camerasMsg struct {
+	devices []scan.Device
+	err     error
+}
+
+// sessionMsg carries the result of opening a camera session.
+type sessionMsg struct {
+	session ScanSession
+	err     error
+}
+
+// sessionEventMsg carries one event from the live camera session. gen tags the
+// session it came from, so events from a session the user has already closed are
+// discarded rather than yanking them back into a scan. ok is false when the
+// event channel closed, meaning the window is gone.
+type sessionEventMsg struct {
+	gen int
+	ev  scan.Event
+	ok  bool
+}
+
+// fuzzyMsg carries the canonical card name resolved from OCR text via Scryfall's
+// fuzzy match; ocr is the original scanned text, kept so it can pre-fill the
+// prompt on a miss.
+type fuzzyMsg struct {
+	canonical string
+	ocr       string
+	err       error
+}
+
 // --- list item types ---
 
 type nameItem string
 
 func (n nameItem) Title() string       { return string(n) }
-func (n nameItem) Description() string  { return "" }
+func (n nameItem) Description() string { return "" }
 func (n nameItem) FilterValue() string { return string(n) }
 
 type printItem struct{ card scryfall.Card }
@@ -74,8 +112,14 @@ func (p printItem) FilterValue() string { return p.Title() + " " + p.Description
 type finishItem string
 
 func (f finishItem) Title() string       { return string(f) }
-func (f finishItem) Description() string  { return "" }
+func (f finishItem) Description() string { return "" }
 func (f finishItem) FilterValue() string { return string(f) }
+
+type cameraItem struct{ dev scan.Device }
+
+func (c cameraItem) Title() string       { return c.dev.Name }
+func (c cameraItem) Description() string { return c.dev.Kind }
+func (c cameraItem) FilterValue() string { return c.dev.Name + " " + c.dev.Kind }
 
 // --- model ---
 
@@ -83,6 +127,7 @@ type model struct {
 	ctx      context.Context
 	searcher Searcher
 	adder    Adder
+	scanner  Scanner
 
 	state state
 
@@ -100,6 +145,25 @@ type model struct {
 
 	qtyErr string
 
+	// scan feedback: the canonical name a camera scan resolved to (and the raw
+	// OCR text it came from), shown as a fixed header for the rest of the
+	// cascade so the user can see the capture was read correctly.
+	scanned    string
+	scannedOCR string
+
+	// camera choice, remembered for the session so bulk scanning doesn't ask
+	// every time. cameraChosen distinguishes "no camera picked yet" from a
+	// deliberate empty ID.
+	cameraID     string
+	cameraName   string
+	cameraChosen bool
+
+	// the live camera session. It outlives individual cards: the window stays up
+	// while the cascade runs, and the flow returns here after each add. gen tags
+	// events so a closed session's stragglers are ignored.
+	session    ScanSession
+	sessionGen int
+
 	// session state
 	status     string // banner shown on the name prompt (last add / error / cancel)
 	statusErr  bool   // style the banner as an error
@@ -107,7 +171,7 @@ type model struct {
 	err        error // fatal program error (rare)
 }
 
-func newModel(ctx context.Context, s Searcher, add Adder, initialName string) model {
+func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string) model {
 	ni := textinput.New()
 	ni.Placeholder = "Card name, e.g. Ulamog, the Infinite Gyre"
 	ni.Focus()
@@ -130,6 +194,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, initialName string) mo
 		ctx:       ctx,
 		searcher:  s,
 		adder:     add,
+		scanner:   sc,
 		nameInput: ni,
 		qtyInput:  qi,
 		spinner:   sp,
@@ -175,13 +240,194 @@ func (m model) autocompleteCmd(q string) tea.Cmd {
 	}
 }
 
+// listCamerasCmd asks the scanner which cameras are attached.
+func (m model) listCamerasCmd() tea.Cmd {
+	scanner := m.scanner
+	return func() tea.Msg {
+		devices, err := scanner.Devices(m.ctx)
+		return camerasMsg{devices: devices, err: err}
+	}
+}
+
+// openSessionCmd opens the camera window on the chosen device.
+func (m model) openSessionCmd() tea.Cmd {
+	scanner, deviceID := m.scanner, m.cameraID
+	return func() tea.Msg {
+		s, err := scanner.Open(m.ctx, deviceID)
+		return sessionMsg{session: s, err: err}
+	}
+}
+
+// nextEventCmd waits for one event from the live session. Each handler re-issues
+// it, which is how a channel becomes a stream of messages in Bubble Tea.
+func nextEventCmd(s ScanSession, gen int) tea.Cmd {
+	events := s.Events()
+	return func() tea.Msg {
+		ev, ok := <-events
+		return sessionEventMsg{gen: gen, ev: ev, ok: ok}
+	}
+}
+
+// beginScan opens the camera, first choosing one if this run hasn't yet. force
+// re-opens the picker even when a camera is already chosen. An already-open
+// session just gets focus back rather than being reopened.
+func (m *model) beginScan(force bool) tea.Cmd {
+	if m.session != nil && !force {
+		m.status = ""
+		m.state = stateCapture
+		return nil
+	}
+	if m.cameraChosen && !force {
+		m.status = ""
+		m.state = stateCameraList
+		return tea.Batch(m.spinner.Tick, m.openSessionCmd())
+	}
+	m.status = ""
+	m.state = stateCameraList
+	return tea.Batch(m.spinner.Tick, m.listCamerasCmd())
+}
+
+// closeSession shuts the camera window and forgets it. Bumping the generation
+// makes any in-flight event from the dying session stale.
+func (m *model) closeSession() {
+	if m.session == nil {
+		return
+	}
+	_ = m.session.Close()
+	m.session = nil
+	m.sessionGen++
+}
+
+// maxFuzzyTries bounds how many OCR lines are tried against Scryfall, so a
+// text-heavy capture can't turn into a burst of lookups.
+const maxFuzzyTries = 5
+
+const (
+	// minFuzzyLen is the shortest OCR text allowed to fuzzy-match a *different*
+	// name. Exact matches bypass it, so genuinely short cards ("Opt", "Fog")
+	// still scan.
+	minFuzzyLen = 4
+	// minSimilarity is how much of the OCR text the matched name must account
+	// for, as 1 - editDistance/length. Short names are only a few edits from
+	// plenty of ordinary words ("adopt" is 2 from "opt"), so this has to sit
+	// above the ratio those produce.
+	minSimilarity = 0.7
+)
+
+// plausibleMatch reports whether canonical is a believable reading of an OCR
+// line.
+//
+// Scryfall's fuzzy endpoint is a *search*, not an identity check: it resolves
+// "option" to the card "Opt" because the query contains the name. That's right
+// for a human typing a partial name and wrong for OCR, where any stray word in
+// frame — a keycap, a sleeve, rules text — silently becomes a card. Short names
+// are magnets for this, and trying several lines per capture gives noise several
+// chances to hit one. So the match has to actually explain what was read.
+func plausibleMatch(ocr, canonical string) bool {
+	o, c := normalizeName(ocr), normalizeName(canonical)
+	if o == "" || c == "" {
+		return false
+	}
+	if o == c {
+		return true
+	}
+	if len(o) < minFuzzyLen {
+		return false
+	}
+	// A partial read of a longer name is fine ("elspeth" → "Elspeth,
+	// Knight-Errant"). The reverse is the bug: text that merely *contains* a
+	// short name must not resolve to it.
+	if strings.HasPrefix(c, o) {
+		return true
+	}
+	return similarity(o, c) >= minSimilarity
+}
+
+// normalizeName reduces a name to comparable letters and digits, so punctuation
+// and spacing differences between OCR and Scryfall don't matter.
+func normalizeName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// similarity scores two normalized strings from 0 to 1 by edit distance.
+func similarity(a, b string) float64 {
+	longest := max(len(a), len(b))
+	if longest == 0 {
+		return 1
+	}
+	return 1 - float64(editDistance(a, b))/float64(longest)
+}
+
+// editDistance is the Levenshtein distance between two strings, computed with a
+// single rolling row.
+func editDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		curr[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			curr[j] = min(min(curr[j-1]+1, prev[j]+1), prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)]
+}
+
+// namedFuzzyCmd resolves noisy OCR text to a canonical card name, trying each
+// recognized line in order until one matches. Only the first line is a real
+// guess at the title — the rest are the fallback for when that guess is wrong,
+// which is what a skewed or misrotated capture produces.
+func (m model) namedFuzzyCmd(lines []string) tea.Cmd {
+	return func() tea.Msg {
+		var firstErr error
+		for i, line := range lines {
+			if i >= maxFuzzyTries {
+				break
+			}
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			card, err := m.searcher.NamedFuzzy(m.ctx, line)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if card != nil && plausibleMatch(line, card.Name) {
+				return fuzzyMsg{canonical: card.Name, ocr: line}
+			}
+		}
+		// Report the best-guess line: it's what gets pre-filled for editing.
+		var top string
+		if len(lines) > 0 {
+			top = lines[0]
+		}
+		return fuzzyMsg{ocr: top, err: firstErr}
+	}
+}
+
 // --- update ---
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(msg.Width, maxInt(msg.Height-4, 4))
+		m.list.SetSize(msg.Width, m.listHeight())
 		return m, nil
 
 	case tea.KeyMsg:
@@ -195,6 +441,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case namesMsg:
 		return m.onNames(msg)
+
+	case camerasMsg:
+		return m.onCameras(msg)
+
+	case sessionMsg:
+		return m.onSession(msg)
+
+	case sessionEventMsg:
+		return m.onSessionEvent(msg)
+
+	case fuzzyMsg:
+		return m.onFuzzy(msg)
 
 	case errMsg:
 		return m.failToName(msg.err.Error())
@@ -215,6 +473,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEsc:
 			return m, tea.Quit
+		case tea.KeyCtrlO:
+			if m.scanner == nil {
+				return m.failToName("card scanning isn't available in this build")
+			}
+			cmd := m.beginScan(false)
+			return m, cmd
+		case tea.KeyCtrlR:
+			// Re-open the camera picker even if this session already chose one.
+			if m.scanner == nil {
+				return m.failToName("card scanning isn't available in this build")
+			}
+			cmd := m.beginScan(true)
+			return m, cmd
 		case tea.KeyEnter:
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
@@ -223,6 +494,48 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = ""
 			m.state = stateLoading
 			return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(name))
+		}
+	case stateCameraList:
+		if msg.Type == tea.KeyEsc {
+			return m.cancelToName()
+		}
+	case stateCameraPick:
+		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
+			return m.cancelToName()
+		}
+		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
+			if it, ok := m.list.SelectedItem().(cameraItem); ok {
+				m.cameraID = it.dev.ID
+				m.cameraName = it.dev.Name
+				m.cameraChosen = true
+				m.state = stateCameraList
+				return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
+			}
+		}
+	case stateCapture:
+		switch msg.Type {
+		case tea.KeySpace, tea.KeyEnter:
+			return m.requestCapture()
+		case tea.KeyLeft:
+			return m.rotatePreview(true)
+		case tea.KeyRight:
+			return m.rotatePreview(false)
+		case tea.KeyCtrlR:
+			// Switch phones without leaving the camera step.
+			m.closeSession()
+			cmd := m.beginScan(true)
+			return m, cmd
+		case tea.KeyEsc:
+			// Close the camera without ending the add session.
+			m.closeSession()
+			return m.cancelToName()
+		}
+	case stateCapturing:
+		// The shutter is already pressed; esc abandons the whole camera rather
+		// than leaving the user staring at a spinner.
+		if msg.Type == tea.KeyEsc {
+			m.closeSession()
+			return m.cancelToName()
 		}
 	case stateNamePick:
 		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
@@ -281,9 +594,9 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
-	case stateNamePick, statePrintPick, stateFinishPick:
+	case stateNamePick, statePrintPick, stateFinishPick, stateCameraPick:
 		m.list, cmd = m.list.Update(msg)
-	case stateLoading:
+	case stateLoading, stateCapturing, stateCameraList:
 		m.spinner, cmd = m.spinner.Update(msg)
 	}
 	return m, cmd
@@ -327,6 +640,166 @@ func (m model) onNames(msg namesMsg) (tea.Model, tea.Cmd) {
 		m.state = stateNamePick
 		return m, nil
 	}
+}
+
+// onCameras handles the camera list. A single camera is used without asking;
+// several are offered as a picker; none is an error the user can act on.
+func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		// The helper's own "no iPhone found" guidance is the useful message here,
+		// so pass it through unprefixed.
+		return m.failToName(msg.err.Error())
+	}
+	switch len(msg.devices) {
+	case 0:
+		return m.failToName("no iPhone found — scanning uses Continuity Camera; connect an iPhone and try again")
+	case 1:
+		m.cameraID = msg.devices[0].ID
+		m.cameraName = msg.devices[0].Name
+		m.cameraChosen = true
+		return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
+	default:
+		items := make([]list.Item, len(msg.devices))
+		for i, d := range msg.devices {
+			items[i] = cameraItem{dev: d}
+		}
+		m.setListItems("Scan with which iPhone?", items)
+		// Pre-select the session's current camera so re-picking is a single enter.
+		for i, d := range msg.devices {
+			if d.ID == m.cameraID {
+				m.list.Select(i)
+				break
+			}
+		}
+		m.state = stateCameraPick
+		return m, nil
+	}
+}
+
+// requestCapture asks the live session for a photo. The window stays up; only
+// the TUI moves to a waiting state.
+func (m model) requestCapture() (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m.failToName("the camera isn't open")
+	}
+	if err := m.session.Capture(); err != nil {
+		m.closeSession()
+		return m.failToName(err.Error())
+	}
+	m.status = ""
+	m.state = stateCapturing
+	return m, m.spinner.Tick
+}
+
+// rotatePreview turns the camera preview a quarter-turn from the terminal, so the
+// user doesn't have to focus the camera window to fix the framing.
+func (m model) rotatePreview(left bool) (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+	if err := m.session.Rotate(left); err != nil {
+		m.closeSession()
+		return m.failToName(err.Error())
+	}
+	return m, nil
+}
+
+// onSession handles the camera window opening: on success the event pump starts
+// and the user can frame their first card.
+func (m model) onSession(msg sessionMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		return m.failToName(msg.err.Error())
+	}
+	m.session = msg.session
+	m.sessionGen++
+	m.state = stateCapture
+	return m, nextEventCmd(m.session, m.sessionGen)
+}
+
+// onSessionEvent handles one message from the camera window and re-arms the pump.
+func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
+	// A straggler from a session the user already closed.
+	if msg.gen != m.sessionGen || m.session == nil {
+		return m, nil
+	}
+	// The channel closed: the window is gone, however that happened.
+	if !msg.ok {
+		m.session = nil
+		m.sessionGen++
+		if m.state == stateCapture || m.state == stateCapturing {
+			return m.cancelToName()
+		}
+		return m, nil
+	}
+
+	again := nextEventCmd(m.session, m.sessionGen)
+	switch msg.ev.Kind {
+	case scan.EventScan:
+		lines := msg.ev.Lines()
+		if len(lines) == 0 {
+			m.status = "nothing readable in that frame — reframe and capture again"
+			m.statusErr = true
+			m.state = stateCapture
+			return m, again
+		}
+		m.state = stateLoading
+		return m, tea.Batch(m.spinner.Tick, m.namedFuzzyCmd(lines), again)
+
+	case scan.EventError:
+		// The window is still up, so stay on the capture step and let them retry.
+		m.status = msg.ev.Message
+		m.statusErr = true
+		if m.state == stateCapturing {
+			m.state = stateCapture
+		}
+		return m, again
+
+	case scan.EventClosed:
+		m.closeSession()
+		return m.cancelToName()
+
+	case scan.EventReady:
+		if msg.ev.Device != "" {
+			m.cameraName = msg.ev.Device
+		}
+		return m, again
+	}
+	// EventRotation and anything unrecognized: nothing to do but keep listening.
+	return m, again
+}
+
+// onFuzzy handles the fuzzy-name resolution of scanned text. On a match it looks
+// up printings (reusing the normal cascade); on a miss it drops back to the
+// prompt with the OCR text pre-filled so the user can correct it.
+func (m model) onFuzzy(msg fuzzyMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		return m.scanMissToName(msg.ocr, "scan: "+msg.err.Error())
+	}
+	if msg.canonical == "" {
+		return m.scanMissToName(msg.ocr, fmt.Sprintf("couldn't identify %q — edit and press enter", msg.ocr))
+	}
+	m.scanned = msg.canonical
+	m.scannedOCR = msg.ocr
+	m.state = stateLoading
+	return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.canonical))
+}
+
+// scanMissToName returns to the name prompt with the OCR text pre-filled and an
+// error banner, so a failed scan is never a dead end.
+func (m model) scanMissToName(ocr, msg string) (tea.Model, tea.Cmd) {
+	m.prints = nil
+	m.chosen = nil
+	m.finish = ""
+	m.qtyErr = ""
+	m.scanned = ""
+	m.scannedOCR = ""
+	m.nameInput.SetValue(ocr)
+	m.nameInput.CursorEnd()
+	m.nameInput.Focus()
+	m.status = msg
+	m.statusErr = true
+	m.state = stateName
+	return m, textinput.Blink
 }
 
 // advanceAfterPrint moves past printing selection: it auto-skips the finish step
@@ -385,7 +858,15 @@ func (m model) resetForNext() (tea.Model, tea.Cmd) {
 	m.chosen = nil
 	m.finish = ""
 	m.qtyErr = ""
+	m.scanned = ""
+	m.scannedOCR = ""
 	m.nameInput.SetValue("")
+	// With the camera still open, go back to framing the next card rather than to
+	// the prompt — that's the whole point of holding the window open.
+	if m.session != nil {
+		m.state = stateCapture
+		return m, nil
+	}
 	m.nameInput.Focus()
 	m.state = stateName
 	return m, textinput.Blink
@@ -427,10 +908,44 @@ func (m *model) setListItems(title string, items []list.Item) {
 	m.list.SetItems(items)
 	m.list.ResetFilter()
 	m.list.Select(0)
-	m.list.SetSize(m.width, maxInt(m.height-4, 4))
+	m.list.SetSize(m.width, m.listHeight())
+}
+
+// cameraLabel names the camera in use, falling back to a generic word before the
+// session has reported its device.
+func (m model) cameraLabel() string {
+	if m.cameraName != "" {
+		return m.cameraName
+	}
+	return "camera"
+}
+
+// listHeight is the space left for the list once the surrounding chrome (help
+// line, plus the scan header when one is showing) is accounted for.
+func (m model) listHeight() int {
+	chrome := 4
+	if m.scanned != "" {
+		chrome += 2
+	}
+	return maxInt(m.height-chrome, 4)
 }
 
 // --- view ---
+
+// scanHeader renders the fixed banner shown for the rest of the cascade after a
+// camera scan, so the user can confirm the OCR landed on the right card. When
+// the raw OCR text differs from the canonical name, it's shown alongside so a
+// wrong-but-plausible match is obvious.
+func (m model) scanHeader() string {
+	if m.scanned == "" {
+		return ""
+	}
+	line := scanStyle.Render("📷 Scanned: " + m.scanned)
+	if m.scannedOCR != "" && !strings.EqualFold(m.scannedOCR, m.scanned) {
+		line += helpStyle.Render(fmt.Sprintf("  (read %q)", m.scannedOCR))
+	}
+	return line + "\n\n"
+}
 
 func (m model) View() string {
 	switch m.state {
@@ -445,26 +960,59 @@ func (m model) View() string {
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
 		b.WriteString(m.nameInput.View() + "\n\n")
-		help := "enter search · esc quit · ctrl+c quit"
+		scanHint := ""
+		if m.scanner != nil {
+			scanHint = "ctrl+o scan card · ctrl+r change camera · "
+			if m.session != nil {
+				scanHint = "ctrl+o back to camera · ctrl+r change camera · "
+			}
+		}
+		help := scanHint + "enter search · esc quit · ctrl+c quit"
 		if m.addedCount > 0 {
 			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
 		}
 		b.WriteString(helpStyle.Render(help))
 		return b.String()
+	case stateCameraList:
+		return fmt.Sprintf("%s looking for a connected iPhone…\n\n%s",
+			m.spinner.View(), helpStyle.Render("esc cancel · ctrl+c quit"))
+	case stateCameraPick:
+		return m.list.View() + "\n" +
+			helpStyle.Render("↑/↓ move · enter scan with this camera · esc back · ctrl+c quit")
+	case stateCapture:
+		var b strings.Builder
+		b.WriteString(titleStyle.Render("Scanning with "+m.cameraLabel()) + "\n\n")
+		if m.status != "" {
+			style := okStyle
+			if m.statusErr {
+				style = errStyle
+			}
+			b.WriteString(style.Render(m.status) + "\n\n")
+		}
+		b.WriteString("Frame the next card, then press space.\n\n")
+		help := "space capture · ←/→ rotate · esc close camera · ctrl+c quit"
+		if m.addedCount > 0 {
+			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
+		}
+		b.WriteString(helpStyle.Render(help + "\n(space and ←/→ also work in the camera window)"))
+		return b.String()
+	case stateCapturing:
+		return fmt.Sprintf("%s reading the card…\n\n%s",
+			m.spinner.View(), helpStyle.Render("esc close camera · ctrl+c quit"))
 	case stateLoading:
-		return fmt.Sprintf("%s searching Scryfall…\n\n%s",
+		return m.scanHeader() + fmt.Sprintf("%s searching Scryfall…\n\n%s",
 			m.spinner.View(), helpStyle.Render("ctrl+c to quit"))
 	case stateNamePick, statePrintPick, stateFinishPick:
-		return m.list.View() + "\n" +
+		return m.scanHeader() + m.list.View() + "\n" +
 			helpStyle.Render("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit")
 	case stateQty:
-		out := promptStyle.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
+		out := m.scanHeader() + promptStyle.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
 			out += "\n" + errStyle.Render(m.qtyErr)
 		}
 		return out + "\n\n" + helpStyle.Render("enter to continue · esc cancel · ctrl+c quit")
 	case stateConfirm:
-		return titleStyle.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
+		return m.scanHeader() + titleStyle.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
 			helpStyle.Render("enter to add · esc cancel · ctrl+c quit")
 	}
 	return ""

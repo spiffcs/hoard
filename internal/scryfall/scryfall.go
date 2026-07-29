@@ -279,6 +279,46 @@ func Autocomplete(ctx context.Context, q string) ([]string, error) {
 	return out.Data, nil
 }
 
+// NamedFuzzy resolves a possibly-imperfect name (e.g. from OCR) to a single
+// canonical card via GET /cards/named?fuzzy=. It returns (nil, nil) when Scryfall
+// can't confidently match (404), so callers can fall back to manual entry.
+func NamedFuzzy(ctx context.Context, text string) (*Card, error) {
+	endpoint := apiBase + "/cards/named?fuzzy=" + url.QueryEscape(text)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fuzzy-naming %q: %w", text, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	// 404 means no confident match (or the query was too ambiguous).
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	var ac apiCard
+	if err := json.Unmarshal(body, &ac); err != nil {
+		return nil, fmt.Errorf("decoding fuzzy-name response (status %d): %w", resp.StatusCode, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if ac.Details != "" {
+			return nil, fmt.Errorf("scryfall fuzzy-name returned %d: %s", resp.StatusCode, ac.Details)
+		}
+		return nil, fmt.Errorf("scryfall fuzzy-name returned %d", resp.StatusCode)
+	}
+	card := ac.toCard()
+	return &card, nil
+}
+
 // SearchPrints returns every paper printing of the card with the given exact
 // name, newest first, following pagination. An empty result (Scryfall 404 "no
 // cards found") returns (nil, nil) rather than an error.

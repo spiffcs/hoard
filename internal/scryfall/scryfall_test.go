@@ -177,6 +177,38 @@ func TestSearchPrintsPaginatesAndDecodes(t *testing.T) {
 	}
 }
 
+func TestNamedFuzzy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("fuzzy")
+		if q == "Ulomog infinte" { // noisy OCR input still resolves
+			w.Write([]byte(`{"object":"card","id":"u1","name":"Ulamog, the Infinite Gyre","set":"uma","collector_number":"7"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"object":"error","status":404,"details":"too ambiguous"}`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	card, err := NamedFuzzy(context.Background(), "Ulomog infinte")
+	if err != nil {
+		t.Fatalf("NamedFuzzy: %v", err)
+	}
+	if card == nil || card.Name != "Ulamog, the Infinite Gyre" {
+		t.Fatalf("fuzzy match wrong: %+v", card)
+	}
+
+	none, err := NamedFuzzy(context.Background(), "zzz")
+	if err != nil {
+		t.Fatalf("NamedFuzzy no-match returned error: %v", err)
+	}
+	if none != nil {
+		t.Errorf("want nil for ambiguous/no match, got %+v", none)
+	}
+}
+
 func TestSearchPrintsNoMatchReturnsEmpty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
