@@ -33,7 +33,7 @@ Usage:
 
 Collection commands:
   add                                              Add cards interactively by name
-  list                                             List loose cards and total value
+  list                                             List loose cards by value, with total
   update-prices                                    Refresh prices (Scryfall updates daily)
   summary                                          Value of collection + each deck
 
@@ -410,6 +410,21 @@ func stdinIsTTY() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// collectionByValue returns a copy of cards ordered most-valuable-first, the same
+// way `deck list` and `summary` rank decks. The store returns them by name, which
+// is only a stable base to sort from. Ties fall back to name so a collection whose
+// prices have never been fetched still lists predictably rather than arbitrarily.
+func collectionByValue(cards []store.CollectionCard) []store.CollectionCard {
+	sorted := slices.Clone(cards)
+	slices.SortFunc(sorted, func(a, b store.CollectionCard) int {
+		if c := cmp.Compare(collectionLineValue(b), collectionLineValue(a)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return sorted
+}
+
 func cmdList(st *store.Store) error {
 	cards, err := st.ListCollection()
 	if err != nil {
@@ -438,7 +453,7 @@ func cmdList(st *store.Store) error {
 	}
 
 	var total float64
-	for _, c := range cards {
+	for _, c := range collectionByValue(cards) {
 		value := collectionLineValue(c)
 		total += value
 		t.Add(

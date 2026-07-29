@@ -163,6 +163,46 @@ func TestDecksByValue(t *testing.T) {
 	}
 }
 
+func TestCollectionByValue(t *testing.T) {
+	price := func(v float64) *float64 { return &v }
+	mk := func(name string, normal int, usd *float64, foil int, usdFoil *float64) store.CollectionCard {
+		c := store.CollectionCard{QtyNormal: normal, QtyFoil: foil}
+		c.Name = name
+		c.PriceUSD = usd
+		c.PriceUSDFoil = usdFoil
+		return c
+	}
+	in := []store.CollectionCard{
+		mk("cheap", 1, price(1), 0, nil),
+		// Quantity counts: 10 × $5 outranks a single $30 card.
+		mk("bulk-but-many", 10, price(5), 0, nil),
+		mk("unpriced-b", 3, nil, 0, nil),
+		mk("one-expensive", 1, price(30), 0, nil),
+		mk("unpriced-a", 1, nil, 0, nil),
+		// Foil value must be counted alongside normal.
+		mk("foil-heavy", 0, nil, 2, price(60)),
+	}
+	got := collectionByValue(in)
+
+	want := []string{"foil-heavy", "bulk-but-many", "one-expensive", "cheap", "unpriced-a", "unpriced-b"}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("position %d = %q, want %q (full order: %v)", i, got[i].Name, name, cardNames(got))
+		}
+	}
+	if in[0].Name != "cheap" {
+		t.Errorf("collectionByValue mutated its argument: %v", cardNames(in))
+	}
+}
+
+func cardNames(cards []store.CollectionCard) []string {
+	out := make([]string, len(cards))
+	for i, c := range cards {
+		out[i] = c.Name
+	}
+	return out
+}
+
 func names(decks []store.DeckSummary) []string {
 	out := make([]string, len(decks))
 	for i, d := range decks {
