@@ -37,6 +37,8 @@ hoard.db
 *.db-journal
 *.db-wal
 *.db-shm
+# Pre-migration backups (hoard.db.bak-v1-20260729)
+*.db.bak-*
 
 # macOS folder cruft
 .DS_Store

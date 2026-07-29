@@ -32,6 +32,14 @@ type Event struct {
 	Rotation int    `json:"rotation"`
 	Message  string `json:"message"`
 	Device   string `json:"device"`
+	// CollectorNumber and SetCode come from the card's bottom border, when it has
+	// one. Cards printed before Exodus (1998) carry no collector number at all,
+	// and only the M15 frame (2014) reliably prints the set code beside it, so
+	// both are routinely empty. Treat an empty read as ordinary, not as failure.
+	CollectorNumber string `json:"collectorNumber"`
+	SetCode         string `json:"setCode"`
+	// BottomLines is the raw text of the bottom band, for debugging a bad read.
+	BottomLines []string `json:"bottomLines"`
 }
 
 // Lines returns the OCR'd text of a scan event, best guess first, falling back

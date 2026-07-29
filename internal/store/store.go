@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ type Card struct {
 	PriceUSDFoil    *float64
 	ScryfallURL     string
 	UpdatedAt       string
+	// AltSource names the vendor a fallback price came from, and is empty when
+	// Scryfall priced the card. Set only by the queries that read prices for
+	// display, so callers can mark an estimate as such.
+	AltSource string
 }
 
 // Entry is a quantity of a card (finish + board) to place in a container.
@@ -121,39 +126,55 @@ type OwnedRow struct {
 	Value       float64
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS cards (
-    scryfall_id      TEXT PRIMARY KEY,
-    set_code         TEXT NOT NULL,
-    collector_number TEXT NOT NULL,
-    name             TEXT NOT NULL,
-    price_usd        REAL,
-    price_usd_foil   REAL,
-    scryfall_url     TEXT NOT NULL,
-    updated_at       TEXT NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS containers (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind       TEXT NOT NULL,
-    name       TEXT NOT NULL,
-    source     TEXT NOT NULL DEFAULT 'manual',
-    source_id  TEXT,
-    source_url TEXT,
-    format     TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(source, source_id)
-);
+// SQL fragments for reading prices with the MTGJSON fallback applied. They are
+// consts rather than repeated text so the four valuation queries cannot drift
+// apart and leave two commands reporting different totals for the same cards.
+//
+// They assume `c` is the cards table and `a` is card_prices_alt, joined by
+// altJoinCards or altJoinEntries.
+const (
+	altJoinCards   = `LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id`
+	altJoinEntries = `LEFT JOIN card_prices_alt a ON a.scryfall_id = e.scryfall_id`
 
-CREATE TABLE IF NOT EXISTS card_entries (
-    container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
-    scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
-    finish       TEXT NOT NULL DEFAULT 'normal',
-    board        TEXT NOT NULL DEFAULT 'main',
-    quantity     INTEGER NOT NULL,
-    PRIMARY KEY (container_id, scryfall_id, finish, board)
-);`
+	// effPriceUSD and effPriceFoil are the price to use for each finish: the
+	// Scryfall figure when there is one, else the fallback.
+	effPriceUSD  = `COALESCE(c.price_usd, a.price_usd)`
+	effPriceFoil = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
+
+	// altSourceExpr names the vendor behind a fallback price, and is empty when
+	// Scryfall priced the card. Display code uses it to mark estimates.
+	//
+	// This form is for queries with no single finish in scope, such as the
+	// collection listing where a row aggregates both. It reports whichever
+	// finish is actually falling back.
+	altSourceExpr = `COALESCE(CASE
+        WHEN c.price_usd IS NULL AND a.price_usd IS NOT NULL THEN a.source_usd
+        WHEN c.price_usd_foil IS NULL AND a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
+    END, '')`
+
+	// altSourceForEntry is the same idea where the row's finish is known, so it
+	// names the vendor that supplied *that* finish. A card's two finishes can
+	// come from different shops, and crediting the wrong one beside a price is
+	// worse than saying nothing.
+	altSourceForEntry = `COALESCE(CASE WHEN e.finish IN ('foil','etched')
+        THEN CASE WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
+        ELSE CASE WHEN c.price_usd IS NULL THEN a.source_usd END
+    END, '')`
+
+	// entryValue values one card_entries row by its finish.
+	entryValue = `COALESCE(CASE WHEN e.finish IN ('foil','etched')
+        THEN ` + effPriceFoil + ` ELSE ` + effPriceUSD + ` END, 0)`
+
+	// unpricedPredicate matches an entry no source can price for the finish it
+	// is actually held in. The finish matters: a card owned only in non-foil
+	// needs no foil price, and treating that as a gap would send every price
+	// run chasing numbers that would never be used.
+	unpricedPredicate = `(e.finish IN ('foil','etched')
+         AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
+   OR (e.finish = 'normal'
+         AND c.price_usd IS NULL AND a.price_usd IS NULL)`
+)
 
 // Store wraps the database handle.
 type Store struct {
@@ -170,19 +191,22 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("creating database directory %q: %w", dir, err)
 		}
 	}
-	// Enable foreign-key enforcement so ON DELETE CASCADE works.
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	// Enable foreign-key enforcement so ON DELETE CASCADE works, and give a
+	// blocked write a few seconds rather than failing outright.
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}
+	// One connection, deliberately. database/sql pools by default, which would
+	// let a PRAGMA land on a different connection than the statement it was
+	// meant to configure. For a single-user CLI serialising is free, and it
+	// makes migrations safe.
+	db.SetMaxOpenConns(1)
+
 	s := &Store{db: db}
-	if err := s.migrateLegacy(); err != nil {
+	if err := s.migrate(path); err != nil {
 		db.Close()
 		return nil, err
-	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 	if _, err := s.collectionID(); err != nil {
 		db.Close()
@@ -279,6 +303,289 @@ func (s *Store) AllCatalogIDs() ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// PriceGap is a card that has no price for a finish it is actually owned in.
+type PriceGap struct {
+	ScryfallID string
+	SetCode    string
+	Name       string
+}
+
+// UnpricedByOwnedFinish returns cards Scryfall could not price for a finish the
+// user actually holds.
+//
+// The finish matters: a card owned only in non-foil needs no foil price, and
+// counting it as a gap would send every run chasing prices that will never be
+// used. Cards already carrying a usable fallback are excluded too, so a second
+// run is cheap.
+func (s *Store) UnpricedByOwnedFinish() ([]PriceGap, error) {
+	rows, err := s.db.Query(`
+SELECT DISTINCT c.scryfall_id, c.set_code, c.name
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+` + altJoinCards + `
+WHERE ` + unpricedPredicate + `
+ORDER BY c.set_code, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("finding unpriced cards: %w", err)
+	}
+	defer rows.Close()
+	var out []PriceGap
+	for rows.Next() {
+		var g PriceGap
+		if err := rows.Scan(&g.ScryfallID, &g.SetCode, &g.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// UnpricedRow is one card-and-finish that no source can price, with where it is
+// held so the reader can see which totals are understated.
+type UnpricedRow struct {
+	Name            string
+	SetCode         string
+	CollectorNumber string
+	Finish          string
+	Copies          int
+	HeldIn          string
+}
+
+// Unpriced lists the same gaps as UnpricedByOwnedFinish, broken out per finish
+// and annotated for display.
+//
+// Kept separate from UnpricedByOwnedFinish because the two want different
+// shapes: the fill needs distinct cards to look up, this needs one row per
+// finish with its containers. They share unpricedPredicate so the two can never
+// disagree about what counts as unpriced.
+func (s *Store) Unpriced() ([]UnpricedRow, error) {
+	rows, err := s.db.Query(`
+SELECT c.name, c.set_code, c.collector_number, e.finish,
+       SUM(e.quantity) AS copies,
+       GROUP_CONCAT(DISTINCT ct.name) AS held_in
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id
+` + altJoinCards + `
+WHERE ` + unpricedPredicate + `
+GROUP BY c.scryfall_id, e.finish
+ORDER BY c.name, e.finish`)
+	if err != nil {
+		return nil, fmt.Errorf("listing unpriced cards: %w", err)
+	}
+	defer rows.Close()
+	var out []UnpricedRow
+	for rows.Next() {
+		var u UnpricedRow
+		if err := rows.Scan(&u.Name, &u.SetCode, &u.CollectorNumber,
+			&u.Finish, &u.Copies, &u.HeldIn); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// AltPrice is a fallback price to record for one card.
+//
+// The two finishes carry their own vendor because they are looked up
+// independently: the shop that prices a card's non-foil printing often has no
+// figure for its foil, and vice versa.
+type AltPrice struct {
+	ScryfallID    string
+	MTGJSONUUID   string
+	PriceUSD      *float64
+	PriceUSDFoil  *float64
+	SourceUSD     string
+	SourceUSDFoil string
+}
+
+// UpsertAltPrices records fallback prices, replacing any previous ones.
+//
+// Rows are rewritten rather than inserted once: a vendor's price moves, and a
+// card Scryfall later learns to price should not be left showing a stale
+// fallback underneath it.
+func (s *Store) UpsertAltPrices(prices []AltPrice) error {
+	if len(prices) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+INSERT INTO card_prices_alt (scryfall_id, mtgjson_uuid, price_usd, price_usd_foil,
+                             source_usd, source_usd_foil, as_of)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(scryfall_id) DO UPDATE SET
+    mtgjson_uuid    = excluded.mtgjson_uuid,
+    price_usd       = excluded.price_usd,
+    price_usd_foil  = excluded.price_usd_foil,
+    source_usd      = excluded.source_usd,
+    source_usd_foil = excluded.source_usd_foil,
+    as_of           = excluded.as_of`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	ts := now()
+	for _, p := range prices {
+		if _, err := stmt.Exec(p.ScryfallID, p.MTGJSONUUID, p.PriceUSD,
+			p.PriceUSDFoil, nullable(p.SourceUSD), nullable(p.SourceUSDFoil), ts); err != nil {
+			return fmt.Errorf("recording fallback price for %s: %w", p.ScryfallID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// FinishFix is one entry recorded in a finish its printing does not come in.
+type FinishFix struct {
+	Name            string
+	SetCode         string
+	CollectorNumber string
+	Container       string
+	Board           string
+	From            string
+	To              string
+	Quantity        int
+}
+
+// hoardFinish translates Scryfall's finish names to the ones stored here.
+// Scryfall says "nonfoil" where card_entries says "normal"; "foil" and "etched"
+// agree.
+func hoardFinish(scryfallFinish string) string {
+	if scryfallFinish == "nonfoil" {
+		return "normal"
+	}
+	return scryfallFinish
+}
+
+// RepairFinishes corrects entries whose finish does not exist for that printing.
+//
+// A decklist with no foil marker imports as "normal", but plenty of printings
+// are foil-only: precon commanders and Duel Decks reprints among them. The
+// resulting entry asks for a price that cannot exist, so the card is valued at
+// zero forever and no amount of price fetching helps.
+//
+// available maps a Scryfall ID to the finishes that printing actually comes in.
+// A correction is only made when the printing has exactly one finish, since that
+// is the only case with a single right answer; anything else is returned as
+// ambiguous and left untouched rather than guessed at.
+func (s *Store) RepairFinishes(available map[string][]string) (fixed, ambiguous []FinishFix, err error) {
+	rows, err := s.db.Query(`
+SELECT e.container_id, ct.name, e.scryfall_id, e.finish, e.board, e.quantity,
+       c.name, c.set_code, c.collector_number
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id
+ORDER BY c.name`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading entries: %w", err)
+	}
+	defer rows.Close()
+
+	type target struct {
+		containerID int64
+		scryfallID  string
+		board       string
+		from, to    string
+		quantity    int
+	}
+	var todo []target
+	for rows.Next() {
+		var t target
+		var f FinishFix
+		if err := rows.Scan(&t.containerID, &f.Container, &t.scryfallID, &t.from,
+			&t.board, &t.quantity, &f.Name, &f.SetCode, &f.CollectorNumber); err != nil {
+			return nil, nil, err
+		}
+		finishes, known := available[t.scryfallID]
+		if !known || len(finishes) == 0 {
+			continue // nothing to judge against
+		}
+		if slices.ContainsFunc(finishes, func(sf string) bool { return hoardFinish(sf) == t.from }) {
+			continue // the recorded finish is real
+		}
+
+		f.Board, f.From, f.Quantity = t.board, t.from, t.quantity
+		if len(finishes) != 1 {
+			f.To = strings.Join(finishes, "|")
+			ambiguous = append(ambiguous, f)
+			continue
+		}
+		t.to = hoardFinish(finishes[0])
+		f.To = t.to
+		fixed = append(fixed, f)
+		todo = append(todo, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(todo) == 0 {
+		return nil, ambiguous, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	for _, t := range todo {
+		// Insert-then-delete rather than UPDATE: the corrected finish may
+		// already exist for this card in this container, and the primary key
+		// includes finish. Merging the quantities is the only correct outcome.
+		if _, err := tx.Exec(`
+INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, board)
+DO UPDATE SET quantity = quantity + excluded.quantity`,
+			t.containerID, t.scryfallID, t.to, t.board, t.quantity); err != nil {
+			return nil, nil, fmt.Errorf("moving entry to %s: %w", t.to, err)
+		}
+		if _, err := tx.Exec(`
+DELETE FROM card_entries
+WHERE container_id=? AND scryfall_id=? AND finish=? AND board=?`,
+			t.containerID, t.scryfallID, t.from, t.board); err != nil {
+			return nil, nil, fmt.Errorf("removing old %s entry: %w", t.from, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return fixed, ambiguous, nil
+}
+
+// nullable stores an empty string as SQL NULL, so "no vendor for this finish"
+// is distinguishable from a vendor whose name happens to be blank.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// KnownMTGJSONUUIDs returns the Scryfall-ID-to-UUID pairs already resolved, so a
+// set file is downloaded at most once ever.
+func (s *Store) KnownMTGJSONUUIDs() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT scryfall_id, mtgjson_uuid FROM card_prices_alt`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var sid, uuid string
+		if err := rows.Scan(&sid, &uuid); err != nil {
+			return nil, err
+		}
+		out[sid] = uuid
+	}
+	return out, rows.Err()
 }
 
 // UpdatePrices refreshes stored prices for the given catalog cards.
@@ -425,11 +732,13 @@ func (s *Store) ListCollection() ([]CollectionCard, error) {
 	}
 	rows, err := s.db.Query(`
 SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       c.price_usd, c.price_usd_foil, c.scryfall_url, c.updated_at,
+       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
+       `+altSourceExpr+`,
        COALESCE(SUM(CASE WHEN e.finish='normal' THEN e.quantity END), 0) AS qty_normal,
        COALESCE(SUM(CASE WHEN e.finish IN ('foil','etched') THEN e.quantity END), 0) AS qty_foil
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinCards+`
 WHERE e.container_id = ?
 GROUP BY c.scryfall_id
 ORDER BY c.name`, cid)
@@ -442,7 +751,7 @@ ORDER BY c.name`, cid)
 	for rows.Next() {
 		var cc CollectionCard
 		if err := rows.Scan(&cc.ScryfallID, &cc.SetCode, &cc.CollectorNumber, &cc.Name,
-			&cc.PriceUSD, &cc.PriceUSDFoil, &cc.ScryfallURL, &cc.UpdatedAt,
+			&cc.PriceUSD, &cc.PriceUSDFoil, &cc.ScryfallURL, &cc.UpdatedAt, &cc.AltSource,
 			&cc.QtyNormal, &cc.QtyFoil); err != nil {
 			return nil, err
 		}
@@ -507,11 +816,11 @@ func (s *Store) ListDecks() ([]DeckSummary, error) {
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
        COUNT(e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
-       COALESCE(SUM(e.quantity * COALESCE(
-           CASE WHEN e.finish IN ('foil','etched') THEN c.price_usd_foil ELSE c.price_usd END, 0)), 0) AS value
+       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM containers ct
 LEFT JOIN card_entries e ON e.container_id = ct.id
 LEFT JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinEntries+`
 WHERE ct.kind = ?
 GROUP BY ct.id
 ORDER BY ct.name`, KindDeck)
@@ -625,10 +934,12 @@ func escapeLike(s string) string {
 func (s *Store) DeckEntries(containerID int64) ([]EntryView, error) {
 	rows, err := s.db.Query(`
 SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       c.price_usd, c.price_usd_foil, c.scryfall_url, c.updated_at,
+       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
+       `+altSourceForEntry+`,
        e.finish, e.board, e.quantity
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinCards+`
 WHERE e.container_id = ?
 ORDER BY
     CASE e.board WHEN 'commander' THEN 0 WHEN 'main' THEN 1 WHEN 'side' THEN 2 ELSE 3 END,
@@ -643,7 +954,7 @@ ORDER BY
 		var v EntryView
 		if err := rows.Scan(&v.Card.ScryfallID, &v.Card.SetCode, &v.Card.CollectorNumber, &v.Card.Name,
 			&v.Card.PriceUSD, &v.Card.PriceUSDFoil, &v.Card.ScryfallURL, &v.Card.UpdatedAt,
-			&v.Finish, &v.Board, &v.Quantity); err != nil {
+			&v.Card.AltSource, &v.Finish, &v.Board, &v.Quantity); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -670,10 +981,10 @@ func (s *Store) TotalsByCard() ([]OwnedRow, error) {
 SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
        c.price_usd, c.price_usd_foil, c.scryfall_url, c.updated_at,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
-       COALESCE(SUM(e.quantity * COALESCE(
-           CASE WHEN e.finish IN ('foil','etched') THEN c.price_usd_foil ELSE c.price_usd END, 0)), 0) AS value
+       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM cards c
 LEFT JOIN card_entries e ON e.scryfall_id = c.scryfall_id
+`+altJoinCards+`
 GROUP BY c.scryfall_id
 HAVING total_copies > 0
 ORDER BY value DESC, c.name`)
@@ -703,9 +1014,9 @@ func (s *Store) CollectionValue() (float64, error) {
 	}
 	var v sql.NullFloat64
 	err = s.db.QueryRow(`
-SELECT SUM(e.quantity * COALESCE(
-    CASE WHEN e.finish IN ('foil','etched') THEN c.price_usd_foil ELSE c.price_usd END, 0))
+SELECT SUM(e.quantity * `+entryValue+`)
 FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinEntries+`
 WHERE e.container_id = ?`, cid).Scan(&v)
 	if err != nil {
 		return 0, err
@@ -736,9 +1047,9 @@ func (s *Store) CollectionTotals() (CollectionTotals, error) {
 	err = s.db.QueryRow(`
 SELECT COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
-       COALESCE(SUM(e.quantity * COALESCE(
-           CASE WHEN e.finish IN ('foil','etched') THEN c.price_usd_foil ELSE c.price_usd END, 0)), 0) AS value
+       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+`+altJoinEntries+`
 WHERE e.container_id = ?`, cid).Scan(&t.DistinctCards, &t.TotalCopies, &t.Value)
 	if err != nil {
 		return CollectionTotals{}, fmt.Errorf("collection totals: %w", err)
@@ -772,7 +1083,7 @@ SELECT EXISTS(
 	if _, err := tx.Exec(`ALTER TABLE cards RENAME TO cards_legacy`); err != nil {
 		return fmt.Errorf("migrate: renaming legacy cards: %w", err)
 	}
-	if _, err := tx.Exec(schema); err != nil {
+	if _, err := tx.Exec(schemaV1); err != nil {
 		return fmt.Errorf("migrate: creating new schema: %w", err)
 	}
 

@@ -68,12 +68,82 @@ hoard summary
 
 # Refresh market prices for every card in the catalog
 hoard update-prices
+
+# Cards counting as $0.00 in your totals, and where they are held
+hoard unpriced
 ```
 
 Scryfall recalculates its price data roughly once a day, so `update-prices` is
 worth running about that often. Running it several times in a day re-fetches the
 entire catalog to arrive at the same numbers: it is the only command that talks
 to Scryfall about every card you own, in batches of 75.
+
+### When Scryfall has no price
+
+Scryfall's USD prices come from TCGplayer alone, so a printing TCGplayer has no
+record of is simply unpriced there. This is not rare. The Modern Horizons 3
+Commander ripple foils have no USD foil price at all, which left one deck valued
+at $134.72 instead of $459.54.
+
+When `update-prices` finds cards with no price for a finish you actually own, it
+consults [MTGJSON](https://mtgjson.com/), which aggregates several vendors:
+
+```
+Updated prices for 1,256 of 1,256 cards.
+  111 cards have no price for a finish you own; checking MTGJSON...
+  filled 96 from cardkingdom, manapool, tcgplayer.
+  15 still unpriced anywhere.
+```
+
+Nothing is downloaded unless there is a gap to fill, and the files are cached for
+the day in your cache directory. A Scryfall price always wins; these only ever
+stand in where there is none. Because they come from a different shelf than the
+rest of hoard's numbers, they are marked with `*` and a footnote naming the
+vendors:
+
+```
+main   1  Planar Nexus   m3c/80  foil  $37.99  $37.99*
+
+* estimated: Scryfall has no price for this printing; from cardkingdom via MTGJSON
+```
+
+Cardmarket is deliberately not used: it quotes euros, and a second currency
+inside a dollar total would be misleading.
+
+### Cards that cannot be priced
+
+`hoard unpriced` shows every card counting as $0.00 and which deck each one is
+dragging down, because a card valued at nothing otherwise looks the same as a
+card genuinely worth nothing:
+
+```
+NAME                  SET/NUM  FINISH  COPIES  HELD IN
+Ambush Commander      evg/1    -            1  Duel Decks Anthology: Elves vs. …
+Angelic Protector     tpr/2    -            1  Duel Decks Anthology: Divine vs.…
+
+19 copies across 15 cards count as $0.00.
+Try: hoard repair-finishes, then hoard update-prices
+```
+
+Often the cause is not a missing price but a wrong finish. A decklist with no
+`*F*` marker imports as non-foil, and plenty of printings are foil-only: precon
+commanders and Duel Decks reprints among them. That entry then asks for a price
+that cannot exist, so no amount of refreshing will ever fill it.
+
+`hoard repair-finishes` finds those and corrects them, using the list of finishes
+Scryfall already publishes for each printing:
+
+```
+NAME                        SET/NUM  QTY  WAS     NOW   IN
+Ambush Commander            evg/1      1  normal  foil  Duel Decks Anthology: Elves v…
+Licia, Sanguine Tribune     c17/40     1  normal  foil  Vampiric Bloodlust (Commander…
+
+Corrected 12 entries. Run hoard update-prices to value them.
+```
+
+It only acts where there is a single right answer, meaning the printing comes in
+exactly one finish. Anything genuinely ambiguous is reported and left alone. It
+is safe to re-run: a second pass finds nothing.
 
 ### Adding cards
 
@@ -195,6 +265,12 @@ hoard --db ~/hoard/collection.db list     # note: --db precedes the command
 export HOARD_DB=~/hoard/collection.db
 ```
 
+When a new version of hoard needs to change the database's shape, it upgrades it
+on first run and copies the old file alongside first, named like
+`hoard.db.bak-v1-20260729`. Nothing is ever deleted, so if an upgrade goes wrong
+the previous state is sitting next to the original. Those copies are safe to
+remove once you are happy.
+
 Piping or redirecting turns off styling, truncation, and bars automatically, so
 `hoard summary | grep` sees whole names and no escape sequences.
 
@@ -239,6 +315,20 @@ came from macOS's automatic correction.
 The card's title is read on-device with Apple's Vision OCR. It is then matched to a real card via
 Scryfall's fuzzy name search.
 
+The bottom border is read too, in a second pass. Magic cards have carried a
+collector number since Exodus (1998), printed bottom centre on older frames and
+bottom left from the M15 frame (2014) onward, where it sits alongside the set
+code. When that read succeeds, the matching printing is moved to the top of the
+printing list and marked `← scanned`, with the cursor already on it. This matters
+for reprinted cards: Sol Ring has over a hundred printings, and the number in
+your hand says which one it is.
+
+It is deliberately a suggestion rather than a decision. A misread digit is visible
+before you commit, and enter is all it takes to accept. If the number matches none
+of the printings, the list is left in its normal order and hoard says so rather
+than quietly pretending nothing was read. Cards too old to carry a number, or a
+border too blurred to read, simply fall back to the ordinary printing picker.
+
 ### Notes and troubleshooting
 
 - Continuity Camera needs an iPhone signed into the same Apple ID, nearby and
@@ -249,6 +339,11 @@ Scryfall's fuzzy name search.
 - Detection waits up to 2.5s for a phone to publish itself; `HOARD_SCAN_WAIT=5` raises it.
 - To confirm what the helper can see, independent of the TUI:
   `./bin/hoard-scan.app/Contents/MacOS/hoard-scan --list-devices`
+- To check what a photo of a card actually reads as, without a camera:
+  `./bin/hoard-scan.app/Contents/MacOS/hoard-scan --image card.heic --rotate 0`.
+  It takes the same code path as a live capture and reports `collectorNumber`,
+  `setCode`, and the raw `bottomLines` it matched against, which is the quickest
+  way to see why a border did not read.
 - The first scan prompts for camera permission (System Settings › Privacy & Security ›
   Camera). On-device OCR only, so no images leave your machine.
 - Backing out is always available: <kbd>Esc</kbd> in the capture window, or

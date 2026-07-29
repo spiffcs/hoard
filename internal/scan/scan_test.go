@@ -17,6 +17,30 @@ func TestParseEvent(t *testing.T) {
 		t.Errorf("candidates = %v, want 2", ev.Candidates)
 	}
 
+	// Collector info read off the card's bottom border.
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","collectorNumber":"123","setCode":"MH3",` +
+			`"bottomLines":["0123/0281 R","MH3 • EN"]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.CollectorNumber != "123" || ev.SetCode != "MH3" {
+		t.Errorf("collector info = %q/%q, want 123/MH3", ev.CollectorNumber, ev.SetCode)
+	}
+	if len(ev.BottomLines) != 2 {
+		t.Errorf("bottomLines = %v, want 2", ev.BottomLines)
+	}
+
+	// A helper too old to report collector info is not an error: cards printed
+	// before 1998 have no number to read either, so empty is the normal case.
+	ev, err = parseEvent([]byte(`{"event":"scan","name":"Black Lotus"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.CollectorNumber != "" || ev.SetCode != "" {
+		t.Errorf("want empty collector info, got %q/%q", ev.CollectorNumber, ev.SetCode)
+	}
+
 	// A line without a kind isn't one of ours; the reader skips it rather than
 	// treating an unknown shape as a scan.
 	if _, err := parseEvent([]byte(`{"name":"Sol Ring"}`)); err == nil {

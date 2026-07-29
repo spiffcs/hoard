@@ -195,6 +195,43 @@ func TestCollectionByValue(t *testing.T) {
 	}
 }
 
+func TestEntriesByValue(t *testing.T) {
+	price := func(v float64) *float64 { return &v }
+	mk := func(name, board, finish string, qty int, usd, usdFoil *float64) store.EntryView {
+		e := store.EntryView{Finish: finish, Board: board, Quantity: qty}
+		e.Card.Name = name
+		e.Card.PriceUSD = usd
+		e.Card.PriceUSDFoil = usdFoil
+		return e
+	}
+	in := []store.EntryView{
+		// Grouped by board as the store returns them, cheapest first.
+		mk("commander-cheap", "commander", "normal", 1, price(2), nil),
+		mk("main-mid", "main", "normal", 1, price(40), nil),
+		// Quantity counts: 10 x $9 beats one $40 card.
+		mk("main-many", "main", "normal", 10, price(9), nil),
+		// Foil entries take the foil price.
+		mk("side-foil", "side", "foil", 1, price(1), price(75)),
+		mk("side-unpriced", "side", "normal", 1, nil, nil),
+	}
+	got := entriesByValue(in)
+
+	want := []string{"main-many", "side-foil", "main-mid", "commander-cheap", "side-unpriced"}
+	for i, name := range want {
+		if got[i].Card.Name != name {
+			t.Errorf("position %d = %q, want %q", i, got[i].Card.Name, name)
+		}
+	}
+	// Board grouping is deliberately flattened; the BOARD column still carries it.
+	if got[0].Board != "main" || got[1].Board != "side" {
+		t.Errorf("expected boards to interleave by value, got %q then %q",
+			got[0].Board, got[1].Board)
+	}
+	if in[0].Card.Name != "commander-cheap" {
+		t.Error("entriesByValue mutated its argument")
+	}
+}
+
 func cardNames(cards []store.CollectionCard) []string {
 	out := make([]string, len(cards))
 	for i, c := range cards {

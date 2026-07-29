@@ -338,6 +338,115 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 	_ = cmd
 }
 
+// solRingPrints is a stand-in for a heavily reprinted card, in Scryfall's
+// newest-first order. The wanted printing is deliberately not first.
+func solRingPrints() []scryfall.Card {
+	return []scryfall.Card{
+		{ID: "a", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil"}},
+		{ID: "b", Name: "Sol Ring", Set: "c21", CollectorNumber: "263", Finishes: []string{"nonfoil"}},
+		{ID: "c", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123", Finishes: []string{"nonfoil"}},
+	}
+}
+
+func TestScannedNumberRanksAndMarksPrinting(t *testing.T) {
+	cards := solRingPrints()
+	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
+	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m.scanned = "Sol Ring"
+	m.scannedSet = "MH3"
+	m.scannedNumber = "123"
+
+	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
+	got := mm.(model)
+
+	if got.state != statePrintPick {
+		t.Fatalf("state = %v, want statePrintPick", got.state)
+	}
+	// Every printing is still offered; only the order changed.
+	if len(got.list.Items()) != len(cards) {
+		t.Fatalf("list has %d items, want all %d printings", len(got.list.Items()), len(cards))
+	}
+	first, ok := got.list.Items()[0].(printItem)
+	if !ok {
+		t.Fatalf("first item is %T, want printItem", got.list.Items()[0])
+	}
+	if first.card.CollectorNumber != "123" || !strings.EqualFold(first.card.Set, "mh3") {
+		t.Errorf("first printing = %s #%s, want MH3 #123",
+			first.card.Set, first.card.CollectorNumber)
+	}
+	if !first.scanned {
+		t.Error("the matched printing should be marked as scanned")
+	}
+	if !strings.Contains(first.Title(), "scanned") {
+		t.Errorf("Title() = %q, want a scanned marker", first.Title())
+	}
+	// Pre-selected, not auto-committed: the cursor is on it but nothing advanced.
+	if got.list.Index() != 0 {
+		t.Errorf("cursor at %d, want the scanned printing at 0", got.list.Index())
+	}
+	if got.chosen != nil {
+		t.Error("a scanned number must not select a printing outright")
+	}
+	// The rest keep Scryfall's newest-first order.
+	rest := got.list.Items()[1:]
+	if rest[0].(printItem).card.Set != "ltc" || rest[1].(printItem).card.Set != "c21" {
+		t.Errorf("remaining order = %v, want ltc then c21", rest)
+	}
+}
+
+func TestScannedNumberMatchingNothingSaysSo(t *testing.T) {
+	cards := solRingPrints()
+	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
+	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m.scanned = "Sol Ring"
+	m.scannedNumber = "999" // misread, or the name match was wrong
+
+	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
+	got := mm.(model)
+
+	if got.list.Items()[0].(printItem).card.Set != "ltc" {
+		t.Error("an unmatched number must leave Scryfall's order alone")
+	}
+	for i, it := range got.list.Items() {
+		if it.(printItem).scanned {
+			t.Errorf("item %d marked scanned when nothing matched", i)
+		}
+	}
+	if !strings.Contains(got.status, "999") {
+		t.Errorf("status = %q, want it to name the number that found nothing", got.status)
+	}
+}
+
+func TestRankByScan(t *testing.T) {
+	cards := solRingPrints()
+
+	// No number read: nothing moves.
+	if _, matched := rankByScan(cards, "", ""); matched {
+		t.Error("no scanned number should not match")
+	}
+
+	// Number alone is enough when it picks out one printing.
+	got, matched := rankByScan(cards, "", "263")
+	if !matched || got[0].Set != "c21" {
+		t.Errorf("number-only match = %v (matched=%v), want c21 first", got, matched)
+	}
+
+	// A set code disambiguates when two printings share a collector number.
+	dupes := []scryfall.Card{
+		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
+		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
+	}
+	got, matched = rankByScan(dupes, "BBB", "7")
+	if !matched || got[0].Set != "bbb" {
+		t.Errorf("set+number match = %v, want bbb first", got)
+	}
+
+	// Original slice must be left alone; the caller still holds it.
+	if cards[0].Set != "ltc" {
+		t.Error("rankByScan mutated its input")
+	}
+}
+
 func TestScanHeaderShowsOcrTextWhenItDiffers(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
 	m.scanned, m.scannedOCR = "Sol Ring", "Sol Rlng"
@@ -401,7 +510,7 @@ func TestScanFallsBackToLaterOcrLines(t *testing.T) {
 	m := newModel(context.Background(), fs, noopAdder, nil, "")
 
 	lines := []string{"control have indestructible.\"", "Volkan Baga", "Elspeth, Knight-Errant"}
-	msg := m.namedFuzzyCmd(lines)().(fuzzyMsg)
+	msg := m.namedFuzzyCmd(lines, "", "")().(fuzzyMsg)
 	if msg.canonical != "Elspeth, Knight-Errant" {
 		t.Errorf("canonical = %q, want the title found on a later line", msg.canonical)
 	}
@@ -455,7 +564,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 	}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "")
 
-	msg := m.namedFuzzyCmd([]string{"option", "Elspeth, Knight-Errant"})().(fuzzyMsg)
+	msg := m.namedFuzzyCmd([]string{"option", "Elspeth, Knight-Errant"}, "", "")().(fuzzyMsg)
 	if msg.canonical != "Elspeth, Knight-Errant" {
 		t.Errorf("canonical = %q, want the real card rather than the Opt false positive",
 			msg.canonical)
@@ -465,7 +574,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 func TestScanFuzzyMissReportsTopLine(t *testing.T) {
 	// Nothing matches → the best-guess line is what gets pre-filled for editing.
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
-	msg := m.namedFuzzyCmd([]string{"Blrgh", "Nonsense"})().(fuzzyMsg)
+	msg := m.namedFuzzyCmd([]string{"Blrgh", "Nonsense"}, "", "")().(fuzzyMsg)
 	if msg.canonical != "" || msg.ocr != "Blrgh" {
 		t.Errorf("miss: canonical=%q ocr=%q, want empty canonical and the top line",
 			msg.canonical, msg.ocr)
@@ -482,7 +591,7 @@ func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
 	for i := range lines {
 		lines[i] = "line"
 	}
-	m.namedFuzzyCmd(lines)()
+	m.namedFuzzyCmd(lines, "", "")()
 	if tries != maxFuzzyTries {
 		t.Errorf("made %d lookups, want %d", tries, maxFuzzyTries)
 	}

@@ -79,7 +79,12 @@ type sessionEventMsg struct {
 type fuzzyMsg struct {
 	canonical string
 	ocr       string
-	err       error
+	// set and number are the collector info read off the card's bottom border,
+	// carried through untouched so the printing picker can rank by them. Both are
+	// empty for cards that don't print them.
+	set    string
+	number string
+	err    error
 }
 
 // --- list item types ---
@@ -90,11 +95,21 @@ func (n nameItem) Title() string       { return string(n) }
 func (n nameItem) Description() string { return "" }
 func (n nameItem) FilterValue() string { return string(n) }
 
-type printItem struct{ card scryfall.Card }
+// printItem is one printing in the picker. scanned marks the printing whose
+// collector number matched the one read off the card, so the user can see what
+// the camera picked before committing to it.
+type printItem struct {
+	card    scryfall.Card
+	scanned bool
+}
 
 func (p printItem) Title() string {
-	return fmt.Sprintf("%s #%s · %s",
+	t := fmt.Sprintf("%s #%s · %s",
 		strings.ToUpper(p.card.Set), p.card.CollectorNumber, p.card.SetName)
+	if p.scanned {
+		t += "  ← scanned"
+	}
+	return t
 }
 func (p printItem) Description() string {
 	parts := []string{}
@@ -150,6 +165,9 @@ type model struct {
 	// cascade so the user can see the capture was read correctly.
 	scanned    string
 	scannedOCR string
+	// collector info read off the card, used to rank and pre-select the printing.
+	scannedSet    string
+	scannedNumber string
 
 	// camera choice, remembered for the session so bulk scanning doesn't ask
 	// every time. cameraChosen distinguishes "no camera picked yet" from a
@@ -391,7 +409,9 @@ func editDistance(a, b string) int {
 // recognized line in order until one matches. Only the first line is a real
 // guess at the title — the rest are the fallback for when that guess is wrong,
 // which is what a skewed or misrotated capture produces.
-func (m model) namedFuzzyCmd(lines []string) tea.Cmd {
+// set and number are the collector info read off the same capture; they take no
+// part in resolving the name and are simply carried through to the printing step.
+func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
 	return func() tea.Msg {
 		var firstErr error
 		for i, line := range lines {
@@ -409,7 +429,7 @@ func (m model) namedFuzzyCmd(lines []string) tea.Cmd {
 				continue
 			}
 			if card != nil && plausibleMatch(line, card.Name) {
-				return fuzzyMsg{canonical: card.Name, ocr: line}
+				return fuzzyMsg{canonical: card.Name, ocr: line, set: set, number: number}
 			}
 		}
 		// Report the best-guess line: it's what gets pre-filled for editing.
@@ -417,7 +437,7 @@ func (m model) namedFuzzyCmd(lines []string) tea.Cmd {
 		if len(lines) > 0 {
 			top = lines[0]
 		}
-		return fuzzyMsg{ocr: top, err: firstErr}
+		return fuzzyMsg{ocr: top, set: set, number: number, err: firstErr}
 	}
 }
 
@@ -615,13 +635,61 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 		m.chosen = &card
 		return m.advanceAfterPrint()
 	}
-	items := make([]list.Item, len(msg.cards))
-	for i, c := range msg.cards {
-		items[i] = printItem{card: c}
+
+	// A collector number read off the card promotes its printing to the top and
+	// marks it, but never selects it outright: a misread digit has to be visible
+	// before it is committed. Heavily reprinted cards make this worth doing —
+	// Sol Ring has well over a hundred printings.
+	cards, matched := rankByScan(msg.cards, m.scannedSet, m.scannedNumber)
+	m.prints = cards
+
+	items := make([]list.Item, len(cards))
+	for i, c := range cards {
+		items[i] = printItem{card: c, scanned: matched && i == 0}
 	}
 	m.setListItems("Select a printing", items)
+	if m.scannedNumber != "" && !matched {
+		// Either the digits were misread or the name match is wrong. Saying so
+		// beats silently showing an unranked list as though nothing was scanned.
+		m.status = fmt.Sprintf("card #%s isn't among these printings — pick manually", m.scannedNumber)
+		m.statusErr = true
+	}
 	m.state = statePrintPick
 	return m, nil
+}
+
+// rankByScan moves the printing matching a scanned collector number to the front,
+// leaving every other printing in Scryfall's order (newest first). A set code
+// makes the match exact; without one, the number alone is enough as long as it
+// picks out a single printing.
+//
+// It reports whether anything matched, so the caller can both mark the row and
+// tell the user when a scanned number found nothing.
+func rankByScan(cards []scryfall.Card, set, number string) ([]scryfall.Card, bool) {
+	if number == "" || len(cards) == 0 {
+		return cards, false
+	}
+	best := -1
+	for i, c := range cards {
+		if !strings.EqualFold(c.CollectorNumber, number) {
+			continue
+		}
+		if set != "" && strings.EqualFold(c.Set, set) {
+			best = i // exact set+number: stop looking
+			break
+		}
+		if best < 0 {
+			best = i // number-only match: keep, but a set match would beat it
+		}
+	}
+	if best < 0 {
+		return cards, false
+	}
+	ranked := make([]scryfall.Card, 0, len(cards))
+	ranked = append(ranked, cards[best])
+	ranked = append(ranked, cards[:best]...)
+	ranked = append(ranked, cards[best+1:]...)
+	return ranked, true
 }
 
 func (m model) onNames(msg namesMsg) (tea.Model, tea.Cmd) {
@@ -743,7 +811,8 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 			return m, again
 		}
 		m.state = stateLoading
-		return m, tea.Batch(m.spinner.Tick, m.namedFuzzyCmd(lines), again)
+		return m, tea.Batch(m.spinner.Tick,
+			m.namedFuzzyCmd(lines, msg.ev.SetCode, msg.ev.CollectorNumber), again)
 
 	case scan.EventError:
 		// The window is still up, so stay on the capture step and let them retry.
@@ -780,6 +849,8 @@ func (m model) onFuzzy(msg fuzzyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.scanned = msg.canonical
 	m.scannedOCR = msg.ocr
+	m.scannedSet = msg.set
+	m.scannedNumber = msg.number
 	m.state = stateLoading
 	return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.canonical))
 }
@@ -793,6 +864,8 @@ func (m model) scanMissToName(ocr, msg string) (tea.Model, tea.Cmd) {
 	m.qtyErr = ""
 	m.scanned = ""
 	m.scannedOCR = ""
+	m.scannedSet = ""
+	m.scannedNumber = ""
 	m.nameInput.SetValue(ocr)
 	m.nameInput.CursorEnd()
 	m.nameInput.Focus()
@@ -860,6 +933,8 @@ func (m model) resetForNext() (tea.Model, tea.Cmd) {
 	m.qtyErr = ""
 	m.scanned = ""
 	m.scannedOCR = ""
+	m.scannedSet = ""
+	m.scannedNumber = ""
 	m.nameInput.SetValue("")
 	// With the camera still open, go back to framing the next card rather than to
 	// the prompt — that's the whole point of holding the window open.

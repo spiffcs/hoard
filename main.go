@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/cphillips918/hoard/internal/decksource"
+	"github.com/cphillips918/hoard/internal/mtgjson"
 	"github.com/cphillips918/hoard/internal/scan"
 	"github.com/cphillips918/hoard/internal/scryfall"
 	"github.com/cphillips918/hoard/internal/store"
@@ -35,13 +37,15 @@ Collection commands:
   add                                              Add cards interactively by name
   list                                             List loose cards by value, with total
   update-prices                                    Refresh prices (Scryfall updates daily)
+  unpriced                                         Cards counting as $0.00, and why
+  repair-finishes                                  Fix cards stored as a finish they lack
   summary                                          Value of collection + each deck
 
 Deck commands:
   deck add <archidekt-url>                         Import/refresh a deck from a link
   deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
   deck list                                        List decks by value, with card counts
-  deck show <name>                                 Show a deck's cards by board
+  deck show <name>                                 Show a deck's cards by value
   deck remove <name>                               Delete a deck
 
 A deck <name> can be any part of its name, as long as it matches one deck.
@@ -107,6 +111,10 @@ func run(args []string) error {
 		return cmdList(st)
 	case "update-prices":
 		return cmdUpdatePrices(ctx, st)
+	case "unpriced":
+		return cmdUnpriced(st)
+	case "repair-finishes":
+		return cmdRepairFinishes(ctx, st)
 	case "summary":
 		return cmdSummary(st)
 	case "deck":
@@ -353,6 +361,20 @@ type scanPrefs struct {
 // Overridden the moment the user adjusts it with ←/→ in the capture window.
 const defaultScanRotation = 90
 
+// priceCacheDir is where downloaded MTGJSON bundles are kept.
+//
+// Unlike the database and scan prefs, these belong in the cache directory
+// rather than beside the hoard: they are re-downloadable, so losing them to
+// eviction costs nothing but a fetch. An empty string disables caching, which
+// only makes the downloads repeat.
+func priceCacheDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "hoard", "mtgjson")
+}
+
 // scanPrefsPath is where scan preferences live — beside the database, so they
 // follow the same per-user location.
 func scanPrefsPath() (string, error) {
@@ -453,21 +475,175 @@ func cmdList(st *store.Store) error {
 	}
 
 	var total float64
+	sources := map[string]bool{}
 	for _, c := range collectionByValue(cards) {
 		value := collectionLineValue(c)
 		total += value
+		if c.AltSource != "" {
+			sources[c.AltSource] = true
+		}
 		t.Add(
 			ui.C(c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber),
 			ui.C(ui.Count(c.QtyNormal)), ui.C(ui.Count(c.QtyFoil)),
 			ui.C(ui.MoneyPtr(c.PriceUSD)), ui.C(ui.MoneyPtr(c.PriceUSDFoil)),
-			ui.C(ui.Money(value)))
+			ui.C(estimated(ui.Money(value), c.AltSource)))
 	}
 	t.AddSpacer()
 	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
 		ui.C(ui.Money(total)))
 
-	_, err = t.WriteTo(os.Stdout)
-	return err
+	if _, err := t.WriteTo(os.Stdout); err != nil {
+		return err
+	}
+	printEstimateNote(env, sources)
+	return nil
+}
+
+// estimated marks a value Scryfall could not price, so an estimate from another
+// vendor never passes for a Scryfall figure.
+func estimated(s, altSource string) string {
+	if altSource == "" {
+		return s
+	}
+	return s + "*"
+}
+
+// printEstimateNote explains the asterisks, naming the vendors involved. Silent
+// when every price came from Scryfall.
+func printEstimateNote(env ui.Env, sources map[string]bool) {
+	if len(sources) == 0 {
+		return
+	}
+	fmt.Println(env.Dim()(fmt.Sprintf(
+		"* estimated: Scryfall has no price for this printing; from %s via MTGJSON",
+		strings.Join(slices.Sorted(maps.Keys(sources)), ", "))))
+}
+
+// cmdRepairFinishes corrects entries recorded in a finish that does not exist.
+//
+// A decklist with no foil marker imports as "normal", but plenty of printings
+// are foil-only: precon commanders and Duel Decks reprints among them. Such an
+// entry asks for a price that cannot exist, so the card sits at $0.00 forever
+// and no amount of price fetching will help. Scryfall knows which finishes a
+// printing comes in; hoard fetches that on every price refresh and has been
+// discarding it.
+func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
+	ids, err := st.AllCatalogIDs()
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		fmt.Println("Catalog is empty; nothing to repair.")
+		return nil
+	}
+
+	idents := make([]scryfall.Identifier, len(ids))
+	for i, id := range ids {
+		idents[i] = scryfall.Identifier{ID: id}
+	}
+	found, _, err := scryfall.FetchCollection(ctx, idents)
+	if err != nil {
+		return err
+	}
+	available := make(map[string][]string, len(found))
+	for _, c := range found {
+		available[c.ID] = c.Finishes
+	}
+
+	fixed, ambiguous, err := st.RepairFinishes(available)
+	if err != nil {
+		return err
+	}
+
+	env := ui.Detect(os.Stdout)
+	if len(fixed) == 0 && len(ambiguous) == 0 {
+		fmt.Println(env.Dim()("Every card is recorded in a finish it actually comes in."))
+		return nil
+	}
+
+	if len(fixed) > 0 {
+		t := ui.Table{
+			Env:    env,
+			Header: true,
+			Cols: []ui.Col{
+				{Title: "NAME", Align: ui.Left, Flex: true, Min: 16},
+				{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+				{Title: "QTY", Align: ui.Right},
+				{Title: "WAS", Align: ui.Left, Style: env.Dim()},
+				{Title: "NOW", Align: ui.Left},
+				{Title: "IN", Align: ui.Left, Flex: true, Min: 10, Max: 30,
+					Priority: 5, Style: env.Dim()},
+			},
+		}
+		for _, f := range fixed {
+			t.Add(ui.C(f.Name), ui.C(f.SetCode+"/"+f.CollectorNumber),
+				ui.C(ui.Count(f.Quantity)), ui.C(f.From), ui.C(f.To), ui.C(f.Container))
+		}
+		if _, err := t.WriteTo(os.Stdout); err != nil {
+			return err
+		}
+		fmt.Println(env.Dim()(fmt.Sprintf(
+			"\nCorrected %s entries. Run hoard update-prices to value them.", ui.Count(len(fixed)))))
+	}
+	for _, a := range ambiguous {
+		fmt.Println(env.Dim()(fmt.Sprintf(
+			"  left alone: %s (%s/%s) is recorded as %s but comes in %s",
+			a.Name, a.SetCode, a.CollectorNumber, a.From, a.To)))
+	}
+	return nil
+}
+
+// cmdUnpriced lists what is contributing nothing to your totals.
+//
+// A card with no price is valued at zero, which is indistinguishable on a table
+// from a card genuinely worth nothing. This is how you tell the difference, and
+// how you find out which deck's total is understated.
+func cmdUnpriced(st *store.Store) error {
+	rows, err := st.Unpriced()
+	if err != nil {
+		return err
+	}
+	env := ui.Detect(os.Stdout)
+	if len(rows) == 0 {
+		fmt.Println(env.Dim()("Every card you own has a price."))
+		return nil
+	}
+
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 20},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "FINISH", Align: ui.Left, Style: env.Dim()},
+			{Title: "COPIES", Align: ui.Right},
+			// Capped and dropped first: deck names run long, and without a
+			// ceiling this column would squeeze the card name to its minimum.
+			{Title: "HELD IN", Align: ui.Left, Flex: true, Min: 10, Max: 34,
+				Priority: 5, Style: env.Dim()},
+		},
+	}
+	var copies int
+	for _, r := range rows {
+		copies += r.Copies
+		finish := r.Finish
+		if finish == "normal" {
+			finish = "-"
+		}
+		t.Add(ui.C(r.Name), ui.C(r.SetCode+"/"+r.CollectorNumber), ui.C(finish),
+			ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
+	}
+	if _, err := t.WriteTo(os.Stdout); err != nil {
+		return err
+	}
+	// Two different cures, and the less obvious one is usually the answer: a
+	// card stored in a finish its printing does not come in can never be
+	// priced, however many times you refresh.
+	fmt.Println(env.Dim()(fmt.Sprintf(
+		"\n%s copies across %s cards count as $0.00.\n"+
+			"Try: hoard repair-finishes, then hoard update-prices",
+		ui.Count(copies), ui.Count(len(rows)))))
+	return nil
 }
 
 func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
@@ -494,6 +670,106 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
 	fmt.Printf("Updated prices for %d of %d cards.\n", len(found), len(ids))
 	if len(notFound) > 0 {
 		fmt.Printf("  %d cards could not be re-fetched from Scryfall.\n", len(notFound))
+	}
+	// Scryfall's results are already committed above, so a failure in the
+	// fallback pass costs nothing that was just fetched.
+	return fillPriceGaps(ctx, st)
+}
+
+// fillPriceGaps looks up prices Scryfall does not have.
+//
+// Scryfall's USD figures come from TCGplayer alone, so a printing TCGplayer has
+// no record of is simply unpriced there. The Modern Horizons 3 ripple foils are
+// the case that prompted this: no usd_foil at all, which left a whole deck
+// valued at a fraction of its worth. MTGJSON aggregates other vendors.
+//
+// Nothing is downloaded unless there is a gap to fill.
+func fillPriceGaps(ctx context.Context, st *store.Store) error {
+	gaps, err := st.UnpricedByOwnedFinish()
+	if err != nil {
+		return err
+	}
+	if len(gaps) == 0 {
+		return nil
+	}
+	mtgjson.CacheDir = priceCacheDir()
+	fmt.Printf("  %d cards have no price for a finish you own; checking MTGJSON...\n", len(gaps))
+
+	// Scryfall ID to MTGJSON UUID, reusing anything already resolved so a set
+	// file is fetched at most once ever.
+	uuids, err := st.KnownMTGJSONUUIDs()
+	if err != nil {
+		return err
+	}
+	bySet := map[string][]store.PriceGap{}
+	for _, g := range gaps {
+		if _, ok := uuids[g.ScryfallID]; !ok {
+			bySet[g.SetCode] = append(bySet[g.SetCode], g)
+		}
+	}
+	for setCode := range bySet {
+		ids, err := mtgjson.SetIdentifiers(ctx, setCode)
+		if err != nil {
+			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
+			// rather than abandon every other card.
+			fmt.Fprintf(os.Stderr, "  skipping set %s: %v\n", setCode, err)
+			continue
+		}
+		for _, g := range bySet[setCode] {
+			if uuid, ok := ids[g.ScryfallID]; ok {
+				uuids[g.ScryfallID] = uuid
+			}
+		}
+	}
+
+	want := make(map[string]bool, len(gaps))
+	byUUID := make(map[string]string, len(gaps))
+	for _, g := range gaps {
+		if uuid, ok := uuids[g.ScryfallID]; ok {
+			want[uuid] = true
+			byUUID[uuid] = g.ScryfallID
+		}
+	}
+	prices, err := mtgjson.TodayPrices(ctx, want)
+	if err != nil {
+		return fmt.Errorf("mtgjson prices: %w", err)
+	}
+
+	alts := make([]store.AltPrice, 0, len(prices))
+	sources := map[string]bool{}
+	for uuid, p := range prices {
+		alts = append(alts, store.AltPrice{
+			ScryfallID:    byUUID[uuid],
+			MTGJSONUUID:   uuid,
+			PriceUSD:      p.USD,
+			PriceUSDFoil:  p.Foil,
+			SourceUSD:     p.USDSource,
+			SourceUSDFoil: p.FoilSource,
+		})
+		sources[p.USDSource] = true
+		sources[p.FoilSource] = true
+	}
+	delete(sources, "") // a finish this card had no vendor for
+	if err := st.UpsertAltPrices(alts); err != nil {
+		return err
+	}
+
+	// Count gaps actually closed, not rows written. MTGJSON often prices a card
+	// only in the finish you don't own — a foil price for a card you hold in
+	// non-foil — which stores a perfectly good row that closes nothing. Counting
+	// writes would report those as fills and quietly overstate the result.
+	remaining, err := st.UnpricedByOwnedFinish()
+	if err != nil {
+		return err
+	}
+	filled := len(gaps) - len(remaining)
+	if filled <= 0 {
+		fmt.Println("  no other source could price them either.")
+		return nil
+	}
+	fmt.Printf("  filled %d from %s.\n", filled, strings.Join(slices.Sorted(maps.Keys(sources)), ", "))
+	if len(remaining) > 0 {
+		fmt.Printf("  %d still unpriced anywhere.\n", len(remaining))
 	}
 	return nil
 }
@@ -732,6 +1008,24 @@ func cmdDeckList(st *store.Store) error {
 	return err
 }
 
+// entriesByValue returns a copy of a deck's entries ordered most-valuable-first,
+// matching `list`, `deck list` and `summary`.
+//
+// The store returns them grouped by board, which this flattens: the BOARD column
+// still says which board each card belongs to, and "what is expensive in this
+// deck" is the question `deck show` is usually asked. Ties fall back to name so
+// an unpriced deck still lists predictably.
+func entriesByValue(entries []store.EntryView) []store.EntryView {
+	sorted := slices.Clone(entries)
+	slices.SortFunc(sorted, func(a, b store.EntryView) int {
+		if c := cmp.Compare(b.Value(), a.Value()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Card.Name, b.Card.Name)
+	})
+	return sorted
+}
+
 func cmdDeckShow(st *store.Store, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("deck show requires a deck id or name")
@@ -764,24 +1058,36 @@ func cmdDeckShow(st *store.Store, args []string) error {
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
+			// PRICE and VALUE are the same number on a singleton, which is most
+			// deck rows, but not on the ones held in multiples: a 29x basic land
+			// is worth 29 times what its price column says, and VALUE is what
+			// TOTAL sums. PRICE is the one that drops first when space is tight.
 			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
 			{Title: "VALUE", Align: ui.Right},
+			// Naming the source outright is clearer than the asterisk used in
+			// `list`, since there is room for a column here. It is the first
+			// thing dropped, being the least load-bearing.
+			{Title: "SOURCE", Align: ui.Left, Priority: 7, Style: env.Dim()},
 		},
 	}
 	var total float64
-	for _, e := range entries {
+	for _, e := range entriesByValue(entries) {
 		total += e.Value()
 		finish := e.Finish
 		if finish == "normal" {
 			finish = "-"
 		}
+		source := e.Card.AltSource
+		if source == "" && e.Price() != nil {
+			source = "scryfall"
+		}
 		t.Add(ui.C(e.Board), ui.C(ui.Count(e.Quantity)), ui.C(e.Card.Name),
 			ui.C(e.Card.SetCode+"/"+e.Card.CollectorNumber), ui.C(finish),
-			ui.C(ui.MoneyPtr(e.Price())), ui.C(ui.Money(e.Value())))
+			ui.C(ui.MoneyPtr(e.Price())), ui.C(ui.Money(e.Value())), ui.C(source))
 	}
 	t.AddSpacer()
-	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
-		ui.C(ui.Money(total)))
+	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
+		ui.C(""), ui.C(ui.Money(total)), ui.C(""))
 
 	_, err = t.WriteTo(os.Stdout)
 	return err

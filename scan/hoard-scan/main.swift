@@ -48,6 +48,14 @@ struct Event: Encodable {
     var rotation: Int = 0
     var message: String = ""
     var device: String = ""
+    /// Read off the card's bottom border when present. Cards printed before
+    /// Exodus (1998) carry no collector number at all, and the set code only
+    /// became reliably printed with the M15 frame, so both are routinely empty
+    /// and an empty read is ordinary rather than a failure.
+    var collectorNumber: String = ""
+    var setCode: String = ""
+    /// Raw text of the bottom band, for tuning the read via --image.
+    var bottomLines: [String] = []
 }
 
 /// Device is one camera the helper can capture from, as listed by --list-devices.
@@ -87,24 +95,119 @@ struct Line {
     let confidence: Float
 }
 
-/// recognizeName runs Vision text recognition on a CGImage and returns the best
-/// guess at the card's title plus a few alternate lines.
+/// CardRead is everything one capture yielded: the title guess and its alternates,
+/// plus whatever the bottom border gave up.
+struct CardRead {
+    var name: String = ""
+    var candidates: [String] = []
+    var collectorNumber: String = ""
+    var setCode: String = ""
+    var bottomLines: [String] = []
+}
+
+/// bottomBandHeight is the fraction of the frame searched for collector info.
+///
+/// It is generous on purpose. The frame is a camera capture, not a cropped card,
+/// so the card's bottom border sits at no fixed offset — and nothing here detects
+/// card edges. A wide band plus pattern matching tolerates loose framing better
+/// than a tight crop would.
+let bottomBandHeight: CGFloat = 0.30
+
+// Collector info as printed. "123/264" is the common form; the solo form covers
+// cards that print the number without a set total, optionally with a trailing
+// rarity letter. The set/language pair is the M15-frame second line, e.g. "MH3 • EN".
+let collectorPairRE = try! NSRegularExpression(pattern: #"(\d{1,5})\s*/\s*\d{1,5}"#)
+let collectorSoloRE = try! NSRegularExpression(pattern: #"^#?\s*(\d{1,5})\s*[A-Z]?$"#)
+let setLangRE = try! NSRegularExpression(
+    pattern: #"\b([0-9A-Z]{3,5})\s*[•·∙*★]\s*[A-Z]{2}\b"#)
+
+/// group returns a capture group of the first match, if any.
+func group(_ re: NSRegularExpression, _ s: String, _ n: Int = 1) -> String? {
+    let full = NSRange(s.startIndex..., in: s)
+    guard let m = re.firstMatch(in: s, range: full), m.numberOfRanges > n,
+          let r = Range(m.range(at: n), in: s) else { return nil }
+    return String(s[r])
+}
+
+/// normalizeNumber drops the zero padding cards are printed with ("0123/0281"),
+/// since Scryfall stores collector numbers unpadded.
+func normalizeNumber(_ s: String) -> String {
+    let trimmed = s.drop(while: { $0 == "0" })
+    return trimmed.isEmpty ? "0" : String(trimmed)
+}
+
+/// parseCollectorInfo pulls a collector number and set code out of the bottom
+/// band's text, matching on shape rather than position. That covers both places
+/// the number appears: the bottom-left block on M15-frame cards (2014 onward) and
+/// the bottom centre on older ones.
+func parseCollectorInfo(_ lines: [String]) -> (number: String, set: String) {
+    var number = "", set = ""
+    for line in lines {
+        if number.isEmpty, let n = group(collectorPairRE, line) {
+            number = normalizeNumber(n)
+        }
+        if set.isEmpty, let s = group(setLangRE, line) {
+            set = s
+        }
+    }
+    // Only fall back to a bare number once the "x/y" form has been ruled out —
+    // a lone number is much easier to confuse with power/toughness or a year.
+    if number.isEmpty {
+        for line in lines {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if let n = group(collectorSoloRE, t) {
+                number = normalizeNumber(n)
+                break
+            }
+        }
+    }
+    return (number, set)
+}
+
+/// readCard runs Vision text recognition on a CGImage and returns the best guess
+/// at the card's title, a few alternate lines, and the collector info printed
+/// along the bottom border.
 ///
 /// The image must already be upright: callers bake any EXIF orientation into the
 /// pixels (see uprighted) before applying their own rotation. Passing an
 /// orientation here as well would apply two rotations, which lands the title at
 /// the bottom and makes the ranking below pick rules text instead.
-func recognizeName(_ cg: CGImage) -> (name: String, candidates: [String]) {
+func readCard(_ cg: CGImage) -> CardRead {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
 
+    // A second pass over the bottom border only. Language correction is off here
+    // and that is not incidental: with it on, Vision "corrects" "123/264" and set
+    // codes like "MH3" into dictionary words, which is the quietest possible way
+    // for this to stop working.
+    let bottom = VNRecognizeTextRequest()
+    bottom.recognitionLevel = .accurate
+    bottom.usesLanguageCorrection = false
+    bottom.recognitionLanguages = ["en-US"]
+    // Normalized, origin bottom-left. The frame is already upright and
+    // rotation-normalized by this point, so the band is stable across orientations.
+    bottom.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: bottomBandHeight)
+
     let handler = VNImageRequestHandler(cgImage: cg, options: [:])
     do {
-        try handler.perform([request])
+        try handler.perform([request, bottom])
     } catch {
-        return ("", [])
+        return CardRead()
     }
+
+    var read = CardRead()
+
+    // Bottom band first: it stands alone, so a title failure doesn't cost us the
+    // collector number.
+    var bottomLines: [String] = []
+    for obs in bottom.results ?? [] {
+        guard let cand = obs.topCandidates(1).first else { continue }
+        let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { bottomLines.append(t) }
+    }
+    read.bottomLines = bottomLines
+    (read.collectorNumber, read.setCode) = parseCollectorInfo(bottomLines)
 
     var lines: [Line] = []
     for obs in request.results ?? [] {
@@ -115,7 +218,7 @@ func recognizeName(_ cg: CGImage) -> (name: String, candidates: [String]) {
                           width: obs.boundingBox.width, confidence: cand.confidence))
     }
     if lines.isEmpty {
-        return ("", [])
+        return read
     }
 
     // The card name is the top-most reasonably-wide, confident line. Rank the
@@ -140,7 +243,10 @@ func recognizeName(_ cg: CGImage) -> (name: String, candidates: [String]) {
     // which happens whenever the capture reaches Vision at an odd angle.
     var candidates = Array(names.prefix(8))
     if candidates.first != primary { candidates.insert(primary, at: 0) }
-    return (primary, candidates)
+
+    read.name = primary
+    read.candidates = candidates
+    return read
 }
 
 /// decodePhoto turns a captured photo into a CGImage plus the orientation Vision
@@ -491,11 +597,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         saveDebugImage(cg, "capture-raw.png")
         let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: effectiveRotation)
         saveDebugImage(forOCR, "capture-ocr.png")
-        let read = recognizeName(forOCR)
+        let read = readCard(forOCR)
         // Emit and stay live: the window persists so the next card can be framed
         // and captured without relaunching the camera.
         emit(Event(event: "scan", name: read.name, candidates: read.candidates,
-                   rotation: manualRotation))
+                   rotation: manualRotation,
+                   collectorNumber: read.collectorNumber, setCode: read.setCode,
+                   bottomLines: read.bottomLines))
     }
 }
 
@@ -623,10 +731,15 @@ if let i = args.firstIndex(of: "--image") {
         fail("could not read image: \(args[i + 1])")
     }
     // Byte-for-byte the live pipeline, so this mode reproduces real scans.
-    let read = recognizeName(
-        rotatedImage(uprighted(cg, orientation), clockwiseDegrees: requestedRotation))
+    let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: requestedRotation)
+    // Write the same debug bitmap the live path does, so HOARD_SCAN_DEBUG_DIR can
+    // be used to tune the bottom band against a still photo.
+    saveDebugImage(forOCR, "capture-ocr.png")
+    let read = readCard(forOCR)
     emit(Event(event: "scan", name: read.name, candidates: read.candidates,
-               rotation: requestedRotation))
+               rotation: requestedRotation,
+               collectorNumber: read.collectorNumber, setCode: read.setCode,
+               bottomLines: read.bottomLines))
     exit(read.name.isEmpty ? 3 : 0)
 }
 

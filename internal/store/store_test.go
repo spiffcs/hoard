@@ -46,6 +46,243 @@ func solRing() scryfall.Card {
 	}
 }
 
+// unpricedFoil is a card Scryfall can price in non-foil but not in foil, like
+// the Modern Horizons 3 ripple foils that motivated the fallback.
+func unpricedFoil() scryfall.Card {
+	return scryfall.Card{
+		ID:              "ripple-id",
+		Set:             "m3c",
+		CollectorNumber: "218",
+		Name:            "Acidic Slime",
+		PriceUSD:        f(0.34),
+		PriceUSDFoil:    nil,
+		ScryfallURL:     "https://scryfall.com/card/m3c/218",
+	}
+}
+
+func TestAltPriceFallback(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+
+	// Before the fallback: owned in foil, no foil price, so worth nothing.
+	if v, _ := s.CollectionValue(); v != 0 {
+		t.Fatalf("setup: value = %v, want 0 before any fallback", v)
+	}
+	gaps, err := s.UnpricedByOwnedFinish()
+	if err != nil {
+		t.Fatalf("UnpricedByOwnedFinish: %v", err)
+	}
+	if len(gaps) != 1 || gaps[0].SetCode != "m3c" {
+		t.Fatalf("gaps = %+v, want the one foil-unpriced card", gaps)
+	}
+
+	if err := s.UpsertAltPrices([]AltPrice{{
+		ScryfallID: "ripple-id", MTGJSONUUID: "uuid-1",
+		PriceUSD: f(0.34), PriceUSDFoil: f(0.49),
+		SourceUSD: "tcgplayer", SourceUSDFoil: "cardkingdom",
+	}}); err != nil {
+		t.Fatalf("UpsertAltPrices: %v", err)
+	}
+
+	// 2 x $0.49 foil, from the fallback.
+	if v, _ := s.CollectionValue(); v != 0.98 {
+		t.Errorf("CollectionValue = %v, want 0.98 from the fallback", v)
+	}
+	totals, _ := s.CollectionTotals()
+	if totals.Value != 0.98 {
+		t.Errorf("CollectionTotals = %v, want 0.98", totals.Value)
+	}
+	// The row view must carry the effective price and name its source, so the
+	// CLI can mark it as an estimate.
+	cards, _ := s.ListCollection()
+	if len(cards) != 1 {
+		t.Fatalf("want 1 collection card, got %d", len(cards))
+	}
+	if cards[0].PriceUSDFoil == nil || *cards[0].PriceUSDFoil != 0.49 {
+		t.Errorf("PriceUSDFoil = %v, want the fallback 0.49", cards[0].PriceUSDFoil)
+	}
+	if cards[0].AltSource != "cardkingdom" {
+		t.Errorf("AltSource = %q, want the foil vendor", cards[0].AltSource)
+	}
+
+	// Once filled, it is no longer a gap, so a second run downloads nothing.
+	if gaps, _ := s.UnpricedByOwnedFinish(); len(gaps) != 0 {
+		t.Errorf("gaps after fill = %+v, want none", gaps)
+	}
+
+	// A Scryfall price must always win over the fallback.
+	priced := unpricedFoil()
+	priced.PriceUSDFoil = f(9.00)
+	if err := s.UpsertCatalogCards([]scryfall.Card{priced}); err != nil {
+		t.Fatalf("UpsertCatalogCards: %v", err)
+	}
+	if v, _ := s.CollectionValue(); v != 18.0 {
+		t.Errorf("CollectionValue = %v, want 18 from Scryfall, not the fallback", v)
+	}
+	cards, _ = s.ListCollection()
+	if cards[0].AltSource != "" {
+		t.Errorf("AltSource = %q, want empty once Scryfall prices it", cards[0].AltSource)
+	}
+}
+
+func TestUnpricedListing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	// A fully priced card must not appear.
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	rows, err := s.Unpriced()
+	if err != nil {
+		t.Fatalf("Unpriced: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want only the foil-unpriced card: %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.Name != "Acidic Slime" || r.Finish != "foil" || r.Copies != 2 {
+		t.Errorf("row = %+v, want Acidic Slime foil x2", r)
+	}
+	if r.SetCode != "m3c" || r.CollectorNumber != "218" {
+		t.Errorf("printing = %s/%s, want m3c/218", r.SetCode, r.CollectorNumber)
+	}
+	if r.HeldIn == "" {
+		t.Error("HeldIn should name the container holding it")
+	}
+
+	// The listing and the fill must agree on what counts as unpriced, so a
+	// fallback price removes the card from both.
+	if err := s.UpsertAltPrices([]AltPrice{{
+		ScryfallID: "ripple-id", MTGJSONUUID: "u", PriceUSDFoil: f(0.49), SourceUSDFoil: "cardkingdom",
+	}}); err != nil {
+		t.Fatalf("UpsertAltPrices: %v", err)
+	}
+	rows, _ = s.Unpriced()
+	gaps, _ := s.UnpricedByOwnedFinish()
+	if len(rows) != 0 || len(gaps) != 0 {
+		t.Errorf("after a fallback price: %d listed, %d gaps; want none of either",
+			len(rows), len(gaps))
+	}
+}
+
+func TestRepairFinishes(t *testing.T) {
+	s := newTestStore(t)
+	// A foil-only printing imported as "normal", which is the bug: a decklist
+	// with no *F* marker defaults to normal even when no such card exists.
+	if err := s.AddCardFinish(unpricedFoil(), "normal", 3); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	// A correctly recorded card, to confirm it is left alone.
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	available := map[string][]string{
+		"ripple-id": {"foil"},            // exists only in foil
+		"ulamog-id": {"nonfoil", "foil"}, // both, and recorded as normal: fine
+	}
+	fixed, ambiguous, err := s.RepairFinishes(available)
+	if err != nil {
+		t.Fatalf("RepairFinishes: %v", err)
+	}
+	if len(ambiguous) != 0 {
+		t.Errorf("ambiguous = %+v, want none", ambiguous)
+	}
+	if len(fixed) != 1 {
+		t.Fatalf("fixed = %+v, want just the foil-only card", fixed)
+	}
+	if fixed[0].From != "normal" || fixed[0].To != "foil" || fixed[0].Quantity != 3 {
+		t.Errorf("fix = %+v, want normal->foil x3", fixed[0])
+	}
+
+	cards, _ := s.ListCollection()
+	var slime CollectionCard
+	for _, c := range cards {
+		if c.ScryfallID == "ripple-id" {
+			slime = c
+		}
+	}
+	if slime.QtyNormal != 0 || slime.QtyFoil != 3 {
+		t.Errorf("after repair: %d normal / %d foil, want 0/3", slime.QtyNormal, slime.QtyFoil)
+	}
+	// Idempotent: a second pass has nothing left to do.
+	fixed, _, err = s.RepairFinishes(available)
+	if err != nil || len(fixed) != 0 {
+		t.Errorf("second pass fixed %+v (err %v), want nothing", fixed, err)
+	}
+}
+
+// Correcting a finish can collide with an entry that already uses it. The
+// primary key includes finish, so the quantities have to merge rather than one
+// row overwriting or rejecting the other.
+func TestRepairFinishesMergesWithExistingEntry(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "normal", 2); err != nil {
+		t.Fatalf("AddCardFinish normal: %v", err)
+	}
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish foil: %v", err)
+	}
+
+	fixed, _, err := s.RepairFinishes(map[string][]string{"ripple-id": {"foil"}})
+	if err != nil {
+		t.Fatalf("RepairFinishes: %v", err)
+	}
+	if len(fixed) != 1 {
+		t.Fatalf("fixed = %+v, want the normal entry moved", fixed)
+	}
+	cards, _ := s.ListCollection()
+	if len(cards) != 1 {
+		t.Fatalf("want 1 card, got %d", len(cards))
+	}
+	// 2 mistakenly-normal plus the 1 already foil.
+	if cards[0].QtyNormal != 0 || cards[0].QtyFoil != 3 {
+		t.Errorf("merged to %d normal / %d foil, want 0/3",
+			cards[0].QtyNormal, cards[0].QtyFoil)
+	}
+}
+
+// When a printing comes in several finishes and none matches, there is no single
+// right answer, so the entry is reported and left untouched rather than guessed.
+func TestRepairFinishesLeavesAmbiguousAlone(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "etched", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	fixed, ambiguous, err := s.RepairFinishes(map[string][]string{
+		"ripple-id": {"nonfoil", "foil"},
+	})
+	if err != nil {
+		t.Fatalf("RepairFinishes: %v", err)
+	}
+	if len(fixed) != 0 {
+		t.Errorf("fixed = %+v, want nothing changed", fixed)
+	}
+	if len(ambiguous) != 1 || ambiguous[0].From != "etched" {
+		t.Errorf("ambiguous = %+v, want the etched entry reported", ambiguous)
+	}
+}
+
+// A card owned only in non-foil must not be reported as needing a foil price.
+func TestUnpricedIgnoresUnownedFinish(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "normal", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	gaps, err := s.UnpricedByOwnedFinish()
+	if err != nil {
+		t.Fatalf("UnpricedByOwnedFinish: %v", err)
+	}
+	if len(gaps) != 0 {
+		t.Errorf("gaps = %+v, want none: the foil price is not needed", gaps)
+	}
+}
+
 func TestCollectionAddAndIncrement(t *testing.T) {
 	s := newTestStore(t)
 
@@ -353,6 +590,11 @@ func TestLegacyMigration(t *testing.T) {
             name TEXT NOT NULL, qty_normal INTEGER NOT NULL DEFAULT 0, qty_foil INTEGER NOT NULL DEFAULT 0,
             price_usd REAL, price_usd_foil REAL, scryfall_url TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 		`INSERT INTO cards VALUES ('ulamog-id','uma','7','Ulamog, the Infinite Gyre',3,1,10.0,25.0,'http://x','2020-01-01T00:00:00Z')`,
+		// A genuinely legacy database predates versioning, so it reports 0.
+		// Without this the fixture would be stamped current while holding the
+		// old shape, which is a state that cannot occur in the wild.
+		`PRAGMA user_version = 0`,
+		`DROP TABLE card_prices_alt`,
 	} {
 		if _, err := legacy.db.Exec(stmt); err != nil {
 			t.Fatalf("seed legacy: %v", err)
