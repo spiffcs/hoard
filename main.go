@@ -1,4 +1,4 @@
-// Command mtg catalogs valuable Magic: The Gathering cards in a local SQLite
+// Command hoard catalogs valuable Magic: The Gathering cards in a local SQLite
 // database. Loose cards are added by their Scryfall page URL; whole decks are
 // imported from a deck-list link (or a pasted/exported text list). The tool
 // records how many of each card you own (across the collection and every deck)
@@ -14,16 +14,16 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/cphillips918/mtg_index/internal/decksource"
-	"github.com/cphillips918/mtg_index/internal/scryfall"
-	"github.com/cphillips918/mtg_index/internal/store"
-	"github.com/cphillips918/mtg_index/internal/tui"
+	"github.com/cphillips918/hoard/internal/decksource"
+	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/cphillips918/hoard/internal/store"
+	"github.com/cphillips918/hoard/internal/tui"
 )
 
-const usage = `mtg — catalog valuable MTG cards and decks in SQLite
+const usage = `hoard — catalog valuable MTG cards and decks in SQLite
 
 Usage:
-  mtg [--db PATH] <command> [args]
+  hoard [--db PATH] <command> [args]
 
 Collection commands:
   add <scryfall-url> [--foil] [--qty N]            Add a loose card by URL
@@ -41,7 +41,7 @@ Deck commands:
   deck show <id|name>                              Show a deck's cards by board
   deck remove <id|name>                            Delete a deck
 
-The database path defaults to ./mtg_index.db (override with --db or $MTG_INDEX_DB).
+The database path defaults to ./hoard.db (override with --db or $HOARD_DB).
 Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
 `
 
@@ -53,7 +53,7 @@ func main() {
 }
 
 func run(args []string) error {
-	fs := flag.NewFlagSet("mtg", flag.ContinueOnError)
+	fs := flag.NewFlagSet("hoard", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dbPath := fs.String("db", defaultDBPath(), "path to the SQLite database file")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -101,12 +101,12 @@ func run(args []string) error {
 	}
 }
 
-// defaultDBPath returns $MTG_INDEX_DB if set, else ./mtg_index.db.
+// defaultDBPath returns $HOARD_DB if set, else ./hoard.db.
 func defaultDBPath() string {
-	if p := os.Getenv("MTG_INDEX_DB"); p != "" {
+	if p := os.Getenv("HOARD_DB"); p != "" {
 		return p
 	}
-	return "mtg_index.db"
+	return "hoard.db"
 }
 
 // parsePositionals parses args, allowing flags and positional arguments to be
@@ -186,7 +186,7 @@ func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty i
 func addByName(ctx context.Context, st *store.Store, name string) error {
 	if !stdinIsTTY() {
 		return fmt.Errorf("adding by name needs an interactive terminal; " +
-			"pass a Scryfall URL instead (e.g. mtg add https://scryfall.com/card/uma/7/...)")
+			"pass a Scryfall URL instead (e.g. hoard add https://scryfall.com/card/uma/7/...)")
 	}
 	res, err := tui.Run(ctx, tui.NewScryfallSearcher(), name)
 	if err != nil {
@@ -224,7 +224,7 @@ func cmdList(st *store.Store) error {
 		return err
 	}
 	if len(cards) == 0 {
-		fmt.Println("Collection is empty. Add a card with: mtg add <scryfall-url>")
+		fmt.Println("Collection is empty. Add a card with: hoard add <scryfall-url>")
 		return nil
 	}
 
@@ -493,7 +493,7 @@ func cmdDeckList(st *store.Store) error {
 		return err
 	}
 	if len(decks) == 0 {
-		fmt.Println("No decks yet. Import one with: mtg deck add <archidekt-url>")
+		fmt.Println("No decks yet. Import one with: hoard deck add <archidekt-url>")
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)

@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/cphillips918/mtg_index/internal/scryfall"
+	"github.com/cphillips918/hoard/internal/scryfall"
 )
 
 // fakeSearcher returns canned results for the cascade tests.

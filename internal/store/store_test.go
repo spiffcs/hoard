@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cphillips918/mtg_index/internal/scryfall"
+	"github.com/cphillips918/hoard/internal/scryfall"
 )
 
 func f(v float64) *float64 { return &v }

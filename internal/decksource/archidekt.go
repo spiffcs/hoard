@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cphillips918/mtg_index/internal/scryfall"
+	"github.com/cphillips918/hoard/internal/scryfall"
 )
 
-const archidektUserAgent = "mtg-index/0.1"
+const archidektUserAgent = "hoard/0.1"
 
 // archidektProvider imports decks from archidekt.com via its public JSON API.
 type archidektProvider struct{}

@@ -1,4 +1,4 @@
-# mtg-index
+# hoard
 
 A small Go CLI that catalogs valuable Magic: The Gathering cards in a local
 SQLite database. Add loose cards by pasting a Scryfall page URL, and import whole
@@ -20,7 +20,7 @@ Storage is normalized and provider-agnostic (no deck-site is referenced structur
 ## Build
 
 ```sh
-go build -o mtg .
+go build -o hoard .
 ```
 
 Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
@@ -32,49 +32,49 @@ Pure Go — no cgo or C toolchain required (uses `modernc.org/sqlite`).
 # looks the card up on Scryfall and asks only the questions needed to pinpoint
 # one exact entry: which card (if the name is ambiguous), which printing,
 # which finish, and how many. Type to filter long printing lists.
-mtg add Ulamog, the Infinite Gyre
+hoard add Ulamog, the Infinite Gyre
 
 # Add two non-foil copies of Ulamog by URL (non-interactive)
-mtg add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --qty 2
+hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --qty 2
 
 # Add a foil copy of the same card
-mtg add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --foil
+hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --foil
 
 # Show the collection and its total value
-mtg list
+hoard list
 
 # Refresh market prices for every card
-mtg update-prices
+hoard update-prices
 
 # Set exact quantities (omit a flag to leave that count unchanged)
-mtg set-qty https://scryfall.com/card/uma/7/... --normal 3 --foil 1
+hoard set-qty https://scryfall.com/card/uma/7/... --normal 3 --foil 1
 
 # Remove a card
-mtg remove https://scryfall.com/card/uma/7/...
+hoard remove https://scryfall.com/card/uma/7/...
 
 # Grand total value: loose collection + each deck
-mtg summary
+hoard summary
 ```
 
 ### Decks
 
 ```sh
 # Import (or refresh) a deck from an Archidekt link
-mtg deck add https://archidekt.com/decks/7319967/high_power_aristocrats
+hoard deck add https://archidekt.com/decks/7319967/high_power_aristocrats
 
 # Moxfield's API is Cloudflare-blocked, so export that deck to text
 # (Moxfield → ⋯ → Export) and import the file:
-mtg deck add --file my-deck.txt --name "My Edgar EDH" --source moxfield
+hoard deck add --file my-deck.txt --name "My Edgar EDH" --source moxfield
 
 # List decks with card counts and value
-mtg deck list
+hoard deck list
 
 # Show a deck's cards grouped by board (commander/main/side/maybe)
-mtg deck show 1            # by id
-mtg deck show "My Edgar EDH"   # or by name
+hoard deck show 1            # by id
+hoard deck show "My Edgar EDH"   # or by name
 
 # Delete a deck
-mtg deck remove 1
+hoard deck remove 1
 ```
 
 Re-importing the same deck link updates it in place (no duplicates). Cards a deck
@@ -88,11 +88,11 @@ like `Commander` / `Sideboard` / `Maybeboard`.
 
 ### Database location
 
-Defaults to `./mtg_index.db`. Override with the `--db` flag or the
-`MTG_INDEX_DB` environment variable:
+Defaults to `./hoard.db`. Override with the `--db` flag or the
+`HOARD_DB` environment variable:
 
 ```sh
-mtg --db ~/mtg/collection.db list
+hoard --db ~/hoard/collection.db list
 ```
 
 ## Development

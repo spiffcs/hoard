@@ -1,4 +1,4 @@
-module github.com/cphillips918/mtg_index
+module github.com/cphillips918/hoard
 
 go 1.26.1
 

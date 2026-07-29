@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cphillips918/mtg_index/internal/scryfall"
+	"github.com/cphillips918/hoard/internal/scryfall"
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
 

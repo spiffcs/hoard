@@ -18,7 +18,7 @@ import (
 
 // userAgent identifies this tool to Scryfall. Scryfall requires a descriptive
 // User-Agent header on every request.
-const userAgent = "mtg-index/0.1"
+const userAgent = "hoard/0.1"
 
 // apiBase is the Scryfall REST API root. It is a var (not const) so tests can
 // point the client at a local httptest server.
