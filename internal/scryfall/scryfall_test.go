@@ -1,6 +1,13 @@
 package scryfall
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+)
 
 func TestParseCardURL(t *testing.T) {
 	tests := []struct {
@@ -86,5 +93,77 @@ func TestParsePrice(t *testing.T) {
 	p := parsePrice("3.49")
 	if p == nil || *p != 3.49 {
 		t.Errorf("valid price: want 3.49, got %v", p)
+	}
+}
+
+func TestIdentifierMarshalOmitsEmpty(t *testing.T) {
+	b, err := json.Marshal(Identifier{ID: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(b); got != `{"id":"abc"}` {
+		t.Errorf("id identifier: got %s", got)
+	}
+	b, _ = json.Marshal(Identifier{Set: "uma", CollectorNumber: "7"})
+	if got := string(b); got != `{"set":"uma","collector_number":"7"}` {
+		t.Errorf("set/num identifier: got %s", got)
+	}
+	b, _ = json.Marshal(Identifier{Name: "Sol Ring"})
+	if got := string(b); got != `{"name":"Sol Ring"}` {
+		t.Errorf("name identifier: got %s", got)
+	}
+}
+
+func TestFetchCollectionChunksAndAggregates(t *testing.T) {
+	// Build 80 identifiers so the client must split into two chunks (75 + 5).
+	ids := make([]Identifier, 80)
+	for i := range ids {
+		ids[i] = Identifier{Name: "Card " + strconv.Itoa(i)}
+	}
+
+	var chunkSizes []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Identifiers []Identifier `json:"identifiers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("server decode: %v", err)
+		}
+		chunkSizes = append(chunkSizes, len(req.Identifiers))
+		// Echo back one found card per identifier; mark the very first as not found.
+		var resp struct {
+			Object   string       `json:"object"`
+			Data     []apiCard    `json:"data"`
+			NotFound []Identifier `json:"not_found"`
+		}
+		resp.Object = "list"
+		for i, id := range req.Identifiers {
+			if len(chunkSizes) == 1 && i == 0 {
+				resp.NotFound = append(resp.NotFound, id)
+				continue
+			}
+			resp.Data = append(resp.Data, apiCard{ID: "x", Name: id.Name})
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	// Point the client at the test server for the duration of the test.
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	found, notFound, err := FetchCollection(context.Background(), ids)
+	if err != nil {
+		t.Fatalf("FetchCollection: %v", err)
+	}
+	if len(chunkSizes) != 2 || chunkSizes[0] != 75 || chunkSizes[1] != 5 {
+		t.Errorf("chunk sizes = %v, want [75 5]", chunkSizes)
+	}
+	if len(found) != 79 {
+		t.Errorf("found = %d, want 79", len(found))
+	}
+	if len(notFound) != 1 {
+		t.Errorf("notFound = %d, want 1", len(notFound))
 	}
 }

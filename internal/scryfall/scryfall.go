@@ -4,6 +4,7 @@
 package scryfall
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,8 +20,9 @@ import (
 // User-Agent header on every request.
 const userAgent = "mtg-index/0.1"
 
-// apiBase is the Scryfall REST API root.
-const apiBase = "https://api.scryfall.com"
+// apiBase is the Scryfall REST API root. It is a var (not const) so tests can
+// point the client at a local httptest server.
+var apiBase = "https://api.scryfall.com"
 
 // Card is the subset of a Scryfall card object that this tool cares about.
 type Card struct {
@@ -115,7 +117,96 @@ func FetchCard(ctx context.Context, set, number string) (*Card, error) {
 		return nil, fmt.Errorf("scryfall returned %d for %s/%s", resp.StatusCode, set, number)
 	}
 
-	return &Card{
+	card := ac.toCard()
+	return &card, nil
+}
+
+// Identifier addresses a single card in a bulk collection request. Exactly one
+// addressing scheme should be populated: ID (Scryfall UUID), Set+CollectorNumber,
+// or Name. It marshals to the shapes accepted by POST /cards/collection.
+type Identifier struct {
+	ID              string `json:"id,omitempty"`
+	Set             string `json:"set,omitempty"`
+	CollectorNumber string `json:"collector_number,omitempty"`
+	Name            string `json:"name,omitempty"`
+}
+
+// collectionMax is Scryfall's per-request cap for the collection endpoint.
+const collectionMax = 75
+
+// FetchCollection resolves many cards at once via POST /cards/collection,
+// automatically splitting identifiers into chunks of 75. It returns the found
+// cards and the identifiers Scryfall could not match (echoed back verbatim).
+func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFound []Identifier, err error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	for i := 0; i < len(ids); i += collectionMax {
+		if i > 0 {
+			// Stay well under Scryfall's rate limit between chunks.
+			time.Sleep(100 * time.Millisecond)
+		}
+		end := min(i+collectionMax, len(ids))
+		chunkFound, chunkNotFound, err := fetchCollectionChunk(ctx, client, ids[i:end])
+		if err != nil {
+			return nil, nil, err
+		}
+		found = append(found, chunkFound...)
+		notFound = append(notFound, chunkNotFound...)
+	}
+	return found, notFound, nil
+}
+
+func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identifier) ([]Card, []Identifier, error) {
+	reqBody, err := json.Marshal(struct {
+		Identifiers []Identifier `json:"identifiers"`
+	}{ids})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/cards/collection", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("requesting card collection: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading collection response: %w", err)
+	}
+
+	var out struct {
+		Data     []apiCard    `json:"data"`
+		NotFound []Identifier `json:"not_found"`
+		Details  string       `json:"details"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, nil, fmt.Errorf("decoding collection response (status %d): %w", resp.StatusCode, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if out.Details != "" {
+			return nil, nil, fmt.Errorf("scryfall collection returned %d: %s", resp.StatusCode, out.Details)
+		}
+		return nil, nil, fmt.Errorf("scryfall collection returned %d", resp.StatusCode)
+	}
+
+	cards := make([]Card, 0, len(out.Data))
+	for _, ac := range out.Data {
+		cards = append(cards, ac.toCard())
+	}
+	return cards, out.NotFound, nil
+}
+
+// toCard converts a decoded Scryfall JSON card into the exported Card type.
+func (ac apiCard) toCard() Card {
+	return Card{
 		ID:              ac.ID,
 		Name:            ac.Name,
 		Set:             ac.Set,
@@ -123,7 +214,7 @@ func FetchCard(ctx context.Context, set, number string) (*Card, error) {
 		ScryfallURL:     ac.ScryfallURI,
 		PriceUSD:        parsePrice(ac.Prices.USD),
 		PriceUSDFoil:    parsePrice(ac.Prices.USDFoil),
-	}, nil
+	}
 }
 
 // parsePrice converts a Scryfall price string ("3.49", "", or absent) into a

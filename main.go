@@ -1,6 +1,8 @@
 // Command mtg catalogs valuable Magic: The Gathering cards in a local SQLite
-// database. Cards are added by their Scryfall page URL; the tool records how
-// many you own (normal and foil) and their current market prices.
+// database. Loose cards are added by their Scryfall page URL; whole decks are
+// imported from a deck-list link (or a pasted/exported text list). The tool
+// records how many of each card you own (across the collection and every deck)
+// and their current market prices.
 package main
 
 import (
@@ -8,26 +10,37 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
-	"time"
 
+	"github.com/cphillips918/mtg_index/internal/decksource"
 	"github.com/cphillips918/mtg_index/internal/scryfall"
 	"github.com/cphillips918/mtg_index/internal/store"
 )
 
-const usage = `mtg — catalog valuable MTG cards in SQLite
+const usage = `mtg — catalog valuable MTG cards and decks in SQLite
 
 Usage:
   mtg [--db PATH] <command> [args]
 
-Commands:
-  add <scryfall-url> [--foil] [--qty N]   Add a card (fetches current prices)
-  list                                    List the collection and total value
-  update-prices                           Refresh prices for all cards
-  set-qty <scryfall-url> [--normal N] [--foil N]   Set exact quantities
-  remove <scryfall-url>                   Remove a card from the collection
+Collection commands:
+  add <scryfall-url> [--foil] [--qty N]            Add a loose card (fetches prices)
+  list                                             List loose cards and total value
+  set-qty <scryfall-url> [--normal N] [--foil N]   Set exact loose quantities
+  remove <scryfall-url>                            Remove a loose card
+  update-prices                                    Refresh prices for all cards
+  summary                                          Value of collection + each deck
+
+Deck commands:
+  deck add <archidekt-url>                         Import/refresh a deck from a link
+  deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
+  deck list                                        List decks with card counts + value
+  deck show <id|name>                              Show a deck's cards by board
+  deck remove <id|name>                            Delete a deck
 
 The database path defaults to ./mtg_index.db (override with --db or $MTG_INDEX_DB).
+Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
 `
 
 func main() {
@@ -38,7 +51,6 @@ func main() {
 }
 
 func run(args []string) error {
-	// Global --db flag may appear before the subcommand.
 	fs := flag.NewFlagSet("mtg", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dbPath := fs.String("db", defaultDBPath(), "path to the SQLite database file")
@@ -53,6 +65,11 @@ func run(args []string) error {
 		return fmt.Errorf("no command given")
 	}
 	cmd, cmdArgs := rest[0], rest[1:]
+
+	if cmd == "help" || cmd == "-h" || cmd == "--help" {
+		fmt.Print(usage)
+		return nil
+	}
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
@@ -72,9 +89,10 @@ func run(args []string) error {
 		return cmdSetQty(st, cmdArgs)
 	case "remove":
 		return cmdRemove(st, cmdArgs)
-	case "help", "-h", "--help":
-		fmt.Print(usage)
-		return nil
+	case "summary":
+		return cmdSummary(st)
+	case "deck":
+		return cmdDeck(ctx, st, cmdArgs)
 	default:
 		fs.Usage()
 		return fmt.Errorf("unknown command %q", cmd)
@@ -116,6 +134,8 @@ func resolveCard(ctx context.Context, url string) (*scryfall.Card, error) {
 	return scryfall.FetchCard(ctx, set, number)
 }
 
+// --- Collection commands ---
+
 func cmdAdd(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	foil := fs.Bool("foil", false, "add the card as foil")
@@ -135,8 +155,7 @@ func cmdAdd(ctx context.Context, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	if err := st.AddCard(toStoreCard(card), *foil, *qty); err != nil {
+	if err := st.AddCard(*card, *foil, *qty); err != nil {
 		return err
 	}
 
@@ -152,7 +171,7 @@ func cmdAdd(ctx context.Context, st *store.Store, args []string) error {
 }
 
 func cmdList(st *store.Store) error {
-	cards, err := st.List()
+	cards, err := st.ListCollection()
 	if err != nil {
 		return err
 	}
@@ -166,7 +185,7 @@ func cmdList(st *store.Store) error {
 
 	var total float64
 	for _, c := range cards {
-		value := lineValue(c)
+		value := collectionLineValue(c)
 		total += value
 		fmt.Fprintf(tw, "%s\t%s/%s\t%d\t%d\t%s\t%s\t%s\n",
 			c.Name, c.SetCode, c.CollectorNumber, c.QtyNormal, c.QtyFoil,
@@ -177,32 +196,30 @@ func cmdList(st *store.Store) error {
 }
 
 func cmdUpdatePrices(ctx context.Context, st *store.Store) error {
-	cards, err := st.List()
+	ids, err := st.AllCatalogIDs()
 	if err != nil {
 		return err
 	}
-	if len(cards) == 0 {
-		fmt.Println("Collection is empty; nothing to update.")
+	if len(ids) == 0 {
+		fmt.Println("Catalog is empty; nothing to update.")
 		return nil
 	}
 
-	updated := 0
-	for i, c := range cards {
-		// Respect Scryfall's rate-limit guidance (~10 req/s).
-		if i > 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
-		fresh, err := scryfall.FetchCard(ctx, c.SetCode, c.CollectorNumber)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  skip %s (%s/%s): %v\n", c.Name, c.SetCode, c.CollectorNumber, err)
-			continue
-		}
-		if err := st.UpdatePrices(c.ScryfallID, fresh.PriceUSD, fresh.PriceUSDFoil); err != nil {
-			return err
-		}
-		updated++
+	idents := make([]scryfall.Identifier, len(ids))
+	for i, id := range ids {
+		idents[i] = scryfall.Identifier{ID: id}
 	}
-	fmt.Printf("Updated prices for %d of %d cards.\n", updated, len(cards))
+	found, notFound, err := scryfall.FetchCollection(ctx, idents)
+	if err != nil {
+		return err
+	}
+	if err := st.UpdatePrices(found); err != nil {
+		return err
+	}
+	fmt.Printf("Updated prices for %d of %d cards.\n", len(found), len(ids))
+	if len(notFound) > 0 {
+		fmt.Printf("  %d cards could not be re-fetched from Scryfall.\n", len(notFound))
+	}
 	return nil
 }
 
@@ -225,13 +242,20 @@ func cmdSetQty(st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Look up the existing row so we can preserve any unspecified quantity.
-	existing, err := findCard(st, set, number)
+	existing, err := st.FindCollectionCard(set, number)
 	if err != nil {
 		return err
 	}
+	if existing == nil {
+		return fmt.Errorf("card %s/%s is not in your collection", set, number)
+	}
 
-	newNormal, newFoil := existing.QtyNormal, existing.QtyFoil
+	// Load current counts so an unspecified flag leaves that finish unchanged.
+	cur, err := currentCollectionQty(st, existing.ScryfallID)
+	if err != nil {
+		return err
+	}
+	newNormal, newFoil := cur.normal, cur.foil
 	if *normal >= 0 {
 		newNormal = *normal
 	}
@@ -239,12 +263,27 @@ func cmdSetQty(st *store.Store, args []string) error {
 		newFoil = *foil
 	}
 
-	if _, err := st.SetQuantities(existing.ScryfallID, newNormal, newFoil); err != nil {
+	if _, err := st.SetCollectionQuantities(existing.ScryfallID, newNormal, newFoil); err != nil {
 		return err
 	}
 	fmt.Printf("Set %s (%s/%s) to normal=%d foil=%d\n",
 		existing.Name, existing.SetCode, existing.CollectorNumber, newNormal, newFoil)
 	return nil
+}
+
+type qtyPair struct{ normal, foil int }
+
+func currentCollectionQty(st *store.Store, scryfallID string) (qtyPair, error) {
+	cards, err := st.ListCollection()
+	if err != nil {
+		return qtyPair{}, err
+	}
+	for _, c := range cards {
+		if c.ScryfallID == scryfallID {
+			return qtyPair{c.QtyNormal, c.QtyFoil}, nil
+		}
+	}
+	return qtyPair{}, nil
 }
 
 func cmdRemove(st *store.Store, args []string) error {
@@ -255,46 +294,275 @@ func cmdRemove(st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	existing, err := findCard(st, set, number)
+	existing, err := st.FindCollectionCard(set, number)
 	if err != nil {
 		return err
 	}
-	if _, err := st.Remove(existing.ScryfallID); err != nil {
+	if existing == nil {
+		return fmt.Errorf("card %s/%s is not in your collection", set, number)
+	}
+	if _, err := st.RemoveFromCollection(existing.ScryfallID); err != nil {
 		return err
 	}
 	fmt.Printf("Removed %s (%s/%s)\n", existing.Name, existing.SetCode, existing.CollectorNumber)
 	return nil
 }
 
-// findCard locates a stored card by set code and collector number. It errors if
-// the card is not in the collection.
-func findCard(st *store.Store, set, number string) (*store.Card, error) {
-	cards, err := st.List()
+func cmdSummary(st *store.Store) error {
+	collVal, err := st.CollectionValue()
+	if err != nil {
+		return err
+	}
+	decks, err := st.ListDecks()
+	if err != nil {
+		return err
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "BUCKET\tCARDS\tVALUE")
+	fmt.Fprintf(tw, "Collection (loose)\t\t%s\n", formatUSD(collVal))
+	grand := collVal
+	for _, d := range decks {
+		fmt.Fprintf(tw, "Deck: %s\t%d\t%s\n", d.Name, d.TotalCopies, formatUSD(d.Value))
+		grand += d.Value
+	}
+	fmt.Fprintf(tw, "\t\t\n")
+	fmt.Fprintf(tw, "GRAND TOTAL\t\t%s\n", formatUSD(grand))
+	return tw.Flush()
+}
+
+// --- Deck commands ---
+
+func cmdDeck(ctx context.Context, st *store.Store, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("deck requires a subcommand: add|list|show|remove")
+	}
+	sub, subArgs := args[0], args[1:]
+	switch sub {
+	case "add":
+		return cmdDeckAdd(ctx, st, subArgs)
+	case "list":
+		return cmdDeckList(st)
+	case "show":
+		return cmdDeckShow(st, subArgs)
+	case "remove":
+		return cmdDeckRemove(st, subArgs)
+	default:
+		return fmt.Errorf("unknown deck subcommand %q (want add|list|show|remove)", sub)
+	}
+}
+
+func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("deck add", flag.ContinueOnError)
+	file := fs.String("file", "", "import from a text/exported decklist file instead of a URL")
+	name := fs.String("name", "", "deck name (defaults to the file name for --file imports)")
+	source := fs.String("source", "", "provider label for text imports (e.g. moxfield)")
+	pos, err := parsePositionals(fs, args)
+	if err != nil {
+		return err
+	}
+
+	var deck *decksource.Deck
+	if *file != "" {
+		deck, err = importTextDeck(*file, *name, *source)
+	} else if len(pos) == 1 {
+		deck, err = decksource.Fetch(ctx, pos[0])
+	} else {
+		return fmt.Errorf("deck add needs either a deck URL or --file <path>")
+	}
+	if err != nil {
+		return err
+	}
+
+	// Resolve every entry's identifier to a catalog card in bulk.
+	idents := make([]scryfall.Identifier, len(deck.Entries))
+	for i, e := range deck.Entries {
+		idents[i] = e.Ident
+	}
+	found, _, err := scryfall.FetchCollection(ctx, idents)
+	if err != nil {
+		return err
+	}
+	if err := st.UpsertCatalogCards(found); err != nil {
+		return err
+	}
+
+	resolver := newResolver(found)
+	var entries []store.Entry
+	var unresolved []string
+	for _, e := range deck.Entries {
+		id, ok := resolver.lookup(e.Ident)
+		if !ok {
+			unresolved = append(unresolved, identLabel(e.Ident))
+			continue
+		}
+		entries = append(entries, store.Entry{
+			ScryfallID: id,
+			Finish:     e.Finish,
+			Board:      e.Board,
+			Quantity:   e.Quantity,
+		})
+	}
+
+	id, err := st.UpsertDeck(store.DeckMeta{
+		Name:      deck.Name,
+		Source:    deck.Source,
+		SourceID:  deck.SourceID,
+		SourceURL: deck.SourceURL,
+		Format:    deck.Format,
+	}, entries)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Imported deck #%d %q (%s) — %d cards resolved.\n",
+		id, deck.Name, deck.Source, len(entries))
+	if len(unresolved) > 0 {
+		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(unresolved))
+		for _, u := range unresolved {
+			fmt.Printf("    - %s\n", u)
+		}
+	}
+	return nil
+}
+
+func importTextDeck(path, name, source string) (*decksource.Deck, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	for i := range cards {
-		if cards[i].SetCode == set && cards[i].CollectorNumber == number {
-			return &cards[i], nil
+	defer f.Close()
+	if name == "" {
+		base := filepath.Base(path)
+		name = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	return decksource.ParseText(name, "", "", source, f)
+}
+
+func cmdDeckList(st *store.Store) error {
+	decks, err := st.ListDecks()
+	if err != nil {
+		return err
+	}
+	if len(decks) == 0 {
+		fmt.Println("No decks yet. Import one with: mtg deck add <archidekt-url>")
+		return nil
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tCARDS\tVALUE")
+	for _, d := range decks {
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", d.ID, d.Name, d.Source, d.TotalCopies, formatUSD(d.Value))
+	}
+	return tw.Flush()
+}
+
+func cmdDeckShow(st *store.Store, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("deck show requires a deck id or name")
+	}
+	deck, err := st.DeckByRef(args[0])
+	if err != nil {
+		return err
+	}
+	entries, err := st.DeckEntries(deck.ID)
+	if err != nil {
+		return err
+	}
+
+	header := deck.Name
+	if deck.Format != "" {
+		header += " — " + deck.Format
+	}
+	fmt.Println(header)
+	if deck.SourceURL != "" {
+		fmt.Println(deck.SourceURL)
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "BOARD\tQTY\tNAME\tSET/NUM\tFINISH\tPRICE\tVALUE")
+	var total float64
+	for _, e := range entries {
+		total += e.Value()
+		finish := e.Finish
+		if finish == "normal" {
+			finish = "-"
 		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s/%s\t%s\t%s\t%s\n",
+			e.Board, e.Quantity, e.Card.Name, e.Card.SetCode, e.Card.CollectorNumber,
+			finish, formatPrice(e.Price()), formatUSD(e.Value()))
 	}
-	return nil, fmt.Errorf("card %s/%s is not in your collection", set, number)
+	fmt.Fprintf(tw, "\t\t\t\t\tTOTAL\t%s\n", formatUSD(total))
+	return tw.Flush()
 }
 
-// toStoreCard maps a fetched Scryfall card to a store.Card (quantities set later).
-func toStoreCard(c *scryfall.Card) store.Card {
-	return store.Card{
-		ScryfallID:      c.ID,
-		SetCode:         c.Set,
-		CollectorNumber: c.CollectorNumber,
-		Name:            c.Name,
-		PriceUSD:        c.PriceUSD,
-		PriceUSDFoil:    c.PriceUSDFoil,
-		ScryfallURL:     c.ScryfallURL,
+func cmdDeckRemove(st *store.Store, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("deck remove requires a deck id or name")
+	}
+	deck, err := st.DeckByRef(args[0])
+	if err != nil {
+		return err
+	}
+	if _, err := st.RemoveContainer(deck.ID); err != nil {
+		return err
+	}
+	fmt.Printf("Removed deck #%d %q\n", deck.ID, deck.Name)
+	return nil
+}
+
+// --- Identifier resolution helpers ---
+
+// resolver maps deck-import identifiers back to canonical Scryfall IDs using the
+// cards returned by the bulk collection lookup.
+type resolver struct {
+	byID   map[string]string // scryfall id -> itself (confirms it resolved)
+	bySN   map[string]string // "set/number" -> scryfall id
+	byName map[string]string // lower(name) -> scryfall id
+}
+
+func newResolver(cards []scryfall.Card) resolver {
+	r := resolver{
+		byID:   make(map[string]string),
+		bySN:   make(map[string]string),
+		byName: make(map[string]string),
+	}
+	for _, c := range cards {
+		r.byID[c.ID] = c.ID
+		r.bySN[strings.ToLower(c.Set)+"/"+c.CollectorNumber] = c.ID
+		r.byName[strings.ToLower(c.Name)] = c.ID
+	}
+	return r
+}
+
+func (r resolver) lookup(id scryfall.Identifier) (string, bool) {
+	switch {
+	case id.ID != "":
+		v, ok := r.byID[id.ID]
+		return v, ok
+	case id.Set != "" && id.CollectorNumber != "":
+		v, ok := r.bySN[strings.ToLower(id.Set)+"/"+id.CollectorNumber]
+		return v, ok
+	case id.Name != "":
+		v, ok := r.byName[strings.ToLower(id.Name)]
+		return v, ok
+	}
+	return "", false
+}
+
+func identLabel(id scryfall.Identifier) string {
+	switch {
+	case id.Name != "":
+		return id.Name
+	case id.Set != "" && id.CollectorNumber != "":
+		return id.Set + "/" + id.CollectorNumber
+	default:
+		return id.ID
 	}
 }
 
-func lineValue(c store.Card) float64 {
+// --- Formatting ---
+
+func collectionLineValue(c store.CollectionCard) float64 {
 	var v float64
 	if c.PriceUSD != nil {
 		v += float64(c.QtyNormal) * *c.PriceUSD
