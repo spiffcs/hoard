@@ -90,19 +90,13 @@ const latestPrices = `
 // RecordPrices appends an observation for every card whose effective price
 // differs from the last one recorded, and reports what moved.
 //
-// Unchanged prices are not written: a row per card per refresh would grow the
-// database by the size of the catalog daily, and nothing reads a repeat of a
-// number already stored. A card with no history yet is recorded silently rather
-// than reported, since a first observation is a baseline, not a movement.
+// Unchanged prices are not written, and a first observation is recorded silently:
+// it is a baseline, not a movement. Only held cards are *reported*, but history is
+// kept for everything, since a card can leave the collection and come back and the
+// gap would be permanent.
 //
-// Only cards actually held are reported. History is kept for the whole catalog
-// regardless, because a card can leave the collection and come back, and the
-// gap in its series would be permanent.
-//
-// A price that disappears — Scryfall dropping a printing it used to quote —
-// leaves the last known observation standing. These are observations, not
-// assertions about every instant in between, and recording a null would make a
-// card that merely went unquoted indistinguishable from one that crashed.
+// A price that disappears leaves the last observation standing. These are
+// observations, not assertions about every instant between them.
 func (s *Store) RecordPrices() ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH eff AS (` + effectivePrices + `),
@@ -235,18 +229,16 @@ func (s *Store) PriceHistoryDepth() (observations int, oldest string, err error)
 // the one actually seen rather than the one reconstructed.
 func backfillStamp(date string) string { return date + "T00:00:00Z" }
 
-// BackfillPrices loads observations recorded before hoard was watching, keyed by
-// Scryfall ID, and reports how many rows and how many cards it wrote.
+// BackfillPrices loads observations recorded before hoard was watching, and
+// reports how many rows and cards it wrote.
 //
-// `before` bounds the import to the era with no history of its own — pass the
-// oldest as_of from PriceHistoryDepth, or "" when there is none. The bound is
-// not tidiness: MTGJSON's vendor snapshots are taken at a different hour than
-// Scryfall's, so an imported point sitting alongside a real one for the same day
-// would show up in Movers as a few cents of movement that never happened.
+// `before` bounds the import to the era with no history of its own (pass the
+// oldest as_of from PriceHistoryDepth). Not tidiness: the two sources snapshot at
+// different hours, so an imported point beside a real one for the same day shows
+// up in Movers as movement that never happened.
 //
-// Nothing already stored is overwritten. Where an imported row collides with a
-// live one, the live one stands: it is what was observed, and this is what was
-// reconstructed afterwards.
+// Where an import collides with a live row the live one stands — it is what was
+// observed, this is what was reconstructed.
 func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation, before string) (inserted, cards int, err error) {
 	if len(byCard) == 0 {
 		return 0, 0, nil
@@ -288,23 +280,17 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	return inserted, cards, nil
 }
 
-// compactSeries reduces one card's observations to the days its price actually
-// moved, per finish, discarding anything at or after before.
+// compactSeries reduces one card's observations to the days its price moved, per
+// finish, discarding anything at or after before.
 //
-// MTGJSON quotes a price for every one of its ninety days whether or not it
-// changed, and storing all of them would add two orders of magnitude more rows
-// than the collection has cards to say nothing new. The first point of each
-// series is always kept: it is the baseline every later comparison reads back
-// through.
+// MTGJSON quotes every one of its ninety days whether or not the price changed;
+// storing all of them would say nothing new in two orders of magnitude more rows.
+// The first point of each series is always kept as the baseline.
 //
-// Filtering happens before compaction, not after, so the surviving window keeps
-// a baseline of its own rather than inheriting one that got cut.
-//
-// The cutoff is compared by date rather than by timestamp. A live observation
-// taken at 05:09 excludes that whole day, not just the hours after it: the two
-// sources snapshot at different times, so an imported midnight price sitting
-// under an observed morning one is the exact same-day overlap the bound exists
-// to prevent.
+// Filtering happens before compaction so the surviving window keeps a baseline of
+// its own. The cutoff compares dates, not timestamps: the two sources snapshot at
+// different hours, and an imported midnight price under an observed morning one is
+// the same-day overlap the bound exists to prevent.
 func compactSeries(obs []mtgjson.Observation, before string) []mtgjson.Observation {
 	if len(before) > len("2006-01-02") {
 		before = before[:len("2006-01-02")]

@@ -148,8 +148,8 @@ func TestAltPriceFallback(t *testing.T) {
 	// A Scryfall price must always win over the fallback.
 	priced := unpricedFoil()
 	priced.PriceUSDFoil = f(9.00)
-	if err := s.UpsertCatalogCards([]scryfall.Card{priced}); err != nil {
-		t.Fatalf("UpsertCatalogCards: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{priced}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if tot, _ := s.CollectionTotals(); tot.Value != 18.0 {
 		t.Errorf("value = %v, want 18 from Scryfall, not the fallback", tot.Value)
@@ -399,8 +399,8 @@ func TestAddCardFinishEtched(t *testing.T) {
 
 func TestDeckByRef(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.UpsertCatalogCards([]scryfall.Card{solRing()}); err != nil {
-		t.Fatalf("UpsertCatalogCards: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	entries := []Entry{{ScryfallID: "sol-id", Finish: "normal", Board: "main", Quantity: 1}}
 	var ids []int64
@@ -474,8 +474,8 @@ func TestDeckByRef(t *testing.T) {
 func TestDeckUpsertReplaceAndCascade(t *testing.T) {
 	s := newTestStore(t)
 	// Catalog must contain the cards a deck references.
-	if err := s.UpsertCatalogCards([]scryfall.Card{ulamog(), solRing()}); err != nil {
-		t.Fatalf("UpsertCatalogCards: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog(), solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 
 	meta := DeckMeta{Name: "My EDH", Source: "archidekt", SourceID: "999", SourceURL: "http://x", Format: "Commander"}
@@ -527,8 +527,8 @@ func TestDeckUpsertReplaceAndCascade(t *testing.T) {
 
 func TestTotalsAcrossContainers(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.UpsertCatalogCards([]scryfall.Card{ulamog(), solRing()}); err != nil {
-		t.Fatalf("UpsertCatalogCards: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog(), solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	// 1 Ulamog loose + 1 Ulamog in a deck = 2 owned.
 	if err := s.AddCard(ulamog(), false, 1); err != nil {
@@ -623,7 +623,7 @@ func TestUpsertKeepsRawJSONWhenTheNewCardHasNone(t *testing.T) {
 
 	withRaw := ulamog()
 	withRaw.Raw = []byte(`{"rarity":"mythic","type_line":"Legendary Creature — Eldrazi"}`)
-	if err := s.UpsertCatalogCards([]scryfall.Card{withRaw}); err != nil {
+	if err := s.UpsertPrintings([]scryfall.Card{withRaw}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 
@@ -631,7 +631,7 @@ func TestUpsertKeepsRawJSONWhenTheNewCardHasNone(t *testing.T) {
 	// rewritten rather than skipped.
 	bare := ulamog()
 	bare.PriceUSD = f(11.00)
-	if err := s.UpsertCatalogCards([]scryfall.Card{bare}); err != nil {
+	if err := s.UpsertPrintings([]scryfall.Card{bare}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
@@ -657,12 +657,12 @@ func TestUpsertReplacesRawJSONWhenTheNewCardHasOne(t *testing.T) {
 
 	first := ulamog()
 	first.Raw = []byte(`{"rarity":"rare"}`)
-	if err := s.UpsertCatalogCards([]scryfall.Card{first}); err != nil {
+	if err := s.UpsertPrintings([]scryfall.Card{first}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	second := ulamog()
 	second.Raw = []byte(`{"rarity":"mythic"}`)
-	if err := s.UpsertCatalogCards([]scryfall.Card{second}); err != nil {
+	if err := s.UpsertPrintings([]scryfall.Card{second}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 

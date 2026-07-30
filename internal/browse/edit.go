@@ -19,7 +19,7 @@ type undoAction struct {
 	desc string
 	// undo performs the restoration. Returning an error leaves the action in
 	// place so it can be tried again.
-	undo func(Store) error
+	undo func(Editor) error
 }
 
 // editable reports whether the selected container's cards can be changed here,
@@ -74,7 +74,7 @@ func (m *Model) adjustQuantity(delta int) {
 	id, finish, name := c.ScryfallID, c.Finish, c.Name
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
-		undo: func(st Store) error {
+		undo: func(st Editor) error {
 			_, err := st.SetHoldingQuantity(id, finish, previous)
 			return err
 		},
@@ -110,7 +110,7 @@ func (m *Model) removeCard() {
 	id, name := c.ScryfallID, c.Name
 	m.undoable(undoAction{
 		desc: name,
-		undo: func(st Store) error { return st.RestoreHoldings(id, removed) },
+		undo: func(st Editor) error { return st.RestoreHoldings(id, removed) },
 	})
 	m.status = fmt.Sprintf("removed %s from the %s", name, strings.ToLower(store.LooseName))
 	m.statusErr = false
@@ -147,7 +147,7 @@ func (m *Model) removeDeck() {
 	}
 	m.undoable(undoAction{
 		desc: name,
-		undo: func(st Store) error {
+		undo: func(st Editor) error {
 			// Recreated rather than resurrected: the deck comes back with a new
 			// container id. Its identity to the rest of hoard is (source,
 			// source_id), which the metadata carries, so a later re-import still

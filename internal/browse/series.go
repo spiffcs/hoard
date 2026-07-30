@@ -8,16 +8,12 @@ import (
 
 // resample turns price observations into evenly-spaced values for a sparkline.
 //
-// Only the days a price actually moved are stored, so the observations are
-// irregularly spaced. Plotting them by index would give a day on which the
-// price moved three times the same width as three quiet weeks, which inverts
-// what a sparkline is for: the flat stretches are the information.
+// Only the days a price moved are stored, so plotting by index would give a
+// volatile day the same width as three quiet weeks — inverting what a sparkline is
+// for, since the flat stretches are the information.
 //
-// Each bucket takes the last price observed at or before its end — the series
-// is a step function, since a price stands until a later one replaces it, not a
-// set of samples to interpolate between. Buckets before the first observation
-// are dropped rather than back-filled, so a card first seen halfway through the
-// window renders half a line instead of a fictional flat start.
+// Each bucket takes the last price at or before its end: the series is a step
+// function, not samples to interpolate between.
 func resample(points []store.PricePoint, buckets int) []float64 {
 	if len(points) == 0 || buckets <= 0 {
 		return nil

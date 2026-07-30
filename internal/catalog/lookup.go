@@ -9,18 +9,11 @@ import (
 )
 
 // Cards returns what the catalog knows about the requested printings, keyed by
-// Scryfall id.
+// Scryfall id. Unknown ids are simply absent; callers ask the API for the
+// remainder rather than treating a miss as "no such card".
 //
-// Ids the catalog has never heard of are simply absent — a card printed since
-// the last build, or one from a bundle that excluded it. Callers are expected to
-// ask the API for the remainder rather than treat a miss as "no such card"; the
-// catalog is a cache, and a stale cache that silently swallowed new cards would
-// be worse than no cache at all.
-//
-// The returned cards carry no Raw document. The catalog stores only what a
-// lookup needs, so the descriptive columns hoard derives from raw_json are left
-// for the API path — see IDsNeedingDocuments in the store for how that gap is
-// closed once rather than on every refresh.
+// The returned cards carry no Raw document — the catalog stores only what a lookup
+// needs, so store.IDsNeedingDocuments closes that gap once rather than per refresh.
 func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 	out := make(map[string]scryfall.Card, len(ids))
 	if len(ids) == 0 {

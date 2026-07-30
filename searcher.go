@@ -9,19 +9,14 @@ import (
 )
 
 // layeredSearcher answers card lookups locally where it can and from Scryfall
-// where it cannot.
+// where it cannot, holding the whole cache policy in one place.
 //
-// One type holds the whole cache policy, so there is a single place that decides
-// what "the catalog does not have this" means. The rule is the same for all
-// three lookups: an empty local result is not an answer, it is a miss, and a
-// miss goes to the API. That keeps a card printed since the last build addable,
-// which a cache treated as authoritative would not.
+// The rule: an empty local result is a miss, not an answer, and a miss goes to
+// the API — which is what keeps a card printed since the last build addable.
 //
-// local may be nil — no writable cache directory, a catalog that would not open,
-// or one that has never been built — in which case this is exactly the Scryfall
-// client hoard always used. It is the same interface as remote rather than the
-// concrete catalog, so the policy below can be exercised against fakes without a
-// database.
+// local is nil when there is no usable catalog, making this exactly the Scryfall
+// client hoard always used. It is an interface rather than the concrete catalog so
+// the policy can be tested against fakes.
 type layeredSearcher struct {
 	local  tui.Searcher
 	remote tui.Searcher

@@ -109,10 +109,7 @@ func (m Model) moversLines(width int) []string {
 		},
 	}
 	for _, c := range m.movers {
-		finish := c.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
+		finish := ui.Finish(c.Finish)
 		t.Add(ui.C(c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber), ui.C(finish),
 			ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
 			ui.C(signedPercent(c.Pct())), ui.C("×"+ui.Count(c.Copies)),
@@ -135,10 +132,7 @@ func (m Model) unpricedLines(width int) []string {
 		},
 	}
 	for _, r := range m.unpriced {
-		finish := r.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
+		finish := ui.Finish(r.Finish)
 		t.Add(ui.C(r.Name), ui.C(r.SetCode+"/"+r.CollectorNumber), ui.C(finish),
 			ui.C("×"+ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}

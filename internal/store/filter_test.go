@@ -35,7 +35,7 @@ func catalog(t *testing.T, s *Store) {
 			ScryfallURL: "http://x", Raw: []byte(doc),
 		})
 	}
-	if err := s.UpsertCatalogCards(cards); err != nil {
+	if err := s.UpsertPrintings(cards); err != nil {
 		t.Fatalf("seeding catalog: %v", err)
 	}
 }
@@ -109,7 +109,7 @@ func TestColorMatchesMembersNotSubstrings(t *testing.T) {
 func TestMatchingCardIDsSkipsUnenrichedRows(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
-	if err := s.UpsertCatalogCards([]scryfall.Card{{
+	if err := s.UpsertPrintings([]scryfall.Card{{
 		ID: "bare", Set: "x", CollectorNumber: "2", Name: "No Document", ScryfallURL: "http://x",
 	}}); err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -185,7 +185,7 @@ func TestMatchingCardIDsRejectsAnInvalidOperator(t *testing.T) {
 func TestEnrichedCount(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
-	if err := s.UpsertCatalogCards([]scryfall.Card{{
+	if err := s.UpsertPrintings([]scryfall.Card{{
 		ID: "bare", Set: "x", CollectorNumber: "2", Name: "No Document", ScryfallURL: "http://x",
 	}}); err != nil {
 		t.Fatalf("upsert: %v", err)

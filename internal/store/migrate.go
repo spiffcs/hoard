@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS card_entries (
 -- come from TCGplayer alone, so a printing TCGplayer has no record of is
 -- unpriced there; MTGJSON aggregates other vendors and often has it.
 --
--- Separate from cards because upsertCatalogTx rewrites price_usd_foil from
+-- Separate from cards because upsertPrintingsTx rewrites price_usd_foil from
 -- every Scryfall response, so a fallback stored there would be nulled out on
 -- the very next update-prices run.
 CREATE TABLE IF NOT EXISTS card_prices_alt (
@@ -134,27 +134,17 @@ UPDATE cards SET mtgjson_uuid = (
 
 CREATE INDEX IF NOT EXISTS cards_mtgjson_uuid ON cards(mtgjson_uuid);`
 
-// keepPriceHistory remembers what a printing used to cost.
+// keepPriceHistory remembers what a printing used to cost. Every price write
+// before this overwrote in place, so nothing could say what had moved.
 //
-// Every price write before this was destructive: upsertCatalogTx and
-// UpsertAltPrices both overwrite in place, so the moment a refresh committed,
-// the old number was gone and nothing could say what had moved. cards.updated_at
-// records when a price was last written, never what it was.
+// Rows are appended only when the price differs from the last observed one: a row
+// per card per refresh would grow the database by the size of the catalog daily.
 //
-// Rows are appended only when the price actually differs from the last one
-// observed, which is what keeps the table small: most of a collection does not
-// move on a given day, and a row per card per refresh would grow the database by
-// the size of the catalog every time.
+// The finish is the *price's* finish, not the one held — etched is valued from the
+// foil price (see entryValue), so it shares that series rather than duplicating it.
 //
-// The finish here is the price's finish — 'normal' or 'foil' — not the finish a
-// card is held in. Etched copies are valued from the foil price (see
-// entryValue), so they share its history rather than getting a third series that
-// would always duplicate it.
-//
-// The seed backfills one observation per priced card from the prices already
-// stored, timestamped when they were actually written. Without it the first
-// refresh after upgrading would have nothing to compare against and would report
-// no movement at all; with it, the numbers already on disk become the baseline.
+// The seed turns the prices already on disk into a baseline, so the first refresh
+// after upgrading has something to compare against.
 const keepPriceHistory = `
 CREATE TABLE IF NOT EXISTS card_price_history (
     scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
@@ -183,29 +173,15 @@ SELECT c.scryfall_id, 'foil',
 FROM cards c LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
 WHERE COALESCE(c.price_usd_foil, a.price_usd_foil) IS NOT NULL;`
 
-// richCardData keeps the whole Scryfall response and exposes its fields as
-// generated columns.
+// richCardData keeps the whole Scryfall response and derives columns from it.
 //
-// Scryfall returns around sixty fields per card and hoard stored eight of them,
-// discarding the rest at json.Unmarshal. That is why nothing can filter by
-// rarity or type: the data was never missing from the API, only from the row.
+// Deriving rather than adding a real column per field makes every future field a
+// one-line ALTER: VIRTUAL generated columns occupy no space in existing rows, so
+// there is no rebuild and no backfill. Costs ~5.4 KB of JSON per card.
 //
-// Storing the raw document and deriving columns from it — rather than adding a
-// real column per field — means every future field is a one-line ALTER. SQLite
-// allows ADD COLUMN for VIRTUAL generated columns specifically because they
-// occupy no space in existing rows, so there is no table rebuild and no
-// backfill. The cost is ~5.4 KB of JSON per card.
-//
-// There is no backfill step here on purpose. update-prices already refetches
-// every owned card from Scryfall, so the first run after this migration fills
-// raw_json for the whole catalog. Until then these columns read NULL, which
-// callers must present as unknown rather than as zero or blank.
-//
-// Double-faced cards are the trap. A transform card leaves the top-level
-// type_line, mana_cost and oracle_text null and puts them inside card_faces[],
-// so a bare json_extract would make every such card untyped — invisible to a
-// type filter, and blank in a detail pane, for the cards most likely to be
-// looked up. Each of those three coalesces to the front face.
+// No backfill here on purpose — update-prices refetches every owned card, so the
+// first run after this fills raw_json. Until then the columns read NULL, which
+// callers must show as unknown rather than as zero.
 const richCardData = `
 ALTER TABLE cards ADD COLUMN raw_json TEXT;
 
@@ -247,19 +223,13 @@ CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);`
 
 // rememberPriceGaps records that MTGJSON was asked about a card and had nothing.
 //
-// Finding the fallback price for one card costs a 50 MB scan of MTGJSON's daily
-// bundle, and the scan is the same size whether one card is wanted or a
-// thousand. Cards no source can price are not rare and not temporary — six of
-// them on a 1,573-card hoard — so without this every refresh pays that scan to
-// re-learn the same answer about the same cards, forever.
+// One card costs a 50 MB scan, and cards nothing can price are neither rare nor
+// temporary, so without this every refresh pays that scan to re-learn the same
+// answer. Only the *absence* is recorded — a price that was found lives in
+// card_prices_alt, and a card with one is no longer a gap.
 //
-// Only the *absence* of a price is recorded here. A price that was found lives
-// in card_prices_alt, and a card that has one is no longer a gap, so the two
-// tables never describe the same card at the same time.
-//
-// checked_at is a timestamp rather than a flag because the answer can change:
-// MTGJSON adds vendors and vendors add stock. The check expires, so a card is
-// re-asked about periodically instead of being written off.
+// A timestamp rather than a flag: MTGJSON adds vendors, so the check expires and
+// the card is asked about again rather than written off.
 const rememberPriceGaps = `
 CREATE TABLE IF NOT EXISTS card_price_gaps (
     scryfall_id TEXT PRIMARY KEY REFERENCES cards(scryfall_id) ON DELETE CASCADE,
@@ -392,17 +362,13 @@ func (s *Store) backup(path string, fromVersion int) error {
 // noticed after the next one has already been applied.
 const keptBackups = 3
 
-// pruneBackups removes all but the most recent snapshots of one database.
+// pruneBackups removes all but the most recent snapshots of one database, since
+// they otherwise accumulate one per migration forever and are not small.
 //
-// Without this they accumulate one per migration forever, and they are not
-// small: raw_json took the newest from half a megabyte to nine. keep is the
-// backup written by the current run, which is never a candidate for removal
-// however the sort turns out.
-//
-// The match is deliberately narrow — the exact `.bak-v<n>-<date>` shape this
-// function writes — so a backup somebody made by hand and named something else
-// is not swept up by a cleanup they never asked for. Best-effort: a hoard whose
-// old backups cannot be removed is not a hoard worth failing a migration over.
+// keep is the current run's backup, never a removal candidate. The match is
+// deliberately narrow — the exact `.bak-v<n>-<date>` shape written here — so a
+// hand-made backup is not swept up by a cleanup nobody asked for. Best-effort:
+// not worth failing a migration over.
 func pruneBackups(dbPath, keep string) {
 	dir := filepath.Dir(dbPath)
 	entries, err := os.ReadDir(dir)
@@ -432,4 +398,71 @@ func pruneBackups(dbPath, keep string) {
 	for _, old := range mine[:len(mine)-(keptBackups-1)] {
 		os.Remove(old)
 	}
+}
+
+// migrateLegacy upgrades a database created by the original single-table build
+// (a `cards` table with a qty_normal column) to the current normalized schema.
+// It is a no-op on fresh databases and on already-migrated ones.
+func (s *Store) migrateLegacy() error {
+	var hasLegacy bool
+	err := s.db.QueryRow(`
+SELECT EXISTS(
+    SELECT 1 FROM pragma_table_info('cards') WHERE name='qty_normal')`).Scan(&hasLegacy)
+	if err != nil {
+		return fmt.Errorf("checking for legacy schema: %w", err)
+	}
+	if !hasLegacy {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`ALTER TABLE cards RENAME TO cards_legacy`); err != nil {
+		return fmt.Errorf("migrate: renaming legacy cards: %w", err)
+	}
+	if _, err := tx.Exec(schemaV1); err != nil {
+		return fmt.Errorf("migrate: creating new schema: %w", err)
+	}
+
+	ts := now()
+	res, err := tx.Exec(`
+INSERT INTO containers (kind, name, source, source_id, created_at, updated_at)
+VALUES (?, 'Collection', 'manual', ?, ?, ?)`,
+		KindCollection, collectionSourceID, ts, ts)
+	if err != nil {
+		return fmt.Errorf("migrate: creating collection: %w", err)
+	}
+	cid, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	// Copy identity + prices into the new catalog.
+	if _, err := tx.Exec(`
+INSERT INTO cards (scryfall_id, set_code, collector_number, name,
+                   price_usd, price_usd_foil, scryfall_url, updated_at)
+SELECT scryfall_id, set_code, collector_number, name,
+       price_usd, price_usd_foil, scryfall_url, updated_at
+FROM cards_legacy`); err != nil {
+		return fmt.Errorf("migrate: copying catalog: %w", err)
+	}
+	// Move quantities into collection entries (one row per non-zero finish).
+	if _, err := tx.Exec(`
+INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
+SELECT ?, scryfall_id, 'normal', 'main', qty_normal FROM cards_legacy WHERE qty_normal > 0`, cid); err != nil {
+		return fmt.Errorf("migrate: copying normal quantities: %w", err)
+	}
+	if _, err := tx.Exec(`
+INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
+SELECT ?, scryfall_id, 'foil', 'main', qty_foil FROM cards_legacy WHERE qty_foil > 0`, cid); err != nil {
+		return fmt.Errorf("migrate: copying foil quantities: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE cards_legacy`); err != nil {
+		return fmt.Errorf("migrate: dropping legacy table: %w", err)
+	}
+	return tx.Commit()
 }

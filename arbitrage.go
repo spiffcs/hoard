@@ -7,7 +7,8 @@ import (
 	"os"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
-	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/pricing"
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -35,9 +36,7 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
 			continue
 		}
 		fmt.Println(env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()))
-		if _, err := arbitrageTable(env, sec).WriteTo(os.Stdout); err != nil {
-			return err
-		}
+		fmt.Print(report.Arbitrage(env, sec))
 		fmt.Println()
 	}
 
@@ -48,96 +47,24 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
 	return nil
 }
 
-// arbitrageTable lays out one section. The three share a column shape so the
-// tables stack without the eye having to re-find the numbers.
-func arbitrageTable(env ui.Env, sec arbitrage.Section) ui.Table {
-	t := ui.Table{
-		Env: env,
-		Cols: []ui.Col{
-			{Align: ui.Left, Flex: true, Min: 16},
-			{Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Align: ui.Left, Priority: 5, Style: env.Dim()},
-			{Align: ui.Right},
-			{Align: ui.Left, Style: env.Dim()},
-			{Align: ui.Right},
-			{Align: ui.Left, Style: env.Dim()},
-			{Align: ui.Right},
-		},
-	}
-	for _, o := range sec.Rows {
-		finish := o.Card.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
-		switch sec.Kind {
-		case arbitrage.KindProfit:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
-				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
-				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
-				ui.C("+"+ui.Money(o.Profit())))
-		case arbitrage.KindLiquid:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
-				ui.C(ui.Money(o.BuyAt)), ui.C("retail"),
-				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
-				ui.C(ui.Percent(o.Liquidity())))
-		default:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
-				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
-				ui.C(ui.Money(o.DearAt)), ui.C(o.DearFrom),
-				ui.C("+"+ui.Percent(o.Spread())))
-		}
-	}
-	return t
-}
-
 // fetchArbitrage gathers today's vendor quotes for everything held and ranks
 // them.
 //
-// This is the one piece the browser cannot do for itself: it needs the MTGJSON
-// id resolver, which writes learned ids back to the catalog and is shared with
-// update-prices. Rather than give internal/browse a network dependency and a
-// second copy of that resolver, main injects this function into it.
+// The browser cannot do this itself without taking on a network dependency, so
+// main injects it (see browse.WithArbitrage).
 func fetchArbitrage(ctx context.Context, st *store.Store, minValue float64) (arbitrage.Result, error) {
 	owned, err := st.OwnedByFinish()
+	if err != nil || len(owned) == 0 {
+		return arbitrage.Result{}, err
+	}
+	refs := make([]pricing.Ref, len(owned))
+	for i, o := range owned {
+		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
+	}
+	quotes, err := newFetcher(st).Quotes(ctx, refs)
 	if err != nil {
 		return arbitrage.Result{}, err
 	}
-	if len(owned) == 0 {
-		return arbitrage.Result{}, nil
-	}
-
-	need := make([]cardRef, 0, len(owned))
-	for _, o := range owned {
-		if o.MTGJSONUUID == "" {
-			need = append(need, cardRef{ScryfallID: o.ScryfallID, SetCode: o.SetCode})
-		}
-	}
-	uuids, err := resolveMTGJSONIDs(ctx, st, need)
-	if err != nil {
-		return arbitrage.Result{}, err
-	}
-
-	want := make(map[string]bool, len(owned))
-	for _, o := range owned {
-		if u := uuidFor(o, uuids); u != "" {
-			want[u] = true
-		}
-	}
-	mtgjson.CacheDir = priceCacheDir()
-	quotes, err := mtgjson.TodayQuotes(ctx, want)
-	if err != nil {
-		return arbitrage.Result{}, fmt.Errorf("mtgjson quotes: %w", err)
-	}
-
 	return arbitrage.Collect(owned, quotes,
-		func(o store.OwnedFinish) string { return uuidFor(o, uuids) }, minValue), nil
-}
-
-// uuidFor prefers the id stored on the card, falling back to one resolved during
-// this run.
-func uuidFor(o store.OwnedFinish, resolved map[string]string) string {
-	if o.MTGJSONUUID != "" {
-		return o.MTGJSONUUID
-	}
-	return resolved[o.ScryfallID]
+		func(o store.OwnedFinish) string { return o.ScryfallID }, minValue), nil
 }

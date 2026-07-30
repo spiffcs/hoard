@@ -96,8 +96,8 @@ func TestRecordPricesReportsMovement(t *testing.T) {
 
 	risen := ulamog()
 	risen.PriceUSD = f(12.50)
-	if err := s.UpdatePrices([]scryfall.Card{risen}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{risen}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 
 	changes, err := s.RecordPrices()
@@ -179,8 +179,8 @@ func TestRecordPricesCountsCopiesAcrossContainersAndFinishes(t *testing.T) {
 
 	sunk := solRing()
 	sunk.PriceUSDFoil = f(4.00)
-	if err := s.UpdatePrices([]scryfall.Card{sunk}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{sunk}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	changes, err := s.RecordPrices()
 	if err != nil {
@@ -203,8 +203,8 @@ func TestRecordPricesIgnoresUnownedCards(t *testing.T) {
 	s := newTestStore(t)
 	// Catalogued but never added to a container, which is the state this is
 	// about: a printing hoard knows the price of and owns none of.
-	if err := s.UpsertCatalogCards([]scryfall.Card{ulamog()}); err != nil {
-		t.Fatalf("UpsertCatalogCards: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)
@@ -213,8 +213,8 @@ func TestRecordPricesIgnoresUnownedCards(t *testing.T) {
 
 	risen := ulamog()
 	risen.PriceUSD = f(99.00)
-	if err := s.UpdatePrices([]scryfall.Card{risen}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{risen}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	changes, err := s.RecordPrices()
 	if err != nil {
@@ -279,8 +279,8 @@ func TestMoversWindow(t *testing.T) {
 
 	risen := ulamog()
 	risen.PriceUSD = f(20.00)
-	if err := s.UpdatePrices([]scryfall.Card{risen}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{risen}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("RecordPrices: %v", err)
@@ -325,8 +325,8 @@ func TestRecordPricesWithinOneSecond(t *testing.T) {
 
 	risen := ulamog()
 	risen.PriceUSD = f(11.00)
-	if err := s.UpdatePrices([]scryfall.Card{risen}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{risen}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("RecordPrices: %v", err)

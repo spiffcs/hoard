@@ -100,21 +100,16 @@ func refreshCards(ctx context.Context, cat *catalog.Catalog, st *store.Store,
 	return append(found, remote...), notFound, fromCatalog, nil
 }
 
-// ensureCatalog offers to build or refresh the catalog, and reports whether its
-// prices can be trusted afterwards.
+// ensureCatalog offers to build or refresh the catalog and reports whether its
+// prices can be trusted afterwards. It asks rather than downloading: 77 MB
+// starting because somebody typed a command is a surprise on a metered link.
 //
-// It asks rather than downloading: seventy-odd megabytes starting because
-// somebody typed a command is a surprise on a metered connection.
+// The return value matters because confirm() declines automatically without a
+// terminal. Without it a scheduled refresh would serve prices as old as the
+// catalog while reporting success, forever.
 //
-// The return value exists because declining is always allowed and a declined
-// update leaves prices that are as old as the catalog. Serving those from a
-// command whose whole job is refreshing prices would report success over stale
-// numbers — and `confirm` declines automatically when there is no terminal, so
-// a scheduled refresh would do it silently and forever.
-//
-// Only prices go stale this way. A printing's identity and its finishes do not
-// change, so `repair-finishes` and the add cascade keep using an out-of-date
-// catalog quite happily; they simply do not call this.
+// Only prices go stale this way — identity and finishes do not — so
+// repair-finishes and the add cascade use an out-of-date catalog happily.
 func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool) {
 	if cat == nil {
 		return false

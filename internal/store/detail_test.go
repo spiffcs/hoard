@@ -91,7 +91,7 @@ func TestParseColorIdentity(t *testing.T) {
 			c := ulamog()
 			c.ID = "c-" + tc.name
 			c.Raw = []byte(`{"color_identity":` + tc.json + `}`)
-			if err := s.UpsertCatalogCards([]scryfall.Card{c}); err != nil {
+			if err := s.UpsertPrintings([]scryfall.Card{c}); err != nil {
 				t.Fatalf("upsert: %v", err)
 			}
 			d, err := s.CardDetail(c.ID)
@@ -146,7 +146,7 @@ func TestHoldingsOfSpansContainers(t *testing.T) {
 
 func TestHoldingsOfUnheldCard(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.UpsertCatalogCards([]scryfall.Card{ulamog()}); err != nil {
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog()}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	holdings, err := s.HoldingsOf("ulamog-id")
@@ -170,8 +170,8 @@ func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 
 	risen := ulamog()
 	risen.PriceUSD = f(12.00)
-	if err := s.UpdatePrices([]scryfall.Card{risen}); err != nil {
-		t.Fatalf("UpdatePrices: %v", err)
+	if err := s.UpsertPrintings([]scryfall.Card{risen}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("RecordPrices: %v", err)

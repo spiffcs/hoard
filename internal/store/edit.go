@@ -5,20 +5,16 @@ import (
 	"fmt"
 )
 
-// SetHoldingQuantity sets how many copies of one printing-and-finish the loose
-// collection holds, and reports what it held before.
+// SetHoldingQuantity sets how many copies of one printing-and-finish the binder
+// holds, and reports what it held before.
 //
-// Per finish rather than the normal/foil pair the removed CLI used: etched is a
-// finish of its own everywhere else — in card_entries, in the per-finish
-// listing, in repair-finishes — and a pivoted setter silently leaves etched
-// entries untouched while appearing to have set the card's quantities.
+// Per finish, not per normal/foil pair: etched is a finish of its own everywhere
+// else, and a pivoted setter would leave etched entries untouched while appearing
+// to have set the card's quantities.
 //
-// A quantity of zero deletes the entry rather than storing a zero, so "held in
-// no copies" and "not held" stay the same state; a row of zero would otherwise
-// show up in every listing that counts holdings.
-//
-// The previous quantity is returned so a caller can offer undo without having
-// read the row first, which would be a second query and a race.
+// Zero deletes the entry rather than storing a zero, so "held in no copies" and
+// "not held" stay one state. The previous quantity comes back so a caller can
+// offer undo without a second query.
 func (s *Store) SetHoldingQuantity(scryfallID, finish string, qty int) (previous int, err error) {
 	if err := validFinish(finish); err != nil {
 		return 0, err

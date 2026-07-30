@@ -68,3 +68,23 @@ func group(s string) string {
 	}
 	return b.String()
 }
+
+// Finish labels a card's finish for a column.
+//
+// "normal" renders as a dash: a column reading "normal" down every row is noise,
+// and the foils are what want pointing out.
+func Finish(finish string) string {
+	if finish == "normal" {
+		return "-"
+	}
+	return finish
+}
+
+// Estimated marks a value the primary source could not supply, so a fallback
+// vendor's figure never passes for the real one.
+func Estimated(s, altSource string) string {
+	if altSource == "" {
+		return s
+	}
+	return s + "*"
+}

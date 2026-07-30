@@ -192,14 +192,11 @@ func (m Model) cardLines(width int) []string {
 	t := ui.Table{Env: env, Header: true, Cols: cols}
 
 	for _, c := range m.cards {
-		finish := c.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
+		finish := ui.Finish(c.Finish)
 		cells := []ui.Cell{
 			ui.C(c.Name), ui.C(c.SetCode + "/" + c.CollectorNumber), ui.C(finish),
 			ui.C("×" + ui.Count(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
-			ui.C(estimated(ui.Money(c.Value), c.AltSource)),
+			ui.C(ui.Estimated(ui.Money(c.Value), c.AltSource)),
 		}
 		if inDeck {
 			cells = append([]ui.Cell{ui.C(c.Board)}, cells...)
@@ -322,15 +319,6 @@ func (m Model) helpLine() string {
 		return "tab cards · / filter · s sort · v views · a add · d remove deck · u undo · q quit"
 	}
 	return "tab decks · enter detail · / filter · s sort · v views · a add · +/- qty · d remove · u undo · q quit"
-}
-
-// estimated marks a value Scryfall could not price, so a vendor estimate never
-// passes for a Scryfall figure. Same convention as the CLI's listings.
-func estimated(s, altSource string) string {
-	if altSource == "" {
-		return s
-	}
-	return s + "*"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

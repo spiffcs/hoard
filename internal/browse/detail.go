@@ -111,10 +111,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		if h.ContainerKind != store.KindCollection && h.Board != "main" {
 			where += " (" + h.Board + ")"
 		}
-		finish := h.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
+		finish := ui.Finish(h.Finish)
 		add("  %-3s %-7s %s", "×"+ui.Count(h.Quantity), finish, where)
 	}
 

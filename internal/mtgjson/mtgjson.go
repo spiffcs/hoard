@@ -454,15 +454,12 @@ func skipValue(dec *json.Decoder) error {
 // bestUSD resolves each finish independently, walking providerOrder until a
 // vendor quotes that finish in USD.
 //
-// Per finish, not per vendor, because the gap this exists to fill is itself
-// finish-specific. TCGplayer lists a non-foil price for the Modern Horizons 3
-// ripple foils but no foil one, so stopping at the first vendor with *any* price
-// takes the non-foil figure and never reaches Card Kingdom and Manapool, which
-// do price the foil. That yields a row that looks filled and values the card at
-// nothing.
+// Per finish, not per vendor: TCGplayer lists a non-foil price for the MH3 ripple
+// foils but no foil one, so stopping at the first vendor with *any* price yields a
+// row that looks filled and values the card at nothing.
 //
-// The cost is that a card's two finishes can come from different shops, which is
-// acceptable: they are independent numbers, and Source records both.
+// The cost is that a card's two finishes can come from different shops. They are
+// independent numbers and Source records both.
 func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 	pick := func(retail func(vendor) map[string]float64) (*float64, string) {
 		for _, name := range providerOrder {

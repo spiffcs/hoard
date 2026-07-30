@@ -1,23 +1,15 @@
 // Package catalog keeps a local copy of Scryfall's card data, so lookups that
-// used to be API calls become indexed queries against a file on disk.
+// were API calls become queries against a file. The shape is a vulnerability
+// scanner's: check a small listing, download only when it is newer, build
+// locally, swap atomically.
 //
-// The shape is borrowed from vulnerability scanners: a large, slowly-changing
-// reference corpus published as a downloadable bundle, with a small listing file
-// to check freshness against. Check the listing, download only when it is newer,
-// build locally, swap atomically.
+// Two consequences of it being a cache rather than a store, both load-bearing:
+// it lives in the OS cache directory and never inside hoard.db, since everything
+// here is re-downloadable and a collection is not; and it has no migrations,
+// because a schema change rebuilds instead of upgrading.
 //
-// Two properties follow from it being a cache rather than a store, and both are
-// load-bearing:
-//
-//   - It lives in the OS cache directory, never inside hoard.db. Everything here
-//     can be re-downloaded; a collection cannot. Keeping them apart is also what
-//     stops the migration runner's VACUUM INTO backup from copying a hundred
-//     megabytes of card data on every schema change.
-//   - It has no migrations. A schema change rebuilds rather than upgrades, which
-//     makes adding a column a one-line change instead of a versioned transform.
-//
-// Callers must treat it as advisory: on a miss, fall through to the API, so a
-// card printed after the last build is still addable.
+// Advisory, never authoritative: callers fall through to the API on a miss, so a
+// card printed since the last build is still addable.
 package catalog
 
 import (

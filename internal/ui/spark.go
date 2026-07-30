@@ -10,22 +10,16 @@ import (
 // line chart rather than as a set of bars.
 var sparks = []rune("▁▂▃▄▅▆▇█")
 
-// Spark renders a series as a one-line chart at most cells columns wide.
+// Spark renders a series as a one-line chart at most cells wide.
 //
-// The scale is the series' own minimum to its own maximum, not zero to the
-// maximum. A sparkline is asked what the shape was, not what the magnitude was:
-// against a zero baseline a card that drifted between $34.00 and $34.50 would
-// render as a flat line indistinguishable from one that never moved at all. The
-// cost of that choice is that the glyphs say nothing about size — two sparklines
-// side by side are not comparable, and the numbers beside them have to carry it.
+// Scaled to the series' own range, not to zero: a card drifting between $34.00 and
+// $34.50 would otherwise look identical to one that never moved. The cost is that
+// two sparklines are not comparable — the numbers beside them carry magnitude.
 //
-// A series with no spread renders flat at mid height rather than at the floor,
-// so "this never moved" and "this bottomed out" do not look the same.
+// A flat series renders at mid height, so "never moved" and "bottomed out" differ.
 //
-// Series longer than cells are averaged into buckets. Callers holding
-// irregularly-timed observations should resample onto an even time base first:
-// bucketing by index weights a day on which the price moved three times the same
-// as three quiet weeks.
+// Longer series are averaged into buckets by index, so callers with irregularly
+// timed observations should resample onto an even time base first.
 func Spark(values []float64, cells int) string {
 	if cells <= 0 {
 		return ""

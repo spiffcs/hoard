@@ -239,17 +239,13 @@ func (t Table) Render() string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// Lines lays the table out and returns each rendered line separately, with no
-// terminating newline.
+// Lines lays the table out and returns each rendered line separately, unterminated.
 //
-// This exists for callers that must address a line after it is laid out — an
-// interactive list drawing a cursor on the selected row, which cannot be done
-// with the single string Render returns without re-splitting it and guessing
-// where the rows are.
+// For callers that must address a line after layout — an interactive list drawing
+// a cursor on the selected row.
 //
-// The order is: the column titles when Header is set, then one line per row in
-// order, with a spacer row rendering as an empty line. So with Header set and
-// no spacers — the shape an interactive list wants — row i is line i+1.
+// Order: column titles when Header is set, then one line per row, a spacer
+// rendering empty. So with a header and no spacers, row i is line i+1.
 func (t Table) Lines() []string {
 	if len(t.Cols) == 0 {
 		return nil
