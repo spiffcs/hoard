@@ -1,10 +1,8 @@
 package browse
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -24,30 +22,6 @@ const (
 	paneContainers pane = iota
 	paneCards
 )
-
-// sortMode is how the card pane is ordered. Containers are always ranked by
-// value: the left pane is the summary, and a summary sorted by name would stop
-// answering the question it exists for.
-type sortMode int
-
-const (
-	sortValue sortMode = iota
-	sortName
-	sortQty
-)
-
-func (s sortMode) String() string {
-	switch s {
-	case sortName:
-		return "name"
-	case sortQty:
-		return "qty"
-	}
-	return "value"
-}
-
-// next cycles through the sort modes.
-func (s sortMode) next() sortMode { return (s + 1) % (sortQty + 1) }
 
 // container is one row of the left pane: the loose collection, or a deck.
 //
@@ -101,7 +75,14 @@ type Model struct {
 	ready         bool
 
 	focus pane
-	sort  sortMode
+
+	// Per-view sort state: which of sortColumns[view] orders the rows, and
+	// whether that column runs backwards. Indexed by viewMode, so each view
+	// keeps its own order across "v" cycles. Containers are always ranked by
+	// value: the left pane is the summary, and a summary sorted by name would
+	// stop answering the question it exists for.
+	sortIdx [len(sortColumns)]int
+	sortRev [len(sortColumns)]bool
 
 	containers []container
 
@@ -270,7 +251,8 @@ func (m *Model) loadCards() error {
 		}
 	}
 
-	m.allCards = sortCards(out, m.sort)
+	m.allCards = out
+	m.sortHoldings()
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
@@ -573,10 +555,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "s":
-		m.sort = m.sort.next()
-		m.cards = sortCards(m.cards, m.sort)
+		m.cycleSort()
 		m.cursor[paneCards], m.offset[paneCards] = 0, 0
-		m.status = "sorted by " + m.sort.String()
+		m.status, m.statusErr = "sorted by "+m.sortLabel(), false
+		return m, nil
+	case "S":
+		m.reverseSort()
+		m.cursor[paneCards], m.offset[paneCards] = 0, 0
+		m.status, m.statusErr = "sorted by "+m.sortLabel(), false
 		return m, nil
 
 	case "r":
@@ -734,32 +720,4 @@ func (m *Model) reload() {
 func (m *Model) setError(err error) {
 	m.status = err.Error()
 	m.statusErr = true
-}
-
-// sortCards orders the card pane.
-//
-// Every mode breaks ties by name, for the same reason the store's own listings
-// do: a hoard whose prices were never fetched is entirely $0.00, and without a
-// tiebreak its order would be arbitrary and shuffle between frames.
-func sortCards(cards []card, mode sortMode) []card {
-	rows := slices.Clone(cards)
-	slices.SortStableFunc(rows, func(a, b card) int {
-		switch mode {
-		case sortName:
-			if c := strings.Compare(a.Name, b.Name); c != 0 {
-				return c
-			}
-			return strings.Compare(a.Finish, b.Finish)
-		case sortQty:
-			if c := cmp.Compare(b.Quantity, a.Quantity); c != 0 {
-				return c
-			}
-		default:
-			if c := cmp.Compare(b.Value, a.Value); c != 0 {
-				return c
-			}
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
-	return rows
 }

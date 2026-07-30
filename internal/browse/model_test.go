@@ -217,13 +217,19 @@ func deck(id int64, name string, copies int, value float64) store.DeckSummary {
 	return d
 }
 
+// row prices the finish it is actually held in, for the same reason entry
+// does below: CollectionRow.Price() reads the foil column for a foil holding.
 func row(name, set, num, finish string, qty int, value float64) store.CollectionRow {
 	r := store.CollectionRow{Finish: finish, Quantity: qty, Value: value}
 	r.ScryfallID = name + "-id"
 	r.Name = name
 	r.SetCode = set
 	r.CollectorNumber = num
-	r.PriceUSD = price(value / float64(max(qty, 1)))
+	if finish == "normal" {
+		r.PriceUSD = price(value / float64(max(qty, 1)))
+	} else {
+		r.PriceUSDFoil = price(value / float64(max(qty, 1)))
+	}
 	return r
 }
 
@@ -417,22 +423,32 @@ func TestSortCycles(t *testing.T) {
 		t.Fatalf("default sort = %v, want value order", names(m.cards))
 	}
 
-	m = key(m, "s") // → name
-	if m.sort != sortName {
-		t.Fatalf("sort = %v, want name", m.sort)
-	}
-	if m.cards[0].Name != "Ancient Tomb" {
-		t.Errorf("by name = %v, want Ancient Tomb first", names(m.cards))
+	// The cycle covers every column the pane shows.
+	for _, step := range []struct{ label, first string }{
+		{"name", "Ancient Tomb"},
+		{"set/num", "Sol Ring"},    // c21/1 before uma/85 and uma/236
+		{"finish", "Ancient Tomb"}, // etched < foil < normal; the one foil leads
+		{"qty", "Bitterblossom"},   // 4 copies
+		{"price", "Ancient Tomb"},  // $134 foil beats $34 and $10
+		{"value", "Bitterblossom"}, // back to the default
+	} {
+		m = key(m, "s")
+		if got := m.sortLabel(); got != step.label {
+			t.Fatalf("sort label = %q, want %q", got, step.label)
+		}
+		if m.cards[0].Name != step.first {
+			t.Errorf("by %s = %v, want %s first", step.label, names(m.cards), step.first)
+		}
 	}
 
-	m = key(m, "s") // → qty
+	m = key(m, "S") // reverse the current column
+	if m.sortLabel() != "value (reversed)" || m.cards[0].Name != "Sol Ring" {
+		t.Errorf("reversed value = %v (label %q), want the cheapest first",
+			names(m.cards), m.sortLabel())
+	}
+	m = key(m, "S") // and back
 	if m.cards[0].Name != "Bitterblossom" {
-		t.Errorf("by qty = %v, want the 4-copy card first", names(m.cards))
-	}
-
-	m = key(m, "s") // back to value
-	if m.sort != sortValue || m.cards[0].Name != "Bitterblossom" {
-		t.Errorf("cycle did not return to value: %v %v", m.sort, names(m.cards))
+		t.Errorf("un-reversed = %v, want value order again", names(m.cards))
 	}
 }
 
@@ -442,8 +458,8 @@ func TestSortPersistsAcrossContainers(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "s") // name
 	m = key(m, "down")
-	if m.sort != sortName {
-		t.Fatalf("sort reset to %v", m.sort)
+	if m.sortLabel() != "name" {
+		t.Fatalf("sort reset to %v", m.sortLabel())
 	}
 	if m.cards[0].Name != "Force of Will" {
 		t.Errorf("deck cards = %v, want name order", names(m.cards))
@@ -662,7 +678,7 @@ func TestFilterBarSwallowsCommandKeys(t *testing.T) {
 		t.Errorf("filtering=%v text=%q — q was treated as quit", m.filtering, m.filterText)
 	}
 	m = typeFilter(m, "s")
-	if m.sort != sortValue {
+	if m.sortIdx[viewHoldings] != 0 {
 		t.Error("s changed the sort while the filter bar was open")
 	}
 }
@@ -1085,7 +1101,7 @@ func TestDetailSwallowsNavigationKeys(t *testing.T) {
 	if m.cursor[paneCards] != at {
 		t.Error("the cursor moved behind the detail overlay")
 	}
-	if m.sort != sortValue {
+	if m.sortIdx[viewHoldings] != 0 {
 		t.Error("s changed the sort behind the detail overlay")
 	}
 }
@@ -1129,6 +1145,84 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	m = key(m, "v")
 	if m.view != viewHoldings {
 		t.Errorf("view = %v, want back to holdings", m.view)
+	}
+}
+
+// Each view sorts its own rows by its own columns — pressing s outside the
+// holdings view used to announce a sort and change nothing.
+func TestSortWorksInEveryView(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{
+		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "normal", Copies: 2, Old: 1, New: 5},
+		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "foil", Copies: 1, Old: 50, New: 10},
+	}
+	st.unpriced = []store.UnpricedRow{
+		{Name: "Zebra", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
+		{Name: "Aardvark", SetCode: "d", CollectorNumber: "4", Finish: "normal", Copies: 5, HeldIn: "Deck"},
+	}
+	m := newTestModel(t, st)
+
+	m = key(m, "v") // movers, impact order: Sinker ($40) first
+	m = key(m, "s") // → name
+	if m.sortLabel() != "name" || m.movers[0].Name != "Riser" {
+		t.Errorf("movers by %s = %s first, want Riser", m.sortLabel(), m.movers[0].Name)
+	}
+	m = key(m, "S") // reversed name
+	if m.movers[0].Name != "Sinker" {
+		t.Errorf("movers by %s = %s first, want Sinker", m.sortLabel(), m.movers[0].Name)
+	}
+
+	m = key(m, "v") // unpriced, name order: Aardvark first
+	if m.unpriced[0].Name != "Aardvark" {
+		t.Fatalf("unpriced default = %s first, want name order", m.unpriced[0].Name)
+	}
+	for range 3 {
+		m = key(m, "s") // name → set/num → finish → qty
+	}
+	if m.sortLabel() != "qty" || m.unpriced[0].Name != "Aardvark" {
+		t.Errorf("unpriced by %s = %s first, want the 5-copy card", m.sortLabel(), m.unpriced[0].Name)
+	}
+
+	// The movers view kept its own reversed-name sort while we were away.
+	m = key(m, "v") // arbitrage
+	m = key(m, "v") // holdings
+	m = key(m, "v") // movers again
+	if m.sortLabel() != "name (reversed)" || m.movers[0].Name != "Sinker" {
+		t.Errorf("movers sort did not survive the round trip: %s, %s first",
+			m.sortLabel(), m.movers[0].Name)
+	}
+}
+
+// Arbitrage rows keep their kind grouping whatever column sorts them: the WHY
+// column is the view's reading order, and dollars must not rank against
+// percentages.
+func TestArbitrageSortStaysGrouped(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.view = viewArbitrage
+	opp := func(name string, buy, sell, dear float64) arbitrage.Opportunity {
+		o := arbitrage.Opportunity{BuyAt: buy, SellAt: sell, DearAt: dear, HasRetail: true, HasBuy: sell > 0}
+		o.Card.Name = name
+		return o
+	}
+	m.arbRows = []arbitrage.Row{
+		{Kind: arbitrage.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
+		{Kind: arbitrage.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
+		{Kind: arbitrage.KindSpread, Opportunity: opp("Zulu Spread", 1, 0, 5)},
+		{Kind: arbitrage.KindSpread, Opportunity: opp("Alpha Spread", 1, 0, 2)},
+	}
+	m.arbLoaded = true
+
+	m = key(m, "s") // → name, within each kind
+	names := make([]string, len(m.arbRows))
+	for i, r := range m.arbRows {
+		names[i] = r.Card.Name
+	}
+	want := []string{"Alpha Profit", "Zulu Profit", "Alpha Spread", "Zulu Spread"}
+	if !slices.Equal(names, want) {
+		t.Errorf("arbitrage by name = %v, want %v (profits before spreads)", names, want)
+	}
+	if m.sortLabel() != "name" {
+		t.Errorf("label = %q, want name", m.sortLabel())
 	}
 }
 
@@ -1246,7 +1340,7 @@ func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("no command returned to run the fetch")
 	}
-	if out := m.View(); !strings.Contains(out, "asking every vendor") {
+	if out := m.View(); !strings.Contains(out, "reading today's vendor prices") {
 		t.Errorf("no progress shown:\n%s", out)
 	}
 

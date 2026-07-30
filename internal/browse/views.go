@@ -57,6 +57,7 @@ func (m *Model) loadView() error {
 			return fmt.Errorf("reading movers: %w", err)
 		}
 		m.movers = store.MoversByImpact(changes)
+		m.applySort()
 		return nil
 	case viewUnpriced:
 		rows, err := m.store.Unpriced()
@@ -64,6 +65,7 @@ func (m *Model) loadView() error {
 			return fmt.Errorf("reading unpriced cards: %w", err)
 		}
 		m.unpriced = rows
+		m.applySort()
 		return nil
 	}
 	return nil

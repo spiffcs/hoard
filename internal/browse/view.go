@@ -287,7 +287,7 @@ func (m Model) statusLine() string {
 	if n == 0 {
 		return helpStyle.Render("nothing here")
 	}
-	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sort)
+	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sortLabel())
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
@@ -329,11 +329,11 @@ func (m Model) helpLine() string {
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · ↑/↓ move · s sort · r reload · q quit"
+		return "v next view · ↑/↓ move · s sort · S reverse · r reload · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · / filter · s sort · v views · a add · d remove deck · u undo · q quit"
+		return "tab cards · / filter · s sort · S reverse · v views · a add · d remove deck · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · s sort · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

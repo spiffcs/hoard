@@ -80,6 +80,7 @@ func (m Model) onArbitrage(msg arbitrageMsg) (tea.Model, tea.Cmd) {
 	}
 	m.arbResult = msg.res
 	m.arbRows = arbitrage.Rows(msg.res, arbitrageRows)
+	m.sortArbRows()
 	m.arbLoaded = true
 	m.status = ""
 	m.clampCursor(paneCards)
@@ -158,10 +159,10 @@ func (m Model) arbitrageHeader() (title, totals string) {
 func (m Model) arbitrageStatus() string {
 	switch {
 	case m.arbLoading:
-		return m.spinner.View() + " asking every vendor for today's prices (~5 MB)"
+		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
 	case !m.arbLoaded:
 		return helpStyle.Render(
-			"arbitrage needs a download, so it waits to be asked — press enter")
+			"arbitrage may need a download, so it waits to be asked — press enter")
 	case len(m.arbRows) == 0:
 		return helpStyle.Render("no vendor disagreed about anything you own today")
 	}
