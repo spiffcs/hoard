@@ -94,8 +94,19 @@ func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Pr
 }
 
 // Quotes returns every vendor quote for each printing, keyed by Scryfall id.
+//
+// Answers come from the day-cache when today's parse already covered these
+// printings — the full bundle is a ~50 MB scan for a few tens of kilobytes of
+// quotes about cards actually owned, and vendor prices only change with the
+// bundle, once a day.
 func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.Quote, error) {
+	if out, ok := f.cachedQuotes(refs); ok {
+		return out, nil
+	}
 	out, _, err := remap(f, ctx, refs, "quotes", mtgjson.TodayQuotes)
+	if err == nil {
+		f.saveQuotes(refs, out)
+	}
 	return out, err
 }
 
