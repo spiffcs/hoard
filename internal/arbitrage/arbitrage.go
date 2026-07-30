@@ -67,20 +67,17 @@ type Result struct {
 	Ignored  int
 }
 
-// Collect turns holdings and their quotes into ranked opportunities.
-//
-// uuidOf maps a holding to the MTGJSON id its quotes are keyed by; the caller
-// owns that resolution because it may involve downloads.
+// Collect turns holdings and their quotes into ranked opportunities. quotes is
+// keyed by Scryfall id, exactly as pricing.Fetcher.Quotes returns them.
 //
 // minValue filters on what you would actually pay, not on what hoard thinks the
 // card is worth. A 900% spread between $0.20 and $1.99 is arithmetic, not an
 // opportunity, and sorting by percentage would otherwise fill every section with
 // cards worth less than the postage.
-func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote,
-	uuidOf func(store.OwnedFinish) string, minValue float64) Result {
+func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minValue float64) Result {
 	var res Result
 	for _, o := range owned {
-		qs := quotes[uuidOf(o)]
+		qs := quotes[o.ScryfallID]
 		if len(qs) == 0 {
 			continue
 		}

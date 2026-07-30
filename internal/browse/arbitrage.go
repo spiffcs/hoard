@@ -112,10 +112,8 @@ func isCanceled(err error) bool {
 // pays; on a spread row it is the cheapest and dearest asking price. The FROM
 // and TO columns name the vendors, so the numbers are never anonymous.
 func (m Model) arbitrageLines(width int) []string {
-	env := ui.Env{Width: width, Color: true, Clamp: true}
-	t := ui.Table{
-		Env: env, Header: true,
-		Cols: []ui.Col{
+	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
+		t := ui.Table{Cols: []ui.Col{
 			{Title: "WHY", Align: ui.Left, Priority: 3, Style: env.Dim()},
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 6, Style: env.Dim()},
@@ -124,23 +122,23 @@ func (m Model) arbitrageLines(width int) []string {
 			{Title: "SELL", Align: ui.Right},
 			{Title: "TO", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "GAIN", Align: ui.Right},
-		},
-	}
-	for _, r := range m.arbRows {
-		sell, to, gain := ui.Money(r.SellAt), r.SellTo, ""
-		switch r.Kind {
-		case arbitrage.KindProfit:
-			gain = "+" + ui.Money(r.Profit())
-		case arbitrage.KindLiquid:
-			gain = ui.Percent(r.Liquidity())
-		default:
-			// A spread row compares two asking prices, not a buy and a sell.
-			sell, to, gain = ui.Money(r.DearAt), r.DearFrom, "+"+ui.Percent(r.Spread())
+		}}
+		for _, r := range m.arbRows {
+			sell, to, gain := ui.Money(r.SellAt), r.SellTo, ""
+			switch r.Kind {
+			case arbitrage.KindProfit:
+				gain = "+" + ui.Money(r.Profit())
+			case arbitrage.KindLiquid:
+				gain = ui.Percent(r.Liquidity())
+			default:
+				// A spread row compares two asking prices, not a buy and a sell.
+				sell, to, gain = ui.Money(r.DearAt), r.DearFrom, "+"+ui.Percent(r.Spread())
+			}
+			t.Add(ui.C(r.Kind.String()), ui.C(r.Card.Name), ui.C(r.Printing()),
+				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom), ui.C(sell), ui.C(to), ui.C(gain))
 		}
-		t.Add(ui.C(r.Kind.String()), ui.C(r.Card.Name), ui.C(r.Printing()),
-			ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom), ui.C(sell), ui.C(to), ui.C(gain))
-	}
-	return m.window(t.Lines(), paneCards, width)
+		return t
+	})
 }
 
 // arbitrageHeader is the right pane's title and summary while in this view.

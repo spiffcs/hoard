@@ -114,11 +114,11 @@ func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool
 	if cat == nil {
 		return false
 	}
-	st := cat.Status(ctx)
+	st := cat.CheckStatus(ctx)
 	switch {
 	case st.Empty():
 		if !confirmFn(fmt.Sprintf(
-			"No local card catalog yet. Download it now (%s)?", downloadSize(ctx))) {
+			"No local card catalog yet. Download it now (%s)?", downloadSize(ctx, cat))) {
 			fmt.Fprintln(os.Stderr,
 				"  using the Scryfall API; run 'hoard catalog update' to make this fast.")
 			return false
@@ -126,7 +126,7 @@ func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool
 	case st.Checked && st.Stale:
 		if !confirmFn(fmt.Sprintf(
 			"A newer card catalog is available (yours is from %s). Update it (%s)?",
-			st.SourceUpdated.Local().Format("2 Jan"), downloadSize(ctx))) {
+			st.SourceUpdated.Local().Format("2 Jan"), downloadSize(ctx, cat))) {
 			fmt.Fprintln(os.Stderr,
 				"  catalog prices would be out of date, so using the Scryfall API instead.")
 			return false
@@ -146,7 +146,7 @@ func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool
 
 // updateCatalog rebuilds the catalog, reporting progress.
 func updateCatalog(ctx context.Context, cat *catalog.Catalog) error {
-	fmt.Printf("Downloading the card catalog (%s)...\n", downloadSize(ctx))
+	fmt.Printf("Downloading the card catalog (%s)...\n", downloadSize(ctx, cat))
 	start := time.Now()
 	last := 0
 	err := cat.Update(ctx, func(n int) {
@@ -166,8 +166,8 @@ func updateCatalog(ctx context.Context, cat *catalog.Catalog) error {
 
 // downloadSize describes the transfer a rebuild would cost, or "unknown size"
 // when the listing cannot be read.
-func downloadSize(ctx context.Context) string {
-	if n := catalog.DownloadSize(ctx); n > 0 {
+func downloadSize(ctx context.Context, cat *catalog.Catalog) string {
+	if n := cat.DownloadSize(ctx); n > 0 {
 		return humanBytes(n)
 	}
 	return "unknown size"
@@ -233,7 +233,7 @@ func cmdCatalog(ctx context.Context, args []string) error {
 
 func catalogStatus(ctx context.Context, cat *catalog.Catalog) error {
 	env := ui.Detect(os.Stdout)
-	st := cat.Status(ctx)
+	st := cat.CheckStatus(ctx)
 
 	if st.Empty() {
 		fmt.Println(env.Dim()("No catalog yet. Build it with: hoard catalog update"))

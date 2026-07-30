@@ -180,3 +180,12 @@ ON CONFLICT(scryfall_id) DO UPDATE SET checked_at = excluded.checked_at`)
 	}
 	return tx.Commit()
 }
+
+// nullable stores an empty string as SQL NULL, so "no vendor for this finish"
+// is distinguishable from a vendor whose name happens to be blank.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}

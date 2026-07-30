@@ -3,7 +3,6 @@ package store
 import (
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // Reconciling a stored finish with the ones a printing actually comes in.
@@ -16,8 +15,13 @@ type FinishFix struct {
 	Container       string
 	Board           string
 	From            string
-	To              string
-	Quantity        int
+	// To is the finish to store instead. Set only for corrected rows; an
+	// ambiguous row carries its candidates in Available instead.
+	To string
+	// Available is the printing's real finishes, for rows where no single
+	// correction is safe and the caller can only report the choices.
+	Available []string
+	Quantity  int
 }
 
 // hoardFinish translates Scryfall's finish names to the ones stored here.
@@ -108,7 +112,7 @@ ORDER BY c.name`)
 		f.Board, f.From, f.Quantity = t.board, t.from, t.quantity
 		to, ok := CorrectFinish(t.from, finishes)
 		if !ok {
-			f.To = strings.Join(finishes, "|")
+			f.Available = finishes
 			ambiguous = append(ambiguous, f)
 			continue
 		}

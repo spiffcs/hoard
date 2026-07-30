@@ -88,6 +88,10 @@ type Catalog struct {
 	db   *sql.DB
 	dir  string
 	path string
+	// entry memoizes the bulk-data listing for this process. Freshness, size
+	// and the download URL are three questions about the same few KB of JSON,
+	// and asking per question meant one update-prices fetched it four times.
+	entry *bundle
 }
 
 // Open opens the catalog in dir, creating an empty one if there is none.
@@ -164,10 +168,10 @@ func (c *Catalog) CardCount() int {
 }
 
 // Built is when the catalog was last built, zero if never.
-func (c *Catalog) Built() time.Time { return c.metaTime(keyBuilt) }
+func (c *Catalog) built() time.Time { return c.metaTime(keyBuilt) }
 
 // SourceUpdated is the timestamp the bulk file itself carried.
-func (c *Catalog) SourceUpdated() time.Time { return c.metaTime(keySourceUpdated) }
+func (c *Catalog) sourceUpdated() time.Time { return c.metaTime(keySourceUpdated) }
 
 // Bytes is the catalog's size on disk, 0 if it cannot be measured.
 func (c *Catalog) Bytes() int64 {

@@ -21,7 +21,9 @@ type state int
 
 const (
 	stateName state = iota
-	stateCameraList
+	// stateCameraBusy is any wait on the camera subsystem — listing devices or
+	// opening the chosen one — so the name does not promise which.
+	stateCameraBusy
 	stateCameraPick
 	stateCapture   // camera window live, waiting for the user to frame and capture
 	stateCapturing // shutter pressed, waiting on the OCR result
@@ -297,11 +299,11 @@ func (m *model) beginScan(force bool) tea.Cmd {
 	}
 	if m.cameraChosen && !force {
 		m.status = ""
-		m.state = stateCameraList
+		m.state = stateCameraBusy
 		return tea.Batch(m.spinner.Tick, m.openSessionCmd())
 	}
 	m.status = ""
-	m.state = stateCameraList
+	m.state = stateCameraBusy
 	return tea.Batch(m.spinner.Tick, m.listCamerasCmd())
 }
 
@@ -319,8 +321,6 @@ func (m *model) closeSession() {
 // maxFuzzyTries bounds how many OCR lines are tried against Scryfall, so a
 // text-heavy capture can't turn into a burst of lookups.
 const maxFuzzyTries = 5
-
-const ()
 
 // namedFuzzyCmd resolves noisy OCR text to a canonical card name, trying each
 // recognized line in order until one matches. Only the first line is a real
@@ -410,19 +410,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEsc:
 			return m, tea.Quit
-		case tea.KeyCtrlO:
+		case tea.KeyCtrlO, tea.KeyCtrlR:
+			// Ctrl-R re-opens the camera picker even when this session already
+			// chose one.
 			if m.scanner == nil {
 				return m.failToName("card scanning isn't available in this build")
 			}
-			cmd := m.beginScan(false)
-			return m, cmd
-		case tea.KeyCtrlR:
-			// Re-open the camera picker even if this session already chose one.
-			if m.scanner == nil {
-				return m.failToName("card scanning isn't available in this build")
-			}
-			cmd := m.beginScan(true)
-			return m, cmd
+			return m, m.beginScan(msg.Type == tea.KeyCtrlR)
 		case tea.KeyEnter:
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
@@ -432,22 +426,23 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateLoading
 			return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(name))
 		}
-	case stateCameraList:
+	case stateCameraBusy:
 		if msg.Type == tea.KeyEsc {
 			return m.cancelToName()
 		}
 	case stateCameraPick:
-		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
-			return m.cancelToName()
-		}
-		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
-			if it, ok := m.list.SelectedItem().(cameraItem); ok {
-				m.cameraID = it.dev.ID
-				m.cameraName = it.dev.Name
-				m.cameraChosen = true
-				m.state = stateCameraList
-				return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
+		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
+			ci, ok := it.(cameraItem)
+			if !ok {
+				return nil, nil, false
 			}
+			m.cameraID = ci.dev.ID
+			m.cameraName = ci.dev.Name
+			m.cameraChosen = true
+			m.state = stateCameraBusy
+			return m, tea.Batch(m.spinner.Tick, m.openSessionCmd()), true
+		}); ok {
+			return next, cmd
 		}
 	case stateCapture:
 		switch msg.Type {
@@ -475,35 +470,40 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.cancelToName()
 		}
 	case stateNamePick:
-		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
-			return m.cancelToName()
-		}
-		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
-			if it, ok := m.list.SelectedItem().(nameItem); ok {
-				m.state = stateLoading
-				return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(string(it)))
+		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
+			ni, ok := it.(nameItem)
+			if !ok {
+				return nil, nil, false
 			}
+			m.state = stateLoading
+			return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(string(ni))), true
+		}); ok {
+			return next, cmd
 		}
 	case statePrintPick:
-		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
-			return m.cancelToName()
-		}
-		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
-			if it, ok := m.list.SelectedItem().(printItem); ok {
-				card := it.card
-				m.chosen = &card
-				return m.advanceAfterPrint()
+		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
+			pi, ok := it.(printItem)
+			if !ok {
+				return nil, nil, false
 			}
+			card := pi.card
+			m.chosen = &card
+			next, cmd := m.advanceAfterPrint()
+			return next, cmd, true
+		}); ok {
+			return next, cmd
 		}
 	case stateFinishPick:
-		if msg.Type == tea.KeyEsc && !m.list.SettingFilter() {
-			return m.cancelToName()
-		}
-		if msg.Type == tea.KeyEnter && !m.list.SettingFilter() {
-			if it, ok := m.list.SelectedItem().(finishItem); ok {
-				m.finish = string(it)
-				return m.toQty()
+		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
+			fi, ok := it.(finishItem)
+			if !ok {
+				return nil, nil, false
 			}
+			m.finish = string(fi)
+			next, cmd := m.toQty()
+			return next, cmd, true
+		}); ok {
+			return next, cmd
 		}
 	case stateQty:
 		if msg.Type == tea.KeyEsc {
@@ -533,7 +533,7 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
 	case stateNamePick, statePrintPick, stateFinishPick, stateCameraPick:
 		m.list, cmd = m.list.Update(msg)
-	case stateLoading, stateCapturing, stateCameraList:
+	case stateLoading, stateCapturing, stateCameraBusy:
 		m.spinner, cmd = m.spinner.Update(msg)
 	}
 	return m, cmd
@@ -560,18 +560,15 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	cards, matched := rankByScan(msg.cards, m.scannedSet, m.scannedNumber)
 	m.prints = cards
 
-	items := make([]list.Item, len(cards))
-	for i, c := range cards {
-		items[i] = printItem{card: c, scanned: matched && i == 0}
-	}
-	m.setListItems("Select a printing", items)
+	showPicker(&m, "Select a printing", cards, statePrintPick, func(i int, c scryfall.Card) list.Item {
+		return printItem{card: c, scanned: matched && i == 0}
+	})
 	if m.scannedNumber != "" && !matched {
 		// Either the digits were misread or the name match is wrong. Saying so
 		// beats silently showing an unranked list as though nothing was scanned.
 		m.status = fmt.Sprintf("card #%s isn't among these printings — pick manually", m.scannedNumber)
 		m.statusErr = true
 	}
-	m.state = statePrintPick
 	return m, nil
 }
 
@@ -617,12 +614,9 @@ func (m model) onNames(msg namesMsg) (tea.Model, tea.Cmd) {
 		m.state = stateLoading
 		return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.names[0]))
 	default:
-		items := make([]list.Item, len(msg.names))
-		for i, n := range msg.names {
-			items[i] = nameItem(n)
-		}
-		m.setListItems("Select a card", items)
-		m.state = stateNamePick
+		showPicker(&m, "Select a card", msg.names, stateNamePick, func(_ int, n string) list.Item {
+			return nameItem(n)
+		})
 		return m, nil
 	}
 }
@@ -644,11 +638,9 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 		m.cameraChosen = true
 		return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
 	default:
-		items := make([]list.Item, len(msg.devices))
-		for i, d := range msg.devices {
-			items[i] = cameraItem{dev: d}
-		}
-		m.setListItems("Scan with which iPhone?", items)
+		showPicker(&m, "Scan with which iPhone?", msg.devices, stateCameraPick, func(_ int, d scan.Device) list.Item {
+			return cameraItem{dev: d}
+		})
 		// Pre-select the session's current camera so re-picking is a single enter.
 		for i, d := range msg.devices {
 			if d.ID == m.cameraID {
@@ -804,12 +796,9 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 		}
 		return m.toQty()
 	}
-	items := make([]list.Item, len(finishes))
-	for i, f := range finishes {
-		items[i] = finishItem(f)
-	}
-	m.setListItems("Select a finish", items)
-	m.state = stateFinishPick
+	showPicker(&m, "Select a finish", finishes, stateFinishPick, func(_ int, f string) list.Item {
+		return finishItem(f)
+	})
 	return m, nil
 }
 
@@ -895,6 +884,38 @@ func (m model) qtyValue() int {
 	return n
 }
 
+// pickerKey handles the keys every picker shares: esc cancels back to the name
+// prompt and enter fires onEnter with the selection — unless the list's own
+// filter is capturing input, which must keep every key. onEnter reports whether
+// it consumed the item, so an unexpected type falls through untouched. One
+// definition, because four hand-written copies of this contract had already
+// been written and a fifth would forget the filter guard.
+func (m model) pickerKey(msg tea.KeyMsg, onEnter func(list.Item) (tea.Model, tea.Cmd, bool)) (tea.Model, tea.Cmd, bool) {
+	if m.list.SettingFilter() {
+		return nil, nil, false
+	}
+	switch msg.Type {
+	case tea.KeyEsc:
+		next, cmd := m.cancelToName()
+		return next, cmd, true
+	case tea.KeyEnter:
+		return onEnter(m.list.SelectedItem())
+	}
+	return nil, nil, false
+}
+
+// showPicker fills the list with one item per element and moves to the picker
+// state — the three steps every picker transition takes, kept together so a
+// new picker cannot forget one.
+func showPicker[T any](m *model, title string, xs []T, st state, item func(int, T) list.Item) {
+	items := make([]list.Item, len(xs))
+	for i, x := range xs {
+		items[i] = item(i, x)
+	}
+	m.setListItems(title, items)
+	m.state = st
+}
+
 func (m *model) setListItems(title string, items []list.Item) {
 	m.list.Title = title
 	m.list.SetItems(items)
@@ -919,7 +940,7 @@ func (m model) listHeight() int {
 	if m.scanned != "" {
 		chrome += 2
 	}
-	return maxInt(m.height-chrome, 4)
+	return max(m.height-chrome, 4)
 }
 
 // --- view ---
@@ -965,7 +986,7 @@ func (m model) View() string {
 		}
 		b.WriteString(helpStyle.Render(help))
 		return b.String()
-	case stateCameraList:
+	case stateCameraBusy:
 		return fmt.Sprintf("%s looking for a connected iPhone…\n\n%s",
 			m.spinner.View(), helpStyle.Render("esc cancel · ctrl+c quit"))
 	case stateCameraPick:
@@ -1075,11 +1096,4 @@ func priceStr(p *float64) string {
 		return "—"
 	}
 	return strconv.FormatFloat(*p, 'f', 2, 64)
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

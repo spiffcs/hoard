@@ -63,7 +63,7 @@ func stamps(t *testing.T, s *Store) []string {
 // moved from, and reporting it would make every newly added card a riser.
 func TestRecordPricesFirstRunIsBaseline(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestRecordPricesFirstRunIsBaseline(t *testing.T) {
 
 func TestRecordPricesReportsMovement(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -134,7 +134,7 @@ func TestRecordPricesReportsMovement(t *testing.T) {
 // refresh would grow the database by the size of the catalog every day.
 func TestRecordPricesSkipsUnchanged(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -268,7 +268,7 @@ func TestRecordPricesUsesFallbackPrices(t *testing.T) {
 
 func TestMoversWindow(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -314,7 +314,7 @@ func TestMoversWindow(t *testing.T) {
 // key, and the later price must win.
 func TestRecordPricesWithinOneSecond(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -428,7 +428,7 @@ func TestPriceHistoryDepth(t *testing.T) {
 		t.Errorf("empty hoard reports %d observations since %q, want 0 and empty", n, oldest)
 	}
 
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -469,7 +469,7 @@ func priceAt(t *testing.T, s *Store, id, finish, asOf string) (float64, string) 
 // say nothing a repeat of the previous number does not already say.
 func TestBackfillPricesStoresOnlyTheDaysThatMoved(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -502,7 +502,7 @@ func TestBackfillPricesStoresOnlyTheDaysThatMoved(t *testing.T) {
 // must not inherit the non-foil's dates, or its history claims moves it never had.
 func TestBackfillPricesKeepsFinishesSeparate(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -535,7 +535,7 @@ func TestBackfillPricesKeepsFinishesSeparate(t *testing.T) {
 // prices actually were; the import is a reconstruction made afterwards.
 func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -564,7 +564,7 @@ func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
 // would surface in Movers as a few cents of movement that never happened.
 func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -600,7 +600,7 @@ func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
 // window needs a baseline of its own rather than one that got cut off.
 func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -628,7 +628,7 @@ func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
 // The point of the whole exercise: a 30-day question answered on day one.
 func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 4); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 4); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -686,7 +686,7 @@ func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 // history the first one created.
 func TestBackfillPricesIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	series := map[string][]mtgjson.Observation{

@@ -4,7 +4,7 @@ import "testing"
 
 func TestSetHoldingQuantity(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -25,7 +25,7 @@ func TestSetHoldingQuantity(t *testing.T) {
 // counts holdings.
 func TestSetHoldingQuantityZeroRemovesTheEntry(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.SetHoldingQuantity("ulamog-id", "normal", 0); err != nil {
@@ -80,7 +80,7 @@ func TestSetHoldingQuantityRejectsUnknownFinish(t *testing.T) {
 // list, not a number — re-adding one copy of one finish would not restore it.
 func TestRemoveFromCollectionReturnsWhatItRemoved(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
 		t.Fatalf("AddCard normal: %v", err)
 	}
 	if err := s.AddCardFinish(ulamog(), "foil", 2); err != nil {
@@ -112,7 +112,7 @@ func TestRemoveFromCollectionReturnsWhatItRemoved(t *testing.T) {
 // must not quietly empty a decklist imported from somewhere else.
 func TestRemoveFromCollectionLeavesDecksAlone(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.UpsertDeck(
@@ -139,7 +139,7 @@ func TestRemoveFromCollectionLeavesDecksAlone(t *testing.T) {
 // double a holding that was partly re-added between the removal and the undo.
 func TestRestoreHoldingsReplacesRatherThanAdds(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	removed, err := s.RemoveFromCollection("ulamog-id")
@@ -147,7 +147,7 @@ func TestRestoreHoldingsReplacesRatherThanAdds(t *testing.T) {
 		t.Fatalf("RemoveFromCollection: %v", err)
 	}
 	// Someone re-adds a copy by hand before hitting undo.
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard again: %v", err)
 	}
 	if err := s.RestoreHoldings("ulamog-id", removed); err != nil {

@@ -216,9 +216,7 @@ func TestCollectFiltersByPrice(t *testing.T) {
 		"cheap": {q("a", mtgjson.Retail, "foil", 0.20), q("b", mtgjson.Retail, "foil", 1.99)},
 		"dear":  {q("a", mtgjson.Retail, "foil", 10), q("b", mtgjson.Retail, "foil", 40)},
 	}
-	uuidOf := func(o store.OwnedFinish) string { return o.ScryfallID }
-
-	res := Collect(owned, quotes, uuidOf, 1.0)
+	res := Collect(owned, quotes, 1.0)
 	if len(res.Opportunities) != 1 || res.Opportunities[0].Card.Name != "dear" {
 		t.Errorf("opportunities = %+v, want only the card above the floor", res.Opportunities)
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -72,16 +73,14 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 			t.Add(ui.C(f.Name), ui.C(ui.Printing(f.SetCode, f.CollectorNumber)),
 				ui.C(ui.Count(f.Quantity)), ui.C(f.From), ui.C(f.To), ui.C(f.Container))
 		}
-		if _, err := t.WriteTo(os.Stdout); err != nil {
-			return err
-		}
+		fmt.Print(t.Render())
 		fmt.Println(env.Dim()(fmt.Sprintf(
 			"\nCorrected %s entries. Run hoard update-prices to value them.", ui.Count(len(fixed)))))
 	}
 	for _, a := range ambiguous {
 		fmt.Println(env.Dim()(fmt.Sprintf(
 			"  left alone: %s (%s/%s) is recorded as %s but comes in %s",
-			a.Name, a.SetCode, a.CollectorNumber, a.From, a.To)))
+			a.Name, a.SetCode, a.CollectorNumber, a.From, strings.Join(a.Available, "|"))))
 	}
 	return nil
 }

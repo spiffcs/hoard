@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"io"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -111,7 +110,7 @@ func (t Table) natural() []int {
 	return w
 }
 
-// FitColumns resolves final column widths for the given natural widths.
+// fitColumns resolves final column widths for the given natural widths.
 //
 // It shrinks Flex columns toward their Min first, then shrinks bounded columns
 // (a bar, say, declared Min 6 / Max 10) toward their Min, then drops columns by
@@ -119,7 +118,7 @@ func (t Table) natural() []int {
 // returns natural widths rather than rendering unreadably narrow cells.
 //
 // keep[i] reports whether column i is rendered at all.
-func FitColumns(cols []Col, natural []int, gutter int, env Env) (widths []int, keep []bool) {
+func fitColumns(cols []Col, natural []int, gutter int, env Env) (widths []int, keep []bool) {
 	widths = append([]int(nil), natural...)
 	keep = make([]bool, len(cols))
 	for i := range keep {
@@ -224,12 +223,6 @@ func FitColumns(cols []Col, natural []int, gutter int, env Env) (widths []int, k
 	return widths, keep
 }
 
-// WriteTo renders the table.
-func (t Table) WriteTo(w io.Writer) (int64, error) {
-	n, err := io.WriteString(w, t.Render())
-	return int64(n), err
-}
-
 // Render lays the table out and returns it as lines, newline-terminated.
 func (t Table) Render() string {
 	lines := t.Lines()
@@ -250,7 +243,7 @@ func (t Table) Lines() []string {
 	if len(t.Cols) == 0 {
 		return nil
 	}
-	widths, keep := FitColumns(t.Cols, t.natural(), t.gutter(), t.Env)
+	widths, keep := fitColumns(t.Cols, t.natural(), t.gutter(), t.Env)
 
 	out := make([]string, 0, len(t.Rows)+1)
 	if t.Header {

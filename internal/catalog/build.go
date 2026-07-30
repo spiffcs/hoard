@@ -79,18 +79,18 @@ type listing struct {
 // A failed check is silence, not an error. Being offline is an ordinary state
 // for a tool whose point is working without the network, and a status command
 // that errors because the network is down would be reporting on the wrong thing.
-func (c *Catalog) Status(ctx context.Context) Status {
+func (c *Catalog) CheckStatus(ctx context.Context) Status {
 	s := Status{
 		Cards:         c.CardCount(),
 		Bytes:         c.Bytes(),
-		Built:         c.Built(),
-		SourceUpdated: c.SourceUpdated(),
+		Built:         c.built(),
+		SourceUpdated: c.sourceUpdated(),
 	}
 	if time.Since(c.metaTime(keyChecked)) < checkInterval {
 		return s
 	}
 
-	entry, err := fetchListing(ctx)
+	entry, err := c.listing(ctx)
 	if err != nil {
 		return s
 	}
@@ -103,6 +103,19 @@ func (c *Catalog) Status(ctx context.Context) Status {
 	s.Remote, s.Checked = remote, true
 	s.Stale = s.SourceUpdated.Before(remote)
 	return s
+}
+
+// listing returns the bulk-data entry, fetched at most once per process and
+// remembered on the Catalog.
+func (c *Catalog) listing(ctx context.Context) (bundle, error) {
+	if c.entry != nil {
+		return *c.entry, nil
+	}
+	e, err := fetchListing(ctx)
+	if err == nil {
+		c.entry = &e
+	}
+	return e, err
 }
 
 // fetchListing reads the bulk-data index and returns the entry for bulkType.
@@ -139,8 +152,8 @@ func fetchListing(ctx context.Context) (bundle, error) {
 
 // DownloadSize is what a rebuild would transfer, for asking before spending it.
 // Zero when the listing could not be read.
-func DownloadSize(ctx context.Context) int64 {
-	e, err := fetchListing(ctx)
+func (c *Catalog) DownloadSize(ctx context.Context) int64 {
+	e, err := c.listing(ctx)
 	if err != nil {
 		return 0
 	}
@@ -174,10 +187,14 @@ type bulkCard struct {
 // progress is called with the running card count so a caller can show movement
 // through a download measured in minutes; it may be nil.
 func (c *Catalog) Update(ctx context.Context, progress func(cards int)) error {
-	entry, err := fetchListing(ctx)
+	entry, err := c.listing(ctx)
 	if err != nil {
 		return err
 	}
+	// A build consumes the listing: whatever happens next — a freshness check,
+	// a retry — should look at the world as it is then, not as it was when
+	// this command started.
+	defer func() { c.entry = nil }()
 
 	// Built beside the real catalog under a temporary name and renamed into
 	// place only on success. An interrupted download must not leave a partial

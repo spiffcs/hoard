@@ -165,7 +165,7 @@ func TestUnpricedListing(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	// A fully priced card must not appear.
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestRepairFinishes(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	// A correctly recorded card, to confirm it is left alone.
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -342,13 +342,13 @@ func TestUnpricedIgnoresUnownedFinish(t *testing.T) {
 func TestCollectionAddAndIncrement(t *testing.T) {
 	s := newTestStore(t)
 
-	if err := s.AddCard(ulamog(), false, 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 2); err != nil {
 		t.Fatalf("AddCard normal: %v", err)
 	}
-	if err := s.AddCard(ulamog(), true, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
 		t.Fatalf("AddCard foil: %v", err)
 	}
-	if err := s.AddCard(ulamog(), false, 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
 		t.Fatalf("AddCard normal again: %v", err)
 	}
 
@@ -531,7 +531,7 @@ func TestTotalsAcrossContainers(t *testing.T) {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	// 1 Ulamog loose + 1 Ulamog in a deck = 2 owned.
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.UpsertDeck(

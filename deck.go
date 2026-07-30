@@ -73,14 +73,14 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		finishes[c.ID] = c.Finishes
 	}
 
-	resolver := newResolver(found)
+	resolved := resolveIDs(found)
 	var entries []store.Entry
 	var unresolved []string
 	var refinished int
 	for _, e := range deck.Entries {
-		id, ok := resolver.lookup(e.Ident)
+		id, ok := resolved[e.Ident.Key()]
 		if !ok {
-			unresolved = append(unresolved, identLabel(e.Ident))
+			unresolved = append(unresolved, e.Ident.Label())
 			continue
 		}
 		// A decklist line with no *F* marker parses as non-foil, but precon
@@ -158,50 +158,15 @@ func cmdDeckRemove(st *store.Store, args []string) error {
 	return nil
 }
 
-// resolver maps deck-import identifiers back to canonical Scryfall IDs using the
-// cards returned by the bulk collection lookup.
-type resolver struct {
-	byID   map[string]string // scryfall id -> itself (confirms it resolved)
-	bySN   map[string]string // "set/number" -> scryfall id
-	byName map[string]string // lower(name) -> scryfall id
-}
-
-func newResolver(cards []scryfall.Card) resolver {
-	r := resolver{
-		byID:   make(map[string]string),
-		bySN:   make(map[string]string),
-		byName: make(map[string]string),
-	}
+// resolveIDs indexes the cards the bulk lookup returned under every key form
+// an Identifier might use, so an import line finds its card by whichever
+// scheme addressed it. The scheme itself lives on scryfall.Identifier.Key.
+func resolveIDs(cards []scryfall.Card) map[string]string {
+	m := make(map[string]string, len(cards)*3)
 	for _, c := range cards {
-		r.byID[c.ID] = c.ID
-		r.bySN[strings.ToLower(c.Set)+"/"+c.CollectorNumber] = c.ID
-		r.byName[strings.ToLower(c.Name)] = c.ID
+		m[c.ID] = c.ID
+		m[strings.ToLower(c.Set)+"/"+c.CollectorNumber] = c.ID
+		m[strings.ToLower(c.Name)] = c.ID
 	}
-	return r
-}
-
-func (r resolver) lookup(id scryfall.Identifier) (string, bool) {
-	switch {
-	case id.ID != "":
-		v, ok := r.byID[id.ID]
-		return v, ok
-	case id.Set != "" && id.CollectorNumber != "":
-		v, ok := r.bySN[strings.ToLower(id.Set)+"/"+id.CollectorNumber]
-		return v, ok
-	case id.Name != "":
-		v, ok := r.byName[strings.ToLower(id.Name)]
-		return v, ok
-	}
-	return "", false
-}
-
-func identLabel(id scryfall.Identifier) string {
-	switch {
-	case id.Name != "":
-		return id.Name
-	case id.Set != "" && id.CollectorNumber != "":
-		return id.Set + "/" + id.CollectorNumber
-	default:
-		return id.ID
-	}
+	return m
 }

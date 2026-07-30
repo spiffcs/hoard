@@ -64,64 +64,46 @@ func (f *Fetcher) say(format string, args ...any) {
 	}
 }
 
+// remap runs one MTGJSON reader over the resolvable refs and re-keys its result
+// by Scryfall id. The public readers differ only in which reader they hand
+// over; the resolution and the key translation are one decision, made here.
+// The int is how many refs resolved, so a caller can report the printings it
+// could not ask about without resolving them all a second time.
+func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, what string,
+	read func(context.Context, string, map[string]bool) (map[string]T, error)) (map[string]T, int, error) {
+	byUUID, toScryfall, err := f.want(ctx, refs)
+	if err != nil || len(byUUID) == 0 {
+		return nil, 0, err
+	}
+	got, err := read(ctx, f.cacheDir, byUUID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("mtgjson %s: %w", what, err)
+	}
+	out := make(map[string]T, len(got))
+	for uuid, v := range got {
+		out[toScryfall[uuid]] = v
+	}
+	return out, len(byUUID), nil
+}
+
 // Prices returns the best USD price for each printing that has one, keyed by
 // Scryfall id.
 func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Price, error) {
-	byUUID, toScryfall, err := f.want(ctx, refs)
-	if err != nil || len(byUUID) == 0 {
-		return nil, err
-	}
-	prices, err := mtgjson.TodayPrices(ctx, f.cacheDir, byUUID)
-	if err != nil {
-		return nil, fmt.Errorf("mtgjson prices: %w", err)
-	}
-	out := make(map[string]mtgjson.Price, len(prices))
-	for uuid, p := range prices {
-		out[toScryfall[uuid]] = p
-	}
-	return out, nil
+	out, _, err := remap(f, ctx, refs, "prices", mtgjson.TodayPrices)
+	return out, err
 }
 
 // Quotes returns every vendor quote for each printing, keyed by Scryfall id.
 func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.Quote, error) {
-	byUUID, toScryfall, err := f.want(ctx, refs)
-	if err != nil || len(byUUID) == 0 {
-		return nil, err
-	}
-	quotes, err := mtgjson.TodayQuotes(ctx, f.cacheDir, byUUID)
-	if err != nil {
-		return nil, fmt.Errorf("mtgjson quotes: %w", err)
-	}
-	out := make(map[string][]mtgjson.Quote, len(quotes))
-	for uuid, q := range quotes {
-		out[toScryfall[uuid]] = q
-	}
-	return out, nil
+	out, _, err := remap(f, ctx, refs, "quotes", mtgjson.TodayQuotes)
+	return out, err
 }
 
 // History returns up to ninety days of observations for each printing, keyed by
-// Scryfall id. Reads a ~150 MB archive, so it is only for a deliberate backfill.
-func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string][]mtgjson.Observation, error) {
-	byUUID, toScryfall, err := f.want(ctx, refs)
-	if err != nil || len(byUUID) == 0 {
-		return nil, err
-	}
-	hist, err := mtgjson.PriceHistory(ctx, f.cacheDir, byUUID)
-	if err != nil {
-		return nil, fmt.Errorf("mtgjson price history: %w", err)
-	}
-	out := make(map[string][]mtgjson.Observation, len(hist))
-	for uuid, obs := range hist {
-		out[toScryfall[uuid]] = obs
-	}
-	return out, nil
-}
-
-// Resolvable reports how many refs have an MTGJSON id, so a caller can say how
-// many printings it could not ask about.
-func (f *Fetcher) Resolvable(ctx context.Context, refs []Ref) (int, error) {
-	byUUID, _, err := f.want(ctx, refs)
-	return len(byUUID), err
+// Scryfall id, plus how many refs had an id to ask with. Reads a ~150 MB
+// archive, so it is only for a deliberate backfill.
+func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string][]mtgjson.Observation, int, error) {
+	return remap(f, ctx, refs, "price history", mtgjson.PriceHistory)
 }
 
 // want resolves refs to the UUID set MTGJSON is keyed by, plus the way back.

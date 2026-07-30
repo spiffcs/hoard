@@ -98,12 +98,7 @@ func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) erro
 
 	fmt.Printf("Fetching 90 days of prices for %s printings from MTGJSON (~150 MB)...\n",
 		ui.Count(len(printings)))
-	fetcher := newFetcher(st)
-	resolvable, err := fetcher.Resolvable(ctx, refs)
-	if err != nil {
-		return err
-	}
-	byCard, err := fetcher.History(ctx, refs)
+	byCard, resolvable, err := newFetcher(st).History(ctx, refs)
 	if err != nil {
 		return err
 	}

@@ -478,3 +478,31 @@ func parsePrice(s string) *float64 {
 	}
 	return &v
 }
+
+// Key is the identifier's lookup key under its own addressing scheme: the
+// Scryfall id, else "set/number", else the name — case-folded the way the
+// resolver comparisons need. One definition, so code resolving identifiers
+// cannot re-derive the scheme priority differently.
+func (id Identifier) Key() string {
+	switch {
+	case id.ID != "":
+		return id.ID
+	case id.Set != "" && id.CollectorNumber != "":
+		return strings.ToLower(id.Set) + "/" + id.CollectorNumber
+	default:
+		return strings.ToLower(id.Name)
+	}
+}
+
+// Label is how the identifier reads to a person, so an unresolved entry can be
+// reported by whatever its decklist called it.
+func (id Identifier) Label() string {
+	switch {
+	case id.Name != "":
+		return id.Name
+	case id.Set != "" && id.CollectorNumber != "":
+		return id.Set + "/" + id.CollectorNumber
+	default:
+		return id.ID
+	}
+}

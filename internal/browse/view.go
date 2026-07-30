@@ -139,24 +139,33 @@ func (m Model) header(left, right int) string {
 		titleStyle.Render(title) + strings.Repeat(" ", gap) + helpStyle.Render(totals)
 }
 
-// containerLines renders the left pane, one line per container.
-func (m Model) containerLines(width int) []string {
+// paneLines renders one pane's table. Every pane shares the same Env, the
+// header row, the zero-width guard and the windowing; only the columns and the
+// rows differ, so those are all a renderer supplies. Before this, two of the
+// five renderers guarded zero width and three did not.
+func (m Model) paneLines(p pane, width int, build func(env ui.Env) ui.Table) []string {
 	if width <= 0 {
 		return nil
 	}
 	env := ui.Env{Width: width, Color: true, Clamp: true}
-	t := ui.Table{
-		Env:    env,
-		Header: true,
-		Cols: []ui.Col{
+	t := build(env)
+	t.Env = env
+	t.Header = true
+	return m.window(t.Lines(), p, width)
+}
+
+// containerLines renders the left pane, one line per container.
+func (m Model) containerLines(width int) []string {
+	return m.paneLines(paneContainers, width, func(env ui.Env) ui.Table {
+		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8},
 			{Title: "VALUE", Align: ui.Right},
-		},
-	}
-	for _, c := range m.containers {
-		t.Add(ui.C(c.Name), ui.C(ui.Money(c.Value)))
-	}
-	return m.window(t.Lines(), paneContainers, width)
+		}}
+		for _, c := range m.containers {
+			t.Add(ui.C(c.Name), ui.C(ui.Money(c.Value)))
+		}
+		return t
+	})
 }
 
 // rightLines renders whichever analysis the right pane is showing.
@@ -174,45 +183,43 @@ func (m Model) rightLines(width int) []string {
 
 // cardLines renders the selected container's holdings.
 func (m Model) cardLines(width int) []string {
-	if width <= 0 {
-		return nil
-	}
-	env := ui.Env{Width: width, Color: true, Clamp: true}
-	inDeck := false
-	if sel := m.selectedContainer(); sel != nil {
-		inDeck = sel.Kind != store.KindCollection
-	}
+	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
+		inDeck := false
+		if sel := m.selectedContainer(); sel != nil {
+			inDeck = sel.Kind != store.KindCollection
+		}
 
-	cols := []ui.Col{
-		{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
-		{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-		{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
-		{Title: "QTY", Align: ui.Right, Priority: 2},
-		{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
-		{Title: "VALUE", Align: ui.Right},
-	}
-	if inDeck {
-		// Board only means something inside a deck; against loose holdings it
-		// would be a column of blanks. It sits beside NAME: the name is what the
-		// eye reads first, and the board qualifies it.
-		cols = slices.Insert(cols, 1,
-			ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
-	}
-	t := ui.Table{Env: env, Header: true, Cols: cols}
-
-	for _, c := range m.cards {
-		finish := ui.Finish(c.Finish)
-		cells := []ui.Cell{
-			ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
-			ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
-			ui.C(ui.Estimated(ui.Money(c.Value), c.AltSource)),
+		cols := []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
+			{Title: "QTY", Align: ui.Right, Priority: 2},
+			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
+			{Title: "VALUE", Align: ui.Right},
 		}
 		if inDeck {
-			cells = slices.Insert(cells, 1, ui.C(c.Board))
+			// Board only means something inside a deck; against loose holdings
+			// it would be a column of blanks. It sits beside NAME: the name is
+			// what the eye reads first, and the board qualifies it.
+			cols = slices.Insert(cols, 1,
+				ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
 		}
-		t.Add(cells...)
-	}
-	return m.window(t.Lines(), paneCards, width)
+		t := ui.Table{Cols: cols}
+
+		for _, c := range m.cards {
+			finish := ui.Finish(c.Finish)
+			cells := []ui.Cell{
+				ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+				ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
+				ui.C(ui.Estimated(ui.Money(c.Value), c.AltSource)),
+			}
+			if inDeck {
+				cells = slices.Insert(cells, 1, ui.C(c.Board))
+			}
+			t.Add(cells...)
+		}
+		return t
+	})
 }
 
 // window slices a pane's rendered lines to what fits, and draws the cursor.
@@ -272,8 +279,8 @@ func (m Model) statusLine() string {
 	if m.view == viewArbitrage {
 		return m.arbitrageStatus()
 	}
-	if s := m.emptyExplanation(); s != "" {
-		return helpStyle.Render(s)
+	if m.emptyNote != "" {
+		return helpStyle.Render(m.emptyNote)
 	}
 
 	n := m.rowCount(m.focus)
@@ -307,32 +314,6 @@ func (m Model) estimateNote() string {
 		return ""
 	}
 	return "* estimated from " + strings.Join(slices.Sorted(maps.Keys(sources)), ", ") + " via MTGJSON"
-}
-
-// emptyExplanation distinguishes a filter that matched nothing from a catalog
-// with nothing to match against.
-//
-// Trait columns are NULL until update-prices has stored a Scryfall document, so
-// on a hoard that has not been refreshed since the upgrade `rarity:mythic`
-// correctly returns nothing — and looks exactly like a hoard containing no
-// mythics. Only the count can tell those apart, and without saying so the
-// feature reads as broken.
-func (m Model) emptyExplanation() string {
-	if len(m.cards) > 0 || m.filter.empty() || !m.filter.needsCatalog() {
-		return ""
-	}
-	enriched, total, err := m.store.EnrichedCount()
-	if err != nil || total == 0 {
-		return ""
-	}
-	if enriched == 0 {
-		return "no card details stored yet — run hoard update-prices to filter by rarity, type or colour"
-	}
-	if enriched < total {
-		return fmt.Sprintf("no matches · %d of %d cards have details; update-prices fills the rest",
-			enriched, total)
-	}
-	return "no matches"
 }
 
 func (m Model) helpLine() string {

@@ -8,16 +8,6 @@ import (
 
 // What is held and what it is worth, across the binder and every deck.
 
-// AddCard ensures the card is in the catalog and adds qty copies to the loose
-// collection as normal or foil.
-func (s *Store) AddCard(c scryfall.Card, foil bool, qty int) error {
-	finish := "normal"
-	if foil {
-		finish = "foil"
-	}
-	return s.AddCardFinish(c, finish, qty)
-}
-
 // validFinish rejects a finish card_entries cannot hold. One definition, so a
 // writer added later cannot admit a value the rest of the schema disagrees with
 // — "nonfoil" being the obvious one, since that is Scryfall's spelling of the
@@ -66,6 +56,14 @@ type CollectionRow struct {
 	Finish   string
 	Quantity int
 	Value    float64
+}
+
+// Price is the market price for this row's finish.
+func (r CollectionRow) Price() *float64 {
+	if scryfall.PricedAsFoil(r.Finish) {
+		return r.PriceUSDFoil
+	}
+	return r.PriceUSD
 }
 
 // ListCollectionByFinish returns the loose collection one row per finish held,

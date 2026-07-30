@@ -47,7 +47,7 @@ func (s sortMode) String() string {
 }
 
 // next cycles through the sort modes.
-func (s sortMode) next() sortMode { return (s + 1) % 3 }
+func (s sortMode) next() sortMode { return (s + 1) % (sortQty + 1) }
 
 // container is one row of the left pane: the loose collection, or a deck.
 //
@@ -117,7 +117,9 @@ type Model struct {
 	filtering  bool
 	filterText string
 	filter     filter
-	filterErr  string
+	// emptyNote explains an empty filtered pane; see refreshEmptyNote.
+	emptyNote string
+	filterErr string
 	// allowed is the id set the trait half of the filter matched, or nil when
 	// the filter asks nothing of the catalog.
 	allowed map[string]bool
@@ -280,6 +282,7 @@ func (m *Model) loadCards() error {
 func (m *Model) applyFilter() {
 	if m.filter.empty() {
 		m.cards = m.allCards
+		m.refreshEmptyNote()
 		return
 	}
 	out := make([]card, 0, len(m.allCards))
@@ -290,6 +293,36 @@ func (m *Model) applyFilter() {
 	}
 	m.cards = out
 	m.clampCursor(paneCards)
+	m.refreshEmptyNote()
+}
+
+// refreshEmptyNote explains an empty filtered pane, computed here — when the
+// query or the rows change — rather than in the render path, which must not
+// read the database (the invariant detail.go states for the whole package).
+//
+// Trait columns are NULL until update-prices has stored a Scryfall document, so
+// on a hoard that has not been refreshed since the upgrade `rarity:mythic`
+// correctly returns nothing — and looks exactly like a hoard containing no
+// mythics. Only the count can tell those apart, and without saying so the
+// feature reads as broken.
+func (m *Model) refreshEmptyNote() {
+	m.emptyNote = ""
+	if len(m.cards) > 0 || m.filter.empty() || !m.filter.needsCatalog() {
+		return
+	}
+	enriched, total, err := m.store.EnrichedCount()
+	if err != nil || total == 0 {
+		return
+	}
+	switch {
+	case enriched == 0:
+		m.emptyNote = "no card details stored yet — run hoard update-prices to filter by rarity, type or colour"
+	case enriched < total:
+		m.emptyNote = fmt.Sprintf("no matches · %d of %d cards have details; update-prices fills the rest",
+			enriched, total)
+	default:
+		m.emptyNote = "no matches"
+	}
 }
 
 // setFilter parses a query and resolves whatever part of it the catalog has to
@@ -485,7 +518,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		// Tab is what people press without thinking in a two-pane layout, so it
 		// toggles rather than only ever moving one way.
-		m.focus = paneCards - m.focus
+		if m.focus == paneContainers {
+			m.focus = paneCards
+		} else {
+			m.focus = paneContainers
+		}
 		m.status = ""
 		return m, nil
 	case "left", "h":

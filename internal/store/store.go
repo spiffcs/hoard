@@ -6,6 +6,12 @@
 //     generic provider slug so no list site is referenced structurally.
 //   - card_entries — how many of a printing, in which finish and board, in which
 //     container.
+//   - card_prices_alt    — fallback vendor prices for printings Scryfall
+//     cannot price, applied by the shared SQL fragments below.
+//   - card_price_history — dated price observations, one per refresh or
+//     backfill, feeding movers and the detail sparklines.
+//   - card_price_gaps    — printings already found unpriced everywhere, so a
+//     refresh stops re-downloading bundles to chase them.
 //
 // Not to be confused with internal/catalog, which is a disposable local copy of
 // Scryfall's whole card database. This package holds the irreplaceable half.
@@ -257,12 +263,4 @@ VALUES (?, 'Collection', 'manual', ?, ?, ?)`,
 		return 0, fmt.Errorf("creating collection container: %w", err)
 	}
 	return res.LastInsertId()
-}
-
-// Price is the market price for this row's finish.
-func (r CollectionRow) Price() *float64 {
-	if scryfall.PricedAsFoil(r.Finish) {
-		return r.PriceUSDFoil
-	}
-	return r.PriceUSD
 }

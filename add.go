@@ -35,15 +35,6 @@ func cmdAdd(ctx context.Context, st *store.Store, args []string) error {
 	return addByName(ctx, st, strings.Join(pos, " "))
 }
 
-// resolveCard parses a Scryfall URL and fetches the card from the API.
-func resolveCard(ctx context.Context, url string) (*scryfall.Card, error) {
-	set, number, err := scryfall.ParseCardURL(url)
-	if err != nil {
-		return nil, err
-	}
-	return scryfall.FetchCard(ctx, set, number)
-}
-
 // looksLikeURL reports whether an argument is a Scryfall card link rather than a
 // card name.
 func looksLikeURL(arg string) bool {
@@ -51,18 +42,22 @@ func looksLikeURL(arg string) bool {
 }
 
 func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty int) error {
-	card, err := resolveCard(ctx, url)
+	set, number, err := scryfall.ParseCardURL(url)
 	if err != nil {
 		return err
 	}
-	if err := st.AddCard(*card, foil, qty); err != nil {
+	card, err := scryfall.FetchCard(ctx, set, number)
+	if err != nil {
 		return err
 	}
-	finish := "normal"
-	price := card.PriceUSD
+	// One mapping from the flag to a finish, made here, so the stored row and
+	// the confirmation line cannot disagree.
+	finish, price := "normal", card.PriceUSD
 	if foil {
-		finish = "foil"
-		price = card.PriceUSDFoil
+		finish, price = "foil", card.PriceUSDFoil
+	}
+	if err := st.AddCardFinish(*card, finish, qty); err != nil {
+		return err
 	}
 	fmt.Printf("Added %d× %s (%s/%s) as %s — %s\n",
 		qty, card.Name, card.Set, card.CollectorNumber, finish, ui.MoneyPtr(price))

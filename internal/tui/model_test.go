@@ -307,8 +307,8 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 
 	// ctrl+o looks for cameras; a lone camera is opened without asking.
 	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
-	if mm.(model).state != stateCameraList {
-		t.Fatalf("ctrl+o should enter stateCameraList, got %v", mm.(model).state)
+	if mm.(model).state != stateCameraBusy {
+		t.Fatalf("ctrl+o should enter stateCameraBusy, got %v", mm.(model).state)
 	}
 	mm, _ = mm.(model).onCameras(camerasMsg{devices: sc.devices})
 	sess := &fakeSession{events: make(chan scan.Event, 8)}
@@ -671,7 +671,7 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 
 	// ctrl+r re-opens the picker deliberately.
 	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyCtrlR})
-	if s := mm.(model).state; s != stateCameraList {
+	if s := mm.(model).state; s != stateCameraBusy {
 		t.Errorf("ctrl+r should re-open the camera picker, got %v", s)
 	}
 }

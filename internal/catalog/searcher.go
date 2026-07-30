@@ -87,7 +87,7 @@ const fuzzyCandidates = 50
 // NamedFuzzy resolves possibly-imperfect text to a single card.
 //
 // Unlike Scryfall's endpoint, this is an identity check rather than a search.
-// That distinction is the whole reason internal/tui carries plausibleMatch: the
+// That distinction is the whole reason cardname.Plausible exists: the
 // API resolves "option" to the card "Opt" because the query contains the name,
 // which is right for a human typing a partial name and wrong for OCR, where any
 // stray word in frame becomes a card. Here the same rule that used to reject the

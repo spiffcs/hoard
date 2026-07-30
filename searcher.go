@@ -24,7 +24,7 @@ type layeredSearcher struct {
 
 // newSearcher composes the two, given a catalog that may be nil or empty.
 func newSearcher(cat *catalog.Catalog) tui.Searcher {
-	s := layeredSearcher{remote: tui.NewScryfallSearcher()}
+	s := layeredSearcher{remote: scryfallSearcher{}}
 	// An empty catalog is worse than no catalog: every lookup would miss, pay
 	// for a query, and go to the API anyway.
 	if cat != nil && cat.CardCount() > 0 {
@@ -73,4 +73,19 @@ func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall
 		return s.remote.NamedFuzzy(ctx, text)
 	}
 	return nil, nil
+}
+
+// scryfallSearcher adapts the package-level scryfall functions to tui.Searcher.
+// It lives here, beside the layering policy, so internal/tui itself never
+// talks to the network.
+type scryfallSearcher struct{}
+
+func (scryfallSearcher) Autocomplete(ctx context.Context, q string) ([]string, error) {
+	return scryfall.Autocomplete(ctx, q)
+}
+func (scryfallSearcher) SearchPrints(ctx context.Context, name string) ([]scryfall.Card, error) {
+	return scryfall.SearchPrints(ctx, name)
+}
+func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error) {
+	return scryfall.NamedFuzzy(ctx, text)
 }

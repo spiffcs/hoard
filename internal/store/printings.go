@@ -7,8 +7,6 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// Printings: the shared card rows, and the ids other sources key them by.
-
 // UpsertPrintings inserts or refreshes printings (identity + price).
 func (s *Store) UpsertPrintings(cards []scryfall.Card) error {
 	if len(cards) == 0 {
@@ -155,13 +153,4 @@ func (s *Store) SaveMTGJSONUUIDs(ids map[string]string) error {
 		}
 	}
 	return tx.Commit()
-}
-
-// nullable stores an empty string as SQL NULL, so "no vendor for this finish"
-// is distinguishable from a vendor whose name happens to be blank.
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

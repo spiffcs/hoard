@@ -1,7 +1,8 @@
 // Package tui provides an interactive terminal cascade for adding a card to the
 // collection by name: type a name, and it walks through only the questions
 // needed (which card, which printing, which finish, how many) to pinpoint one
-// exact entry, resolving candidates from Scryfall.
+// exact entry. Candidates come from whatever Searcher the caller supplies —
+// the local catalog, the Scryfall API, or a layering of both.
 package tui
 
 import (
@@ -60,22 +61,6 @@ type Result struct {
 // session open.
 type Adder func(Result) error
 
-// scryfallSearcher adapts the package-level scryfall functions to Searcher.
-type scryfallSearcher struct{}
-
-func (scryfallSearcher) Autocomplete(ctx context.Context, q string) ([]string, error) {
-	return scryfall.Autocomplete(ctx, q)
-}
-func (scryfallSearcher) SearchPrints(ctx context.Context, name string) ([]scryfall.Card, error) {
-	return scryfall.SearchPrints(ctx, name)
-}
-func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error) {
-	return scryfall.NamedFuzzy(ctx, text)
-}
-
-// NewScryfallSearcher returns a Searcher backed by the live Scryfall API.
-func NewScryfallSearcher() Searcher { return scryfallSearcher{} }
-
 // Run launches an interactive add session: the user searches for a card (by
 // typing a name or scanning one with the camera), walks the cascade, and
 // confirms; each confirmed card is persisted via add and the session loops back
@@ -87,11 +72,12 @@ func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName str
 	final, err := p.Run()
 	// However the program ended — quit, esc, or a crash — the camera window must
 	// not outlive it.
-	if fm, ok := final.(model); ok && fm.session != nil {
+	fm, ok := final.(model)
+	if ok && fm.session != nil {
 		_ = fm.session.Close()
 	}
 	if err != nil {
 		return err
 	}
-	return final.(model).err
+	return fm.err
 }

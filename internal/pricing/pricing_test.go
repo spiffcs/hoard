@@ -33,10 +33,10 @@ func unpricedFoil() scryfall.Card {
 // which this proves by pointing the fetcher at a cache dir it would fail on.
 func TestFillGapsDoesNothingWithoutGaps(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCard(scryfall.Card{
+	if err := s.AddCardFinish(scryfall.Card{
 		ID: "u", Set: "uma", CollectorNumber: "7", Name: "Ulamog",
 		PriceUSD: f64(10), PriceUSDFoil: f64(25), ScryfallURL: "http://x",
-	}, false, 1); err != nil {
+	}, "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	report, err := New(s, t.TempDir()).FillGaps(context.Background())
@@ -78,17 +78,17 @@ func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 // collection-wide read free after the first run.
 func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCard(unpricedFoil(), false, 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	// Unreachable cache and no network; only the supplied id can satisfy this.
-	n, err := New(s, filepath.Join(t.TempDir(), "nope")).Resolvable(context.Background(),
+	byUUID, _, err := New(s, filepath.Join(t.TempDir(), "nope")).want(context.Background(),
 		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "known-uuid"}})
 	if err != nil {
-		t.Fatalf("Resolvable: %v", err)
+		t.Fatalf("want: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("resolvable = %d, want the supplied id counted", n)
+	if len(byUUID) != 1 {
+		t.Errorf("resolvable = %d, want the supplied id counted", len(byUUID))
 	}
 }
 

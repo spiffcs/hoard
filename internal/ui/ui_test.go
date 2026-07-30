@@ -156,7 +156,7 @@ func TestFitColumns(t *testing.T) {
 	}
 	for _, c := range cases {
 		env := Env{Width: c.width, Clamp: true, Bars: true}
-		widths, keep := FitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
+		widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
 
 		for i, want := range c.wantKeep {
 			if keep[i] != want {
@@ -188,7 +188,7 @@ func TestFitColumns(t *testing.T) {
 // A non-terminal must never truncate: full names, greppable.
 func TestFitColumnsNoClamp(t *testing.T) {
 	env := Env{Width: 80, Clamp: false}
-	widths, keep := FitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
+	widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
 	for i, w := range widths {
 		if w != summaryNatural[i] || !keep[i] {
 			t.Errorf("col %d: got width %d keep %v, want natural %d kept", i, w, keep[i], summaryNatural[i])

@@ -19,60 +19,43 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// The browser's needs, split by what each part of it does. *store.Store
-// satisfies all of them; the split exists so a caller depends only on the half
-// it uses — an undo closure takes an Editor, not the whole database.
-type (
-	// Lister fills the two panes.
-	Lister interface {
-		CollectionTotals() (store.CollectionTotals, error)
-		ListDecks() ([]store.DeckSummary, error)
-		ListCollectionByFinish() ([]store.CollectionRow, error)
-		DeckEntries(containerID int64) ([]store.EntryView, error)
-	}
+// Editor changes what is held; it is split out of Store because the undo
+// closures take an Editor, not the whole database. UpsertDeck is here to undo
+// a deck removal: RemoveContainer cascades, so the deck is rebuilt from what
+// was read before the delete.
+type Editor interface {
+	SetHoldingQuantity(scryfallID, finish string, qty int) (int, error)
+	RemoveFromCollection(scryfallID string) ([]store.Holding, error)
+	RestoreHoldings(scryfallID string, holdings []store.Holding) error
+	RemoveContainer(id int64) (int64, error)
+	UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
+}
 
-	// Filterer answers the half of a query that is about the printing rather
-	// than the holding. EnrichedCount is what lets an empty result say "nothing
-	// has traits yet" rather than "nothing matched".
-	Filterer interface {
-		MatchingCardIDs(f store.TraitFilter) (map[string]bool, error)
-		EnrichedCount() (enriched, total int, err error)
-	}
+// Store is everything the browser reads and edits. *store.Store satisfies it.
+type Store interface {
+	Editor
 
-	// Analyst answers questions about the whole hoard rather than one
-	// container. Both are plain database reads; neither touches the network.
-	Analyst interface {
-		Movers(since string) ([]store.PriceChange, error)
-		Unpriced() ([]store.UnpricedRow, error)
-	}
+	// Filling the two panes.
+	CollectionTotals() (store.CollectionTotals, error)
+	ListDecks() ([]store.DeckSummary, error)
+	ListCollectionByFinish() ([]store.CollectionRow, error)
+	DeckEntries(containerID int64) ([]store.EntryView, error)
 
-	// Detailer reads one printing in depth.
-	Detailer interface {
-		CardDetail(scryfallID string) (store.CardDetail, error)
-		HoldingsOf(scryfallID string) ([]store.Holding, error)
-		PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
-	}
+	// The half of a query that is about the printing rather than the holding.
+	// EnrichedCount is what lets an empty result say "nothing has traits yet"
+	// rather than "nothing matched".
+	MatchingCardIDs(f store.TraitFilter) (map[string]bool, error)
+	EnrichedCount() (enriched, total int, err error)
 
-	// Editor changes what is held. UpsertDeck is here to undo a deck removal:
-	// RemoveContainer cascades, so the deck is rebuilt from what was read before
-	// the delete.
-	Editor interface {
-		SetHoldingQuantity(scryfallID, finish string, qty int) (int, error)
-		RemoveFromCollection(scryfallID string) ([]store.Holding, error)
-		RestoreHoldings(scryfallID string, holdings []store.Holding) error
-		RemoveContainer(id int64) (int64, error)
-		UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
-	}
+	// Hoard-wide analysis. Plain database reads; neither touches the network.
+	Movers(since string) ([]store.PriceChange, error)
+	Unpriced() ([]store.UnpricedRow, error)
 
-	// Store is all of it, which is what the model itself holds.
-	Store interface {
-		Lister
-		Filterer
-		Analyst
-		Detailer
-		Editor
-	}
-)
+	// One printing in depth.
+	CardDetail(scryfallID string) (store.CardDetail, error)
+	HoldingsOf(scryfallID string) ([]store.Holding, error)
+	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
+}
 
 // Option configures the browser.
 type Option func(*Model)

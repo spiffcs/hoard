@@ -22,7 +22,7 @@ func enriched() scryfall.Card {
 
 func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(enriched(), false, 1); err != nil {
+	if err := s.AddCardFinish(enriched(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 // that happens to be blank, and hides the fact that a refresh would fix it.
 func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil { // no Raw
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil { // no Raw
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func TestParseColorIdentity(t *testing.T) {
 // card spread across the collection and two decks.
 func TestHoldingsOfSpansContainers(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	for _, name := range []string{"Deck A", "Deck B"} {
@@ -160,7 +160,7 @@ func TestHoldingsOfUnheldCard(t *testing.T) {
 
 func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {

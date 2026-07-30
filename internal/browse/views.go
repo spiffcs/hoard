@@ -38,7 +38,7 @@ func (v viewMode) String() string {
 	return "holdings"
 }
 
-func (v viewMode) next() viewMode { return (v + 1) % 4 }
+func (v viewMode) next() viewMode { return (v + 1) % (viewArbitrage + 1) }
 
 // moversWindow is how far back the movers view looks. The same default as
 // `hoard movers`, so the two agree.
@@ -93,10 +93,8 @@ func (m Model) viewRowCount() int {
 
 // moversLines renders the risers and sinkers.
 func (m Model) moversLines(width int) []string {
-	env := ui.Env{Width: width, Color: true, Clamp: true}
-	t := ui.Table{
-		Env: env, Header: true,
-		Cols: []ui.Col{
+	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
+		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim()},
@@ -105,37 +103,35 @@ func (m Model) moversLines(width int) []string {
 			{Title: "CHANGE", Align: ui.Right, Priority: 3, Style: env.Dim()},
 			{Title: "QTY", Align: ui.Right, Priority: 2},
 			{Title: "IMPACT", Align: ui.Right},
-		},
-	}
-	for _, c := range m.movers {
-		finish := ui.Finish(c.Finish)
-		t.Add(ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
-			ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
-			ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
-			ui.C(ui.SignedMoney(c.TotalDelta())))
-	}
-	return m.window(t.Lines(), paneCards, width)
+		}}
+		for _, c := range m.movers {
+			finish := ui.Finish(c.Finish)
+			t.Add(ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+				ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
+				ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
+				ui.C(ui.SignedMoney(c.TotalDelta())))
+		}
+		return t
+	})
 }
 
 // unpricedLines renders the holdings nothing can price.
 func (m Model) unpricedLines(width int) []string {
-	env := ui.Env{Width: width, Color: true, Clamp: true}
-	t := ui.Table{
-		Env: env, Header: true,
-		Cols: []ui.Col{
+	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
+		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 3, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "QTY", Align: ui.Right, Priority: 2},
 			{Title: "HELD IN", Align: ui.Left, Priority: 5, Style: env.Dim()},
-		},
-	}
-	for _, r := range m.unpriced {
-		finish := ui.Finish(r.Finish)
-		t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
-			ui.C(ui.Qty(r.Copies)), ui.C(r.HeldIn))
-	}
-	return m.window(t.Lines(), paneCards, width)
+		}}
+		for _, r := range m.unpriced {
+			finish := ui.Finish(r.Finish)
+			t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
+				ui.C(ui.Qty(r.Copies)), ui.C(r.HeldIn))
+		}
+		return t
+	})
 }
 
 // viewHeader is the right pane's title and summary for the current mode.

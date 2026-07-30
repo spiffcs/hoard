@@ -76,8 +76,8 @@ func TestOpenCreatesAnEmptyCatalog(t *testing.T) {
 	if c.CardCount() != 0 {
 		t.Errorf("Cards = %d, want 0 for a fresh catalog", c.CardCount())
 	}
-	if !c.Built().IsZero() {
-		t.Errorf("Built = %v, want zero", c.Built())
+	if !c.built().IsZero() {
+		t.Errorf("Built = %v, want zero", c.built())
 	}
 	if _, err := os.Stat(c.Path()); err != nil {
 		t.Errorf("no file at %s: %v", c.Path(), err)
@@ -147,10 +147,10 @@ func TestBuildRecordsProvenance(t *testing.T) {
 	if err := c.Update(context.Background(), nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if got := c.SourceUpdated().Format(time.RFC3339); got != "2026-07-30T12:00:00Z" {
+	if got := c.sourceUpdated().Format(time.RFC3339); got != "2026-07-30T12:00:00Z" {
 		t.Errorf("SourceUpdated = %s, want the bundle's own timestamp", got)
 	}
-	if c.Built().IsZero() {
+	if c.built().IsZero() {
 		t.Error("Built not recorded")
 	}
 	if c.Bytes() == 0 {
@@ -236,7 +236,7 @@ func TestFailedBuildLeavesThePreviousCatalog(t *testing.T) {
 	if got := c.CardCount(); got != 1 {
 		t.Errorf("Cards = %d, want the previous catalog intact", got)
 	}
-	if got := c.SourceUpdated().Format(time.RFC3339); got != "2026-07-29T00:00:00Z" {
+	if got := c.sourceUpdated().Format(time.RFC3339); got != "2026-07-29T00:00:00Z" {
 		t.Errorf("SourceUpdated = %s, want the old build's", got)
 	}
 	// And no debris left behind to be mistaken for a catalog.
@@ -254,7 +254,7 @@ func TestStatusReportsStaleness(t *testing.T) {
 
 	// Immediately after a build the check is fresh, so no request is made and
 	// nothing is claimed about the remote.
-	s := c.Status(context.Background())
+	s := c.CheckStatus(context.Background())
 	if s.Checked || s.Stale {
 		t.Errorf("status right after a build = %+v, want no check and not stale", s)
 	}
@@ -267,7 +267,7 @@ func TestStatusReportsStaleness(t *testing.T) {
 		t.Fatal(err)
 	}
 	serveBundle(t, "2026-07-30T00:00:00Z", []string{card("a", "Sol Ring", "c21", "1", "2.00")})
-	s = c.Status(context.Background())
+	s = c.CheckStatus(context.Background())
 	if !s.Checked || !s.Stale {
 		t.Errorf("status = %+v, want a check reporting stale", s)
 	}
@@ -292,7 +292,7 @@ func TestStatusHonoursTheCheckInterval(t *testing.T) {
 
 	c := openTemp(t)
 	for range 5 {
-		c.Status(context.Background())
+		c.CheckStatus(context.Background())
 	}
 	if hits != 1 {
 		t.Errorf("made %d listing requests across 5 status calls, want 1", hits)
@@ -307,7 +307,7 @@ func TestStatusIsSilentWhenOffline(t *testing.T) {
 	defer func() { listingURL = old }()
 
 	c := openTemp(t)
-	s := c.Status(context.Background())
+	s := c.CheckStatus(context.Background())
 	if s.Checked || s.Stale {
 		t.Errorf("status = %+v, want no claim about the remote", s)
 	}

@@ -65,6 +65,5 @@ func fetchArbitrage(ctx context.Context, st *store.Store, minValue float64) (arb
 	if err != nil {
 		return arbitrage.Result{}, err
 	}
-	return arbitrage.Collect(owned, quotes,
-		func(o store.OwnedFinish) string { return o.ScryfallID }, minValue), nil
+	return arbitrage.Collect(owned, quotes, minValue), nil
 }
