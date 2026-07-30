@@ -1,0 +1,200 @@
+package browse
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
+)
+
+// sparkCells is how wide a price history is drawn. Wide enough for ninety days
+// of movement to have a shape, narrow enough to sit beside a label.
+const sparkCells = 32
+
+// detail is everything the detail overlay shows about one printing, gathered in
+// one go so the view never reads the database while rendering.
+type detail struct {
+	card     store.CardDetail
+	holdings []store.Holding
+	series   map[string][]store.PricePoint // by finish
+	err      error
+}
+
+// openDetail loads the selected card's detail.
+//
+// Only from the holdings view: the analytical panes list different rows, so the
+// cursor there indexes a different slice and this would open a card the reader
+// is not pointing at.
+func (m *Model) openDetail() {
+	if m.view != viewHoldings {
+		m.status, m.statusErr = "card detail works on holdings — press v to come back", true
+		return
+	}
+	c := m.selectedCard()
+	if c == nil {
+		return
+	}
+	d := detail{series: map[string][]store.PricePoint{}}
+
+	var err error
+	if d.card, err = m.store.CardDetail(c.ScryfallID); err != nil {
+		m.setError(err)
+		return
+	}
+	if d.holdings, err = m.store.HoldingsOf(c.ScryfallID); err != nil {
+		m.setError(err)
+		return
+	}
+	// Both finishes, not just the one held: a card owned in non-foil is often
+	// being looked at precisely because its foil is doing something.
+	for _, finish := range []string{"normal", "foil"} {
+		s, err := m.store.PriceSeries(c.ScryfallID, finish)
+		if err != nil {
+			m.setError(err)
+			return
+		}
+		if len(s) > 0 {
+			d.series[finish] = s
+		}
+	}
+	m.detail = &d
+}
+
+// detailLines renders the overlay.
+func (m Model) detailLines(d detail, width int) []string {
+	dim := helpStyle.Render
+	var out []string
+	add := func(format string, args ...any) {
+		out = append(out, ui.Truncate(fmt.Sprintf(format, args...), width))
+	}
+
+	c := d.card
+	out = append(out, titleStyle.Render(ui.Truncate(c.Name, width)))
+
+	// The type line and mana cost sit together the way they do on the card.
+	if line := joinNonEmpty("  ", deref(c.TypeLine), deref(c.ManaCost)); line != "" {
+		add("%s", line)
+	}
+	printing := c.SetCode + "/" + c.CollectorNumber
+	if c.SetName != nil {
+		printing = *c.SetName + " · " + printing
+	}
+	if c.Rarity != nil {
+		printing += " · " + *c.Rarity
+	}
+	out = append(out, dim(ui.Truncate(printing, width)))
+	if meta := joinNonEmpty(" · ", deref(c.Artist), deref(c.ReleasedAt)); meta != "" {
+		out = append(out, dim(ui.Truncate(meta, width)))
+	}
+
+	// An un-refreshed card has none of the above. Say why once rather than
+	// leaving the reader to wonder what happened to the card's details.
+	if !c.Enriched {
+		out = append(out, dim("card details not stored yet — run hoard update-prices"))
+	}
+
+	if c.OracleText != nil && *c.OracleText != "" {
+		out = append(out, "")
+		for _, para := range strings.Split(*c.OracleText, "\n") {
+			out = append(out, wrap(para, width)...)
+		}
+	}
+
+	out = append(out, "", titleStyle.Render("HELD"))
+	if len(d.holdings) == 0 {
+		out = append(out, dim("  nothing — this printing is catalogued but not held"))
+	}
+	for _, h := range d.holdings {
+		where := h.ContainerName
+		if h.ContainerKind != store.KindCollection && h.Board != "main" {
+			where += " (" + h.Board + ")"
+		}
+		finish := h.Finish
+		if finish == "normal" {
+			finish = "-"
+		}
+		add("  %-3s %-7s %s", "×"+ui.Count(h.Quantity), finish, where)
+	}
+
+	out = append(out, "", titleStyle.Render("PRICE"))
+	if len(d.series) == 0 {
+		out = append(out, dim("  no history yet — run hoard backfill-prices for the last 90 days"))
+	}
+	for _, finish := range []string{"normal", "foil"} {
+		s := d.series[finish]
+		if len(s) == 0 {
+			continue
+		}
+		label := finish
+		if finish == "normal" {
+			label = "non-foil"
+		}
+		spark := ui.Spark(resample(s, sparkCells), sparkCells)
+		now := s[len(s)-1].Price
+		out = append(out, fmt.Sprintf("  %-9s %s  %s", label, spark, ui.Money(now)))
+		out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
+	}
+	return out
+}
+
+// seriesRange describes what the sparkline above it is scaled to.
+//
+// The glyphs are scaled to the series' own range, so without the numbers a
+// dramatic-looking line could be a fifty-cent wobble. Naming the low, the high
+// and how far back it goes is what makes the shape mean something.
+func seriesRange(s []store.PricePoint) string {
+	lo, hi := s[0].Price, s[0].Price
+	for _, p := range s {
+		lo = min(lo, p.Price)
+		hi = max(hi, p.Price)
+	}
+	since := s[0].AsOf
+	if t, err := time.Parse(time.RFC3339, s[0].AsOf); err == nil {
+		since = t.Local().Format("2 Jan")
+	}
+	return fmt.Sprintf("%s–%s since %s · %d obs",
+		ui.Money(lo), ui.Money(hi), since, len(s))
+}
+
+// wrap breaks a paragraph to width, on spaces.
+func wrap(s string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var out []string
+	line := words[0]
+	for _, w := range words[1:] {
+		if len(line)+1+len(w) > width {
+			out = append(out, line)
+			line = w
+			continue
+		}
+		line += " " + w
+	}
+	return append(out, line)
+}
+
+// deref is a nullable string as text, empty when unknown.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// joinNonEmpty joins the parts that have something in them.
+func joinNonEmpty(sep string, parts ...string) string {
+	kept := parts[:0]
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, sep)
+}

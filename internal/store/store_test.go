@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -609,5 +610,163 @@ func TestLegacyMigration(t *testing.T) {
 	}
 	if row := collectionRow(t, s, "ulamog-id", "normal"); row.Name != "Ulamog, the Infinite Gyre" {
 		t.Errorf("migrated name = %q", row.Name)
+	}
+}
+
+// A card can be re-upserted from a source that carries no Scryfall response — a
+// decklist import naming a printing already in the catalog. That must not wipe
+// the document a previous update-prices fetched, because every generated column
+// derives from it: the card would keep its name and price and silently lose its
+// rarity, type and everything the TUI reads.
+func TestUpsertKeepsRawJSONWhenTheNewCardHasNone(t *testing.T) {
+	s := newTestStore(t)
+
+	withRaw := ulamog()
+	withRaw.Raw = []byte(`{"rarity":"mythic","type_line":"Legendary Creature — Eldrazi"}`)
+	if err := s.UpsertCatalogCards([]scryfall.Card{withRaw}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	// Same card, no response attached, and a moved price so the row really is
+	// rewritten rather than skipped.
+	bare := ulamog()
+	bare.PriceUSD = f(11.00)
+	if err := s.UpsertCatalogCards([]scryfall.Card{bare}); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	var rarity sql.NullString
+	var price float64
+	if err := s.db.QueryRow(
+		`SELECT rarity, price_usd FROM cards WHERE scryfall_id = 'ulamog-id'`).
+		Scan(&rarity, &price); err != nil {
+		t.Fatalf("reading card: %v", err)
+	}
+	if !rarity.Valid || rarity.String != "mythic" {
+		t.Errorf("rarity = %+v, want the document from the first upsert to survive", rarity)
+	}
+	if price != 11.00 {
+		t.Errorf("price = %v, want the second upsert's 11", price)
+	}
+}
+
+// The other direction: a refresh that does carry a response replaces the stored
+// document, or the columns freeze at whatever was first seen.
+func TestUpsertReplacesRawJSONWhenTheNewCardHasOne(t *testing.T) {
+	s := newTestStore(t)
+
+	first := ulamog()
+	first.Raw = []byte(`{"rarity":"rare"}`)
+	if err := s.UpsertCatalogCards([]scryfall.Card{first}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	second := ulamog()
+	second.Raw = []byte(`{"rarity":"mythic"}`)
+	if err := s.UpsertCatalogCards([]scryfall.Card{second}); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	var rarity string
+	if err := s.db.QueryRow(
+		`SELECT rarity FROM cards WHERE scryfall_id = 'ulamog-id'`).Scan(&rarity); err != nil {
+		t.Fatalf("reading rarity: %v", err)
+	}
+	if rarity != "mythic" {
+		t.Errorf("rarity = %q, want the newer document", rarity)
+	}
+}
+
+// A card MTGJSON cannot price is not a temporary state, so the answer is
+// remembered — otherwise every refresh pays a 50 MB scan to re-learn it.
+func TestPriceGapChecksAreRemembered(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+
+	gaps, err := s.UnpricedByOwnedFinish()
+	if err != nil {
+		t.Fatalf("UnpricedByOwnedFinish: %v", err)
+	}
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want the one foil-unpriced card", gaps)
+	}
+	if gaps[0].CheckedAt != nil {
+		t.Errorf("CheckedAt = %v, want nil before anything asked", gaps[0].CheckedAt)
+	}
+
+	if err := s.RecordPriceGapChecks([]string{gaps[0].ScryfallID}); err != nil {
+		t.Fatalf("RecordPriceGapChecks: %v", err)
+	}
+	gaps, _ = s.UnpricedByOwnedFinish()
+	if len(gaps) != 1 || gaps[0].CheckedAt == nil {
+		t.Fatalf("gaps = %+v, want the check recorded", gaps)
+	}
+	first := *gaps[0].CheckedAt
+
+	// Asking again moves the timestamp forward rather than adding a row, so the
+	// window is measured from the most recent answer.
+	if err := s.RecordPriceGapChecks([]string{gaps[0].ScryfallID}); err != nil {
+		t.Fatalf("second RecordPriceGapChecks: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM card_price_gaps`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("%d rows, want one per card", n)
+	}
+	gaps, _ = s.UnpricedByOwnedFinish()
+	if *gaps[0].CheckedAt < first {
+		t.Error("the recorded check went backwards")
+	}
+}
+
+// A card that gets a price stops being a gap, so a remembered check about it
+// never suppresses anything again.
+func TestPricedCardLeavesTheGapList(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	gaps, _ := s.UnpricedByOwnedFinish()
+	if err := s.RecordPriceGapChecks([]string{gaps[0].ScryfallID}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpsertAltPrices([]AltPrice{{
+		ScryfallID: "ripple-id", MTGJSONUUID: "u",
+		PriceUSDFoil: f(0.49), SourceUSDFoil: "cardkingdom",
+	}}); err != nil {
+		t.Fatalf("UpsertAltPrices: %v", err)
+	}
+	if gaps, _ := s.UnpricedByOwnedFinish(); len(gaps) != 0 {
+		t.Errorf("gaps = %+v, want none once a price exists", gaps)
+	}
+}
+
+// Removing a card takes its remembered check with it rather than leaving a row
+// pointing at nothing.
+func TestPriceGapChecksCascade(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	gaps, _ := s.UnpricedByOwnedFinish()
+	if err := s.RecordPriceGapChecks([]string{gaps[0].ScryfallID}); err != nil {
+		t.Fatal(err)
+	}
+	// The holding has to go first: card_entries references cards without a
+	// cascade, so a held card cannot be deleted at all.
+	if _, err := s.RemoveFromCollection("ripple-id"); err != nil {
+		t.Fatalf("RemoveFromCollection: %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM cards WHERE scryfall_id = 'ripple-id'`); err != nil {
+		t.Fatalf("deleting the card: %v", err)
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM card_price_gaps`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d orphaned gap rows remain", n)
 	}
 }

@@ -22,6 +22,8 @@ loose collection and every deck, and stores the current market price from the
 
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Browsing](#browsing) — [filtering](#filtering), [card details](#card-details)
+- [The local catalog](#the-local-catalog)
 - [Usage](#usage) — [what moved](#what-moved), [price history](#starting-with-history-you-dont-have-yet), [missing prices](#when-scryfall-has-no-price), [vendor spreads](#where-vendors-disagree), [adding cards](#adding-cards)
 - [Decks](#decks)
 - [Database location](#database-location)
@@ -49,8 +51,7 @@ make all                             # builds ./hoard and the iPhone scan helper
 
 ./hoard add                          # add cards interactively (start here)
                                      #   ctrl+o scans a card with your iPhone
-./hoard list                         # what's in the loose collection
-./hoard summary                      # grand total across collection + decks
+./hoard                              # browse everything you own
 ```
 
 `make all` is `make build` plus `make scan`. If you only want the CLI, or you
@@ -62,22 +63,205 @@ The database is created on first run in a per-user data directory, and its path 
 printed once so you know where it went. See
 [Database location](#database-location) to put it somewhere else.
 
-Run `hoard help` (or `hoard` with no arguments) for the full command list.
+Run `hoard help` for the full command list.
+
+## Browsing
+
+Running `hoard` with no arguments opens the browser: containers on the left, the
+cards inside the selected one on the right.
+
+```
+COLLECTION                      CARDS · BINDER                          335 · $2,893.87
+NAME                     VALUE  NAME                SET/NUM  FINISH  QTY    PRICE    VALUE
+Binder               $2,893.87  Solitude            mh2/32   -        ×4   $34.28  $137.12
+Eldrazi Incursion …    $545.18  Bitterblossom       uma/85   -        ×4   $34.11  $136.44
+Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $134.90  $134.90
+Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
+──────────────────────────────────────────────────────────────────────────────────────────
+1/23 · sorted by value
+tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
+```
+
+Your **collection** is everything you own: the **binder** — every card not
+committed to a deck — plus each deck. The left pane lists them; the right shows
+what is inside whichever you have selected.
+
+This replaces four commands that used to do it one question at a time. The left
+pane is what `summary` printed; moving the cursor down it is `deck list`;
+selecting a row is `deck show`; selecting the binder is `list`. Comparing a deck
+against the binder is no longer two commands and a good memory.
+
+| Key | |
+|---|---|
+| <kbd>tab</kbd> / <kbd>←</kbd> <kbd>→</kbd> | switch pane |
+| <kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd> | move · <kbd>g</kbd>/<kbd>G</kbd> jump to ends |
+| <kbd>enter</kbd> | card detail — printings, where it's held, price history |
+| <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it |
+| <kbd>s</kbd> | sort by value → name → quantity |
+| <kbd>v</kbd> | switch view: holdings → movers → unpriced → arbitrage |
+| <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
+| <kbd>d</kbd> | remove the card, or the deck — asks first |
+| <kbd>u</kbd> | undo the last edit |
+| <kbd>a</kbd> | add cards — hands off to the add flow, then returns you here |
+| <kbd>r</kbd> | reload · <kbd>q</kbd> quit |
+
+Deck cards are deliberately read-only. A deck is owned by the list it was
+imported from, so editing it here would drift from that source until the next
+`deck add` overwrote the change without saying so.
+
+**Arbitrage waits to be asked.** The other three views are instant database
+reads; arbitrage needs today's vendor quotes from MTGJSON, so cycling to it shows
+`press enter to fetch` rather than starting a download because you passed
+through. While it runs the pane says so and <kbd>esc</kbd> — or leaving with
+<kbd>v</kbd> — cancels it.
+
+```
+ARBITRAGE                                        45 rows · 1,260 printings compared
+WHY        NAME           SET/NUM     BUY  FROM           SELL  TO              GAIN
+arbitrage  Tarnished Ci…  ody/329   $7.81  manapool     $10.50  cardkingdom   +$2.69
+arbitrage  Thoughtseize   2xm/109   $3.12  manapool      $5.50  cardkingdom   +$2.38
+liquid     Thassa, Deep…  thb/71   $25.00  retail       $25.00  cardkingdom   100.0%
+spread     Siege-Gang L…  m3c/61    $4.49  cardkingdom  $41.68  manapool    +828.3%
+```
+
+The CLI prints this as three tables; a scrolling pane cannot show three at once
+without burying two, so the rows keep their reading order — real arbitrage first —
+and the WHY column says which question each row answers. `hoard arbitrage` still
+gives you the three-table version with `--min` and `--limit`.
+
+Pressing <kbd>a</kbd> hands the terminal to the same interactive add flow
+`hoard add` runs — type a name or <kbd>ctrl+o</kbd> to scan with your iPhone —
+and drops you back in the browser when you leave it, with the new cards already
+in your binder. It is a handoff rather than a window inside the browser because
+two full-screen programs cannot share one terminal.
+
+**Piped, `hoard` prints the summary table instead** — no colour, no truncation,
+no escape sequences — so `hoard | grep` and `hoard > totals.txt` still work.
+
+### Filtering
+
+<kbd>/</kbd> opens a filter bar. The pane narrows as you type; bare words match
+the card name.
+
+```
+bitter                 sol ring              set:mh3
+rarity:mythic          t:creature            t:"legendary creature"
+color:B                color:WU              cmc>=3        cmc<=2
+finish:foil            board:side            qty>1         price>20
+```
+
+Terms are ANDed, so `rarity:mythic finish:foil qty>1` is all three at once.
+There is no `OR`: every question this answers narrows.
+
+The keys are `name set finish board qty price value` for what you hold, and
+`rarity type artist layout setname color cmc` for the card itself. The second
+group needs card details stored — see [Card details](#card-details) — and the bar
+says so if they are missing rather than reporting no matches.
+
+Two details that are easy to trip over. `rarity` matches exactly, because
+"common" is a substring of "uncommon" and a substring match would return the
+opposite of what you asked. And a card no source can price fails `price<1`
+rather than counting as zero: unpriced is not cheap.
+
+### Card details
+
+Pressing <kbd>enter</kbd> on a card opens what hoard knows about it:
+
+```
+Solitude
+Creature — Elemental Incarnation  {3}{W}{W}
+Modern Horizons 2 · mh2/32 · mythic
+Evan Shipard · 2021-06-18
+
+Flash
+Lifelink
+When this creature enters, exile up to one other target creature. That creature's
+controller gains life equal to its power.
+
+HELD
+  ×4  -       Binder
+
+PRICE
+  non-foil  ▇▇█▇▇▇▇▄▃▆▅▄▄▄▄▃▄▄▄▂▁▁▁▁▁▁▁▁▁▁▁▁  $34.28
+            $33.34–$41.08 since 29 Apr · 79 obs
+  foil      ▁▂▂▂▂▂▂▂▂▄▄▄▄▅▅▇▇▇▆▆▆▆▆▆▇▇▇▇▇▇▇█  $46.91
+            $36.55–$46.91 since 29 Apr · 11 obs
+```
+
+**HELD** is the question no single command could answer before: `list` saw the
+binder and `deck show` saw one deck, so neither could tell you that four copies
+of a card are one in the binder and three spread across two decks.
+
+The sparklines are scaled to each series' own low and high, not to zero — against
+a zero baseline a card that drifted between $34.00 and $34.50 would look
+identical to one that never moved. The numbers underneath carry the magnitude,
+which is why they are there. Points are spaced by **date**, so a quiet month
+occupies a month of the line rather than one step.
+
+Card details come from Scryfall and are stored on refresh, so a hoard upgraded
+from an older version has none until you run:
+
+```sh
+hoard update-prices
+```
+
+That fills them for every card you own in one pass — the same request that
+refreshes prices, so it costs nothing extra. Until it runs, the detail pane says
+so instead of showing blanks, and trait filters find nothing and explain why.
+
+## The local catalog
+
+hoard keeps a copy of Scryfall's card data on disk, so lookups that used to be
+API calls are queries against a file. It is built from Scryfall's published bulk
+bundle — the same thing their rate-limit message points you at — and refreshed
+the way a scanner refreshes a vulnerability database: check a small listing, and
+download only when what they publish is newer than what you have.
+
+```sh
+hoard catalog          # what's stored, how old, whether Scryfall has newer
+hoard catalog update   # rebuild now
+```
+
+On a real collection the difference is stark. `update-prices` used to make 21
+batched requests and could be rate-limited part-way, losing everything already
+fetched; with a catalog it served **1,568 of 1,573 cards locally in 1.3 seconds**,
+and the prices matched the API's exactly on all 1,573.
+
+The catalog lives in your cache directory — `~/Library/Caches/hoard/catalog` on
+macOS — and never inside `hoard.db`. Everything in it is a download away and your
+collection is not, so they are kept apart: deleting the catalog is always a safe
+fix, and the pre-migration backups of `hoard.db` stay small.
+
+Card lookups use it too. Name completion and printing search become indexed
+queries — instant, and working with no network. Camera scanning resolves against
+it as well, which turned out to be **more** accurate than the API rather than
+less: on a set of real card names, OCR-style corruptions and the noise a camera
+actually catches, the local matcher scored **30/30 against Scryfall's 26/30**. It
+wins on exactly the inputs that matter — Scryfall returns nothing for `Sol Rlng`,
+`S0l Ring`, `Stonef0rge Mystlc` or `Anclent Tornb`, while the local matcher reads
+all four — and it refuses `option`, which the API resolves to the card `Opt`.
+
+It is a **cache, never an authority**. Anything it does not have falls through to
+the Scryfall API, so a card printed since the last build still adds normally. The
+five cards above that came from Scryfall are digital-only printings the bundle
+excludes on purpose.
+
+About 107,000 paper printings, **57 MB**, built in under ten seconds. hoard asks
+before downloading it rather than spending your bandwidth uninvited, and
+declining is fine — a stale catalog still answers, and an absent one just means
+the API path hoard always used.
 
 ## Usage
 
-> **Global flags must come before the command.** `hoard --db ./my.db summary` works;
-> `hoard summary --db ./my.db` silently uses the default database instead.
+> **Global flags must come before the command.** `hoard --db ./my.db unpriced`
+> works; `hoard unpriced --db ./my.db` silently uses the default database instead.
 
 ```sh
+# Browse the hoard — the main way to look at anything
+hoard
+
 # Add cards interactively (see below), the main way in
 hoard add
-
-# Show the collection and its total value
-hoard list
-
-# Grand total value: loose collection + each deck
-hoard summary
 
 # Refresh market prices for every card in the catalog
 hoard update-prices
@@ -221,7 +405,7 @@ Try: hoard repair-finishes, then hoard update-prices
 
 ### Where vendors disagree
 
-`summary` reports one price per card as though it were the truth. It isn't: the
+A valuation reports one price per card as though it were the truth. It isn't: the
 same card is quoted by three US vendors at once, on both sides of the counter,
 and they disagree more than a single figure suggests. `hoard arbitrage` shows
 where, in three sections:
@@ -307,10 +491,11 @@ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --foil
 `--qty` and `--foil` apply to this URL form only; in a session you're asked for the
 finish and quantity directly.
 
-### What `summary` looks like
+### The piped summary
 
-`summary` groups the hoard into two sections and ranks decks by value, with a bar
-showing each one's share of the grand total:
+Redirected or piped, plain `hoard` prints the totals as a table, grouped into two
+sections and ranked by value, with a bar showing each deck's share of the grand
+total:
 
 ```
 COLLECTION                                           100  $1,901.70  ████▉
@@ -339,22 +524,20 @@ hoard deck add https://archidekt.com/decks/7319967/high_power_aristocrats
 # (Moxfield → ⋯ → Export) and import the file:
 hoard deck add --file my-deck.txt --name "My Edgar EDH" --source moxfield
 
-# List decks with card counts and value, most valuable first
-hoard deck list
-
-# Show a deck's cards
-hoard deck show vampiric
-
 # Delete a deck
 hoard deck remove "My Edgar EDH"
 ```
 
-`deck show` and `deck remove` accept **any part of a deck's name**, case-insensitively,
+Listing decks and looking inside one are done by [browsing](#browsing) rather
+than by their own commands: the left pane ranks every deck by value and selecting
+one shows its cards.
+
+`deck remove` accepts **any part of a deck's name**, case-insensitively,
 as long as it matches one deck. If it matches several, they're listed so you can
 narrow it down rather than the wrong deck being acted on:
 
 ```
-$ hoard deck show "Duel Decks"
+$ hoard deck remove "Duel Decks"
 error: "Duel Decks" matches 8 decks:
   Duel Decks Anthology: Divine vs. Demonic (Demonic)
   Duel Decks Anthology: Divine vs. Demonic (Divine)
@@ -420,7 +603,7 @@ the previous state is sitting next to the original. Those copies are safe to
 remove once you are happy.
 
 Piping or redirecting turns off styling, truncation, and bars automatically, so
-`hoard summary | grep` sees whole names and no escape sequences.
+`hoard | grep` sees whole names and no escape sequences.
 
 ## Scanning a card
 

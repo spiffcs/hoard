@@ -25,11 +25,30 @@ import (
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
 
-// Container kinds.
+// Container kinds. These are stored values, never shown; see LooseName for what
+// the singleton is called on screen.
 const (
 	KindCollection = "collection"
 	KindDeck       = "deck"
 )
+
+// LooseName is what the cards outside any deck are called in the interface.
+//
+// "Collection" is the whole hoard — the binder and every deck together — so
+// using it for the loose half made the summary contradict itself, listing a
+// "COLLECTION" of 335 cards above a "TOTAL" of 2,214. A binder is where those
+// singles actually live.
+//
+// The stored container is still named "Collection" in the database and its kind
+// is still `collection`; both are internal and neither is worth a migration to
+// rename. The queries that hand a container name to a caller substitute this
+// one, so nothing downstream has to know.
+const LooseName = "Binder"
+
+// containerLabel is a container's display name: the deck's own name, or
+// LooseName for the singleton. It assumes the containers table is aliased `ct`.
+const containerLabel = `CASE WHEN ct.kind = '` + KindCollection +
+	`' THEN '` + LooseName + `' ELSE ct.name END`
 
 // collectionSourceID is the fixed source_id of the singleton loose collection,
 // letting it share the UNIQUE(source, source_id) constraint with decks.
@@ -244,10 +263,14 @@ func (s *Store) UpsertCatalogCards(cards []scryfall.Card) error {
 }
 
 func upsertCatalogTx(tx *sql.Tx, cards []scryfall.Card) error {
+	// raw_json coalesces to what is already stored, so a card written from a
+	// source that carries no response — a decklist import, a test fixture —
+	// leaves the document a previous refresh fetched intact rather than nulling
+	// it and silently emptying every generated column that depends on it.
 	stmt, err := tx.Prepare(`
 INSERT INTO cards (scryfall_id, set_code, collector_number, name,
-                   price_usd, price_usd_foil, scryfall_url, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   price_usd, price_usd_foil, scryfall_url, updated_at, raw_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scryfall_id) DO UPDATE SET
     set_code         = excluded.set_code,
     collector_number = excluded.collector_number,
@@ -255,7 +278,8 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
     price_usd        = excluded.price_usd,
     price_usd_foil   = excluded.price_usd_foil,
     scryfall_url     = excluded.scryfall_url,
-    updated_at       = excluded.updated_at`)
+    updated_at       = excluded.updated_at,
+    raw_json         = COALESCE(excluded.raw_json, cards.raw_json)`)
 	if err != nil {
 		return err
 	}
@@ -263,8 +287,12 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 
 	ts := now()
 	for _, c := range cards {
+		var raw any // nil, not "", so the COALESCE above sees NULL
+		if len(c.Raw) > 0 {
+			raw = string(c.Raw)
+		}
 		if _, err := stmt.Exec(c.ID, c.Set, c.CollectorNumber, c.Name,
-			c.PriceUSD, c.PriceUSDFoil, c.ScryfallURL, ts); err != nil {
+			c.PriceUSD, c.PriceUSDFoil, c.ScryfallURL, ts, raw); err != nil {
 			return fmt.Errorf("upserting catalog card %s: %w", c.Name, err)
 		}
 	}
@@ -294,6 +322,10 @@ type PriceGap struct {
 	ScryfallID string
 	SetCode    string
 	Name       string
+	// CheckedAt is when MTGJSON was last asked about this card and had nothing,
+	// or nil if it has never been asked. Callers use it to avoid paying for a
+	// 50 MB scan to re-learn an answer they already have.
+	CheckedAt *string
 }
 
 // UnpricedByOwnedFinish returns cards Scryfall could not price for a finish the
@@ -305,9 +337,10 @@ type PriceGap struct {
 // run is cheap.
 func (s *Store) UnpricedByOwnedFinish() ([]PriceGap, error) {
 	rows, err := s.db.Query(`
-SELECT DISTINCT c.scryfall_id, c.set_code, c.name
+SELECT DISTINCT c.scryfall_id, c.set_code, c.name, g.checked_at
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
+LEFT JOIN card_price_gaps g ON g.scryfall_id = c.scryfall_id
 ` + altJoinCards + `
 WHERE ` + unpricedPredicate + `
 ORDER BY c.set_code, c.name`)
@@ -318,7 +351,7 @@ ORDER BY c.set_code, c.name`)
 	var out []PriceGap
 	for rows.Next() {
 		var g PriceGap
-		if err := rows.Scan(&g.ScryfallID, &g.SetCode, &g.Name); err != nil {
+		if err := rows.Scan(&g.ScryfallID, &g.SetCode, &g.Name, &g.CheckedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -348,7 +381,7 @@ func (s *Store) Unpriced() ([]UnpricedRow, error) {
 	rows, err := s.db.Query(`
 SELECT c.name, c.set_code, c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
-       GROUP_CONCAT(DISTINCT ct.name) AS held_in
+       GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -535,7 +568,7 @@ func CorrectFinish(finish string, available []string) (string, bool) {
 // ambiguous and left untouched rather than guessed at.
 func (s *Store) RepairFinishes(available map[string][]string) (fixed, ambiguous []FinishFix, err error) {
 	rows, err := s.db.Query(`
-SELECT e.container_id, ct.name, e.scryfall_id, e.finish, e.board, e.quantity,
+SELECT e.container_id, ` + containerLabel + `, e.scryfall_id, e.finish, e.board, e.quantity,
        c.name, c.set_code, c.collector_number
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
@@ -695,13 +728,23 @@ func (s *Store) AddCard(c scryfall.Card, foil bool, qty int) error {
 	return s.AddCardFinish(c, finish, qty)
 }
 
+// validFinish rejects a finish card_entries cannot hold. One definition, so a
+// writer added later cannot admit a value the rest of the schema disagrees with
+// — "nonfoil" being the obvious one, since that is Scryfall's spelling of the
+// finish this package calls "normal".
+func validFinish(finish string) error {
+	switch finish {
+	case "normal", "foil", "etched":
+		return nil
+	}
+	return fmt.Errorf("invalid finish %q", finish)
+}
+
 // AddCardFinish ensures the card is in the catalog and adds qty copies of the
 // given finish ("normal", "foil", or "etched") to the loose collection.
 func (s *Store) AddCardFinish(c scryfall.Card, finish string, qty int) error {
-	switch finish {
-	case "normal", "foil", "etched":
-	default:
-		return fmt.Errorf("invalid finish %q", finish)
+	if err := validFinish(finish); err != nil {
+		return err
 	}
 	cid, err := s.collectionID()
 	if err != nil {
@@ -1098,6 +1141,65 @@ SELECT ?, scryfall_id, 'foil', 'main', qty_foil FROM cards_legacy WHERE qty_foil
 	}
 	if _, err := tx.Exec(`DROP TABLE cards_legacy`); err != nil {
 		return fmt.Errorf("migrate: dropping legacy table: %w", err)
+	}
+	return tx.Commit()
+}
+
+// IDsNeedingDocuments lists catalogued printings with no stored Scryfall
+// document.
+//
+// The local catalog carries prices and identity but not the whole response, so a
+// refresh served from it cannot fill raw_json — and the descriptive columns
+// derived from it would stay null forever for any card added before migration v5
+// or imported from a decklist. This is the bounded set that still has to come
+// from the API, and it empties after one refresh rather than recurring.
+func (s *Store) IDsNeedingDocuments() ([]string, error) {
+	rows, err := s.db.Query(`SELECT scryfall_id FROM cards WHERE raw_json IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("finding cards without a stored document: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// RecordPriceGapChecks notes that MTGJSON was asked about these cards and had
+// no usable price.
+//
+// Recorded for every card asked about, not only the ones that came back empty:
+// a card MTGJSON priced is no longer a gap, so it will not be asked about again
+// regardless, and writing a row for it would be describing a state that no
+// longer exists.
+func (s *Store) RecordPriceGapChecks(scryfallIDs []string) error {
+	if len(scryfallIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+INSERT INTO card_price_gaps (scryfall_id, checked_at) VALUES (?, ?)
+ON CONFLICT(scryfall_id) DO UPDATE SET checked_at = excluded.checked_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	ts := now()
+	for _, id := range scryfallIDs {
+		if _, err := stmt.Exec(id, ts); err != nil {
+			return fmt.Errorf("recording price-gap check for %s: %w", id, err)
+		}
 	}
 	return tx.Commit()
 }

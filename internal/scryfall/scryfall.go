@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,13 +38,25 @@ type Card struct {
 	PriceUSDFoil *float64
 
 	// Display fields, populated by search results and used to disambiguate
-	// printings interactively. They are ignored by the store.
+	// printings interactively. They are ignored by the store, which reads the
+	// equivalents out of Raw instead.
 	SetName      string
 	ReleasedAt   string
 	Finishes     []string // e.g. ["nonfoil","foil","etched"]
 	PromoTypes   []string
 	FrameEffects []string
 	BorderColor  string
+
+	// Raw is the card object exactly as Scryfall sent it.
+	//
+	// Scryfall returns around sixty fields per card and this type names a dozen.
+	// Keeping the bytes means the store can expose rarity, type line, mana cost
+	// and the rest as generated columns without a new field here, a new column
+	// in the INSERT, and a re-download of the whole catalog for each one.
+	//
+	// Nil when a card came from somewhere that has no response to keep — a test
+	// fixture, or a legacy row read back out of the database.
+	Raw json.RawMessage
 }
 
 // ParseCardURL extracts the set code and collector number from a Scryfall
@@ -133,7 +146,7 @@ func FetchCard(ctx context.Context, set, number string) (*Card, error) {
 		return nil, fmt.Errorf("scryfall returned %d for %s/%s", resp.StatusCode, set, number)
 	}
 
-	card := ac.toCard()
+	card := ac.toCard(body)
 	return &card, nil
 }
 
@@ -158,10 +171,12 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 	for i := 0; i < len(ids); i += collectionMax {
 		if i > 0 {
 			// Stay well under Scryfall's rate limit between chunks.
-			time.Sleep(100 * time.Millisecond)
+			if err := sleepCtx(ctx, chunkPause); err != nil {
+				return nil, nil, err
+			}
 		}
 		end := min(i+collectionMax, len(ids))
-		chunkFound, chunkNotFound, err := fetchCollectionChunk(ctx, client, ids[i:end])
+		chunkFound, chunkNotFound, err := fetchCollectionChunkRetrying(ctx, client, ids[i:end])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -169,6 +184,75 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 		notFound = append(notFound, chunkNotFound...)
 	}
 	return found, notFound, nil
+}
+
+// chunkPause is the gap between collection requests. Scryfall asks for fewer
+// than 10 requests a second and suggests 50–100ms; 150 leaves margin, and on a
+// 1,500-card catalog it costs about three seconds across the whole run.
+const chunkPause = 150 * time.Millisecond
+
+// rateLimitRetries is how many times a chunk waits out a 429 before giving up.
+const rateLimitRetries = 3
+
+// errRateLimited reports a 429 along with how long Scryfall asked us to wait.
+type errRateLimited struct{ retryAfter time.Duration }
+
+func (e errRateLimited) Error() string {
+	return fmt.Sprintf("scryfall rate-limited the request (retry after %s)", e.retryAfter)
+}
+
+// fetchCollectionChunkRetrying waits out rate limiting rather than abandoning
+// the run.
+//
+// A refresh of a real collection is twenty-odd requests, and a 429 on any one of
+// them used to discard every card fetched before it — the longer the collection,
+// the more work a single throttle threw away. Scryfall's budget is also wider
+// than one process: a hoard refreshed twice in a few minutes can be limited
+// while well under the per-second rate, so waiting is the correct response
+// rather than an error worth surfacing.
+func fetchCollectionChunkRetrying(ctx context.Context, client *http.Client, ids []Identifier) ([]Card, []Identifier, error) {
+	var lastErr error
+	for attempt := 0; attempt <= rateLimitRetries; attempt++ {
+		cards, missing, err := fetchCollectionChunk(ctx, client, ids)
+		var limited errRateLimited
+		if !errors.As(err, &limited) {
+			return cards, missing, err
+		}
+		lastErr = err
+		if attempt == rateLimitRetries {
+			break
+		}
+		if err := sleepCtx(ctx, limited.retryAfter); err != nil {
+			return nil, nil, err
+		}
+	}
+	return nil, nil, lastErr
+}
+
+// sleepCtx waits for d, or returns early if the caller gives up. A minute-long
+// rate-limit wait must still respond to ctrl-c.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// retryAfter reads the Retry-After header, falling back to a default when it is
+// missing or unparseable. Scryfall sends seconds; the value is clamped so a
+// surprising header cannot park the process for an afternoon.
+func retryAfter(resp *http.Response, fallback time.Duration) time.Duration {
+	const maxWait = 90 * time.Second
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
+			return min(time.Duration(secs)*time.Second, maxWait)
+		}
+	}
+	return fallback
 }
 
 func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identifier) ([]Card, []Identifier, error) {
@@ -198,10 +282,20 @@ func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identi
 		return nil, nil, fmt.Errorf("reading collection response: %w", err)
 	}
 
+	// Data is decoded in two passes — to RawMessage, then to apiCard — so each
+	// card's own bytes survive for the store. Decoding straight to apiCard
+	// discards them, and re-marshalling the decoded struct would write back the
+	// dozen fields it names rather than the sixty Scryfall sent.
 	var out struct {
-		Data     []apiCard    `json:"data"`
-		NotFound []Identifier `json:"not_found"`
-		Details  string       `json:"details"`
+		Data     []json.RawMessage `json:"data"`
+		NotFound []Identifier      `json:"not_found"`
+		Details  string            `json:"details"`
+	}
+	// Checked before decoding: a 429 body is an error object, not a card list,
+	// and its "details" is the shouty warning about network blocks rather than
+	// anything worth showing per attempt.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, nil, errRateLimited{retryAfter: retryAfter(resp, 60*time.Second)}
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, nil, fmt.Errorf("decoding collection response (status %d): %w", resp.StatusCode, err)
@@ -213,15 +307,30 @@ func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identi
 		return nil, nil, fmt.Errorf("scryfall collection returned %d", resp.StatusCode)
 	}
 
-	cards := make([]Card, 0, len(out.Data))
-	for _, ac := range out.Data {
-		cards = append(cards, ac.toCard())
+	cards, err := decodeCards(out.Data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoding collection response: %w", err)
 	}
 	return cards, out.NotFound, nil
 }
 
-// toCard converts a decoded Scryfall JSON card into the exported Card type.
-func (ac apiCard) toCard() Card {
+// decodeCards turns a list of raw card objects into Cards, each keeping the
+// bytes it came from.
+func decodeCards(raws []json.RawMessage) ([]Card, error) {
+	cards := make([]Card, 0, len(raws))
+	for _, raw := range raws {
+		var ac apiCard
+		if err := json.Unmarshal(raw, &ac); err != nil {
+			return nil, err
+		}
+		cards = append(cards, ac.toCard(raw))
+	}
+	return cards, nil
+}
+
+// toCard converts a decoded Scryfall JSON card into the exported Card type,
+// carrying the bytes it was decoded from so the store can keep them.
+func (ac apiCard) toCard(raw json.RawMessage) Card {
 	// The catalog has a single "foil" price column; when a card has no foil
 	// price but does have an etched price (etched-only printings), use that so
 	// etched entries can still be valued.
@@ -243,6 +352,7 @@ func (ac apiCard) toCard() Card {
 		BorderColor:     ac.BorderColor,
 		PriceUSD:        parsePrice(ac.Prices.USD),
 		PriceUSDFoil:    foil,
+		Raw:             raw,
 	}
 }
 
@@ -315,7 +425,7 @@ func NamedFuzzy(ctx context.Context, text string) (*Card, error) {
 		}
 		return nil, fmt.Errorf("scryfall fuzzy-name returned %d", resp.StatusCode)
 	}
-	card := ac.toCard()
+	card := ac.toCard(body)
 	return &card, nil
 }
 
@@ -370,10 +480,10 @@ func searchPage(ctx context.Context, client *http.Client, endpoint string) ([]Ca
 		return nil, "", nil // no cards matched
 	}
 	var out struct {
-		Data     []apiCard `json:"data"`
-		HasMore  bool      `json:"has_more"`
-		NextPage string    `json:"next_page"`
-		Details  string    `json:"details"`
+		Data     []json.RawMessage `json:"data"`
+		HasMore  bool              `json:"has_more"`
+		NextPage string            `json:"next_page"`
+		Details  string            `json:"details"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, "", fmt.Errorf("decoding search response (status %d): %w", resp.StatusCode, err)
@@ -385,9 +495,9 @@ func searchPage(ctx context.Context, client *http.Client, endpoint string) ([]Ca
 		return nil, "", fmt.Errorf("scryfall search returned %d", resp.StatusCode)
 	}
 
-	cards := make([]Card, 0, len(out.Data))
-	for _, ac := range out.Data {
-		cards = append(cards, ac.toCard())
+	cards, err := decodeCards(out.Data)
+	if err != nil {
+		return nil, "", fmt.Errorf("decoding search response: %w", err)
 	}
 	next := ""
 	if out.HasMore {

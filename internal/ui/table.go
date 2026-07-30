@@ -232,30 +232,49 @@ func (t Table) WriteTo(w io.Writer) (int64, error) {
 
 // Render lays the table out and returns it as lines, newline-terminated.
 func (t Table) Render() string {
-	if len(t.Cols) == 0 {
+	lines := t.Lines()
+	if len(lines) == 0 {
 		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// Lines lays the table out and returns each rendered line separately, with no
+// terminating newline.
+//
+// This exists for callers that must address a line after it is laid out — an
+// interactive list drawing a cursor on the selected row, which cannot be done
+// with the single string Render returns without re-splitting it and guessing
+// where the rows are.
+//
+// The order is: the column titles when Header is set, then one line per row in
+// order, with a spacer row rendering as an empty line. So with Header set and
+// no spacers — the shape an interactive list wants — row i is line i+1.
+func (t Table) Lines() []string {
+	if len(t.Cols) == 0 {
+		return nil
 	}
 	widths, keep := FitColumns(t.Cols, t.natural(), t.gutter(), t.Env)
 
-	var b strings.Builder
+	out := make([]string, 0, len(t.Rows)+1)
 	if t.Header {
 		titles := make([]Cell, len(t.Cols))
 		for i, c := range t.Cols {
 			titles[i] = Cell{Text: c.Title}
 		}
-		b.WriteString(t.line(Row{Cells: titles, Style: t.Env.Dim()}, widths, keep))
+		out = append(out, t.line(Row{Cells: titles, Style: t.Env.Dim()}, widths, keep))
 	}
 	for _, r := range t.Rows {
-		b.WriteString(t.line(r, widths, keep))
+		out = append(out, t.line(r, widths, keep))
 	}
-	return b.String()
+	return out
 }
 
-// line renders one row, padding outside the styled span so that ANSI escapes
-// can never influence column alignment.
+// line renders one row without its terminating newline, padding outside the
+// styled span so that ANSI escapes can never influence column alignment.
 func (t Table) line(r Row, widths []int, keep []bool) string {
 	if r.Spacer {
-		return "\n"
+		return ""
 	}
 
 	gutter := strings.Repeat(" ", t.gutter())
@@ -303,7 +322,7 @@ func (t Table) line(r Row, widths []int, keep []bool) string {
 	}
 
 	// Trailing padding helps nobody and dirties grep/diff output.
-	return strings.TrimRight(b.String(), " ") + "\n"
+	return strings.TrimRight(b.String(), " ")
 }
 
 // Truncate shortens s to at most w display cells, marking the cut with an

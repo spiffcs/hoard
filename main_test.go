@@ -1,13 +1,21 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/catalog"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
+
+// f is a float pointer, for the price fields the store takes as nullable.
+func f(v float64) *float64 { return &v }
 
 func TestExtractDBFlag(t *testing.T) {
 	cases := []struct {
@@ -97,7 +105,7 @@ func renderSummary(env ui.Env) string {
 func TestSummaryTable(t *testing.T) {
 	got := renderSummary(ui.Env{Width: 80, Clamp: true, Bars: true})
 	want := strings.Join([]string{
-		"COLLECTION                 10  $100.00  ██",
+		"BINDER                     10  $100.00  ██",
 		"DECKS · 3                 200  $400.00  ████████",
 		"",
 		"  Alpha Deck (Precon)     100  $300.00  ██████",
@@ -138,113 +146,6 @@ func TestSummaryTableTieBreaksByName(t *testing.T) {
 	}
 }
 
-func TestDecksByValue(t *testing.T) {
-	mk := func(name string, value float64) store.DeckSummary {
-		d := store.DeckSummary{Value: value}
-		d.Name = name
-		return d
-	}
-	in := []store.DeckSummary{
-		mk("cheap", 1), mk("rich", 300), mk("zero-b", 0), mk("mid", 50), mk("zero-a", 0),
-	}
-	got := decksByValue(in)
-
-	want := []string{"rich", "mid", "cheap", "zero-a", "zero-b"}
-	for i, name := range want {
-		if got[i].Name != name {
-			t.Errorf("position %d = %q, want %q (full order: %v)", i, got[i].Name, name, names(got))
-		}
-	}
-
-	// The caller's slice must be left alone: cmdDeckList and summaryTable both
-	// sort the same result of ListDecks.
-	if in[0].Name != "cheap" {
-		t.Errorf("decksByValue mutated its argument: %v", names(in))
-	}
-}
-
-func TestCollectionByValue(t *testing.T) {
-	mk := func(name, finish string, qty int, value float64) store.CollectionRow {
-		r := store.CollectionRow{Finish: finish, Quantity: qty, Value: value}
-		r.Name = name
-		return r
-	}
-	in := []store.CollectionRow{
-		mk("cheap", "normal", 1, 1),
-		// Quantity is already folded into Value by the store.
-		mk("bulk-but-many", "normal", 10, 50),
-		mk("unpriced-b", "normal", 3, 0),
-		mk("one-expensive", "normal", 1, 30),
-		mk("unpriced-a", "normal", 1, 0),
-		// A foil holding is its own row now, not a second column.
-		mk("foil-heavy", "foil", 2, 120),
-	}
-	got := collectionByValue(in)
-
-	want := []string{"foil-heavy", "bulk-but-many", "one-expensive", "cheap", "unpriced-a", "unpriced-b"}
-	for i, name := range want {
-		if got[i].Name != name {
-			t.Errorf("position %d = %q, want %q (full order: %v)", i, got[i].Name, name, cardNames(got))
-		}
-	}
-	if in[0].Name != "cheap" {
-		t.Errorf("collectionByValue mutated its argument: %v", cardNames(in))
-	}
-}
-
-func TestEntriesByValue(t *testing.T) {
-	price := func(v float64) *float64 { return &v }
-	mk := func(name, board, finish string, qty int, usd, usdFoil *float64) store.EntryView {
-		e := store.EntryView{Finish: finish, Board: board, Quantity: qty}
-		e.Card.Name = name
-		e.Card.PriceUSD = usd
-		e.Card.PriceUSDFoil = usdFoil
-		return e
-	}
-	in := []store.EntryView{
-		// Grouped by board as the store returns them, cheapest first.
-		mk("commander-cheap", "commander", "normal", 1, price(2), nil),
-		mk("main-mid", "main", "normal", 1, price(40), nil),
-		// Quantity counts: 10 x $9 beats one $40 card.
-		mk("main-many", "main", "normal", 10, price(9), nil),
-		// Foil entries take the foil price.
-		mk("side-foil", "side", "foil", 1, price(1), price(75)),
-		mk("side-unpriced", "side", "normal", 1, nil, nil),
-	}
-	got := entriesByValue(in)
-
-	want := []string{"main-many", "side-foil", "main-mid", "commander-cheap", "side-unpriced"}
-	for i, name := range want {
-		if got[i].Card.Name != name {
-			t.Errorf("position %d = %q, want %q", i, got[i].Card.Name, name)
-		}
-	}
-	// Board grouping is deliberately flattened; the BOARD column still carries it.
-	if got[0].Board != "main" || got[1].Board != "side" {
-		t.Errorf("expected boards to interleave by value, got %q then %q",
-			got[0].Board, got[1].Board)
-	}
-	if in[0].Card.Name != "commander-cheap" {
-		t.Error("entriesByValue mutated its argument")
-	}
-}
-
-func cardNames(rows []store.CollectionRow) []string {
-	out := make([]string, len(rows))
-	for i, r := range rows {
-		out[i] = r.Name
-	}
-	return out
-}
-
-func names(decks []store.DeckSummary) []string {
-	out := make([]string, len(decks))
-	for i, d := range decks {
-		out[i] = d.Name
-	}
-	return out
-}
-
 // The non-terminal profile is the scriptable one: whole names, no bars, and
 // crucially no escape sequences.
 func TestSummaryTablePiped(t *testing.T) {
@@ -280,14 +181,225 @@ func TestSummaryTableNarrow(t *testing.T) {
 func TestSummaryTableEmpty(t *testing.T) {
 	out := summaryTable(ui.Env{Width: 80, Clamp: true, Bars: true},
 		store.CollectionTotals{}, nil).Render()
+	// "DECKS · 0" is now the widest label, so it sets the name column.
 	want := strings.Join([]string{
-		"COLLECTION  0  $0.00",
-		"DECKS · 0   0  $0.00",
+		"BINDER     0  $0.00",
+		"DECKS · 0  0  $0.00",
 		"",
-		"TOTAL       0  $0.00",
+		"TOTAL      0  $0.00",
 		"",
 	}, "\n")
 	if out != want {
 		t.Errorf("empty summary =\n%s\nwant\n%s", out, want)
 	}
+}
+
+// Bare `hoard` has two behaviours and the split is what keeps piping alive, so
+// both halves are asserted rather than only the interactive one.
+func TestBareHoardWritesTheSummaryWhenNotATTY(t *testing.T) {
+	// go test's stdout is never a character device, so this exercises the
+	// non-interactive branch as it will run under a pipe.
+	if stdoutIsTTY() {
+		t.Skip("test stdout is a terminal")
+	}
+
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "hoard.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	if err := st.AddCard(scryfall.Card{
+		ID: "x", Set: "uma", CollectorNumber: "7", Name: "Ulamog",
+		ScryfallURL: "http://x", PriceUSD: f(10),
+	}, false, 2); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	// cmdBrowse must not try to open a bubbletea program here; if the TTY gate
+	// were wrong this would hang or fail rather than return.
+	if err := cmdBrowse(context.Background(), st); err != nil {
+		t.Fatalf("cmdBrowse: %v", err)
+	}
+}
+
+// The commands the browser replaced are gone, and the error has to say so
+// rather than silently doing nothing.
+func TestRemovedReadCommandsAreRejected(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"--db", filepath.Join(dir, "a.db"), "list"},
+		{"--db", filepath.Join(dir, "b.db"), "summary"},
+		{"--db", filepath.Join(dir, "c.db"), "deck", "list"},
+		{"--db", filepath.Join(dir, "d.db"), "deck", "show", "x"},
+	} {
+		err := run(args)
+		if err == nil {
+			t.Errorf("run(%v) succeeded, want an unknown-command error", args)
+			continue
+		}
+		if !strings.Contains(err.Error(), "unknown") {
+			t.Errorf("run(%v) = %v, want it to say the command is unknown", args, err)
+		}
+	}
+}
+
+// countingSearcher stands in for the Scryfall API and records what reached it.
+type countingSearcher struct {
+	auto, prints, fuzzy int
+	names               []string
+	cards               []scryfall.Card
+	card                *scryfall.Card
+}
+
+func (c *countingSearcher) Autocomplete(context.Context, string) ([]string, error) {
+	c.auto++
+	return c.names, nil
+}
+func (c *countingSearcher) SearchPrints(context.Context, string) ([]scryfall.Card, error) {
+	c.prints++
+	return c.cards, nil
+}
+func (c *countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, error) {
+	c.fuzzy++
+	return c.card, nil
+}
+
+// A nil catalog is a supported state: hoard behaves exactly as it did before the
+// catalog existed.
+func TestSearcherWithNoCatalogGoesStraightToTheAPI(t *testing.T) {
+	remote := &countingSearcher{names: []string{"Sol Ring"}}
+	s := layeredSearcher{remote: remote}
+	ctx := context.Background()
+
+	if got, _ := s.Autocomplete(ctx, "sol"); len(got) != 1 {
+		t.Errorf("Autocomplete = %v", got)
+	}
+	s.SearchPrints(ctx, "Sol Ring")
+	s.NamedFuzzy(ctx, "Sol Ring")
+	if remote.auto != 1 || remote.prints != 1 || remote.fuzzy != 1 {
+		t.Errorf("api calls: %d/%d/%d, want one each", remote.auto, remote.prints, remote.fuzzy)
+	}
+}
+
+// An empty catalog is worse than none: every lookup would miss, pay for a query,
+// and go to the API anyway. newSearcher must not layer one in.
+func TestNewSearcherIgnoresAnEmptyCatalog(t *testing.T) {
+	cat, err := catalog.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer cat.Close()
+
+	s, ok := newSearcher(cat).(layeredSearcher)
+	if !ok {
+		t.Fatalf("newSearcher returned %T", newSearcher(cat))
+	}
+	if s.local != nil {
+		t.Error("an empty catalog was layered in")
+	}
+}
+
+// A confident local "no" is final. Asking Scryfall afterwards would hand exactly
+// the rejected cases to the endpoint that resolves "option" to "Opt" —
+// reintroducing the bug the local check exists to prevent.
+func TestFuzzyRefusalIsNotRetriedRemotely(t *testing.T) {
+	remote := &countingSearcher{card: &scryfall.Card{Name: "Opt"}}
+	s := layeredSearcher{local: &fakeLocal{}, remote: remote}
+
+	got, err := s.NamedFuzzy(context.Background(), "option")
+	if err != nil {
+		t.Fatalf("NamedFuzzy: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %q, want the local refusal to stand", got.Name)
+	}
+	if remote.fuzzy != 0 {
+		t.Error("a rejected read was sent to Scryfall's fuzzy search anyway")
+	}
+}
+
+// A local hit must not touch the API at all — that is the point.
+func TestLocalHitsSkipTheAPI(t *testing.T) {
+	remote := &countingSearcher{}
+	s := layeredSearcher{local: &fakeLocal{}, remote: remote}
+	ctx := context.Background()
+
+	if got, _ := s.Autocomplete(ctx, "sol"); len(got) == 0 {
+		t.Error("no local autocomplete")
+	}
+	if got, _ := s.SearchPrints(ctx, "Sol Ring"); len(got) == 0 {
+		t.Error("no local printings")
+	}
+	if got, _ := s.NamedFuzzy(ctx, "Sol Rlng"); got == nil {
+		t.Error("no local fuzzy match")
+	}
+	if remote.auto+remote.prints+remote.fuzzy != 0 {
+		t.Errorf("api was called %d/%d/%d times for locally-answerable lookups",
+			remote.auto, remote.prints, remote.fuzzy)
+	}
+}
+
+// A name the catalog has never seen — a printing newer than the last build —
+// still resolves, which is what keeps the cache advisory rather than
+// authoritative.
+func TestMissesFallThroughToTheAPI(t *testing.T) {
+	remote := &countingSearcher{
+		names: []string{"Brand New Card"},
+		cards: []scryfall.Card{{ID: "new", Name: "Brand New Card"}},
+	}
+	s := layeredSearcher{local: &fakeLocal{}, remote: remote}
+	ctx := context.Background()
+
+	if got, _ := s.Autocomplete(ctx, "brand new"); len(got) != 1 {
+		t.Errorf("Autocomplete = %v, want the API's answer", got)
+	}
+	if got, _ := s.SearchPrints(ctx, "Brand New Card"); len(got) != 1 {
+		t.Errorf("SearchPrints = %v, want the API's answer", got)
+	}
+	if remote.auto != 1 || remote.prints != 1 {
+		t.Errorf("api calls: %d/%d, want one each", remote.auto, remote.prints)
+	}
+}
+
+// fakeLocal stands in for the catalog: it knows one card and refuses everything
+// else, which is the behaviour the layering has to respect.
+type fakeLocal struct {
+	auto, prints, fuzzy int
+	err                 error
+}
+
+func (f *fakeLocal) Autocomplete(_ context.Context, q string) ([]string, error) {
+	f.auto++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if strings.Contains(strings.ToLower(q), "sol") {
+		return []string{"Sol Ring"}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeLocal) SearchPrints(_ context.Context, name string) ([]scryfall.Card, error) {
+	f.prints++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if name == "Sol Ring" {
+		return []scryfall.Card{{ID: "sol", Name: "Sol Ring"}}, nil
+	}
+	return nil, nil
+}
+
+// NamedFuzzy resolves a plausible read and refuses anything else, exactly as the
+// catalog's own matcher does.
+func (f *fakeLocal) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, error) {
+	f.fuzzy++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if cardname.Plausible(text, "Sol Ring") {
+		return &scryfall.Card{ID: "sol", Name: "Sol Ring"}, nil
+	}
+	return nil, nil
 }

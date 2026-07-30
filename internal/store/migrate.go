@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,8 @@ var migrations = []migration{
 	{2, splitAltPriceSources},
 	{3, cacheMTGJSONIDs},
 	{4, keepPriceHistory},
+	{5, richCardData},
+	{6, rememberPriceGaps},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -179,6 +183,89 @@ SELECT c.scryfall_id, 'foil',
 FROM cards c LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
 WHERE COALESCE(c.price_usd_foil, a.price_usd_foil) IS NOT NULL;`
 
+// richCardData keeps the whole Scryfall response and exposes its fields as
+// generated columns.
+//
+// Scryfall returns around sixty fields per card and hoard stored eight of them,
+// discarding the rest at json.Unmarshal. That is why nothing can filter by
+// rarity or type: the data was never missing from the API, only from the row.
+//
+// Storing the raw document and deriving columns from it — rather than adding a
+// real column per field — means every future field is a one-line ALTER. SQLite
+// allows ADD COLUMN for VIRTUAL generated columns specifically because they
+// occupy no space in existing rows, so there is no table rebuild and no
+// backfill. The cost is ~5.4 KB of JSON per card.
+//
+// There is no backfill step here on purpose. update-prices already refetches
+// every owned card from Scryfall, so the first run after this migration fills
+// raw_json for the whole catalog. Until then these columns read NULL, which
+// callers must present as unknown rather than as zero or blank.
+//
+// Double-faced cards are the trap. A transform card leaves the top-level
+// type_line, mana_cost and oracle_text null and puts them inside card_faces[],
+// so a bare json_extract would make every such card untyped — invisible to a
+// type filter, and blank in a detail pane, for the cards most likely to be
+// looked up. Each of those three coalesces to the front face.
+const richCardData = `
+ALTER TABLE cards ADD COLUMN raw_json TEXT;
+
+ALTER TABLE cards ADD COLUMN rarity TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.rarity')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN set_name TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.set_name')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN cmc REAL
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.cmc')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN artist TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.artist')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN released_at TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.released_at')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN layout TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.layout')) VIRTUAL;
+
+ALTER TABLE cards ADD COLUMN type_line TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.type_line'),
+                                  json_extract(raw_json,'$.card_faces[0].type_line'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN mana_cost TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.mana_cost'),
+                                  json_extract(raw_json,'$.card_faces[0].mana_cost'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN oracle_text TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.oracle_text'),
+                                  json_extract(raw_json,'$.card_faces[0].oracle_text'))) VIRTUAL;
+
+-- Kept as the JSON array Scryfall sends. Colour is a set, not a string, so
+-- filtering reads it with json_each rather than matching substrings — which
+-- would make color:U also match a UB card, and color:R match nothing at all
+-- when the array happens to be ordered ["B","R"].
+ALTER TABLE cards ADD COLUMN color_identity TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.color_identity')) VIRTUAL;
+
+CREATE INDEX IF NOT EXISTS cards_name ON cards(name);
+
+-- card_entries had no index on scryfall_id, so every join from cards — which is
+-- most of the valuation queries — scanned the whole table.
+CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);`
+
+// rememberPriceGaps records that MTGJSON was asked about a card and had nothing.
+//
+// Finding the fallback price for one card costs a 50 MB scan of MTGJSON's daily
+// bundle, and the scan is the same size whether one card is wanted or a
+// thousand. Cards no source can price are not rare and not temporary — six of
+// them on a 1,573-card hoard — so without this every refresh pays that scan to
+// re-learn the same answer about the same cards, forever.
+//
+// Only the *absence* of a price is recorded here. A price that was found lives
+// in card_prices_alt, and a card that has one is no longer a gap, so the two
+// tables never describe the same card at the same time.
+//
+// checked_at is a timestamp rather than a flag because the answer can change:
+// MTGJSON adds vendors and vendors add stock. The check expires, so a card is
+// re-asked about periodically instead of being written off.
+const rememberPriceGaps = `
+CREATE TABLE IF NOT EXISTS card_price_gaps (
+    scryfall_id TEXT PRIMARY KEY REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    checked_at  TEXT NOT NULL
+);`
+
 // migrate brings the database up to schemaVersion, backing it up first.
 func (s *Store) migrate(path string) error {
 	v, fresh, err := s.bootstrapVersion()
@@ -294,5 +381,55 @@ func (s *Store) backup(path string, fromVersion int) error {
 		return fmt.Errorf("backing up database before migration: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Backed up database to %s before upgrading schema.\n", dest)
+	pruneBackups(path, dest)
 	return nil
+}
+
+// keptBackups is how many pre-migration snapshots survive a prune.
+//
+// One is the actual safety net — the state immediately before the migration you
+// just ran. The extra two cover the case where a migration's damage is only
+// noticed after the next one has already been applied.
+const keptBackups = 3
+
+// pruneBackups removes all but the most recent snapshots of one database.
+//
+// Without this they accumulate one per migration forever, and they are not
+// small: raw_json took the newest from half a megabyte to nine. keep is the
+// backup written by the current run, which is never a candidate for removal
+// however the sort turns out.
+//
+// The match is deliberately narrow — the exact `.bak-v<n>-<date>` shape this
+// function writes — so a backup somebody made by hand and named something else
+// is not swept up by a cleanup they never asked for. Best-effort: a hoard whose
+// old backups cannot be removed is not a hoard worth failing a migration over.
+func pruneBackups(dbPath, keep string) {
+	dir := filepath.Dir(dbPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := filepath.Base(dbPath) + ".bak-v"
+
+	var mine []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		if full == keep {
+			continue
+		}
+		mine = append(mine, full)
+	}
+	if len(mine) < keptBackups {
+		return
+	}
+
+	// The names embed version then date, both zero-padded enough to sort in the
+	// order they were written, so the oldest are simply the first.
+	slices.Sort(mine)
+	for _, old := range mine[:len(mine)-(keptBackups-1)] {
+		os.Remove(old)
+	}
 }

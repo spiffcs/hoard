@@ -3,10 +3,12 @@ package scryfall
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestParseCardURL(t *testing.T) {
@@ -232,7 +234,7 @@ func TestEtchedFallbackPrice(t *testing.T) {
 	ac := apiCard{ID: "x", Name: "Etched Card"}
 	ac.Prices.USDFoil = ""
 	ac.Prices.USDEtched = "42.00"
-	c := ac.toCard()
+	c := ac.toCard(nil)
 	if c.PriceUSDFoil == nil || *c.PriceUSDFoil != 42.0 {
 		t.Errorf("etched fallback: want 42, got %v", c.PriceUSDFoil)
 	}
@@ -289,5 +291,175 @@ func TestFetchCollectionChunksAndAggregates(t *testing.T) {
 	}
 	if len(notFound) != 1 {
 		t.Errorf("notFound = %d, want 1", len(notFound))
+	}
+}
+
+// The store keeps whatever Scryfall sends so that fields this package does not
+// name are still available later. If Raw were dropped — or rebuilt by
+// re-marshalling the decoded struct — every unnamed field would vanish, and the
+// loss would only show up much later as an empty column.
+func TestRawCarriesUnmodelledFields(t *testing.T) {
+	const card = `{"id":"raw-id","name":"Bitterblossom","set":"uma",
+	  "collector_number":"85","scryfall_uri":"http://x","prices":{"usd":"34.11"},
+	  "rarity":"mythic","type_line":"Tribal Enchantment — Faerie","cmc":2.0,
+	  "artist":"Jesper Ejsing","color_identity":["B"]}`
+
+	check := func(t *testing.T, c Card) {
+		t.Helper()
+		if len(c.Raw) == 0 {
+			t.Fatal("Raw is empty; the response bytes were dropped")
+		}
+		var got map[string]any
+		if err := json.Unmarshal(c.Raw, &got); err != nil {
+			t.Fatalf("Raw is not valid JSON: %v", err)
+		}
+		// None of these are fields on Card, which is the point.
+		for k, want := range map[string]any{
+			"rarity": "mythic", "artist": "Jesper Ejsing", "cmc": 2.0,
+		} {
+			if got[k] != want {
+				t.Errorf("Raw[%q] = %v, want %v", k, got[k], want)
+			}
+		}
+	}
+
+	t.Run("FetchCard", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(card))
+		}))
+		defer srv.Close()
+		old := apiBase
+		apiBase = srv.URL
+		defer func() { apiBase = old }()
+
+		c, err := FetchCard(context.Background(), "uma", "85")
+		if err != nil {
+			t.Fatalf("FetchCard: %v", err)
+		}
+		check(t, *c)
+	})
+
+	// The list endpoints are the ones that must decode in two passes; a single
+	// pass straight to apiCard is what silently loses the bytes.
+	t.Run("FetchCollection", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"data":[` + card + `],"not_found":[]}`))
+		}))
+		defer srv.Close()
+		old := apiBase
+		apiBase = srv.URL
+		defer func() { apiBase = old }()
+
+		found, _, err := FetchCollection(context.Background(), []Identifier{{ID: "raw-id"}})
+		if err != nil || len(found) != 1 {
+			t.Fatalf("FetchCollection: %v, got %d cards", err, len(found))
+		}
+		check(t, found[0])
+	})
+
+	t.Run("SearchPrints", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"data":[` + card + `],"has_more":false}`))
+		}))
+		defer srv.Close()
+		old := apiBase
+		apiBase = srv.URL
+		defer func() { apiBase = old }()
+
+		cards, err := SearchPrints(context.Background(), "Bitterblossom")
+		if err != nil || len(cards) != 1 {
+			t.Fatalf("SearchPrints: %v, got %d cards", err, len(cards))
+		}
+		check(t, cards[0])
+	})
+}
+
+// A 429 on any one chunk used to discard every card fetched before it, so the
+// longer the collection the more work a single throttle threw away. Scryfall's
+// budget is wider than one process, so waiting is the right response.
+func TestFetchCollectionWaitsOutRateLimiting(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"object":"error","status":429,"details":"You are being rate-limited"}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"a","name":"Sol Ring","set":"c21",
+			"collector_number":"1","prices":{"usd":"2.00"}}],"not_found":[]}`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	found, _, err := FetchCollection(context.Background(), []Identifier{{ID: "a"}})
+	if err != nil {
+		t.Fatalf("FetchCollection: %v", err)
+	}
+	if len(found) != 1 || found[0].Name != "Sol Ring" {
+		t.Errorf("found = %+v, want the card from the retried request", found)
+	}
+	if calls != 2 {
+		t.Errorf("made %d requests, want 2 (one limited, one retried)", calls)
+	}
+}
+
+// A rate-limit wait can be a minute; it must still answer ctrl-c rather than
+// pinning the terminal until Scryfall relents.
+func TestFetchCollectionRateLimitWaitIsCancellable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already given up before the wait begins
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := FetchCollection(ctx, []Identifier{{ID: "a"}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still waiting after cancellation; the sleep ignores the context")
+	}
+}
+
+func TestRetryAfterHeader(t *testing.T) {
+	mk := func(v string) *http.Response {
+		h := http.Header{}
+		if v != "" {
+			h.Set("Retry-After", v)
+		}
+		return &http.Response{Header: h}
+	}
+	fallback := 30 * time.Second
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"5", 5 * time.Second},
+		{" 12 ", 12 * time.Second},
+		{"", fallback},
+		{"not-a-number", fallback},
+		{"0", fallback},
+		// A surprising header must not park the process for an afternoon.
+		{"86400", 90 * time.Second},
+	} {
+		if got := retryAfter(mk(tc.header), fallback); got != tc.want {
+			t.Errorf("retryAfter(%q) = %v, want %v", tc.header, got, tc.want)
+		}
 	}
 }

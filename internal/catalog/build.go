@@ -1,0 +1,440 @@
+package catalog
+
+import (
+	"bufio"
+	"compress/gzip"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/spiffcs/hoard/internal/cardname"
+)
+
+// userAgent identifies this tool to Scryfall, matching the API client.
+const userAgent = "hoard/0.1"
+
+// listingURL is Scryfall's bulk-data index: a few kilobytes describing each
+// bundle and when it was last rebuilt. It is a var so tests can point at an
+// httptest server.
+var listingURL = "https://api.scryfall.com/bulk-data"
+
+// bulkType is the bundle to build from.
+//
+// default_cards is one row per printing, in English or the printed language
+// where there is no English version — which is exactly hoard's unit, since the
+// collection is keyed on a printing's Scryfall id. oracle_cards would collapse
+// printings together and all_cards would add every language for no gain.
+const bulkType = "default_cards"
+
+// checkInterval is how long a freshness check is trusted for.
+//
+// Scryfall rebuilds these bundles a few times a day, and a shell full of hoard
+// invocations should not mean a request each. Six hours keeps the catalog within
+// a build or two of current while making the listing call effectively free.
+const checkInterval = 6 * time.Hour
+
+// httpClient carries no timeout: the bundle is 77 MB and any fixed deadline is
+// either too tight for a slow link or too slack to be worth setting. Every call
+// takes a context, so cancellation belongs to the caller.
+var httpClient = &http.Client{}
+
+// Status describes the local catalog and, when it was worth asking, how it
+// compares to what Scryfall publishes.
+type Status struct {
+	Cards         int
+	Bytes         int64
+	Built         time.Time
+	SourceUpdated time.Time
+
+	// Remote is the published bundle's timestamp; zero when the listing was not
+	// consulted. Checked says which of those it is, so "not asked" is never
+	// mistaken for "nothing newer".
+	Remote  time.Time
+	Checked bool
+	Stale   bool
+}
+
+// Empty reports whether the catalog has never been built.
+func (s Status) Empty() bool { return s.Cards == 0 }
+
+// bundle is one entry in Scryfall's bulk-data index.
+type bundle struct {
+	Type           string `json:"type"`
+	UpdatedAt      string `json:"updated_at"`
+	DownloadURI    string `json:"jsonl_download_uri"`
+	CompressedSize int64  `json:"compressed_size"`
+}
+
+// listing is the shape of Scryfall's bulk-data index, narrowed.
+type listing struct {
+	Data []bundle `json:"data"`
+}
+
+// Status reports the local catalog, checking Scryfall for a newer bundle when
+// the last check has aged out.
+//
+// A failed check is silence, not an error. Being offline is an ordinary state
+// for a tool whose point is working without the network, and a status command
+// that errors because the network is down would be reporting on the wrong thing.
+func (c *Catalog) Status(ctx context.Context) Status {
+	s := Status{
+		Cards:         c.CardCount(),
+		Bytes:         c.Bytes(),
+		Built:         c.Built(),
+		SourceUpdated: c.SourceUpdated(),
+	}
+	if time.Since(c.metaTime(keyChecked)) < checkInterval {
+		return s
+	}
+
+	entry, err := fetchListing(ctx)
+	if err != nil {
+		return s
+	}
+	remote, err := time.Parse(time.RFC3339, entry.UpdatedAt)
+	if err != nil {
+		return s
+	}
+	_ = c.setMeta(keyChecked, time.Now().UTC().Format(time.RFC3339))
+
+	s.Remote, s.Checked = remote, true
+	s.Stale = s.SourceUpdated.Before(remote)
+	return s
+}
+
+// fetchListing reads the bulk-data index and returns the entry for bulkType.
+func fetchListing(ctx context.Context) (bundle, error) {
+	var zero bundle
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listingURL, nil)
+	if err != nil {
+		return zero, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return zero, fmt.Errorf("reading the bulk-data listing: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return zero, fmt.Errorf("bulk-data listing returned %d", resp.StatusCode)
+	}
+
+	var l listing
+	if err := json.NewDecoder(resp.Body).Decode(&l); err != nil {
+		return zero, fmt.Errorf("decoding the bulk-data listing: %w", err)
+	}
+	for _, e := range l.Data {
+		if e.Type == bulkType {
+			return e, nil
+		}
+	}
+	return zero, fmt.Errorf("bulk-data listing has no %q bundle", bulkType)
+}
+
+// DownloadSize is what a rebuild would transfer, for asking before spending it.
+// Zero when the listing could not be read.
+func DownloadSize(ctx context.Context) int64 {
+	e, err := fetchListing(ctx)
+	if err != nil {
+		return 0
+	}
+	return e.CompressedSize
+}
+
+// bulkCard is a row of the bundle, narrowed to what the catalog stores.
+type bulkCard struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Set             string   `json:"set"`
+	SetName         string   `json:"set_name"`
+	CollectorNumber string   `json:"collector_number"`
+	ScryfallURI     string   `json:"scryfall_uri"`
+	ReleasedAt      string   `json:"released_at"`
+	Rarity          string   `json:"rarity"`
+	Finishes        []string `json:"finishes"`
+	PromoTypes      []string `json:"promo_types"`
+	FrameEffects    []string `json:"frame_effects"`
+	BorderColor     string   `json:"border_color"`
+	Games           []string `json:"games"`
+	Prices          struct {
+		USD       string `json:"usd"`
+		USDFoil   string `json:"usd_foil"`
+		USDEtched string `json:"usd_etched"`
+	} `json:"prices"`
+}
+
+// Update rebuilds the catalog from Scryfall's current bundle.
+//
+// progress is called with the running card count so a caller can show movement
+// through a download measured in minutes; it may be nil.
+func (c *Catalog) Update(ctx context.Context, progress func(cards int)) error {
+	entry, err := fetchListing(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Built beside the real catalog under a temporary name and renamed into
+	// place only on success. An interrupted download must not leave a partial
+	// catalog that looks complete — every lookup would then quietly miss.
+	tmpPath := filepath.Join(c.dir, fileName+".building")
+	os.Remove(tmpPath)
+	tmp, err := openAt(c.dir, tmpPath)
+	if err != nil {
+		return err
+	}
+
+	cards, err := tmp.build(ctx, entry.DownloadURI, progress)
+	if err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for k, v := range map[string]string{
+		keySourceUpdated: entry.UpdatedAt,
+		keyBuilt:         now,
+		keyChecked:       now,
+		keyCards:         fmt.Sprint(cards),
+	} {
+		if err := tmp.setMeta(k, v); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// Swap. The live handle has to let go of the file first, and is reopened
+	// against whatever ends up there — including the old catalog, if the rename
+	// fails, so a failed swap leaves a working catalog rather than none.
+	if err := c.db.Close(); err != nil {
+		return err
+	}
+	renameErr := os.Rename(tmpPath, c.path)
+	reopened, err := openAt(c.dir, c.path)
+	if err != nil {
+		return fmt.Errorf("catalog: reopening after rebuild: %w", err)
+	}
+	c.db = reopened.db
+	if renameErr != nil {
+		return fmt.Errorf("catalog: replacing the catalog: %w", renameErr)
+	}
+	return nil
+}
+
+// build streams the bundle into this (temporary) catalog and returns how many
+// cards it stored.
+func (c *Catalog) build(ctx context.Context, url string, progress func(int)) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("downloading the card bundle: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("card bundle returned %d", resp.StatusCode)
+	}
+
+	zr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("decompressing the card bundle: %w", err)
+	}
+	defer zr.Close()
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	insertCard, err := tx.Prepare(`
+INSERT OR REPLACE INTO cards (scryfall_id, name, name_norm, set_code, collector_number,
+    set_name, released_at, rarity, finishes, promo_types, frame_effects, border_color,
+    price_usd, price_usd_foil, price_usd_etched, scryfall_url)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer insertCard.Close()
+
+	// Names are collected in memory and written after the cards. There are far
+	// fewer of them than printings, and deduplicating in Go avoids a SELECT per
+	// row against a table that is still being written.
+	names := map[string]string{}
+
+	sc := bufio.NewScanner(zr)
+	// Some cards — long oracle text, many faces, many rulings links — exceed the
+	// scanner's 64 KB default, and a line that does not fit is a silent short
+	// read rather than an error.
+	sc.Buffer(make([]byte, 0, 256*1024), 4*1024*1024)
+
+	var n int
+	for sc.Scan() {
+		// A cancelled build should stop promptly rather than at the end of a
+		// 77 MB stream.
+		if n%2000 == 0 {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			default:
+			}
+			if progress != nil && n > 0 {
+				progress(n)
+			}
+		}
+
+		line := trimJSONLine(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var bc bulkCard
+		if err := json.Unmarshal(line, &bc); err != nil {
+			// One malformed row is not worth abandoning the build for; the
+			// catalog is advisory and a missing card falls through to the API.
+			continue
+		}
+		if bc.ID == "" || !hasGame(bc.Games, "paper") {
+			continue
+		}
+
+		norm := cardname.Normalize(bc.Name)
+		if _, err := insertCard.Exec(bc.ID, bc.Name, norm, bc.Set, bc.CollectorNumber,
+			nullable(bc.SetName), nullable(bc.ReleasedAt), nullable(bc.Rarity),
+			jsonArray(bc.Finishes), jsonArray(bc.PromoTypes), jsonArray(bc.FrameEffects),
+			nullable(bc.BorderColor), parsePrice(bc.Prices.USD), parsePrice(bc.Prices.USDFoil),
+			parsePrice(bc.Prices.USDEtched), bc.ScryfallURI); err != nil {
+			return 0, fmt.Errorf("storing %s: %w", bc.Name, err)
+		}
+		if norm != "" {
+			names[norm] = bc.Name
+		}
+		n++
+	}
+	if err := sc.Err(); err != nil {
+		return 0, fmt.Errorf("reading the card bundle: %w", err)
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("card bundle contained no paper cards")
+	}
+
+	if err := writeNames(tx, names); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// writeNames stores the distinct names and the trigram index that generates
+// fuzzy candidates.
+//
+// Written from a map accumulated during the card pass rather than by querying
+// the cards table afterwards: many printings share a name, so the map is a
+// fraction of the rows and the deduplication has already happened.
+func writeNames(tx *sql.Tx, names map[string]string) error {
+	insertName, err := tx.Prepare(`INSERT OR REPLACE INTO names (name_norm, name) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insertName.Close()
+
+	insertTri, err := tx.Prepare(`INSERT INTO name_trigrams (tri, name_norm) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insertTri.Close()
+
+	for norm, display := range names {
+		if _, err := insertName.Exec(norm, display); err != nil {
+			return fmt.Errorf("storing name %q: %w", display, err)
+		}
+		for _, tri := range cardname.Trigrams(norm) {
+			if _, err := insertTri.Exec(tri, norm); err != nil {
+				return fmt.Errorf("indexing name %q: %w", display, err)
+			}
+		}
+	}
+	return nil
+}
+
+// hasGame reports whether a card is available in the given game.
+func hasGame(games []string, want string) bool {
+	for _, g := range games {
+		if g == want {
+			return true
+		}
+	}
+	return false
+}
+
+// trimJSONLine strips the array punctuation Scryfall's JSON (as opposed to
+// JSONL) bundles carry, so either form parses.
+func trimJSONLine(b []byte) []byte {
+	for len(b) > 0 && (b[0] == ' ' || b[0] == '\t' || b[0] == '[') {
+		b = b[1:]
+	}
+	for len(b) > 0 {
+		c := b[len(b)-1]
+		if c == ' ' || c == '\t' || c == '\r' || c == ',' || c == ']' {
+			b = b[:len(b)-1]
+			continue
+		}
+		break
+	}
+	if len(b) == 0 || b[0] != '{' {
+		return nil
+	}
+	return b
+}
+
+// jsonArray stores a string slice the way Scryfall sends it, so callers read it
+// back with json_each rather than by splitting a delimiter that could appear in
+// a value.
+func jsonArray(v []string) any {
+	if len(v) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// nullable stores an empty string as NULL, so "unknown" and "empty" stay
+// distinguishable in the catalog the way they are in hoard.db.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// parsePrice converts Scryfall's decimal string into a nullable float.
+func parsePrice(s string) any {
+	if s == "" {
+		return nil
+	}
+	var f float64
+	if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
+		return nil
+	}
+	return f
+}

@@ -1,11 +1,23 @@
 # Should hoard store its data as MTGJSON?
 
-**Status:** partly built · **Date:** 2026-07-28, amended 2026-07-29
+**Status:** mostly built · **Date:** 2026-07-28, amended 2026-07-30
 
-The migration runner (§1) and price history (§3) shipped, along with a 90-day
-MTGJSON backfill that this document originally declined — see §D for what changed
-and what did not. Richer card data (§2), exports (§4) and offline (§5) remain
-proposals.
+The migration runner (§1), richer card data (§2) and price history (§3) all
+shipped, along with a 90-day MTGJSON backfill that this document originally
+declined — see §D for what changed and what did not. Exports (§4) and offline
+(§5) remain proposals.
+
+§2 shipped as migration v5 rather than v2, and it is what the interactive browser
+filters on: without the generated columns there is no rarity or type to filter
+by. Two notes from building it. `card_faces[0]` fallbacks are load-bearing for
+`mana_cost` and `oracle_text` — on a 1,573-card collection they rescue 9 and 11
+cards respectively, all transform and flip layouts — but the `type_line` fallback
+never fires, because Scryfall does supply a combined top-level value. And rarity
+has to be matched exactly rather than by substring: "common" is a substring of
+"uncommon", so a LIKE returns the opposite of what was asked.
+
+§1's `SetMaxOpenConns(1)` and `busy_timeout` were already in `Open` by the time
+this was re-read; that item is stale.
 
 A design investigation, written to be read before any of it is built. All sizes
 and API facts below were measured live on the date above; re-check them if this

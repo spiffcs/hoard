@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -278,5 +279,108 @@ func TestRenderTruncatesToWidth(t *testing.T) {
 	}
 	if !strings.Contains(tbl.Render(), "…") {
 		t.Error("expected an ellipsis marking the truncation")
+	}
+}
+
+// Render must stay byte-identical now that it is built from Lines, or every
+// piped table in the CLI shifts.
+func TestLinesJoinToRender(t *testing.T) {
+	env := Env{Width: 60, Clamp: true}
+	tb := testTable(env)
+	lines := tb.Lines()
+	if got, want := strings.Join(lines, "\n")+"\n", tb.Render(); got != want {
+		t.Errorf("Lines joined = %q\nRender      = %q", got, want)
+	}
+}
+
+// The contract an interactive list depends on: with a header and no spacers,
+// row i is line i+1. If that slips, a cursor highlights the wrong card.
+func TestLinesRowIndexing(t *testing.T) {
+	tb := Table{
+		Env:    Env{Width: 40, Clamp: true},
+		Header: true,
+		Cols:   []Col{{Title: "NAME", Align: Left}, {Title: "QTY", Align: Right}},
+	}
+	tb.Add(C("Sol Ring"), C("40"))
+	tb.Add(C("Bitterblossom"), C("4"))
+
+	lines := tb.Lines()
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want header + 2 rows: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "NAME") {
+		t.Errorf("line 0 = %q, want the header", lines[0])
+	}
+	if !strings.Contains(lines[1], "Sol Ring") {
+		t.Errorf("line 1 = %q, want row 0", lines[1])
+	}
+	if !strings.Contains(lines[2], "Bitterblossom") {
+		t.Errorf("line 2 = %q, want row 1", lines[2])
+	}
+	// No line carries its own newline; the caller joins them.
+	for i, l := range lines {
+		if strings.Contains(l, "\n") {
+			t.Errorf("line %d contains a newline: %q", i, l)
+		}
+	}
+}
+
+func TestLinesSpacerIsAnEmptyLine(t *testing.T) {
+	tb := Table{Env: Env{Width: 40, Clamp: true}, Cols: []Col{{Title: "N", Align: Left}}}
+	tb.Add(C("a"))
+	tb.AddSpacer()
+	tb.Add(C("b"))
+
+	lines := tb.Lines()
+	if len(lines) != 3 || lines[1] != "" {
+		t.Errorf("lines = %q, want a spacer as an empty middle line", lines)
+	}
+}
+
+func TestSpark(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []float64
+		cells  int
+		want   string
+	}{
+		{"rising", []float64{1, 2, 3, 4, 5, 6, 7, 8}, 8, "▁▂▃▄▅▆▇█"},
+		{"falling", []float64{8, 7, 6, 5, 4, 3, 2, 1}, 8, "█▇▆▅▄▃▂▁"},
+		{"two points", []float64{1, 2}, 8, "▁█"},
+		{"single point", []float64{42}, 8, "▄"},
+		// A card whose price never moved must not look like one that bottomed out.
+		{"flat", []float64{5, 5, 5, 5}, 8, "▄▄▄▄"},
+		{"empty", nil, 8, ""},
+		{"no cells", []float64{1, 2, 3}, 0, ""},
+		// Negatives are not prices, but the scale must not assume a zero floor.
+		{"negative range", []float64{-4, 0, 4}, 3, "▁▄█"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Spark(tt.values, tt.cells); got != tt.want {
+				t.Errorf("Spark(%v, %d) = %q, want %q", tt.values, tt.cells, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSparkNeverExceedsCells(t *testing.T) {
+	long := make([]float64, 500)
+	for i := range long {
+		long[i] = float64(i % 17)
+	}
+	for _, cells := range []int{1, 5, 20, 80} {
+		got := Spark(long, cells)
+		if n := len([]rune(got)); n != cells {
+			t.Errorf("Spark(500 values, %d) rendered %d cells", cells, n)
+		}
+	}
+}
+
+// A NaN would otherwise become the whole range and flatten every real point.
+func TestSparkIgnoresNonFiniteValues(t *testing.T) {
+	got := Spark([]float64{1, math.NaN(), 8, math.Inf(1)}, 8)
+	if got != "▁█" {
+		t.Errorf("Spark with NaN/Inf = %q, want the two finite points", got)
 	}
 }

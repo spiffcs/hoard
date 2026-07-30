@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -13,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -320,90 +320,7 @@ func (m *model) closeSession() {
 // text-heavy capture can't turn into a burst of lookups.
 const maxFuzzyTries = 5
 
-const (
-	// minFuzzyLen is the shortest OCR text allowed to fuzzy-match a *different*
-	// name. Exact matches bypass it, so genuinely short cards ("Opt", "Fog")
-	// still scan.
-	minFuzzyLen = 4
-	// minSimilarity is how much of the OCR text the matched name must account
-	// for, as 1 - editDistance/length. Short names are only a few edits from
-	// plenty of ordinary words ("adopt" is 2 from "opt"), so this has to sit
-	// above the ratio those produce.
-	minSimilarity = 0.7
-)
-
-// plausibleMatch reports whether canonical is a believable reading of an OCR
-// line.
-//
-// Scryfall's fuzzy endpoint is a *search*, not an identity check: it resolves
-// "option" to the card "Opt" because the query contains the name. That's right
-// for a human typing a partial name and wrong for OCR, where any stray word in
-// frame — a keycap, a sleeve, rules text — silently becomes a card. Short names
-// are magnets for this, and trying several lines per capture gives noise several
-// chances to hit one. So the match has to actually explain what was read.
-func plausibleMatch(ocr, canonical string) bool {
-	o, c := normalizeName(ocr), normalizeName(canonical)
-	if o == "" || c == "" {
-		return false
-	}
-	if o == c {
-		return true
-	}
-	if len(o) < minFuzzyLen {
-		return false
-	}
-	// A partial read of a longer name is fine ("elspeth" → "Elspeth,
-	// Knight-Errant"). The reverse is the bug: text that merely *contains* a
-	// short name must not resolve to it.
-	if strings.HasPrefix(c, o) {
-		return true
-	}
-	return similarity(o, c) >= minSimilarity
-}
-
-// normalizeName reduces a name to comparable letters and digits, so punctuation
-// and spacing differences between OCR and Scryfall don't matter.
-func normalizeName(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// similarity scores two normalized strings from 0 to 1 by edit distance.
-func similarity(a, b string) float64 {
-	longest := max(len(a), len(b))
-	if longest == 0 {
-		return 1
-	}
-	return 1 - float64(editDistance(a, b))/float64(longest)
-}
-
-// editDistance is the Levenshtein distance between two strings, computed with a
-// single rolling row.
-func editDistance(a, b string) int {
-	ar, br := []rune(a), []rune(b)
-	prev := make([]int, len(br)+1)
-	curr := make([]int, len(br)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(ar); i++ {
-		curr[0] = i
-		for j := 1; j <= len(br); j++ {
-			cost := 1
-			if ar[i-1] == br[j-1] {
-				cost = 0
-			}
-			curr[j] = min(min(curr[j-1]+1, prev[j]+1), prev[j-1]+cost)
-		}
-		prev, curr = curr, prev
-	}
-	return prev[len(br)]
-}
+const ()
 
 // namedFuzzyCmd resolves noisy OCR text to a canonical card name, trying each
 // recognized line in order until one matches. Only the first line is a real
@@ -428,7 +345,7 @@ func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
 				}
 				continue
 			}
-			if card != nil && plausibleMatch(line, card.Name) {
+			if card != nil && cardname.Plausible(line, card.Name) {
 				return fuzzyMsg{canonical: card.Name, ocr: line, set: set, number: number}
 			}
 		}

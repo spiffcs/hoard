@@ -6,7 +6,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -18,7 +17,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/browse"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/scan"
@@ -31,24 +33,29 @@ import (
 const usage = `hoard — catalog valuable MTG cards and decks in SQLite
 
 Usage:
-  hoard [--db PATH] <command> [args]
+  hoard [--db PATH] [command] [args]
+
+  hoard                                            Browse the hoard (no arguments)
+
+Browsing replaces the old list, summary, deck list and deck show commands: it
+shows your binder and every deck beside their cards, filters by name or card trait, edits
+quantities in place, and reaches movers, unpriced and arbitrage with 'v'. Piped
+or redirected, plain 'hoard' prints the summary table instead, so 'hoard | grep'
+still works.
 
 Collection commands:
   add                                              Add cards interactively by name
-  list                                             List loose cards by value, with total
   update-prices [--limit N]                        Refresh prices (Scryfall updates daily)
   movers [--since 30d] [--limit N]                 Biggest risers and sinkers you hold
   backfill-prices                                  Load 90 days of past prices from MTGJSON
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
-  arbitrage [--min N] [--limit N]                  Where vendors disagree on price
-  summary                                          Value of collection + each deck
+  arbitrage [--min N] [--limit N]                  Where vendors disagree, as three tables
+  catalog [status|update]                          The local copy of Scryfall's card data
 
 Deck commands:
   deck add <archidekt-url>                         Import/refresh a deck from a link
   deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
-  deck list                                        List decks by value, with card counts
-  deck show <name>                                 Show a deck's cards by value
   deck remove <name>                               Delete a deck
 
 A deck <name> can be any part of its name, as long as it matches one deck.
@@ -73,11 +80,14 @@ func run(args []string) error {
 		return err
 	}
 
-	if len(rest) == 0 {
-		fmt.Fprint(os.Stderr, usage)
-		return fmt.Errorf("no command given")
+	// No command opens the browser. It replaces what used to be four separate
+	// read commands — list, summary, deck list, deck show — so the thing you
+	// reach for most often is also the thing you get by typing nothing.
+	cmd := ""
+	var cmdArgs []string
+	if len(rest) > 0 {
+		cmd, cmdArgs = rest[0], rest[1:]
 	}
-	cmd, cmdArgs := rest[0], rest[1:]
 
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		fmt.Print(usage)
@@ -108,10 +118,10 @@ func run(args []string) error {
 
 	ctx := context.Background()
 	switch cmd {
+	case "":
+		return cmdBrowse(ctx, st)
 	case "add":
 		return cmdAdd(ctx, st, cmdArgs)
-	case "list":
-		return cmdList(st)
 	case "update-prices":
 		return cmdUpdatePrices(ctx, st, cmdArgs)
 	case "movers":
@@ -124,8 +134,8 @@ func run(args []string) error {
 		return cmdRepairFinishes(ctx, st)
 	case "arbitrage":
 		return cmdArbitrage(ctx, st, cmdArgs)
-	case "summary":
-		return cmdSummary(st)
+	case "catalog":
+		return cmdCatalog(ctx, cmdArgs)
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:
@@ -139,11 +149,11 @@ func run(args []string) error {
 //
 // The standard library's flag package stops parsing at the first positional, so
 // a --db written after the command name would be handed on to the subcommand
-// instead — and the subcommands that take no flags of their own (list, summary,
-// update-prices) would ignore it silently and open the default database. That
+// instead — and the subcommands that take no flags of their own (unpriced,
+// repair-finishes) would ignore it silently and open the default database. That
 // failure is invisible: you get a perfectly good report about the wrong hoard.
-// Extracting the flag up front means `hoard --db X summary` and
-// `hoard summary --db X` are the same command.
+// Extracting the flag up front means `hoard --db X unpriced` and
+// `hoard unpriced --db X` are the same command.
 //
 // Only --db is global; every other flag is left in place for the subcommand.
 func extractDBFlag(args []string) (rest []string, db string, err error) {
@@ -304,7 +314,14 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	add := func(res tui.Result) error {
 		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
 	}
-	return tui.Run(ctx, tui.NewScryfallSearcher(), add, helperScanner{}, name)
+	// Lookups prefer the local catalog and fall through to Scryfall, so a name
+	// completes instantly and offline where it can, and a card printed since the
+	// last catalog build still resolves.
+	cat := openCatalog()
+	if cat != nil {
+		defer cat.Close()
+	}
+	return tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name)
 }
 
 // helperScanner drives the native camera helper for the add TUI's scan action
@@ -441,74 +458,6 @@ func stdinIsTTY() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// collectionByValue returns a copy ordered most-valuable-first, the same way
-// `deck list` and `summary` rank decks. Ties fall back to name so a collection
-// whose prices have never been fetched still lists predictably.
-func collectionByValue(rows []store.CollectionRow) []store.CollectionRow {
-	sorted := slices.Clone(rows)
-	slices.SortFunc(sorted, func(a, b store.CollectionRow) int {
-		if c := cmp.Compare(b.Value, a.Value); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
-	return sorted
-}
-
-func cmdList(st *store.Store) error {
-	rows, err := st.ListCollectionByFinish()
-	if err != nil {
-		return err
-	}
-	env := ui.Detect(os.Stdout)
-	if len(rows) == 0 {
-		fmt.Println(env.Dim()("Collection is empty. Add a card with: hoard add <scryfall-url>"))
-		return nil
-	}
-
-	// One row per finish held, matching deck show. The pivoted alternative needs
-	// a NORMAL/FOIL pair and a USD/USD FOIL pair to say the same thing, and
-	// prints a price for a finish you do not own on every row.
-	t := ui.Table{
-		Env:    env,
-		Header: true,
-		Cols: []ui.Col{
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
-			{Title: "QTY", Align: ui.Right},
-			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
-			{Title: "VALUE", Align: ui.Right},
-		},
-	}
-
-	var total float64
-	sources := map[string]bool{}
-	for _, r := range collectionByValue(rows) {
-		total += r.Value
-		if r.AltSource != "" {
-			sources[r.AltSource] = true
-		}
-		finish := r.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
-		t.Add(
-			ui.C(r.Name), ui.C(r.SetCode+"/"+r.CollectorNumber), ui.C(finish),
-			ui.C(ui.Count(r.Quantity)), ui.C(ui.MoneyPtr(r.Price())),
-			ui.C(estimated(ui.Money(r.Value), r.AltSource)))
-	}
-	t.AddSpacer()
-	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
-		ui.C(ui.Money(total)))
-
-	if _, err := t.WriteTo(os.Stdout); err != nil {
-		return err
-	}
-	printEstimateNote(env, sources)
-	return nil
-}
-
 // estimated marks a value Scryfall could not price, so an estimate from another
 // vendor never passes for a Scryfall figure.
 func estimated(s, altSource string) string {
@@ -547,11 +496,11 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 		return nil
 	}
 
-	idents := make([]scryfall.Identifier, len(ids))
-	for i, id := range ids {
-		idents[i] = scryfall.Identifier{ID: id}
+	cat := openCatalog()
+	if cat != nil {
+		defer cat.Close()
 	}
-	found, _, err := scryfall.FetchCollection(ctx, idents)
+	found, _, _, err := refreshCards(ctx, cat, st, ids)
 	if err != nil {
 		return err
 	}
@@ -672,11 +621,18 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error 
 		return nil
 	}
 
-	idents := make([]scryfall.Identifier, len(ids))
-	for i, id := range ids {
-		idents[i] = scryfall.Identifier{ID: id}
+	cat := openCatalog()
+	if cat != nil {
+		defer cat.Close()
 	}
-	found, notFound, err := scryfall.FetchCollection(ctx, idents)
+	// Prices are only taken from the catalog when it is current. A stale one is
+	// still fine for everything else, but this command exists to refresh prices
+	// and must not report success over yesterday's.
+	priceSource := cat
+	if !ensureCatalog(ctx, cat) {
+		priceSource = nil
+	}
+	found, notFound, local, err := refreshCards(ctx, priceSource, st, ids)
 	if err != nil {
 		return err
 	}
@@ -684,6 +640,9 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error 
 		return err
 	}
 	fmt.Printf("Updated prices for %d of %d cards.\n", len(found), len(ids))
+	if local > 0 {
+		fmt.Printf("  %d from the local catalog, %d from Scryfall.\n", local, len(found)-local)
+	}
 	if len(notFound) > 0 {
 		fmt.Printf("  %d cards could not be re-fetched from Scryfall.\n", len(notFound))
 	}
@@ -759,6 +718,15 @@ func resolveMTGJSONIDs(ctx context.Context, st *store.Store, need []cardRef) (ma
 	return known, nil
 }
 
+// gapRecheckAfter is how long a "MTGJSON has no price for this" answer is
+// trusted before the card is asked about again.
+//
+// The answer is usually permanent — a printing no vendor stocks stays unstocked
+// — but not always: MTGJSON adds vendors and vendors add stock. A week keeps the
+// daily refresh free of a 50 MB scan while still noticing a card that becomes
+// priceable, at the cost of showing it as unpriced for up to that long.
+const gapRecheckAfter = 7 * 24 * time.Hour
+
 // fillPriceGaps looks up prices Scryfall does not have.
 //
 // Scryfall's USD figures come from TCGplayer alone, so a printing TCGplayer has
@@ -775,6 +743,24 @@ func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	if len(gaps) == 0 {
 		return nil
 	}
+
+	// Asking MTGJSON about one card costs a scan of its whole daily bundle, and
+	// the cards nothing can price are largely permanent. Skip the scan when
+	// every remaining gap was asked about recently — but if even one is due, do
+	// the scan and re-ask about all of them, since by then the cost is paid.
+	cutoff := time.Now().UTC().Add(-gapRecheckAfter).Format(time.RFC3339)
+	var due int
+	for _, g := range gaps {
+		if g.CheckedAt == nil || *g.CheckedAt < cutoff {
+			due++
+		}
+	}
+	if due == 0 {
+		fmt.Printf("  %d cards have no price for a finish you own; "+
+			"MTGJSON had none when last asked.\n", len(gaps))
+		return nil
+	}
+
 	mtgjson.CacheDir = priceCacheDir()
 	fmt.Printf("  %d cards have no price for a finish you own; checking MTGJSON...\n", len(gaps))
 
@@ -818,6 +804,16 @@ func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	if err := st.UpsertAltPrices(alts); err != nil {
 		return err
 	}
+	// Note that these were asked about, so a run tomorrow does not pay for the
+	// same scan to learn the same thing. Cards MTGJSON did price stop being gaps
+	// and are never asked about again anyway.
+	asked := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		asked = append(asked, g.ScryfallID)
+	}
+	if err := st.RecordPriceGapChecks(asked); err != nil {
+		return err
+	}
 
 	// Count gaps actually closed, not rows written. MTGJSON often prices a card
 	// only in the finish you don't own — a foil price for a card you hold in
@@ -839,7 +835,45 @@ func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	return nil
 }
 
-func cmdSummary(st *store.Store) error {
+// cmdBrowse is what `hoard` with no arguments does.
+//
+// At a terminal it opens the browser. Redirected or piped it prints the summary
+// table instead, because a full-screen program has nothing sensible to write to
+// a file and `hoard | grep` is worth keeping working. ui.Detect already reports
+// the difference and already renders a pipe-safe table — no colour, no
+// truncation — which is why this is a branch rather than a second command.
+//
+// The browser loops with the add cascade: pressing `a` quits the program with a
+// request to add, we run the cascade, then come back. Two bubbletea programs
+// cannot share a terminal, so they take turns rather than nesting.
+func cmdBrowse(ctx context.Context, st *store.Store) error {
+	if !stdoutIsTTY() {
+		return writeSummary(st)
+	}
+	// arbitrageMin matches the CLI command's --min default, so the two views
+	// agree about what is too cheap to be worth a shipping label.
+	const arbitrageMin = 1.0
+
+	for {
+		again, err := browse.Run(ctx, st,
+			browse.WithArbitrage(func(ctx context.Context) (arbitrage.Result, error) {
+				return fetchArbitrage(ctx, st, arbitrageMin)
+			}))
+		if err != nil || !again {
+			return err
+		}
+		// The cascade persists each confirmed card itself, so there is nothing
+		// to hand back; the browser re-reads on the next pass.
+		if err := addByName(ctx, st, ""); err != nil {
+			// A failed add is not a reason to lose the browser.
+			fmt.Fprintln(os.Stderr, "add:", err)
+		}
+	}
+}
+
+// writeSummary prints the hoard's totals, the output `hoard summary` used to
+// produce. It is what a non-interactive `hoard` writes.
+func writeSummary(st *store.Store) error {
 	coll, err := st.CollectionTotals()
 	if err != nil {
 		return err
@@ -852,26 +886,18 @@ func cmdSummary(st *store.Store) error {
 	return err
 }
 
+// stdoutIsTTY reports whether output is going to an interactive terminal rather
+// than a pipe or a file.
+func stdoutIsTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 // barCells is the width of the summary's share-bar column.
 const barCells = 10
-
-// decksByValue returns a copy of decks ordered most-valuable-first.
-//
-// Both deck listings rank by value rather than name: what you want from either
-// is "where is the money", and the store's ORDER BY ct.name is only a stable
-// base to sort from. Ties fall back to name so that a hoard whose prices have
-// never been fetched — every deck at $0.00 — still lists in a predictable
-// order instead of an arbitrary one.
-func decksByValue(decks []store.DeckSummary) []store.DeckSummary {
-	sorted := slices.Clone(decks)
-	slices.SortFunc(sorted, func(a, b store.DeckSummary) int {
-		if c := cmp.Compare(b.Value, a.Value); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
-	return sorted
-}
 
 // summaryTable lays out the hoard as two labelled sections — the loose
 // collection and the decks — rather than a flat list distinguished by a
@@ -880,7 +906,7 @@ func decksByValue(decks []store.DeckSummary) []store.DeckSummary {
 // It is pure so the whole layout can be tested at any terminal width without a
 // database.
 func summaryTable(env ui.Env, coll store.CollectionTotals, decks []store.DeckSummary) ui.Table {
-	sorted := decksByValue(decks)
+	sorted := store.DecksByValue(decks)
 
 	var deckCopies int
 	var deckValue float64
@@ -912,7 +938,7 @@ func summaryTable(env ui.Env, coll store.CollectionTotals, decks []store.DeckSum
 	// The section rows are bold throughout, bars included: the two of them tile
 	// the bar column and so double as the scale legend for the deck rows below.
 	t.AddStyled(env.Bold(),
-		ui.C("COLLECTION"), ui.C(ui.Count(coll.TotalCopies)), ui.C(ui.Money(coll.Value)),
+		ui.C(strings.ToUpper(store.LooseName)), ui.C(ui.Count(coll.TotalCopies)), ui.C(ui.Money(coll.Value)),
 		ui.C(share(coll.Value)))
 	t.AddStyled(env.Bold(),
 		ui.C(fmt.Sprintf("DECKS · %d", len(sorted))), ui.C(ui.Count(deckCopies)),
@@ -940,20 +966,16 @@ func summaryTable(env ui.Env, coll store.CollectionTotals, decks []store.DeckSum
 
 func cmdDeck(ctx context.Context, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("deck requires a subcommand: add|list|show|remove")
+		return fmt.Errorf("deck requires a subcommand: add|remove")
 	}
 	sub, subArgs := args[0], args[1:]
 	switch sub {
 	case "add":
 		return cmdDeckAdd(ctx, st, subArgs)
-	case "list":
-		return cmdDeckList(st)
-	case "show":
-		return cmdDeckShow(st, subArgs)
 	case "remove":
 		return cmdDeckRemove(st, subArgs)
 	default:
-		return fmt.Errorf("unknown deck subcommand %q (want add|list|show|remove)", sub)
+		return fmt.Errorf("unknown deck subcommand %q (want add|remove)", sub)
 	}
 }
 
@@ -1067,120 +1089,6 @@ func importTextDeck(path, name, source string) (*decksource.Deck, error) {
 		name = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 	return decksource.ParseText(name, "", "", source, f)
-}
-
-func cmdDeckList(st *store.Store) error {
-	decks, err := st.ListDecks()
-	if err != nil {
-		return err
-	}
-	env := ui.Detect(os.Stdout)
-	if len(decks) == 0 {
-		fmt.Println(env.Dim()("No decks yet. Import one with: hoard deck add <archidekt-url>"))
-		return nil
-	}
-
-	// NAME is deliberately not flexible here: this is the reference view where
-	// deck names are shown in full, so `summary` is free to truncate them.
-	t := ui.Table{
-		Env:    env,
-		Header: true,
-		Cols: []ui.Col{
-			{Title: "NAME", Align: ui.Left},
-			{Title: "CARDS", Align: ui.Right},
-			{Title: "VALUE", Align: ui.Right},
-		},
-	}
-	for _, d := range decksByValue(decks) {
-		t.Add(ui.C(d.Name), ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)))
-	}
-	_, err = t.WriteTo(os.Stdout)
-	return err
-}
-
-// entriesByValue returns a copy of a deck's entries ordered most-valuable-first,
-// matching `list`, `deck list` and `summary`.
-//
-// The store returns them grouped by board, which this flattens: the BOARD column
-// still says which board each card belongs to, and "what is expensive in this
-// deck" is the question `deck show` is usually asked. Ties fall back to name so
-// an unpriced deck still lists predictably.
-func entriesByValue(entries []store.EntryView) []store.EntryView {
-	sorted := slices.Clone(entries)
-	slices.SortFunc(sorted, func(a, b store.EntryView) int {
-		if c := cmp.Compare(b.Value(), a.Value()); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Card.Name, b.Card.Name)
-	})
-	return sorted
-}
-
-func cmdDeckShow(st *store.Store, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("deck show requires a deck id or name")
-	}
-	deck, err := st.DeckByRef(args[0])
-	if err != nil {
-		return err
-	}
-	entries, err := st.DeckEntries(deck.ID)
-	if err != nil {
-		return err
-	}
-
-	env := ui.Detect(os.Stdout)
-	header := deck.Name
-	if deck.Format != "" {
-		header += " — " + deck.Format
-	}
-	fmt.Println(env.Bold()(header))
-	if deck.SourceURL != "" {
-		fmt.Println(env.Dim()(deck.SourceURL))
-	}
-
-	t := ui.Table{
-		Env:    env,
-		Header: true,
-		Cols: []ui.Col{
-			{Title: "BOARD", Align: ui.Left, Style: env.Dim()},
-			{Title: "QTY", Align: ui.Right},
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
-			// PRICE and VALUE are the same number on a singleton, which is most
-			// deck rows, but not on the ones held in multiples: a 29x basic land
-			// is worth 29 times what its price column says, and VALUE is what
-			// TOTAL sums. PRICE is the one that drops first when space is tight.
-			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
-			{Title: "VALUE", Align: ui.Right},
-			// Naming the source outright is clearer than the asterisk used in
-			// `list`, since there is room for a column here. It is the first
-			// thing dropped, being the least load-bearing.
-			{Title: "SOURCE", Align: ui.Left, Priority: 7, Style: env.Dim()},
-		},
-	}
-	var total float64
-	for _, e := range entriesByValue(entries) {
-		total += e.Value()
-		finish := e.Finish
-		if finish == "normal" {
-			finish = "-"
-		}
-		source := e.Card.AltSource
-		if source == "" && e.Price() != nil {
-			source = "scryfall"
-		}
-		t.Add(ui.C(e.Board), ui.C(ui.Count(e.Quantity)), ui.C(e.Card.Name),
-			ui.C(e.Card.SetCode+"/"+e.Card.CollectorNumber), ui.C(finish),
-			ui.C(ui.MoneyPtr(e.Price())), ui.C(ui.Money(e.Value())), ui.C(source))
-	}
-	t.AddSpacer()
-	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(""), ui.C(""), ui.C(""), ui.C(""),
-		ui.C(""), ui.C(ui.Money(total)), ui.C(""))
-
-	_, err = t.WriteTo(os.Stdout)
-	return err
 }
 
 func cmdDeckRemove(st *store.Store, args []string) error {

@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -548,8 +549,8 @@ func TestPlausibleMatch(t *testing.T) {
 		{"Volkan Baga", "Elspeth, Knight-Errant", false, "artist line"},
 	}
 	for _, c := range cases {
-		if got := plausibleMatch(c.ocr, c.canonical); got != c.want {
-			t.Errorf("plausibleMatch(%q, %q) = %v, want %v — %s",
+		if got := cardname.Plausible(c.ocr, c.canonical); got != c.want {
+			t.Errorf("cardname.Plausible(%q, %q) = %v, want %v — %s",
 				c.ocr, c.canonical, got, c.want, c.why)
 		}
 	}

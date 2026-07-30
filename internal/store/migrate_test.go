@@ -319,3 +319,197 @@ PRAGMA user_version = 1;`)
 		t.Errorf("single vendor = %q/%q, want manapool for both", normal.String, foil.String)
 	}
 }
+
+// The generated columns are the whole point of v5: without them there is nothing
+// to filter a collection by. This asserts they resolve from a real Scryfall
+// document rather than merely existing.
+func TestRichCardDataGeneratedColumns(t *testing.T) {
+	s := freshDB(t)
+
+	const bitterblossom = `{"id":"bb","name":"Bitterblossom","set":"uma",
+	  "set_name":"Ultimate Masters","collector_number":"85","rarity":"mythic",
+	  "type_line":"Tribal Enchantment — Faerie","mana_cost":"{1}{B}","cmc":2.0,
+	  "oracle_text":"At the beginning of your upkeep...","artist":"Jesper Ejsing",
+	  "released_at":"2018-12-07","layout":"normal","color_identity":["B"]}`
+
+	if _, err := s.db.Exec(`
+INSERT INTO cards (scryfall_id, set_code, collector_number, name, scryfall_url, updated_at, raw_json)
+VALUES ('bb','uma','85','Bitterblossom','http://x','2026-07-30T00:00:00Z', ?)`,
+		bitterblossom); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var rarity, typeLine, mana, artist, setName, layout, colors string
+	var cmc float64
+	if err := s.db.QueryRow(`
+SELECT rarity, type_line, mana_cost, artist, set_name, layout, color_identity, cmc
+FROM cards WHERE scryfall_id = 'bb'`).
+		Scan(&rarity, &typeLine, &mana, &artist, &setName, &layout, &colors, &cmc); err != nil {
+		t.Fatalf("reading generated columns: %v", err)
+	}
+	for _, tc := range []struct{ name, got, want string }{
+		{"rarity", rarity, "mythic"},
+		{"type_line", typeLine, "Tribal Enchantment — Faerie"},
+		{"mana_cost", mana, "{1}{B}"},
+		{"artist", artist, "Jesper Ejsing"},
+		{"set_name", setName, "Ultimate Masters"},
+		{"layout", layout, "normal"},
+		{"color_identity", colors, `["B"]`},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+	if cmc != 2.0 {
+		t.Errorf("cmc = %v, want 2", cmc)
+	}
+}
+
+// A transform card leaves the top-level type_line, mana_cost and oracle_text
+// null and puts them in card_faces[]. Without the COALESCE these columns are
+// null for exactly the cards people look up most, and a type filter silently
+// omits them — the failure looks like "no results", not like a bug.
+func TestRichCardDataReadsDoubleFacedCards(t *testing.T) {
+	s := freshDB(t)
+
+	const ajani = `{"id":"aj","name":"Ajani, Nacatl Pariah // Ajani, Nacatl Avenger",
+	  "set":"mh3","collector_number":"237","rarity":"mythic","layout":"modal_dfc",
+	  "cmc":2.0,"color_identity":["R","W"],
+	  "card_faces":[
+	    {"name":"Ajani, Nacatl Pariah","mana_cost":"{1}{W}",
+	     "type_line":"Legendary Creature — Cat Warrior","oracle_text":"When Ajani enters..."},
+	    {"name":"Ajani, Nacatl Avenger","mana_cost":"",
+	     "type_line":"Legendary Planeswalker — Ajani","oracle_text":"+2: Put a +1/+1 counter..."}]}`
+
+	if _, err := s.db.Exec(`
+INSERT INTO cards (scryfall_id, set_code, collector_number, name, scryfall_url, updated_at, raw_json)
+VALUES ('aj','mh3','237','Ajani, Nacatl Pariah // Ajani, Nacatl Avenger','http://x','2026-07-30T00:00:00Z', ?)`,
+		ajani); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var typeLine, mana, oracle string
+	if err := s.db.QueryRow(`
+SELECT type_line, mana_cost, oracle_text FROM cards WHERE scryfall_id = 'aj'`).
+		Scan(&typeLine, &mana, &oracle); err != nil {
+		t.Fatalf("reading front-face columns: %v", err)
+	}
+	if typeLine != "Legendary Creature — Cat Warrior" {
+		t.Errorf("type_line = %q, want the front face's", typeLine)
+	}
+	if mana != "{1}{W}" {
+		t.Errorf("mana_cost = %q, want the front face's", mana)
+	}
+	if !strings.HasPrefix(oracle, "When Ajani enters") {
+		t.Errorf("oracle_text = %q, want the front face's", oracle)
+	}
+
+	// And it must be reachable by the filter that would otherwise miss it.
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM cards WHERE type_line LIKE '%Creature%'`).Scan(&n); err != nil {
+		t.Fatalf("type filter: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("type filter matched %d rows, want the transform card", n)
+	}
+}
+
+// Rows written before v5, or by an import that carries no Scryfall response,
+// have no document to derive from. The columns must read NULL so callers can say
+// "unknown" — a zero or an empty string would be indistinguishable from a real
+// value and would quietly mislead.
+func TestRichCardDataNullWithoutRawJSON(t *testing.T) {
+	s := freshDB(t)
+	if _, err := s.db.Exec(`
+INSERT INTO cards (scryfall_id, set_code, collector_number, name, scryfall_url, updated_at)
+VALUES ('bare','uma','7','Ulamog','http://x','2026-07-30T00:00:00Z')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var rarity, typeLine sql.NullString
+	var cmc sql.NullFloat64
+	if err := s.db.QueryRow(
+		`SELECT rarity, type_line, cmc FROM cards WHERE scryfall_id = 'bare'`).
+		Scan(&rarity, &typeLine, &cmc); err != nil {
+		t.Fatalf("reading columns: %v", err)
+	}
+	if rarity.Valid || typeLine.Valid || cmc.Valid {
+		t.Errorf("want all NULL without raw_json, got %+v %+v %+v", rarity, typeLine, cmc)
+	}
+}
+
+// Backups accumulate one per migration and are not small — raw_json took the
+// newest from half a megabyte to nine — so old ones are pruned.
+func TestBackupPruneKeepsTheRecentOnes(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "hoard.db")
+
+	// Five old snapshots plus one hand-made backup that does not match the
+	// pattern this function writes.
+	var made []string
+	for _, name := range []string{
+		"hoard.db.bak-v1-20260101", "hoard.db.bak-v2-20260102",
+		"hoard.db.bak-v3-20260103", "hoard.db.bak-v4-20260104",
+		"hoard.db.bak-v5-20260105",
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		made = append(made, p)
+	}
+	handmade := filepath.Join(dir, "hoard.db.backup-before-merge")
+	if err := os.WriteFile(handmade, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A database that is not a backup at all must also survive.
+	if err := os.WriteFile(db, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	current := filepath.Join(dir, "hoard.db.bak-v6-20260106")
+	if err := os.WriteFile(current, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pruneBackups(db, current)
+
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	// The run's own backup is never a candidate, whatever the sort says.
+	if !exists(current) {
+		t.Error("the backup just written was removed")
+	}
+	// Two most recent of the older ones survive, making three in total.
+	if !exists(made[4]) || !exists(made[3]) {
+		t.Error("the most recent old backups were removed")
+	}
+	for _, p := range made[:3] {
+		if exists(p) {
+			t.Errorf("%s should have been pruned", filepath.Base(p))
+		}
+	}
+	// Anything not matching the exact shape this writes is left alone.
+	if !exists(handmade) {
+		t.Error("a hand-made backup was swept up by the prune")
+	}
+	if !exists(db) {
+		t.Fatal("the database itself was removed")
+	}
+}
+
+// Below the keep threshold nothing is touched.
+func TestBackupPruneLeavesAFewAlone(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "hoard.db")
+	for _, name := range []string{"hoard.db.bak-v1-20260101", "hoard.db.bak-v2-20260102"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneBackups(db, "")
+	for _, name := range []string{"hoard.db.bak-v1-20260101", "hoard.db.bak-v2-20260102"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was pruned with only two present", name)
+		}
+	}
+}
