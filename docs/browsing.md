@@ -1,0 +1,163 @@
+# Browsing
+
+Running `hoard` with no arguments opens the browser: containers on the left, the
+cards inside the selected one on the right.
+
+```
+COLLECTION                      CARDS · BINDER                          335 · $2,893.87
+NAME                     VALUE  NAME                SET/NUM  FINISH  QTY    PRICE    VALUE
+Binder               $2,893.87  Solitude            mh2/32   -        ×4   $34.28  $137.12
+Eldrazi Incursion …    $545.18  Bitterblossom       uma/85   -        ×4   $34.11  $136.44
+Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $134.90  $134.90
+Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
+──────────────────────────────────────────────────────────────────────────────────────────
+1/23 · sorted by value
+tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
+```
+
+The left pane lists your binders first (the default binder, then any you created
+with `hoard binder new`), followed by every deck ranked by value. The right pane
+shows what is inside whichever container you have selected.
+
+## Keys
+
+| Key | |
+|---|---|
+| <kbd>tab</kbd> / <kbd>←</kbd> <kbd>→</kbd> / <kbd>h</kbd> <kbd>l</kbd> | switch pane |
+| <kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd> | move · <kbd>pgup</kbd>/<kbd>pgdn</kbd> page · <kbd>g</kbd>/<kbd>G</kbd> jump to ends |
+| <kbd>enter</kbd> | card detail — printings, where it's held, price history |
+| <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it · <kbd>ctrl+u</kbd> wipes the bar |
+| <kbd>s</kbd> | sort by value → name → quantity |
+| <kbd>v</kbd> | switch view: holdings → movers → unpriced → arbitrage |
+| <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
+| <kbd>d</kbd> | remove the card, or the deck — asks first |
+| <kbd>u</kbd> | undo the last edit |
+| <kbd>a</kbd> | add cards — hands off to the add flow, then returns you here |
+| <kbd>r</kbd> | reload · <kbd>q</kbd> quit |
+
+Binder cards are editable in place (<kbd>+</kbd>, <kbd>-</kbd>, <kbd>d</kbd>,
+<kbd>u</kbd>) — every binder, not just the default. Deck cards are deliberately
+read-only: a deck is owned by the list it was imported from, so editing it here
+would drift from that source until the next `deck add` overwrote the change
+without saying so.
+
+Pressing <kbd>a</kbd> hands the terminal to the same interactive add flow
+`hoard add` runs — type a name or <kbd>ctrl+o</kbd> to scan with your iPhone —
+and drops you back in the browser when you leave it, with the new cards already
+in your binder. It is a handoff rather than a window inside the browser because
+two full-screen programs cannot share one terminal.
+
+## Views
+
+<kbd>v</kbd> cycles through four views. Holdings, movers, and unpriced are
+instant database reads. **Arbitrage waits to be asked**: it needs today's vendor
+quotes from MTGJSON, so cycling to it shows `press enter to fetch` rather than
+starting a download because you passed through. While it runs the pane says so,
+and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
+
+```
+ARBITRAGE                                        45 rows · 1,260 printings compared
+WHY        NAME           SET/NUM     BUY  FROM           SELL  TO              GAIN
+arbitrage  Tarnished Ci…  ody/329   $7.81  manapool     $10.50  cardkingdom   +$2.69
+arbitrage  Thoughtseize   2xm/109   $3.12  manapool      $5.50  cardkingdom   +$2.38
+liquid     Thassa, Deep…  thb/71   $25.00  retail       $25.00  cardkingdom   100.0%
+spread     Siege-Gang L…  m3c/61    $4.49  cardkingdom  $41.68  manapool    +828.3%
+```
+
+The CLI prints this as three tables; a scrolling pane cannot show three at once
+without burying two, so the rows keep their reading order — real arbitrage first —
+and the WHY column says which question each row answers. `hoard arbitrage` still
+gives you the three-table version with `--min` and `--limit`; see
+[pricing.md](pricing.md#where-vendors-disagree).
+
+## Filtering
+
+<kbd>/</kbd> opens a filter bar. The pane narrows as you type; bare words match
+the card name.
+
+```
+bitter                 sol ring              set:mh3
+rarity:mythic          t:creature            t:"legendary creature"
+color:B                color:WU              cmc>=3        cmc<=2
+finish:foil            board:side            qty>1         price>20
+```
+
+Terms are ANDed, so `rarity:mythic finish:foil qty>1` is all three at once.
+There is no `OR`: every question this answers narrows.
+
+The keys are `name set finish board qty price value` for what you hold, and
+`rarity type artist layout setname color cmc` for the card itself. The second
+group needs card details stored — see [Card details](#card-details) — and the bar
+says so if they are missing rather than reporting no matches.
+
+Two details that are easy to trip over. `rarity` matches exactly, because
+"common" is a substring of "uncommon" and a substring match would return the
+opposite of what you asked. And a card no source can price fails `price<1`
+rather than counting as zero: unpriced is not cheap.
+
+## Card details
+
+Pressing <kbd>enter</kbd> on a card opens what hoard knows about it:
+
+```
+Solitude
+Creature — Elemental Incarnation  {3}{W}{W}
+Modern Horizons 2 · mh2/32 · mythic
+Evan Shipard · 2021-06-18
+
+Flash
+Lifelink
+When this creature enters, exile up to one other target creature. That creature's
+controller gains life equal to its power.
+
+HELD
+  ×4  -       Binder
+
+PRICE
+  non-foil  ▇▇█▇▇▇▇▄▃▆▅▄▄▄▄▃▄▄▄▂▁▁▁▁▁▁▁▁▁▁▁▁  $34.28
+            $33.34–$41.08 since 29 Apr · 79 obs
+  foil      ▁▂▂▂▂▂▂▂▂▄▄▄▄▅▅▇▇▇▆▆▆▆▆▆▇▇▇▇▇▇▇█  $46.91
+            $36.55–$46.91 since 29 Apr · 11 obs
+```
+
+**HELD** answers the question no single view could before: that four copies of a
+card are one in the binder and three spread across two decks.
+
+The sparklines are scaled to each series' own low and high, not to zero — against
+a zero baseline a card that drifted between $34.00 and $34.50 would look
+identical to one that never moved. The numbers underneath carry the magnitude,
+which is why they are there. Points are spaced by **date**, so a quiet month
+occupies a month of the line rather than one step.
+
+Card details come from Scryfall and are stored on refresh, so a hoard upgraded
+from an older version has none until you run `hoard update-prices`. That fills
+them for every card you own in one pass — the same request that refreshes
+prices, so it costs nothing extra. Until it runs, the detail pane says so
+instead of showing blanks, and trait filters find nothing and explain why.
+
+## Piped output
+
+Redirected or piped, plain `hoard` prints the totals as a table instead of
+opening the TUI — no colour, no truncation, no escape sequences — so
+`hoard | grep` and `hoard > totals.txt` still work. The table is grouped into
+two sections and ranked by value, with a bar showing each deck's share of the
+grand total:
+
+```
+COLLECTION                                           100  $1,901.70  ████▉
+DECKS · 22                                         1,878  $1,987.58  █████
+
+  Vampiric Bloodlust (Commander 2017)                100    $198.12  ▌
+  Draconic Domination (Commander 2017 Precon)        100    $172.41  ▍
+  Tricky Terrain Collector's Edition (Modern Hori…   100    $164.59  ▍
+  …
+  Duel Decks Anthology: Jace vs. Chandra (Chandra)    60     $15.05  ▏
+
+TOTAL                                              1,978  $3,889.28
+```
+
+The two section bars tile the column exactly, so they double as the scale for the
+deck bars beneath them. A blank bar means a deck is worth $0.00, usually because
+its prices haven't been fetched yet; run `hoard update-prices`.
+
+Set `COLUMNS` to override the detected terminal width.
