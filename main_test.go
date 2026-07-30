@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cphillips918/hoard/internal/store"
-	"github.com/cphillips918/hoard/internal/ui"
+	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func TestExtractDBFlag(t *testing.T) {

@@ -1,6 +1,6 @@
-module github.com/cphillips918/hoard
+module github.com/spiffcs/hoard
 
-go 1.26.1
+go 1.26
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

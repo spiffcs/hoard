@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 // Board names used across providers.

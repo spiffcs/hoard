@@ -13,8 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/cphillips918/hoard/internal/scan"
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scan"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 type state int

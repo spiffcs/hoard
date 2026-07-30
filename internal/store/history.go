@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/cphillips918/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/mtgjson"
 )
 
 // PriceChange is one printing-and-finish whose price moved between two

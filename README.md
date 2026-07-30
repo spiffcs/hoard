@@ -1,25 +1,38 @@
 # hoard
 
+[![CI](https://github.com/spiffcs/hoard/actions/workflows/ci.yml/badge.svg)](https://github.com/spiffcs/hoard/actions/workflows/ci.yml)
+
 A small Go CLI that catalogs Magic: The Gathering cards in a local
 SQLite database.
 
 **Point your iPhone at a card and it gets filed.** On macOS, hoard uses
-Continuity Camera to read a card's title with Apple's Vision OCR. It 
-then matches it against Scryfall's fuzzy name search and drops it straight into
+Continuity Camera to read a card's title with Apple's Vision OCR. It then
+matches it against Scryfall's fuzzy name search and drops it straight into
 the add flow. The camera window stays open between shots, so working through a
 box of cards is: frame, press space, confirm, repeat. See
 [Scanning a card](#scanning-a-card).
 
-You can also type a card's name, paste a Scryfall page URL, or import whole
-**decks** from a deck-list link. Hoard also works using an exported deck list text. 
-However a card gets in, hoard records how many you own across the loose collection or decks.
-It also adds the current market price on each add. These are fetched from the
+Cards get in three other ways: type a name, paste a Scryfall page URL, or import
+a whole **deck** — from an Archidekt link, or from a decklist you exported to a
+text file. However a card arrives, hoard records how many you own across the
+loose collection and every deck, and stores the current market price from the
 [Scryfall API](https://scryfall.com/docs/api).
+
+## Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Usage](#usage) — [what moved](#what-moved), [price history](#starting-with-history-you-dont-have-yet), [missing prices](#when-scryfall-has-no-price), [vendor spreads](#where-vendors-disagree), [adding cards](#adding-cards)
+- [Decks](#decks)
+- [Database location](#database-location)
+- [Scanning a card](#scanning-a-card)
+- [Development](#development)
+- [License](#license)
 
 ## Requirements
 
-- **Go 1.26.1 or newer** (`go version` to check). The module targets that
-  version and will not build on older toolchains.
+- **Go 1.26 or newer** (`go version` to check). The module targets that version
+  and will not build on older toolchains.
 - An internet connection for the Scryfall API. Nothing else is needed: the core is
   pure Go, with no cgo or C toolchain (it uses `modernc.org/sqlite`).
 - Optional, macOS only: Xcode's Swift toolchain, if you want to
@@ -438,7 +451,7 @@ choice is remembered for the session so bulk scanning doesn't ask again, and
 
 A window opens with the live feed **and stays open**. Frame a card, press
 <kbd>space</kbd>, and the add prompts run in the terminal; once the card is saved you're
-back at framing for the next one. 
+back at framing for the next one.
 
 The preview starts rotated a quarter-turn clockwise, which is what a portrait-held
 iPhone needs: Continuity Camera hands over a landscape frame and macOS often can't
@@ -501,3 +514,15 @@ make scan      # macOS camera helper (see above)
 make all       # build + scan
 make clean     # remove ./hoard and ./bin
 ```
+
+CI runs `gofmt`, `go vet`, `go test` and `go build` on every push and pull
+request, so a change that only fails formatting is caught before review.
+
+There is one design document worth reading before making changes to how prices
+are stored: [docs/mtgjson-storage.md](docs/mtgjson-storage.md) covers why hoard
+keeps its own schema rather than adopting MTGJSON's, and which parts of that
+investigation have since been built.
+
+## License
+
+[MIT](LICENSE) — © 2026 Christopher Phillips.

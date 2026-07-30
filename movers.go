@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cphillips918/hoard/internal/mtgjson"
-	"github.com/cphillips918/hoard/internal/store"
-	"github.com/cphillips918/hoard/internal/ui"
+	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // defaultMoverRows is how many risers and sinkers a section shows before it is

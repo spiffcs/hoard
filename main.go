@@ -19,13 +19,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cphillips918/hoard/internal/decksource"
-	"github.com/cphillips918/hoard/internal/mtgjson"
-	"github.com/cphillips918/hoard/internal/scan"
-	"github.com/cphillips918/hoard/internal/scryfall"
-	"github.com/cphillips918/hoard/internal/store"
-	"github.com/cphillips918/hoard/internal/tui"
-	"github.com/cphillips918/hoard/internal/ui"
+	"github.com/spiffcs/hoard/internal/decksource"
+	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/scan"
+	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 const usage = `hoard — catalog valuable MTG cards and decks in SQLite
@@ -1246,19 +1246,4 @@ func identLabel(id scryfall.Identifier) string {
 	default:
 		return id.ID
 	}
-}
-
-// --- Valuation ---
-
-// collectionLineValue is the worth of one loose-collection row across both
-// finishes. Money formatting itself lives in internal/ui.
-func collectionLineValue(c store.CollectionCard) float64 {
-	var v float64
-	if c.PriceUSD != nil {
-		v += float64(c.QtyNormal) * *c.PriceUSD
-	}
-	if c.PriceUSDFoil != nil {
-		v += float64(c.QtyFoil) * *c.PriceUSDFoil
-	}
-	return v
 }

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # go-version-file keeps the toolchain in step with go.mod, so bumping the
+      # module's floor does not silently leave CI on an older compiler.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      # No network needed: every HTTP client is pointed at an httptest server,
+      # and the database is a temp-dir SQLite file.
+      - name: test
+        run: go test ./...
+
+      - name: build
+        run: go build ./...

@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/cphillips918/hoard/internal/scan"
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scan"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 // fakeSearcher returns canned results for the cascade tests.

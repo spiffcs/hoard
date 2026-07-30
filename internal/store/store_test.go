@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 func f(v float64) *float64 { return &v }
@@ -20,6 +20,44 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+// heldByFinish reports how many copies of one printing the loose collection
+// holds, per finish, read through the same per-finish view `hoard list` uses.
+//
+// Finishes with nothing held are simply absent, so an assertion of 0 reads a
+// missing key rather than a stored zero — which is what the view returns, since
+// it lists holdings rather than the finishes a printing could come in.
+func heldByFinish(t *testing.T, s *Store, scryfallID string) map[string]int {
+	t.Helper()
+	rows, err := s.ListCollectionByFinish()
+	if err != nil {
+		t.Fatalf("ListCollectionByFinish: %v", err)
+	}
+	out := map[string]int{}
+	for _, r := range rows {
+		if r.ScryfallID == scryfallID {
+			out[r.Finish] = r.Quantity
+		}
+	}
+	return out
+}
+
+// collectionRow finds one printing-and-finish in the loose collection, for the
+// assertions that care about the row's price and its source rather than counts.
+func collectionRow(t *testing.T, s *Store, scryfallID, finish string) CollectionRow {
+	t.Helper()
+	rows, err := s.ListCollectionByFinish()
+	if err != nil {
+		t.Fatalf("ListCollectionByFinish: %v", err)
+	}
+	for _, r := range rows {
+		if r.ScryfallID == scryfallID && r.Finish == finish {
+			return r
+		}
+	}
+	t.Fatalf("no %s row for %s in %+v", finish, scryfallID, rows)
+	return CollectionRow{}
 }
 
 func ulamog() scryfall.Card {
@@ -67,8 +105,8 @@ func TestAltPriceFallback(t *testing.T) {
 	}
 
 	// Before the fallback: owned in foil, no foil price, so worth nothing.
-	if v, _ := s.CollectionValue(); v != 0 {
-		t.Fatalf("setup: value = %v, want 0 before any fallback", v)
+	if tot, _ := s.CollectionTotals(); tot.Value != 0 {
+		t.Fatalf("setup: value = %v, want 0 before any fallback", tot.Value)
 	}
 	gaps, err := s.UnpricedByOwnedFinish()
 	if err != nil {
@@ -87,24 +125,18 @@ func TestAltPriceFallback(t *testing.T) {
 	}
 
 	// 2 x $0.49 foil, from the fallback.
-	if v, _ := s.CollectionValue(); v != 0.98 {
-		t.Errorf("CollectionValue = %v, want 0.98 from the fallback", v)
-	}
 	totals, _ := s.CollectionTotals()
 	if totals.Value != 0.98 {
-		t.Errorf("CollectionTotals = %v, want 0.98", totals.Value)
+		t.Errorf("CollectionTotals = %v, want 0.98 from the fallback", totals.Value)
 	}
 	// The row view must carry the effective price and name its source, so the
 	// CLI can mark it as an estimate.
-	cards, _ := s.ListCollection()
-	if len(cards) != 1 {
-		t.Fatalf("want 1 collection card, got %d", len(cards))
+	row := collectionRow(t, s, "ripple-id", "foil")
+	if row.PriceUSDFoil == nil || *row.PriceUSDFoil != 0.49 {
+		t.Errorf("PriceUSDFoil = %v, want the fallback 0.49", row.PriceUSDFoil)
 	}
-	if cards[0].PriceUSDFoil == nil || *cards[0].PriceUSDFoil != 0.49 {
-		t.Errorf("PriceUSDFoil = %v, want the fallback 0.49", cards[0].PriceUSDFoil)
-	}
-	if cards[0].AltSource != "cardkingdom" {
-		t.Errorf("AltSource = %q, want the foil vendor", cards[0].AltSource)
+	if row.AltSource != "cardkingdom" {
+		t.Errorf("AltSource = %q, want the foil vendor", row.AltSource)
 	}
 
 	// Once filled, it is no longer a gap, so a second run downloads nothing.
@@ -118,12 +150,11 @@ func TestAltPriceFallback(t *testing.T) {
 	if err := s.UpsertCatalogCards([]scryfall.Card{priced}); err != nil {
 		t.Fatalf("UpsertCatalogCards: %v", err)
 	}
-	if v, _ := s.CollectionValue(); v != 18.0 {
-		t.Errorf("CollectionValue = %v, want 18 from Scryfall, not the fallback", v)
+	if tot, _ := s.CollectionTotals(); tot.Value != 18.0 {
+		t.Errorf("value = %v, want 18 from Scryfall, not the fallback", tot.Value)
 	}
-	cards, _ = s.ListCollection()
-	if cards[0].AltSource != "" {
-		t.Errorf("AltSource = %q, want empty once Scryfall prices it", cards[0].AltSource)
+	if row := collectionRow(t, s, "ripple-id", "foil"); row.AltSource != "" {
+		t.Errorf("AltSource = %q, want empty once Scryfall prices it", row.AltSource)
 	}
 }
 
@@ -234,15 +265,9 @@ func TestRepairFinishes(t *testing.T) {
 		t.Errorf("fix = %+v, want normal->foil x3", fixed[0])
 	}
 
-	cards, _ := s.ListCollection()
-	var slime CollectionCard
-	for _, c := range cards {
-		if c.ScryfallID == "ripple-id" {
-			slime = c
-		}
-	}
-	if slime.QtyNormal != 0 || slime.QtyFoil != 3 {
-		t.Errorf("after repair: %d normal / %d foil, want 0/3", slime.QtyNormal, slime.QtyFoil)
+	held := heldByFinish(t, s, "ripple-id")
+	if held["normal"] != 0 || held["foil"] != 3 {
+		t.Errorf("after repair: %d normal / %d foil, want 0/3", held["normal"], held["foil"])
 	}
 	// Idempotent: a second pass has nothing left to do.
 	fixed, _, err = s.RepairFinishes(available)
@@ -270,14 +295,10 @@ func TestRepairFinishesMergesWithExistingEntry(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("fixed = %+v, want the normal entry moved", fixed)
 	}
-	cards, _ := s.ListCollection()
-	if len(cards) != 1 {
-		t.Fatalf("want 1 card, got %d", len(cards))
-	}
-	// 2 mistakenly-normal plus the 1 already foil.
-	if cards[0].QtyNormal != 0 || cards[0].QtyFoil != 3 {
-		t.Errorf("merged to %d normal / %d foil, want 0/3",
-			cards[0].QtyNormal, cards[0].QtyFoil)
+	// 2 mistakenly-normal plus the 1 already foil, merged into one holding.
+	held := heldByFinish(t, s, "ripple-id")
+	if held["normal"] != 0 || held["foil"] != 3 {
+		t.Errorf("merged to %d normal / %d foil, want 0/3", held["normal"], held["foil"])
 	}
 }
 
@@ -330,31 +351,16 @@ func TestCollectionAddAndIncrement(t *testing.T) {
 		t.Fatalf("AddCard normal again: %v", err)
 	}
 
-	cards, err := s.ListCollection()
-	if err != nil {
-		t.Fatalf("ListCollection: %v", err)
-	}
-	if len(cards) != 1 {
-		t.Fatalf("want 1 collection card, got %d", len(cards))
-	}
-	if cards[0].QtyNormal != 5 || cards[0].QtyFoil != 1 {
-		t.Errorf("quantities = %d/%d, want 5/1", cards[0].QtyNormal, cards[0].QtyFoil)
-	}
-
-	val, err := s.CollectionValue()
-	if err != nil {
-		t.Fatalf("CollectionValue: %v", err)
-	}
-	// 5*10 + 1*25 = 75
-	if val != 75.0 {
-		t.Errorf("CollectionValue = %v, want 75", val)
+	held := heldByFinish(t, s, "ulamog-id")
+	if held["normal"] != 5 || held["foil"] != 1 {
+		t.Errorf("quantities = %d/%d, want 5/1", held["normal"], held["foil"])
 	}
 
 	totals, err := s.CollectionTotals()
 	if err != nil {
 		t.Fatalf("CollectionTotals: %v", err)
 	}
-	// One printing, six copies across both finishes, valued like CollectionValue.
+	// One printing, six copies across both finishes: 5*10 + 1*25 = 75.
 	if totals.DistinctCards != 1 || totals.TotalCopies != 6 || totals.Value != 75.0 {
 		t.Errorf("CollectionTotals = %+v, want {1 6 75}", totals)
 	}
@@ -379,67 +385,14 @@ func TestAddCardFinishEtched(t *testing.T) {
 	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
 		t.Fatalf("AddCardFinish foil: %v", err)
 	}
-	// etched + foil are distinct entry rows but pivot together into QtyFoil.
-	cards, _ := s.ListCollection()
-	if len(cards) != 1 || cards[0].QtyFoil != 3 || cards[0].QtyNormal != 0 {
-		t.Fatalf("pivot wrong: %+v", cards)
+	// etched and foil stay distinct holdings rather than being folded together,
+	// which is the whole reason the per-finish view exists.
+	held := heldByFinish(t, s, "ulamog-id")
+	if held["etched"] != 2 || held["foil"] != 1 || held["normal"] != 0 {
+		t.Fatalf("holdings = %v, want 2 etched / 1 foil / 0 normal", held)
 	}
 	if err := s.AddCardFinish(ulamog(), "bogus", 1); err == nil {
 		t.Error("expected error for invalid finish")
-	}
-}
-
-func TestSetCollectionQuantities(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
-
-	existed, err := s.SetCollectionQuantities("ulamog-id", 4, 2)
-	if err != nil {
-		t.Fatalf("SetCollectionQuantities: %v", err)
-	}
-	if !existed {
-		t.Error("existed = false, want true")
-	}
-	c, _ := s.FindCollectionCard("uma", "7")
-	if c == nil {
-		t.Fatal("card not found after set-qty")
-	}
-	cards, _ := s.ListCollection()
-	if cards[0].QtyNormal != 4 || cards[0].QtyFoil != 2 {
-		t.Errorf("quantities = %d/%d, want 4/2", cards[0].QtyNormal, cards[0].QtyFoil)
-	}
-
-	// Setting a finish to 0 removes it.
-	if _, err := s.SetCollectionQuantities("ulamog-id", 0, 3); err != nil {
-		t.Fatalf("SetCollectionQuantities zero-normal: %v", err)
-	}
-	cards, _ = s.ListCollection()
-	if cards[0].QtyNormal != 0 || cards[0].QtyFoil != 3 {
-		t.Errorf("quantities = %d/%d, want 0/3", cards[0].QtyNormal, cards[0].QtyFoil)
-	}
-
-	existed, _ = s.SetCollectionQuantities("missing-id", 1, 1)
-	if existed {
-		t.Error("existed = true for missing card, want false")
-	}
-}
-
-func TestRemoveFromCollection(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 2); err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
-	n, err := s.RemoveFromCollection("ulamog-id")
-	if err != nil {
-		t.Fatalf("RemoveFromCollection: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("removed %d entry rows, want 1", n)
-	}
-	if c, _ := s.FindCollectionCard("uma", "7"); c != nil {
-		t.Errorf("card still present after remove: %+v", c)
 	}
 }
 
@@ -587,14 +540,14 @@ func TestTotalsAcrossContainers(t *testing.T) {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 
-	totals, err := s.TotalsByCard()
+	totals, err := s.OwnedByFinish()
 	if err != nil {
-		t.Fatalf("TotalsByCard: %v", err)
+		t.Fatalf("OwnedByFinish: %v", err)
 	}
 	var ulamogTotal int
 	for _, o := range totals {
 		if o.ScryfallID == "ulamog-id" {
-			ulamogTotal = o.TotalCopies
+			ulamogTotal += o.Copies
 		}
 	}
 	if ulamogTotal != 2 {
@@ -650,17 +603,11 @@ func TestLegacyMigration(t *testing.T) {
 	}
 	defer s.Close()
 
-	cards, err := s.ListCollection()
-	if err != nil {
-		t.Fatalf("ListCollection after migrate: %v", err)
+	held := heldByFinish(t, s, "ulamog-id")
+	if held["normal"] != 3 || held["foil"] != 1 {
+		t.Errorf("migrated quantities = %d/%d, want 3/1", held["normal"], held["foil"])
 	}
-	if len(cards) != 1 {
-		t.Fatalf("want 1 migrated card, got %d", len(cards))
-	}
-	if cards[0].QtyNormal != 3 || cards[0].QtyFoil != 1 {
-		t.Errorf("migrated quantities = %d/%d, want 3/1", cards[0].QtyNormal, cards[0].QtyFoil)
-	}
-	if cards[0].Name != "Ulamog, the Infinite Gyre" {
-		t.Errorf("migrated name = %q", cards[0].Name)
+	if row := collectionRow(t, s, "ulamog-id", "normal"); row.Name != "Ulamog, the Infinite Gyre" {
+		t.Errorf("migrated name = %q", row.Name)
 	}
 }

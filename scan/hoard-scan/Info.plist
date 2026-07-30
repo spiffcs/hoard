@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>hoard scan</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.cphillips918.hoard.scan</string>
+	<string>dev.spiffcs.hoard.scan</string>
 	<key>CFBundleExecutable</key>
 	<string>hoard-scan</string>
 	<key>CFBundleIconFile</key>

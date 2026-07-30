@@ -273,9 +273,8 @@ INSERT INTO card_entries VALUES (1,'ulamog-id','normal','main',2);`)
 		t.Fatalf("backups = %v, want exactly one", backups)
 	}
 	// The data must have survived the migration.
-	cards, err := s.ListCollection()
-	if err != nil || len(cards) != 1 || cards[0].QtyNormal != 2 {
-		t.Errorf("after migrating: %+v, %v; want the 2 copies intact", cards, err)
+	if held := heldByFinish(t, s, "ulamog-id"); held["normal"] != 2 {
+		t.Errorf("after migrating: %v; want the 2 copies intact", held)
 	}
 }
 
@@ -295,7 +294,7 @@ INSERT INTO card_prices_alt VALUES ('ripple-id','u1',0.34,0.49,'tcgplayer/cardki
 INSERT INTO card_prices_alt VALUES ('sol-id','u2',1.00,2.00,'manapool','x');
 PRAGMA user_version = 1;`)
 
-		s, err := Open(path) // runs v2 and v3
+	s, err := Open(path) // runs v2 and v3
 	if err != nil {
 		t.Fatalf("reopen (migrate to v2): %v", err)
 	}

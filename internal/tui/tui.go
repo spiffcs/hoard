@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/cphillips918/hoard/internal/scan"
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scan"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 // Searcher supplies the Scryfall lookups the cascade needs. It is an interface

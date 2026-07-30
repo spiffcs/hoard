@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 const archidektUserAgent = "hoard/0.1"

@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
 
@@ -110,22 +110,6 @@ type DeckSummary struct {
 	TotalCopies   int
 	Value         float64
 }
-
-// CollectionCard is a catalog card pivoted back into normal/foil quantities as
-// held in the loose collection, matching the original `list` output.
-type CollectionCard struct {
-	Card
-	QtyNormal int
-	QtyFoil   int
-}
-
-// OwnedRow aggregates how many of a card are owned across all containers.
-type OwnedRow struct {
-	Card
-	TotalCopies int
-	Value       float64
-}
-
 
 // SQL fragments for reading prices with the MTGJSON fallback applied. They are
 // consts rather than repeated text so the four valuation queries cannot drift
@@ -743,129 +727,6 @@ DO UPDATE SET quantity = quantity + excluded.quantity`,
 	return tx.Commit()
 }
 
-// SetCollectionQuantities sets the exact normal/foil counts for a card in the
-// loose collection. A count of 0 removes that finish's entry. Returns whether
-// the card was present in the collection.
-func (s *Store) SetCollectionQuantities(scryfallID string, normal, foil int) (bool, error) {
-	cid, err := s.collectionID()
-	if err != nil {
-		return false, err
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-
-	var existed bool
-	if err := tx.QueryRow(`SELECT EXISTS(
-        SELECT 1 FROM card_entries WHERE container_id=? AND scryfall_id=?)`,
-		cid, scryfallID).Scan(&existed); err != nil {
-		return false, err
-	}
-	if err := setFinishQty(tx, cid, scryfallID, "normal", normal); err != nil {
-		return false, err
-	}
-	if err := setFinishQty(tx, cid, scryfallID, "foil", foil); err != nil {
-		return false, err
-	}
-	return existed, tx.Commit()
-}
-
-func setFinishQty(tx *sql.Tx, cid int64, scryfallID, finish string, qty int) error {
-	if qty <= 0 {
-		_, err := tx.Exec(`DELETE FROM card_entries
-            WHERE container_id=? AND scryfall_id=? AND finish=? AND board='main'`,
-			cid, scryfallID, finish)
-		return err
-	}
-	_, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
-DO UPDATE SET quantity = excluded.quantity`,
-		cid, scryfallID, finish, qty)
-	return err
-}
-
-// RemoveFromCollection deletes all of a card's entries from the loose
-// collection. Returns the number of entry rows removed.
-func (s *Store) RemoveFromCollection(scryfallID string) (int64, error) {
-	cid, err := s.collectionID()
-	if err != nil {
-		return 0, err
-	}
-	res, err := s.db.Exec(`DELETE FROM card_entries WHERE container_id=? AND scryfall_id=?`,
-		cid, scryfallID)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
-// FindCollectionCard looks up a loose-collection card by set code and collector
-// number, returning nil if it is not in the collection.
-func (s *Store) FindCollectionCard(set, number string) (*Card, error) {
-	cid, err := s.collectionID()
-	if err != nil {
-		return nil, err
-	}
-	row := s.db.QueryRow(`
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       c.price_usd, c.price_usd_foil, c.scryfall_url, c.updated_at
-FROM cards c
-JOIN card_entries e ON e.scryfall_id = c.scryfall_id
-WHERE e.container_id = ? AND c.set_code = ? AND c.collector_number = ?
-LIMIT 1`, cid, set, number)
-	var c Card
-	err = row.Scan(&c.ScryfallID, &c.SetCode, &c.CollectorNumber, &c.Name,
-		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// ListCollection returns loose-collection cards pivoted into normal/foil
-// quantities, ordered by name.
-func (s *Store) ListCollection() ([]CollectionCard, error) {
-	cid, err := s.collectionID()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.Query(`
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
-       `+altSourceExpr+`,
-       COALESCE(SUM(CASE WHEN e.finish='normal' THEN e.quantity END), 0) AS qty_normal,
-       COALESCE(SUM(CASE WHEN e.finish IN ('foil','etched') THEN e.quantity END), 0) AS qty_foil
-FROM card_entries e
-JOIN cards c ON c.scryfall_id = e.scryfall_id
-`+altJoinCards+`
-WHERE e.container_id = ?
-GROUP BY c.scryfall_id
-ORDER BY c.name`, cid)
-	if err != nil {
-		return nil, fmt.Errorf("listing collection: %w", err)
-	}
-	defer rows.Close()
-
-	var out []CollectionCard
-	for rows.Next() {
-		var cc CollectionCard
-		if err := rows.Scan(&cc.ScryfallID, &cc.SetCode, &cc.CollectorNumber, &cc.Name,
-			&cc.PriceUSD, &cc.PriceUSDFoil, &cc.ScryfallURL, &cc.UpdatedAt, &cc.AltSource,
-			&cc.QtyNormal, &cc.QtyFoil); err != nil {
-			return nil, err
-		}
-		out = append(out, cc)
-	}
-	return out, rows.Err()
-}
-
 // CollectionRow is one loose-collection holding: a printing in one finish.
 type CollectionRow struct {
 	Card
@@ -877,10 +738,10 @@ type CollectionRow struct {
 // ListCollectionByFinish returns the loose collection one row per finish held,
 // matching how deck show and unpriced present cards.
 //
-// The pivoted view ListCollection returns needs four columns to say what two
-// can, since a row shows a normal price and a foil price whether or not either
-// finish is owned. Splitting by finish also keeps etched distinct, which the
-// pivot folds into foil.
+// One row per finish rather than a row per printing pivoted into normal/foil
+// columns: the pivot needs four columns to say what two can, since it shows a
+// normal price and a foil price whether or not either finish is owned. Splitting
+// by finish also keeps etched distinct, which a pivot folds into foil.
 func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 	cid, err := s.collectionID()
 	if err != nil {
@@ -1139,56 +1000,6 @@ func (s *Store) RemoveContainer(id int64) (int64, error) {
 
 // --- Aggregates ---
 
-// TotalsByCard returns each catalog card with the total copies owned across all
-// containers (collection + decks) and total value, ordered by descending value.
-func (s *Store) TotalsByCard() ([]OwnedRow, error) {
-	rows, err := s.db.Query(`
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       c.price_usd, c.price_usd_foil, c.scryfall_url, c.updated_at,
-       COALESCE(SUM(e.quantity), 0) AS total_copies,
-       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
-FROM cards c
-LEFT JOIN card_entries e ON e.scryfall_id = c.scryfall_id
-`+altJoinCards+`
-GROUP BY c.scryfall_id
-HAVING total_copies > 0
-ORDER BY value DESC, c.name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []OwnedRow
-	for rows.Next() {
-		var o OwnedRow
-		if err := rows.Scan(&o.ScryfallID, &o.SetCode, &o.CollectorNumber, &o.Name,
-			&o.PriceUSD, &o.PriceUSDFoil, &o.ScryfallURL, &o.UpdatedAt,
-			&o.TotalCopies, &o.Value); err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
-}
-
-// CollectionValue returns the total market value of the loose collection.
-func (s *Store) CollectionValue() (float64, error) {
-	cid, err := s.collectionID()
-	if err != nil {
-		return 0, err
-	}
-	var v sql.NullFloat64
-	err = s.db.QueryRow(`
-SELECT SUM(e.quantity * `+entryValue+`)
-FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
-`+altJoinEntries+`
-WHERE e.container_id = ?`, cid).Scan(&v)
-	if err != nil {
-		return 0, err
-	}
-	return v.Float64, nil
-}
-
 // CollectionTotals rolls the loose collection up the same way DeckSummary rolls
 // up a deck, so `summary` can present the two alike.
 type CollectionTotals struct {
@@ -1201,8 +1012,8 @@ type CollectionTotals struct {
 // copies, and market value in one pass.
 //
 // Copies are counted with the same COALESCE(SUM(quantity), 0) as ListDecks, and
-// valued with the same foil/etched CASE as CollectionValue, so the collection
-// and the decks stay directly comparable once they're summed into one total.
+// valued with the shared entryValue fragment, so the collection and the decks
+// stay directly comparable once they're summed into one total.
 func (s *Store) CollectionTotals() (CollectionTotals, error) {
 	cid, err := s.collectionID()
 	if err != nil {

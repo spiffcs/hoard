@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/cphillips918/hoard/internal/mtgjson"
-	"github.com/cphillips918/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/store"
 )
 
 func ownedFoil(name string) store.OwnedFinish {

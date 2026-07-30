@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 // lineRE matches common decklist lines exported by Moxfield, Archidekt, MTGGoldfish,

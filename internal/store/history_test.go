@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cphillips918/hoard/internal/mtgjson"
-	"github.com/cphillips918/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 // changeFor finds one card-and-finish in a set of changes.
@@ -201,11 +201,10 @@ func TestRecordPricesCountsCopiesAcrossContainersAndFinishes(t *testing.T) {
 // held has changed value.
 func TestRecordPricesIgnoresUnownedCards(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCard(ulamog(), false, 1); err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
-	if _, err := s.RemoveFromCollection("ulamog-id"); err != nil {
-		t.Fatalf("RemoveFromCollection: %v", err)
+	// Catalogued but never added to a container, which is the state this is
+	// about: a printing hoard knows the price of and owns none of.
+	if err := s.UpsertCatalogCards([]scryfall.Card{ulamog()}); err != nil {
+		t.Fatalf("UpsertCatalogCards: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)

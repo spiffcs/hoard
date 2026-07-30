@@ -35,7 +35,7 @@ swiftc -O \
 	"$SRC"
 
 # Ad-hoc sign so the camera (TCC) permission prompt is attributed to the app.
-codesign --force --sign - --identifier dev.cphillips918.hoard.scan "$APP" 2>/dev/null || \
+codesign --force --sign - --identifier dev.spiffcs.hoard.scan "$APP" 2>/dev/null || \
 	echo "warning: codesign failed (unsigned build); camera permission may prompt oddly." >&2
 
 echo "Built $APP" >&2

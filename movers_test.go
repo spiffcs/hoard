@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cphillips918/hoard/internal/store"
-	"github.com/cphillips918/hoard/internal/ui"
+	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func change(name string, copies int, old, now float64) store.PriceChange {
