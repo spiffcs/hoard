@@ -67,26 +67,29 @@ As built:
 
 ---
 
-## ⬜ A. Export (days 5–6) — NEXT UP
+## ✅ A. Export — DONE (committed)
 
 `hoard export [--format csv|moxfield|archidekt] [--binder REF|--deck REF|--all] [-o file]`,
-stdout by default (scriptable).
+stdout by default (scriptable). Bare `hoard export` means `--all` — every
+binder, then every deck.
 
-- **Canonical CSV** (also the re-import format):
-  `Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD`.
-  Scryfall ID makes re-import exact; Set+CN keeps it spreadsheet-friendly.
-- **Moxfield writer** (their collection-import shape):
-  `Count,Name,Edition,Condition,Language,Foil,Collector Number` — Condition
-  hardcoded "Near Mint", Language "English" (hoard lacks both), Foil column ∈
-  {"", foil, etched}.
-- **Archidekt writer**:
-  `Quantity,Name,Finish,Edition Code,Collector Number,Scryfall ID` — their
-  importer tolerates missing optionals.
-- New `internal/export/csv.go` on `encoding/csv`. Data comes from
-  `store.BinderByFinish` / `store.DeckEntries` / `store.ListBinders` /
-  `store.ListDecks` — no new queries expected.
-- Golden-file tests against a fixture DB. **Checkpoint: a generated file
-  actually uploads to Moxfield** (manual verification).
+As built (matches the design above with these notes):
+
+- `internal/export/csv.go` — `Row` (normalized holding) plus `WriteCanonical`,
+  `WriteMoxfield`, `WriteArchidekt` on `encoding/csv`. Canonical header is
+  exposed as `export.CanonicalHeader()` for phase B's sniffer.
+- Output is **deterministically sorted** (container, name, set, number,
+  finish) so exports are diffable in git (backlog item 6 half-done for free).
+- Moxfield/Archidekt have no container column, so identical
+  `(Scryfall ID, finish)` rows are **aggregated across containers**; canonical
+  keeps per-container rows. Archidekt Finish ∈ {Normal, Foil, Etched}.
+- Unpriced cards emit an **empty** Price USD cell, never 0.00.
+- Data comes from `BinderByFinish`/`DeckEntries`/`ListBinders`/`ListDecks` as
+  planned — no new queries. Command lives in `export.go` (repo root).
+- Tests are inline-want writer tests plus command tests against a temp store
+  (`internal/export/csv_test.go`, `export_test.go`) — house style, no
+  golden-file machinery. **Checkpoint: a generated file uploads to Moxfield**
+  (manual verification, pending).
 
 ## ⬜ B. Import (days 7–9)
 

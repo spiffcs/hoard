@@ -74,6 +74,7 @@ is printed once. `hoard help` lists every command.
 | `hoard deck add --file x.txt` | import an exported decklist (Moxfield et al.) |
 | `hoard deck remove <name>` | delete a deck — any unambiguous part of the name works |
 | `hoard binder new <name>` | create a named binder; also `list`, `rename`, `rm` |
+| `hoard export` | everything as CSV — hoard's own format, or `--format moxfield`/`archidekt` |
 | `hoard update-prices` | refresh prices (Scryfall updates daily) and report movers |
 | `hoard movers --since 30d` | biggest risers and sinkers over a window |
 | `hoard unpriced` | cards counting as $0.00, and where they're held |

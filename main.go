@@ -55,6 +55,10 @@ Deck commands:
   deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
   deck remove <name>                               Delete a deck
 
+Interop commands:
+  export [--binder B | --deck D | --all] [-o FILE] Holdings as CSV (everything by default)
+         [--format csv|moxfield|archidekt]           in hoard's format or theirs
+
 A deck <name> can be any part of its name, as long as it matches one deck.
 
 The database lives in a per-user data directory by default (e.g. on macOS
@@ -135,6 +139,8 @@ func run(args []string) error {
 		return cmdCatalog(ctx, cmdArgs)
 	case "binder":
 		return cmdBinder(st, cmdArgs)
+	case "export":
+		return cmdExport(st, cmdArgs)
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:
