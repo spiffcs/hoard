@@ -58,6 +58,8 @@ Deck commands:
 Interop commands:
   export [--binder B | --deck D | --all] [-o FILE] Holdings as CSV (everything by default)
          [--format csv|moxfield|archidekt]           in hoard's format or theirs
+  import FILE [--binder B | --preserve-binders]    Add a collection CSV export (ManaBox,
+         [--format F] [--dry-run]                    Moxfield, Delver Lens, hoard)
 
 A deck <name> can be any part of its name, as long as it matches one deck.
 
@@ -141,6 +143,8 @@ func run(args []string) error {
 		return cmdBinder(st, cmdArgs)
 	case "export":
 		return cmdExport(st, cmdArgs)
+	case "import":
+		return cmdImport(ctx, st, cmdArgs)
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:

@@ -91,33 +91,40 @@ As built (matches the design above with these notes):
   golden-file machinery. **Checkpoint: a generated file uploads to Moxfield**
   (manual verification, pending).
 
-## ⬜ B. Import (days 7–9)
+## ✅ B. Import — DONE (committed)
 
-`hoard import file.csv [--format auto|manabox|moxfield|delver|hoard] [--binder REF] [--dry-run]`.
+`hoard import file.csv [--format auto|manabox|moxfield|delver|hoard]
+[--binder REF | --preserve-binders] [--dry-run]`.
 
-- New `internal/collsource/csv.go`: **header-sniffing dispatcher**. Formats:
-  ManaBox (has "Binder Name", ..., "Scryfall ID" columns), Moxfield
-  ("Count,Tradelist Count,...,Edition"), Delver Lens (varies by version — fail
-  loudly on unknowns with `--format` override), and hoard's own canonical CSV.
-  Dragon Shield deferred (cut line). Normalize every format to
-  `{Qty, Name, Set, Number, Finish, ScryfallID}`.
-- **Resolution reuses the deck-import pipeline verbatim**: rows with Scryfall
-  IDs (ManaBox/Delver/hoard) go direct; others build set+number
-  `scryfall.Identifier`s for `scryfall.FetchCollection`
-  (internal/scryfall/scryfall.go — batches 75/request, 429 retry built in) with
-  name fallback, then `resolveIDs` (deck.go) and `store.CorrectFinish`
-  (internal/store/finishes.go) for illegal finish/printing combos — exactly how
-  `cmdDeckAdd` works today.
-- Lossy fields (condition, language, purchase price) are **dropped with a
-  summary line** ("dropped condition on 212 rows"). Non-English rows resolve to
-  the printing the set/number names.
-- `--dry-run` prints the resolution report, writes nothing. Writes go through
-  `AddCardFinishTo` into the chosen binder (default binder if none named).
-- Optional `--preserve-binders`: fan ManaBox's "Binder Name" column into real
-  binders via `CreateBinder` (cut-line candidate).
-- One fixture per real app export committed to testdata.
-- **Checkpoint: round-trip test — export → import into a fresh DB → identical
-  totals.**
+As built (matches the design above with these notes):
+
+- `internal/collsource/` — `Row`/`Collection` types plus the header-sniffing
+  dispatcher in csv.go, driven by a per-format `spec` table (columns looked up
+  by **name**, never position, so reordered/extended exports still parse).
+  Unknown headers fail loudly, naming the columns seen and suggesting
+  `--format`. Dragon Shield deferred as planned.
+- Resolution reuses the deck pipeline: `fetchCollection` (a package-main seam
+  over `scryfall.FetchCollection`, swappable in tests) → `resolveIDs` →
+  `store.CorrectFinish`. The **name fallback is a real second pass**: rows
+  whose set+number landed in notFound retry as name identifiers before being
+  reported unresolved (`cmdDeckAdd` still has no such pass).
+- `Row.Name` is kept alongside `Row.Ident` to power that fallback; hoard's own
+  Container column populates `Row.Binder` just like ManaBox's "Binder Name",
+  so `--preserve-binders` also reconstructs a canonical export's organization
+  (deck rows in such a file become binders of the same name — import never
+  creates decks).
+- Dropped-field counting is *informative-only*: a condition counts only when
+  it isn't near-mint, a language only when it isn't English, a purchase price
+  only when nonzero — so the report says what was actually lost.
+- `--preserve-binders` shipped (not cut); creates missing binders once,
+  case-insensitively, and routes empty binder names to the default binder.
+- Fixtures are synthesized (docs/known formats), one per app in
+  `internal/collsource/testdata/` — swap in real exports when available;
+  Delver Lens headers especially vary by version.
+- **Round-trip checkpoint passes** as `TestExportImportRoundTrip`
+  (import_test.go): export → import into a fresh DB with `--preserve-binders`
+  → identical `CollectionTotals` and binder structure. Also verified manually
+  against live Scryfall with real collection rows.
 
 ## ⬜ D. Add-flow destination picker (day 10 am)
 

@@ -1,0 +1,226 @@
+package main
+
+// The import command: adding a collection CSV exported from another app — or
+// from hoard itself — to the binder of your choice.
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/spiffcs/hoard/internal/collsource"
+	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/store"
+)
+
+// fetchCollection is scryfall.FetchCollection behind a seam, so tests can
+// resolve imports against fixtures instead of the network.
+var fetchCollection = scryfall.FetchCollection
+
+func cmdImport(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	format := fs.String("format", "auto", "file format: auto (sniff the header), manabox, moxfield, delver, or hoard")
+	binderRef := fs.String("binder", "", "add everything to this binder (id, name, or unique fragment)")
+	dryRun := fs.Bool("dry-run", false, "resolve and report, but write nothing")
+	preserve := fs.Bool("preserve-binders", false, "recreate the file's own binders instead of using one destination")
+	pos, err := parsePositionals(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("import needs exactly one CSV file")
+	}
+	if *binderRef != "" && *preserve {
+		return fmt.Errorf("--binder and --preserve-binders name different destinations; choose one")
+	}
+
+	f, err := os.Open(pos[0])
+	if err != nil {
+		return err
+	}
+	coll, err := collsource.Parse(f, *format)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("%s: %w", pos[0], err)
+	}
+
+	// Resolve every row against Scryfall in bulk, exactly like deck add;
+	// FetchCollection batches and retries rate limits itself.
+	idents := make([]scryfall.Identifier, len(coll.Rows))
+	for i, r := range coll.Rows {
+		idents[i] = r.Ident
+	}
+	found, _, err := fetchCollection(ctx, idents)
+	if err != nil {
+		return err
+	}
+	resolved := resolveIDs(found)
+	cards := make(map[string]scryfall.Card, len(found))
+	for _, c := range found {
+		cards[c.ID] = c
+	}
+
+	// Second chance: a set+number Scryfall does not know (a vendor's set
+	// code, a renumbered promo) often still names a real card. Retry those
+	// rows by name before declaring them unresolved — the printing will be
+	// whichever Scryfall picks, which beats losing the card entirely.
+	var retry []scryfall.Identifier
+	queued := make(map[string]bool)
+	for _, r := range coll.Rows {
+		if _, ok := resolved[r.Ident.Key()]; ok || r.Ident.Name != "" || r.Name == "" {
+			continue
+		}
+		ident := scryfall.Identifier{Name: r.Name}
+		if !queued[ident.Key()] {
+			queued[ident.Key()] = true
+			retry = append(retry, ident)
+		}
+	}
+	if len(retry) > 0 {
+		found2, _, err := fetchCollection(ctx, retry)
+		if err != nil {
+			return err
+		}
+		for _, c := range found2 {
+			cards[c.ID] = c
+		}
+		for k, id := range resolveIDs(found2) {
+			if _, ok := resolved[k]; !ok {
+				resolved[k] = id
+			}
+		}
+	}
+
+	type addition struct {
+		binder string // destination binder; "" = the --binder/default target
+		card   scryfall.Card
+		finish string
+		qty    int
+	}
+	var adds []addition
+	var unresolved []string
+	var refinished int
+	for _, r := range coll.Rows {
+		id, ok := resolved[r.Ident.Key()]
+		if !ok && r.Name != "" {
+			id, ok = resolved[strings.ToLower(r.Name)]
+		}
+		if !ok {
+			label := r.Ident.Label()
+			if r.Name != "" {
+				label = r.Name
+			}
+			unresolved = append(unresolved, label)
+			continue
+		}
+		card := cards[id]
+		// Same guard as deck add: a file claiming a finish the printing does
+		// not come in would store an unpriceable entry.
+		finish := r.Finish
+		if corrected, changed := store.CorrectFinish(finish, card.Finishes); changed {
+			finish = corrected
+			refinished++
+		}
+		binder := ""
+		if *preserve {
+			binder = r.Binder
+		}
+		adds = append(adds, addition{binder: binder, card: card, finish: finish, qty: r.Quantity})
+	}
+
+	// Destinations. ListBinders puts the default binder first, and its
+	// display names are what ManaBox-style binder columns are matched on.
+	binders, err := st.ListBinders()
+	if err != nil {
+		return err
+	}
+	targetID, targetName := binders[0].ID, binders[0].Name
+	if *binderRef != "" {
+		b, err := st.BinderByRef(*binderRef)
+		if err != nil {
+			return err
+		}
+		targetID, targetName = b.ID, b.Name
+	}
+	binderIDs := make(map[string]int64, len(binders))
+	for _, b := range binders {
+		binderIDs[strings.ToLower(b.Name)] = b.ID
+	}
+
+	var created []string
+	copies := 0
+	perBinder := make(map[string]int)
+	for _, a := range adds {
+		dest, name := targetID, targetName
+		if a.binder != "" {
+			key := strings.ToLower(a.binder)
+			id, ok := binderIDs[key]
+			if !ok {
+				// Reserve the name either way so a dry run counts the
+				// creation once; -1 never reaches the store.
+				id = -1
+				if !*dryRun {
+					if id, err = st.CreateBinder(a.binder); err != nil {
+						return err
+					}
+				}
+				binderIDs[key] = id
+				created = append(created, a.binder)
+			}
+			dest, name = id, a.binder
+		}
+		if !*dryRun {
+			if err := st.AddCardFinishTo(dest, a.card, a.finish, a.qty); err != nil {
+				return err
+			}
+		}
+		copies += a.qty
+		perBinder[name] += a.qty
+	}
+
+	verb := "Imported"
+	if *dryRun {
+		verb = "Would import"
+	}
+	fmt.Printf("%s %d cards (%s format): %d rows resolved.\n", verb, copies, coll.Format, len(adds))
+	for _, name := range sortedKeys(perBinder) {
+		note := ""
+		if slices.Contains(created, name) {
+			note = " (new binder)"
+		}
+		fmt.Printf("  %d into %s%s\n", perBinder[name], name, note)
+	}
+	if refinished > 0 {
+		fmt.Printf("  %d recorded as foil: the file said otherwise but the printing has no non-foil.\n",
+			refinished)
+	}
+	for _, field := range sortedKeys(coll.Dropped) {
+		fmt.Printf("  Dropped %s on %d rows: hoard does not track it.\n", field, coll.Dropped[field])
+	}
+	if len(unresolved) > 0 {
+		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(unresolved))
+		for _, u := range unresolved {
+			fmt.Printf("    - %s\n", u)
+		}
+	}
+	if *dryRun {
+		fmt.Println("Dry run: nothing was written.")
+		return nil
+	}
+	// Price what Scryfall could not, as deck add does, so the import is worth
+	// what it is worth immediately.
+	return fillPriceGaps(ctx, st)
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
