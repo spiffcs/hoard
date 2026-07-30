@@ -22,7 +22,7 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
 	}
 
 	env := ui.Detect(os.Stdout)
-	res, err := fetchArbitrage(ctx, st, *minValue)
+	res, err := fetchArbitrage(ctx, newFetcher(st), st, *minValue)
 	if err != nil {
 		return err
 	}
@@ -48,11 +48,13 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
 }
 
 // fetchArbitrage gathers today's vendor quotes for everything held and ranks
-// them.
+// them. The fetcher is a parameter because the two callers need different
+// progress wiring: the CLI reports on stderr, the browse TUI must stay silent
+// or the lines land inside its alt-screen frame.
 //
 // The browser cannot do this itself without taking on a network dependency, so
 // main injects it (see browse.WithArbitrage).
-func fetchArbitrage(ctx context.Context, st *store.Store, minValue float64) (arbitrage.Result, error) {
+func fetchArbitrage(ctx context.Context, f *pricing.Fetcher, st *store.Store, minValue float64) (arbitrage.Result, error) {
 	owned, err := st.OwnedByFinish()
 	if err != nil || len(owned) == 0 {
 		return arbitrage.Result{}, err
@@ -61,7 +63,7 @@ func fetchArbitrage(ctx context.Context, st *store.Store, minValue float64) (arb
 	for i, o := range owned {
 		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
 	}
-	quotes, err := newFetcher(st).Quotes(ctx, refs)
+	quotes, err := f.Quotes(ctx, refs)
 	if err != nil {
 		return arbitrage.Result{}, err
 	}

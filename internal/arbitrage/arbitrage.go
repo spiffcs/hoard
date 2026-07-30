@@ -11,6 +11,7 @@ package arbitrage
 import (
 	"cmp"
 	"slices"
+	"strings"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -240,6 +241,20 @@ func top(all []Opportunity, limit int, k Kind) []Opportunity {
 			out = append(out, o)
 		}
 	}
-	slices.SortFunc(out, order)
+	// Stable, fully tiebroken: the ranking keys tie often (two printings a
+	// vendor prices identically), and truncating an unpinned order would make
+	// rows near the limit appear and vanish between runs over the same data.
+	slices.SortStableFunc(out, func(a, b Opportunity) int {
+		if c := order(a, b); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Card.Name, b.Card.Name); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Card.ScryfallID, b.Card.ScryfallID); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Card.Finish, b.Card.Finish)
+	})
 	return out[:min(len(out), limit)]
 }

@@ -224,8 +224,14 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 // 1,500-card catalog it costs about three seconds across the whole run.
 const chunkPause = 150 * time.Millisecond
 
-// rateLimitRetries is how many times a chunk waits out a 429 before giving up.
+// rateLimitRetries is how many times a chunk waits out a 429 or a transient
+// failure before giving up.
 const rateLimitRetries = 3
+
+// transientPause is the base wait after a 5xx or a dropped connection, scaled
+// by attempt. Unlike a 429 there is no Retry-After to honour, so a short ramp
+// is a guess — but a bounded one. A var so tests can shrink the wait.
+var transientPause = 2 * time.Second
 
 // errRateLimited reports a 429 along with how long Scryfall asked us to wait.
 type errRateLimited struct{ retryAfter time.Duration }
@@ -234,28 +240,44 @@ func (e errRateLimited) Error() string {
 	return fmt.Sprintf("scryfall rate-limited the request (retry after %s)", e.retryAfter)
 }
 
-// fetchCollectionChunkRetrying waits out rate limiting rather than abandoning
-// the run.
+// errTransient marks a failure worth another attempt: a 5xx from Scryfall or a
+// transport error. Cancellation is never wrapped — the caller giving up is not
+// a condition to retry through.
+type errTransient struct{ err error }
+
+func (e errTransient) Error() string { return e.err.Error() }
+func (e errTransient) Unwrap() error { return e.err }
+
+// fetchCollectionChunkRetrying waits out rate limiting and transient failures
+// rather than abandoning the run.
 //
-// A refresh of a real collection is twenty-odd requests, and a 429 on any one of
-// them used to discard every card fetched before it — the longer the collection,
-// the more work a single throttle threw away. Scryfall's budget is also wider
-// than one process: a hoard refreshed twice in a few minutes can be limited
-// while well under the per-second rate, so waiting is the correct response
-// rather than an error worth surfacing.
+// A refresh of a real collection is twenty-odd requests and a big CSV import
+// several dozen, and a failure on any one of them discards every card fetched
+// before it — the longer the run, the more work a single 429 or stray 502
+// threw away. Scryfall's budget is also wider than one process: a hoard
+// refreshed twice in a few minutes can be limited while well under the
+// per-second rate, so waiting is the correct response rather than an error
+// worth surfacing.
 func fetchCollectionChunkRetrying(ctx context.Context, ids []Identifier) ([]Card, []Identifier, error) {
 	var lastErr error
 	for attempt := 0; attempt <= rateLimitRetries; attempt++ {
 		cards, missing, err := fetchCollectionChunk(ctx, ids)
 		var limited errRateLimited
-		if !errors.As(err, &limited) {
+		var transient errTransient
+		var wait time.Duration
+		switch {
+		case errors.As(err, &limited):
+			wait = limited.retryAfter
+		case errors.As(err, &transient):
+			wait = transientPause * time.Duration(attempt+1)
+		default:
 			return cards, missing, err
 		}
 		lastErr = err
 		if attempt == rateLimitRetries {
 			break
 		}
-		if err := sleepCtx(ctx, limited.retryAfter); err != nil {
+		if err := sleepCtx(ctx, wait); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -297,13 +319,19 @@ func fetchCollectionChunk(ctx context.Context, ids []Identifier) ([]Card, []Iden
 	}
 	r, err := apiDo(ctx, http.MethodPost, apiBase+"/cards/collection", reqBody, "card collection")
 	if err != nil {
-		return nil, nil, err
+		if ctx.Err() != nil {
+			return nil, nil, err // the caller gave up; do not retry through it
+		}
+		return nil, nil, errTransient{err}
 	}
 	// Checked before decoding: a 429 body is an error object, not a card list,
 	// and its "details" is the shouty warning about network blocks rather than
 	// anything worth showing per attempt.
 	if r.status == http.StatusTooManyRequests {
 		return nil, nil, errRateLimited{retryAfter: retryAfter(r.header, 60*time.Second)}
+	}
+	if r.status >= http.StatusInternalServerError {
+		return nil, nil, errTransient{statusErr(r, "collection")}
 	}
 	if r.status != http.StatusOK {
 		return nil, nil, statusErr(r, "collection")
@@ -415,19 +443,27 @@ func SearchPrints(ctx context.Context, exactName string) ([]Card, error) {
 	query := fmt.Sprintf(`!"%s" game:paper`, exactName)
 	endpoint := apiBase + "/cards/search?unique=prints&order=released&q=" + url.QueryEscape(query)
 
+	// searchMaxPages caps pagination: the next-page URL is server-supplied, and
+	// no card has 20×175 paper printings — a longer walk is a server loop.
+	const searchMaxPages = 20
+
 	var cards []Card
-	for endpoint != "" {
-		page, next, err := searchPage(ctx, endpoint)
+	for page := 0; endpoint != "" && page < searchMaxPages; page++ {
+		found, next, err := searchPage(ctx, endpoint)
 		if err != nil {
 			return nil, err
 		}
-		if page == nil { // 404 no-match on the first page
+		if found == nil { // 404 no-match on the first page
 			return nil, nil
 		}
-		cards = append(cards, page...)
+		cards = append(cards, found...)
 		endpoint = next
 		if next != "" {
-			time.Sleep(100 * time.Millisecond) // rate-limit courtesy between pages
+			// Rate-limit courtesy between pages — cancellable, since this can
+			// run under the TUI where the user may have moved on.
+			if err := sleepCtx(ctx, 100*time.Millisecond); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return cards, nil

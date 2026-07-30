@@ -10,6 +10,7 @@ package pricing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -169,11 +170,19 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	learned := make(map[string]string)
 	for setCode, sids := range bySet {
 		ids, err := mtgjson.SetIdentifiers(ctx, f.cacheDir, setCode)
-		if err != nil {
+		if errors.Is(err, mtgjson.ErrNoSuchSet) {
 			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
 			// rather than abandon every other card.
-			f.say("skipping set %s: %v", setCode, err)
+			f.say("skipping set %s: mtgjson has no such set", setCode)
 			continue
+		}
+		if err != nil {
+			// Anything else — DNS failure, a 503, a cancelled context — is not
+			// an answer about this set. Pressing on would let an outage read as
+			// "these cards resolved to nothing", and FillGaps would then stamp
+			// every gap as checked and stay quiet for a week about prices that
+			// do exist. An honest failure is re-runnable; a wrong answer isn't.
+			return nil, fmt.Errorf("resolving mtgjson ids for set %s: %w", setCode, err)
 		}
 		for _, sid := range sids {
 			if uuid, ok := ids[sid]; ok {

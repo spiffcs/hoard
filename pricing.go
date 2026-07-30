@@ -20,6 +20,13 @@ func newFetcher(st *store.Store) *pricing.Fetcher {
 		WithProgress(func(msg string) { fmt.Fprintf(os.Stderr, "  %s\n", msg) })
 }
 
+// newQuietFetcher is newFetcher without the progress wiring, for the browse
+// TUI: its alt screen owns the terminal, and stderr lines printed mid-fetch
+// land inside the rendered frame.
+func newQuietFetcher(st *store.Store) *pricing.Fetcher {
+	return pricing.New(st, pricing.DefaultCacheDir())
+}
+
 // fillPriceGaps prices what Scryfall could not, and says what happened.
 func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	report, err := newFetcher(st).FillGaps(ctx)

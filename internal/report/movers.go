@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/store"
@@ -94,6 +95,11 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 }
 
 // topMovers filters, sorts and truncates one section's rows.
+//
+// The sort is stable with a full tiebreak, for the same reason store's own
+// listings pin ties: same-delta rows are the common case (every 1-copy card
+// that moved the same cent), and truncating an unpinned order would make rows
+// appear and disappear between two runs over identical data.
 func topMovers(all []store.PriceChange, limit int, keep func(store.PriceChange) bool,
 	order func(a, b store.PriceChange) int) []store.PriceChange {
 	var out []store.PriceChange
@@ -102,7 +108,18 @@ func topMovers(all []store.PriceChange, limit int, keep func(store.PriceChange) 
 			out = append(out, c)
 		}
 	}
-	slices.SortFunc(out, order)
+	slices.SortStableFunc(out, func(a, b store.PriceChange) int {
+		if c := order(a, b); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.ScryfallID, b.ScryfallID); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Finish, b.Finish)
+	})
 	return out[:min(len(out), limit)]
 }
 

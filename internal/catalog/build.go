@@ -36,10 +36,22 @@ const bulkType = "default_cards"
 // a build or two of current while making the listing call effectively free.
 const checkInterval = 6 * time.Hour
 
-// httpClient carries no timeout: the bundle is 77 MB and any fixed deadline is
-// either too tight for a slow link or too slack to be worth setting. Every call
-// takes a context, so cancellation belongs to the caller.
-var httpClient = &http.Client{}
+// httpClient carries no whole-request timeout: the bundle is 77 MB and any
+// fixed deadline is either too tight for a slow link or too slack to be worth
+// setting. The transport does bound the header wait, so a server that accepts
+// the connection and then goes silent fails in seconds — which matters because
+// CheckStatus runs at the start of every update-prices, where a hang would
+// block the command before it has done anything at all.
+var httpClient = &http.Client{Transport: func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 30 * time.Second
+	return t
+}()}
+
+// listingTimeout bounds the whole bulk-data index fetch. The listing is a few
+// kilobytes; unlike the bundle it can afford a hard deadline, and CheckStatus
+// promises "a failed check is silence" — a promise a hang would break.
+const listingTimeout = 10 * time.Second
 
 // Status describes the local catalog and, when it was worth asking, how it
 // compares to what Scryfall publishes.
@@ -122,6 +134,8 @@ func (c *Catalog) listing(ctx context.Context) (bundle, error) {
 func fetchListing(ctx context.Context) (bundle, error) {
 	var zero bundle
 
+	ctx, cancel := context.WithTimeout(ctx, listingTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listingURL, nil)
 	if err != nil {
 		return zero, err

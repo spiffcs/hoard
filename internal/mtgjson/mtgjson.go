@@ -53,12 +53,21 @@ type Price struct {
 	FoilSource string
 }
 
-// httpClient is shared across requests. It carries no timeout of its own: the
-// files here range from a sub-megabyte set file to the ~150 MB price archive,
-// and any single deadline is either too tight for the archive on a slow link or
-// too slack to be worth setting for the rest. Every call takes a context, so
-// cancellation belongs to the caller, which knows what it asked for.
-var httpClient = &http.Client{}
+// httpClient is shared across requests. It carries no whole-request timeout:
+// the files here range from a sub-megabyte set file to the ~150 MB price
+// archive, and any single deadline is either too tight for the archive on a
+// slow link or too slack to be worth setting for the rest. The transport does
+// bound the header wait, so a server that accepts the connection and then goes
+// silent fails in seconds instead of hanging a command that has printed nothing.
+var httpClient = &http.Client{Transport: headerBoundedTransport()}
+
+// headerBoundedTransport is the default transport with a response-header
+// deadline — the one timeout that is safe for arbitrarily large bodies.
+func headerBoundedTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 30 * time.Second
+	return t
+}
 
 // today is a var so tests can pin the cache key.
 var today = func() string { return time.Now().Format("2006-01-02") }
@@ -76,7 +85,16 @@ func fetch(ctx context.Context, cacheDir, name string) (io.ReadCloser, error) {
 	if cacheDir != "" {
 		cachePath = filepath.Join(cacheDir, today()+"-"+name)
 		if f, err := os.Open(cachePath); err == nil {
-			return f, nil
+			if gzipMagic(f) {
+				return f, nil
+			}
+			// A cached entry that is not gzip is a poisoned file — a captive
+			// portal or maintenance page that arrived with a 200 on some
+			// earlier run. Served as-is it would wedge every price command
+			// until midnight with "gzip: invalid header"; deleted, this run
+			// simply downloads again.
+			f.Close()
+			os.Remove(cachePath)
 		}
 	}
 
@@ -122,11 +140,35 @@ func fetch(ctx context.Context, cacheDir, name string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	tmp.Close()
+	// Never cache what isn't gzip: a 200 carrying an interstitial page would
+	// otherwise become today's bundle and every later command would fail on it.
+	if bad, err := os.Open(tmp.Name()); err == nil {
+		ok := gzipMagic(bad)
+		bad.Close()
+		if !ok {
+			os.Remove(tmp.Name())
+			return nil, fmt.Errorf("mtgjson %s: server sent a non-gzip response (an outage page?); try again shortly", name)
+		}
+	}
 	if err := os.Rename(tmp.Name(), cachePath); err != nil {
 		os.Remove(tmp.Name())
 		return nil, err
 	}
 	return os.Open(cachePath)
+}
+
+// gzipMagic reports whether f begins with the gzip magic bytes, leaving the
+// offset back at the start either way. Every file this package fetches is
+// gzip, so anything else is a wrong answer no matter what the status code said.
+func gzipMagic(f *os.File) bool {
+	var hdr [2]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+		return false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	return hdr[0] == 0x1f && hdr[1] == 0x8b
 }
 
 // pruneCache deletes entries from previous days. Without it the cache grows by

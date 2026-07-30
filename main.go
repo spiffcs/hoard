@@ -277,7 +277,7 @@ func cmdBrowse(ctx context.Context, st *store.Store) error {
 	for {
 		again, err := browse.Run(ctx, st,
 			browse.WithArbitrage(func(ctx context.Context) (arbitrage.Result, error) {
-				return fetchArbitrage(ctx, st, arbitrageMin)
+				return fetchArbitrage(ctx, newQuietFetcher(st), st, arbitrageMin)
 			}))
 		if err != nil || !again {
 			return err
