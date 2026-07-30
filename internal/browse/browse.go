@@ -24,8 +24,8 @@ import (
 // a deck removal: RemoveContainer cascades, so the deck is rebuilt from what
 // was read before the delete.
 type Editor interface {
-	SetHoldingQuantity(scryfallID, finish string, qty int) (int, error)
-	RemoveFromCollection(scryfallID string) ([]store.Holding, error)
+	SetHoldingQuantityIn(containerID int64, scryfallID, finish string, qty int) (int, error)
+	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)
 	RestoreHoldings(scryfallID string, holdings []store.Holding) error
 	RemoveContainer(id int64) (int64, error)
 	UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
@@ -35,10 +35,11 @@ type Editor interface {
 type Store interface {
 	Editor
 
-	// Filling the two panes.
-	CollectionTotals() (store.CollectionTotals, error)
+	// Filling the two panes. Binders come back default-first with their own
+	// totals, so the left pane needs no synthesized rows.
+	ListBinders() ([]store.DeckSummary, error)
 	ListDecks() ([]store.DeckSummary, error)
-	ListCollectionByFinish() ([]store.CollectionRow, error)
+	BinderByFinish(containerID int64) ([]store.CollectionRow, error)
 	DeckEntries(containerID int64) ([]store.EntryView, error)
 
 	// The half of a query that is about the printing rather than the holding.

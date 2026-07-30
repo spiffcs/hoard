@@ -46,9 +46,11 @@ const (
 // are internal and not worth a migration. containerLabel substitutes this one.
 const LooseName = "Binder"
 
-// containerLabel is a container's display name: the deck's own name, or
-// LooseName for the singleton. It assumes the containers table is aliased `ct`.
-const containerLabel = `CASE WHEN ct.kind = '` + KindCollection +
+// containerLabel is a container's display name: its own name, or LooseName for
+// the default binder. Keyed on the sentinel source_id rather than the kind,
+// because user-created binders share the kind and keep their own names. It
+// assumes the containers table is aliased `ct`.
+const containerLabel = `CASE WHEN ct.source_id = '` + collectionSourceID +
 	`' THEN '` + LooseName + `' ELSE ct.name END`
 
 // collectionSourceID is the fixed source_id of the singleton loose collection,

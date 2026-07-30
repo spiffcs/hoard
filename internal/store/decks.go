@@ -58,9 +58,12 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 	return id, tx.Commit()
 }
 
-const deckSelect = `
-SELECT id, kind, name, source, COALESCE(source_id,''), COALESCE(source_url,''), COALESCE(format,'')
-FROM containers WHERE kind=?`
+// containerSelect reads one container with its display name resolved, so the
+// default binder answers to "Binder" rather than its stored row name.
+const containerSelect = `
+SELECT ct.id, ct.kind, ` + containerLabel + `, ct.source,
+       COALESCE(ct.source_id,''), COALESCE(ct.source_url,''), COALESCE(ct.format,'')
+FROM containers ct WHERE ct.kind=?`
 
 // ListDecks returns all decks with rolled-up card counts and value.
 func (s *Store) ListDecks() ([]DeckSummary, error) {
@@ -111,18 +114,26 @@ func scanContainer(sc interface{ Scan(...any) error }) (*Container, error) {
 // lists them rather than picking one, since silently acting on the wrong deck is
 // the worst outcome for `deck remove`.
 func (s *Store) DeckByRef(ref string) (*Container, error) {
+	return s.containerByRef(KindDeck, "deck", ref)
+}
+
+// containerByRef is the id / exact-name / unique-fragment resolution shared by
+// decks and binders. Names are matched on the display label, so the default
+// binder answers to "Binder". noun is what the errors call the thing.
+func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 	// A bare integer is an id, never a name fragment.
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-		c, err := scanContainer(s.db.QueryRow(deckSelect+` AND id=?`, KindDeck, id))
+		c, err := scanContainer(s.db.QueryRow(containerSelect+` AND ct.id=?`, kind, id))
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("no deck matching %q", ref)
+			return nil, fmt.Errorf("no %s matching %q", noun, ref)
 		}
 		return c, err
 	}
 
-	// An exact name wins outright, so a deck whose whole name is a fragment of
-	// another's stays reachable.
-	c, err := scanContainer(s.db.QueryRow(deckSelect+` AND name=? COLLATE NOCASE`, KindDeck, ref))
+	// An exact name wins outright, so a name that is a fragment of another's
+	// stays reachable.
+	c, err := scanContainer(s.db.QueryRow(
+		containerSelect+` AND `+containerLabel+`=? COLLATE NOCASE`, kind, ref))
 	if err == nil {
 		return c, nil
 	}
@@ -130,10 +141,11 @@ func (s *Store) DeckByRef(ref string) (*Container, error) {
 		return nil, err
 	}
 
-	// Otherwise accept a fragment, as long as it picks out exactly one deck.
+	// Otherwise accept a fragment, as long as it picks out exactly one.
 	// LIKE is already case-insensitive for ASCII in SQLite.
-	rows, err := s.db.Query(deckSelect+` AND name LIKE ? ESCAPE '\' ORDER BY name`,
-		KindDeck, "%"+escapeLike(ref)+"%")
+	rows, err := s.db.Query(
+		containerSelect+` AND `+containerLabel+` LIKE ? ESCAPE '\' ORDER BY ct.name`,
+		kind, "%"+escapeLike(ref)+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -153,12 +165,12 @@ func (s *Store) DeckByRef(ref string) (*Container, error) {
 
 	switch len(matches) {
 	case 0:
-		return nil, fmt.Errorf("no deck matching %q", ref)
+		return nil, fmt.Errorf("no %s matching %q", noun, ref)
 	case 1:
 		return matches[0], nil
 	default:
 		var b strings.Builder
-		fmt.Fprintf(&b, "%q matches %d decks:", ref, len(matches))
+		fmt.Fprintf(&b, "%q matches %d %ss:", ref, len(matches), noun)
 		for _, m := range matches[:min(len(matches), 5)] {
 			fmt.Fprintf(&b, "\n  %s", m.Name)
 		}

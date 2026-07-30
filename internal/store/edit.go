@@ -16,13 +16,19 @@ import (
 // "not held" stay one state. The previous quantity comes back so a caller can
 // offer undo without a second query.
 func (s *Store) SetHoldingQuantity(scryfallID, finish string, qty int) (previous int, err error) {
-	if err := validFinish(finish); err != nil {
-		return 0, err
-	}
 	cid, err := s.collectionID()
 	if err != nil {
 		return 0, err
 	}
+	return s.SetHoldingQuantityIn(cid, scryfallID, finish, qty)
+}
+
+// SetHoldingQuantityIn is SetHoldingQuantity against a chosen binder.
+func (s *Store) SetHoldingQuantityIn(containerID int64, scryfallID, finish string, qty int) (previous int, err error) {
+	if err := validFinish(finish); err != nil {
+		return 0, err
+	}
+	cid := containerID
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -74,6 +80,12 @@ func (s *Store) RemoveFromCollection(scryfallID string) ([]Holding, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.RemoveFromBinder(cid, scryfallID)
+}
+
+// RemoveFromBinder is RemoveFromCollection against a chosen binder.
+func (s *Store) RemoveFromBinder(containerID int64, scryfallID string) ([]Holding, error) {
+	cid := containerID
 
 	tx, err := s.db.Begin()
 	if err != nil {

@@ -44,6 +44,12 @@ Collection commands:
   arbitrage [--min N] [--limit N]                  Where vendors disagree, as three tables
   catalog [status|update]                          The local copy of Scryfall's card data
 
+Binder commands:
+  binder list                                      Your binders, with counts and value
+  binder new <name>                                Create a named binder
+  binder rename <binder> <new-name>                Rename a binder
+  binder rm <binder>                               Remove an empty binder
+
 Deck commands:
   deck add <archidekt-url>                         Import/refresh a deck from a link
   deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
@@ -127,6 +133,8 @@ func run(args []string) error {
 		return cmdArbitrage(ctx, st, cmdArgs)
 	case "catalog":
 		return cmdCatalog(ctx, cmdArgs)
+	case "binder":
+		return cmdBinder(st, cmdArgs)
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:

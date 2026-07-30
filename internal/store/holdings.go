@@ -21,15 +21,22 @@ func validFinish(finish string) error {
 }
 
 // AddCardFinish ensures the card is in the catalog and adds qty copies of the
-// given finish ("normal", "foil", or "etched") to the loose collection.
+// given finish ("normal", "foil", or "etched") to the default binder.
 func (s *Store) AddCardFinish(c scryfall.Card, finish string, qty int) error {
-	if err := validFinish(finish); err != nil {
-		return err
-	}
 	cid, err := s.collectionID()
 	if err != nil {
 		return err
 	}
+	return s.AddCardFinishTo(cid, c, finish, qty)
+}
+
+// AddCardFinishTo is AddCardFinish into a chosen container — a named binder,
+// or a deck's mainboard.
+func (s *Store) AddCardFinishTo(containerID int64, c scryfall.Card, finish string, qty int) error {
+	if err := validFinish(finish); err != nil {
+		return err
+	}
+	cid := containerID
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -66,18 +73,24 @@ func (r CollectionRow) Price() *float64 {
 	return r.PriceUSD
 }
 
-// ListCollectionByFinish returns the loose collection one row per finish held,
+// ListCollectionByFinish returns the default binder one row per finish held,
 // matching how deck show and unpriced present cards.
-//
-// One row per finish rather than a row per printing pivoted into normal/foil
-// columns: the pivot needs four columns to say what two can, since it shows a
-// normal price and a foil price whether or not either finish is owned. Splitting
-// by finish also keeps etched distinct, which a pivot folds into foil.
 func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 	cid, err := s.collectionID()
 	if err != nil {
 		return nil, err
 	}
+	return s.BinderByFinish(cid)
+}
+
+// BinderByFinish returns one binder's holdings, one row per finish held.
+//
+// One row per finish rather than a row per printing pivoted into normal/foil
+// columns: the pivot needs four columns to say what two can, since it shows a
+// normal price and a foil price whether or not either finish is owned. Splitting
+// by finish also keeps etched distinct, which a pivot folds into foil.
+func (s *Store) BinderByFinish(containerID int64) ([]CollectionRow, error) {
+	cid := containerID
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
        e.finish,
@@ -160,24 +173,26 @@ type CollectionTotals struct {
 }
 
 // CollectionTotals returns the loose collection's distinct printings, total
-// copies, and market value in one pass.
+// copies, and market value in one pass — summed across every binder, so the
+// summary's BINDER line means "everything not in a deck" however the cards are
+// organised.
 //
 // Copies are counted with the same COALESCE(SUM(quantity), 0) as ListDecks, and
 // valued with the shared entryValue fragment, so the collection and the decks
 // stay directly comparable once they're summed into one total.
 func (s *Store) CollectionTotals() (CollectionTotals, error) {
-	cid, err := s.collectionID()
-	if err != nil {
+	if _, err := s.collectionID(); err != nil {
 		return CollectionTotals{}, err
 	}
 	var t CollectionTotals
-	err = s.db.QueryRow(`
+	err := s.db.QueryRow(`
 SELECT COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
        COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id
 `+altJoinEntries+`
-WHERE e.container_id = ?`, cid).Scan(&t.DistinctCards, &t.TotalCopies, &t.Value)
+WHERE ct.kind = ?`, KindCollection).Scan(&t.DistinctCards, &t.TotalCopies, &t.Value)
 	if err != nil {
 		return CollectionTotals{}, fmt.Errorf("collection totals: %w", err)
 	}

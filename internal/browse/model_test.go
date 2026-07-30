@@ -79,11 +79,26 @@ func (f *fakeStore) EnrichedCount() (int, int, error) {
 	return f.enriched, len(f.collection), f.err
 }
 
-func (f *fakeStore) CollectionTotals() (store.CollectionTotals, error) {
-	return f.totals, f.err
+// The fake's single binder carries id defaultBinderID, mirroring the real
+// store where the default binder is an ordinary row with an id.
+const defaultBinderID = 1
+
+func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	b := store.DeckSummary{
+		DistinctCards: f.totals.DistinctCards,
+		TotalCopies:   f.totals.TotalCopies,
+		Value:         f.totals.Value,
+	}
+	b.ID = defaultBinderID
+	b.Name = store.LooseName
+	b.Kind = store.KindCollection
+	return []store.DeckSummary{b}, nil
 }
 func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) { return f.decks, f.err }
-func (f *fakeStore) ListCollectionByFinish() ([]store.CollectionRow, error) {
+func (f *fakeStore) BinderByFinish(int64) ([]store.CollectionRow, error) {
 	return f.collection, f.err
 }
 func (f *fakeStore) DeckEntries(id int64) ([]store.EntryView, error) {
@@ -97,7 +112,7 @@ func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { re
 
 // SetHoldingQuantity mutates the fixture the way the store mutates the
 // database, so an edit followed by an undo is observable end to end.
-func (f *fakeStore) SetHoldingQuantity(id, finish string, qty int) (int, error) {
+func (f *fakeStore) SetHoldingQuantityIn(_ int64, id, finish string, qty int) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -127,7 +142,7 @@ func (f *fakeStore) SetHoldingQuantity(id, finish string, qty int) (int, error) 
 	return previous, nil
 }
 
-func (f *fakeStore) RemoveFromCollection(id string) ([]store.Holding, error) {
+func (f *fakeStore) RemoveFromBinder(_ int64, id string) ([]store.Holding, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -1478,4 +1493,41 @@ func TestStatusLineSilentWithoutEstimates(t *testing.T) {
 	if got := m.statusLine(); strings.Contains(got, "estimated") {
 		t.Errorf("status = %q, want no estimate note", got)
 	}
+}
+
+// With several binders the left pane lists each as its own editable row,
+// default first — none of the fake-row shortcuts the singleton era had.
+func TestMultipleBindersEachGetARow(t *testing.T) {
+	st := testStore()
+	m := newTestModel(t, &multiBinderStore{fakeStore: st})
+	view := m.View()
+	for _, want := range []string{store.LooseName, "Trade Stock"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("left pane is missing binder %q:\n%s", want, view)
+		}
+	}
+	// The second binder's row is selectable and editable like the first.
+	m = key(m, "down")
+	sel := m.selectedContainer()
+	if sel == nil || sel.Name != "Trade Stock" {
+		t.Fatalf("selected = %+v, want the Trade Stock binder", sel)
+	}
+	if ok, why := m.editable(); !ok {
+		t.Errorf("a named binder is not editable: %s", why)
+	}
+}
+
+// multiBinderStore adds a second binder to the fake.
+type multiBinderStore struct{ *fakeStore }
+
+func (m *multiBinderStore) ListBinders() ([]store.DeckSummary, error) {
+	bs, err := m.fakeStore.ListBinders()
+	if err != nil {
+		return nil, err
+	}
+	b := store.DeckSummary{TotalCopies: 2, Value: 20}
+	b.ID = 42
+	b.Name = "Trade Stock"
+	b.Kind = store.KindCollection
+	return append(bs, b), nil
 }

@@ -65,7 +65,8 @@ func (m *Model) adjustQuantity(delta int) {
 	if want == c.Quantity {
 		return
 	}
-	previous, err := m.store.SetHoldingQuantity(c.ScryfallID, c.Finish, want)
+	binderID := m.selectedContainer().ID
+	previous, err := m.store.SetHoldingQuantityIn(binderID, c.ScryfallID, c.Finish, want)
 	if err != nil {
 		m.setError(err)
 		return
@@ -75,7 +76,7 @@ func (m *Model) adjustQuantity(delta int) {
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantity(id, finish, previous)
+			_, err := st.SetHoldingQuantityIn(binderID, id, finish, previous)
 			return err
 		},
 	})
@@ -102,7 +103,7 @@ func (m *Model) removeCard() {
 		return
 	}
 
-	removed, err := m.store.RemoveFromCollection(c.ScryfallID)
+	removed, err := m.store.RemoveFromBinder(m.selectedContainer().ID, c.ScryfallID)
 	if err != nil {
 		m.setError(err)
 		return

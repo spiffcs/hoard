@@ -199,24 +199,25 @@ func New(st Store, opts ...Option) (Model, error) {
 	return m, nil
 }
 
-// loadContainers reads the left pane: the loose collection, then decks by value.
+// loadContainers reads the left pane: the binders (default first), then decks
+// by value.
 func (m *Model) loadContainers() error {
-	totals, err := m.store.CollectionTotals()
+	binders, err := m.store.ListBinders()
 	if err != nil {
-		return fmt.Errorf("reading collection totals: %w", err)
+		return fmt.Errorf("reading binders: %w", err)
 	}
 	decks, err := m.store.ListDecks()
 	if err != nil {
 		return fmt.Errorf("reading decks: %w", err)
 	}
 
-	out := []container{{
-		ID:     0,
-		Name:   store.LooseName,
-		Kind:   store.KindCollection,
-		Copies: totals.TotalCopies,
-		Value:  totals.Value,
-	}}
+	out := make([]container, 0, len(binders)+len(decks))
+	for _, b := range binders {
+		out = append(out, container{
+			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
+			Copies: b.TotalCopies, Value: b.Value,
+		})
+	}
 	for _, d := range store.DecksByValue(decks) {
 		out = append(out, container{
 			ID: d.ID, Name: d.Name, Kind: store.KindDeck,
@@ -242,9 +243,9 @@ func (m *Model) loadCards() error {
 
 	var out []card
 	if sel.Kind == store.KindCollection {
-		rows, err := m.store.ListCollectionByFinish()
+		rows, err := m.store.BinderByFinish(sel.ID)
 		if err != nil {
-			return fmt.Errorf("reading the collection: %w", err)
+			return fmt.Errorf("reading binder %q: %w", sel.Name, err)
 		}
 		for _, r := range store.CollectionByValue(rows) {
 			out = append(out, card{
