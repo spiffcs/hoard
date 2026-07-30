@@ -54,9 +54,12 @@ type Price struct {
 	FoilSource string
 }
 
-// httpClient is shared across requests; the bulk price file is large enough that
-// the default 30s used elsewhere is too tight.
-var httpClient = &http.Client{Timeout: 3 * time.Minute}
+// httpClient is shared across requests. It carries no timeout of its own: the
+// files here range from a sub-megabyte set file to the ~150 MB price archive,
+// and any single deadline is either too tight for the archive on a slow link or
+// too slack to be worth setting for the rest. Every call takes a context, so
+// cancellation belongs to the caller, which knows what it asked for.
+var httpClient = &http.Client{}
 
 // CacheDir, when set, keeps downloaded files so repeated runs on the same day
 // don't re-fetch them. This matters because a card no source can price stays a
@@ -239,7 +242,7 @@ const (
 // still excluded, since a euro price cannot be compared against dollar ones.
 func TodayQuotes(ctx context.Context, want map[string]bool) (map[string][]Quote, error) {
 	out := map[string][]Quote{}
-	err := streamPrices(ctx, want, func(uuid string, rec priceRecord) {
+	err := streamPrices(ctx, todayFile, want, func(uuid string, rec priceRecord) {
 		var qs []Quote
 		for _, name := range providerOrder {
 			v, ok := rec.Paper[name]
@@ -268,16 +271,25 @@ func TodayQuotes(ctx context.Context, want map[string]bool) (map[string][]Quote,
 	return out, nil
 }
 
-// streamPrices walks AllPricesToday, handing each wanted record to visit.
+// Price archives. Today's file holds one observation per card; the full one
+// holds the last 90 days, and is thirty times the size for it.
+const (
+	todayFile   = "AllPricesToday.json.gz"
+	archiveFile = "AllPrices.json.gz"
+)
+
+// streamPrices walks one of the price archives, handing each wanted record to
+// visit.
 //
-// The document is ~50 MB decoded and covers every card in Magic, so records not
-// asked for are skipped without being built. Scan cost is the same whether one
-// card is wanted or every card is, which is why callers need not keep want small.
-func streamPrices(ctx context.Context, want map[string]bool, visit func(string, priceRecord)) error {
+// Even today's document is ~50 MB decoded and covers every card in Magic, so
+// records not asked for are skipped without being built. Scan cost is the same
+// whether one card is wanted or every card is, which is why callers need not
+// keep want small.
+func streamPrices(ctx context.Context, file string, want map[string]bool, visit func(string, priceRecord)) error {
 	if len(want) == 0 {
 		return nil
 	}
-	body, err := fetch(ctx, "AllPricesToday.json.gz")
+	body, err := fetch(ctx, file)
 	if err != nil {
 		return fmt.Errorf("fetching prices: %w", err)
 	}
@@ -321,7 +333,7 @@ func streamPrices(ctx context.Context, want map[string]bool, visit func(string, 
 // whole. Only UUIDs asked for are retained.
 func TodayPrices(ctx context.Context, want map[string]bool) (map[string]Price, error) {
 	out := make(map[string]Price, len(want))
-	err := streamPrices(ctx, want, func(uuid string, rec priceRecord) {
+	err := streamPrices(ctx, todayFile, want, func(uuid string, rec priceRecord) {
 		if p, ok := bestUSD(uuid, rec); ok {
 			out[uuid] = p
 		}
@@ -331,6 +343,59 @@ func TodayPrices(ctx context.Context, want map[string]bool) (map[string]Price, e
 	}
 	if len(out) == 0 {
 		return nil, nil
+	}
+	return out, nil
+}
+
+// Observation is one card's price for one finish on one day.
+//
+// Source travels with the price rather than being assumed by the caller: a
+// stored observation has to say which vendor quoted it, and having the vendor
+// named in two packages is how the two drift apart.
+type Observation struct {
+	Date   string // 'YYYY-MM-DD'
+	Finish string // normal | foil
+	Price  float64
+	Source string
+}
+
+// historyProvider is the only vendor whose back catalogue is read.
+//
+// Scryfall's USD prices come from TCGplayer alone, so this series is the one
+// that is continuous with the prices hoard already holds. Splicing Card Kingdom
+// or Manapool onto the front of a Scryfall series would put a vendor's markup at
+// the join and read as a real price movement on the day the two meet.
+const historyProvider = "tcgplayer"
+
+// PriceHistory returns every dated USD retail observation MTGJSON holds for the
+// requested UUIDs — about 90 days' worth, both finishes.
+//
+// This reads AllPrices rather than AllPricesToday: ~150 MB on the wire against
+// 5 MB, and thirty times the rows, which is why nothing calls it on a schedule.
+// Observations come back in no particular order; callers that care sort them.
+func PriceHistory(ctx context.Context, want map[string]bool) (map[string][]Observation, error) {
+	out := make(map[string][]Observation, len(want))
+	err := streamPrices(ctx, archiveFile, want, func(uuid string, rec priceRecord) {
+		v, ok := rec.Paper[historyProvider]
+		if !ok || v.Currency != "USD" {
+			return
+		}
+		var obs []Observation
+		for finish, byDate := range map[string]map[string]float64{
+			"normal": v.Retail.Normal, "foil": v.Retail.Foil,
+		} {
+			for date, price := range byDate {
+				obs = append(obs, Observation{
+					Date: date, Finish: finish, Price: price, Source: historyProvider,
+				})
+			}
+		}
+		if len(obs) > 0 {
+			out[uuid] = obs
+		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

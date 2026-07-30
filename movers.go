@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cphillips918/hoard/internal/mtgjson"
 	"github.com/cphillips918/hoard/internal/store"
 	"github.com/cphillips918/hoard/internal/ui"
 )
@@ -63,6 +65,133 @@ func cmdMovers(st *store.Store, args []string) error {
 			"Prices have only been recorded since %s.", t.Local().Format("2 Jan 2006"))))
 	}
 	return nil
+}
+
+// cmdBackfillPrices loads the prices MTGJSON kept while hoard was not looking.
+//
+// Price history only starts when the table that holds it does, so a fresh hoard
+// answers "what moved in the last month" with a day of data and a footer
+// apologising for it. MTGJSON publishes the last ninety days per card, which is
+// enough to make the question answerable immediately instead of in March.
+//
+// This is a one-off by design, and separate from update-prices for that reason:
+// the archive is ~150 MB against the 5 MB of today's file, and the download
+// cache is pruned nightly, so folding it into the routine refresh would risk
+// re-fetching the whole thing on any day someone updates prices.
+//
+// Only what is held gets backfilled. History for the rest of the catalog is
+// worth keeping once observed (a card can leave the collection and come back),
+// but it is not worth 150 MB and a wait to reconstruct for cards nobody owns.
+func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("backfill-prices", flag.ContinueOnError)
+	if _, err := parsePositionals(fs, args); err != nil {
+		return err
+	}
+
+	env := ui.Detect(os.Stdout)
+	owned, err := st.OwnedByFinish()
+	if err != nil {
+		return err
+	}
+	if len(owned) == 0 {
+		fmt.Println(env.Dim()("Nothing owned yet."))
+		return nil
+	}
+	_, oldest, err := st.PriceHistoryDepth()
+	if err != nil {
+		return err
+	}
+
+	need := make([]cardRef, 0, len(owned))
+	for _, o := range owned {
+		if o.MTGJSONUUID == "" {
+			need = append(need, cardRef{ScryfallID: o.ScryfallID, SetCode: o.SetCode})
+		}
+	}
+	uuids, err := resolveMTGJSONIDs(ctx, st, need)
+	if err != nil {
+		return err
+	}
+
+	// Owned rows are per finish, so the same printing appears twice; the import
+	// is per printing.
+	printings := map[string]bool{}
+	want := map[string]bool{}
+	sidByUUID := map[string]string{}
+	for _, o := range owned {
+		printings[o.ScryfallID] = true
+		if u := uuidFor(o, uuids); u != "" {
+			want[u] = true
+			sidByUUID[u] = o.ScryfallID
+		}
+	}
+
+	fmt.Printf("Fetching 90 days of prices for %s printings from MTGJSON (~150 MB)...\n",
+		ui.Count(len(printings)))
+	mtgjson.CacheDir = priceCacheDir()
+	hist, err := mtgjson.PriceHistory(ctx, want)
+	if err != nil {
+		return fmt.Errorf("mtgjson price history: %w", err)
+	}
+
+	byCard := make(map[string][]mtgjson.Observation, len(hist))
+	for uuid, obs := range hist {
+		byCard[sidByUUID[uuid]] = obs
+	}
+	inserted, cards, err := st.BackfillPrices(byCard, oldest)
+	if err != nil {
+		return err
+	}
+
+	printBackfill(env, backfillResult{
+		printings: len(printings), unmapped: len(printings) - len(want),
+		unquoted: len(want) - len(hist), inserted: inserted, cards: cards,
+		hadHistorySince: oldest,
+	})
+	return nil
+}
+
+// backfillResult is what one import did, and what it could not reach.
+type backfillResult struct {
+	printings, unmapped, unquoted, inserted, cards int
+	hadHistorySince                                string
+}
+
+// printBackfill reports the import, including what it missed.
+//
+// The misses are not filler. Movers joins a card against its own baseline, so a
+// printing with no backfilled history simply stops appearing in any window that
+// predates hoard — the list quietly gets shorter rather than visibly incomplete.
+// Saying how many were skipped is the only place that becomes visible.
+func printBackfill(env ui.Env, r backfillResult) {
+	dim := env.Dim()
+	if r.inserted == 0 {
+		if r.hadHistorySince != "" {
+			if t, err := time.Parse(time.RFC3339, r.hadHistorySince); err == nil {
+				fmt.Println(dim(fmt.Sprintf(
+					"Nothing to backfill: prices are already recorded from %s.",
+					t.Local().Format("2 Jan 2006"))))
+				return
+			}
+		}
+		fmt.Println(dim("MTGJSON had no earlier prices for anything you hold."))
+		return
+	}
+
+	fmt.Printf("Backfilled %s observations across %s printings.\n",
+		ui.Count(r.inserted), ui.Count(r.cards))
+	if r.unmapped > 0 {
+		fmt.Println(dim(fmt.Sprintf(
+			"  %s printings have no MTGJSON id and were skipped.", ui.Count(r.unmapped))))
+	}
+	if r.unquoted > 0 {
+		fmt.Println(dim(fmt.Sprintf(
+			"  %s have no TCGplayer price history — the same gap 'unpriced' reports.",
+			ui.Count(r.unquoted))))
+	}
+	fmt.Println(dim("Prices come from TCGplayer, the source Scryfall itself quotes."))
+	fmt.Println()
+	fmt.Println("Try: hoard movers --since 30d")
 }
 
 // parseWindow reads a lookback like 7d, 2w or 48h.

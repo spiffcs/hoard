@@ -72,6 +72,9 @@ hoard update-prices
 # What has risen and fallen since a month ago
 hoard movers --since 30d
 
+# One-off: load the last 90 days of prices from MTGJSON
+hoard backfill-prices
+
 # Cards counting as $0.00 in your totals, and where they are held
 hoard unpriced
 
@@ -126,6 +129,35 @@ Only prices that actually changed are stored, so the table stays small — most 
 a collection does not move on a given day. A card added between refreshes gets
 its first observation on the next one, as a baseline rather than as a rise from
 nothing.
+
+### Starting with history you don't have yet
+
+History begins the first time you run `update-prices`, so a new hoard answers
+`movers --since 30d` with a day of data and a footer apologising for it. MTGJSON
+publishes the last ninety days, which closes that gap in one download:
+
+```sh
+hoard backfill-prices
+```
+
+Run it once. It is deliberately not part of `update-prices`: the ninety-day
+archive is around 150 MB against the 5 MB of the daily file, and the download
+cache is cleared nightly, so folding it in would risk re-fetching the lot on any
+day you refresh prices. Running it again is harmless and inserts nothing — the
+import stops at the day your own history begins.
+
+Backfilled prices come from **TCGplayer**, which is the source Scryfall's USD
+figures come from, so the imported series joins up with your own instead of
+stepping at the seam. Where a real observation and an imported one land on the
+same day, the real one stands.
+
+Two things it cannot reach: printings MTGJSON has no id for, and printings
+TCGplayer never priced — the same gap `unpriced` reports. Those simply have no
+history before you started recording, and the command says how many there were,
+because `movers` would otherwise just quietly list fewer cards.
+
+Ninety days is the ceiling. `--since 6m` will still tell you the history only
+goes back so far.
 
 ### When Scryfall has no price
 

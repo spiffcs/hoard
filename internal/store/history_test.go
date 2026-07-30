@@ -2,8 +2,10 @@ package store
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/cphillips918/hoard/internal/mtgjson"
 	"github.com/cphillips918/hoard/internal/scryfall"
 )
 
@@ -439,5 +441,284 @@ func TestPriceHistoryDepth(t *testing.T) {
 	}
 	if n != 2 || oldest == "" {
 		t.Errorf("depth = %d since %q, want 2 observations and a timestamp", n, oldest)
+	}
+}
+
+// obs builds one imported observation. Source is fixed: only TCGplayer's series
+// is imported, because it is the one Scryfall's own prices come from.
+func obs(date, finish string, price float64) mtgjson.Observation {
+	return mtgjson.Observation{Date: date, Finish: finish, Price: price, Source: "tcgplayer"}
+}
+
+// priceAt reads one stored observation, so a test can assert that a row survived
+// a collision rather than merely that some row exists.
+func priceAt(t *testing.T, s *Store, id, finish, asOf string) (float64, string) {
+	t.Helper()
+	var price float64
+	var source string
+	err := s.db.QueryRow(`SELECT price_usd, source FROM card_price_history
+	    WHERE scryfall_id = ? AND finish = ? AND as_of = ?`, id, finish, asOf).
+		Scan(&price, &source)
+	if err != nil {
+		t.Fatalf("reading %s/%s at %s: %v", id, finish, asOf, err)
+	}
+	return price, source
+}
+
+// MTGJSON quotes a price every day whether or not it changed. Storing all ninety
+// would add two orders of magnitude more rows than the collection has cards, and
+// say nothing a repeat of the previous number does not already say.
+func TestBackfillPricesStoresOnlyTheDaysThatMoved(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	inserted, cards, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			obs("2026-07-01", "normal", 5.00),
+			obs("2026-07-02", "normal", 5.00),
+			obs("2026-07-03", "normal", 7.00),
+			obs("2026-07-04", "normal", 7.00),
+			obs("2026-07-05", "normal", 6.00),
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	// The 1st as baseline, then the two days it actually moved.
+	if inserted != 3 || cards != 1 {
+		t.Errorf("inserted %d rows across %d cards, want 3 across 1", inserted, cards)
+	}
+	want := []string{"2026-07-01T00:00:00Z", "2026-07-03T00:00:00Z", "2026-07-05T00:00:00Z"}
+	if got := stamps(t, s); !slices.Equal(got, want) {
+		t.Errorf("stamps = %v, want %v", got, want)
+	}
+	if p, src := priceAt(t, s, "ulamog-id", "normal", want[1]); p != 7.00 || src != "tcgplayer" {
+		t.Errorf("2026-07-03 = %v from %q, want 7 from tcgplayer", p, src)
+	}
+}
+
+// Each finish is its own series. A foil that held steady while the non-foil moved
+// must not inherit the non-foil's dates, or its history claims moves it never had.
+func TestBackfillPricesKeepsFinishesSeparate(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			obs("2026-07-01", "normal", 5.00),
+			obs("2026-07-02", "normal", 6.00),
+			obs("2026-07-01", "foil", 20.00),
+			obs("2026-07-02", "foil", 20.00),
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	// Two for the non-foil, one for the foil that never moved.
+	if inserted != 3 {
+		t.Errorf("inserted %d, want 3", inserted)
+	}
+	var foils int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM card_price_history WHERE finish = 'foil'`).
+		Scan(&foils); err != nil {
+		t.Fatalf("counting foils: %v", err)
+	}
+	if foils != 1 {
+		t.Errorf("stored %d foil observations, want 1", foils)
+	}
+}
+
+// An imported price must never displace an observed one. The live row is what the
+// prices actually were; the import is a reconstruction made afterwards.
+func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	backdate(t, s, stamps(t, s)[0], "2026-07-10T00:00:00Z")
+
+	// Same card, same finish, same day, different price — and unbounded, so the
+	// only thing stopping the overwrite is the conflict clause.
+	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {obs("2026-07-10", "normal", 99.00)},
+	}, "")
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	if inserted != 0 {
+		t.Errorf("inserted %d, want 0: the day was already observed", inserted)
+	}
+	if p, src := priceAt(t, s, "ulamog-id", "normal", "2026-07-10T00:00:00Z"); p != 10.00 || src != "scryfall" {
+		t.Errorf("stored %v from %q, want the observed 10 from scryfall", p, src)
+	}
+}
+
+// The bound is not tidiness. MTGJSON's vendor snapshots are taken at a different
+// hour than Scryfall's, so an imported point beside a real one for the same era
+// would surface in Movers as a few cents of movement that never happened.
+func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	backdate(t, s, stamps(t, s)[0], "2026-07-10T05:09:38Z")
+	_, oldest, err := s.PriceHistoryDepth()
+	if err != nil {
+		t.Fatalf("PriceHistoryDepth: %v", err)
+	}
+
+	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			obs("2026-07-08", "normal", 4.00),
+			obs("2026-07-09", "normal", 6.00),
+			obs("2026-07-10", "normal", 9.90), // same day as the live row
+			obs("2026-07-11", "normal", 9.95), // after it
+		},
+	}, oldest)
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	if inserted != 2 {
+		t.Errorf("inserted %d, want 2: only the days before history began", inserted)
+	}
+	want := []string{"2026-07-08T00:00:00Z", "2026-07-09T00:00:00Z", "2026-07-10T05:09:38Z"}
+	if got := stamps(t, s); !slices.Equal(got, want) {
+		t.Errorf("stamps = %v, want %v", got, want)
+	}
+}
+
+// Filtering happens before the repeats are dropped, not after: the surviving
+// window needs a baseline of its own rather than one that got cut off.
+func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	// Compacting first would keep only the 1st, whose price then falls outside
+	// the window, leaving the card with no baseline at all.
+	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			obs("2026-07-01", "normal", 5.00),
+			obs("2026-07-02", "normal", 5.00),
+			obs("2026-07-03", "normal", 5.00),
+			obs("2026-07-09", "normal", 8.00),
+		},
+	}, "2026-07-03T00:00:00Z")
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted %d, want 1", inserted)
+	}
+	if got := stamps(t, s); !slices.Equal(got, []string{"2026-07-01T00:00:00Z"}) {
+		t.Errorf("stamps = %v, want the 1st as the window's baseline", got)
+	}
+}
+
+// The point of the whole exercise: a 30-day question answered on day one.
+func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 4); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	backdate(t, s, stamps(t, s)[0], "2026-07-29T05:09:38Z")
+	_, oldest, err := s.PriceHistoryDepth()
+	if err != nil {
+		t.Fatalf("PriceHistoryDepth: %v", err)
+	}
+
+	// Before: a month-wide window has nothing at or before its cutoff to
+	// compare against, so the card is invisible.
+	before, err := s.Movers("2026-06-29T00:00:00Z")
+	if err != nil {
+		t.Fatalf("Movers: %v", err)
+	}
+	if len(before) != 0 {
+		t.Fatalf("got %+v before backfilling, want nothing", before)
+	}
+
+	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {obs("2026-06-20", "normal", 4.00), obs("2026-07-15", "normal", 8.00)},
+	}, oldest); err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+
+	got, err := s.Movers("2026-06-29T00:00:00Z")
+	if err != nil {
+		t.Fatalf("Movers: %v", err)
+	}
+	c := changeFor(t, got, "ulamog-id", "normal")
+	// Baseline is the imported 15 July price; current is the live one, not the
+	// newest import, because midnight sorts before an observed timestamp.
+	if c.Old != 4.00 || c.New != 10.00 {
+		t.Errorf("moved %v -> %v, want 4 -> 10", c.Old, c.New)
+	}
+	if c.Source != "scryfall" {
+		t.Errorf("Source = %q, want scryfall: the current price is the observed one", c.Source)
+	}
+	if c.Copies != 4 || c.TotalDelta() != 24.00 {
+		t.Errorf("%d copies, total %v; want 4 and 24", c.Copies, c.TotalDelta())
+	}
+
+	_, depth, err := s.PriceHistoryDepth()
+	if err != nil {
+		t.Fatalf("PriceHistoryDepth: %v", err)
+	}
+	if depth != "2026-06-20T00:00:00Z" {
+		t.Errorf("oldest = %q, want the imported 20 June point", depth)
+	}
+}
+
+// Running it twice must not double the rows: the second pass is bounded by the
+// history the first one created.
+func TestBackfillPricesIsIdempotent(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCard(ulamog(), false, 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	series := map[string][]mtgjson.Observation{
+		"ulamog-id": {obs("2026-07-01", "normal", 5.00), obs("2026-07-02", "normal", 6.00)},
+	}
+	if _, _, err := s.BackfillPrices(series, ""); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	first := observationCount(t, s)
+
+	_, oldest, err := s.PriceHistoryDepth()
+	if err != nil {
+		t.Fatalf("PriceHistoryDepth: %v", err)
+	}
+	inserted, cards, err := s.BackfillPrices(series, oldest)
+	if err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if inserted != 0 || cards != 0 {
+		t.Errorf("second pass inserted %d rows across %d cards, want none", inserted, cards)
+	}
+	if got := observationCount(t, s); got != first {
+		t.Errorf("history grew from %d to %d", first, got)
+	}
+}
+
+// Nothing to import must not open a transaction or report anything happened.
+func TestBackfillPricesEmptyInputWritesNothing(t *testing.T) {
+	s := newTestStore(t)
+	inserted, cards, err := s.BackfillPrices(nil, "")
+	if err != nil || inserted != 0 || cards != 0 {
+		t.Errorf("got %d/%d, %v; want 0/0 and no error", inserted, cards, err)
 	}
 }

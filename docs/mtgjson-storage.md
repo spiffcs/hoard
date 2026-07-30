@@ -1,6 +1,11 @@
 # Should hoard store its data as MTGJSON?
 
-**Status:** proposed, not started · **Date:** 2026-07-28
+**Status:** partly built · **Date:** 2026-07-28, amended 2026-07-29
+
+The migration runner (§1) and price history (§3) shipped, along with a 90-day
+MTGJSON backfill that this document originally declined — see §D for what changed
+and what did not. Richer card data (§2), exports (§4) and offline (§5) remain
+proposals.
 
 A design investigation, written to be read before any of it is built. All sizes
 and API facts below were measured live on the date above; re-check them if this
@@ -316,16 +321,42 @@ keep only wanted columns without ever landing ~616 MB. This is the right
 mechanism *if* offline acquisition is wanted; see §5 for why the download is the
 easy part.
 
-### D. 90-day price backfill — declined on honesty, not cost
+### D. 90-day price backfill — declined for portfolios, since **done** for per-card trends
 
-`AllPrices.json.xz` is 44.4 MB, cheaper than the Scryfall bulk file. It needs a
-uuid↔scryfallId map that `AllPrices` doesn't contain: either
-`AllIdentifiers.json.xz` (105.8 MB) or per-set files fetched lazily (~0.6 MB each;
-this collection spans 107 sets, so ~70 MB). Affordable. Declined because
-backfilled prices for cards you did not own then produce a **counterfactual
-portfolio** — "your collection was worth $3,200 in April" is false if half of it
-was bought in June. Charting that would ship a lying graph. Per-*card* trends are
-a legitimate reason to revisit, since those are true regardless of ownership.
+*Originally declined; revisited and partly built as `hoard backfill-prices`. The
+original reasoning, and what changed, both below.*
+
+Declined because backfilled prices for cards you did not own then produce a
+**counterfactual portfolio** — "your collection was worth $3,200 in April" is
+false if half of it was bought in June. Charting that would ship a lying graph.
+Per-*card* trends were noted as a legitimate reason to revisit, since those are
+true regardless of ownership.
+
+`hoard movers` turned out to be exactly that carve-out, so the backfill was
+built for it. `ownedByPriceFinish` has no time dimension: it multiplies past
+*prices* by *current* quantities, and never asserts what the hoard was worth on
+any past date. **The counterfactual objection still stands in full for any
+collection-value-over-time chart**, and that remains unbuilt for this reason.
+
+Two cost notes from the original assessment need correcting:
+
+- The uuid↔scryfallId map is no longer a cost at all. Migration 3
+  (`cacheMTGJSONIDs`) caches `cards.mtgjson_uuid`, which was already populated
+  for ~85% of the live catalog by ordinary `update-prices` and `arbitrage` runs;
+  `resolveMTGJSONIDs` fills the remainder from per-set files it keeps
+  permanently. Neither `AllIdentifiers` (105.8 MB) nor a ~70 MB sweep of set
+  files is needed.
+- **44.4 MB was the `.xz`.** `internal/mtgjson` only decompresses gzip, and
+  `AllPrices.json.gz` is **148.6 MB** — measured 2026-07-29. Still affordable for
+  a one-off, but more than three times the figure quoted here, and the reason the
+  backfill is its own command rather than part of `update-prices`.
+
+As built: TCGplayer retail only, because Scryfall's USD comes from TCGplayer and
+any other vendor's series would step at the join; observations compacted to the
+days a price actually moved; bounded to dates strictly before existing history so
+imported and observed prices never describe the same day; and `ON CONFLICT DO
+NOTHING`, so an observation always outranks a reconstruction. No migration was
+needed — `card_price_history.source` already took a vendor name.
 
 ### E. Export decks as MTGJSON — rejected
 

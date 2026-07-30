@@ -38,6 +38,7 @@ Collection commands:
   list                                             List loose cards by value, with total
   update-prices [--limit N]                        Refresh prices (Scryfall updates daily)
   movers [--since 30d] [--limit N]                 Biggest risers and sinkers you hold
+  backfill-prices                                  Load 90 days of past prices from MTGJSON
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
   arbitrage [--min N] [--limit N]                  Where vendors disagree on price
@@ -115,6 +116,8 @@ func run(args []string) error {
 		return cmdUpdatePrices(ctx, st, cmdArgs)
 	case "movers":
 		return cmdMovers(st, cmdArgs)
+	case "backfill-prices":
+		return cmdBackfillPrices(ctx, st, cmdArgs)
 	case "unpriced":
 		return cmdUnpriced(st)
 	case "repair-finishes":

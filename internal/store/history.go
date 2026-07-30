@@ -1,8 +1,12 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
+	"slices"
+
+	"github.com/cphillips918/hoard/internal/mtgjson"
 )
 
 // PriceChange is one printing-and-finish whose price moved between two
@@ -221,4 +225,110 @@ func (s *Store) PriceHistoryDepth() (observations int, oldest string, err error)
 		return 0, "", err
 	}
 	return observations, first.String, nil
+}
+
+// backfillStamp turns MTGJSON's bare date into the RFC3339 form the rest of the
+// history is written in.
+//
+// Midnight, not the hour the file was built: it puts a backfilled point before
+// any live observation taken the same day, so the newest row for a card stays
+// the one actually seen rather than the one reconstructed.
+func backfillStamp(date string) string { return date + "T00:00:00Z" }
+
+// BackfillPrices loads observations recorded before hoard was watching, keyed by
+// Scryfall ID, and reports how many rows and how many cards it wrote.
+//
+// `before` bounds the import to the era with no history of its own — pass the
+// oldest as_of from PriceHistoryDepth, or "" when there is none. The bound is
+// not tidiness: MTGJSON's vendor snapshots are taken at a different hour than
+// Scryfall's, so an imported point sitting alongside a real one for the same day
+// would show up in Movers as a few cents of movement that never happened.
+//
+// Nothing already stored is overwritten. Where an imported row collides with a
+// live one, the live one stands: it is what was observed, and this is what was
+// reconstructed afterwards.
+func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation, before string) (inserted, cards int, err error) {
+	if len(byCard) == 0 {
+		return 0, 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer stmt.Close()
+
+	for sid, obs := range byCard {
+		var wrote bool
+		for _, o := range compactSeries(obs, before) {
+			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
+			if err != nil {
+				return 0, 0, fmt.Errorf("backfilling prices for %s: %w", sid, err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				inserted += int(n)
+				wrote = true
+			}
+		}
+		if wrote {
+			cards++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return inserted, cards, nil
+}
+
+// compactSeries reduces one card's observations to the days its price actually
+// moved, per finish, discarding anything at or after before.
+//
+// MTGJSON quotes a price for every one of its ninety days whether or not it
+// changed, and storing all of them would add two orders of magnitude more rows
+// than the collection has cards to say nothing new. The first point of each
+// series is always kept: it is the baseline every later comparison reads back
+// through.
+//
+// Filtering happens before compaction, not after, so the surviving window keeps
+// a baseline of its own rather than inheriting one that got cut.
+//
+// The cutoff is compared by date rather than by timestamp. A live observation
+// taken at 05:09 excludes that whole day, not just the hours after it: the two
+// sources snapshot at different times, so an imported midnight price sitting
+// under an observed morning one is the exact same-day overlap the bound exists
+// to prevent.
+func compactSeries(obs []mtgjson.Observation, before string) []mtgjson.Observation {
+	if len(before) > len("2006-01-02") {
+		before = before[:len("2006-01-02")]
+	}
+	byFinish := map[string][]mtgjson.Observation{}
+	for _, o := range obs {
+		if before != "" && o.Date >= before {
+			continue
+		}
+		byFinish[o.Finish] = append(byFinish[o.Finish], o)
+	}
+
+	kept := make([]mtgjson.Observation, 0, len(byFinish))
+	for _, series := range byFinish {
+		slices.SortFunc(series, func(a, b mtgjson.Observation) int {
+			return cmp.Compare(a.Date, b.Date)
+		})
+		var last float64
+		for i, o := range series {
+			if i == 0 || o.Price != last {
+				kept = append(kept, o)
+				last = o.Price
+			}
+		}
+	}
+	return kept
 }

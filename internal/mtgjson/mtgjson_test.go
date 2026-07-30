@@ -302,3 +302,78 @@ func TestSetIdentifiersUnknownSet(t *testing.T) {
 		t.Errorf("err = %v, want ErrNoSuchSet", err)
 	}
 }
+
+// archiveFileBody is AllPrices' shape: the same nesting as today's file, but
+// with a run of dates under each finish rather than one.
+const archiveFileBody = `{
+ "meta": {"date": "2026-07-29", "version": "5.3.0"},
+ "data": {
+  "uuid-hist": {"paper": {
+    "tcgplayer": {"currency": "USD", "retail": {
+        "normal": {"2026-07-27": 1.00, "2026-07-28": 1.25, "2026-07-29": 1.25},
+        "foil":   {"2026-07-28": 4.00, "2026-07-29": 4.50}},
+      "buylist": {"normal": {"2026-07-28": 0.40}}},
+    "cardkingdom": {"currency": "USD", "retail": {
+        "normal": {"2026-07-28": 9.99}}}
+  }},
+  "uuid-eur-tcg": {"paper": {
+    "tcgplayer": {"currency": "EUR", "retail": {"normal": {"2026-07-28": 2.00}}}
+  }},
+  "uuid-no-tcg": {"paper": {
+    "manapool": {"currency": "USD", "retail": {"normal": {"2026-07-28": 3.00}}}
+  }}
+ }
+}`
+
+func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+
+	got, err := PriceHistory(context.Background(), map[string]bool{"uuid-hist": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	obs := got["uuid-hist"]
+	// Three normal dates and two foil: the whole series, not just the newest.
+	if len(obs) != 5 {
+		t.Fatalf("got %d observations, want 5: %+v", len(obs), obs)
+	}
+	for _, o := range obs {
+		if o.Source != "tcgplayer" {
+			t.Errorf("observation %+v: source = %q, want tcgplayer", o, o.Source)
+		}
+		// Card Kingdom's 9.99 and the 0.40 buylist are the two figures that must
+		// not appear: one is another shop's retail, the other is the wrong side
+		// of the counter, and both would read as a price move.
+		if o.Price == 9.99 || o.Price == 0.40 {
+			t.Errorf("observation %+v leaked from another vendor or the buylist", o)
+		}
+	}
+}
+
+func TestPriceHistorySkipsNonUSDAndAbsentProvider(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+
+	// A EUR tcgplayer series and a card tcgplayer never quoted are both absent
+	// rather than converted or substituted: a euro price in a USD total is a
+	// lie, and another vendor's series would not join up with Scryfall's.
+	got, err := PriceHistory(context.Background(),
+		map[string]bool{"uuid-eur-tcg": true, "uuid-no-tcg": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %+v, want nothing", got)
+	}
+}
+
+func TestPriceHistoryEmptyRequestSkipsDownload(t *testing.T) {
+	old := apiBase
+	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
+	defer func() { apiBase = old }()
+
+	// Nothing owned must not pull 150 MB to discover that.
+	got, err := PriceHistory(context.Background(), nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("got %v, %v; want empty and no error", got, err)
+	}
+}
