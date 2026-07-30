@@ -18,11 +18,6 @@ import (
 // barCells is the width of the summary's share-bar column.
 const barCells = 10
 
-// Printing is the set/number label shown beside a card's name.
-func Printing(setCode, collectorNumber string) string {
-	return setCode + "/" + collectorNumber
-}
-
 // Summary is the hoard's totals: the binder, the decks, and the grand total.
 //
 // Two labelled sections rather than a flat list distinguished by a repeated
@@ -103,7 +98,7 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 	var copies int
 	for _, r := range rows {
 		copies += r.Copies
-		t.Add(ui.C(r.Name), ui.C(Printing(r.SetCode, r.CollectorNumber)),
+		t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
 			ui.C(ui.Finish(r.Finish)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}
 	// Two different cures, and the less obvious one is usually the answer: a

@@ -77,7 +77,7 @@ func (m Model) detailLines(d detail, width int) []string {
 	if line := joinNonEmpty("  ", deref(c.TypeLine), deref(c.ManaCost)); line != "" {
 		add("%s", line)
 	}
-	printing := c.SetCode + "/" + c.CollectorNumber
+	printing := ui.Printing(c.SetCode, c.CollectorNumber)
 	if c.SetName != nil {
 		printing = *c.SetName + " · " + printing
 	}
@@ -111,8 +111,13 @@ func (m Model) detailLines(d detail, width int) []string {
 		if h.ContainerKind != store.KindCollection && h.Board != "main" {
 			where += " (" + h.Board + ")"
 		}
-		finish := ui.Finish(h.Finish)
-		add("  %-3s %-7s %s", "×"+ui.Count(h.Quantity), finish, where)
+		// The finish is named only when it isn't normal — the table columns'
+		// rule, minus the placeholder dash, which in a list reads as a stray mark.
+		parts := []string{ui.Qty(h.Quantity)}
+		if h.Finish != "normal" {
+			parts = append(parts, h.Finish)
+		}
+		add("  %s", strings.Join(append(parts, where), " · "))
 	}
 
 	out = append(out, "", titleStyle.Render("PRICE"))
@@ -130,7 +135,18 @@ func (m Model) detailLines(d detail, width int) []string {
 		}
 		spark := ui.Spark(resample(s, sparkCells), sparkCells)
 		now := s[len(s)-1].Price
-		out = append(out, fmt.Sprintf("  %-9s %s  %s", label, spark, ui.Money(now)))
+		line := fmt.Sprintf("  %-9s %s  %s", label, spark, titleStyle.Render(ui.Money(now)))
+		// The change over the window is the question the sparkline raises;
+		// answer it in the movers view's own +$/-% language. A single check has
+		// no movement to report.
+		if first := s[0].Price; len(s) > 1 && now != first {
+			change := ui.SignedMoney(now - first)
+			if pct := ui.SignedPercent(safeFrac(now-first, first)); pct != "" {
+				change += " (" + pct + ")"
+			}
+			line += "  " + change
+		}
+		out = append(out, line)
 		out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
 	}
 	return out
@@ -151,8 +167,17 @@ func seriesRange(s []store.PricePoint) string {
 	if t, err := time.Parse(time.RFC3339, s[0].AsOf); err == nil {
 		since = t.Local().Format("2 Jan")
 	}
-	return fmt.Sprintf("%s–%s since %s · %d obs",
-		ui.Money(lo), ui.Money(hi), since, len(s))
+	return fmt.Sprintf("%s–%s · %d checks since %s",
+		ui.Money(lo), ui.Money(hi), len(s), since)
+}
+
+// safeFrac is delta/base, 0 when base is 0, so a card that appeared from
+// nowhere shows no percentage rather than an infinite one.
+func safeFrac(delta, base float64) float64 {
+	if base == 0 {
+		return 0
+	}
+	return delta / base
 }
 
 // wrap breaks a paragraph to width, on spaces.

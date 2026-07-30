@@ -69,7 +69,7 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 			},
 		}
 		for _, f := range fixed {
-			t.Add(ui.C(f.Name), ui.C(f.SetCode+"/"+f.CollectorNumber),
+			t.Add(ui.C(f.Name), ui.C(ui.Printing(f.SetCode, f.CollectorNumber)),
 				ui.C(ui.Count(f.Quantity)), ui.C(f.From), ui.C(f.To), ui.C(f.Container))
 		}
 		if _, err := t.WriteTo(os.Stdout); err != nil {

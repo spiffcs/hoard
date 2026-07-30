@@ -181,9 +181,7 @@ func escapeLike(s string) string {
 // board then name.
 func (s *Store) DeckEntries(containerID int64) ([]EntryView, error) {
 	rows, err := s.db.Query(`
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
-       `+altSourceForEntry+`,
+SELECT `+cardCols(altSourceForEntry)+`,
        e.finish, e.board, e.quantity
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
@@ -200,9 +198,8 @@ ORDER BY
 	var out []EntryView
 	for rows.Next() {
 		var v EntryView
-		if err := rows.Scan(&v.Card.ScryfallID, &v.Card.SetCode, &v.Card.CollectorNumber, &v.Card.Name,
-			&v.Card.PriceUSD, &v.Card.PriceUSDFoil, &v.Card.ScryfallURL, &v.Card.UpdatedAt,
-			&v.Card.AltSource, &v.Finish, &v.Board, &v.Quantity); err != nil {
+		if err := rows.Scan(append(cardScanDest(&v.Card),
+			&v.Finish, &v.Board, &v.Quantity)...); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

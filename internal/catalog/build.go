@@ -12,11 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/cardname"
 )
-
-// userAgent identifies this tool to Scryfall, matching the API client.
-const userAgent = "hoard/0.1"
 
 // listingURL is Scryfall's bulk-data index: a few kilobytes describing each
 // bundle and when it was last rebuilt. It is a var so tests can point at an
@@ -115,7 +113,7 @@ func fetchListing(ctx context.Context) (bundle, error) {
 	if err != nil {
 		return zero, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", buildinfo.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
@@ -240,7 +238,7 @@ func (c *Catalog) build(ctx context.Context, url string, progress func(int)) (in
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", buildinfo.UserAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

@@ -36,10 +36,8 @@ type CardDetail struct {
 
 // cardDetailCols selects the identity and price columns alongside the generated
 // ones, with the same fallback prices every other valuation query applies.
-const cardDetailCols = `
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
-       ` + altSourceExpr + `,
+var cardDetailCols = `
+SELECT ` + cardCols(altSourceExpr) + `,
        c.rarity, c.set_name, c.type_line, c.mana_cost, c.oracle_text,
        c.artist, c.released_at, c.layout, c.color_identity, c.cmc,
        c.raw_json IS NOT NULL
@@ -51,11 +49,10 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 
 	var d CardDetail
 	var colors sql.NullString
-	if err := row.Scan(&d.ScryfallID, &d.SetCode, &d.CollectorNumber, &d.Name,
-		&d.PriceUSD, &d.PriceUSDFoil, &d.ScryfallURL, &d.UpdatedAt, &d.AltSource,
+	if err := row.Scan(append(cardScanDest(&d.Card),
 		&d.Rarity, &d.SetName, &d.TypeLine, &d.ManaCost, &d.OracleText,
 		&d.Artist, &d.ReleasedAt, &d.Layout, &colors, &d.CMC,
-		&d.Enriched); err != nil {
+		&d.Enriched)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}
 	d.ColorIdentity = parseColorIdentity(colors)

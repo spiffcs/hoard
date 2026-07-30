@@ -11,10 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
-
-const archidektUserAgent = "hoard/0.1"
 
 // archidektProvider imports decks from archidekt.com via its public JSON API.
 type archidektProvider struct{}
@@ -56,7 +55,7 @@ func (p archidektProvider) Fetch(ctx context.Context, u *url.URL) (*Deck, error)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", archidektUserAgent)
+	req.Header.Set("User-Agent", buildinfo.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}

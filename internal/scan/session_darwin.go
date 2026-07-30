@@ -131,21 +131,27 @@ func (s *Session) send(cmd string) error {
 	return nil
 }
 
-// Close ends the session and closes the camera window. It is safe to call more
-// than once. Closing stdin is itself a shutdown signal, so a helper that ignores
-// the quit command still exits.
-func (s *Session) Close() error {
+// Shutdown asks the helper to exit without touching the event channel, for a
+// caller that is itself consuming Events and must see the final ones — Close's
+// drain would race such a consumer and could swallow them. It is safe to call
+// more than once. Closing stdin is itself a shutdown signal, so a helper that
+// ignores the quit command still exits.
+func (s *Session) Shutdown() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed {
-		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
 	_, _ = io.WriteString(s.stdin, "quit\n")
-	err := s.stdin.Close()
-	s.mu.Unlock()
+	return s.stdin.Close()
+}
 
-	// Drain so pump can finish and Wait can be reached.
+// Close ends the session and closes the camera window, consuming any remaining
+// events so pump can finish and Wait can be reached. It is safe to call more
+// than once.
+func (s *Session) Close() error {
+	err := s.Shutdown()
 	for range s.events { //nolint:revive // draining
 	}
 	return err

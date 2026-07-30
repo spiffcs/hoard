@@ -376,13 +376,14 @@ Updated prices for 1,256 of 1,256 cards.
 Nothing is downloaded unless there is a gap to fill, and the files are cached for
 the day in your cache directory. A Scryfall price always wins; these only ever
 stand in where there is none. Because they come from a different shelf than the
-rest of hoard's numbers, they are marked with `*` and a footnote naming the
-vendors:
+rest of hoard's numbers, the browser marks them with `*` and its status line
+names the vendors:
 
 ```
-main   1  Planar Nexus   m3c/80  foil  $37.99  $37.99*
-
-* estimated: Scryfall has no price for this printing; from cardkingdom via MTGJSON
+NAME           SET/NUM  FINISH  QTY  PRICE   VALUE
+Planar Nexus   m3c/80   foil    ×1   $37.99  $37.99*
+──────────────────────────────────────────────────
+1/26 · sorted by value · * estimated from cardkingdom via MTGJSON
 ```
 
 Cardmarket is deliberately not used: it quotes euros, and a second currency

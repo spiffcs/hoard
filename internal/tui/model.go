@@ -1061,7 +1061,7 @@ func priceLabel(c scryfall.Card) string {
 
 func priceForFinish(c scryfall.Card, finish string) string {
 	p := c.PriceUSD
-	if finish == "foil" || finish == "etched" {
+	if scryfall.PricedAsFoil(finish) {
 		p = c.PriceUSDFoil
 	}
 	if p == nil {

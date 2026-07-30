@@ -13,7 +13,9 @@ import (
 	"slices"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // OutlierFactor is how far above the cheapest quote a price may sit before it is
@@ -52,7 +54,7 @@ func (o Opportunity) Profit() float64 { return o.SellAt - o.BuyAt }
 
 // Printing is the set/number label for this opportunity's card.
 func (o Opportunity) Printing() string {
-	return o.Card.SetCode + "/" + o.Card.CollectorNumber
+	return ui.Printing(o.Card.SetCode, o.Card.CollectorNumber)
 }
 
 // Result is a whole pass over the collection.
@@ -102,7 +104,7 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote,
 func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCount, dropped int) {
 	op.Card = o
 	finish := "normal"
-	if o.Finish == "foil" || o.Finish == "etched" {
+	if scryfall.PricedAsFoil(o.Finish) {
 		finish = "foil"
 	}
 

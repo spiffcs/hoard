@@ -4,14 +4,11 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strconv"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
-
-// Price movement and vendor-spread tables.
 
 // DefaultMoverRows is how many risers and sinkers a section shows before it is
 // truncated. Ten fits a terminal beside the rest of a refresh's output; the tail
@@ -87,10 +84,10 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			finish := ui.Finish(c.Finish)
 			// The indent lives in the name cell, so every column to its right
 			// stays aligned with the section heading above.
-			t.Add(ui.C("  "+c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber), ui.C(finish),
+			t.Add(ui.C("  "+c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C("→"), ui.C(ui.Money(c.New)),
-				ui.C(signedPercent(c.Pct())), ui.C("×"+ui.Count(c.Copies)),
-				ui.C(signedMoney(c.TotalDelta())))
+				ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
+				ui.C(ui.SignedMoney(c.TotalDelta())))
 		}
 	}
 	return t
@@ -107,32 +104,6 @@ func topMovers(all []store.PriceChange, limit int, keep func(store.PriceChange) 
 	}
 	slices.SortFunc(out, order)
 	return out[:min(len(out), limit)]
-}
-
-// signedMoney formats a movement, always carrying its sign. ui.Money already
-// writes a minus; only the rise needs marking, so a column of them reads as
-// direction rather than as a column of amounts.
-func signedMoney(v float64) string {
-	if v > 0 {
-		return "+" + ui.Money(v)
-	}
-	return ui.Money(v)
-}
-
-// signedPercent formats a movement as a percentage.
-//
-// ui.Percent is for shares of a total and renders anything at or below zero as
-// empty, which is exactly the half of this list that matters. An empty string is
-// returned only when the old price was zero, where a percentage is meaningless.
-func signedPercent(frac float64) string {
-	if frac == 0 {
-		return ""
-	}
-	s := strconv.FormatFloat(frac*100, 'f', 1, 64) + "%"
-	if frac > 0 {
-		return "+" + s
-	}
-	return s
 }
 
 // Arbitrage lays out one section of the vendor comparison. The three share a
@@ -188,5 +159,5 @@ func Movers(env ui.Env, changes []store.PriceChange, limit int, window string) s
 	}
 	return moversTable(env, moverSections(changes, limit)).Render() + "\n" +
 		env.Dim()(fmt.Sprintf("%s printings moved %s. Net change: %s",
-			ui.Count(len(changes)), window, signedMoney(net))) + "\n"
+			ui.Count(len(changes)), window, ui.SignedMoney(net))) + "\n"
 }

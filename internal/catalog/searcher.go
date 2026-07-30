@@ -58,9 +58,7 @@ func (c *Catalog) SearchPrints(_ context.Context, exactName string) ([]scryfall.
 		return nil, nil
 	}
 	rows, err := c.db.Query(`
-SELECT scryfall_id, name, set_code, collector_number, set_name, released_at,
-       finishes, promo_types, frame_effects, border_color,
-       price_usd, price_usd_foil, price_usd_etched, scryfall_url
+SELECT `+cardColumns+`
 FROM cards WHERE name_norm = ?
 ORDER BY released_at DESC, set_code, collector_number`, norm)
 	if err != nil {

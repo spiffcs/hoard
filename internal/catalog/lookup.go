@@ -31,9 +31,7 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 		for i, id := range batch {
 			args[i] = id
 		}
-		q := `SELECT scryfall_id, name, set_code, collector_number, set_name,
-		             released_at, finishes, promo_types, frame_effects, border_color,
-		             price_usd, price_usd_foil, price_usd_etched, scryfall_url
+		q := `SELECT ` + cardColumns + `
 		      FROM cards WHERE scryfall_id IN (?` + strings.Repeat(",?", len(batch)-1) + `)`
 
 		rows, err := c.db.Query(q, args...)
@@ -60,6 +58,13 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 // rowScanner is what both Query and QueryRow results satisfy.
 type rowScanner interface{ Scan(...any) error }
 
+// cardColumns is the projection scanCard reads, in its exact order. Every query
+// that feeds scanCard interpolates this rather than restating the list, so the
+// column order is decided once, beside the code that depends on it.
+const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
+       released_at, finishes, promo_types, frame_effects, border_color,
+       price_usd, price_usd_foil, price_usd_etched, scryfall_url`
+
 // scanCard reads one catalog row into the shared Card type.
 //
 // Building a scryfall.Card rather than a catalog-specific type is deliberate:
@@ -84,13 +89,9 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.PromoTypes = decodeArray(promos)
 	c.FrameEffects = decodeArray(frames)
 	c.PriceUSD = usd
-	// The catalog has a real etched column; hoard's single foil price takes it
-	// when there is no ordinary foil price, matching what the API client does
-	// for etched-only printings.
-	c.PriceUSDFoil = foil
-	if c.PriceUSDFoil == nil {
-		c.PriceUSDFoil = etched
-	}
+	// The catalog has a real etched column; folding it matches what the API
+	// client does, so a local answer and a remote one price identically.
+	c.PriceUSDFoil = scryfall.FoilPrice(foil, etched)
 	return c, nil
 }
 

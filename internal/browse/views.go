@@ -2,7 +2,6 @@ package browse
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"strings"
@@ -110,10 +109,10 @@ func (m Model) moversLines(width int) []string {
 	}
 	for _, c := range m.movers {
 		finish := ui.Finish(c.Finish)
-		t.Add(ui.C(c.Name), ui.C(c.SetCode+"/"+c.CollectorNumber), ui.C(finish),
+		t.Add(ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 			ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
-			ui.C(signedPercent(c.Pct())), ui.C("×"+ui.Count(c.Copies)),
-			ui.C(signedMoney(c.TotalDelta())))
+			ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
+			ui.C(ui.SignedMoney(c.TotalDelta())))
 	}
 	return m.window(t.Lines(), paneCards, width)
 }
@@ -133,8 +132,8 @@ func (m Model) unpricedLines(width int) []string {
 	}
 	for _, r := range m.unpriced {
 		finish := ui.Finish(r.Finish)
-		t.Add(ui.C(r.Name), ui.C(r.SetCode+"/"+r.CollectorNumber), ui.C(finish),
-			ui.C("×"+ui.Count(r.Copies)), ui.C(r.HeldIn))
+		t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
+			ui.C(ui.Qty(r.Copies)), ui.C(r.HeldIn))
 	}
 	return m.window(t.Lines(), paneCards, width)
 }
@@ -149,7 +148,7 @@ func (m Model) viewHeader() (title, totals string) {
 		}
 		since := m.now().Add(-moversWindow).Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since,
-			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), signedMoney(net))
+			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), ui.SignedMoney(net))
 	case viewArbitrage:
 		return m.arbitrageHeader()
 	case viewUnpriced:
@@ -165,27 +164,4 @@ func (m Model) viewHeader() (title, totals string) {
 			fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value))
 	}
 	return "CARDS", ""
-}
-
-// signedMoney formats a movement, always carrying its sign. ui.Money already
-// writes a minus; only the rise needs marking, so a column of them reads as
-// direction rather than as a column of amounts. Matches the CLI's movers table.
-func signedMoney(v float64) string {
-	if v > 0 {
-		return "+" + ui.Money(v)
-	}
-	return ui.Money(v)
-}
-
-// signedPercent formats a movement as a percentage, empty when the old price
-// was zero and a percentage would be meaningless.
-func signedPercent(frac float64) string {
-	if frac == 0 {
-		return ""
-	}
-	s := strconv.FormatFloat(frac*100, 'f', 1, 64) + "%"
-	if frac > 0 {
-		return "+" + s
-	}
-	return s
 }

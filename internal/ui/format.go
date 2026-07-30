@@ -88,3 +88,39 @@ func Estimated(s, altSource string) string {
 	}
 	return s + "*"
 }
+
+// Printing is the set/number label shown beside a card's name.
+func Printing(setCode, collectorNumber string) string {
+	return setCode + "/" + collectorNumber
+}
+
+// Qty labels an owned quantity. The × keeps a bare count from reading as yet
+// another price in a row full of numbers.
+func Qty(n int) string { return "×" + Count(n) }
+
+// SignedMoney formats a movement, always carrying its sign. Money already
+// writes a minus; only the rise needs marking, so a column of them reads as
+// direction rather than as a column of amounts.
+func SignedMoney(v float64) string {
+	if v > 0 {
+		return "+" + Money(v)
+	}
+	return Money(v)
+}
+
+// SignedPercent formats a movement as a percentage.
+//
+// Percent is for shares of a total and renders anything at or below zero as
+// empty, which is exactly the half of a movers list that matters. An empty
+// string is returned only for zero, where the movement has no direction (or,
+// for a caller dividing by an old price, where a percentage is meaningless).
+func SignedPercent(frac float64) string {
+	if frac == 0 {
+		return ""
+	}
+	s := strconv.FormatFloat(frac*100, 'f', 1, 64) + "%"
+	if frac > 0 {
+		return "+" + s
+	}
+	return s
+}

@@ -10,6 +10,7 @@ type Session struct{}
 func (*Session) Events() <-chan Event { return nil }
 func (*Session) Capture() error       { return ErrUnsupported }
 func (*Session) Rotate(bool) error    { return ErrUnsupported }
+func (*Session) Shutdown() error      { return nil }
 func (*Session) Close() error         { return nil }
 
 // Open is unsupported off macOS; the camera+OCR helper is macOS-only.

@@ -438,12 +438,12 @@ func TestFetchCollectionRateLimitWaitIsCancellable(t *testing.T) {
 }
 
 func TestRetryAfterHeader(t *testing.T) {
-	mk := func(v string) *http.Response {
+	mk := func(v string) http.Header {
 		h := http.Header{}
 		if v != "" {
 			h.Set("Retry-After", v)
 		}
-		return &http.Response{Header: h}
+		return h
 	}
 	fallback := 30 * time.Second
 	for _, tc := range []struct {

@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -524,13 +526,20 @@ func TestScrollingKeepsTheCursorVisible(t *testing.T) {
 	m = next.(Model)
 	m = key(m, "tab")
 
-	rows := m.visibleRows()
+	// The window holds one fewer data row than visibleRows: the column titles
+	// are drawn inside the pane. Checking against visibleRows itself would pass
+	// with the cursor resting one row below the border, highlighted off-screen.
+	rows := m.visibleRows() - 1
 	for range len(m.cards) + 5 {
 		m = key(m, "down")
 		if m.cursor[paneCards] < m.offset[paneCards] ||
 			m.cursor[paneCards] >= m.offset[paneCards]+rows {
 			t.Fatalf("cursor %d outside window [%d,%d)",
 				m.cursor[paneCards], m.offset[paneCards], m.offset[paneCards]+rows)
+		}
+		// The selected row must actually be on screen, not just in bounds.
+		if name := m.cards[m.cursor[paneCards]].Name; !strings.Contains(m.View(), name) {
+			t.Fatalf("selected row %q is not in the rendered frame", name)
 		}
 		// And the rendered pane never exceeds the terminal height.
 		if n := len(strings.Split(m.View(), "\n")); n > 12 {
@@ -549,8 +558,49 @@ func TestBoardColumnOnlyAppearsForDecks(t *testing.T) {
 		t.Error("BOARD shown for the loose collection")
 	}
 	m = key(m, "down") // → Rich Deck
-	if !strings.Contains(m.View(), "BOARD") {
+	view := m.View()
+	if !strings.Contains(view, "BOARD") {
 		t.Error("BOARD missing for a deck")
+	}
+	// It qualifies the name, so it sits beside it — not out in front.
+	if name, board := strings.Index(view, "NAME"), strings.Index(view, "BOARD"); name > board {
+		t.Error("BOARD column renders before NAME")
+	}
+}
+
+// The selection bar must span the row. It is applied over an already-styled
+// line, and a dim cell's reset used to end the reverse video mid-row — in a
+// deck, where the dim BOARD column came first, only the board name lit up.
+func TestSelectionBarSpansTheWholeRow(t *testing.T) {
+	// go test's stdout is not a terminal, so lipgloss renders every style as a
+	// no-op unless told otherwise — and this test is about the escape codes.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newTestModel(t, testStore())
+	m = key(m, "down") // → a deck, so the row carries a dim BOARD cell
+	m = key(m, "tab")  // focus its cards
+
+	name := m.cards[m.cursor[paneCards]].Name
+	var sel string
+	for line := range strings.SplitSeq(m.View(), "\n") {
+		if strings.Contains(line, name) && strings.Contains(line, "\x1b[7m") {
+			sel = line
+			break
+		}
+	}
+	if sel == "" {
+		t.Fatalf("no reverse-video line contains the selected card %q", name)
+	}
+	// The bar must survive past the dim BOARD cell to the SET/NUM column: an
+	// embedded style reset would switch the reverse off after the first styled
+	// cell, and everything to its right would render unhighlighted.
+	if !strings.Contains(sel, "mh3/1") {
+		t.Fatalf("selected row lost its SET/NUM column: %q", sel)
+	}
+	if seg := sel[strings.Index(sel, "\x1b[7m"):strings.Index(sel, "mh3/1")]; strings.Contains(seg, "\x1b[0m") {
+		t.Errorf("selection bar is reset before SET/NUM: %q", sel)
 	}
 }
 
@@ -1398,5 +1448,34 @@ func TestAddKeyIsTextWhileFiltering(t *testing.T) {
 	}
 	if m.filterText != "a" {
 		t.Errorf("filterText = %q", m.filterText)
+	}
+}
+
+// A fallback-priced card gets an asterisk in the VALUE column; the status line
+// must say what the asterisk means, naming the vendor, or the mark reads as
+// line noise.
+func TestStatusLineExplainsEstimatedPrices(t *testing.T) {
+	st := testStore()
+	st.collection[1].AltSource = "cardkingdom"
+	m := newTestModel(t, st)
+
+	got := m.statusLine()
+	if !strings.Contains(got, "* estimated") || !strings.Contains(got, "cardkingdom") {
+		t.Errorf("status = %q, want the estimate note with its vendor", got)
+	}
+
+	// The asterisks live in the holdings table, so an analysis view without
+	// them must not carry the explanation.
+	m = key(m, "v")
+	if strings.Contains(m.statusLine(), "estimated") {
+		t.Errorf("status = %q, want no estimate note outside the holdings view", m.statusLine())
+	}
+}
+
+// When every price came from Scryfall there are no asterisks to explain.
+func TestStatusLineSilentWithoutEstimates(t *testing.T) {
+	m := newTestModel(t, testStore())
+	if got := m.statusLine(); strings.Contains(got, "estimated") {
+		t.Errorf("status = %q, want no estimate note", got)
 	}
 }

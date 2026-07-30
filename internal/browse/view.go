@@ -2,9 +2,12 @@ package browse
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -107,8 +110,12 @@ func (m Model) paneWidths() (left, right int) {
 func (m Model) visibleRows() int { return max(m.height-chromeRows, 1) }
 
 // scrollIntoView moves the focused pane's window so the cursor is inside it.
+//
+// A pane shows one fewer data row than visibleRows: the column-title line is
+// drawn inside the pane, not the chrome. Counting it here would let the cursor
+// rest one row past the border, highlighted but invisible.
 func (m *Model) scrollIntoView() {
-	rows := m.visibleRows()
+	rows := max(m.visibleRows()-1, 1)
 	for p := range m.offset {
 		if m.cursor[p] < m.offset[p] {
 			m.offset[p] = m.cursor[p]
@@ -186,20 +193,22 @@ func (m Model) cardLines(width int) []string {
 	}
 	if inDeck {
 		// Board only means something inside a deck; against loose holdings it
-		// would be a column of blanks.
-		cols = append([]ui.Col{{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()}}, cols...)
+		// would be a column of blanks. It sits beside NAME: the name is what the
+		// eye reads first, and the board qualifies it.
+		cols = slices.Insert(cols, 1,
+			ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
 	}
 	t := ui.Table{Env: env, Header: true, Cols: cols}
 
 	for _, c := range m.cards {
 		finish := ui.Finish(c.Finish)
 		cells := []ui.Cell{
-			ui.C(c.Name), ui.C(c.SetCode + "/" + c.CollectorNumber), ui.C(finish),
-			ui.C("×" + ui.Count(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
+			ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+			ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
 			ui.C(ui.Estimated(ui.Money(c.Value), c.AltSource)),
 		}
 		if inDeck {
-			cells = append([]ui.Cell{ui.C(c.Board)}, cells...)
+			cells = slices.Insert(cells, 1, ui.C(c.Board))
 		}
 		t.Add(cells...)
 	}
@@ -227,11 +236,14 @@ func (m Model) window(lines []string, p pane, width int) []string {
 		line := fit(rows[i], width)
 		switch {
 		case i == m.cursor[p] && m.focus == p:
-			line = cursorStyle.Render(line)
+			// The row's own styling is stripped first: a dim cell's reset would
+			// end the reverse video mid-line, leaving a selection bar that stops
+			// at whichever column happened to be styled.
+			line = cursorStyle.Render(ansi.Strip(line))
 		case i == m.cursor[p]:
 			// The unfocused pane keeps a mark on its row so switching back is
 			// not a hunt for where the cursor was.
-			line = inactiveStyle.Render(line)
+			line = inactiveStyle.Render(ansi.Strip(line))
 		}
 		out = append(out, line)
 	}
@@ -272,7 +284,29 @@ func (m Model) statusLine() string {
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
+	if note := m.estimateNote(); note != "" {
+		pos += " · " + note
+	}
 	return helpStyle.Render(pos)
+}
+
+// estimateNote explains the asterisked values, naming the vendors involved.
+// Empty when every visible price came from Scryfall, so the common case pays
+// no width for it.
+func (m Model) estimateNote() string {
+	if m.view != viewHoldings {
+		return ""
+	}
+	sources := map[string]bool{}
+	for _, c := range m.cards {
+		if c.AltSource != "" {
+			sources[c.AltSource] = true
+		}
+	}
+	if len(sources) == 0 {
+		return ""
+	}
+	return "* estimated from " + strings.Join(slices.Sorted(maps.Keys(sources)), ", ") + " via MTGJSON"
 }
 
 // emptyExplanation distinguishes a filter that matched nothing from a catalog

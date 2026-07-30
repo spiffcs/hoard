@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/scryfall"
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
 
@@ -102,7 +103,7 @@ type EntryView struct {
 
 // Price returns the market price for this entry's finish (foil vs. normal).
 func (e EntryView) Price() *float64 {
-	if e.Finish == "foil" || e.Finish == "etched" {
+	if scryfall.PricedAsFoil(e.Finish) {
 		return e.Card.PriceUSDFoil
 	}
 	return e.Card.PriceUSD
@@ -173,6 +174,24 @@ const (
          AND c.price_usd IS NULL AND a.price_usd IS NULL)`
 )
 
+// cardCols selects the Card fields, in the order cardScanDest reads them.
+// altSource is altSourceExpr or altSourceForEntry, whichever the query's scope
+// permits. Projection and scan sit side by side so a new Card field is one
+// edit here, not a coordinated edit per query — a mismatch used to surface
+// only as a runtime scan error.
+func cardCols(altSource string) string {
+	return `c.scryfall_id, c.set_code, c.collector_number, c.name,
+       ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
+       ` + altSource
+}
+
+// cardScanDest is the scan targets matching cardCols, for the caller to extend
+// with its query's own columns.
+func cardScanDest(c *Card) []any {
+	return []any{&c.ScryfallID, &c.SetCode, &c.CollectorNumber, &c.Name,
+		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource}
+}
+
 // Store wraps the database handle.
 type Store struct {
 	db *sql.DB
@@ -242,7 +261,7 @@ VALUES (?, 'Collection', 'manual', ?, ?, ?)`,
 
 // Price is the market price for this row's finish.
 func (r CollectionRow) Price() *float64 {
-	if r.Finish == "foil" || r.Finish == "etched" {
+	if scryfall.PricedAsFoil(r.Finish) {
 		return r.PriceUSDFoil
 	}
 	return r.PriceUSD

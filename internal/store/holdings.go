@@ -81,9 +81,7 @@ func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 		return nil, err
 	}
 	rows, err := s.db.Query(`
-SELECT c.scryfall_id, c.set_code, c.collector_number, c.name,
-       `+effPriceUSD+`, `+effPriceFoil+`, c.scryfall_url, c.updated_at,
-       `+altSourceForEntry+`,
+SELECT `+cardCols(altSourceForEntry)+`,
        e.finish,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
@@ -101,9 +99,8 @@ ORDER BY value DESC, c.name`, cid)
 	var out []CollectionRow
 	for rows.Next() {
 		var r CollectionRow
-		if err := rows.Scan(&r.ScryfallID, &r.SetCode, &r.CollectorNumber, &r.Name,
-			&r.PriceUSD, &r.PriceUSDFoil, &r.ScryfallURL, &r.UpdatedAt, &r.AltSource,
-			&r.Finish, &r.Quantity, &r.Value); err != nil {
+		if err := rows.Scan(append(cardScanDest(&r.Card),
+			&r.Finish, &r.Quantity, &r.Value)...); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

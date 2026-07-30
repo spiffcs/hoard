@@ -15,11 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-// userAgent identifies this tool to Scryfall. Scryfall requires a descriptive
-// User-Agent header on every request.
-const userAgent = "hoard/0.1"
+	"github.com/spiffcs/hoard/internal/buildinfo"
+)
 
 // apiBase is the Scryfall REST API root. It is a var (not const) so tests can
 // point the client at a local httptest server.
@@ -110,43 +108,79 @@ type apiCard struct {
 	Details string `json:"details"`
 }
 
+// httpClient is shared by every request. One client, deliberately: when each
+// call site built its own, the timeout policy was five copies of one decision.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// apiResponse is what apiDo hands back: enough to interpret the outcome
+// without re-reading the body.
+type apiResponse struct {
+	status int
+	header http.Header
+	body   []byte
+}
+
+// apiDo performs one API request with the standard headers and returns the
+// whole response. Status interpretation stays with each endpoint — the quirks
+// genuinely differ (fuzzy's 404 means "no match", collection's 429 carries a
+// Retry-After worth honouring) — but the transport plumbing is one decision,
+// made here. what names the operation for error messages.
+func apiDo(ctx context.Context, method, endpoint string, reqBody []byte, what string) (apiResponse, error) {
+	var r io.Reader
+	if reqBody != nil {
+		r = bytes.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, r)
+	if err != nil {
+		return apiResponse{}, err
+	}
+	req.Header.Set("User-Agent", buildinfo.UserAgent)
+	req.Header.Set("Accept", "application/json")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return apiResponse{}, fmt.Errorf("requesting %s: %w", what, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return apiResponse{}, fmt.Errorf("reading %s response: %w", what, err)
+	}
+	return apiResponse{status: resp.StatusCode, header: resp.Header, body: body}, nil
+}
+
+// statusErr reports a not-OK response, preferring the API's own "details"
+// message when the body carries one.
+func statusErr(r apiResponse, what string) error {
+	var e struct {
+		Details string `json:"details"`
+	}
+	_ = json.Unmarshal(r.body, &e)
+	if e.Details != "" {
+		return fmt.Errorf("scryfall %s returned %d: %s", what, r.status, e.Details)
+	}
+	return fmt.Errorf("scryfall %s returned %d", what, r.status)
+}
+
 // FetchCard retrieves a single card from Scryfall by set code and collector
 // number.
 func FetchCard(ctx context.Context, set, number string) (*Card, error) {
 	endpoint := fmt.Sprintf("%s/cards/%s/%s", apiBase, url.PathEscape(set), url.PathEscape(number))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	what := fmt.Sprintf("card %s/%s", set, number)
+	r, err := apiDo(ctx, http.MethodGet, endpoint, nil, what)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("requesting card %s/%s: %w", set, number, err)
+	if r.status != http.StatusOK {
+		return nil, statusErr(r, what)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response for %s/%s: %w", set, number, err)
-	}
-
 	var ac apiCard
-	if err := json.Unmarshal(body, &ac); err != nil {
-		return nil, fmt.Errorf("decoding response for %s/%s (status %d): %w", set, number, resp.StatusCode, err)
+	if err := json.Unmarshal(r.body, &ac); err != nil {
+		return nil, fmt.Errorf("decoding response for %s/%s: %w", set, number, err)
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		if ac.Details != "" {
-			return nil, fmt.Errorf("scryfall returned %d for %s/%s: %s", resp.StatusCode, set, number, ac.Details)
-		}
-		return nil, fmt.Errorf("scryfall returned %d for %s/%s", resp.StatusCode, set, number)
-	}
-
-	card := ac.toCard(body)
+	card := ac.toCard(r.body)
 	return &card, nil
 }
 
@@ -167,7 +201,6 @@ const collectionMax = 75
 // automatically splitting identifiers into chunks of 75. It returns the found
 // cards and the identifiers Scryfall could not match (echoed back verbatim).
 func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFound []Identifier, err error) {
-	client := &http.Client{Timeout: 30 * time.Second}
 	for i := 0; i < len(ids); i += collectionMax {
 		if i > 0 {
 			// Stay well under Scryfall's rate limit between chunks.
@@ -176,7 +209,7 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 			}
 		}
 		end := min(i+collectionMax, len(ids))
-		chunkFound, chunkNotFound, err := fetchCollectionChunkRetrying(ctx, client, ids[i:end])
+		chunkFound, chunkNotFound, err := fetchCollectionChunkRetrying(ctx, ids[i:end])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -210,10 +243,10 @@ func (e errRateLimited) Error() string {
 // than one process: a hoard refreshed twice in a few minutes can be limited
 // while well under the per-second rate, so waiting is the correct response
 // rather than an error worth surfacing.
-func fetchCollectionChunkRetrying(ctx context.Context, client *http.Client, ids []Identifier) ([]Card, []Identifier, error) {
+func fetchCollectionChunkRetrying(ctx context.Context, ids []Identifier) ([]Card, []Identifier, error) {
 	var lastErr error
 	for attempt := 0; attempt <= rateLimitRetries; attempt++ {
-		cards, missing, err := fetchCollectionChunk(ctx, client, ids)
+		cards, missing, err := fetchCollectionChunk(ctx, ids)
 		var limited errRateLimited
 		if !errors.As(err, &limited) {
 			return cards, missing, err
@@ -245,9 +278,9 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // retryAfter reads the Retry-After header, falling back to a default when it is
 // missing or unparseable. Scryfall sends seconds; the value is clamped so a
 // surprising header cannot park the process for an afternoon.
-func retryAfter(resp *http.Response, fallback time.Duration) time.Duration {
+func retryAfter(h http.Header, fallback time.Duration) time.Duration {
 	const maxWait = 90 * time.Second
-	if v := resp.Header.Get("Retry-After"); v != "" {
+	if v := h.Get("Retry-After"); v != "" {
 		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
 			return min(time.Duration(secs)*time.Second, maxWait)
 		}
@@ -255,31 +288,25 @@ func retryAfter(resp *http.Response, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identifier) ([]Card, []Identifier, error) {
+func fetchCollectionChunk(ctx context.Context, ids []Identifier) ([]Card, []Identifier, error) {
 	reqBody, err := json.Marshal(struct {
 		Identifiers []Identifier `json:"identifiers"`
 	}{ids})
 	if err != nil {
 		return nil, nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/cards/collection", bytes.NewReader(reqBody))
+	r, err := apiDo(ctx, http.MethodPost, apiBase+"/cards/collection", reqBody, "card collection")
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("requesting card collection: %w", err)
+	// Checked before decoding: a 429 body is an error object, not a card list,
+	// and its "details" is the shouty warning about network blocks rather than
+	// anything worth showing per attempt.
+	if r.status == http.StatusTooManyRequests {
+		return nil, nil, errRateLimited{retryAfter: retryAfter(r.header, 60*time.Second)}
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading collection response: %w", err)
+	if r.status != http.StatusOK {
+		return nil, nil, statusErr(r, "collection")
 	}
 
 	// Data is decoded in two passes — to RawMessage, then to apiCard — so each
@@ -289,24 +316,10 @@ func fetchCollectionChunk(ctx context.Context, client *http.Client, ids []Identi
 	var out struct {
 		Data     []json.RawMessage `json:"data"`
 		NotFound []Identifier      `json:"not_found"`
-		Details  string            `json:"details"`
 	}
-	// Checked before decoding: a 429 body is an error object, not a card list,
-	// and its "details" is the shouty warning about network blocks rather than
-	// anything worth showing per attempt.
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, nil, errRateLimited{retryAfter: retryAfter(resp, 60*time.Second)}
+	if err := json.Unmarshal(r.body, &out); err != nil {
+		return nil, nil, fmt.Errorf("decoding collection response: %w", err)
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, nil, fmt.Errorf("decoding collection response (status %d): %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if out.Details != "" {
-			return nil, nil, fmt.Errorf("scryfall collection returned %d: %s", resp.StatusCode, out.Details)
-		}
-		return nil, nil, fmt.Errorf("scryfall collection returned %d", resp.StatusCode)
-	}
-
 	cards, err := decodeCards(out.Data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("decoding collection response: %w", err)
@@ -331,13 +344,7 @@ func decodeCards(raws []json.RawMessage) ([]Card, error) {
 // toCard converts a decoded Scryfall JSON card into the exported Card type,
 // carrying the bytes it was decoded from so the store can keep them.
 func (ac apiCard) toCard(raw json.RawMessage) Card {
-	// The catalog has a single "foil" price column; when a card has no foil
-	// price but does have an etched price (etched-only printings), use that so
-	// etched entries can still be valued.
-	foil := parsePrice(ac.Prices.USDFoil)
-	if foil == nil {
-		foil = parsePrice(ac.Prices.USDEtched)
-	}
+	foil := FoilPrice(parsePrice(ac.Prices.USDFoil), parsePrice(ac.Prices.USDEtched))
 	return Card{
 		ID:              ac.ID,
 		Name:            ac.Name,
@@ -360,30 +367,17 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 // GET /cards/autocomplete. Returns an empty slice when nothing matches.
 func Autocomplete(ctx context.Context, q string) ([]string, error) {
 	endpoint := apiBase + "/cards/autocomplete?q=" + url.QueryEscape(q)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	r, err := apiDo(ctx, http.MethodGet, endpoint, nil, "autocomplete")
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("autocomplete %q: %w", q, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("scryfall autocomplete returned %d", resp.StatusCode)
+	if r.status != http.StatusOK {
+		return nil, statusErr(r, "autocomplete")
 	}
 	var out struct {
 		Data []string `json:"data"`
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := json.Unmarshal(r.body, &out); err != nil {
 		return nil, fmt.Errorf("decoding autocomplete response: %w", err)
 	}
 	return out.Data, nil
@@ -394,38 +388,22 @@ func Autocomplete(ctx context.Context, q string) ([]string, error) {
 // can't confidently match (404), so callers can fall back to manual entry.
 func NamedFuzzy(ctx context.Context, text string) (*Card, error) {
 	endpoint := apiBase + "/cards/named?fuzzy=" + url.QueryEscape(text)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fuzzy-naming %q: %w", text, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	r, err := apiDo(ctx, http.MethodGet, endpoint, nil, "fuzzy-name")
 	if err != nil {
 		return nil, err
 	}
 	// 404 means no confident match (or the query was too ambiguous).
-	if resp.StatusCode == http.StatusNotFound {
+	if r.status == http.StatusNotFound {
 		return nil, nil
 	}
+	if r.status != http.StatusOK {
+		return nil, statusErr(r, "fuzzy-name")
+	}
 	var ac apiCard
-	if err := json.Unmarshal(body, &ac); err != nil {
-		return nil, fmt.Errorf("decoding fuzzy-name response (status %d): %w", resp.StatusCode, err)
+	if err := json.Unmarshal(r.body, &ac); err != nil {
+		return nil, fmt.Errorf("decoding fuzzy-name response: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		if ac.Details != "" {
-			return nil, fmt.Errorf("scryfall fuzzy-name returned %d: %s", resp.StatusCode, ac.Details)
-		}
-		return nil, fmt.Errorf("scryfall fuzzy-name returned %d", resp.StatusCode)
-	}
-	card := ac.toCard(body)
+	card := ac.toCard(r.body)
 	return &card, nil
 }
 
@@ -437,10 +415,9 @@ func SearchPrints(ctx context.Context, exactName string) ([]Card, error) {
 	query := fmt.Sprintf(`!"%s" game:paper`, exactName)
 	endpoint := apiBase + "/cards/search?unique=prints&order=released&q=" + url.QueryEscape(query)
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	var cards []Card
 	for endpoint != "" {
-		page, next, err := searchPage(ctx, client, endpoint)
+		page, next, err := searchPage(ctx, endpoint)
 		if err != nil {
 			return nil, err
 		}
@@ -458,43 +435,25 @@ func SearchPrints(ctx context.Context, exactName string) ([]Card, error) {
 
 // searchPage fetches one page of a /cards/search result. It returns the page's
 // cards, the next-page URL ("" when done), or (nil, "", nil) on a 404 no-match.
-func searchPage(ctx context.Context, client *http.Client, endpoint string) ([]Card, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+func searchPage(ctx context.Context, endpoint string) ([]Card, string, error) {
+	r, err := apiDo(ctx, http.MethodGet, endpoint, nil, "search")
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("searching prints: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
+	if r.status == http.StatusNotFound {
 		return nil, "", nil // no cards matched
+	}
+	if r.status != http.StatusOK {
+		return nil, "", statusErr(r, "search")
 	}
 	var out struct {
 		Data     []json.RawMessage `json:"data"`
 		HasMore  bool              `json:"has_more"`
 		NextPage string            `json:"next_page"`
-		Details  string            `json:"details"`
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, "", fmt.Errorf("decoding search response (status %d): %w", resp.StatusCode, err)
+	if err := json.Unmarshal(r.body, &out); err != nil {
+		return nil, "", fmt.Errorf("decoding search response: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		if out.Details != "" {
-			return nil, "", fmt.Errorf("scryfall search returned %d: %s", resp.StatusCode, out.Details)
-		}
-		return nil, "", fmt.Errorf("scryfall search returned %d", resp.StatusCode)
-	}
-
 	cards, err := decodeCards(out.Data)
 	if err != nil {
 		return nil, "", fmt.Errorf("decoding search response: %w", err)

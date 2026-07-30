@@ -305,8 +305,8 @@ func TestSignedMoney(t *testing.T) {
 		{0, "$0.00"},
 		{1234.5, "+$1,234.50"},
 	} {
-		if got := signedMoney(tc.in); got != tc.want {
-			t.Errorf("signedMoney(%v) = %q, want %q", tc.in, got, tc.want)
+		if got := ui.SignedMoney(tc.in); got != tc.want {
+			t.Errorf("ui.SignedMoney(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -323,8 +323,8 @@ func TestSignedPercent(t *testing.T) {
 		{0.005, "+0.5%"},
 		{0, ""}, // no old price to be a percentage of
 	} {
-		if got := signedPercent(tc.in); got != tc.want {
-			t.Errorf("signedPercent(%v) = %q, want %q", tc.in, got, tc.want)
+		if got := ui.SignedPercent(tc.in); got != tc.want {
+			t.Errorf("ui.SignedPercent(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

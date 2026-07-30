@@ -64,6 +64,24 @@ func (p *persistingSession) Events() <-chan scan.Event {
 	return p.events
 }
 
+// Close shuts the session down through the forwarding goroutine rather than
+// through Session.Close, whose drain would race that goroutine for the same
+// channel — and a final rotation correction swallowed by the drain would never
+// reach the preferences file.
+func (p *persistingSession) Close() error {
+	if p.events == nil {
+		// Events was never called, so there is no forwarder to protect.
+		return p.Session.Close()
+	}
+	err := p.Session.Shutdown()
+	// Consume what the forwarder relays until it sees the session's channel
+	// close and exits. This both keeps it from blocking on a full buffer and
+	// guarantees every last event passed through the rotation check above.
+	for range p.events { //nolint:revive // draining
+	}
+	return err
+}
+
 // scanPrefs holds the small amount of scan state worth surviving between runs.
 type scanPrefs struct {
 	// Rotation is extra clockwise preview rotation in degrees (0/90/180/270).

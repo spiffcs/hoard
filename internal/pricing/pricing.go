@@ -71,8 +71,7 @@ func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Pr
 	if err != nil || len(byUUID) == 0 {
 		return nil, err
 	}
-	mtgjson.CacheDir = f.cacheDir
-	prices, err := mtgjson.TodayPrices(ctx, byUUID)
+	prices, err := mtgjson.TodayPrices(ctx, f.cacheDir, byUUID)
 	if err != nil {
 		return nil, fmt.Errorf("mtgjson prices: %w", err)
 	}
@@ -89,8 +88,7 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 	if err != nil || len(byUUID) == 0 {
 		return nil, err
 	}
-	mtgjson.CacheDir = f.cacheDir
-	quotes, err := mtgjson.TodayQuotes(ctx, byUUID)
+	quotes, err := mtgjson.TodayQuotes(ctx, f.cacheDir, byUUID)
 	if err != nil {
 		return nil, fmt.Errorf("mtgjson quotes: %w", err)
 	}
@@ -108,8 +106,7 @@ func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string][]mtgjson
 	if err != nil || len(byUUID) == 0 {
 		return nil, err
 	}
-	mtgjson.CacheDir = f.cacheDir
-	hist, err := mtgjson.PriceHistory(ctx, byUUID)
+	hist, err := mtgjson.PriceHistory(ctx, f.cacheDir, byUUID)
 	if err != nil {
 		return nil, fmt.Errorf("mtgjson price history: %w", err)
 	}
@@ -173,13 +170,12 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 		return known, nil
 	}
 
-	mtgjson.CacheDir = f.cacheDir
 	if len(bySet) > 3 {
 		f.say("resolving card ids from %d sets (once only)...", len(bySet))
 	}
 	learned := make(map[string]string)
 	for setCode, sids := range bySet {
-		ids, err := mtgjson.SetIdentifiers(ctx, setCode)
+		ids, err := mtgjson.SetIdentifiers(ctx, f.cacheDir, setCode)
 		if err != nil {
 			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
 			// rather than abandon every other card.
