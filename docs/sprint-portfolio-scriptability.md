@@ -142,7 +142,7 @@ exactly equals the live summary's totals. Interface method is named
 outnumber seeded ones (seeded rows never leave the series, so presence alone
 would mark it forever), and `hoard watch` becomes migration **v10**.
 
-## ⬜ D. `hoard watch`
+## ✅ D. `hoard watch`
 
 - Same v9 migration: `watches(id, scryfall_id, display, finish, op,
   threshold, created_at, last_state)`. A table, not a prefs file — scan.json's
@@ -155,6 +155,22 @@ would mark it forever), and `hoard watch` becomes migration **v10**.
   0 = quiet; `--json` for scripting. Cron pairing:
   `hoard update-prices && hoard watch`.
 - `watch list` / `watch rm` complete the surface.
+
+**Landed** (2026-07-30): migration **v10** `watches` table with
+`UNIQUE(scryfall_id, finish, op)` — re-adding a question replaces its
+threshold and resets state rather than stacking duplicate alerts. Crossing
+semantics: fires when the condition starts holding (including the first
+check — "already under your threshold" is worth exactly one alert);
+unpriced cards are skipped with state untouched, so the alert fires when a
+price appears rather than manufacturing a phantom crossing. Thresholds are
+strict (< / >). `watch add` resolves through `cardResolver` (the deck/import
+pipeline) and upserts the card into the catalog so update-prices keeps
+pricing it even when unowned — the buy-watch case. Exit 3 maps from an
+`errWatchFired` sentinel handled before the error printer (an alert is a
+result, not a failure). JSON is the `watch` document kind, schema **1.0.2**;
+`--json` still exits 3. Live-verified on the real DB: add → list
+(met/waiting/unpriced states) → first check fired exit 3 → second quiet
+exit 0.
 
 ## ⬜ E. Bulk paste entry
 

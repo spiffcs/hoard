@@ -45,6 +45,9 @@ Collection commands:
   repair-finishes                                  Fix cards stored as a finish they lack
   arbitrage [--min N] [--limit N]                  Where vendors disagree, as three tables
   report [--top N] [--csv] [-o FILE]               Dated valuation: totals, binders, top holdings
+  watch                                            Check price watches (no network; exit 3 = fired)
+  watch add <name> --under N|--over N [--foil]     Alert when a price crosses a threshold
+  watch list | watch rm <id|name>                  Your watches, and removing one
   catalog [status|update]                          The local copy of Scryfall's card data
 
 Binder commands:
@@ -67,11 +70,12 @@ Interop commands:
 A deck <name> can be any part of its name, as long as it matches one deck.
 
 --json prints a versioned JSON document instead of a table, on the read
-commands: hoard (the summary), unpriced, movers, arbitrage, report, and
-export. See docs/json.md; the schemas live in schema/json/.
+commands: hoard (the summary), unpriced, movers, arbitrage, report, watch,
+and export. See docs/json.md; the schemas live in schema/json/.
 
 Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
-with unresolvable cards) — so a script can tell "done" from "done, mostly".
+with unresolvable cards) · 3 a price watch crossed its threshold — so a script
+can tell "done" from "done, mostly", and a cron can branch on an alert.
 
 The database lives in a per-user data directory by default (e.g. on macOS
 ~/Library/Application Support/hoard/hoard.db, on Linux $XDG_DATA_HOME/hoard/hoard.db)
@@ -87,6 +91,12 @@ var errPartial = errors.New("some items were skipped")
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		// A fired watch is a result, not a failure: the alert is already on
+		// stdout, and the sentinel only carries the exit status a cron
+		// wrapper branches on.
+		if errors.Is(err, errWatchFired) {
+			os.Exit(3)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		if errors.Is(err, errPartial) {
 			os.Exit(2)
@@ -153,12 +163,16 @@ func run(args []string) error {
 		return cmdReport(st, cmdArgs, jsonOut)
 	case "export":
 		return cmdExport(st, cmdArgs, jsonOut)
+	case "watch":
+		// The bare check emits JSON; cmdWatch itself rejects --json on the
+		// add/list/rm subcommands, which write or configure.
+		return cmdWatch(ctx, st, cmdArgs, jsonOut)
 	}
 	// Everything below writes or configures; a --json that would be silently
 	// ignored is worse than an error, because the caller is a script that
 	// expects to parse what comes back.
 	if jsonOut {
-		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, report, export", cmd)
+		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, report, watch, export", cmd)
 	}
 	switch cmd {
 	case "add":

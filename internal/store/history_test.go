@@ -786,8 +786,10 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',10,'scryfall','2026-05-01T00:00:00Z')`,
 		`INSERT INTO card_price_history VALUES ('ulamog-id','foil',20,'scryfall','2026-05-01T00:00:00Z')`,
 		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',12,'scryfall','2026-05-10T00:00:00Z')`,
-		// Rewind to v8 so reopening replays exactly the snapshot migration.
+		// Rewind to v8 so reopening replays the snapshot migration (and
+		// v10's watches table, which must also not pre-exist).
 		`DROP TABLE value_snapshots`,
+		`DROP TABLE watches`,
 		`PRAGMA user_version = 8`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {

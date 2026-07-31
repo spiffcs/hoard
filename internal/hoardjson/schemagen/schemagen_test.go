@@ -104,6 +104,11 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				CollectorNumber: "236", Finish: "foil", Copies: 1, Old: 30, New: 32,
 				Source: "scryfall"}}),
 		"movers-empty": hoardjson.FromMovers("2026-06-30T00:00:00Z", "", nil),
+		"watch": hoardjson.FromWatchCheck(2, []store.WatchStatus{{
+			Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over", Threshold: 10},
+			Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125", PriceUSD: f(12.5),
+		}}),
+		"watch-quiet": hoardjson.FromWatchCheck(0, nil),
 		"report": hoardjson.FromValuation(report.ValuationData{
 			AsOf:   "2026-07-30T09:00:00Z",
 			Binder: store.CollectionTotals{DistinctCards: 2, TotalCopies: 3, Value: 16.5},

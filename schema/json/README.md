@@ -48,6 +48,8 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.0.2** — ADDITION: the `watch` document kind (one price-watch check:
+  how many watches were evaluated, which just crossed their thresholds).
 - **1.0.1** — ADDITION: the `report` document kind (dated valuation — totals,
   per-binder breakdown, top holdings, price-source coverage). Every 1.0.0
   document remains valid.

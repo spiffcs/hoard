@@ -37,6 +37,7 @@ var migrations = []migration{
 	{7, rememberImports},
 	{8, renameNonfoil},
 	{9, valueSnapshots},
+	{10, watchesTable},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -289,6 +290,25 @@ CREATE TABLE value_snapshots (
     decks  REAL NOT NULL,
     total  REAL NOT NULL,
     source TEXT NOT NULL DEFAULT 'observed'
+);`
+
+// v10: price watches. In the database rather than a prefs file because a
+// watch carries state — last_state is what makes an alert fire once on a
+// crossing instead of every cron run it sits past the threshold — and
+// because alert data must not inherit a config file's swallow-all-errors
+// loading. One watch per card, finish and direction: re-adding replaces the
+// threshold rather than stacking a duplicate alert.
+const watchesTable = `
+CREATE TABLE watches (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id),
+    display     TEXT NOT NULL,
+    finish      TEXT NOT NULL,
+    op          TEXT NOT NULL,
+    threshold   REAL NOT NULL,
+    created_at  TEXT NOT NULL,
+    last_state  TEXT NOT NULL DEFAULT '',
+    UNIQUE(scryfall_id, finish, op)
 );`
 
 // migrate brings the database up to schemaVersion, backing it up first.

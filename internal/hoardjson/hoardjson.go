@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.0.1"
+const SchemaVersion = "1.0.2"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -35,20 +35,22 @@ const (
 	KindMovers    Kind = "movers"
 	KindArbitrage Kind = "arbitrage"
 	KindReport    Kind = "report"
+	KindWatch     Kind = "watch"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=arbitrage,enum=report"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=arbitrage,enum=report,enum=watch"`
 
-	Summary   *Summary   `json:"summary,omitempty"`
-	Holdings  *Holdings  `json:"holdings,omitempty"`
-	Unpriced  *Unpriced  `json:"unpriced,omitempty"`
-	Movers    *Movers    `json:"movers,omitempty"`
-	Arbitrage *Arbitrage `json:"arbitrage,omitempty"`
-	Report    *Report    `json:"report,omitempty"`
+	Summary   *Summary    `json:"summary,omitempty"`
+	Holdings  *Holdings   `json:"holdings,omitempty"`
+	Unpriced  *Unpriced   `json:"unpriced,omitempty"`
+	Movers    *Movers     `json:"movers,omitempty"`
+	Arbitrage *Arbitrage  `json:"arbitrage,omitempty"`
+	Report    *Report     `json:"report,omitempty"`
+	Watch     *WatchCheck `json:"watch,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -238,6 +240,24 @@ type SourceCount struct {
 type UnpricedCount struct {
 	Printings int `json:"printings"`
 	Copies    int `json:"copies"`
+}
+
+// WatchCheck is one pass over the price watches: how many could be evaluated
+// (an unpriced card answers neither "under" nor "over" and is not counted),
+// and the watches that just crossed into their condition. A crossing fires
+// once; a threshold merely still-met fires nothing.
+type WatchCheck struct {
+	Checked int          `json:"checked"`
+	Fired   []FiredWatch `json:"fired"`
+}
+
+// FiredWatch is one alert: the card, the threshold it crossed, and the price
+// that crossed it.
+type FiredWatch struct {
+	Card         Card    `json:"card"`
+	Op           string  `json:"op" jsonschema:"enum=under,enum=over"`
+	ThresholdUsd float64 `json:"thresholdUsd"`
+	PriceUsd     float64 `json:"priceUsd"`
 }
 
 // Write emits one document: two-space indented, HTML left unescaped (card

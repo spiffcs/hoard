@@ -195,6 +195,33 @@ func FromValuation(d report.ValuationData) Document {
 	return doc
 }
 
+// FromWatchCheck builds the watch document from one check's results.
+func FromWatchCheck(checked int, fired []store.WatchStatus) Document {
+	w := &WatchCheck{Checked: checked, Fired: make([]FiredWatch, 0, len(fired))}
+	for _, f := range fired {
+		price := 0.0
+		if f.PriceUSD != nil {
+			price = *f.PriceUSD
+		}
+		w.Fired = append(w.Fired, FiredWatch{
+			Card: Card{
+				Name:        f.Name,
+				ScryfallID:  f.ScryfallID,
+				MTGJSONUUID: f.MTGJSONUUID,
+				SetCode:     f.SetCode,
+				Number:      f.CollectorNumber,
+				Finish:      f.Finish,
+			},
+			Op:           f.Op,
+			ThresholdUsd: cents(f.Threshold),
+			PriceUsd:     cents(price),
+		})
+	}
+	doc := envelope(KindWatch)
+	doc.Watch = w
+	return doc
+}
+
 // FromArbitrage builds the arbitrage document: the full ranking of every
 // opportunity, per question, without the display's top-N truncation.
 func FromArbitrage(res arbitrage.Result) Document {
