@@ -145,6 +145,12 @@ CREATE INDEX IF NOT EXISTS cards_mtgjson_uuid ON cards(mtgjson_uuid);`
 //
 // The seed turns the prices already on disk into a baseline, so the first refresh
 // after upgrading has something to compare against.
+//
+// CAUTION on the CASCADE below: history is the one table that cannot be
+// re-fetched — MTGJSON's archive reaches back 90 days, and everything older
+// exists only here. Nothing deletes from cards today, so the cascade never
+// fires; any future pruning of catalog rows must exempt printings with
+// history, or years of observations vanish with a row that was "just a cache".
 const keepPriceHistory = `
 CREATE TABLE IF NOT EXISTS card_price_history (
     scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
@@ -236,22 +242,73 @@ CREATE TABLE IF NOT EXISTS card_price_gaps (
     checked_at  TEXT NOT NULL
 );`
 
+// applicationID marks the file as a hoard database in its SQLite header:
+// "HORD" in ASCII, per the application-file-format convention, so a tool (or a
+// future hoard command) can tell a hoard from any other .db without guessing
+// at table names.
+const applicationID = 0x484F5244
+
 // migrate brings the database up to schemaVersion, backing it up first.
+//
+// The backup fires before anything rewrites data — including the legacy
+// single-table transform below — because a backup taken after a transform can
+// only preserve the transform's mistakes.
 func (s *Store) migrate(path string) error {
-	v, fresh, err := s.bootstrapVersion()
-	if err != nil {
-		return err
+	var v int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return fmt.Errorf("reading schema version: %w", err)
 	}
-	if v >= schemaVersion {
-		return nil
+	// A file from a newer hoard is refused, not written. Every migration so
+	// far has been additive, but that is circumstance rather than contract,
+	// and this is the one file that cannot be re-downloaded after an older
+	// binary scribbles on it.
+	if v > schemaVersion {
+		return fmt.Errorf(
+			"database schema is v%d but this hoard understands v%d — upgrade hoard; an older build must not write here",
+			v, schemaVersion)
 	}
-	// A database created moments ago has nothing worth preserving, and backing
-	// it up would leave a stray file beside every new hoard.
+	if v == schemaVersion {
+		return s.stampApplicationID()
+	}
+
+	// Every hoard predating versioning reports user_version 0, and three
+	// states share that value: an empty file, a database from the original
+	// single-table build, and a v1 database that was never marked. Only the
+	// empty file is fresh — a database created moments ago has nothing worth
+	// preserving, and backing it up would leave a stray file beside every new
+	// hoard.
+	fresh := false
+	if v == 0 {
+		var hasCards bool
+		if err := s.db.QueryRow(`
+SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`).Scan(&hasCards); err != nil {
+			return fmt.Errorf("inspecting schema: %w", err)
+		}
+		fresh = !hasCards
+	}
 	if !fresh {
 		if err := s.backup(path, v); err != nil {
 			return err
 		}
 	}
+
+	if v == 0 {
+		// The original build's wide cards table, migrated in place — after the
+		// backup above, so its pre-state survives on disk.
+		if err := s.migrateLegacy(); err != nil {
+			return err
+		}
+		// Safe on all three v0 states: creates what is missing, touches what
+		// is not.
+		if _, err := s.db.Exec(schemaV1); err != nil {
+			return fmt.Errorf("initializing schema: %w", err)
+		}
+		if err := s.setVersion(1); err != nil {
+			return err
+		}
+		v = 1
+	}
+
 	for _, m := range migrations {
 		if m.Version <= v {
 			continue
@@ -260,46 +317,22 @@ func (s *Store) migrate(path string) error {
 			return fmt.Errorf("migrating to schema v%d: %w", m.Version, err)
 		}
 	}
-	return nil
+	return s.stampApplicationID()
 }
 
-// bootstrapVersion returns the database's schema version, stamping it first if
-// it predates versioning.
-//
-// Every hoard in existence reports user_version 0, and three different states
-// share that value, so they have to be told apart before anything is stamped:
-// an empty file, a database from the original single-table build, and a current
-// one that simply was never marked. This is the last place pragma_table_info is
-// consulted to work out a version.
-func (s *Store) bootstrapVersion() (version int, fresh bool, err error) {
-	var v int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
-		return 0, false, fmt.Errorf("reading schema version: %w", err)
+// stampApplicationID writes hoard's magic into the file header, once. Failure
+// to read the pragma is not worth failing Open over — the id is a courtesy to
+// tooling, not a load-bearing invariant.
+func (s *Store) stampApplicationID() error {
+	var id int64
+	if err := s.db.QueryRow(`PRAGMA application_id`).Scan(&id); err != nil {
+		return nil
 	}
-	if v > 0 {
-		return v, false, nil
+	if id == applicationID {
+		return nil
 	}
-
-	// An empty file has no tables at all, which is what separates a brand-new
-	// hoard from one that simply predates versioning.
-	var hasCards bool
-	if err := s.db.QueryRow(`
-SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`).Scan(&hasCards); err != nil {
-		return 0, false, fmt.Errorf("inspecting schema: %w", err)
-	}
-
-	// The original build's wide cards table, migrated in place.
-	if err := s.migrateLegacy(); err != nil {
-		return 0, false, err
-	}
-	// Safe on all three states: creates what is missing, touches what is not.
-	if _, err := s.db.Exec(schemaV1); err != nil {
-		return 0, false, fmt.Errorf("initializing schema: %w", err)
-	}
-	if err := s.setVersion(1); err != nil {
-		return 0, false, err
-	}
-	return 1, !hasCards, nil
+	_, err := s.db.Exec(fmt.Sprintf(`PRAGMA application_id = %d`, applicationID))
+	return err
 }
 
 // apply runs one migration and stamps its version in the same transaction.

@@ -9,7 +9,9 @@
 //   - card_prices_alt    — fallback vendor prices for printings Scryfall
 //     cannot price, applied by the shared SQL fragments below.
 //   - card_price_history — dated price observations, one per refresh or
-//     backfill, feeding movers and the detail sparklines.
+//     backfill, feeding movers and the detail sparklines. Irreplaceable in
+//     practice: MTGJSON's archive reaches back 90 days, so any observation
+//     older than that exists nowhere but here.
 //   - card_price_gaps    — printings already found unpriced everywhere, so a
 //     refresh stops re-downloading bundles to chase them.
 //
@@ -216,8 +218,17 @@ func Open(path string) (*Store, error) {
 		}
 	}
 	// Enable foreign-key enforcement so ON DELETE CASCADE works, and give a
-	// blocked write a few seconds rather than failing outright.
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	// blocked write a few seconds rather than failing outright. Transactions
+	// begin immediate: several writers here read a value and write it back in
+	// one transaction, and a deferred BEGIN that upgrades to a write lock under
+	// a concurrent process gets an instant SQLITE_BUSY that busy_timeout never
+	// retries — taking the lock up front turns that race into a plain wait.
+	//
+	// Durability is the default and deliberately so: journal_mode=DELETE with
+	// synchronous=FULL. This file is the irreplaceable half, and every commit
+	// paying a real fsync is the choice. Anyone switching to WAL later must set
+	// synchronous explicitly — WAL quietly weakens it to NORMAL semantics.
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}

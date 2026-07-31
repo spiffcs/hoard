@@ -82,29 +82,40 @@ func (s *Store) BinderByRef(ref string) (*Container, error) {
 
 // CreateBinder makes a new empty binder and returns its id.
 func (s *Store) CreateBinder(name string) (int64, error) {
+	name, sid, err := s.validateNewBinderName(name)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.Exec(insertBinderSQL, KindCollection, name, sid, now(), now())
+	if err != nil {
+		return 0, fmt.Errorf("creating binder %q: %w", name, err)
+	}
+	return res.LastInsertId()
+}
+
+const insertBinderSQL = `
+INSERT INTO containers (kind, name, source, source_id, created_at, updated_at)
+VALUES (?, ?, 'manual', ?, ?, ?)`
+
+// validateNewBinderName checks a proposed binder name against the creation
+// rules without creating anything, so a batch import can vet every name before
+// its transaction opens. Returns the trimmed name and its source_id slug.
+func (s *Store) validateNewBinderName(name string) (trimmed, sourceID string, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return 0, fmt.Errorf("a binder needs a name")
+		return "", "", fmt.Errorf("a binder needs a name")
 	}
 	sid := binderSourceID(name)
 	if sid == "binder:" {
-		return 0, fmt.Errorf("binder name %q has no usable characters", name)
+		return "", "", fmt.Errorf("binder name %q has no usable characters", name)
 	}
 	// Uniqueness is checked against display names, not just the slugged
 	// source_id, so "Trade" cannot shadow the default "Binder" or collide with
 	// a name that slugs identically.
 	if existing, err := s.containerByRef(KindCollection, "binder", name); err == nil {
-		return 0, fmt.Errorf("a binder named %q already exists", existing.Name)
+		return "", "", fmt.Errorf("a binder named %q already exists", existing.Name)
 	}
-	ts := now()
-	res, err := s.db.Exec(`
-INSERT INTO containers (kind, name, source, source_id, created_at, updated_at)
-VALUES (?, ?, 'manual', ?, ?, ?)`,
-		KindCollection, name, sid, ts, ts)
-	if err != nil {
-		return 0, fmt.Errorf("creating binder %q: %w", name, err)
-	}
-	return res.LastInsertId()
+	return name, sid, nil
 }
 
 // RenameBinder gives a binder a new display name. The default binder keeps its

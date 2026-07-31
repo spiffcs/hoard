@@ -151,35 +151,43 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		binderIDs[strings.ToLower(b.Name)] = b.ID
 	}
 
+	// Plan every write first, then hand the whole batch to the store as one
+	// transaction: an interrupted import must be nothing rather than half,
+	// because added quantities cannot be told apart from cards actually owned.
+	// New binder names are deduped case-insensitively on their first spelling.
 	var created []string
+	spelling := make(map[string]string)
 	copies := 0
 	perBinder := make(map[string]int)
+	cardAdds := make([]store.CardAdd, 0, len(adds))
 	for _, a := range adds {
 		dest, name := targetID, targetName
+		newBinder := ""
 		if a.binder != "" {
 			key := strings.ToLower(a.binder)
-			id, ok := binderIDs[key]
-			if !ok {
-				// Reserve the name either way so a dry run counts the
-				// creation once; -1 never reaches the store.
-				id = -1
-				if !*dryRun {
-					if id, err = st.CreateBinder(a.binder); err != nil {
-						return err
-					}
+			if id, ok := binderIDs[key]; ok {
+				dest, name = id, a.binder
+			} else {
+				canonical, seen := spelling[key]
+				if !seen {
+					canonical = strings.TrimSpace(a.binder)
+					spelling[key] = canonical
+					created = append(created, canonical)
 				}
-				binderIDs[key] = id
-				created = append(created, a.binder)
-			}
-			dest, name = id, a.binder
-		}
-		if !*dryRun {
-			if err := st.AddCardFinishTo(dest, a.card, a.finish, a.qty); err != nil {
-				return err
+				dest, name, newBinder = 0, canonical, canonical
 			}
 		}
+		cardAdds = append(cardAdds, store.CardAdd{
+			ContainerID: dest, Binder: newBinder,
+			Card: a.card, Finish: a.finish, Quantity: a.qty,
+		})
 		copies += a.qty
 		perBinder[name] += a.qty
+	}
+	if !*dryRun && len(cardAdds) > 0 {
+		if _, err := st.ApplyImport(created, cardAdds); err != nil {
+			return err
+		}
 	}
 
 	verb := "Imported"

@@ -74,7 +74,17 @@ func CorrectFinish(finish string, available []string) (string, bool) {
 // is the only case with a single right answer; anything else is returned as
 // ambiguous and left untouched rather than guessed at.
 func (s *Store) RepairFinishes(available map[string][]string) (fixed, ambiguous []FinishFix, err error) {
-	rows, err := s.db.Query(`
+	// The read happens inside the same transaction as the writes below.
+	// Quantities captured by the SELECT are re-written by the merge, so a
+	// change between the two — another hoard process, the browse TUI in a
+	// second terminal — would silently lose or invent copies.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`
 SELECT e.container_id, ` + containerLabel + `, e.scryfall_id, e.finish, e.board, e.quantity,
        c.name, c.set_code, c.collector_number
 FROM card_entries e
@@ -123,15 +133,13 @@ ORDER BY c.name`)
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
+	// The single connection serializes statements, so the cursor must be fully
+	// drained and closed before the writes below reuse the connection.
+	rows.Close()
 	if len(todo) == 0 {
 		return nil, ambiguous, nil
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tx.Rollback()
 	for _, t := range todo {
 		// Insert-then-delete rather than UPDATE: the corrected finish may
 		// already exist for this card in this container, and the primary key
