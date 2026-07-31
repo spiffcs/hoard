@@ -1,10 +1,86 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
 )
+
+// SourceCount is how much of the collection one price source covers: a
+// printing-finish combination counts once however many copies are held, and
+// Copies counts them all. Source is "scryfall", a fallback vendor's name, or
+// "" for the printings nothing can price.
+type SourceCount struct {
+	Source    string
+	Printings int
+	Copies    int
+}
+
+// PriceSources reports where every owned printing-finish's price comes from,
+// largest source first. The valuation report prints this so a reader knows
+// which figures are Scryfall's, which are a fallback vendor's estimate, and
+// how much of the total is standing on nothing at all.
+func (s *Store) PriceSources() ([]SourceCount, error) {
+	// The inner query classifies each owned printing-finish exactly as
+	// entryValue prices it: the foil price for foil and etched, with Scryfall
+	// preferred over the fallback — so the counts and the totals they explain
+	// cannot disagree.
+	rows, err := s.db.Query(`
+SELECT src, COUNT(*) AS printings, SUM(copies) AS copies FROM (
+  SELECT CASE WHEN e.finish IN ('foil','etched') THEN
+           CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
+                WHEN a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
+                ELSE '' END
+         ELSE
+           CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
+                WHEN a.price_usd IS NOT NULL THEN a.source_usd
+                ELSE '' END
+         END AS src,
+         SUM(e.quantity) AS copies
+  FROM card_entries e
+  JOIN cards c ON c.scryfall_id = e.scryfall_id
+  ` + altJoinEntries + `
+  GROUP BY c.scryfall_id, e.finish
+)
+GROUP BY src
+ORDER BY printings DESC, src`)
+	if err != nil {
+		return nil, fmt.Errorf("counting price sources: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceCount
+	for rows.Next() {
+		var sc SourceCount
+		if err := rows.Scan(&sc.Source, &sc.Printings, &sc.Copies); err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+// LatestPriceStamp is when the prices being reported were observed: the
+// newest history row, or — before any history exists — the newest card
+// fetch. Empty only when the database has never seen a price at all. A
+// valuation carries this date because "what it's worth" is meaningless
+// without "as of when".
+func (s *Store) LatestPriceStamp() (string, error) {
+	var stamp sql.NullString
+	if err := s.db.QueryRow(
+		`SELECT MAX(as_of) FROM card_price_history`).Scan(&stamp); err != nil {
+		return "", fmt.Errorf("reading latest observation: %w", err)
+	}
+	if stamp.String != "" {
+		return stamp.String, nil
+	}
+	if err := s.db.QueryRow(
+		`SELECT MAX(updated_at) FROM cards WHERE price_usd IS NOT NULL
+		    OR price_usd_foil IS NOT NULL`).Scan(&stamp); err != nil {
+		return "", fmt.Errorf("reading latest fetch: %w", err)
+	}
+	return stamp.String, nil
+}
 
 // Prices Scryfall could not supply, and the gaps that remain after trying.
 

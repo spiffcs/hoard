@@ -8,6 +8,7 @@ hoard --json                 # the summary: binder, decks, totals
 hoard unpriced --json        # what counts as $0.00, and where it's held
 hoard movers --json          # every price change in the window
 hoard arbitrage --json       # the full vendor-disagreement ranking
+hoard report --json          # the dated valuation: totals, binders, sources
 hoard export --json          # holdings, same data as the canonical CSV
 ```
 
@@ -72,6 +73,13 @@ Everything in one binder as Scryfall ids, e.g. to feed another tool:
 
 ```sh
 hoard export --binder Trade --json | jq -r '.holdings.rows[].card.scryfallId'
+```
+
+The valuation's headline figures, and how much of the total is estimated:
+
+```sh
+hoard report --json | jq '{asOf: .report.asOf, total: .report.total.valueUsd,
+                           sources: .report.sources}'
 ```
 
 Exit codes are unchanged by `--json`: 0 success, 1 error, 2 finished with

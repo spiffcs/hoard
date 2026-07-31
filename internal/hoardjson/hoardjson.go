@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.0.0"
+const SchemaVersion = "1.0.1"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -34,19 +34,21 @@ const (
 	KindUnpriced  Kind = "unpriced"
 	KindMovers    Kind = "movers"
 	KindArbitrage Kind = "arbitrage"
+	KindReport    Kind = "report"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=arbitrage"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=arbitrage,enum=report"`
 
 	Summary   *Summary   `json:"summary,omitempty"`
 	Holdings  *Holdings  `json:"holdings,omitempty"`
 	Unpriced  *Unpriced  `json:"unpriced,omitempty"`
 	Movers    *Movers    `json:"movers,omitempty"`
 	Arbitrage *Arbitrage `json:"arbitrage,omitempty"`
+	Report    *Report    `json:"report,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -186,6 +188,56 @@ type Opportunity struct {
 	ProfitUsd *float64 `json:"profitUsd,omitempty"`
 	// Liquidity is the fraction of the cheapest retail a shop will pay.
 	Liquidity *float64 `json:"liquidity,omitempty"`
+}
+
+// Report is the dated valuation: the totals, each binder, the most valuable
+// holdings, and where every price came from. TopHoldings is the display's
+// top-N — the full itemized list is the holdings document's job.
+type Report struct {
+	// AsOf is when the prices were observed (RFC 3339); absent when nothing
+	// has ever been priced.
+	AsOf        string          `json:"asOf,omitempty"`
+	Total       GrandTotal      `json:"total"`
+	Binder      Totals          `json:"binder"`
+	Decks       DeckAggregate   `json:"decks"`
+	Binders     []DeckTotals    `json:"binders"`
+	TopHoldings []ReportHolding `json:"topHoldings"`
+	Sources     []SourceCount   `json:"sources"`
+	Unpriced    UnpricedCount   `json:"unpriced"`
+}
+
+// DeckAggregate rolls every deck into one line, as the report's totals show
+// them; the per-deck split lives in the summary document.
+type DeckAggregate struct {
+	Count       int     `json:"count"`
+	TotalCopies int     `json:"totalCopies"`
+	ValueUsd    float64 `json:"valueUsd"`
+}
+
+// ReportHolding is one itemized holding: the per-copy price and what the
+// copies are worth together. PriceUsd is absent when no source prices the
+// card — its copies are in the totals at $0.00.
+type ReportHolding struct {
+	Card     Card     `json:"card"`
+	Copies   int      `json:"copies"`
+	PriceUsd *float64 `json:"priceUsd,omitempty"`
+	ValueUsd float64  `json:"valueUsd"`
+}
+
+// SourceCount is one price source's coverage: distinct printing-finish
+// combinations and the physical copies they account for. Source is
+// "scryfall" or a fallback vendor's name.
+type SourceCount struct {
+	Source    string `json:"source"`
+	Printings int    `json:"printings"`
+	Copies    int    `json:"copies"`
+}
+
+// UnpricedCount is the residue no source covers, counted the same way as
+// SourceCount.
+type UnpricedCount struct {
+	Printings int `json:"printings"`
+	Copies    int `json:"copies"`
 }
 
 // Write emits one document: two-space indented, HTML left unescaped (card

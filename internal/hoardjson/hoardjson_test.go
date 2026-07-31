@@ -10,6 +10,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -32,7 +33,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -78,7 +79,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -126,7 +127,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -166,7 +167,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -212,7 +213,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -245,7 +246,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []arbitrage.Opportunity{tomb, ring}, Compared: 2, Ignored: 1,
 	}))
 	want := `{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0.1",
   "kind": "arbitrage",
   "arbitrage": {
     "comparedPrintings": 2,
@@ -318,5 +319,103 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 `
 	if got != want {
 		t.Errorf("arbitrage document:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestReportDocument(t *testing.T) {
+	got := write(t, FromValuation(report.ValuationData{
+		AsOf:   "2026-07-30T09:00:00Z",
+		Binder: store.CollectionTotals{DistinctCards: 2, TotalCopies: 3, Value: 16.5},
+		Binders: []store.DeckSummary{
+			{Container: store.Container{Name: "Binder"}, DistinctCards: 1, TotalCopies: 2, Value: 4},
+			{Container: store.Container{Name: "Trade"}, DistinctCards: 1, TotalCopies: 1, Value: 12.5},
+		},
+		Decks: []store.DeckSummary{
+			{Container: store.Container{Name: "Fish"}, DistinctCards: 1, TotalCopies: 1, Value: 0},
+		},
+		Top: []store.OwnedFinish{
+			{ScryfallID: "sol", MTGJSONUUID: "uu-sol", Name: "Sol Ring", SetCode: "c21",
+				CollectorNumber: "125", Finish: "foil", Copies: 1, Value: 12.5},
+			{ScryfallID: "rem", Name: "Mystic Remora", SetCode: "ice",
+				CollectorNumber: "78", Finish: "nonfoil", Copies: 1, Value: 0},
+		},
+		Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
+		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
+	}))
+	want := `{
+  "schemaVersion": "1.0.1",
+  "kind": "report",
+  "report": {
+    "asOf": "2026-07-30T09:00:00Z",
+    "total": {
+      "totalCopies": 4,
+      "valueUsd": 16.5
+    },
+    "binder": {
+      "distinctCards": 2,
+      "totalCopies": 3,
+      "valueUsd": 16.5
+    },
+    "decks": {
+      "count": 1,
+      "totalCopies": 1,
+      "valueUsd": 0
+    },
+    "binders": [
+      {
+        "name": "Binder",
+        "distinctCards": 1,
+        "totalCopies": 2,
+        "valueUsd": 4
+      },
+      {
+        "name": "Trade",
+        "distinctCards": 1,
+        "totalCopies": 1,
+        "valueUsd": 12.5
+      }
+    ],
+    "topHoldings": [
+      {
+        "card": {
+          "name": "Sol Ring",
+          "scryfallId": "sol",
+          "mtgjsonUuid": "uu-sol",
+          "setCode": "c21",
+          "number": "125",
+          "finish": "foil"
+        },
+        "copies": 1,
+        "priceUsd": 12.5,
+        "valueUsd": 12.5
+      },
+      {
+        "card": {
+          "name": "Mystic Remora",
+          "scryfallId": "rem",
+          "setCode": "ice",
+          "number": "78",
+          "finish": "nonfoil"
+        },
+        "copies": 1,
+        "valueUsd": 0
+      }
+    ],
+    "sources": [
+      {
+        "source": "scryfall",
+        "printings": 2,
+        "copies": 3
+      }
+    ],
+    "unpriced": {
+      "printings": 1,
+      "copies": 1
+    }
+  }
+}
+`
+	if got != want {
+		t.Errorf("report document:\n%s\nwant:\n%s", got, want)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -103,6 +104,18 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				CollectorNumber: "236", Finish: "foil", Copies: 1, Old: 30, New: 32,
 				Source: "scryfall"}}),
 		"movers-empty": hoardjson.FromMovers("2026-06-30T00:00:00Z", "", nil),
+		"report": hoardjson.FromValuation(report.ValuationData{
+			AsOf:   "2026-07-30T09:00:00Z",
+			Binder: store.CollectionTotals{DistinctCards: 2, TotalCopies: 3, Value: 16.5},
+			Binders: []store.DeckSummary{{Container: store.Container{Name: "Binder"},
+				DistinctCards: 2, TotalCopies: 3, Value: 16.5}},
+			Decks: []store.DeckSummary{{Container: store.Container{Name: "Fish"},
+				DistinctCards: 1, TotalCopies: 1, Value: 0}},
+			Top: []store.OwnedFinish{{ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
+				CollectorNumber: "125", Finish: "foil", Copies: 1, Value: 12.5}},
+			Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
+			Unpriced: store.SourceCount{Printings: 1, Copies: 1},
+		}),
 		"arbitrage": hoardjson.FromArbitrage(arbitrage.Result{
 			Compared: 1, Ignored: 0,
 			Opportunities: []arbitrage.Opportunity{{

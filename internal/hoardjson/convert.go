@@ -11,6 +11,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -137,6 +138,60 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 	}
 	doc := envelope(KindMovers)
 	doc.Movers = m
+	return doc
+}
+
+// FromValuation builds the report document from the same data the text
+// report renders, so the two can never state different figures.
+func FromValuation(d report.ValuationData) Document {
+	r := &Report{
+		AsOf:        d.AsOf,
+		Binder:      Totals{DistinctCards: d.Binder.DistinctCards, TotalCopies: d.Binder.TotalCopies, ValueUsd: cents(d.Binder.Value)},
+		Binders:     make([]DeckTotals, 0, len(d.Binders)),
+		TopHoldings: make([]ReportHolding, 0, len(d.Top)),
+		Sources:     make([]SourceCount, 0, len(d.Sources)),
+		Unpriced:    UnpricedCount{Printings: d.Unpriced.Printings, Copies: d.Unpriced.Copies},
+	}
+	deckCopies, deckValue := 0, 0.0
+	for _, dk := range d.Decks {
+		deckCopies += dk.TotalCopies
+		deckValue += dk.Value
+	}
+	r.Decks = DeckAggregate{Count: len(d.Decks), TotalCopies: deckCopies, ValueUsd: cents(deckValue)}
+	r.Total = GrandTotal{TotalCopies: d.Binder.TotalCopies + deckCopies,
+		ValueUsd: cents(d.Binder.Value + deckValue)}
+	for _, b := range d.Binders {
+		r.Binders = append(r.Binders, DeckTotals{Name: b.Name, Totals: Totals{
+			DistinctCards: b.DistinctCards, TotalCopies: b.TotalCopies, ValueUsd: cents(b.Value)}})
+	}
+	for _, o := range d.Top {
+		h := ReportHolding{
+			Card: Card{
+				Name:        o.Name,
+				ScryfallID:  o.ScryfallID,
+				MTGJSONUUID: o.MTGJSONUUID,
+				SetCode:     o.SetCode,
+				Number:      o.CollectorNumber,
+				Finish:      o.Finish,
+			},
+			Copies:   o.Copies,
+			ValueUsd: cents(o.Value),
+		}
+		// A zero-value row is an unpriced one: the store values what it
+		// cannot price at exactly zero, and a per-copy price of $0.00 would
+		// claim knowledge the absence is there to deny.
+		if o.Value > 0 && o.Copies > 0 {
+			p := cents(o.Value / float64(o.Copies))
+			h.PriceUsd = &p
+		}
+		r.TopHoldings = append(r.TopHoldings, h)
+	}
+	for _, sc := range d.Sources {
+		r.Sources = append(r.Sources, SourceCount{
+			Source: sc.Source, Printings: sc.Printings, Copies: sc.Copies})
+	}
+	doc := envelope(KindReport)
+	doc.Report = r
 	return doc
 }
 

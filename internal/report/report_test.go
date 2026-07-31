@@ -335,3 +335,83 @@ func change(name string, copies int, old, now float64) store.PriceChange {
 		Copies: copies, Old: old, New: now,
 	}
 }
+
+func TestValuationRendersEverySection(t *testing.T) {
+	d := ValuationData{
+		AsOf:   "2026-07-30T09:00:00Z",
+		Binder: testCollection(),
+		Binders: []store.DeckSummary{
+			func() store.DeckSummary {
+				b := store.DeckSummary{DistinctCards: 1, TotalCopies: 4, Value: 60}
+				b.Name = "Binder"
+				return b
+			}(),
+			func() store.DeckSummary {
+				b := store.DeckSummary{DistinctCards: 1, TotalCopies: 6, Value: 40}
+				b.Name = "Trade"
+				return b
+			}(),
+		},
+		Decks: testDecks(),
+		Top: []store.OwnedFinish{
+			{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
+				Finish: "nonfoil", Copies: 2, Value: 60},
+		},
+		Sources:  []store.SourceCount{{Source: "scryfall", Printings: 3, Copies: 10}},
+		Unpriced: store.SourceCount{Printings: 1, Copies: 2},
+	}
+	out := Valuation(ui.Env{Width: 100, Clamp: true}, d)
+	for _, want := range []string{
+		"VALUATION · prices as of 30 Jul 2026",
+		"BINDERS", "Trade",
+		"TOP 1 HOLDINGS", "Ancient Tomb", "$30.00", "$60.00",
+		"PRICE SOURCES", "scryfall", "unpriced", "counted as $0.00",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("valuation is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// One binder means the breakdown restates the totals line above it, so the
+// section must vanish rather than say the same thing twice.
+func TestValuationSkipsSingleBinderBreakdown(t *testing.T) {
+	b := store.DeckSummary{DistinctCards: 2, TotalCopies: 10, Value: 100}
+	b.Name = "Binder"
+	out := Valuation(ui.Env{Width: 100, Clamp: true}, ValuationData{
+		Binder:  testCollection(),
+		Binders: []store.DeckSummary{b},
+	})
+	if strings.Contains(out, "BINDERS") {
+		t.Errorf("single-binder valuation still shows the breakdown:\n%s", out)
+	}
+	if strings.Contains(out, "prices as of") {
+		t.Errorf("valuation with no AsOf claims a date:\n%s", out)
+	}
+}
+
+// The CSV is the full itemized list: exact bytes, dated on every row, with
+// the unpriced row showing 0.00 values (a valuation sums to a number; the
+// "unknown, not free" distinction lives in the report's sources section and
+// the holdings export).
+func TestValuationCSV(t *testing.T) {
+	var sb strings.Builder
+	err := ValuationCSV(&sb, "2026-07-30T09:00:00Z", []store.OwnedFinish{
+		{Name: "Mystic Remora", SetCode: "ice", CollectorNumber: "78",
+			Finish: "nonfoil", Copies: 1, Value: 0},
+		{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
+			Finish: "nonfoil", Copies: 2, Value: 60},
+	})
+	if err != nil {
+		t.Fatalf("ValuationCSV: %v", err)
+	}
+	want := strings.Join([]string{
+		"Name,Set,Collector Number,Finish,Copies,Unit Price USD,Value USD,As Of",
+		"Ancient Tomb,uma,236,nonfoil,2,30.00,60.00,30 Jul 2026",
+		"Mystic Remora,ice,78,nonfoil,1,0.00,0.00,30 Jul 2026",
+		"",
+	}, "\n")
+	if sb.String() != want {
+		t.Errorf("valuation CSV:\n%s\nwant:\n%s", sb.String(), want)
+	}
+}

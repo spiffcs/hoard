@@ -96,7 +96,7 @@ JSON (movers/arbitrage emit the full ranking), money fields round to whole
 cents, absent-means-unknown for priceUsd/mtgjsonUuid, store.Card learned
 MTGJSONUUID (cardCols), UnpricedRow learned identifiers + a Containers list.
 
-## ⬜ B. `hoard report`
+## ✅ B. `hoard report`
 
 Dated valuation document for insurance/sale: totals, top-N holdings,
 per-binder breakdown, price sources, as-of date.
@@ -107,6 +107,14 @@ per-binder breakdown, price sources, as-of date.
   a CSV writer for the report shape, `--json` via A.
 - `hoard report [-o FILE] [--top N] [--json|--csv]`; deterministic ordering
   throughout so reports diff cleanly in git.
+
+**Landed** (2026-07-30): `report.Valuation`/`ValuationCSV` in internal/report
+(text itemizes --top N, default 10; CSV is the full list, dated per row);
+store gained `PriceSources` (per-source printings/copies, classified exactly
+as entryValue prices) and `LatestPriceStamp` (newest history row, else newest
+priced fetch). JSON is the `report` document kind — schema **1.0.1**, the
+first ADDITION bump: schema-1.0.0.json stayed immutable, 1.0.1 landed beside
+it with a changelog entry.
 
 ## ⬜ C. Value snapshots + browser sparkline
 

@@ -44,6 +44,7 @@ Collection commands:
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
   arbitrage [--min N] [--limit N]                  Where vendors disagree, as three tables
+  report [--top N] [--csv] [-o FILE]               Dated valuation: totals, binders, top holdings
   catalog [status|update]                          The local copy of Scryfall's card data
 
 Binder commands:
@@ -66,8 +67,8 @@ Interop commands:
 A deck <name> can be any part of its name, as long as it matches one deck.
 
 --json prints a versioned JSON document instead of a table, on the read
-commands: hoard (the summary), unpriced, movers, arbitrage, and export.
-See docs/json.md; the schemas live in schema/json/.
+commands: hoard (the summary), unpriced, movers, arbitrage, report, and
+export. See docs/json.md; the schemas live in schema/json/.
 
 Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
 with unresolvable cards) — so a script can tell "done" from "done, mostly".
@@ -148,6 +149,8 @@ func run(args []string) error {
 		return cmdUnpriced(st, jsonOut)
 	case "arbitrage":
 		return cmdArbitrage(ctx, st, cmdArgs, jsonOut)
+	case "report":
+		return cmdReport(st, cmdArgs, jsonOut)
 	case "export":
 		return cmdExport(st, cmdArgs, jsonOut)
 	}
@@ -155,7 +158,7 @@ func run(args []string) error {
 	// ignored is worse than an error, because the caller is a script that
 	// expects to parse what comes back.
 	if jsonOut {
-		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, export", cmd)
+		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, report, export", cmd)
 	}
 	switch cmd {
 	case "add":
