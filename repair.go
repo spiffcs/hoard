@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -56,24 +57,7 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 	}
 
 	if len(fixed) > 0 {
-		t := ui.Table{
-			Env:    env,
-			Header: true,
-			Cols: []ui.Col{
-				{Title: "NAME", Align: ui.Left, Flex: true, Min: 16},
-				{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-				{Title: "QTY", Align: ui.Right},
-				{Title: "WAS", Align: ui.Left, Style: env.Dim()},
-				{Title: "NOW", Align: ui.Left},
-				{Title: "IN", Align: ui.Left, Flex: true, Min: 10, Max: 30,
-					Priority: 5, Style: env.Dim()},
-			},
-		}
-		for _, f := range fixed {
-			t.Add(ui.C(f.Name), ui.C(ui.Printing(f.SetCode, f.CollectorNumber)),
-				ui.C(ui.Count(f.Quantity)), ui.C(f.From), ui.C(f.To), ui.C(f.Container))
-		}
-		fmt.Print(t.Render())
+		fmt.Print(report.FinishRepairs(env, fixed))
 		fmt.Println(env.Dim()(fmt.Sprintf(
 			"\nCorrected %s entries. Run hoard update-prices to value them.", ui.Count(len(fixed)))))
 	}

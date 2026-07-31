@@ -1043,26 +1043,10 @@ func (m model) confirmSummary() string {
 // --- pure helpers (unit-tested) ---
 
 // finishOptions maps a card's Scryfall finishes to the tool's finish names,
-// preserving a stable normal→foil→etched order.
+// in a stable normal→foil→etched order. The translation itself lives beside
+// the Card type, shared, so this package holds no private copy of it.
 func finishOptions(c scryfall.Card) []string {
-	has := map[string]bool{}
-	for _, f := range c.Finishes {
-		switch f {
-		case "nonfoil":
-			has["normal"] = true
-		case "foil":
-			has["foil"] = true
-		case "etched":
-			has["etched"] = true
-		}
-	}
-	var out []string
-	for _, f := range []string{"normal", "foil", "etched"} {
-		if has[f] {
-			out = append(out, f)
-		}
-	}
-	return out
+	return scryfall.Finishes(c)
 }
 
 // printMarkers summarizes distinguishing traits of a printing for display.

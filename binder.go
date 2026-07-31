@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -65,20 +66,6 @@ func binderList(st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	env := ui.Detect(os.Stdout)
-	t := ui.Table{
-		Env: env, Header: true,
-		Cols: []ui.Col{
-			{Title: "ID", Align: ui.Right, Style: env.Dim()},
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8},
-			{Title: "CARDS", Align: ui.Right},
-			{Title: "VALUE", Align: ui.Right},
-		},
-	}
-	for _, b := range binders {
-		t.Add(ui.C(fmt.Sprint(b.ID)), ui.C(b.Name),
-			ui.C(ui.Count(b.TotalCopies)), ui.C(ui.Money(b.Value)))
-	}
-	fmt.Print(t.Render())
+	fmt.Print(report.Binders(ui.Detect(os.Stdout), binders))
 	return nil
 }

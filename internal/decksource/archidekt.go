@@ -111,6 +111,7 @@ func archidektToDeck(id, sourceURL string, ad *archidektDeck) *Deck {
 		}
 		d.Entries = append(d.Entries, Entry{
 			Ident:    ident,
+			Name:     c.Card.OracleCard.Name,
 			Quantity: c.Quantity,
 			Finish:   normalizeFinish(c.Modifier),
 			Board:    boardFromCategories(c.Categories),

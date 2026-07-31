@@ -21,3 +21,24 @@ func FoilPrice(foil, etched *float64) *float64 {
 	}
 	return etched
 }
+
+// Finishes returns the finishes a card comes in, translated to the tool's
+// vocabulary (normal|foil|etched) in that stable order. Scryfall says
+// "nonfoil" where the rest of the tool says "normal"; this is the shared
+// translation table, so no consumer needs a private copy that can drift.
+func Finishes(c Card) []string {
+	has := map[string]bool{}
+	for _, f := range c.Finishes {
+		if f == "nonfoil" {
+			f = "normal"
+		}
+		has[f] = true
+	}
+	var out []string
+	for _, f := range []string{"normal", "foil", "etched"} {
+		if has[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}

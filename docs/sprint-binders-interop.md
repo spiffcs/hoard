@@ -198,6 +198,34 @@ versions.
   **Never cut**: canonical CSV export, ManaBox/Moxfield import, binders — they
   are the positioning.
 
+## Hardening interlude (2026-07-30, between B and D)
+
+An architecture audit (Release It! / SQLite-as-application-format / DDIA /
+Unix philosophy / Ousterhout) landed four commits before the picker work:
+
+1. **Network edge**: an MTGJSON outage no longer stamps price gaps "checked"
+   (it used to silence re-asks for a week); non-gzip 200s are never cached and
+   poisoned day-cache entries self-heal; Scryfall's bounded retry covers 5xx;
+   the bulk-data listing has a deadline; movers/arbitrage sort deterministically.
+2. **Store**: forward-compat guard (+`application_id` "HORD"), the migration
+   backup fires before the legacy transform, imports commit as one transaction
+   (`Store.ApplyImport`), `RepairFinishes` reads inside its tx, DSN uses
+   `_txlock=immediate`. Price history is documented as irreplaceable (90-day
+   source window) and its `ON DELETE CASCADE` flagged as a loaded gun.
+3. **Import ledger + round trip**: schema v7 `import_ledger` refuses re-runs
+   by content hash (`--again` overrides); canonical CSV gained a
+   `Container Kind` column and import skips deck rows, so an --all export
+   restores instead of pouring decks into binders.
+4. **Modules + CLI discipline**: `internal/resolve` owns the shared card
+   pipeline (deck add gained the name-retry pass and offline testability);
+   catalog progress and its y/N prompt moved to stderr; report tables are
+   single-sourced (`report.Binders`/`FinishRepairs`, advice split from
+   `Unpriced`); exit code 2 = completed-with-skips; `scryfall.Finishes` is the
+   one nonfoil→normal translation table. decksource.Entry carries Name.
+
+Deliberately not done (audit judged working-as-intended): circuit breakers,
+WAL, splitting browse.Store, moving layeredSearcher, Archidekt retry.
+
 ## Post-sprint backlog
 
 Leading themes (maintainer decision): **portfolio + scriptability** — they
@@ -218,10 +246,20 @@ export with prices).
 
 **Scriptability — "the only MTG tool that composes":**
 5. `--json` on every read command (summary, unpriced, movers, arbitrage,
-   export) with a documented stable schema.
+   export) with a documented stable schema. (Groundwork done: report tables
+   are prose-free and single-sourced; export assembles data before rendering.)
 6. Deterministic export ordering → version your collection in git; diffs show
-   adds/removals.
-7. Document the SQLite schema as a public read API.
+   adds/removals. (Done for export, movers, and arbitrage in the hardening
+   interlude.)
+7. Document the SQLite schema as a public read API. (The file now carries
+   application_id "HORD" and refuses newer-schema writes.)
+
+**From the hardening audit:**
+14. `hoard backup` / `hoard doctor`: on-demand `VACUUM INTO` + integrity_check,
+    reusing the migration backup machinery — the irreplaceable price history
+    currently has no export path.
+15. Unify `refreshCards` (catalog-first resolution in catalog.go) with
+    `internal/resolve` so update-prices/repair share the one pipeline too.
 
 **Later / opportunistic:**
 8. Multi-card scanning productionization (if the E spike says go).

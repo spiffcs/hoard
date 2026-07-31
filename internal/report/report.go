@@ -101,11 +101,18 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 		t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
 			ui.C(ui.Finish(r.Finish)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}
-	// Two different cures, and the less obvious one is usually the answer: a
-	// card stored in a finish its printing does not come in can never be priced,
-	// however many times you refresh.
 	return t.Render() + env.Dim()(fmt.Sprintf(
-		"\n%s copies across %s cards count as $0.00.\n"+
-			"Try: hoard repair-finishes, then hoard update-prices",
+		"\n%s copies across %s cards count as $0.00.",
 		ui.Count(copies), ui.Count(len(rows)))) + "\n"
+}
+
+// UnpricedAdvice is what to do about unpriced holdings — separate from the
+// table so a machine-readable rendering of the data never carries prose, and
+// the caller decides where advice belongs.
+//
+// Two different cures, and the less obvious one is usually the answer: a card
+// stored in a finish its printing does not come in can never be priced,
+// however many times you refresh.
+func UnpricedAdvice(env ui.Env) string {
+	return env.Dim()("Try: hoard repair-finishes, then hoard update-prices") + "\n"
 }

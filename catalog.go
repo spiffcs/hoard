@@ -145,20 +145,24 @@ func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool
 }
 
 // updateCatalog rebuilds the catalog, reporting progress.
+//
+// Progress goes to stderr, like every other long wait in hoard (see
+// newFetcher): ensureCatalog runs inside update-prices, and download chatter
+// on stdout would land in the data stream of `hoard update-prices | …`.
 func updateCatalog(ctx context.Context, cat *catalog.Catalog) error {
-	fmt.Printf("Downloading the card catalog (%s)...\n", downloadSize(ctx, cat))
+	fmt.Fprintf(os.Stderr, "Downloading the card catalog (%s)...\n", downloadSize(ctx, cat))
 	start := time.Now()
 	last := 0
 	err := cat.Update(ctx, func(n int) {
 		if n-last >= 25000 {
-			fmt.Printf("  %s cards...\n", ui.Count(n))
+			fmt.Fprintf(os.Stderr, "  %s cards...\n", ui.Count(n))
 			last = n
 		}
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Catalog ready: %s cards, %s on disk, built in %s.\n",
+	fmt.Fprintf(os.Stderr, "Catalog ready: %s cards, %s on disk, built in %s.\n",
 		ui.Count(cat.CardCount()), humanBytes(cat.Bytes()),
 		time.Since(start).Round(time.Second))
 	return nil
@@ -199,12 +203,14 @@ var confirmFn = confirm
 // Anything but an explicit yes declines: the questions this asks all precede
 // spending somebody's bandwidth, and the safe reading of a stray keystroke is
 // "don't". A non-interactive stdin declines outright rather than blocking a
-// script forever on a prompt nobody will answer.
+// script forever on a prompt nobody will answer. The prompt itself goes to
+// stderr — it is conversation with the user, not command output, and it must
+// not leak into a pipe that happens to still have a terminal on stdin.
 func confirm(question string) bool {
 	if !stdinIsTTY() {
 		return false
 	}
-	fmt.Printf("%s [y/N] ", question)
+	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
 	var answer string
 	fmt.Scanln(&answer)
 	return answer == "y" || answer == "Y" || answer == "yes"

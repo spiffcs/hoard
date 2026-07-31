@@ -119,6 +119,10 @@ func cmdUnpriced(st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	fmt.Print(report.Unpriced(ui.Detect(os.Stdout), rows))
+	env := ui.Detect(os.Stdout)
+	fmt.Print(report.Unpriced(env, rows))
+	if len(rows) > 0 {
+		fmt.Print(report.UnpricedAdvice(env))
+	}
 	return nil
 }

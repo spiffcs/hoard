@@ -11,33 +11,35 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// stubFetch swaps the Scryfall bulk lookup for an in-memory one over the given
-// cards, matching by the same keys resolveIDs uses. Returns a call counter so
-// tests can see whether the name-fallback pass ran.
+// stubFetch swaps the resolver's Scryfall lookup for an in-memory one over
+// the given cards, matching by the same keys the resolver indexes. Covers
+// deck add and import alike — they share cardResolver. Returns a call counter
+// so tests can see whether the name-fallback pass ran.
 func stubFetch(t *testing.T, cards ...scryfall.Card) *int {
 	t.Helper()
-	index := resolveIDs(cards)
-	byID := make(map[string]scryfall.Card, len(cards))
+	index := make(map[string]scryfall.Card, len(cards)*3)
 	for _, c := range cards {
-		byID[c.ID] = c
+		index[c.ID] = c
+		index[strings.ToLower(c.Set)+"/"+c.CollectorNumber] = c
+		index[strings.ToLower(c.Name)] = c
 	}
 	calls := new(int)
-	old := fetchCollection
-	t.Cleanup(func() { fetchCollection = old })
-	fetchCollection = func(_ context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
+	old := cardResolver.Fetch
+	t.Cleanup(func() { cardResolver.Fetch = old })
+	cardResolver.Fetch = func(_ context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
 		*calls++
 		var found []scryfall.Card
 		var notFound []scryfall.Identifier
 		seen := make(map[string]bool)
 		for _, ident := range ids {
-			id, ok := index[ident.Key()]
+			c, ok := index[ident.Key()]
 			if !ok {
 				notFound = append(notFound, ident)
 				continue
 			}
-			if !seen[id] {
-				seen[id] = true
-				found = append(found, byID[id])
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				found = append(found, c)
 			}
 		}
 		return found, notFound, nil

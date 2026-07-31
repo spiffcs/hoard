@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/decksource"
-	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -53,48 +53,31 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
-	// Resolve every entry's identifier to a catalog card in bulk.
-	idents := make([]scryfall.Identifier, len(deck.Entries))
+	// Resolve every entry in bulk — the shared pipeline also retries misses
+	// by name and corrects finishes the printing does not come in (a decklist
+	// with no *F* marker parses as non-foil, but precon commanders are
+	// frequently foil-only, and the claimed finish would price at $0 forever).
+	reqs := make([]resolve.Request, len(deck.Entries))
 	for i, e := range deck.Entries {
-		idents[i] = e.Ident
+		reqs[i] = resolve.Request{Ident: e.Ident, Name: e.Name, Finish: e.Finish}
 	}
-	found, _, err := scryfall.FetchCollection(ctx, idents)
+	res, err := cardResolver.Resolve(ctx, reqs)
 	if err != nil {
 		return err
 	}
-	if err := st.UpsertPrintings(found); err != nil {
+	if err := st.UpsertPrintings(res.Found); err != nil {
 		return err
 	}
 
-	// Finishes, keyed by the id the resolver hands back, so an entry can be
-	// checked against the finishes its printing actually comes in.
-	finishes := make(map[string][]string, len(found))
-	for _, c := range found {
-		finishes[c.ID] = c.Finishes
-	}
-
-	resolved := resolveIDs(found)
 	var entries []store.Entry
-	var unresolved []string
-	var refinished int
-	for _, e := range deck.Entries {
-		id, ok := resolved[e.Ident.Key()]
-		if !ok {
-			unresolved = append(unresolved, e.Ident.Label())
+	for i, e := range deck.Entries {
+		m := res.Matches[i]
+		if !m.OK {
 			continue
 		}
-		// A decklist line with no *F* marker parses as non-foil, but precon
-		// commanders and Duel Decks reprints are frequently foil-only. Storing
-		// the finish the list claimed would ask for a price that cannot exist,
-		// leaving the card at $0.00 no matter how often prices are refreshed.
-		finish := e.Finish
-		if corrected, changed := store.CorrectFinish(finish, finishes[id]); changed {
-			finish = corrected
-			refinished++
-		}
 		entries = append(entries, store.Entry{
-			ScryfallID: id,
-			Finish:     finish,
+			ScryfallID: m.Card.ID,
+			Finish:     m.Finish,
 			Board:      e.Board,
 			Quantity:   e.Quantity,
 		})
@@ -113,13 +96,13 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 
 	fmt.Printf("Imported deck #%d %q (%s): %d cards resolved.\n",
 		id, deck.Name, deck.Source, len(entries))
-	if refinished > 0 {
+	if res.Refinished > 0 {
 		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
-			refinished)
+			res.Refinished)
 	}
-	if len(unresolved) > 0 {
-		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(unresolved))
-		for _, u := range unresolved {
+	if len(res.Unresolved) > 0 {
+		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(res.Unresolved))
+		for _, u := range res.Unresolved {
 			fmt.Printf("    - %s\n", u)
 		}
 	}
@@ -127,7 +110,13 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 	// Price what Scryfall could not, now rather than on some later
 	// update-prices, so a freshly imported deck is worth what it is worth. This
 	// only downloads when the import actually left a gap.
-	return fillPriceGaps(ctx, st)
+	if err := fillPriceGaps(ctx, st); err != nil {
+		return err
+	}
+	if n := len(res.Unresolved); n > 0 {
+		return fmt.Errorf("%d cards were skipped: %w", n, errPartial)
+	}
+	return nil
 }
 
 func importTextDeck(path, name, source string) (*decksource.Deck, error) {
@@ -158,15 +147,7 @@ func cmdDeckRemove(st *store.Store, args []string) error {
 	return nil
 }
 
-// resolveIDs indexes the cards the bulk lookup returned under every key form
-// an Identifier might use, so an import line finds its card by whichever
-// scheme addressed it. The scheme itself lives on scryfall.Identifier.Key.
-func resolveIDs(cards []scryfall.Card) map[string]string {
-	m := make(map[string]string, len(cards)*3)
-	for _, c := range cards {
-		m[c.ID] = c.ID
-		m[strings.ToLower(c.Set)+"/"+c.CollectorNumber] = c.ID
-		m[strings.ToLower(c.Name)] = c.ID
-	}
-	return m
-}
+// cardResolver is the shared import pipeline (bulk lookup, name retry, finish
+// correction). One instance so tests can swap its Fetch for a fixture-backed
+// lookup and cover deck add and import through the same seam.
+var cardResolver = &resolve.Resolver{}

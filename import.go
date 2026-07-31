@@ -16,13 +16,10 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/collsource"
+	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
-
-// fetchCollection is scryfall.FetchCollection behind a seam, so tests can
-// resolve imports against fixtures instead of the network.
-var fetchCollection = scryfall.FetchCollection
 
 func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
@@ -79,51 +76,15 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 	}
 	coll.Rows = keptRows
 
-	// Resolve every row against Scryfall in bulk, exactly like deck add;
-	// FetchCollection batches and retries rate limits itself.
-	idents := make([]scryfall.Identifier, len(coll.Rows))
+	// Resolve every row through the shared pipeline — bulk lookup, name
+	// retry for set+number pairs Scryfall does not know, finish correction.
+	reqs := make([]resolve.Request, len(coll.Rows))
 	for i, r := range coll.Rows {
-		idents[i] = r.Ident
+		reqs[i] = resolve.Request{Ident: r.Ident, Name: r.Name, Finish: r.Finish}
 	}
-	found, _, err := fetchCollection(ctx, idents)
+	res, err := cardResolver.Resolve(ctx, reqs)
 	if err != nil {
 		return err
-	}
-	resolved := resolveIDs(found)
-	cards := make(map[string]scryfall.Card, len(found))
-	for _, c := range found {
-		cards[c.ID] = c
-	}
-
-	// Second chance: a set+number Scryfall does not know (a vendor's set
-	// code, a renumbered promo) often still names a real card. Retry those
-	// rows by name before declaring them unresolved — the printing will be
-	// whichever Scryfall picks, which beats losing the card entirely.
-	var retry []scryfall.Identifier
-	queued := make(map[string]bool)
-	for _, r := range coll.Rows {
-		if _, ok := resolved[r.Ident.Key()]; ok || r.Ident.Name != "" || r.Name == "" {
-			continue
-		}
-		ident := scryfall.Identifier{Name: r.Name}
-		if !queued[ident.Key()] {
-			queued[ident.Key()] = true
-			retry = append(retry, ident)
-		}
-	}
-	if len(retry) > 0 {
-		found2, _, err := fetchCollection(ctx, retry)
-		if err != nil {
-			return err
-		}
-		for _, c := range found2 {
-			cards[c.ID] = c
-		}
-		for k, id := range resolveIDs(found2) {
-			if _, ok := resolved[k]; !ok {
-				resolved[k] = id
-			}
-		}
 	}
 
 	type addition struct {
@@ -133,34 +94,16 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		qty    int
 	}
 	var adds []addition
-	var unresolved []string
-	var refinished int
-	for _, r := range coll.Rows {
-		id, ok := resolved[r.Ident.Key()]
-		if !ok && r.Name != "" {
-			id, ok = resolved[strings.ToLower(r.Name)]
-		}
-		if !ok {
-			label := r.Ident.Label()
-			if r.Name != "" {
-				label = r.Name
-			}
-			unresolved = append(unresolved, label)
+	for i, r := range coll.Rows {
+		m := res.Matches[i]
+		if !m.OK {
 			continue
-		}
-		card := cards[id]
-		// Same guard as deck add: a file claiming a finish the printing does
-		// not come in would store an unpriceable entry.
-		finish := r.Finish
-		if corrected, changed := store.CorrectFinish(finish, card.Finishes); changed {
-			finish = corrected
-			refinished++
 		}
 		binder := ""
 		if *preserve {
 			binder = r.Binder
 		}
-		adds = append(adds, addition{binder: binder, card: card, finish: finish, qty: r.Quantity})
+		adds = append(adds, addition{binder: binder, card: m.Card, finish: m.Finish, qty: r.Quantity})
 	}
 
 	// Destinations. ListBinders puts the default binder first, and its
@@ -238,26 +181,35 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		fmt.Printf("  Skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards.\n",
 			skippedDeckRows)
 	}
-	if refinished > 0 {
+	if res.Refinished > 0 {
 		fmt.Printf("  %d recorded as foil: the file said otherwise but the printing has no non-foil.\n",
-			refinished)
+			res.Refinished)
 	}
 	for _, field := range sortedKeys(coll.Dropped) {
 		fmt.Printf("  Dropped %s on %d rows: hoard does not track it.\n", field, coll.Dropped[field])
 	}
-	if len(unresolved) > 0 {
-		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(unresolved))
-		for _, u := range unresolved {
+	if len(res.Unresolved) > 0 {
+		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(res.Unresolved))
+		for _, u := range res.Unresolved {
 			fmt.Printf("    - %s\n", u)
 		}
 	}
 	if *dryRun {
 		fmt.Println("Dry run: nothing was written.")
+		if n := len(res.Unresolved); n > 0 {
+			return fmt.Errorf("%d rows would not resolve: %w", n, errPartial)
+		}
 		return nil
 	}
 	// Price what Scryfall could not, as deck add does, so the import is worth
 	// what it is worth immediately.
-	return fillPriceGaps(ctx, st)
+	if err := fillPriceGaps(ctx, st); err != nil {
+		return err
+	}
+	if n := len(res.Unresolved); n > 0 {
+		return fmt.Errorf("%d rows were skipped: %w", n, errPartial)
+	}
+	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

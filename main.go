@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -63,15 +64,27 @@ Interop commands:
 
 A deck <name> can be any part of its name, as long as it matches one deck.
 
+Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
+with unresolvable cards) — so a script can tell "done" from "done, mostly".
+
 The database lives in a per-user data directory by default (e.g. on macOS
 ~/Library/Application Support/hoard/hoard.db, on Linux $XDG_DATA_HOME/hoard/hoard.db)
 — so it's the same hoard from any directory. Override with --db or $HOARD_DB.
 Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
 `
 
+// errPartial marks a command that finished its work but had to skip some of
+// it — unresolved cards in an import, say. Wrapped with the specifics and
+// mapped to exit code 2, so a pipeline can distinguish "done" from "done,
+// mostly" without parsing output.
+var errPartial = errors.New("some items were skipped")
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		if errors.Is(err, errPartial) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

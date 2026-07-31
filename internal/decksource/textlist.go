@@ -88,7 +88,7 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 			finish = "etched"
 		}
 
-		d.Entries = append(d.Entries, Entry{Ident: ident, Quantity: qty, Finish: finish, Board: board})
+		d.Entries = append(d.Entries, Entry{Ident: ident, Name: name, Quantity: qty, Finish: finish, Board: board})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err

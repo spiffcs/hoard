@@ -23,8 +23,11 @@ const (
 
 // Entry is one card line in an imported deck, addressed by a Scryfall
 // identifier (by id, set+number, or name) with quantity, finish, and board.
+// Name rides along even when the identifier is an id or set+number, so a
+// lookup miss can fall back to a name search instead of dropping the card.
 type Entry struct {
 	Ident    scryfall.Identifier
+	Name     string
 	Quantity int
 	Finish   string // normal|foil|etched
 	Board    string // main|commander|side|maybe
