@@ -127,6 +127,11 @@ func (m *Model) scrollIntoView() {
 	}
 }
 
+// headerSparkCells is how wide the hoard-value sparkline draws. Narrower than
+// the detail view's: it shares the header row with the title and the totals,
+// both of which matter more.
+const headerSparkCells = 24
+
 // header labels each pane and puts the selected container's totals on the right,
 // where the card pane they describe begins.
 func (m Model) header(left, right int) string {
@@ -134,9 +139,46 @@ func (m Model) header(left, right int) string {
 
 	title := ui.Truncate(name, max(right-len(totals)-1, 0))
 	gap := max(right-lipgloss.Width(title)-len(totals), 0)
+
+	// The hoard-value sparkline sits in the gap, beside the totals it
+	// explains. It yields first on a narrow terminal: the title and the
+	// numbers are the header's job, the chart is a bonus.
+	middle := strings.Repeat(" ", gap)
+	if spark := m.valueSpark(); spark != "" && gap >= lipgloss.Width(spark)+2 {
+		middle = strings.Repeat(" ", gap-lipgloss.Width(spark)-1) +
+			helpStyle.Render(spark) + " "
+	}
 	return titleStyle.Render(fit("COLLECTION", left)) +
 		strings.Repeat(" ", paneGap) +
-		titleStyle.Render(title) + strings.Repeat(" ", gap) + helpStyle.Render(totals)
+		titleStyle.Render(title) + middle + helpStyle.Render(totals)
+}
+
+// valueSpark is the hoard's worth over time as a one-line chart: empty
+// outside the holdings view, or until two snapshots exist to draw a line
+// between. A "≈" prefix marks a chart still mostly built from seeded points —
+// values reconstructed from today's quantities, estimates rather than
+// observations. Seeded rows never leave the series, so the marker clears not
+// when they vanish but when genuine observations outnumber them.
+func (m Model) valueSpark() string {
+	if m.view != viewHoldings || len(m.valueSeries) < 2 {
+		return ""
+	}
+	points := make([]ui.TimePoint, len(m.valueSeries))
+	seeded := 0
+	for i, p := range m.valueSeries {
+		points[i] = ui.TimePoint{AsOf: p.AsOf, Value: p.Total}
+		if p.Seeded {
+			seeded++
+		}
+	}
+	spark := ui.Spark(ui.Resample(points, headerSparkCells), headerSparkCells)
+	if spark == "" {
+		return ""
+	}
+	if seeded*2 >= len(m.valueSeries) {
+		spark = "≈" + spark
+	}
+	return spark
 }
 
 // paneLines renders one pane's table. Every pane shares the same Env, the

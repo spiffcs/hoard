@@ -132,15 +132,81 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.appendPrices(seen); err != nil {
+	// One timestamp for the history rows and the snapshot, so the refresh
+	// reads back as a single instant everywhere.
+	ts := now()
+	if err := s.appendPrices(seen, ts); err != nil {
+		return nil, err
+	}
+	// The snapshot is written whether or not anything moved: a chart's flat
+	// stretches are information ("checked, unchanged"), and skipping them
+	// would leave gaps indistinguishable from "never looked".
+	if err := s.snapshotValue(ts); err != nil {
 		return nil, err
 	}
 	return moved, nil
 }
 
+// snapshotValue records what the whole hoard is worth right now, split the way
+// the summary splits it. Uses entryValue, so the snapshot and the summary can
+// never disagree about the same instant.
+func (s *Store) snapshotValue(ts string) error {
+	_, err := s.db.Exec(`
+INSERT INTO value_snapshots (as_of, binder, decks, total, source)
+SELECT ?,
+       COALESCE(SUM(CASE WHEN ct.kind = '`+KindCollection+`' THEN e.quantity * `+entryValue+` END), 0),
+       COALESCE(SUM(CASE WHEN ct.kind <> '`+KindCollection+`' THEN e.quantity * `+entryValue+` END), 0),
+       COALESCE(SUM(e.quantity * `+entryValue+`), 0),
+       'observed'
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id
+`+altJoinEntries+`
+ON CONFLICT(as_of) DO UPDATE SET
+    binder = excluded.binder,
+    decks  = excluded.decks,
+    total  = excluded.total,
+    source = excluded.source`, ts)
+	if err != nil {
+		return fmt.Errorf("recording value snapshot: %w", err)
+	}
+	return nil
+}
+
+// ValuePoint is the hoard's worth at one instant. Seeded points were
+// reconstructed at migration time from today's quantities and that day's
+// prices — an estimate, and charts should say so.
+type ValuePoint struct {
+	AsOf   string
+	Binder float64
+	Decks  float64
+	Total  float64
+	Seeded bool
+}
+
+// ValueSnapshots returns the whole series, oldest first.
+func (s *Store) ValueSnapshots() ([]ValuePoint, error) {
+	rows, err := s.db.Query(`
+SELECT as_of, binder, decks, total, source = 'seeded'
+FROM value_snapshots ORDER BY as_of`)
+	if err != nil {
+		return nil, fmt.Errorf("reading value snapshots: %w", err)
+	}
+	defer rows.Close()
+	var out []ValuePoint
+	for rows.Next() {
+		var p ValuePoint
+		if err := rows.Scan(&p.AsOf, &p.Binder, &p.Decks, &p.Total, &p.Seeded); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // appendPrices writes one observation per change, all at the same instant so a
 // single refresh reads back as a single point in the series.
-func (s *Store) appendPrices(changes []PriceChange) error {
+func (s *Store) appendPrices(changes []PriceChange, ts string) error {
 	if len(changes) == 0 {
 		return nil
 	}
@@ -163,7 +229,6 @@ ON CONFLICT(scryfall_id, finish, as_of) DO UPDATE SET
 	}
 	defer stmt.Close()
 
-	ts := now()
 	for _, c := range changes {
 		if _, err := stmt.Exec(c.ScryfallID, c.Finish, c.New, c.Source, ts); err != nil {
 			return fmt.Errorf("recording price for %s: %w", c.Name, err)

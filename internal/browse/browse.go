@@ -56,6 +56,9 @@ type Store interface {
 	CardDetail(scryfallID string) (store.CardDetail, error)
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
 	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
+
+	// The whole hoard over time, for the header sparkline.
+	ValueSnapshots() ([]store.ValuePoint, error)
 }
 
 // Option configures the browser.

@@ -133,7 +133,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		if finish == "nonfoil" {
 			label = "non-foil"
 		}
-		spark := ui.Spark(resample(s, sparkCells), sparkCells)
+		spark := ui.Spark(ui.Resample(pricePoints(s), sparkCells), sparkCells)
 		now := s[len(s)-1].Price
 		line := fmt.Sprintf("  %-9s %s  %s", label, spark, titleStyle.Render(ui.Money(now)))
 		// The change over the window is the question the sparkline raises;

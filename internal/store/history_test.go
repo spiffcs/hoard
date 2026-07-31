@@ -721,3 +721,107 @@ func TestBackfillPricesEmptyInputWritesNothing(t *testing.T) {
 		t.Errorf("got %d/%d, %v; want 0/0 and no error", inserted, cards, err)
 	}
 }
+
+// RecordPrices must snapshot the hoard's value even when nothing moved: the
+// chart's flat stretches mean "checked, unchanged", and skipping them would
+// leave gaps indistinguishable from "never looked".
+func TestRecordPricesWritesValueSnapshot(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]Entry{{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("RecordPrices: %v", err)
+	}
+	snaps, err := s.ValueSnapshots()
+	if err != nil {
+		t.Fatalf("ValueSnapshots: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("snapshots = %d, want 1 after a refresh", len(snaps))
+	}
+	got := snaps[0]
+	if got.Seeded {
+		t.Error("a refresh's snapshot is marked seeded")
+	}
+	// 2 non-foil at $10 loose, 1 foil at $25 in the deck.
+	if got.Binder != 20 || got.Decks != 25 || got.Total != 45 {
+		t.Errorf("snapshot = binder %v / decks %v / total %v, want 20/25/45",
+			got.Binder, got.Decks, got.Total)
+	}
+
+	// A second observation at a distinct instant lands beside it, prices
+	// unchanged — written directly so the test does not sleep out a
+	// same-second collision.
+	if err := s.snapshotValue("2099-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("snapshotValue: %v", err)
+	}
+	if snaps, _ = s.ValueSnapshots(); len(snaps) != 2 {
+		t.Errorf("snapshots = %d, want the unchanged value recorded again", len(snaps))
+	}
+}
+
+// Migrating to v9 seeds the value series from existing price history: one
+// estimated point per recorded date, from today's quantities at that day's
+// prices, carrying each price forward across dates it did not move.
+func TestValueSnapshotsSeededFromHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "seed.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]Entry{{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',10,'scryfall','2026-05-01T00:00:00Z')`,
+		`INSERT INTO card_price_history VALUES ('ulamog-id','foil',20,'scryfall','2026-05-01T00:00:00Z')`,
+		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',12,'scryfall','2026-05-10T00:00:00Z')`,
+		// Rewind to v8 so reopening replays exactly the snapshot migration.
+		`DROP TABLE value_snapshots`,
+		`PRAGMA user_version = 8`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen (migrate): %v", err)
+	}
+	defer s.Close()
+
+	snaps, err := s.ValueSnapshots()
+	if err != nil {
+		t.Fatalf("ValueSnapshots: %v", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("seeded snapshots = %+v, want one per history date", snaps)
+	}
+	first, second := snaps[0], snaps[1]
+	if !first.Seeded || !second.Seeded {
+		t.Error("migration-built snapshots are not marked seeded")
+	}
+	if first.AsOf != "2026-05-01T00:00:00Z" || second.AsOf != "2026-05-10T00:00:00Z" {
+		t.Errorf("stamps = %s / %s", first.AsOf, second.AsOf)
+	}
+	// Day one: 2 non-foil at $10 loose, 1 foil at $20 in the deck.
+	if first.Binder != 20 || first.Decks != 20 || first.Total != 40 {
+		t.Errorf("first = %+v, want binder 20 / decks 20 / total 40", first)
+	}
+	// Day ten: the non-foil moved to $12; the foil price carries forward.
+	if second.Binder != 24 || second.Decks != 20 || second.Total != 44 {
+		t.Errorf("second = %+v, want binder 24 / decks 20 / total 44", second)
+	}
+}

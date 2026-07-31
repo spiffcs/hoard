@@ -42,3 +42,7 @@ hoard.db
 
 # macOS folder cruft
 .DS_Store
+
+# Claude Code local session state (worktrees, caches); device settings live
+# in ~/.claude, so nothing here is shared project config
+.claude/

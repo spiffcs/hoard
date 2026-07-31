@@ -125,6 +125,10 @@ type Model struct {
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
 
+	// valueSeries backs the holdings header's sparkline: the whole hoard's
+	// worth over time, loaded once and on reload like everything else.
+	valueSeries []store.ValuePoint
+
 	// Arbitrage is the one view that needs the network, so unlike the others it
 	// is fetched on request, asynchronously, and can be abandoned part-way.
 	arbitrage  ArbitrageFunc
@@ -177,7 +181,29 @@ func New(st Store, opts ...Option) (Model, error) {
 	if err := m.loadCards(); err != nil {
 		return Model{}, err
 	}
+	if err := m.loadValueSeries(); err != nil {
+		return Model{}, err
+	}
 	return m, nil
+}
+
+// loadValueSeries reads the hoard-value history behind the header sparkline.
+func (m *Model) loadValueSeries() error {
+	series, err := m.store.ValueSnapshots()
+	if err != nil {
+		return fmt.Errorf("reading value snapshots: %w", err)
+	}
+	m.valueSeries = series
+	return nil
+}
+
+// pricePoints adapts a price series to the resampler's shape.
+func pricePoints(s []store.PricePoint) []ui.TimePoint {
+	out := make([]ui.TimePoint, len(s))
+	for i, p := range s {
+		out[i] = ui.TimePoint{AsOf: p.AsOf, Value: p.Price}
+	}
+	return out
 }
 
 // loadContainers reads the left pane: the binders (default first), then decks
@@ -708,6 +734,10 @@ func (m *Model) reload() {
 		return
 	}
 	if err := m.loadCards(); err != nil {
+		m.setError(err)
+		return
+	}
+	if err := m.loadValueSeries(); err != nil {
 		m.setError(err)
 		return
 	}

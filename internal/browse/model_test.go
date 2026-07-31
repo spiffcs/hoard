@@ -28,8 +28,9 @@ type fakeStore struct {
 
 	// traits maps a scryfall id to the trait terms it satisfies, standing in
 	// for the generated columns without a database.
-	traits   map[string][]string
-	enriched int
+	traits    map[string][]string
+	enriched  int
+	snapshots []store.ValuePoint
 
 	err error // when set, every read fails
 
@@ -109,6 +110,7 @@ func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
 }
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
+func (f *fakeStore) ValueSnapshots() ([]store.ValuePoint, error)            { return f.snapshots, f.err }
 
 // SetHoldingQuantity mutates the fixture the way the store mutates the
 // database, so an edit followed by an undo is observable end to end.
@@ -1020,53 +1022,6 @@ func TestEditKeepsTheCursorInPlace(t *testing.T) {
 	}
 }
 
-func TestResample(t *testing.T) {
-	pt := func(day int, price float64) store.PricePoint {
-		return store.PricePoint{
-			AsOf:  time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
-			Price: price,
-		}
-	}
-	// A price that moved on day 1 then held for a month, then moved again. By
-	// index this is three equal thirds; by time the flat month dominates, which
-	// is the truth a sparkline should show.
-	series := []store.PricePoint{pt(1, 10), pt(2, 20), pt(31, 30)}
-	got := resample(series, 10)
-	if len(got) != 10 {
-		t.Fatalf("got %d buckets, want 10", len(got))
-	}
-	if got[len(got)-1] != 30 {
-		t.Errorf("last bucket = %v, want the latest price", got[len(got)-1])
-	}
-	var at20 int
-	for _, v := range got {
-		if v == 20 {
-			at20++
-		}
-	}
-	if at20 < 6 {
-		t.Errorf("only %d of 10 buckets sit at the month-long price: %v", at20, got)
-	}
-}
-
-func TestResampleEdgeCases(t *testing.T) {
-	if got := resample(nil, 8); got != nil {
-		t.Errorf("nil series = %v, want nil", got)
-	}
-	one := []store.PricePoint{{AsOf: "2026-05-01T00:00:00Z", Price: 7}}
-	if got := resample(one, 8); len(got) != 1 || got[0] != 7 {
-		t.Errorf("single point = %v, want [7]", got)
-	}
-	// Two observations at the same instant have no span to spread across.
-	same := []store.PricePoint{
-		{AsOf: "2026-05-01T00:00:00Z", Price: 7},
-		{AsOf: "2026-05-01T00:00:00Z", Price: 9},
-	}
-	if got := resample(same, 8); len(got) != 1 || got[0] != 9 {
-		t.Errorf("zero-span series = %v, want the latest price", got)
-	}
-}
-
 func TestDetailOpensAndCloses(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)
@@ -1624,4 +1579,82 @@ func (m *multiBinderStore) ListBinders() ([]store.DeckSummary, error) {
 	b.Name = "Trade Stock"
 	b.Kind = store.KindCollection
 	return append(bs, b), nil
+}
+
+// The header sparkline: drawn from value snapshots on the holdings view,
+// marked "≈" when any point is a migration-seeded estimate, and absent
+// entirely when there is nothing to chart.
+func TestHeaderValueSpark(t *testing.T) {
+	st := testStore()
+	st.snapshots = []store.ValuePoint{
+		{AsOf: "2026-05-01T00:00:00Z", Total: 100},
+		{AsOf: "2026-05-10T00:00:00Z", Total: 140},
+	}
+	m := newTestModel(t, st)
+	if spark := m.valueSpark(); !strings.ContainsAny(spark, "▁▂▃▄▅▆▇█") {
+		t.Errorf("valueSpark = %q, want block glyphs", spark)
+	} else if strings.Contains(spark, "≈") {
+		t.Errorf("valueSpark = %q claims an estimate for observed points", spark)
+	}
+	if !strings.ContainsAny(m.View(), "▁▂▃▄▅▆▇█") {
+		t.Error("the header does not draw the sparkline")
+	}
+
+	st.snapshots[0].Seeded = true
+	m = newTestModel(t, st)
+	if spark := m.valueSpark(); !strings.HasPrefix(spark, "≈") {
+		t.Errorf("valueSpark = %q, want the ≈ estimate marker", spark)
+	}
+}
+
+func TestHeaderValueSparkYields(t *testing.T) {
+	st := testStore()
+	st.snapshots = []store.ValuePoint{
+		{AsOf: "2026-05-01T00:00:00Z", Total: 100},
+		{AsOf: "2026-05-10T00:00:00Z", Total: 140},
+	}
+	m := newTestModel(t, st)
+
+	// One snapshot is a dot, not a line — nothing to draw.
+	st.snapshots = st.snapshots[:1]
+	if err := m.loadValueSeries(); err != nil {
+		t.Fatalf("loadValueSeries: %v", err)
+	}
+	if spark := m.valueSpark(); spark != "" {
+		t.Errorf("valueSpark = %q with a single point, want none", spark)
+	}
+
+	// Off the holdings view the hoard total is not what the header describes.
+	st.snapshots = append(st.snapshots, store.ValuePoint{AsOf: "2026-05-10T00:00:00Z", Total: 140})
+	if err := m.loadValueSeries(); err != nil {
+		t.Fatalf("loadValueSeries: %v", err)
+	}
+	m.view = viewUnpriced
+	if spark := m.valueSpark(); spark != "" {
+		t.Errorf("valueSpark = %q on the unpriced view, want none", spark)
+	}
+
+	// A narrow terminal keeps the title and totals; the chart goes first.
+	m.view = viewHoldings
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 46, Height: 20})
+	m = next.(Model)
+	if out := m.View(); strings.ContainsAny(out, "▁▂▃▄▅▆▇█") {
+		t.Error("a 46-column terminal still draws the sparkline")
+	}
+}
+
+// The estimate marker clears when genuine observations outnumber the seeded
+// reconstruction — seeded rows never leave the series, so "no seeded points"
+// would keep the marker forever.
+func TestHeaderValueSparkMarkerClearsWhenObservationsDominate(t *testing.T) {
+	st := testStore()
+	st.snapshots = []store.ValuePoint{
+		{AsOf: "2026-05-01T00:00:00Z", Total: 100, Seeded: true},
+		{AsOf: "2026-05-02T00:00:00Z", Total: 110},
+		{AsOf: "2026-05-03T00:00:00Z", Total: 120},
+	}
+	m := newTestModel(t, st)
+	if spark := m.valueSpark(); strings.Contains(spark, "≈") {
+		t.Errorf("valueSpark = %q, want no marker once observed points dominate", spark)
+	}
 }

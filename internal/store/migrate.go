@@ -36,6 +36,7 @@ var migrations = []migration{
 	{6, rememberPriceGaps},
 	{7, rememberImports},
 	{8, renameNonfoil},
+	{9, valueSnapshots},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -272,6 +273,24 @@ const renameNonfoil = `
 UPDATE card_entries SET finish = 'nonfoil' WHERE finish = 'normal';
 UPDATE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';`
 
+// v9: the hoard's total value over time, one row per observation. Per-card
+// history answers "what did this card do"; a value chart needs "what did the
+// whole hoard do", and deriving that on the fly would revalue every entry
+// against every historical date on each render.
+//
+// The table's data half — seeding the series from existing history — is Go
+// (seedValueSnapshots below), not SQL: a date-by-date revaluation is a linear
+// sweep in code and a planner tarpit as a query. Two SQL formulations ran for
+// minutes on a 55k-row history before this was accepted.
+const valueSnapshots = `
+CREATE TABLE value_snapshots (
+    as_of  TEXT PRIMARY KEY,
+    binder REAL NOT NULL,
+    decks  REAL NOT NULL,
+    total  REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'observed'
+);`
+
 // migrate brings the database up to schemaVersion, backing it up first.
 //
 // The backup fires before anything rewrites data — including the legacy
@@ -340,8 +359,126 @@ SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`)
 		if err := s.apply(m); err != nil {
 			return fmt.Errorf("migrating to schema v%d: %w", m.Version, err)
 		}
+		if m.Version == 9 {
+			if err := s.seedValueSnapshots(); err != nil {
+				return fmt.Errorf("seeding value snapshots: %w", err)
+			}
+		}
 	}
 	return s.stampApplicationID()
+}
+
+// seedValueSnapshots reconstructs the value series from the price history
+// already held: one estimated point per recorded date, valuing today's
+// quantities at that day's prices. Estimates — the quantities are current,
+// not historical — hence source='seeded'; genuine observations (written by
+// RecordPrices from v9 on) say 'observed'.
+//
+// One ordered pass over history, totals maintained incrementally: when a
+// printing's price changes, the running totals move by copies × delta. The
+// day's last write wins, matching "the newest observation at or before the
+// date" — the same rule the movers baseline uses.
+func (s *Store) seedValueSnapshots() error {
+	type key struct{ sid, pfinish string }
+	type held struct{ binder, decks int }
+	owned := map[key]held{}
+	rows, err := s.db.Query(`
+SELECT e.scryfall_id,
+       CASE WHEN e.finish IN ('foil','etched') THEN 'foil' ELSE 'nonfoil' END AS pfinish,
+       CASE WHEN ct.kind = '` + KindCollection + `' THEN 1 ELSE 0 END AS in_binder,
+       SUM(e.quantity)
+FROM card_entries e
+JOIN containers ct ON ct.id = e.container_id
+GROUP BY e.scryfall_id, pfinish, in_binder`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var k key
+		var inBinder, copies int
+		if err := rows.Scan(&k.sid, &k.pfinish, &inBinder, &copies); err != nil {
+			rows.Close()
+			return err
+		}
+		h := owned[k]
+		if inBinder == 1 {
+			h.binder += copies
+		} else {
+			h.decks += copies
+		}
+		owned[k] = h
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// RFC 3339 sorts lexicographically, so ORDER BY as_of is chronological
+	// and substr(as_of, 1, 10) is the day.
+	rows, err = s.db.Query(`
+SELECT scryfall_id, finish, price_usd, substr(as_of, 1, 10)
+FROM card_price_history
+WHERE scryfall_id IN (SELECT scryfall_id FROM card_entries)
+ORDER BY as_of`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type snapshot struct {
+		day           string
+		binder, decks float64
+	}
+	var snaps []snapshot
+	cur := map[key]float64{}
+	var binderTotal, decksTotal float64
+	day := ""
+	for rows.Next() {
+		var k key
+		var price float64
+		var d string
+		if err := rows.Scan(&k.sid, &k.pfinish, &price, &d); err != nil {
+			return err
+		}
+		if day != "" && d != day {
+			snaps = append(snaps, snapshot{day, binderTotal, decksTotal})
+		}
+		day = d
+		h, ok := owned[k]
+		if !ok {
+			continue // held card, but not in this price finish
+		}
+		delta := price - cur[k]
+		binderTotal += float64(h.binder) * delta
+		decksTotal += float64(h.decks) * delta
+		cur[k] = price
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if day != "" {
+		snaps = append(snaps, snapshot{day, binderTotal, decksTotal})
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`
+INSERT INTO value_snapshots (as_of, binder, decks, total, source)
+VALUES (?, ?, ?, ?, 'seeded')`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, sn := range snaps {
+		if _, err := stmt.Exec(sn.day+"T00:00:00Z", sn.binder, sn.decks,
+			sn.binder+sn.decks); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // stampApplicationID writes hoard's magic into the file header, once. Failure

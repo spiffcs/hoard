@@ -116,7 +116,7 @@ priced fetch). JSON is the `report` document kind — schema **1.0.1**, the
 first ADDITION bump: schema-1.0.0.json stayed immutable, 1.0.1 landed beside
 it with a changelog entry.
 
-## ⬜ C. Value snapshots + browser sparkline
+## ✅ C. Value snapshots + browser sparkline
 
 - Migration v9: `value_snapshots(as_of TEXT PRIMARY KEY, binder REAL,
   decks REAL, total REAL, source TEXT)`, source ∈ observed|seeded.
@@ -130,6 +130,17 @@ it with a changelog entry.
 - Browser: `browse.Store` gains `ValueSeries()`; browse's `resample` promotes
   to internal/ui beside `Spark`; the sparkline renders in the holdings header
   and yields to the title when the terminal is narrow.
+
+**Landed** (2026-07-30): as planned, except seeding is **Go, not SQL**
+(`seedValueSnapshots`, hooked after v9 applies like the legacy transform):
+one ordered pass over history with incremental totals. Two SQL formulations
+(correlated MAX, then a grouped join) each ran >2 minutes on the real 55k-row
+history — the planner tarpit is documented at the migration. Real-DB check:
+91 seeded points in 0.4s including backup, and the newest seeded point
+exactly equals the live summary's totals. Interface method is named
+`ValueSnapshots()`; the header spark shows `≈` until observed points
+outnumber seeded ones (seeded rows never leave the series, so presence alone
+would mark it forever), and `hoard watch` becomes migration **v10**.
 
 ## ⬜ D. `hoard watch`
 
