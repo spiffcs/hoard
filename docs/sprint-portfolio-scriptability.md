@@ -28,7 +28,7 @@ backlog for next time.
 JSON discipline first because report and watch emit through it. Each phase is
 one commit, committed by the maintainer.
 
-## ⬜ A. `--json` on every read command
+## ✅ A. `--json` on every read command
 
 **Schema philosophy (decided at planning, after surveying the ecosystem):**
 there is no community-standard *collection* interchange format — MTGJSON
@@ -58,8 +58,7 @@ identifiers**, not a parallel universe:
 - **Custom only where nothing standard exists**: containers, quantities,
   boards, totals, movers, watch state — the collection semantics no external
   schema models.
-- **`schema/` managed the syft way** (surveyed from anchore/syft's
-  schema/json): one `schema/json/schema-X.Y.Z.json` per version plus
+- **`schema/` management**: one `schema/json/schema-X.Y.Z.json` per version plus
   `schema-latest.json`, **never deleted and never mutated once released** —
   only new versions are added. Versioned by **SchemaVer**
   (`MODEL.REVISION.ADDITION`: MODEL = breaks all historical data, REVISION =
@@ -86,6 +85,16 @@ Implementation:
   (arbitrage.Sections, kinds via Kind.String()), export ([]export.Row with
   json tags — `--json` as a fourth format).
 - Golden JSON tests per command against fixture stores, schema-validated.
+
+**Landed** (2026-07-30): one `Document` envelope (`schemaVersion` + `kind` +
+one payload) in internal/hoardjson; `--json` on hoard/unpriced/movers/
+arbitrage/export (everything else rejects it); schema 1.0.0 generated into
+schema/json/ with descriptions from the model's doc comments, drift +
+instance-validation tests in internal/hoardjson/schemagen; docs/json.md.
+Decisions made while building, all documented there: `--limit` never shapes
+JSON (movers/arbitrage emit the full ranking), money fields round to whole
+cents, absent-means-unknown for priceUsd/mtgjsonUuid, store.Card learned
+MTGJSONUUID (cardCols), UnpricedRow learned identifiers + a Containers list.
 
 ## ⬜ B. `hoard report`
 

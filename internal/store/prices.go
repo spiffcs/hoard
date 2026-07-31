@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // Prices Scryfall could not supply, and the gaps that remain after trying.
 
@@ -49,12 +53,18 @@ ORDER BY c.set_code, c.name`)
 // UnpricedRow is one card-and-finish that no source can price, with where it is
 // held so the reader can see which totals are understated.
 type UnpricedRow struct {
+	ScryfallID      string
+	MTGJSONUUID     string
 	Name            string
 	SetCode         string
 	CollectorNumber string
 	Finish          string
 	Copies          int
-	HeldIn          string
+	// Containers holds each container's display label, sorted; HeldIn is the
+	// comma-joined form for one-cell display. Both exist because a name may
+	// itself contain a comma, which makes the joined form unsplittable.
+	Containers []string
+	HeldIn     string
 }
 
 // Unpriced lists the same gaps as UnpricedByOwnedFinish, broken out per finish
@@ -65,10 +75,17 @@ type UnpricedRow struct {
 // finish with its containers. They share unpricedPredicate so the two can never
 // disagree about what counts as unpriced.
 func (s *Store) Unpriced() ([]UnpricedRow, error) {
+	// The labels are aggregated twice: once with DISTINCT for the display
+	// string, and once more on an unprintable separator (unit separator, 0x1f)
+	// for the list — a name may contain a comma, so the display string cannot
+	// be split back apart, and SQLite refuses a custom separator alongside
+	// DISTINCT, so one aggregate cannot serve both.
 	rows, err := s.db.Query(`
-SELECT c.name, c.set_code, c.collector_number, e.finish,
+SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
+       c.name, c.set_code, c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
-       GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in
+       GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in,
+       GROUP_CONCAT(` + containerLabel + `, char(31)) AS held_in_raw
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -83,13 +100,22 @@ ORDER BY c.name, e.finish`)
 	var out []UnpricedRow
 	for rows.Next() {
 		var u UnpricedRow
-		if err := rows.Scan(&u.Name, &u.SetCode, &u.CollectorNumber,
-			&u.Finish, &u.Copies, &u.HeldIn); err != nil {
+		var raw string
+		if err := rows.Scan(&u.ScryfallID, &u.MTGJSONUUID, &u.Name, &u.SetCode,
+			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw); err != nil {
 			return nil, err
 		}
+		u.Containers = dedupeSorted(strings.Split(raw, "\x1f"))
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// dedupeSorted sorts labels and drops duplicates — the Go half of a DISTINCT
+// the SQL aggregate above is not allowed to express.
+func dedupeSorted(labels []string) []string {
+	slices.Sort(labels)
+	return slices.Compact(labels)
 }
 
 // AltPrice is a fallback price to record for one card.

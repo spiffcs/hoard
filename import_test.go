@@ -176,7 +176,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 
 	file := filepath.Join(t.TempDir(), "roundtrip.csv")
-	if err := cmdExport(src, []string{"-o", file}); err != nil {
+	if err := cmdExport(src, []string{"-o", file}, false); err != nil {
 		t.Fatalf("cmdExport: %v", err)
 	}
 

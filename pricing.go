@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
@@ -27,25 +28,27 @@ func newQuietFetcher(st *store.Store) *pricing.Fetcher {
 	return pricing.New(st, pricing.DefaultCacheDir())
 }
 
-// fillPriceGaps prices what Scryfall could not, and says what happened.
+// fillPriceGaps prices what Scryfall could not, and says what happened — on
+// stderr, like the fetcher's own progress: it is narration about the work,
+// not the work's result, and stdout stays reserved for data.
 func fillPriceGaps(ctx context.Context, st *store.Store) error {
 	report, err := newFetcher(st).FillGaps(ctx)
 	if err != nil || report.Gaps == 0 {
 		return err
 	}
 	if report.Skipped {
-		fmt.Printf("  %d cards have no price for a finish you own; "+
+		fmt.Fprintf(os.Stderr, "  %d cards have no price for a finish you own; "+
 			"MTGJSON had none when last asked.\n", report.Gaps)
 		return nil
 	}
-	fmt.Printf("  %d cards have no price for a finish you own; checking MTGJSON...\n", report.Gaps)
+	fmt.Fprintf(os.Stderr, "  %d cards have no price for a finish you own; checking MTGJSON...\n", report.Gaps)
 	if report.Filled <= 0 {
-		fmt.Println("  no other source could price them either.")
+		fmt.Fprintln(os.Stderr, "  no other source could price them either.")
 		return nil
 	}
-	fmt.Printf("  filled %d from %s.\n", report.Filled, strings.Join(report.Sources, ", "))
+	fmt.Fprintf(os.Stderr, "  filled %d from %s.\n", report.Filled, strings.Join(report.Sources, ", "))
 	if report.Remaining > 0 {
-		fmt.Printf("  %d still unpriced anywhere.\n", report.Remaining)
+		fmt.Fprintf(os.Stderr, "  %d still unpriced anywhere.\n", report.Remaining)
 	}
 	return nil
 }
@@ -114,10 +117,13 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error 
 // A card with no price is valued at zero, which is indistinguishable on a table
 // from a card genuinely worth nothing. This is how you tell the difference, and
 // how you find out which deck's total is understated.
-func cmdUnpriced(st *store.Store) error {
+func cmdUnpriced(st *store.Store, jsonOut bool) error {
 	rows, err := st.Unpriced()
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		return hoardjson.Write(os.Stdout, hoardjson.FromUnpriced(rows))
 	}
 	env := ui.Detect(os.Stdout)
 	fmt.Print(report.Unpriced(env, rows))

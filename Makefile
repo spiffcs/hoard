@@ -1,4 +1,4 @@
-.PHONY: build scan test vet all clean
+.PHONY: build scan test vet all clean generate-json-schema
 
 # Build the hoard binary.
 build:
@@ -10,6 +10,11 @@ scan:
 
 # Build everything needed for the full experience (binary + scan helper).
 all: build scan
+
+# Regenerate schema/json/ from the internal/hoardjson model. If the current
+# schema version has been released, bump hoardjson.SchemaVersion first.
+generate-json-schema:
+	go run ./schema/json/generate
 
 test:
 	go test ./...

@@ -61,7 +61,10 @@ const collectionSourceID = "__collection__"
 
 // Card is a catalog entry: a distinct printing plus its latest market prices.
 type Card struct {
-	ScryfallID      string
+	ScryfallID string
+	// MTGJSONUUID is empty when the printing has no MTGJSON mapping yet; it is
+	// filled in by price updates that consult MTGJSON.
+	MTGJSONUUID     string
 	SetCode         string
 	CollectorNumber string
 	Name            string
@@ -190,7 +193,7 @@ const (
 // edit here, not a coordinated edit per query — a mismatch used to surface
 // only as a runtime scan error.
 func cardCols(altSource string) string {
-	return `c.scryfall_id, c.set_code, c.collector_number, c.name,
+	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
        ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
        ` + altSource
 }
@@ -198,7 +201,7 @@ func cardCols(altSource string) string {
 // cardScanDest is the scan targets matching cardCols, for the caller to extend
 // with its query's own columns.
 func cardScanDest(c *Card) []any {
-	return []any{&c.ScryfallID, &c.SetCode, &c.CollectorNumber, &c.Name,
+	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
 		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource}
 }
 

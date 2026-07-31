@@ -10,12 +10,19 @@ import (
 	"os"
 
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-func cmdExport(st *store.Store, args []string) error {
+// writeHoldingsJSON is the JSON member of the format table, matching the CSV
+// writers' signature.
+func writeHoldingsJSON(w io.Writer, rows []export.Row) error {
+	return hoardjson.Write(w, hoardjson.FromExportRows(rows))
+}
+
+func cmdExport(st *store.Store, args []string, jsonOut bool) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
-	format := fs.String("format", "csv", "output format: csv (canonical), moxfield, or archidekt")
+	format := fs.String("format", "csv", "output format: csv (canonical), json, moxfield, or archidekt")
 	binder := fs.String("binder", "", "export one binder (id, name, or unique fragment)")
 	deck := fs.String("deck", "", "export one deck (id, name, or unique fragment)")
 	all := fs.Bool("all", false, "export every binder and deck (the default)")
@@ -24,13 +31,23 @@ func cmdExport(st *store.Store, args []string) error {
 		return err
 	}
 
+	// The global --json is the same request as --format json; saying both
+	// differently is the one combination with no right answer.
+	if jsonOut {
+		if *format != "csv" && *format != "json" {
+			return fmt.Errorf("--json conflicts with --format %s", *format)
+		}
+		*format = "json"
+	}
+
 	write := map[string]func(io.Writer, []export.Row) error{
 		"csv":       export.WriteCanonical,
+		"json":      writeHoldingsJSON,
 		"moxfield":  export.WriteMoxfield,
 		"archidekt": export.WriteArchidekt,
 	}[*format]
 	if write == nil {
-		return fmt.Errorf("unknown format %q (want csv, moxfield, or archidekt)", *format)
+		return fmt.Errorf("unknown format %q (want csv, json, moxfield, or archidekt)", *format)
 	}
 	if (*binder != "" && *deck != "") || (*all && (*binder != "" || *deck != "")) {
 		return fmt.Errorf("choose one of --binder, --deck, or --all")
@@ -121,6 +138,7 @@ func binderRows(st *store.Store, id int64, name string) ([]export.Row, error) {
 			CollectorNumber: r.CollectorNumber,
 			Finish:          r.Finish,
 			ScryfallID:      r.ScryfallID,
+			MTGJSONUUID:     r.MTGJSONUUID,
 			Container:       name,
 			Kind:            "binder",
 			// BinderByFinish sums across boards, and binder entries only ever
@@ -146,6 +164,7 @@ func deckRows(st *store.Store, id int64, name string) ([]export.Row, error) {
 			CollectorNumber: e.Card.CollectorNumber,
 			Finish:          e.Finish,
 			ScryfallID:      e.Card.ScryfallID,
+			MTGJSONUUID:     e.Card.MTGJSONUUID,
 			Container:       name,
 			Kind:            "deck",
 			Board:           e.Board,

@@ -1,0 +1,407 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/spiffcs/hoard/main/schema/json/schema-1.0.0.json",
+  "$defs": {
+    "Arbitrage": {
+      "properties": {
+        "comparedPrintings": {
+          "type": "integer",
+          "description": "ComparedPrintings is how many owned printings had two or more vendors;\nIgnoredListings is how many quotes were discarded as unsupported\noutliers. Reported so a consumer knows what was left out."
+        },
+        "ignoredListings": {
+          "type": "integer"
+        },
+        "opportunities": {
+          "items": {
+            "$ref": "#/$defs/Opportunity"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "comparedPrintings",
+        "ignoredListings",
+        "opportunities"
+      ],
+      "description": "Arbitrage is one pass of vendor disagreement over everything held: the full ranking behind all three tables, not the display's top-N."
+    },
+    "Card": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "scryfallId": {
+          "type": "string"
+        },
+        "mtgjsonUuid": {
+          "type": "string"
+        },
+        "setCode": {
+          "type": "string"
+        },
+        "number": {
+          "type": "string"
+        },
+        "finish": {
+          "type": "string",
+          "enum": [
+            "nonfoil",
+            "foil",
+            "etched"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "scryfallId",
+        "setCode",
+        "number",
+        "finish"
+      ],
+      "description": "Card identifies one printing in one finish."
+    },
+    "DeckTotals": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "distinctCards": {
+          "type": "integer"
+        },
+        "totalCopies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "distinctCards",
+        "totalCopies",
+        "valueUsd"
+      ],
+      "description": "DeckTotals is one deck's totals, ordered by value as the summary lists them."
+    },
+    "GrandTotal": {
+      "properties": {
+        "totalCopies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "totalCopies",
+        "valueUsd"
+      ],
+      "description": "GrandTotal is the whole hoard."
+    },
+    "Holding": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "container": {
+          "type": "string"
+        },
+        "containerKind": {
+          "type": "string",
+          "enum": [
+            "binder",
+            "deck"
+          ]
+        },
+        "board": {
+          "type": "string"
+        },
+        "priceUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "count",
+        "container",
+        "containerKind",
+        "board"
+      ],
+      "description": "Holding is a quantity of one card in one container."
+    },
+    "Holdings": {
+      "properties": {
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/Holding"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rows"
+      ],
+      "description": "Holdings is every requested holding, one row per printing-finish-container, in the export's canonical order — the same data as the canonical CSV."
+    },
+    "Movers": {
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "Since is the comparison cutoff (RFC 3339): each card's newest price\nagainst its last price recorded on or before this instant."
+        },
+        "recordedSince": {
+          "type": "string",
+          "description": "RecordedSince is the oldest price observation held (RFC 3339). When it\nis later than Since, history simply does not reach as far back as the\nquestion asked."
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/PriceChange"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "since",
+        "changes"
+      ],
+      "description": "Movers is the price changes between two observations, every change rather than the display's top-N, ordered by absolute impact."
+    },
+    "Opportunity": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "copies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "arbitrage",
+            "liquid",
+            "spread"
+          ]
+        },
+        "buyUsd": {
+          "type": "number"
+        },
+        "buyFrom": {
+          "type": "string"
+        },
+        "dearUsd": {
+          "type": "number"
+        },
+        "dearFrom": {
+          "type": "string"
+        },
+        "spread": {
+          "type": "number"
+        },
+        "sellUsd": {
+          "type": "number"
+        },
+        "sellTo": {
+          "type": "string"
+        },
+        "profitUsd": {
+          "type": "number",
+          "description": "ProfitUsd is sellUsd − buyUsd per copy; positive is genuine arbitrage."
+        },
+        "liquidity": {
+          "type": "number",
+          "description": "Liquidity is the fraction of the cheapest retail a shop will pay."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "copies",
+        "valueUsd",
+        "kind",
+        "buyUsd",
+        "buyFrom",
+        "dearUsd",
+        "dearFrom",
+        "spread"
+      ],
+      "description": "Opportunity is one owned printing-and-finish with the vendor quotes that make it interesting, tagged with the question it answers: \"arbitrage\" (a shop pays more than the cheapest retail), \"liquid\" (buylist close to retail), or \"spread\" (vendors disagree)."
+    },
+    "PriceChange": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "copies": {
+          "type": "integer"
+        },
+        "oldUsd": {
+          "type": "number"
+        },
+        "newUsd": {
+          "type": "number"
+        },
+        "impactUsd": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source names where the new price came from: \"scryfall\", or the vendor\nbehind a fallback."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "copies",
+        "oldUsd",
+        "newUsd",
+        "impactUsd",
+        "source"
+      ],
+      "description": "PriceChange is one printing-and-finish whose per-copy price moved."
+    },
+    "Summary": {
+      "properties": {
+        "binder": {
+          "$ref": "#/$defs/Totals"
+        },
+        "decks": {
+          "items": {
+            "$ref": "#/$defs/DeckTotals"
+          },
+          "type": "array"
+        },
+        "total": {
+          "$ref": "#/$defs/GrandTotal"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "binder",
+        "decks",
+        "total"
+      ],
+      "description": "Summary is the hoard's totals: the loose collection, each deck, and the grand total, as the summary table reports them."
+    },
+    "Totals": {
+      "properties": {
+        "distinctCards": {
+          "type": "integer"
+        },
+        "totalCopies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "distinctCards",
+        "totalCopies",
+        "valueUsd"
+      ],
+      "description": "Totals rolls one container group up: how many distinct printings, how many physical copies, and their market value."
+    },
+    "Unpriced": {
+      "properties": {
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/UnpricedRow"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rows"
+      ],
+      "description": "Unpriced is every holding no source can price — the copies counting as $0.00 in every total."
+    },
+    "UnpricedRow": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "copies": {
+          "type": "integer"
+        },
+        "containers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "copies",
+        "containers"
+      ],
+      "description": "UnpricedRow is one unpriced card-and-finish and the containers holding it."
+    }
+  },
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "summary",
+        "holdings",
+        "unpriced",
+        "movers",
+        "arbitrage"
+      ]
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "holdings": {
+      "$ref": "#/$defs/Holdings"
+    },
+    "unpriced": {
+      "$ref": "#/$defs/Unpriced"
+    },
+    "movers": {
+      "$ref": "#/$defs/Movers"
+    },
+    "arbitrage": {
+      "$ref": "#/$defs/Arbitrage"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind"
+  ],
+  "description": "Document is the envelope every hoard JSON emission shares: a schema version, a kind, and the one payload the kind names."
+}

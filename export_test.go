@@ -49,7 +49,7 @@ func exportStore(t *testing.T) *store.Store {
 func TestCmdExportWritesEverythingByDefault(t *testing.T) {
 	st := exportStore(t)
 	out := filepath.Join(t.TempDir(), "out.csv")
-	if err := cmdExport(st, []string{"-o", out}); err != nil {
+	if err := cmdExport(st, []string{"-o", out}, false); err != nil {
 		t.Fatalf("cmdExport: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -71,7 +71,7 @@ func TestCmdExportWritesEverythingByDefault(t *testing.T) {
 func TestCmdExportScopesToOneBinder(t *testing.T) {
 	st := exportStore(t)
 	out := filepath.Join(t.TempDir(), "out.csv")
-	if err := cmdExport(st, []string{"--binder", "Trade", "-o", out}); err != nil {
+	if err := cmdExport(st, []string{"--binder", "Trade", "-o", out}, false); err != nil {
 		t.Fatalf("cmdExport: %v", err)
 	}
 	got, _ := os.ReadFile(out)
@@ -90,8 +90,83 @@ func TestCmdExportRejectsBadFlagCombos(t *testing.T) {
 		{"--all", "--binder", "Trade"},
 		{"--format", "mtgo"},
 	} {
-		if err := cmdExport(st, args); err == nil {
+		if err := cmdExport(st, args, false); err == nil {
 			t.Errorf("cmdExport(%v) succeeded, want an error", args)
 		}
+	}
+}
+
+// TestCmdExportJSON walks the whole wiring — store, row assembly, canonical
+// sort, document envelope — and pins the exact bytes a script consumes.
+func TestCmdExportJSON(t *testing.T) {
+	st := exportStore(t)
+	out := filepath.Join(t.TempDir(), "out.json")
+	if err := cmdExport(st, []string{"-o", out}, true); err != nil {
+		t.Fatalf("cmdExport: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := `{
+  "schemaVersion": "1.0.0",
+  "kind": "holdings",
+  "holdings": {
+    "rows": [
+      {
+        "card": {
+          "name": "Sol Ring",
+          "scryfallId": "sol",
+          "setCode": "c21",
+          "number": "125",
+          "finish": "nonfoil"
+        },
+        "count": 2,
+        "container": "Binder",
+        "containerKind": "binder",
+        "board": "main",
+        "priceUsd": 2
+      },
+      {
+        "card": {
+          "name": "Mystic Remora",
+          "scryfallId": "rem",
+          "setCode": "ice",
+          "number": "78",
+          "finish": "nonfoil"
+        },
+        "count": 1,
+        "container": "Fish",
+        "containerKind": "deck",
+        "board": "main"
+      },
+      {
+        "card": {
+          "name": "Sol Ring",
+          "scryfallId": "sol",
+          "setCode": "c21",
+          "number": "125",
+          "finish": "foil"
+        },
+        "count": 1,
+        "container": "Trade",
+        "containerKind": "binder",
+        "board": "main",
+        "priceUsd": 12.5
+      }
+    ]
+  }
+}
+`
+	if string(got) != want {
+		t.Errorf("export --json:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// --json with a foreign --format is a contradiction, not a precedence puzzle.
+func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
+	st := exportStore(t)
+	if err := cmdExport(st, []string{"--format", "moxfield"}, true); err == nil {
+		t.Error("cmdExport(--format moxfield, --json) succeeded, want an error")
 	}
 }

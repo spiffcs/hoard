@@ -28,17 +28,21 @@ type Row struct {
 	CollectorNumber string
 	Finish          string
 	ScryfallID      string
-	Container       string
-	Kind            string
-	Board           string
-	PriceUSD        *float64
+	// MTGJSONUUID rides along for the JSON emission's card references; no CSV
+	// writer carries it (the canonical column set is a compatibility promise
+	// shared with the import sniffer).
+	MTGJSONUUID string
+	Container   string
+	Kind        string
+	Board       string
+	PriceUSD    *float64
 }
 
 // WriteCanonical writes hoard's own CSV: lossless (Scryfall ID makes re-import
 // exact, Container/Board keep the organization) yet spreadsheet-friendly via
 // Set and Collector Number.
 func WriteCanonical(w io.Writer, rows []Row) error {
-	rows = sorted(rows)
+	rows = Sorted(rows)
 	cw := csv.NewWriter(w)
 	cw.Write(canonicalHeader)
 	for _, r := range rows {
@@ -69,7 +73,7 @@ func CanonicalHeader() []string {
 // Language are hardcoded to their commonest values because hoard does not
 // track either; Moxfield requires the columns.
 func WriteMoxfield(w io.Writer, rows []Row) error {
-	rows = sorted(aggregated(rows))
+	rows = Sorted(aggregated(rows))
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"Count", "Name", "Edition", "Condition", "Language", "Foil", "Collector Number"})
 	for _, r := range rows {
@@ -90,7 +94,7 @@ func WriteMoxfield(w io.Writer, rows []Row) error {
 // WriteArchidekt writes Archidekt's collection-import columns; their importer
 // tolerates missing optionals, so this is the minimal exact set.
 func WriteArchidekt(w io.Writer, rows []Row) error {
-	rows = sorted(aggregated(rows))
+	rows = Sorted(aggregated(rows))
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"Quantity", "Name", "Finish", "Edition Code", "Collector Number", "Scryfall ID"})
 	for _, r := range rows {
@@ -126,11 +130,12 @@ func aggregated(rows []Row) []Row {
 	return out
 }
 
-// sorted returns the rows in output order without disturbing the caller's
+// Sorted returns the rows in output order without disturbing the caller's
 // slice. Container first so a canonical export reads binder by binder; the
 // rest pins ties so equal-value rows (which the store orders arbitrarily)
-// cannot reshuffle between exports.
-func sorted(rows []Row) []Row {
+// cannot reshuffle between exports. Exported because the JSON emission
+// promises the same canonical order as the CSV writers.
+func Sorted(rows []Row) []Row {
 	out := append([]Row(nil), rows...)
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]

@@ -7,13 +7,14 @@ import (
 	"os"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
+func cmdArbitrage(ctx context.Context, st *store.Store, args []string, jsonOut bool) error {
 	fs := flag.NewFlagSet("arbitrage", flag.ContinueOnError)
 	minValue := fs.Float64("min", 1, "ignore cards cheaper than this")
 	limit := fs.Int("limit", 10, "rows per section")
@@ -25,6 +26,11 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string) error {
 	res, err := fetchArbitrage(ctx, newFetcher(st), st, *minValue)
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		// --min still shapes the data (it is a selection, not a truncation);
+		// --limit does not, for the same reason movers emits everything.
+		return hoardjson.Write(os.Stdout, hoardjson.FromArbitrage(res))
 	}
 	if len(res.Opportunities) == 0 {
 		fmt.Println(env.Dim()("No vendor quotes for anything you own above that value."))

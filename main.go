@@ -17,6 +17,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -25,7 +26,7 @@ import (
 const usage = `hoard — catalog valuable MTG cards and decks in SQLite
 
 Usage:
-  hoard [--db PATH] [command] [args]
+  hoard [--db PATH] [--json] [command] [args]
 
   hoard                                            Browse the hoard (no arguments)
 
@@ -57,12 +58,16 @@ Deck commands:
   deck remove <name>                               Delete a deck
 
 Interop commands:
-  export [--binder B | --deck D | --all] [-o FILE] Holdings as CSV (everything by default)
-         [--format csv|moxfield|archidekt]           in hoard's format or theirs
+  export [--binder B | --deck D | --all] [-o FILE] Holdings as CSV or JSON (everything by
+         [--format csv|json|moxfield|archidekt]       default) in hoard's format or theirs
   import FILE [--binder B | --preserve-binders]    Add a collection CSV export (ManaBox,
          [--format F] [--dry-run]                    Moxfield, Delver Lens, hoard)
 
 A deck <name> can be any part of its name, as long as it matches one deck.
+
+--json prints a versioned JSON document instead of a table, on the read
+commands: hoard (the summary), unpriced, movers, arbitrage, and export.
+See docs/json.md; the schemas live in schema/json/.
 
 Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
 with unresolvable cards) — so a script can tell "done" from "done, mostly".
@@ -95,6 +100,7 @@ func run(args []string) error {
 		fmt.Fprint(os.Stderr, usage)
 		return err
 	}
+	rest, jsonOut := extractJSONFlag(rest)
 
 	// No command opens the browser. It replaces what used to be four separate
 	// read commands — list, summary, deck list, deck show — so the thing you
@@ -135,27 +141,35 @@ func run(args []string) error {
 	ctx := context.Background()
 	switch cmd {
 	case "":
-		return cmdBrowse(ctx, st)
+		return cmdBrowse(ctx, st, jsonOut)
+	case "movers":
+		return cmdMovers(st, cmdArgs, jsonOut)
+	case "unpriced":
+		return cmdUnpriced(st, jsonOut)
+	case "arbitrage":
+		return cmdArbitrage(ctx, st, cmdArgs, jsonOut)
+	case "export":
+		return cmdExport(st, cmdArgs, jsonOut)
+	}
+	// Everything below writes or configures; a --json that would be silently
+	// ignored is worse than an error, because the caller is a script that
+	// expects to parse what comes back.
+	if jsonOut {
+		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, export", cmd)
+	}
+	switch cmd {
 	case "add":
 		return cmdAdd(ctx, st, cmdArgs)
 	case "update-prices":
 		return cmdUpdatePrices(ctx, st, cmdArgs)
-	case "movers":
-		return cmdMovers(st, cmdArgs)
 	case "backfill-prices":
 		return cmdBackfillPrices(ctx, st, cmdArgs)
-	case "unpriced":
-		return cmdUnpriced(st)
 	case "repair-finishes":
 		return cmdRepairFinishes(ctx, st)
-	case "arbitrage":
-		return cmdArbitrage(ctx, st, cmdArgs)
 	case "catalog":
 		return cmdCatalog(ctx, cmdArgs)
 	case "binder":
 		return cmdBinder(st, cmdArgs)
-	case "export":
-		return cmdExport(st, cmdArgs)
 	case "import":
 		return cmdImport(ctx, st, cmdArgs)
 	case "deck":
@@ -164,6 +178,26 @@ func run(args []string) error {
 		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// extractJSONFlag pulls the global --json switch out of args wherever it
+// appears, for the same reason extractDBFlag exists: written after the
+// command, it would be passed to a subcommand that ignores it, and the caller
+// — by definition a script — would try to parse a table.
+func extractJSONFlag(args []string) (rest []string, jsonOut bool) {
+	rest = make([]string, 0, len(args))
+	for i, arg := range args {
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		if arg == "-json" || arg == "--json" {
+			jsonOut = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	return rest, jsonOut
 }
 
 // extractDBFlag pulls the global --db flag out of args wherever it appears.
@@ -279,9 +313,14 @@ func stdinIsTTY() bool {
 //
 // The loop is the add handoff — `a` quits with a request, we run the cascade, then
 // re-enter. Two bubbletea programs cannot share a terminal, so they take turns.
-func cmdBrowse(ctx context.Context, st *store.Store) error {
+func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
+	// --json means the summary document even at a terminal: asking for JSON is
+	// asking for output, not for an interactive session.
+	if jsonOut {
+		return writeSummary(st, true)
+	}
 	if !stdoutIsTTY() {
-		return writeSummary(st)
+		return writeSummary(st, false)
 	}
 	// arbitrageMin matches the CLI command's --min default, so the two views
 	// agree about what is too cheap to be worth a shipping label.
@@ -306,7 +345,7 @@ func cmdBrowse(ctx context.Context, st *store.Store) error {
 
 // writeSummary prints the hoard's totals, the output `hoard summary` used to
 // produce. It is what a non-interactive `hoard` writes.
-func writeSummary(st *store.Store) error {
+func writeSummary(st *store.Store, jsonOut bool) error {
 	coll, err := st.CollectionTotals()
 	if err != nil {
 		return err
@@ -314,6 +353,9 @@ func writeSummary(st *store.Store) error {
 	decks, err := st.ListDecks()
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		return hoardjson.Write(os.Stdout, hoardjson.FromSummary(coll, decks))
 	}
 	fmt.Print(report.Summary(ui.Detect(os.Stdout), coll, decks))
 	return nil

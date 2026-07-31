@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-func cmdMovers(st *store.Store, args []string) error {
+func cmdMovers(st *store.Store, args []string, jsonOut bool) error {
 	fs := flag.NewFlagSet("movers", flag.ContinueOnError)
 	since := fs.String("since", "30d", "how far back to compare (e.g. 7d, 2w, 48h)")
 	limit := fs.Int("limit", report.DefaultMoverRows, "rows per section")
@@ -32,17 +33,28 @@ func cmdMovers(st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
+	cutoff := time.Now().UTC().Add(-window)
 	// An empty result means "nothing moved", which is indistinguishable from
-	// "nothing was ever recorded" unless the difference is stated outright.
+	// "nothing was ever recorded" unless the difference is stated outright —
+	// in prose for a reader, by recordedSince's absence for a script.
 	if observations == 0 {
+		if jsonOut {
+			return hoardjson.Write(os.Stdout,
+				hoardjson.FromMovers(cutoff.Format(time.RFC3339), "", nil))
+		}
 		fmt.Println(env.Dim()("No price history recorded yet. Run hoard update-prices to start."))
 		return nil
 	}
 
-	cutoff := time.Now().UTC().Add(-window)
 	changes, err := st.Movers(cutoff.Format(time.RFC3339))
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		// The whole answer, not the display's top-N: --limit shapes the
+		// tables, and a consumer slices its own.
+		return hoardjson.Write(os.Stdout,
+			hoardjson.FromMovers(cutoff.Format(time.RFC3339), oldest, changes))
 	}
 	// A date, not "over the last 7d". Prices are observed when a refresh runs,
 	// not continuously, so what is being compared is today's price against the

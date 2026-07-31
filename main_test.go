@@ -101,7 +101,7 @@ func TestBareHoardWritesTheSummaryWhenNotATTY(t *testing.T) {
 
 	// cmdBrowse must not try to open a bubbletea program here; if the TTY gate
 	// were wrong this would hang or fail rather than return.
-	if err := cmdBrowse(context.Background(), st); err != nil {
+	if err := cmdBrowse(context.Background(), st, false); err != nil {
 		t.Fatalf("cmdBrowse: %v", err)
 	}
 }
@@ -287,4 +287,25 @@ func (f *fakeLocal) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, 
 		return &scryfall.Card{ID: "sol", Name: "Sol Ring"}, nil
 	}
 	return nil, nil
+}
+
+func TestExtractJSONFlag(t *testing.T) {
+	for _, tt := range []struct {
+		args     []string
+		wantRest []string
+		wantJSON bool
+	}{
+		{[]string{"--json", "movers"}, []string{"movers"}, true},
+		{[]string{"export", "--json"}, []string{"export"}, true},
+		{[]string{"-json"}, []string{}, true},
+		{[]string{"movers"}, []string{"movers"}, false},
+		// After a bare --, --json is a positional for the subcommand, not ours.
+		{[]string{"deck", "--", "--json"}, []string{"deck", "--", "--json"}, false},
+	} {
+		rest, jsonOut := extractJSONFlag(tt.args)
+		if jsonOut != tt.wantJSON || strings.Join(rest, " ") != strings.Join(tt.wantRest, " ") {
+			t.Errorf("extractJSONFlag(%v) = (%v, %v), want (%v, %v)",
+				tt.args, rest, jsonOut, tt.wantRest, tt.wantJSON)
+		}
+	}
 }
