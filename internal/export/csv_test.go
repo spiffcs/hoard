@@ -12,15 +12,15 @@ func f(v float64) *float64 { return &v }
 func fixture() []Row {
 	return []Row{
 		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "foil",
-			ScryfallID: "sol-1", Container: "Trade", Board: "main", PriceUSD: f(12.5)},
+			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(12.5)},
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "normal",
-			ScryfallID: "sol-1", Container: "Binder", Board: "main", PriceUSD: f(2)},
+			ScryfallID: "sol-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
 		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "normal",
-			ScryfallID: "sol-1", Container: "Trade", Board: "main", PriceUSD: f(2)},
+			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(2)},
 		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78", Finish: "normal",
-			ScryfallID: "remora-1", Container: "Binder", Board: "main", PriceUSD: nil},
+			ScryfallID: "remora-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: nil},
 		{Count: 1, Name: "Aether Vial", Set: "dst", CollectorNumber: "91", Finish: "etched",
-			ScryfallID: "vial-1", Container: "Vintage", Board: "main", PriceUSD: f(30)},
+			ScryfallID: "vial-1", Container: "Vintage", Kind: "deck", Board: "main", PriceUSD: f(30)},
 	}
 }
 
@@ -30,12 +30,12 @@ func TestWriteCanonicalIsSortedAndKeepsContainers(t *testing.T) {
 		t.Fatalf("WriteCanonical: %v", err)
 	}
 	want := strings.Join([]string{
-		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD",
-		"1,Mystic Remora,ice,78,normal,remora-1,Binder,main,", // unpriced: empty cell, not 0.00
-		"2,Sol Ring,c21,125,normal,sol-1,Binder,main,2.00",
-		"1,Sol Ring,c21,125,foil,sol-1,Trade,main,12.50",
-		"1,Sol Ring,c21,125,normal,sol-1,Trade,main,2.00",
-		"1,Aether Vial,dst,91,etched,vial-1,Vintage,main,30.00",
+		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
+		"1,Mystic Remora,ice,78,normal,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
+		"2,Sol Ring,c21,125,normal,sol-1,Binder,binder,main,2.00",
+		"1,Sol Ring,c21,125,foil,sol-1,Trade,binder,main,12.50",
+		"1,Sol Ring,c21,125,normal,sol-1,Trade,binder,main,2.00",
+		"1,Aether Vial,dst,91,etched,vial-1,Vintage,deck,main,30.00",
 		"",
 	}, "\n")
 	if b.String() != want {

@@ -26,6 +26,12 @@ type Row struct {
 	// hoard's Container), empty for formats that have none. Only honored when
 	// the import asks to preserve binders.
 	Binder string
+	// Kind is the container's kind in hoard's own canonical CSV — "binder" or
+	// "deck" — and empty for every other format (and for canonical files that
+	// predate the column, which held only binder rows). The importer skips
+	// deck rows: pouring a deck's contents into a binder would count those
+	// cards twice the moment the deck itself is re-imported.
+	Kind string
 }
 
 // Collection is a parsed export file.

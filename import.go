@@ -4,7 +4,10 @@ package main
 // from hoard itself — to the binder of your choice.
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -27,6 +30,7 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 	binderRef := fs.String("binder", "", "add everything to this binder (id, name, or unique fragment)")
 	dryRun := fs.Bool("dry-run", false, "resolve and report, but write nothing")
 	preserve := fs.Bool("preserve-binders", false, "recreate the file's own binders instead of using one destination")
+	again := fs.Bool("again", false, "import a file this hoard has already imported, adding its cards a second time")
 	pos, err := parsePositionals(fs, args)
 	if err != nil {
 		return err
@@ -38,15 +42,42 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		return fmt.Errorf("--binder and --preserve-binders name different destinations; choose one")
 	}
 
-	f, err := os.Open(pos[0])
+	data, err := os.ReadFile(pos[0])
 	if err != nil {
 		return err
 	}
-	coll, err := collsource.Parse(f, *format)
-	f.Close()
+	// Imports add quantities, so the same file twice doubles every count with
+	// no visible symptom. The ledger keys on content — a renamed copy of an
+	// already-imported export is still the same cards.
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	if when, cardCount, done, err := st.ImportedAt(hash); err != nil {
+		return err
+	} else if done && !*again && !*dryRun {
+		return fmt.Errorf(
+			"this file's contents were already imported on %s (%d cards) — re-running would double every quantity.\nUse --again to add them anyway",
+			when, cardCount)
+	}
+
+	coll, err := collsource.Parse(bytes.NewReader(data), *format)
 	if err != nil {
 		return fmt.Errorf("%s: %w", pos[0], err)
 	}
+
+	// Deck rows in a canonical export are the decks' own contents. Imported
+	// as loose cards they would inflate the binder totals, and re-importing
+	// the decks themselves would then count every card twice — so they are
+	// skipped, and `deck add` remains the way decks come back.
+	skippedDeckRows := 0
+	keptRows := coll.Rows[:0]
+	for _, r := range coll.Rows {
+		if r.Kind == "deck" {
+			skippedDeckRows++
+			continue
+		}
+		keptRows = append(keptRows, r)
+	}
+	coll.Rows = keptRows
 
 	// Resolve every row against Scryfall in bulk, exactly like deck add;
 	// FetchCollection batches and retries rate limits itself.
@@ -185,7 +216,8 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		perBinder[name] += a.qty
 	}
 	if !*dryRun && len(cardAdds) > 0 {
-		if _, err := st.ApplyImport(created, cardAdds); err != nil {
+		receipt := &store.ImportReceipt{Hash: hash, File: pos[0], Cards: copies}
+		if _, err := st.ApplyImport(receipt, created, cardAdds); err != nil {
 			return err
 		}
 	}
@@ -201,6 +233,10 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 			note = " (new binder)"
 		}
 		fmt.Printf("  %d into %s%s\n", perBinder[name], name, note)
+	}
+	if skippedDeckRows > 0 {
+		fmt.Printf("  Skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards.\n",
+			skippedDeckRows)
 	}
 	if refinished > 0 {
 		fmt.Printf("  %d recorded as foil: the file said otherwise but the printing has no non-foil.\n",

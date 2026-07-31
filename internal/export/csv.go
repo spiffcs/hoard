@@ -17,6 +17,10 @@ import (
 // Finish uses hoard's spelling (normal|foil|etched); each writer maps it to
 // its format's vocabulary. A nil PriceUSD means unpriced, which is not the
 // same as free — writers emit an empty cell, never 0.00.
+//
+// Kind says what the container is (binder|deck). The canonical CSV carries it
+// so an import can tell loose cards from deck contents — without it, importing
+// an --all export would pour every deck into a binder and inflate the totals.
 type Row struct {
 	Count           int
 	Name            string
@@ -25,6 +29,7 @@ type Row struct {
 	Finish          string
 	ScryfallID      string
 	Container       string
+	Kind            string
 	Board           string
 	PriceUSD        *float64
 }
@@ -39,7 +44,7 @@ func WriteCanonical(w io.Writer, rows []Row) error {
 	for _, r := range rows {
 		cw.Write([]string{
 			strconv.Itoa(r.Count), r.Name, r.Set, r.CollectorNumber, r.Finish,
-			r.ScryfallID, r.Container, r.Board, price(r.PriceUSD),
+			r.ScryfallID, r.Container, r.Kind, r.Board, price(r.PriceUSD),
 		})
 	}
 	cw.Flush()
@@ -47,10 +52,12 @@ func WriteCanonical(w io.Writer, rows []Row) error {
 }
 
 // canonicalHeader is shared with the import sniffer, which recognizes hoard's
-// own files by exactly these columns.
+// own files by these columns. Container Kind arrived after the first release;
+// the importer treats a file without it as all binder rows, which is what
+// those older files were.
 var canonicalHeader = []string{
 	"Count", "Name", "Set", "Collector Number", "Finish",
-	"Scryfall ID", "Container", "Board", "Price USD",
+	"Scryfall ID", "Container", "Container Kind", "Board", "Price USD",
 }
 
 // CanonicalHeader returns the canonical CSV's column names, in order.
@@ -112,7 +119,7 @@ func aggregated(rows []Row) []Row {
 			out[i].Count += r.Count
 			continue
 		}
-		r.Container, r.Board = "", ""
+		r.Container, r.Kind, r.Board = "", "", ""
 		idx[k] = len(out)
 		out = append(out, r)
 	}

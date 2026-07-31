@@ -122,6 +122,7 @@ func binderRows(st *store.Store, id int64, name string) ([]export.Row, error) {
 			Finish:          r.Finish,
 			ScryfallID:      r.ScryfallID,
 			Container:       name,
+			Kind:            "binder",
 			// BinderByFinish sums across boards, and binder entries only ever
 			// hold 'main' — there is no per-row board to report.
 			Board:    "main",
@@ -146,6 +147,7 @@ func deckRows(st *store.Store, id int64, name string) ([]export.Row, error) {
 			Finish:          e.Finish,
 			ScryfallID:      e.Card.ScryfallID,
 			Container:       name,
+			Kind:            "deck",
 			Board:           e.Board,
 			PriceUSD:        e.Price(),
 		}

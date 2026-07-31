@@ -16,7 +16,7 @@ func TestApplyImportCreatesBindersAndAddsAtomically(t *testing.T) {
 	}
 	defaultID := binders[0].ID
 
-	created, err := s.ApplyImport([]string{"Trade"}, []CardAdd{
+	created, err := s.ApplyImport(nil, []string{"Trade"}, []CardAdd{
 		{ContainerID: defaultID, Card: ulamog(), Finish: "normal", Quantity: 2},
 		{Binder: "Trade", Card: solRing(), Finish: "foil", Quantity: 1},
 	})
@@ -47,7 +47,7 @@ func TestApplyImportIsAllOrNothing(t *testing.T) {
 	binders, _ := s.ListBinders()
 	defaultID := binders[0].ID
 
-	_, err := s.ApplyImport([]string{"Trade"}, []CardAdd{
+	_, err := s.ApplyImport(nil, []string{"Trade"}, []CardAdd{
 		{ContainerID: defaultID, Card: ulamog(), Finish: "normal", Quantity: 2},
 		{Binder: "Ghost", Card: solRing(), Finish: "normal", Quantity: 1}, // not in newBinders
 	})

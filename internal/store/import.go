@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -19,16 +21,40 @@ type CardAdd struct {
 	Quantity    int
 }
 
+// ImportReceipt records that one file's content has been imported, so a
+// re-run can be refused instead of silently doubling quantities.
+type ImportReceipt struct {
+	Hash  string // content hash of the file, the identity that matters
+	File  string // display name for the refusal message
+	Cards int
+}
+
+// ImportedAt reports when a file with this content hash was imported, if ever.
+func (s *Store) ImportedAt(hash string) (when string, cards int, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT imported_at, cards FROM import_ledger WHERE hash=?`, hash).
+		Scan(&when, &cards)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("reading import ledger: %w", err)
+	}
+	return when, cards, true, nil
+}
+
 // ApplyImport commits one file's additions atomically: the binders it
-// creates, the catalog rows its cards need, and the entries themselves.
-// Returns the ids of the binders it created, keyed by name.
+// creates, the catalog rows its cards need, the entries themselves, and the
+// receipt saying this content has now been imported. Returns the ids of the
+// binders it created, keyed by name.
 //
 // One transaction, deliberately. Entry quantities accumulate, so a
 // half-committed import is indistinguishable from cards actually owned and
 // cannot be safely re-run — where UpsertDeck gets its safety from replacement,
-// an import gets it from atomicity. One transaction is also what makes a
-// 2,000-row file cost one fsync instead of 2,000.
-func (s *Store) ApplyImport(newBinders []string, adds []CardAdd) (map[string]int64, error) {
+// an import gets it from atomicity. The receipt commits with the cards
+// (exactly-once: neither exists without the other), and is upserted so an
+// explicit re-import refreshes the date rather than failing. One transaction
+// is also what makes a 2,000-row file cost one fsync instead of 2,000.
+func (s *Store) ApplyImport(receipt *ImportReceipt, newBinders []string, adds []CardAdd) (map[string]int64, error) {
 	// Vet everything vetable before the transaction opens: a name collision or
 	// a bad finish should refuse the import, not abort it half-planned.
 	type binderPlan struct{ name, sourceID string }
@@ -92,6 +118,17 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 		}
 		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, a.Quantity); err != nil {
 			return nil, fmt.Errorf("adding %s: %w", a.Card.Name, err)
+		}
+	}
+
+	if receipt != nil {
+		if _, err := tx.Exec(`
+INSERT INTO import_ledger (hash, file, cards, imported_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(hash) DO UPDATE SET file=excluded.file, cards=excluded.cards,
+    imported_at=excluded.imported_at`,
+			receipt.Hash, receipt.File, receipt.Cards, now()); err != nil {
+			return nil, fmt.Errorf("recording import receipt: %w", err)
 		}
 	}
 	return created, tx.Commit()

@@ -25,6 +25,7 @@ type spec struct {
 	finish   string
 	scryfall string
 	binder   string
+	kind     string // container kind column; only hoard's own format has one
 	// Lossy columns hoard cannot store, counted into Collection.Dropped when
 	// a cell actually says something (a non-NM condition, a non-English
 	// language, a nonzero price).
@@ -39,6 +40,7 @@ var specs = []spec{
 		sniff: []string{"Scryfall ID", "Container", "Board"},
 		qty:   "Count", cardName: "Name", set: "Set", number: "Collector Number",
 		finish: "Finish", scryfall: "Scryfall ID", binder: "Container",
+		kind: "Container Kind",
 	},
 	{
 		name:  "manabox",
@@ -138,6 +140,7 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 			Name:     name,
 			Finish:   normFinish(get(rec, sp.finish)),
 			Binder:   get(rec, sp.binder),
+			Kind:     strings.ToLower(get(rec, sp.kind)),
 			Ident:    identFor(get(rec, sp.scryfall), get(rec, sp.set), get(rec, sp.number), name),
 		})
 

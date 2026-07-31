@@ -57,10 +57,10 @@ func TestCmdExportWritesEverythingByDefault(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	want := strings.Join([]string{
-		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD",
-		"2,Sol Ring,c21,125,normal,sol,Binder,main,2.00",
-		"1,Mystic Remora,ice,78,normal,rem,Fish,main,",
-		"1,Sol Ring,c21,125,foil,sol,Trade,main,12.50",
+		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
+		"2,Sol Ring,c21,125,normal,sol,Binder,binder,main,2.00",
+		"1,Mystic Remora,ice,78,normal,rem,Fish,deck,main,",
+		"1,Sol Ring,c21,125,foil,sol,Trade,binder,main,12.50",
 		"",
 	}, "\n")
 	if string(got) != want {
@@ -75,10 +75,10 @@ func TestCmdExportScopesToOneBinder(t *testing.T) {
 		t.Fatalf("cmdExport: %v", err)
 	}
 	got, _ := os.ReadFile(out)
-	if strings.Contains(string(got), "Fish") || strings.Contains(string(got), "Binder,main") {
+	if strings.Contains(string(got), "Fish") || strings.Contains(string(got), "Binder,binder,main") {
 		t.Errorf("--binder Trade leaked other containers:\n%s", got)
 	}
-	if !strings.Contains(string(got), "1,Sol Ring,c21,125,foil,sol,Trade,main,12.50") {
+	if !strings.Contains(string(got), "1,Sol Ring,c21,125,foil,sol,Trade,binder,main,12.50") {
 		t.Errorf("--binder Trade is missing its own card:\n%s", got)
 	}
 }

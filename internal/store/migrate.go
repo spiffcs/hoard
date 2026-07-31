@@ -34,6 +34,7 @@ var migrations = []migration{
 	{4, keepPriceHistory},
 	{5, richCardData},
 	{6, rememberPriceGaps},
+	{7, rememberImports},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -247,6 +248,18 @@ CREATE TABLE IF NOT EXISTS card_price_gaps (
 // future hoard command) can tell a hoard from any other .db without guessing
 // at table names.
 const applicationID = 0x484F5244
+
+// v7: a receipt per imported file, keyed by content hash. Entry quantities
+// accumulate, so without this a re-run of the same CSV silently doubles every
+// count — the receipt is what lets `hoard import` refuse a repeat instead.
+// The file name and date are for the refusal message, not for matching.
+const rememberImports = `
+CREATE TABLE IF NOT EXISTS import_ledger (
+    hash        TEXT PRIMARY KEY,
+    file        TEXT NOT NULL,
+    cards       INTEGER NOT NULL,
+    imported_at TEXT NOT NULL
+);`
 
 // migrate brings the database up to schemaVersion, backing it up first.
 //

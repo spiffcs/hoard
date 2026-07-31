@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -143,8 +144,9 @@ func TestCmdImportDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// The sprint checkpoint: export → import into a fresh database → identical
-// totals, with the binder structure intact.
+// The sprint checkpoint, now with a deck in the source: export → import into a
+// fresh database → identical binder totals, with the deck's rows skipped
+// rather than poured into a binder as loose cards.
 func TestExportImportRoundTrip(t *testing.T) {
 	src := importStore(t)
 	cards := importFixtures()
@@ -160,6 +162,15 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 	if err := src.AddCardFinishTo(trade, cards[2], "normal", 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
+	}
+	// A deck too: before Container Kind existed, its cards came back as loose
+	// copies and inflated the binder totals.
+	if err := src.UpsertPrintings([]scryfall.Card{cards[1]}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if _, err := src.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]store.Entry{{ScryfallID: cards[1].ID, Finish: "normal", Board: "main", Quantity: 4}}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
 	}
 
 	file := filepath.Join(t.TempDir(), "roundtrip.csv")
@@ -182,7 +193,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("CollectionTotals: %v", err)
 	}
 	if got != want {
-		t.Errorf("round-trip totals = %+v, want %+v", got, want)
+		t.Errorf("round-trip totals = %+v, want %+v (deck rows must not inflate the binders)", got, want)
 	}
 	srcBinders, _ := src.ListBinders()
 	dstBinders, _ := dst.ListBinders()
@@ -195,6 +206,46 @@ func TestExportImportRoundTrip(t *testing.T) {
 				srcBinders[i].Name, srcBinders[i].TotalCopies,
 				dstBinders[i].Name, dstBinders[i].TotalCopies)
 		}
+	}
+	// No "Fish" binder either: the deck's rows were skipped, not renamed.
+	for _, b := range dstBinders {
+		if b.Name == "Fish" {
+			t.Error("the deck came back as a binder")
+		}
+	}
+}
+
+// Importing the same content twice is refused via the ledger; --again is the
+// explicit override, and a dry run neither records nor refuses.
+func TestCmdImportRefusesRepeats(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	file := "internal/collsource/testdata/manabox.csv"
+
+	if err := cmdImport(context.Background(), st, []string{"--dry-run", file}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if err := cmdImport(context.Background(), st, []string{file}); err != nil {
+		t.Fatalf("first import (after a dry run): %v", err)
+	}
+	totals, _ := st.CollectionTotals()
+	first := totals.TotalCopies
+
+	err := cmdImport(context.Background(), st, []string{file})
+	if err == nil || !strings.Contains(err.Error(), "already imported") {
+		t.Fatalf("second import: err = %v, want an already-imported refusal", err)
+	}
+	totals, _ = st.CollectionTotals()
+	if totals.TotalCopies != first {
+		t.Errorf("copies changed on a refused import: %d -> %d", first, totals.TotalCopies)
+	}
+
+	if err := cmdImport(context.Background(), st, []string{"--again", file}); err != nil {
+		t.Fatalf("--again: %v", err)
+	}
+	totals, _ = st.CollectionTotals()
+	if totals.TotalCopies != 2*first {
+		t.Errorf("copies after --again = %d, want %d (an explicit double)", totals.TotalCopies, 2*first)
 	}
 }
 

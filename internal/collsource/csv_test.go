@@ -97,11 +97,30 @@ func TestHoardCanonicalRoundTripsContainers(t *testing.T) {
 	if c.Format != "hoard" {
 		t.Fatalf("sniffed %q, want hoard", c.Format)
 	}
-	if c.Rows[1].Binder != "Trade" || c.Rows[1].Finish != "foil" {
+	if c.Rows[1].Binder != "Trade" || c.Rows[1].Finish != "foil" || c.Rows[1].Kind != "binder" {
 		t.Errorf("trade row = %+v", c.Rows[1])
+	}
+	// The deck row carries its kind so the importer can refuse to pour deck
+	// contents into a binder.
+	if c.Rows[3].Kind != "deck" || c.Rows[3].Binder != "Fish" {
+		t.Errorf("deck row = %+v", c.Rows[3])
 	}
 	if len(c.Dropped) != 0 {
 		t.Errorf("dropped = %v, want nothing — the canonical format is lossless", c.Dropped)
+	}
+}
+
+// A canonical file from before the Container Kind column still parses, its
+// rows all reading as binder rows — which is all such files ever held.
+func TestHoardCanonicalWithoutKindColumnStillParses(t *testing.T) {
+	in := "Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD\n" +
+		"2,Sol Ring,c21,125,normal,sol-id-1,Binder,main,2.00\n"
+	c, err := Parse(strings.NewReader(in), "auto")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if c.Format != "hoard" || len(c.Rows) != 1 || c.Rows[0].Kind != "" {
+		t.Errorf("format=%q rows=%+v, want hoard rows with empty kind", c.Format, c.Rows)
 	}
 }
 
