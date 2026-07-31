@@ -44,6 +44,30 @@ says so rather than quietly pretending nothing was read. Cards too old to carry
 a number, or a border too blurred to read, simply fall back to the ordinary
 printing picker.
 
+## Scanning several cards at once
+
+Fan a spread of cards — or lay them out with gaps — and capture once: every
+readable title becomes a card, and the terminal walks you through confirming
+them one at a time with a **card k of N** header. Each card runs the ordinary
+cascade (printing, finish, destination, quantity), <kbd>ctrl+s</kbd> skips one
+card, and <kbd>esc</kbd> abandons the rest of the batch. A single card in
+frame behaves exactly as it always has — no mode, nothing to switch.
+
+Detection is two-channel: card outlines found in the frame are
+perspective-corrected and read individually (the only way collector info can
+be read per card — cards laid out with gaps get the most of this), while
+title bands of overlapped cards are picked out of the whole-frame text. Titles
+survive fanning; outlines and bottom borders don't, so cards in a fan usually
+resolve by name and land in the normal printing picker. Something that reads
+title-like but isn't a card (a keycap, a leaflet) fails the Scryfall match and
+is skipped automatically with a note.
+
+On the wire, the helper's `scan` event now carries a `cards: []` list (name,
+candidates, and per-card `setCode`/`collectorNumber` when read); the flat
+single-card fields remain populated from the frame-wide read, so an older
+hoard binary against a newer helper — or the reverse — keeps working on the
+single-card path.
+
 ## Rotation
 
 The preview starts rotated a quarter-turn clockwise, which is what a

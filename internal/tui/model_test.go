@@ -320,7 +320,7 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 	gen := mm.(model).sessionGen
 	mm, _ = mm.(model).onSessionEvent(sessionEventMsg{gen: gen, ok: true,
 		ev: scan.Event{Kind: scan.EventScan, Name: "Sol Rlng", Candidates: []string{"Sol Rlng"}}})
-	mm, _ = mm.(model).onFuzzy(fuzzyMsg{canonical: "Sol Ring", ocr: "Sol Rlng"})
+	mm, _ = mm.(model).onFuzzy(fuzzyMsg{canonical: "Sol Ring", ocr: "Sol Rlng", seq: mm.(model).fuzzySeq})
 	mm, _ = mm.(model).Update(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
 	if got.state != statePrintPick {
@@ -613,7 +613,7 @@ func TestScanMissPrefillsOcrText(t *testing.T) {
 	// Fuzzy match fails → back to prompt with OCR text pre-filled for editing.
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder,
 		&fakeScanner{}, "", nil)
-	mm, _ := m.onFuzzy(fuzzyMsg{ocr: "Blrgh Nonsense"}) // canonical empty = miss
+	mm, _ := m.onFuzzy(fuzzyMsg{ocr: "Blrgh Nonsense", seq: m.fuzzySeq}) // canonical empty = miss
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr {
 		t.Fatalf("miss should show error banner on prompt: state=%v statusErr=%v", got.state, got.statusErr)
@@ -940,5 +940,202 @@ func TestSingleDestinationSkipsThePicker(t *testing.T) {
 	}
 	if strings.Contains(got.status, "→") {
 		t.Errorf("banner %q names a destination nobody chose", got.status)
+	}
+}
+
+// batchFixture is a three-card capture and a searcher that resolves each name.
+func batchFixture() (scan.Event, fakeSearcher) {
+	ev := scan.Event{Kind: scan.EventScan, Name: "Ulamog, the Infinite Gyre", Cards: []scan.Card{
+		{Name: "Ulamog, the Infinite Gyre", Candidates: []string{"Ulamog, the Infinite Gyre"}, SetCode: "UMA", CollectorNumber: "7"},
+		{Name: "Emrakul, the World Anew", Candidates: []string{"Emrakul, the World Anew"}},
+		{Name: "Kozilek, the Broken Reality", Candidates: []string{"Kozilek, the Broken Reality"}},
+	}}
+	fs := fakeSearcher{
+		fuzzy: map[string]string{
+			"Ulamog, the Infinite Gyre":   "Ulamog, the Infinite Gyre",
+			"Emrakul, the World Anew":     "Emrakul, the World Anew",
+			"Kozilek, the Broken Reality": "Kozilek, the Broken Reality",
+		},
+	}
+	return ev, fs
+}
+
+// single returns a one-printing, one-finish card so a batch test's cascade
+// auto-skips straight to quantity.
+func single(id, name string) scryfall.Card {
+	return scryfall.Card{ID: id, Name: name, Set: "uma", CollectorNumber: "1",
+		Finishes: []string{"nonfoil"}}
+}
+
+// runCard walks one queued card from its fuzzy resolution through confirm.
+func runCard(t *testing.T, m model, name string, card scryfall.Card) model {
+	t.Helper()
+	mm, _ := m.onFuzzy(fuzzyMsg{canonical: name, ocr: name, seq: m.fuzzySeq})
+	mm, _ = mm.(model).Update(printsMsg{name: name, cards: []scryfall.Card{card}})
+	got := mm.(model)
+	if got.state != stateQty {
+		t.Fatalf("%s: state = %v, want stateQty", name, got.state)
+	}
+	mm, _ = got.submitQty()
+	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	return mm.(model)
+}
+
+// One capture with three cards walks three cascades, in order, each carrying
+// its own collector info — nothing pooled, nothing cross-paired.
+func TestBatchWalksEveryCard(t *testing.T) {
+	ev, fs := batchFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := mm.(model)
+	if got.batchTotal != 3 || len(got.queue) != 2 || got.state != stateLoading {
+		t.Fatalf("batch = %d/%d state=%v, want 3 with 2 queued, loading", got.batchTotal, len(got.queue), got.state)
+	}
+
+	got = runCard(t, got, "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
+	if got.state != stateLoading || len(got.queue) != 1 {
+		t.Fatalf("after card 1: state=%v queue=%d, want loading card 2", got.state, len(got.queue))
+	}
+	// The badge counts up, and card 1's collector info did not leak forward.
+	if !strings.Contains(got.scanHeader(), "card 2 of 3") {
+		t.Errorf("header = %q, want the card 2 of 3 badge", got.scanHeader())
+	}
+	if got.scannedSet != "" || got.scannedNumber != "" {
+		t.Errorf("card 1's collector info leaked into card 2: %q/%q", got.scannedSet, got.scannedNumber)
+	}
+
+	got = runCard(t, got, "Emrakul, the World Anew", single("e1", "Emrakul, the World Anew"))
+	got = runCard(t, got, "Kozilek, the Broken Reality", single("k1", "Kozilek, the Broken Reality"))
+
+	if len(ra.got) != 3 {
+		t.Fatalf("adder got %d cards, want 3", len(ra.got))
+	}
+	if got.state != stateCapture || got.batchTotal != 0 {
+		t.Errorf("after the batch: state=%v batchTotal=%d, want back at capture with no batch", got.state, got.batchTotal)
+	}
+}
+
+// The first card's fuzzy carries its own set and number — the cross-pairing
+// regression the per-card protocol exists to prevent.
+func TestBatchCarriesPerCardCollectorInfo(t *testing.T) {
+	ev, fs := batchFixture()
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := mm.(model)
+
+	// Execute the real fuzzy command for card 1 and inspect what it carries.
+	msg := got.startCardCmd(ev.Cards[0])().(fuzzyMsg)
+	if msg.set != "UMA" || msg.number != "7" {
+		t.Errorf("card 1 fuzzy carries %q/%q, want UMA/7", msg.set, msg.number)
+	}
+}
+
+// ctrl+s drops exactly the current card; the rest of the batch continues.
+func TestBatchSkipAdvances(t *testing.T) {
+	ev, fs := batchFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := runCard(t, mm.(model), "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
+
+	// Skip card 2 while it is still resolving.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got = mm.(model)
+	if got.state != stateLoading || len(got.queue) != 0 {
+		t.Fatalf("after skip: state=%v queue=%d, want loading card 3", got.state, len(got.queue))
+	}
+	got = runCard(t, got, "Kozilek, the Broken Reality", single("k1", "Kozilek, the Broken Reality"))
+
+	if len(ra.got) != 2 || ra.got[1].Card.Name != "Kozilek, the Broken Reality" {
+		t.Errorf("adder got %+v, want Ulamog and Kozilek only", len(ra.got))
+	}
+}
+
+// A stale fuzzy answer from a skipped card must not hijack its successor.
+func TestBatchSkipDropsStaleFuzzy(t *testing.T) {
+	ev, fs := batchFixture()
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := mm.(model)
+	staleSeq := got.fuzzySeq
+
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS}) // skip card 1 mid-resolve
+	got = mm.(model)
+	mm, _ = got.onFuzzy(fuzzyMsg{canonical: "Ulamog, the Infinite Gyre", ocr: "x", seq: staleSeq})
+	got = mm.(model)
+	if got.scanned == "Ulamog, the Infinite Gyre" {
+		t.Error("a skipped card's fuzzy answer took over the cascade")
+	}
+}
+
+// Esc abandons the whole batch: get-me-out must not quietly keep queueing.
+func TestBatchEscAbandons(t *testing.T) {
+	ev, fs := batchFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := runCard(t, mm.(model), "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
+
+	// Card 2 is loading; esc bails out of everything.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm.(model)
+	if got.batchTotal != 0 || got.queue != nil {
+		t.Fatalf("esc left a batch behind: total=%d queue=%d", got.batchTotal, len(got.queue))
+	}
+	if !strings.Contains(got.status, "abandoned") {
+		t.Errorf("status = %q, want the abandonment named", got.status)
+	}
+	if got.state != stateCapture {
+		t.Errorf("state = %v, want back at the live camera", got.state)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adder got %d, want just the confirmed card", len(ra.got))
+	}
+}
+
+// A card nobody can identify banners and walks on — phantom reads (a keycap,
+// a box lid) cost a banner, not the capture.
+func TestBatchMissContinues(t *testing.T) {
+	ev, fs := batchFixture()
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := mm.(model)
+
+	// Card 1's fuzzy comes back empty: a phantom.
+	mm, _ = got.onFuzzy(fuzzyMsg{ocr: "delete", seq: got.fuzzySeq})
+	got = mm.(model)
+	if got.state != stateLoading || len(got.queue) != 1 {
+		t.Fatalf("after miss: state=%v queue=%d, want card 2 loading", got.state, len(got.queue))
+	}
+	if !got.statusErr || got.status == "" {
+		t.Errorf("the miss should banner: %q", got.status)
+	}
+}
+
+// q inside a picker used to quit the whole program via the list widget's own
+// keymap — with a batch queued, silent data loss. It must not quit anymore.
+func TestQInPickerNoLongerQuits(t *testing.T) {
+	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
+		Finishes: []string{"nonfoil", "foil"}}
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Ulamog", nil)
+	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card, card}})
+	got := mm.(model)
+	if got.state != stateFinishPick && got.state != statePrintPick {
+		t.Fatalf("setup: state = %v, want a picker", got.state)
+	}
+	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if isQuit(cmd) {
+		t.Fatal("q quit the program from inside a picker")
+	}
+	if mm2.(model).state != got.state {
+		t.Errorf("q changed state to %v", mm2.(model).state)
 	}
 }

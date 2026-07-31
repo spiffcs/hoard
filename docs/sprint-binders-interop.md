@@ -154,7 +154,22 @@ As built (matches the design with the deferred decision resolved):
   built; URL adds still go to the default binder (a `--binder` flag for the
   URL path is a small backlog item if wanted).
 
-## ⬜ E. Multi-card scan spike (day 10 pm, timeboxed)
+## ✅ E. Multi-card scan spike — DONE, and productionized the same day
+
+**Verdict was GO, as a hybrid with whole-frame title lines as the primary
+channel** — across five captured fixtures, rect crops only saw cards with
+visible outlines (2 of 9 in a booster-sized cascade) while the whole-frame
+OCR pass read every title. The spike was productionized immediately: the
+helper emits `cards: []` per capture (title-line clustering via `titleLike`
+text shape, crops refining by tolerant title match), and the TUI walks a
+batch-confirm queue (`card k of N`, ctrl+s skips, esc abandons). The
+user-facing story is in docs/scanning.md ("Scanning several cards at once");
+`$HOARD_SCAN_MULTI` traces clustering decisions to stderr, iterable offline
+with `--image` against captures under HOARD_SCAN_DEBUG_DIR. Final sweep hit
+100% recall on all five fixtures. Original spike design follows for
+reference:
+
+### (original design)
 
 Swift-only, in scan/hoard-scan/main.swift (~850 lines, built by build-scan.sh
 via `make scan`; NOT part of `go build`):
@@ -274,7 +289,9 @@ export with prices).
     `internal/resolve` so update-prices/repair share the one pipeline too.
 
 **Later / opportunistic:**
-8. Multi-card scanning productionization (if the E spike says go).
+8. ~~Multi-card scanning productionization~~ — done post-sprint, same day:
+   `cards: []` protocol, TUI batch queue with ctrl+s skip, title-primary
+   clustering. See docs/scanning.md.
 9. Bulk paste entry: pipe any text list into a binder (generalize
    internal/decksource/textlist.go — it already parses `4 Sol Ring (C21) 125 *F*`).
 10. Condition/language columns (unlocks lossless ManaBox import and real

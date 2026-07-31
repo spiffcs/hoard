@@ -88,6 +88,11 @@ func (s *Session) pump(stdout io.Reader, stderr *bytes.Buffer) {
 		sawEvent = true
 		s.events <- ev
 	}
+	// A scanner error (an over-long line, a read failure) would otherwise look
+	// exactly like the helper closing cleanly — say what actually happened.
+	if err := sc.Err(); err != nil {
+		s.events <- Event{Kind: EventError, Message: "reading helper output: " + err.Error()}
+	}
 
 	waitErr := s.cmd.Wait()
 	if sawEvent {

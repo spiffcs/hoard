@@ -87,7 +87,10 @@ type fuzzyMsg struct {
 	// empty for cards that don't print them.
 	set    string
 	number string
-	err    error
+	// seq is the model's fuzzySeq when the lookup was issued; a mismatch on
+	// arrival means the user skipped or abandoned this card mid-resolve.
+	seq int
+	err error
 }
 
 // --- list item types ---
@@ -191,6 +194,17 @@ type model struct {
 	scannedSet    string
 	scannedNumber string
 
+	// queue holds a capture's remaining cards while the user walks the batch —
+	// a fanned spread scans as several cards, confirmed one cascade at a time.
+	// batchTotal is the capture's card count, for the "card k of N" badge; zero
+	// means no batch is active (a single-card capture never starts one).
+	queue      []scan.Card
+	batchTotal int
+	// fuzzySeq invalidates in-flight fuzzy resolutions: skipping or abandoning
+	// mid-resolve must not let the abandoned card's answer hijack whatever the
+	// user moved on to. fuzzyMsg carries the seq it was issued under.
+	fuzzySeq int
+
 	// camera choice, remembered for the session so bulk scanning doesn't ask
 	// every time. cameraChosen distinguishes "no camera picked yet" from a
 	// deliberate empty ID.
@@ -229,6 +243,10 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	l := list.New(nil, list.NewDefaultDelegate(), 0, 0)
 	l.SetShowStatusBar(false)
 	l.SetShowTitle(false)
+	// The list widget's own quit keys (q, esc as quit) would end the whole
+	// program from inside a picker — with a batch queued, that silently drops
+	// cards. esc keeps its cancel meaning via pickerKey; ctrl+c still quits.
+	l.DisableQuitKeybindings()
 
 	m := model{
 		ctx:       ctx,
@@ -353,6 +371,7 @@ const maxFuzzyTries = 5
 // set and number are the collector info read off the same capture; they take no
 // part in resolving the name and are simply carried through to the printing step.
 func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
+	seq := m.fuzzySeq
 	return func() tea.Msg {
 		var firstErr error
 		for i, line := range lines {
@@ -370,7 +389,7 @@ func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
 				continue
 			}
 			if card != nil && cardname.Plausible(line, card.Name) {
-				return fuzzyMsg{canonical: card.Name, ocr: line, set: set, number: number}
+				return fuzzyMsg{canonical: card.Name, ocr: line, set: set, number: number, seq: seq}
 			}
 		}
 		// Report the best-guess line: it's what gets pre-filled for editing.
@@ -378,8 +397,15 @@ func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
 		if len(lines) > 0 {
 			top = lines[0]
 		}
-		return fuzzyMsg{ocr: top, set: set, number: number, err: firstErr}
+		return fuzzyMsg{ocr: top, set: set, number: number, seq: seq, err: firstErr}
 	}
+}
+
+// startCardCmd begins one card's cascade: resolve its OCR lines against
+// Scryfall, its own collector info riding along. The caller bumps fuzzySeq
+// first, so any lookup still in flight for a previous card lands dead.
+func (m model) startCardCmd(c scan.Card) tea.Cmd {
+	return m.namedFuzzyCmd(c.Lines(), c.SetCode, c.CollectorNumber)
 }
 
 // --- update ---
@@ -429,6 +455,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+s skips the current card of a batch, wherever its cascade is: the
+	// queue's whole point is that one unwanted card costs a keystroke, not the
+	// capture. Gated on an active batch, so the key stays free elsewhere, and
+	// on the list's filter, which must keep every printable.
+	if msg.Type == tea.KeyCtrlS && m.batchTotal > 1 && !m.list.SettingFilter() {
+		m.status, m.statusErr = "skipped", false
+		return m.advanceQueue()
+	}
+	// Esc must be able to abandon a batch even between cards, while the next
+	// one is still resolving — stateLoading has no esc of its own, and a queue
+	// that cannot be escaped mid-stride is a trap.
+	if msg.Type == tea.KeyEsc && m.batchTotal > 1 && m.state == stateLoading {
+		return m.cancelToName()
+	}
 	switch m.state {
 	case stateName:
 		switch msg.Type {
@@ -748,16 +788,22 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 	again := nextEventCmd(m.session, m.sessionGen)
 	switch msg.ev.Kind {
 	case scan.EventScan:
-		lines := msg.ev.Lines()
-		if len(lines) == 0 {
+		cards := msg.ev.CardList()
+		if len(cards) == 0 {
 			m.status = "nothing readable in that frame — reframe and capture again"
 			m.statusErr = true
 			m.state = stateCapture
 			return m, again
 		}
+		// A spread becomes a queue walked one cascade at a time; a single card
+		// is a batch of one, which never shows the badge and never queues.
+		// Each card's collector info travels with its own lines — pooling them
+		// per frame is how one card's name got another card's printing.
+		m.batchTotal = len(cards)
+		m.queue = cards[1:]
+		m.fuzzySeq++
 		m.state = stateLoading
-		return m, tea.Batch(m.spinner.Tick,
-			m.namedFuzzyCmd(lines, msg.ev.SetCode, msg.ev.CollectorNumber), again)
+		return m, tea.Batch(m.spinner.Tick, m.startCardCmd(cards[0]), again)
 
 	case scan.EventError:
 		// The window is still up, so stay on the capture step and let them retry.
@@ -786,6 +832,9 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 // up printings (reusing the normal cascade); on a miss it drops back to the
 // prompt with the OCR text pre-filled so the user can correct it.
 func (m model) onFuzzy(msg fuzzyMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.fuzzySeq {
+		return m, nil // the user skipped or abandoned this card mid-resolve
+	}
 	if msg.err != nil {
 		return m.scanMissToName(msg.ocr, "scan: "+msg.err.Error())
 	}
@@ -803,6 +852,16 @@ func (m model) onFuzzy(msg fuzzyMsg) (tea.Model, tea.Cmd) {
 // scanMissToName returns to the name prompt with the OCR text pre-filled and an
 // error banner, so a failed scan is never a dead end.
 func (m model) scanMissToName(ocr, msg string) (tea.Model, tea.Cmd) {
+	// Mid-batch, one unidentifiable card must not strand the rest of the
+	// capture at the prompt: banner the miss and walk on. Phantom reads — a
+	// keycap, a box lid — die here, which is the queue working as designed.
+	if m.batchTotal > 1 {
+		m.status = msg
+		m.statusErr = true
+		return m.advanceQueue()
+	}
+	m.queue = nil
+	m.batchTotal = 0
 	m.prints = nil
 	m.chosen = nil
 	m.finish = ""
@@ -874,20 +933,58 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 		m.status += " → " + m.dest.Name
 	}
 	m.statusErr = false
-	return m.resetForNext()
+	return m.advanceQueue()
 }
 
-// cancelToName abandons the in-progress add and returns to the name prompt.
+// advanceQueue moves the batch to its next card, or ends it. The camera is
+// not returned to until the queue drains — walking every card of the capture
+// first is the batch's whole point. When no batch is active this is exactly
+// resetForNext, which keeps every single-card path byte-identical.
+func (m model) advanceQueue() (tea.Model, tea.Cmd) {
+	if len(m.queue) == 0 {
+		m.batchTotal = 0
+		return m.resetForNext()
+	}
+	next := m.queue[0]
+	m.queue = m.queue[1:]
+	m.prints = nil
+	m.chosen = nil
+	m.finish = ""
+	m.qtyErr = ""
+	m.scanned = ""
+	m.scannedOCR = ""
+	m.scannedSet = ""
+	m.scannedNumber = ""
+	m.fuzzySeq++
+	m.state = stateLoading
+	return m, tea.Batch(m.spinner.Tick, m.startCardCmd(next))
+}
+
+// cancelToName abandons the in-progress add — and with it any queued batch:
+// esc means "get me out", and silently continuing a queue the user just
+// escaped would be the opposite.
 func (m model) cancelToName() (tea.Model, tea.Cmd) {
 	m.status = ""
+	if m.batchTotal > 1 {
+		dropped := len(m.queue) + 1 // the current card and everything behind it
+		m.status = fmt.Sprintf("batch abandoned — %d of %d cards not added", dropped, m.batchTotal)
+		m.statusErr = false
+	}
+	m.queue = nil
+	m.batchTotal = 0
+	m.fuzzySeq++
 	return m.resetForNext()
 }
 
 // failToName shows an error banner and returns to the name prompt, keeping the
-// session alive.
+// session alive — or, mid-batch, walks on to the next card: one card's failed
+// write should cost that card, not the capture.
 func (m model) failToName(msg string) (tea.Model, tea.Cmd) {
 	m.status = msg
 	m.statusErr = true
+	if m.batchTotal > 1 {
+		return m.advanceQueue()
+	}
 	return m.resetForNext()
 }
 
@@ -1005,15 +1102,35 @@ func (m model) listHeight() int {
 
 // --- view ---
 
+// batchHelp appends the skip key to a cascade help line while a batch is
+// active — the key only exists then, so advertising it elsewhere would lie.
+func (m model) batchHelp(base string) string {
+	if m.batchTotal > 1 {
+		return base + " · ctrl+s skip card"
+	}
+	return base
+}
+
 // scanHeader renders the fixed banner shown for the rest of the cascade after a
 // camera scan, so the user can confirm the OCR landed on the right card. When
 // the raw OCR text differs from the canonical name, it's shown alongside so a
-// wrong-but-plausible match is obvious.
+// wrong-but-plausible match is obvious. A multi-card capture prefixes its
+// progress — the badge is what makes N manual printing picks bearable.
 func (m model) scanHeader() string {
-	if m.scanned == "" {
-		return ""
+	var badge string
+	if m.batchTotal > 1 {
+		badge = fmt.Sprintf("card %d of %d", m.batchTotal-len(m.queue), m.batchTotal)
 	}
-	line := scanStyle.Render("📷 Scanned: " + m.scanned)
+	if m.scanned == "" {
+		if badge == "" {
+			return ""
+		}
+		return scanStyle.Render("📷 "+badge) + "\n\n"
+	}
+	if badge != "" {
+		badge += " · "
+	}
+	line := scanStyle.Render("📷 " + badge + "Scanned: " + m.scanned)
 	if m.scannedOCR != "" && !strings.EqualFold(m.scannedOCR, m.scanned) {
 		line += helpStyle.Render(fmt.Sprintf("  (read %q)", m.scannedOCR))
 	}
@@ -1077,16 +1194,16 @@ func (m model) View() string {
 			m.spinner.View(), helpStyle.Render("ctrl+c to quit"))
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick:
 		return m.scanHeader() + m.list.View() + "\n" +
-			helpStyle.Render("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit")
+			helpStyle.Render(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit"))
 	case stateQty:
 		out := m.scanHeader() + promptStyle.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
 			out += "\n" + errStyle.Render(m.qtyErr)
 		}
-		return out + "\n\n" + helpStyle.Render("enter to continue · esc cancel · ctrl+c quit")
+		return out + "\n\n" + helpStyle.Render(m.batchHelp("enter to continue · esc cancel · ctrl+c quit"))
 	case stateConfirm:
 		return m.scanHeader() + titleStyle.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
-			helpStyle.Render("enter to add · esc cancel · ctrl+c quit")
+			helpStyle.Render(m.batchHelp("enter to add · esc cancel · ctrl+c quit"))
 	}
 	return ""
 }

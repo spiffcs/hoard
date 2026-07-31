@@ -40,6 +40,34 @@ type Event struct {
 	SetCode         string `json:"setCode"`
 	// BottomLines is the raw text of the bottom band, for debugging a bad read.
 	BottomLines []string `json:"bottomLines"`
+	// Cards is every card the capture found, in reading order — a fanned
+	// spread yields one entry per card. Empty from helpers that predate
+	// multi-card scanning; use CardList, which falls back to the flat fields.
+	Cards []Card `json:"cards"`
+}
+
+// Card is one card of a capture. Name and Candidates mirror the event's flat
+// fields; CollectorNumber and SetCode are set only when the helper could read
+// them off this card specifically — keeping the pairing per card is the point,
+// since pooling a frame's reads once matched one card's name with another
+// card's printing.
+type Card struct {
+	Name            string   `json:"name"`
+	Candidates      []string `json:"candidates"`
+	CollectorNumber string   `json:"collectorNumber"`
+	SetCode         string   `json:"setCode"`
+}
+
+// Lines returns the card's OCR'd text, best guess first, falling back to Name
+// when there is no candidate list.
+func (c Card) Lines() []string {
+	if len(c.Candidates) > 0 {
+		return c.Candidates
+	}
+	if c.Name != "" {
+		return []string{c.Name}
+	}
+	return nil
 }
 
 // Lines returns the OCR'd text of a scan event, best guess first, falling back
@@ -52,6 +80,24 @@ func (e Event) Lines() []string {
 		return []string{e.Name}
 	}
 	return nil
+}
+
+// CardList returns the capture's cards. A helper too old to report a card
+// list is not an error: its flat fields describe exactly one card, so they
+// become a list of one — the compatibility seam in a single place.
+func (e Event) CardList() []Card {
+	if len(e.Cards) > 0 {
+		return e.Cards
+	}
+	if len(e.Lines()) == 0 {
+		return nil
+	}
+	return []Card{{
+		Name:            e.Name,
+		Candidates:      e.Candidates,
+		CollectorNumber: e.CollectorNumber,
+		SetCode:         e.SetCode,
+	}}
 }
 
 // parseEvent decodes one newline-delimited JSON event from the helper.

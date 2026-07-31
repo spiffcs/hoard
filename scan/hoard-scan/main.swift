@@ -56,6 +56,12 @@ struct Event: Encodable {
     var setCode: String = ""
     /// Raw text of the bottom band, for tuning the read via --image.
     var bottomLines: [String] = []
+    /// Every card the capture found, in reading order — a fanned spread yields
+    /// one entry per card. Optional so events that carry no cards keep their
+    /// old wire shape byte-for-byte; the flat fields above stay populated from
+    /// the frame-wide read, so an older hoard keeps working against this
+    /// helper.
+    var cards: [CardEntry]? = nil
 }
 
 /// Device is one camera the helper can capture from, as listed by --list-devices.
@@ -86,23 +92,43 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
 
 // MARK: - OCR
 
-/// A recognized text line with its vertical position (Vision origin is bottom-left,
-/// so a larger `top` is higher on the card) and confidence.
+/// A recognized text line with its full normalized bounding box (Vision origin
+/// is bottom-left) and confidence. The box matters beyond ranking: multi-card
+/// clustering needs horizontal position to tell which card a line belongs to,
+/// which top-and-width alone cannot say.
 struct Line {
     let text: String
-    let top: CGFloat
-    let width: CGFloat
+    let box: CGRect
     let confidence: Float
+
+    var top: CGFloat { box.maxY }
+    var width: CGFloat { box.width }
 }
 
 /// CardRead is everything one capture yielded: the title guess and its alternates,
-/// plus whatever the bottom border gave up.
+/// plus whatever the bottom border gave up. lines keeps the ranked plausible-name
+/// lines with their geometry, for the multi-card clustering that runs after the
+/// single-card read.
 struct CardRead {
     var name: String = ""
     var candidates: [String] = []
     var collectorNumber: String = ""
     var setCode: String = ""
     var bottomLines: [String] = []
+    var lines: [Line] = []
+}
+
+/// CardEntry is one card of a capture, as the scan event reports it: the title
+/// guess with alternates, and collector info when a crop could read it. The
+/// per-card shape exists because pooling a frame's reads cross-pairs cards —
+/// one card's name with another's printing — observed live before this shape
+/// existed, when a fanned capture emitted the top-most title beside the front
+/// card's collector number.
+struct CardEntry: Encodable {
+    var name: String = ""
+    var candidates: [String] = []
+    var collectorNumber: String = ""
+    var setCode: String = ""
 }
 
 /// collectorBandFraction is how far up the *card* the collector band reaches, as a
@@ -360,8 +386,7 @@ func readCard(_ cg: CGImage) -> CardRead {
         guard let cand = obs.topCandidates(1).first else { continue }
         let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { continue }
-        lines.append(Line(text: t, top: obs.boundingBox.maxY,
-                          width: obs.boundingBox.width, confidence: cand.confidence))
+        lines.append(Line(text: t, box: obs.boundingBox, confidence: cand.confidence))
     }
     if lines.isEmpty {
         return read
@@ -377,12 +402,8 @@ func readCard(_ cg: CGImage) -> CardRead {
         return a.confidence > b.confidence
     }
 
-    // Filter out obvious non-title noise (very short tokens, pure numbers/symbols).
-    func plausibleName(_ s: String) -> Bool {
-        let letters = s.filter { $0.isLetter }
-        return letters.count >= 3
-    }
-    let names = ranked.map { $0.text }.filter(plausibleName)
+    let plausible = ranked.filter { plausibleName($0.text) }
+    let names = plausible.map { $0.text }
     let primary = names.first ?? ranked.first!.text
     // Report several lines, best-guess first. The caller tries each against
     // Scryfall, so a card still resolves when the top-line guess is wrong —
@@ -392,7 +413,233 @@ func readCard(_ cg: CGImage) -> CardRead {
 
     read.name = primary
     read.candidates = candidates
+    read.lines = plausible
     return read
+}
+
+/// plausibleName filters obvious non-title noise: very short tokens, pure
+/// numbers and symbols. Shared by the single-card ranking and the multi-card
+/// clustering, so both mean the same thing by "could be a card name".
+func plausibleName(_ s: String) -> Bool {
+    let letters = s.filter { $0.isLetter }
+    return letters.count >= 3
+}
+
+// MARK: - Multi-card detection
+
+// Grown from a spike over five captured fixtures (tight fan, booster-sized
+// cascade, steady fan, loose spread, desk clutter), which established:
+// rectangle outlines only survive for unoccluded cards (2 of 9 in the
+// cascade), while the whole-frame text pass reads every visible title band —
+// so title lines are the primary channel and crops are the refinement,
+// contributing per-card candidates and the only readable collector info.
+// Set $HOARD_SCAN_MULTI for stderr tracing of the decisions.
+
+/// multiDebug traces the multi-card decisions to stderr when asked. Purely
+/// diagnostic: nothing downstream parses these lines.
+func multiDebug(_ s: String) {
+    guard ProcessInfo.processInfo.environment["HOARD_SCAN_MULTI"] != nil else { return }
+    FileHandle.standardError.write(Data("multi: \(s)\n".utf8))
+}
+
+/// cardRects finds every card-shaped quad in the frame. The detector runs with
+/// looser thresholds than findCard's — a card at the edge of a fan shows less
+/// of its outline than a lone framed card — and the containment pass keeps
+/// only the outermost quads, dropping near-duplicate detections and the boxes
+/// *inside* a card (the art frame and the rules box, which OCR to rules text
+/// rather than titles).
+func cardRects(_ cg: CGImage) -> [VNRectangleObservation] {
+    let req = VNDetectRectanglesRequest()
+    req.minimumAspectRatio = 0.15
+    req.maximumAspectRatio = 1.0
+    req.minimumSize = 0.08
+    req.minimumConfidence = 0.3
+    req.quadratureTolerance = 25
+    req.maximumObservations = 16
+    do {
+        try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
+    } catch {
+        multiDebug("rect detection failed: \(error.localizedDescription)")
+        return []
+    }
+    let rects = req.results ?? []
+
+    func area(_ o: VNRectangleObservation) -> CGFloat {
+        o.boundingBox.width * o.boundingBox.height
+    }
+    var kept: [VNRectangleObservation] = []
+    for r in rects.sorted(by: { area($0) > area($1) }) {
+        let bb = r.boundingBox
+        let swallowed = kept.contains { k in
+            let inter = k.boundingBox.intersection(bb)
+            return !inter.isNull && inter.width * inter.height > 0.7 * bb.width * bb.height
+        }
+        if !swallowed { kept.append(r) }
+    }
+    multiDebug("\(rects.count) rects, \(kept.count) kept after containment dedup")
+    return kept
+}
+
+/// perspectiveCrop straightens one detected quad into an upright card image —
+/// the step the single-card path never needed, since it reads the whole frame.
+func perspectiveCrop(_ cg: CGImage, _ r: VNRectangleObservation, _ ctx: CIContext) -> CGImage? {
+    let w = CGFloat(cg.width), h = CGFloat(cg.height)
+    let ci = CIImage(cgImage: cg)
+    func pt(_ p: CGPoint) -> CIVector { CIVector(x: p.x * w, y: p.y * h) }
+    guard let f = CIFilter(name: "CIPerspectiveCorrection") else { return nil }
+    f.setValue(ci, forKey: kCIInputImageKey)
+    f.setValue(pt(r.topLeft), forKey: "inputTopLeft")
+    f.setValue(pt(r.topRight), forKey: "inputTopRight")
+    f.setValue(pt(r.bottomLeft), forKey: "inputBottomLeft")
+    f.setValue(pt(r.bottomRight), forKey: "inputBottomRight")
+    guard let out = f.outputImage else { return nil }
+    return ctx.createCGImage(out, from: out.extent)
+}
+
+/// typeLineWords are tokens that mark a card's *type* line ("Legendary
+/// Enchantment Creature — God"), which reads at title-like isolation and
+/// title-like capitalization. Card names essentially never use these words,
+/// so a token match is a safe rejection.
+let typeLineWords: Set<String> = [
+    "legendary", "creature", "enchantment", "planeswalker",
+    "sorcery", "instant", "battle", "tribal", "snow",
+]
+
+/// titleLike judges whether a frame line could be a card's title band, by the
+/// text alone. Geometry cannot do this job: in a booster-sized cascade the
+/// stacked title bands sit closer together than a rules paragraph's spacing,
+/// so any gap threshold either eats real titles or admits rules text. Shape
+/// separates them instead — Magic titles are Title Case multi-word lines,
+/// rules text is sentence case, type lines carry known type words. Filtered
+/// generously: a survivor that isn't a card dies on the Go side's Scryfall
+/// fuzzy match. Single-word names (Ponder, Opt) are rejected here but not
+/// lost — a lone card always has an outline, so the crop channel carries it.
+func titleLike(_ s: String) -> Bool {
+    if boilerplate(s) { return false }
+    let words = s.split(whereSeparator: { $0.isWhitespace })
+    guard words.count >= 2 else { return false }
+    guard let first = words.first?.first, first.isLetter else { return false }
+    let tokens = words.map { String($0.lowercased().filter { $0.isLetter }) }
+    if tokens.contains(where: { typeLineWords.contains($0) }) { return false }
+    var caps = 0
+    for w in words where w.first?.isUppercase == true { caps += 1 }
+    // Titles capitalize everything but connectors; sentences capitalize
+    // little. Strictly more than half keeps "Erebos. God of the Dead" and
+    // rejects "companion Animals".
+    return caps * 2 > words.count
+}
+
+/// normTitle reduces a read title to the characters worth comparing.
+func normTitle(_ s: String) -> String {
+    String(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+}
+
+/// editDistance is plain Levenshtein — titles are short and there are at most
+/// a handful of comparisons per capture, so the simple table is plenty.
+func editDistance(_ a: String, _ b: String) -> Int {
+    let x = Array(a), y = Array(b)
+    if x.isEmpty { return y.count }
+    if y.isEmpty { return x.count }
+    var prev = Array(0...y.count)
+    var cur = [Int](repeating: 0, count: y.count + 1)
+    for i in 1...x.count {
+        cur[0] = i
+        for j in 1...y.count {
+            let sub = prev[j - 1] + (x[i - 1] == y[j - 1] ? 0 : 1)
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, sub)
+        }
+        swap(&prev, &cur)
+    }
+    return prev[y.count]
+}
+
+/// sameTitle reports whether two reads plausibly name the same card. The
+/// tolerance exists because the frame pass and a perspective-corrected crop
+/// routinely OCR the same printed title differently ("Ulamoz, tre" vs
+/// "Ulamos, the") — and a missed match here becomes the same card twice in
+/// the confirm queue, which a user will confirm twice and double-count.
+func sameTitle(_ a: String, _ b: String) -> Bool {
+    let x = normTitle(a), y = normTitle(b)
+    if x.isEmpty || y.isEmpty { return false }
+    if x == y { return true }
+    if (x.count >= 8 && y.contains(x)) || (y.count >= 8 && x.contains(y)) { return true }
+    return editDistance(x, y) * 4 <= max(x.count, y.count) // ≤ a quarter differs
+}
+
+/// boilerplate matches the card frame's own print that reads at title-like
+/// isolation and capitalization — the copyright border line and the artist
+/// credit — which would otherwise become phantom queue entries on every
+/// capture that shows a card's bottom.
+func boilerplate(_ s: String) -> Bool {
+    let t = s.lowercased()
+    return t.contains("wizards of the coast") || t.hasPrefix("illus")
+        || s.hasPrefix("™") || s.hasPrefix("©")
+        || s.contains("•") // the collector line's separator; never in a name
+}
+
+/// scanFrame is the whole capture read: the frame-wide single-card read the
+/// event's flat fields have always carried, plus the per-card list a fanned
+/// spread needs.
+///
+/// Title lines are the primary channel and are never excluded by geometry.
+/// The fixtures were unambiguous about why: on a fan, the rectangle detector
+/// returns quads that span *several* cards (an occluded outline completes
+/// itself along a neighbor's edge), so "this line sits inside a detected
+/// card" proves nothing. Crops refine instead — a crop whose title matches an
+/// existing line entry upgrades it with the crop's richer candidates and any
+/// collector read; a crop matching nothing is a card the frame pass missed.
+/// Junk entries (keycaps, box lids, stray prose) survive to the event and die
+/// on the Go side's Scryfall fuzzy match, which the clutter fixture showed
+/// filters them for free.
+func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
+    let read = readCard(cg)
+    let rects = cardRects(cg)
+    let ciContext = CIContext()
+
+    // Entries carry their anchor height so the final list reads top-to-bottom,
+    // the order a person reads a fan.
+    var entries: [(top: CGFloat, entry: CardEntry)] = []
+
+    for line in read.lines {
+        if !titleLike(line.text) {
+            multiDebug("line not title-like: \"\(line.text)\"")
+            continue
+        }
+        if entries.contains(where: { sameTitle($0.entry.name, line.text) }) {
+            multiDebug("line repeats an entry: \"\(line.text)\"")
+            continue
+        }
+        multiDebug("line entry: \"\(line.text)\"")
+        entries.append((line.top, CardEntry(name: line.text, candidates: [line.text])))
+    }
+
+    for (i, r) in rects.enumerated() {
+        guard let crop = perspectiveCrop(cg, r, ciContext) else { continue }
+        saveDebugImage(crop, "multi-rect-\(i).png")
+        let cropRead = readCard(crop)
+        if cropRead.name.isEmpty {
+            continue // a quad that reads as nothing is desk, not card
+        }
+        var e = CardEntry(name: cropRead.name, candidates: Array(cropRead.candidates.prefix(8)))
+        // A bare number off a crop is a mana cost or power box as often as a
+        // collector number; only a set-and-number pair is worth reporting.
+        if !cropRead.setCode.isEmpty && !cropRead.collectorNumber.isEmpty {
+            e.setCode = cropRead.setCode
+            e.collectorNumber = cropRead.collectorNumber
+        }
+        if let idx = entries.firstIndex(where: { sameTitle($0.entry.name, e.name) }) {
+            // The crop read the same title off straightened pixels — usually
+            // the cleaner read — and may carry the printing.
+            entries[idx].entry = e
+            multiDebug("crop \(i) refines \"\(e.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber)")
+        } else {
+            entries.append((r.boundingBox.maxY, e))
+            multiDebug("crop \(i) adds \"\(e.name)\"")
+        }
+    }
+
+    entries.sort { $0.top > $1.top }
+    return (read, entries.map { $0.entry })
 }
 
 /// decodePhoto turns a captured photo into a CGImage plus the orientation Vision
@@ -750,13 +997,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         saveDebugImage(cg, "capture-raw.png")
         let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: effectiveRotation)
         saveDebugImage(forOCR, "capture-ocr.png")
-        let read = readCard(forOCR)
+        let (read, cards) = scanFrame(forOCR)
         // Emit and stay live: the window persists so the next card can be framed
         // and captured without relaunching the camera.
         emit(Event(event: "scan", name: read.name, candidates: read.candidates,
                    rotation: manualRotation,
                    collectorNumber: read.collectorNumber, setCode: read.setCode,
-                   bottomLines: read.bottomLines))
+                   bottomLines: read.bottomLines, cards: cards))
     }
 }
 
@@ -888,12 +1135,12 @@ if let i = args.firstIndex(of: "--image") {
     // Write the same debug bitmap the live path does, so HOARD_SCAN_DEBUG_DIR can
     // be used to tune the bottom band against a still photo.
     saveDebugImage(forOCR, "capture-ocr.png")
-    let read = readCard(forOCR)
+    let (read, cards) = scanFrame(forOCR)
     emit(Event(event: "scan", name: read.name, candidates: read.candidates,
                rotation: requestedRotation,
                collectorNumber: read.collectorNumber, setCode: read.setCode,
-               bottomLines: read.bottomLines))
-    exit(read.name.isEmpty ? 3 : 0)
+               bottomLines: read.bottomLines, cards: cards))
+    exit(read.name.isEmpty && cards.isEmpty ? 3 : 0)
 }
 
 // Live mode: request camera access, then run the AppKit event loop.

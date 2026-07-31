@@ -93,3 +93,49 @@ func TestParseDevices(t *testing.T) {
 		t.Error("expected error for malformed JSON")
 	}
 }
+
+func TestCardListFallsBackToFlatFields(t *testing.T) {
+	// A helper too old to report a card list still describes exactly one card
+	// in its flat fields; CardList is the one place that compatibility lives.
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","candidates":["Sol Ring","Artifact"],` +
+			`"collectorNumber":"125","setCode":"C21"}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	cards := ev.CardList()
+	if len(cards) != 1 {
+		t.Fatalf("cards = %d, want the flat fields as one card", len(cards))
+	}
+	c := cards[0]
+	if c.Name != "Sol Ring" || c.SetCode != "C21" || c.CollectorNumber != "125" || len(c.Candidates) != 2 {
+		t.Errorf("card = %+v, want the flat fields carried over", c)
+	}
+	// And a frame with nothing readable yields no cards, not one empty card.
+	if got := (Event{Kind: EventScan}).CardList(); got != nil {
+		t.Errorf("empty event CardList = %+v, want nil", got)
+	}
+}
+
+func TestCardListPassesThroughCards(t *testing.T) {
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Ulamog, the Infinite Gyre",` +
+			`"cards":[{"name":"Ulamog, the Infinite Gyre","candidates":["Ulamog, the Infinite Gyre"],"setCode":"UMA","collectorNumber":"7"},` +
+			`{"name":"Emrakul, the World Anew","candidates":["Emrakul, the World Anew"]}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	cards := ev.CardList()
+	if len(cards) != 2 {
+		t.Fatalf("cards = %d, want the list as sent", len(cards))
+	}
+	if cards[0].SetCode != "UMA" || cards[0].CollectorNumber != "7" {
+		t.Errorf("card 0 lost its printing: %+v", cards[0])
+	}
+	if cards[1].Name != "Emrakul, the World Anew" || cards[1].SetCode != "" {
+		t.Errorf("card 1 = %+v, want name-only", cards[1])
+	}
+	if lines := cards[1].Lines(); len(lines) != 1 || lines[0] != "Emrakul, the World Anew" {
+		t.Errorf("card Lines = %v", lines)
+	}
+}
