@@ -1,5 +1,9 @@
 # Sprint: Binders, Interop, and the Road to Best-in-OSS
 
+**This sprint is complete** (all five phases plus a hardening interlude and
+multi-card scanning productionization). The current sprint is
+[sprint-portfolio-scriptability.md](sprint-portfolio-scriptability.md).
+
 Status document for the two-week sprint started 2026-07-30. Written so a fresh
 session (human or AI) can resume with zero prior context. Update the status
 markers as phases land.
