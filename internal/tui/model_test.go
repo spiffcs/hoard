@@ -138,7 +138,7 @@ func TestExactNameSkipsNamePick(t *testing.T) {
 	fs := fakeSearcher{
 		prints: map[string][]scryfall.Card{"Ulamog, the Infinite Gyre": {card}},
 	}
-	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog, the Infinite Gyre")
+	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog, the Infinite Gyre", nil)
 
 	// Init fires the prints search; deliver its message.
 	mm, _ := m.Update(printsMsg{name: "Ulamog, the Infinite Gyre", cards: []scryfall.Card{card}})
@@ -156,7 +156,7 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 	fs := fakeSearcher{
 		auto: map[string][]string{"Ulamog": {"Ulamog, the Infinite Gyre", "Ulamog, the Ceaseless Hunger"}},
 	}
-	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog")
+	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog", nil)
 
 	// Prints for "Ulamog" come back empty → triggers autocomplete.
 	mm, cmd := m.Update(printsMsg{name: "Ulamog", cards: nil})
@@ -174,7 +174,7 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
 		Finishes: []string{"foil"}} // one printing, one finish
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Foily")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Foily", nil)
 
 	mm, _ := m.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
 	got := mm.(model)
@@ -188,7 +188,7 @@ func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 
 func TestNoMatchKeepsSession(t *testing.T) {
 	// Empty prints AND empty autocomplete → error banner, back on the name prompt.
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Zzz Nonexistent")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Zzz Nonexistent", nil)
 	mm, cmd := m.Update(printsMsg{name: "Zzz Nonexistent", cards: nil})
 	mm, _ = step(t, mm, cmd) // run autocomplete → namesMsg{nil}
 	got := mm.(model)
@@ -202,7 +202,7 @@ func TestConfirmAddsAndLoopsBack(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
 		Finishes: []string{"nonfoil"}, PriceUSD: fp(37.20)}
 	ra := &recordingAdder{}
-	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog")
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog", nil)
 	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
 	got := mm.(model)
 	if got.state != stateQty {
@@ -246,7 +246,7 @@ func TestAdderErrorKeepsSession(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
 		Finishes: []string{"nonfoil"}}
 	ra := &recordingAdder{err: errors.New("disk full")}
-	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog")
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog", nil)
 	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
 	got := mm.(model) // stateQty
 	mm, _ = got.submitQty()
@@ -270,7 +270,7 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 	// esc mid-cascade (print pick) → back to name prompt, not quit.
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"A": {card,
 		{ID: "b", Name: "A", Set: "y", CollectorNumber: "2", Finishes: []string{"nonfoil"}}}}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "A")
+	m := newModel(context.Background(), fs, noopAdder, nil, "A", nil)
 	mm, _ := m.Update(printsMsg{name: "A", cards: fs.prints["A"]})
 	got := mm.(model)
 	if got.state != statePrintPick {
@@ -303,7 +303,7 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 		prints: map[string][]scryfall.Card{"Sol Ring": cards},
 	}
 	sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
-	m := newModel(context.Background(), fs, noopAdder, sc, "")
+	m := newModel(context.Background(), fs, noopAdder, sc, "", nil)
 
 	// ctrl+o looks for cameras; a lone camera is opened without asking.
 	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
@@ -352,7 +352,7 @@ func solRingPrints() []scryfall.Card {
 func TestScannedNumberRanksAndMarksPrinting(t *testing.T) {
 	cards := solRingPrints()
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 	m.scanned = "Sol Ring"
 	m.scannedSet = "MH3"
 	m.scannedNumber = "123"
@@ -398,7 +398,7 @@ func TestScannedNumberRanksAndMarksPrinting(t *testing.T) {
 func TestScannedNumberMatchingNothingSaysSo(t *testing.T) {
 	cards := solRingPrints()
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 	m.scanned = "Sol Ring"
 	m.scannedNumber = "999" // misread, or the name match was wrong
 
@@ -449,7 +449,7 @@ func TestRankByScan(t *testing.T) {
 }
 
 func TestScanHeaderShowsOcrTextWhenItDiffers(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.scanned, m.scannedOCR = "Sol Ring", "Sol Rlng"
 	head := m.scanHeader()
 	if !strings.Contains(head, "Sol Ring") || !strings.Contains(head, "Sol Rlng") {
@@ -472,7 +472,7 @@ func TestScanHeaderShowsOcrTextWhenItDiffers(t *testing.T) {
 func TestScanHeaderClearedAfterAdd(t *testing.T) {
 	card := scryfall.Card{ID: "s", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
 		Finishes: []string{"nonfoil"}}
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.scanned, m.scannedOCR = "Sol Ring", "Sol Rlng"
 	m.chosen, m.finish = &card, "normal"
 	m.qtyInput.SetValue("1")
@@ -484,7 +484,7 @@ func TestScanHeaderClearedAfterAdd(t *testing.T) {
 }
 
 func TestClosingCameraWindowReturnsToPrompt(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	sess := &fakeSession{events: make(chan scan.Event, 8)}
 	mm, _ := m.onSession(sessionMsg{session: sess})
 	got := mm.(model)
@@ -508,7 +508,7 @@ func TestScanFallsBackToLaterOcrLines(t *testing.T) {
 	// The top-line guess is rules text (what a misrotated capture yields); the
 	// real title is further down the list and should still resolve.
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 
 	lines := []string{"control have indestructible.\"", "Volkan Baga", "Elspeth, Knight-Errant"}
 	msg := m.namedFuzzyCmd(lines, "", "")().(fuzzyMsg)
@@ -563,7 +563,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 		"option":                 "Opt",
 		"Elspeth, Knight-Errant": "Elspeth, Knight-Errant",
 	}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "")
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 
 	msg := m.namedFuzzyCmd([]string{"option", "Elspeth, Knight-Errant"}, "", "")().(fuzzyMsg)
 	if msg.canonical != "Elspeth, Knight-Errant" {
@@ -574,7 +574,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 
 func TestScanFuzzyMissReportsTopLine(t *testing.T) {
 	// Nothing matches → the best-guess line is what gets pre-filled for editing.
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	msg := m.namedFuzzyCmd([]string{"Blrgh", "Nonsense"}, "", "")().(fuzzyMsg)
 	if msg.canonical != "" || msg.ocr != "Blrgh" {
 		t.Errorf("miss: canonical=%q ocr=%q, want empty canonical and the top line",
@@ -586,7 +586,7 @@ func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
 	// A text-heavy capture must not turn into an unbounded burst of lookups.
 	var tries int
 	counting := countingSearcher{onFuzzy: func() { tries++ }}
-	m := newModel(context.Background(), counting, noopAdder, nil, "")
+	m := newModel(context.Background(), counting, noopAdder, nil, "", nil)
 
 	lines := make([]string, 20)
 	for i := range lines {
@@ -612,7 +612,7 @@ func (c countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, e
 func TestScanMissPrefillsOcrText(t *testing.T) {
 	// Fuzzy match fails → back to prompt with OCR text pre-filled for editing.
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder,
-		&fakeScanner{}, "")
+		&fakeScanner{}, "", nil)
 	mm, _ := m.onFuzzy(fuzzyMsg{ocr: "Blrgh Nonsense"}) // canonical empty = miss
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr {
@@ -626,7 +626,7 @@ func TestScanMissPrefillsOcrText(t *testing.T) {
 func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 	devices := []scan.Device{cam("phone", "Chris's iPhone", "iPhone"), cam("spare", "Old iPhone", "iPhone")}
 	sc := &fakeScanner{devices: devices}
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
 
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	mm, _ = mm.(model).onCameras(camerasMsg{devices: devices})
@@ -677,7 +677,7 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 }
 
 func TestNoCamerasKeepsSession(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	mm, _ := m.onCameras(camerasMsg{devices: nil})
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr || got.status == "" {
@@ -699,7 +699,7 @@ func openCapture(t *testing.T, m model) (model, *fakeSession) {
 }
 
 func TestSpaceCapturesWithoutReopeningTheCamera(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
@@ -716,7 +716,7 @@ func TestSpaceCapturesWithoutReopeningTheCamera(t *testing.T) {
 }
 
 func TestArrowKeysRotateFromTheTerminal(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
@@ -735,7 +735,7 @@ func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
 	card := scryfall.Card{ID: "s", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
 		Finishes: []string{"nonfoil"}}
 	ra := &recordingAdder{}
-	m := newModel(context.Background(), fakeSearcher{}, ra.add, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
 	got.chosen, got.finish = &card, "normal"
@@ -758,7 +758,7 @@ func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
 }
 
 func TestEscAtCaptureClosesCameraButKeepsSession(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
 	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -775,7 +775,7 @@ func TestEscAtCaptureClosesCameraButKeepsSession(t *testing.T) {
 }
 
 func TestStaleSessionEventsAreDropped(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, _ := openCapture(t, m)
 	stale := got.sessionGen
 
@@ -792,7 +792,7 @@ func TestStaleSessionEventsAreDropped(t *testing.T) {
 
 func TestUnreadableFrameStaysOnCapture(t *testing.T) {
 	// A frame Vision couldn't read shouldn't drop the user out of the camera.
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, _ := openCapture(t, m)
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = mm.(model)
@@ -809,7 +809,7 @@ func TestUnreadableFrameStaysOnCapture(t *testing.T) {
 }
 
 func TestCaptureErrorKeepsTheWindowOpen(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = mm.(model)
@@ -829,7 +829,7 @@ func TestCaptureErrorKeepsTheWindowOpen(t *testing.T) {
 }
 
 func TestScanDisabledWhenNil(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr {
@@ -838,7 +838,7 @@ func TestScanDisabledWhenNil(t *testing.T) {
 }
 
 func TestQtyValidation(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "x")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "x", nil)
 	m.state = stateQty
 	m.qtyInput.SetValue("0")
 	mm, _ := m.submitQty()
@@ -857,5 +857,88 @@ func TestFinishOptions(t *testing.T) {
 	}
 	if fo := finishOptions(scryfall.Card{}); len(fo) != 0 {
 		t.Errorf("no finishes → empty, got %v", fo)
+	}
+}
+
+// destFixtures is a hoard with somewhere to choose: the default binder, a
+// named binder, and a deck.
+func destFixtures() []Destination {
+	return []Destination{
+		{ID: 1, Name: "Binder", Kind: "binder"},
+		{ID: 2, Name: "Trade", Kind: "binder"},
+		{ID: 7, Name: "Fish Deck", Kind: "deck"},
+	}
+}
+
+// With more than one destination the cascade asks where the card goes after
+// the finish step, hands the choice to the adder, and remembers it — the next
+// card's picker opens on the last answer.
+func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
+	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
+		Finishes: []string{"foil"}} // single finish: the next question is the destination
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Foily", destFixtures())
+
+	mm, _ := m.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
+	got := mm.(model)
+	if got.state != stateDestPick {
+		t.Fatalf("state = %v, want stateDestPick after the finish auto-skip", got.state)
+	}
+	if len(got.list.Items()) != 3 {
+		t.Fatalf("picker items = %d, want 3", len(got.list.Items()))
+	}
+	if got.list.Index() != 0 {
+		t.Fatalf("first pick opens at %d, want the default binder at 0", got.list.Index())
+	}
+
+	// Choose the Trade binder and finish the add.
+	got.list.Select(1)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != stateQty || got.dest.ID != 2 {
+		t.Fatalf("state=%v dest=%+v, want stateQty with Trade chosen", got.state, got.dest)
+	}
+	mm, _ = got.submitQty()
+	got = mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	got = mm.(model)
+	if len(ra.got) != 1 || ra.got[0].ContainerID != 2 {
+		t.Fatalf("adder got %+v, want ContainerID 2", ra.got)
+	}
+	if !strings.Contains(got.status, "→ Trade") {
+		t.Errorf("banner %q should name the destination", got.status)
+	}
+
+	// The next card's picker opens on the remembered pick.
+	mm, _ = got.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
+	got = mm.(model)
+	if got.state != stateDestPick || got.list.Index() != 1 {
+		t.Fatalf("second card: state=%v index=%d, want the picker preselecting Trade", got.state, got.list.Index())
+	}
+}
+
+// One destination is no choice at all: the cascade never asks, the flow is the
+// one it always was, and the adder still learns which container that was.
+func TestSingleDestinationSkipsThePicker(t *testing.T) {
+	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
+		Finishes: []string{"foil"}}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Foily",
+		[]Destination{{ID: 1, Name: "Binder", Kind: "binder"}})
+
+	mm, _ := m.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
+	got := mm.(model)
+	if got.state != stateQty {
+		t.Fatalf("state = %v, want stateQty — one destination must not ask", got.state)
+	}
+	mm, _ = got.submitQty()
+	got = mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if len(ra.got) != 1 || ra.got[0].ContainerID != 1 {
+		t.Fatalf("adder got %+v, want ContainerID 1", ra.got)
+	}
+	if strings.Contains(got.status, "→") {
+		t.Errorf("banner %q names a destination nobody chose", got.status)
 	}
 }

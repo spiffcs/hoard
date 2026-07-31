@@ -49,11 +49,23 @@ type ScanSession interface {
 	Close() error
 }
 
-// Result is the pinpointed selection to add to the collection.
+// Destination is somewhere a confirmed card can go: a binder, or a deck's
+// mainboard. The cascade only displays these — what an ID means is the
+// caller's business, which is what keeps this package free of store imports.
+type Destination struct {
+	ID   int64
+	Name string
+	Kind string // "binder" | "deck", display only
+}
+
+// Result is the pinpointed selection to add to the collection. ContainerID is
+// the chosen destination's ID, or 0 when the caller supplied no destinations —
+// in which case wherever the Adder defaults to is the destination.
 type Result struct {
-	Card   scryfall.Card
-	Finish string // normal|foil|etched
-	Qty    int
+	Card        scryfall.Card
+	Finish      string // normal|foil|etched
+	Qty         int
+	ContainerID int64
 }
 
 // Adder persists a confirmed selection. It is called once per card the user
@@ -66,8 +78,13 @@ type Adder func(Result) error
 // confirms; each confirmed card is persisted via add and the session loops back
 // for the next card until the user exits. sc may be nil to disable the camera
 // scan action. initialName optionally pre-seeds the first search.
-func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string) error {
-	m := newModel(ctx, s, add, sc, initialName)
+//
+// dests is everywhere a card may be put. With one (or none) the cascade never
+// asks — the single-binder flow is exactly what it always was; with more, a
+// destination step follows the finish, remembering the last pick so a bulk
+// add is one enter per card.
+func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) error {
+	m := newModel(ctx, s, add, sc, initialName, dests)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 	// However the program ended — quit, esc, or a crash — the camera window must

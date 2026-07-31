@@ -88,8 +88,10 @@ As built (matches the design above with these notes):
   planned — no new queries. Command lives in `export.go` (repo root).
 - Tests are inline-want writer tests plus command tests against a temp store
   (`internal/export/csv_test.go`, `export_test.go`) — house style, no
-  golden-file machinery. **Checkpoint: a generated file uploads to Moxfield**
-  (manual verification, pending).
+  golden-file machinery. **Checkpoint passed: a generated file uploaded to
+  Moxfield's collection import** (2026-07-30; note it is the *collection*
+  importer, reached from a binder on moxfield.com/collection — deck pages only
+  take pasted text lists).
 
 ## ✅ B. Import — DONE (committed)
 
@@ -126,21 +128,31 @@ As built (matches the design above with these notes):
   → identical `CollectionTotals` and binder structure. Also verified manually
   against live Scryfall with real collection rows.
 
-## ⬜ D. Add-flow destination picker (day 10 am)
+## ✅ D. Add-flow destination picker — DONE
 
-- `tui.Result` (internal/tui/tui.go) gains `ContainerID int64`.
-- New `stateDestPick` in internal/tui/model.go built with the existing
-  `showPicker`/`pickerKey` generic helpers, slotted after finish pick **only
-  when more than one destination exists** — the single-binder flow stays
-  byte-identical. Offer binders AND decks (the original ask included adding to
-  decks from the add flow); deck adds go to board 'main'.
-- The adder in add.go calls `AddCardFinishTo(r.ContainerID, ...)`.
-- The container list is injected into `tui.Run` (a new source param or an
-  extension of the Adder contract — decide at implementation; keep tui free of
-  store imports, it currently only knows scryfall.Card).
-- Remember the last pick for the session (bulk adds go to the same place).
-- Cut-line fallback if TUI work runs long: `hoard add --binder REF` flag
-  delivers the capability without TUI changes.
+As built (matches the design with the deferred decision resolved):
+
+- The injection is a **new `dests []tui.Destination` parameter on `tui.Run`**
+  — `Destination{ID, Name, Kind}` is tui's own type, so the package still
+  imports no store. add.go builds the list (binders default-first, then decks
+  by value — the browse left pane's order) and the adder calls
+  `AddCardFinishTo(r.ContainerID, ...)`; `ContainerID` is 0 only when no
+  destinations were supplied, falling back to `AddCardFinish`.
+- `stateDestPick` slots after the finish step via `toDest()`, built on the
+  shared `showPicker`/`pickerKey` helpers. With ≤1 destination it never
+  appears — the single-binder cascade, confirm screen, and banner are
+  character-identical (existing tests pass with nil destinations, unchanged).
+- Deck rows are labelled "deck · adds to the mainboard"; the pick lands on
+  board 'main' via `AddCardFinishTo`.
+- The session remembers the last pick (`m.dest` survives `resetForNext`), so
+  the picker opens preselected and a bulk add is one enter per card; the
+  confirm screen and success banner name the destination when there was a
+  choice ("→ Trade").
+- Tests: `TestDestinationPickerAsksHandsOffAndRemembers`,
+  `TestSingleDestinationSkipsThePicker` (model_test.go).
+- The `hoard add --binder REF` cut-line fallback was not needed and was not
+  built; URL adds still go to the default binder (a `--binder` flag for the
+  URL path is a small backlog item if wanted).
 
 ## ⬜ E. Multi-card scan spike (day 10 pm, timeboxed)
 

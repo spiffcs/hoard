@@ -69,9 +69,17 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 		return fmt.Errorf("adding by name needs an interactive terminal; " +
 			"pass a Scryfall URL instead (e.g. hoard add https://scryfall.com/card/uma/7/...)")
 	}
+	dests, err := destinations(st)
+	if err != nil {
+		return err
+	}
 	// Each confirmed card is persisted immediately; the session loops until the
-	// user exits.
+	// user exits. The cascade hands back the destination it asked about — the
+	// default binder when it never had to ask.
 	add := func(res tui.Result) error {
+		if res.ContainerID != 0 {
+			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+		}
 		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
 	}
 	// Lookups prefer the local catalog and fall through to Scryfall, so a name
@@ -81,5 +89,27 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	return tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name)
+	return tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name, dests)
+}
+
+// destinations lists everywhere an add can land: the binders (default first),
+// then decks ranked by value — the same order the browser's left pane uses, so
+// the picker reads like a place the user already knows.
+func destinations(st *store.Store) ([]tui.Destination, error) {
+	binders, err := st.ListBinders()
+	if err != nil {
+		return nil, err
+	}
+	decks, err := st.ListDecks()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tui.Destination, 0, len(binders)+len(decks))
+	for _, b := range binders {
+		out = append(out, tui.Destination{ID: b.ID, Name: b.Name, Kind: "binder"})
+	}
+	for _, d := range store.DecksByValue(decks) {
+		out = append(out, tui.Destination{ID: d.ID, Name: d.Name, Kind: "deck"})
+	}
+	return out, nil
 }

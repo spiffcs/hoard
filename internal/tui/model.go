@@ -31,6 +31,7 @@ const (
 	stateNamePick
 	statePrintPick
 	stateFinishPick
+	stateDestPick
 	stateQty
 	stateConfirm
 )
@@ -138,6 +139,19 @@ func (c cameraItem) Title() string       { return c.dev.Name }
 func (c cameraItem) Description() string { return c.dev.Kind }
 func (c cameraItem) FilterValue() string { return c.dev.Name + " " + c.dev.Kind }
 
+// destItem is one destination in the picker. A deck row says where in the
+// deck the card lands, since "add to a deck" could plausibly mean any board.
+type destItem struct{ d Destination }
+
+func (d destItem) Title() string { return d.d.Name }
+func (d destItem) Description() string {
+	if d.d.Kind == "deck" {
+		return "deck · adds to the mainboard"
+	}
+	return d.d.Kind
+}
+func (d destItem) FilterValue() string { return d.d.Name + " " + d.d.Kind }
+
 // --- model ---
 
 type model struct {
@@ -159,6 +173,12 @@ type model struct {
 	prints []scryfall.Card
 	chosen *scryfall.Card
 	finish string
+
+	// destinations the caller offered, and the current pick. dest doubles as
+	// the session memory: it survives resetForNext, so the picker opens on
+	// wherever the last card went and a bulk add answers with one enter.
+	dests []Destination
+	dest  Destination
 
 	qtyErr string
 
@@ -191,7 +211,7 @@ type model struct {
 	err        error // fatal program error (rare)
 }
 
-func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string) model {
+func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) model {
 	ni := textinput.New()
 	ni.Placeholder = "Card name, e.g. Ulamog, the Infinite Gyre"
 	ni.Focus()
@@ -215,12 +235,16 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		searcher:  s,
 		adder:     add,
 		scanner:   sc,
+		dests:     dests,
 		nameInput: ni,
 		qtyInput:  qi,
 		spinner:   sp,
 		list:      l,
 		width:     80,
 		height:    22,
+	}
+	if len(dests) > 0 {
+		m.dest = dests[0]
 	}
 	if strings.TrimSpace(initialName) != "" {
 		m.nameInput.SetValue(strings.TrimSpace(initialName))
@@ -500,6 +524,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return nil, nil, false
 			}
 			m.finish = string(fi)
+			next, cmd := m.toDest()
+			return next, cmd, true
+		}); ok {
+			return next, cmd
+		}
+	case stateDestPick:
+		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
+			di, ok := it.(destItem)
+			if !ok {
+				return nil, nil, false
+			}
+			m.dest = di.d
 			next, cmd := m.toQty()
 			return next, cmd, true
 		}); ok {
@@ -531,7 +567,7 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
-	case stateNamePick, statePrintPick, stateFinishPick, stateCameraPick:
+	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick:
 		m.list, cmd = m.list.Update(msg)
 	case stateLoading, stateCapturing, stateCameraBusy:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -794,7 +830,7 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 		} else {
 			m.finish = "normal"
 		}
-		return m.toQty()
+		return m.toDest()
 	}
 	showPicker(&m, "Select a finish", finishes, stateFinishPick, func(_ int, f string) list.Item {
 		return finishItem(f)
@@ -802,10 +838,30 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// toDest asks where the card goes — or doesn't: with zero or one destination
+// the question has one answer, and the single-binder cascade stays exactly
+// what it always was. The cursor opens on the last pick, so a bulk add into
+// the same place is one enter per card.
+func (m model) toDest() (tea.Model, tea.Cmd) {
+	if len(m.dests) <= 1 {
+		return m.toQty()
+	}
+	showPicker(&m, "Add to", m.dests, stateDestPick, func(_ int, d Destination) list.Item {
+		return destItem{d}
+	})
+	for i, d := range m.dests {
+		if d.ID == m.dest.ID {
+			m.list.Select(i)
+			break
+		}
+	}
+	return m, nil
+}
+
 // confirmAdd persists the pinpointed selection via the adder, records a banner,
 // and loops back to the name prompt for the next card.
 func (m model) confirmAdd() (tea.Model, tea.Cmd) {
-	res := Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue()}
+	res := Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue(), ContainerID: m.dest.ID}
 	if err := m.adder(res); err != nil {
 		return m.failToName(err.Error())
 	}
@@ -813,6 +869,10 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s — %s",
 		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, priceForFinish(res.Card, res.Finish))
+	// Naming the destination matters exactly when there was a choice.
+	if len(m.dests) > 1 {
+		m.status += " → " + m.dest.Name
+	}
 	m.statusErr = false
 	return m.resetForNext()
 }
@@ -1015,7 +1075,7 @@ func (m model) View() string {
 	case stateLoading:
 		return m.scanHeader() + fmt.Sprintf("%s searching Scryfall…\n\n%s",
 			m.spinner.View(), helpStyle.Render("ctrl+c to quit"))
-	case stateNamePick, statePrintPick, stateFinishPick:
+	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick:
 		return m.scanHeader() + m.list.View() + "\n" +
 			helpStyle.Render("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit")
 	case stateQty:
@@ -1035,9 +1095,16 @@ func (m model) confirmSummary() string {
 	c := m.chosen
 	finish := m.finish
 	price := priceForFinish(*c, finish)
-	return fmt.Sprintf("%d× %s\n%s #%s · %s\nfinish: %s   price: %s",
+	out := fmt.Sprintf("%d× %s\n%s #%s · %s\nfinish: %s   price: %s",
 		m.qtyValue(), c.Name, strings.ToUpper(c.Set), c.CollectorNumber, c.SetName,
 		finish, price)
+	// The destination line appears exactly when there was a choice to recall —
+	// a single-binder session's confirm screen is character-identical to what
+	// it always showed.
+	if len(m.dests) > 1 {
+		out += "\nadd to: " + m.dest.Name
+	}
+	return out
 }
 
 // --- pure helpers (unit-tested) ---
