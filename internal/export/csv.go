@@ -14,7 +14,7 @@ import (
 )
 
 // Row is one exported holding: a printing in one finish, in one container.
-// Finish uses hoard's spelling (normal|foil|etched); each writer maps it to
+// Finish uses Scryfall's spelling (nonfoil|foil|etched); each writer maps it to
 // its format's vocabulary. A nil PriceUSD means unpriced, which is not the
 // same as free — writers emit an empty cell, never 0.00.
 //
@@ -75,7 +75,7 @@ func WriteMoxfield(w io.Writer, rows []Row) error {
 	for _, r := range rows {
 		// Moxfield's Foil column: empty for non-foil, else the finish name.
 		foil := r.Finish
-		if foil == "normal" {
+		if foil == "nonfoil" {
 			foil = ""
 		}
 		cw.Write([]string{
@@ -94,7 +94,7 @@ func WriteArchidekt(w io.Writer, rows []Row) error {
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"Quantity", "Name", "Finish", "Edition Code", "Collector Number", "Scryfall ID"})
 	for _, r := range rows {
-		finish := map[string]string{"normal": "Normal", "foil": "Foil", "etched": "Etched"}[r.Finish]
+		finish := map[string]string{"nonfoil": "Normal", "foil": "Foil", "etched": "Etched"}[r.Finish]
 		if finish == "" {
 			finish = r.Finish
 		}

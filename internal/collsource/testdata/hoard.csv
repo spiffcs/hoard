@@ -1,5 +1,5 @@
 Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD
-2,Sol Ring,c21,125,normal,sol-id-1,Binder,binder,main,2.00
+2,Sol Ring,c21,125,nonfoil,sol-id-1,Binder,binder,main,2.00
 1,Sol Ring,c21,125,foil,sol-id-1,Trade,binder,main,12.50
-1,Mystic Remora,ice,78,normal,remora-id-1,Binder,binder,main,
+1,Mystic Remora,ice,78,nonfoil,remora-id-1,Binder,binder,main,
 1,Lightning Bolt,2x2,117,foil,bolt-id-1,Fish,deck,main,3.50

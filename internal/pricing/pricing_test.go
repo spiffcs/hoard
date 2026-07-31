@@ -36,7 +36,7 @@ func TestFillGapsDoesNothingWithoutGaps(t *testing.T) {
 	if err := s.AddCardFinish(scryfall.Card{
 		ID: "u", Set: "uma", CollectorNumber: "7", Name: "Ulamog",
 		PriceUSD: f64(10), PriceUSDFoil: f64(25), ScryfallURL: "http://x",
-	}, "normal", 1); err != nil {
+	}, "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	report, err := New(s, t.TempDir()).FillGaps(context.Background())
@@ -78,7 +78,7 @@ func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 // collection-wide read free after the first run.
 func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	// Unreachable cache and no network; only the supplied id can satisfy this.

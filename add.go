@@ -52,7 +52,7 @@ func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty i
 	}
 	// One mapping from the flag to a finish, made here, so the stored row and
 	// the confirmation line cannot disagree.
-	finish, price := "normal", card.PriceUSD
+	finish, price := "nonfoil", card.PriceUSD
 	if foil {
 		finish, price = "foil", card.PriceUSDFoil
 	}

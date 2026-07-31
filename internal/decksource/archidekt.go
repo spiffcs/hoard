@@ -142,7 +142,7 @@ func normalizeFinish(modifier string) string {
 	case "etched":
 		return "etched"
 	default:
-		return "normal"
+		return "nonfoil"
 	}
 }
 

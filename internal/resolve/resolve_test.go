@@ -48,11 +48,11 @@ func TestResolveRetriesByNameAndCorrectsFinishes(t *testing.T) {
 	res, err := r.Resolve(context.Background(), []Request{
 		// A set+number the fixture does not know, but a name it does: only
 		// the retry pass can answer this one.
-		{Ident: scryfall.Identifier{Set: "zzz", CollectorNumber: "999"}, Name: "Sol Ring", Finish: "normal"},
+		{Ident: scryfall.Identifier{Set: "zzz", CollectorNumber: "999"}, Name: "Sol Ring", Finish: "nonfoil"},
 		// A foil-only printing claimed as normal: must come back corrected.
-		{Ident: scryfall.Identifier{ID: "precon-id"}, Name: "Obuun", Finish: "normal"},
+		{Ident: scryfall.Identifier{ID: "precon-id"}, Name: "Obuun", Finish: "nonfoil"},
 		// Nothing anywhere answers this one.
-		{Ident: scryfall.Identifier{Name: "No Such Card"}, Name: "No Such Card", Finish: "normal"},
+		{Ident: scryfall.Identifier{Name: "No Such Card"}, Name: "No Such Card", Finish: "nonfoil"},
 	})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)

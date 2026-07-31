@@ -188,7 +188,7 @@ CREATE TABLE card_prices (
   as_of       TEXT NOT NULL,                  -- 'YYYY-MM-DD'
   source      TEXT NOT NULL,                  -- 'scryfall' | 'tcgplayer' | 'cardkingdom' | ...
   kind        TEXT NOT NULL DEFAULT 'retail', -- 'retail' | 'buylist'
-  finish      TEXT NOT NULL,                  -- 'normal' | 'foil' | 'etched'
+  finish      TEXT NOT NULL,                  -- 'nonfoil' | 'foil' | 'etched' (v8 renamed 'normal')
   currency    TEXT NOT NULL DEFAULT 'USD',
   price       REAL NOT NULL,
   PRIMARY KEY (scryfall_id, as_of, source, kind, finish, currency)

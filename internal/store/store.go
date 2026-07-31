@@ -78,7 +78,7 @@ type Card struct {
 // Entry is a quantity of a card (finish + board) to place in a container.
 type Entry struct {
 	ScryfallID string
-	Finish     string // normal|foil|etched
+	Finish     string // nonfoil|foil|etched
 	Board      string // main|commander|side|maybe
 	Quantity   int
 }
@@ -180,7 +180,7 @@ const (
 	// run chasing numbers that would never be used.
 	unpricedPredicate = `(e.finish IN ('foil','etched')
          AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
-   OR (e.finish = 'normal'
+   OR (e.finish = 'nonfoil'
          AND c.price_usd IS NULL AND a.price_usd IS NULL)`
 )
 

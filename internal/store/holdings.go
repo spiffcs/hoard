@@ -9,19 +9,19 @@ import (
 // What is held and what it is worth, across the binder and every deck.
 
 // validFinish rejects a finish card_entries cannot hold. One definition, so a
-// writer added later cannot admit a value the rest of the schema disagrees with
-// — "nonfoil" being the obvious one, since that is Scryfall's spelling of the
-// finish this package calls "normal".
+// writer added later cannot admit a value the rest of the schema disagrees
+// with. The vocabulary is Scryfall's own (nonfoil|foil|etched) as of schema
+// v8 — hoard used to say "normal" and translated at every boundary.
 func validFinish(finish string) error {
 	switch finish {
-	case "normal", "foil", "etched":
+	case "nonfoil", "foil", "etched":
 		return nil
 	}
 	return fmt.Errorf("invalid finish %q", finish)
 }
 
 // AddCardFinish ensures the card is in the catalog and adds qty copies of the
-// given finish ("normal", "foil", or "etched") to the default binder.
+// given finish ("nonfoil", "foil", or "etched") to the default binder.
 func (s *Store) AddCardFinish(c scryfall.Card, finish string, qty int) error {
 	cid, err := s.collectionID()
 	if err != nil {

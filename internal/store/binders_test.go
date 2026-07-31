@@ -27,7 +27,7 @@ func TestCreateBinderAndAddTo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := s.AddCardFinishTo(id, ulamog(), "normal", 3); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 	// The default binder is untouched; the new one holds the cards.
@@ -132,7 +132,7 @@ func TestDeleteBinderRefusesDefaultAndNonEmpty(t *testing.T) {
 	}
 
 	id, _ := s.CreateBinder("Trade")
-	if err := s.AddCardFinishTo(id, ulamog(), "normal", 2); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 2); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 	err := s.DeleteBinder(id)
@@ -154,20 +154,20 @@ func TestDeleteBinderRefusesDefaultAndNonEmpty(t *testing.T) {
 func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 	s := newTestStore(t)
 	id, _ := s.CreateBinder("Trade")
-	if err := s.AddCardFinish(ulamog(), "normal", 4); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 4); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddCardFinishTo(id, ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", "normal", 5)
+	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", "nonfoil", 5)
 	if err != nil {
 		t.Fatalf("SetHoldingQuantityIn: %v", err)
 	}
 	if prev != 1 {
 		t.Errorf("previous = %d, want 1", prev)
 	}
-	if got := heldByFinish(t, s, "ulamog-id"); got["normal"] != 4 {
+	if got := heldByFinish(t, s, "ulamog-id"); got["nonfoil"] != 4 {
 		t.Errorf("default binder = %+v, want its 4 copies untouched", got)
 	}
 	rows, _ := s.BinderByFinish(id)

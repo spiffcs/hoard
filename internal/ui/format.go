@@ -71,10 +71,10 @@ func group(s string) string {
 
 // Finish labels a card's finish for a column.
 //
-// "normal" renders as a dash: a column reading "normal" down every row is noise,
+// "nonfoil" renders as a dash: a column reading "nonfoil" down every row is noise,
 // and the foils are what want pointing out.
 func Finish(finish string) string {
-	if finish == "normal" {
+	if finish == "nonfoil" {
 		return "-"
 	}
 	return finish

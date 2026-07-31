@@ -887,7 +887,7 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 		if len(finishes) == 1 {
 			m.finish = finishes[0]
 		} else {
-			m.finish = "normal"
+			m.finish = "nonfoil"
 		}
 		return m.toDest()
 	}

@@ -35,6 +35,7 @@ var migrations = []migration{
 	{5, richCardData},
 	{6, rememberPriceGaps},
 	{7, rememberImports},
+	{8, renameNonfoil},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -260,6 +261,16 @@ CREATE TABLE IF NOT EXISTS import_ledger (
     cards       INTEGER NOT NULL,
     imported_at TEXT NOT NULL
 );`
+
+// v8: hoard's finish vocabulary said 'normal' where Scryfall and MTGJSON both
+// say 'nonfoil'. With the JSON surface adopting ecosystem vocabulary, the
+// discrepancy was renamed away at the source rather than translated at every
+// boundary. Earlier frozen migrations (the v1 bootstrap default, the v4
+// history seed, the legacy transform) still write 'normal' — they run before
+// this one, which is the point.
+const renameNonfoil = `
+UPDATE card_entries SET finish = 'nonfoil' WHERE finish = 'normal';
+UPDATE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';`
 
 // migrate brings the database up to schemaVersion, backing it up first.
 //

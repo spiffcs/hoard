@@ -165,7 +165,7 @@ func TestUnpricedListing(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	// A fully priced card must not appear.
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -214,16 +214,16 @@ func TestCorrectFinish(t *testing.T) {
 	}{
 		// The bug this exists for: a decklist with no *F* marker parses as
 		// normal, but the printing has no non-foil.
-		{"foil-only printing listed as normal", "normal", []string{"foil"}, "foil", true},
-		{"nonfoil-only listed as foil", "foil", []string{"nonfoil"}, "normal", true},
-		// Scryfall says "nonfoil" where entries say "normal".
-		{"already valid", "normal", []string{"nonfoil", "foil"}, "normal", false},
+		{"foil-only printing listed as normal", "nonfoil", []string{"foil"}, "foil", true},
+		{"nonfoil-only listed as foil", "foil", []string{"nonfoil"}, "nonfoil", true},
+		// Scryfall says "nonfoil" where entries say "nonfoil".
+		{"already valid", "nonfoil", []string{"nonfoil", "foil"}, "nonfoil", false},
 		{"foil is valid", "foil", []string{"nonfoil", "foil"}, "foil", false},
 		{"etched is valid", "etched", []string{"nonfoil", "etched"}, "etched", false},
 		// Several finishes and none matches: no single right answer, so leave it.
 		{"ambiguous", "etched", []string{"nonfoil", "foil"}, "etched", false},
 		// Nothing to check against.
-		{"unknown printing", "normal", nil, "normal", false},
+		{"unknown printing", "nonfoil", nil, "nonfoil", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -238,13 +238,13 @@ func TestCorrectFinish(t *testing.T) {
 
 func TestRepairFinishes(t *testing.T) {
 	s := newTestStore(t)
-	// A foil-only printing imported as "normal", which is the bug: a decklist
+	// A foil-only printing imported as "nonfoil", which is the bug: a decklist
 	// with no *F* marker defaults to normal even when no such card exists.
-	if err := s.AddCardFinish(unpricedFoil(), "normal", 3); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	// A correctly recorded card, to confirm it is left alone.
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -262,13 +262,13 @@ func TestRepairFinishes(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("fixed = %+v, want just the foil-only card", fixed)
 	}
-	if fixed[0].From != "normal" || fixed[0].To != "foil" || fixed[0].Quantity != 3 {
+	if fixed[0].From != "nonfoil" || fixed[0].To != "foil" || fixed[0].Quantity != 3 {
 		t.Errorf("fix = %+v, want normal->foil x3", fixed[0])
 	}
 
 	held := heldByFinish(t, s, "ripple-id")
-	if held["normal"] != 0 || held["foil"] != 3 {
-		t.Errorf("after repair: %d normal / %d foil, want 0/3", held["normal"], held["foil"])
+	if held["nonfoil"] != 0 || held["foil"] != 3 {
+		t.Errorf("after repair: %d normal / %d foil, want 0/3", held["nonfoil"], held["foil"])
 	}
 	// Idempotent: a second pass has nothing left to do.
 	fixed, _, err = s.RepairFinishes(available)
@@ -282,7 +282,7 @@ func TestRepairFinishes(t *testing.T) {
 // row overwriting or rejecting the other.
 func TestRepairFinishesMergesWithExistingEntry(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "normal", 2); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 2); err != nil {
 		t.Fatalf("AddCardFinish normal: %v", err)
 	}
 	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
@@ -298,8 +298,8 @@ func TestRepairFinishesMergesWithExistingEntry(t *testing.T) {
 	}
 	// 2 mistakenly-normal plus the 1 already foil, merged into one holding.
 	held := heldByFinish(t, s, "ripple-id")
-	if held["normal"] != 0 || held["foil"] != 3 {
-		t.Errorf("merged to %d normal / %d foil, want 0/3", held["normal"], held["foil"])
+	if held["nonfoil"] != 0 || held["foil"] != 3 {
+		t.Errorf("merged to %d normal / %d foil, want 0/3", held["nonfoil"], held["foil"])
 	}
 }
 
@@ -327,7 +327,7 @@ func TestRepairFinishesLeavesAmbiguousAlone(t *testing.T) {
 // A card owned only in non-foil must not be reported as needing a foil price.
 func TestUnpricedIgnoresUnownedFinish(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	gaps, err := s.UnpricedByOwnedFinish()
@@ -342,19 +342,19 @@ func TestUnpricedIgnoresUnownedFinish(t *testing.T) {
 func TestCollectionAddAndIncrement(t *testing.T) {
 	s := newTestStore(t)
 
-	if err := s.AddCardFinish(ulamog(), "normal", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
 		t.Fatalf("AddCard normal: %v", err)
 	}
 	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
 		t.Fatalf("AddCard foil: %v", err)
 	}
-	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCard normal again: %v", err)
 	}
 
 	held := heldByFinish(t, s, "ulamog-id")
-	if held["normal"] != 5 || held["foil"] != 1 {
-		t.Errorf("quantities = %d/%d, want 5/1", held["normal"], held["foil"])
+	if held["nonfoil"] != 5 || held["foil"] != 1 {
+		t.Errorf("quantities = %d/%d, want 5/1", held["nonfoil"], held["foil"])
 	}
 
 	totals, err := s.CollectionTotals()
@@ -389,7 +389,7 @@ func TestAddCardFinishEtched(t *testing.T) {
 	// etched and foil stay distinct holdings rather than being folded together,
 	// which is the whole reason the per-finish view exists.
 	held := heldByFinish(t, s, "ulamog-id")
-	if held["etched"] != 2 || held["foil"] != 1 || held["normal"] != 0 {
+	if held["etched"] != 2 || held["foil"] != 1 || held["nonfoil"] != 0 {
 		t.Fatalf("holdings = %v, want 2 etched / 1 foil / 0 normal", held)
 	}
 	if err := s.AddCardFinish(ulamog(), "bogus", 1); err == nil {
@@ -402,7 +402,7 @@ func TestDeckByRef(t *testing.T) {
 	if err := s.UpsertPrintings([]scryfall.Card{solRing()}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
-	entries := []Entry{{ScryfallID: "sol-id", Finish: "normal", Board: "main", Quantity: 1}}
+	entries := []Entry{{ScryfallID: "sol-id", Finish: "nonfoil", Board: "main", Quantity: 1}}
 	var ids []int64
 	for _, name := range []string{
 		"Vampiric Bloodlust (Commander 2017)",
@@ -480,8 +480,8 @@ func TestDeckUpsertReplaceAndCascade(t *testing.T) {
 
 	meta := DeckMeta{Name: "My EDH", Source: "archidekt", SourceID: "999", SourceURL: "http://x", Format: "Commander"}
 	entries := []Entry{
-		{ScryfallID: "ulamog-id", Finish: "normal", Board: "commander", Quantity: 1},
-		{ScryfallID: "sol-id", Finish: "normal", Board: "main", Quantity: 1},
+		{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "commander", Quantity: 1},
+		{ScryfallID: "sol-id", Finish: "nonfoil", Board: "main", Quantity: 1},
 	}
 	id, err := s.UpsertDeck(meta, entries)
 	if err != nil {
@@ -531,12 +531,12 @@ func TestTotalsAcrossContainers(t *testing.T) {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	// 1 Ulamog loose + 1 Ulamog in a deck = 2 owned.
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.UpsertDeck(
 		DeckMeta{Name: "D", Source: "text", SourceID: "d1"},
-		[]Entry{{ScryfallID: "ulamog-id", Finish: "normal", Board: "main", Quantity: 1}},
+		[]Entry{{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 1}},
 	); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -605,10 +605,10 @@ func TestLegacyMigration(t *testing.T) {
 	defer s.Close()
 
 	held := heldByFinish(t, s, "ulamog-id")
-	if held["normal"] != 3 || held["foil"] != 1 {
-		t.Errorf("migrated quantities = %d/%d, want 3/1", held["normal"], held["foil"])
+	if held["nonfoil"] != 3 || held["foil"] != 1 {
+		t.Errorf("migrated quantities = %d/%d, want 3/1", held["nonfoil"], held["foil"])
 	}
-	if row := collectionRow(t, s, "ulamog-id", "normal"); row.Name != "Ulamog, the Infinite Gyre" {
+	if row := collectionRow(t, s, "ulamog-id", "nonfoil"); row.Name != "Ulamog, the Infinite Gyre" {
 		t.Errorf("migrated name = %q", row.Name)
 	}
 }

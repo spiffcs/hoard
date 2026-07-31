@@ -138,9 +138,9 @@ func TestFilterMatches(t *testing.T) {
 	}
 	normal := card{
 		ScryfallID: "b", Name: "Sol Ring", SetCode: "c21",
-		Finish: "normal", Board: "side", Quantity: 40, Price: price(1.10), Value: 44,
+		Finish: "nonfoil", Board: "side", Quantity: 40, Price: price(1.10), Value: 44,
 	}
-	unpriced := card{ScryfallID: "c", Name: "Mystery", SetCode: "xyz", Finish: "normal"}
+	unpriced := card{ScryfallID: "c", Name: "Mystery", SetCode: "xyz", Finish: "nonfoil"}
 
 	tests := []struct {
 		query string
@@ -160,8 +160,8 @@ func TestFilterMatches(t *testing.T) {
 		{"price<1", nil},
 		{"price>0", []string{"a", "b"}},
 		// Terms are ANDed.
-		{"finish:normal qty>10", []string{"b"}},
-		{"finish:normal qty>100", nil},
+		{"finish:nonfoil qty>10", []string{"b"}},
+		{"finish:nonfoil qty>100", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {

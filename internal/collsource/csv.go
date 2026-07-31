@@ -210,9 +210,11 @@ func parseQty(s string) (int, error) {
 	return n, nil
 }
 
-// normFinish maps each app's foil column to hoard's finish vocabulary.
-// Anything unrecognized reads as normal — the finish repair command exists,
-// while an invented foil would claim a price that may not exist.
+// normFinish maps each app's foil column to the finish vocabulary
+// (nonfoil|foil|etched — Scryfall's spelling, hoard's too). Anything
+// unrecognized reads as nonfoil — ManaBox's "normal" among it — because the
+// finish repair command exists, while an invented foil would claim a price
+// that may not exist.
 func normFinish(s string) string {
 	switch strings.ToLower(s) {
 	case "foil", "true", "yes", "1":
@@ -220,7 +222,7 @@ func normFinish(s string) string {
 	case "etched", "foil-etched", "etched foil":
 		return "etched"
 	default:
-		return "normal"
+		return "nonfoil"
 	}
 }
 

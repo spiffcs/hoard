@@ -225,7 +225,7 @@ func row(name, set, num, finish string, qty int, value float64) store.Collection
 	r.Name = name
 	r.SetCode = set
 	r.CollectorNumber = num
-	if finish == "normal" {
+	if finish == "nonfoil" {
 		r.PriceUSD = price(value / float64(max(qty, 1)))
 	} else {
 		r.PriceUSDFoil = price(value / float64(max(qty, 1)))
@@ -242,7 +242,7 @@ func entry(name, board, finish string, qty int, usd float64) store.EntryView {
 	e.Card.Name = name
 	e.Card.SetCode = "mh3"
 	e.Card.CollectorNumber = "1"
-	if finish == "normal" {
+	if finish == "nonfoil" {
 		e.Card.PriceUSD = price(usd)
 	} else {
 		e.Card.PriceUSDFoil = price(usd)
@@ -258,9 +258,9 @@ func testStore() *fakeStore {
 			deck(2, "Rich Deck", 100, 500),
 		},
 		collection: []store.CollectionRow{
-			row("Bitterblossom", "uma", "85", "normal", 4, 136),
+			row("Bitterblossom", "uma", "85", "nonfoil", 4, 136),
 			row("Ancient Tomb", "uma", "236", "foil", 1, 134),
-			row("Sol Ring", "c21", "1", "normal", 3, 30),
+			row("Sol Ring", "c21", "1", "nonfoil", 3, 30),
 		},
 		traits: map[string][]string{
 			"Bitterblossom-id": {"mythic", "enchantment", "B"},
@@ -269,8 +269,8 @@ func testStore() *fakeStore {
 		},
 		enriched: 3,
 		deckCards: map[int64][]store.EntryView{
-			2: {entry("Solitude", "main", "normal", 1, 34), entry("Force of Will", "side", "foil", 2, 90)},
-			1: {entry("Llanowar Elves", "main", "normal", 1, 1)},
+			2: {entry("Solitude", "main", "nonfoil", 1, 34), entry("Force of Will", "side", "foil", 2, 90)},
+			1: {entry("Llanowar Elves", "main", "nonfoil", 1, 1)},
 		},
 	}
 }
@@ -547,7 +547,7 @@ func TestScrollingKeepsTheCursorVisible(t *testing.T) {
 	// More rows than a short terminal can show.
 	for i := range 40 {
 		st.collection = append(st.collection,
-			row("Filler "+strconv.Itoa(i), "set", strconv.Itoa(i), "normal", 1, float64(i)))
+			row("Filler "+strconv.Itoa(i), "set", strconv.Itoa(i), "nonfoil", 1, float64(i)))
 	}
 	m, err := New(st)
 	if err != nil {
@@ -804,7 +804,7 @@ func TestEmptyTraitResultExplainsAnUnrefreshedCatalog(t *testing.T) {
 // one deck, and re-typing it for every container would make it useless.
 func TestFilterPersistsAcrossContainers(t *testing.T) {
 	st := testStore()
-	st.deckCards[2] = append(st.deckCards[2], entry("Sol Ring", "main", "normal", 1, 2))
+	st.deckCards[2] = append(st.deckCards[2], entry("Sol Ring", "main", "nonfoil", 1, 2))
 	m := newTestModel(t, st)
 	m = typeFilter(m, "ring")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1109,7 +1109,7 @@ func TestDetailSwallowsNavigationKeys(t *testing.T) {
 func TestViewCyclesAndLoads(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "normal", Copies: 2, Old: 1, New: 5},
+		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
 		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "foil", Copies: 1, Old: 50, New: 10},
 	}
 	st.unpriced = []store.UnpricedRow{
@@ -1153,12 +1153,12 @@ func TestViewCyclesAndLoads(t *testing.T) {
 func TestSortWorksInEveryView(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "normal", Copies: 2, Old: 1, New: 5},
+		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
 		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "foil", Copies: 1, Old: 50, New: 10},
 	}
 	st.unpriced = []store.UnpricedRow{
 		{Name: "Zebra", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
-		{Name: "Aardvark", SetCode: "d", CollectorNumber: "4", Finish: "normal", Copies: 5, HeldIn: "Deck"},
+		{Name: "Aardvark", SetCode: "d", CollectorNumber: "4", Finish: "nonfoil", Copies: 5, HeldIn: "Deck"},
 	}
 	m := newTestModel(t, st)
 
@@ -1247,7 +1247,7 @@ func TestViewRowCountFollowsTheMode(t *testing.T) {
 func TestAnalyticalViewsRefuseHoldingActions(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		{Name: "Riser", Finish: "normal", Copies: 2, Old: 1, New: 5},
+		{Name: "Riser", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
 	}
 	m := newTestModel(t, st)
 	before := len(st.collection)
@@ -1291,7 +1291,7 @@ func arbModel(t *testing.T, fn ArbitrageFunc) Model {
 
 func opp(name string, buy, sell float64) arbitrage.Opportunity {
 	return arbitrage.Opportunity{
-		Card:      store.OwnedFinish{Name: name, SetCode: "mh3", CollectorNumber: "1", Finish: "normal"},
+		Card:      store.OwnedFinish{Name: name, SetCode: "mh3", CollectorNumber: "1", Finish: "nonfoil"},
 		BuyAt:     buy,
 		DearAt:    buy * 2,
 		SellAt:    sell,

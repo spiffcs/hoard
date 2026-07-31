@@ -273,7 +273,7 @@ INSERT INTO card_entries VALUES (1,'ulamog-id','normal','main',2);`)
 		t.Fatalf("backups = %v, want exactly one", backups)
 	}
 	// The data must have survived the migration.
-	if held := heldByFinish(t, s, "ulamog-id"); held["normal"] != 2 {
+	if held := heldByFinish(t, s, "ulamog-id"); held["nonfoil"] != 2 {
 		t.Errorf("after migrating: %v; want the 2 copies intact", held)
 	}
 }
@@ -330,7 +330,7 @@ func TestRichCardDataGeneratedColumns(t *testing.T) {
 	  "set_name":"Ultimate Masters","collector_number":"85","rarity":"mythic",
 	  "type_line":"Tribal Enchantment — Faerie","mana_cost":"{1}{B}","cmc":2.0,
 	  "oracle_text":"At the beginning of your upkeep...","artist":"Jesper Ejsing",
-	  "released_at":"2018-12-07","layout":"normal","color_identity":["B"]}`
+	  "released_at":"2018-12-07","layout":"nonfoil","color_identity":["B"]}`
 
 	if _, err := s.db.Exec(`
 INSERT INTO cards (scryfall_id, set_code, collector_number, name, scryfall_url, updated_at, raw_json)
@@ -353,7 +353,7 @@ FROM cards WHERE scryfall_id = 'bb'`).
 		{"mana_cost", mana, "{1}{B}"},
 		{"artist", artist, "Jesper Ejsing"},
 		{"set_name", setName, "Ultimate Masters"},
-		{"layout", layout, "normal"},
+		{"layout", layout, "nonfoil"},
 		{"color_identity", colors, `["B"]`},
 	} {
 		if tc.got != tc.want {

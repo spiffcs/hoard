@@ -95,7 +95,7 @@ func TestBareHoardWritesTheSummaryWhenNotATTY(t *testing.T) {
 	if err := st.AddCardFinish(scryfall.Card{
 		ID: "x", Set: "uma", CollectorNumber: "7", Name: "Ulamog",
 		ScryfallURL: "http://x", PriceUSD: f(10),
-	}, "normal", 2); err != nil {
+	}, "nonfoil", 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 

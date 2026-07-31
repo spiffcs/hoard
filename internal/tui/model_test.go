@@ -224,7 +224,7 @@ func TestConfirmAddsAndLoopsBack(t *testing.T) {
 		t.Fatalf("adder called %d times, want 1", len(ra.got))
 	}
 	r := ra.got[0]
-	if r.Qty != 3 || r.Finish != "normal" || r.Card.ID != "u1" {
+	if r.Qty != 3 || r.Finish != "nonfoil" || r.Card.ID != "u1" {
 		t.Errorf("result wrong: %+v", r)
 	}
 	// Session loops back to the name prompt (not quit) with a success banner.
@@ -474,7 +474,7 @@ func TestScanHeaderClearedAfterAdd(t *testing.T) {
 		Finishes: []string{"nonfoil"}}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.scanned, m.scannedOCR = "Sol Ring", "Sol Rlng"
-	m.chosen, m.finish = &card, "normal"
+	m.chosen, m.finish = &card, "nonfoil"
 	m.qtyInput.SetValue("1")
 
 	mm, _ := m.confirmAdd()
@@ -738,7 +738,7 @@ func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, ra.add, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	got.chosen, got.finish = &card, "normal"
+	got.chosen, got.finish = &card, "nonfoil"
 	got.qtyInput.SetValue("1")
 	mm, _ := got.confirmAdd()
 	got = mm.(model)
@@ -851,7 +851,7 @@ func TestQtyValidation(t *testing.T) {
 func TestFinishOptions(t *testing.T) {
 	c := scryfall.Card{Finishes: []string{"foil", "nonfoil", "etched"}}
 	got := finishOptions(c)
-	want := []string{"normal", "foil", "etched"}
+	want := []string{"nonfoil", "foil", "etched"}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Errorf("finishOptions = %v, want %v (stable order)", got, want)
 	}

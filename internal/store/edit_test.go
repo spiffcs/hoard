@@ -4,19 +4,19 @@ import "testing"
 
 func TestSetHoldingQuantity(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
-	prev, err := s.SetHoldingQuantity("ulamog-id", "normal", 5)
+	prev, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", 5)
 	if err != nil {
 		t.Fatalf("SetHoldingQuantity: %v", err)
 	}
 	if prev != 2 {
 		t.Errorf("previous = %d, want 2", prev)
 	}
-	if held := heldByFinish(t, s, "ulamog-id"); held["normal"] != 5 {
-		t.Errorf("normal = %d, want 5", held["normal"])
+	if held := heldByFinish(t, s, "ulamog-id"); held["nonfoil"] != 5 {
+		t.Errorf("normal = %d, want 5", held["nonfoil"])
 	}
 }
 
@@ -25,10 +25,10 @@ func TestSetHoldingQuantity(t *testing.T) {
 // counts holdings.
 func TestSetHoldingQuantityZeroRemovesTheEntry(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	if _, err := s.SetHoldingQuantity("ulamog-id", "normal", 0); err != nil {
+	if _, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", 0); err != nil {
 		t.Fatalf("SetHoldingQuantity: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestSetHoldingQuantityRejectsUnknownFinish(t *testing.T) {
 // list, not a number — re-adding one copy of one finish would not restore it.
 func TestRemoveFromCollectionReturnsWhatItRemoved(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCard normal: %v", err)
 	}
 	if err := s.AddCardFinish(ulamog(), "foil", 2); err != nil {
@@ -103,7 +103,7 @@ func TestRemoveFromCollectionReturnsWhatItRemoved(t *testing.T) {
 		t.Fatalf("RestoreHoldings: %v", err)
 	}
 	held := heldByFinish(t, s, "ulamog-id")
-	if held["normal"] != 3 || held["foil"] != 2 {
+	if held["nonfoil"] != 3 || held["foil"] != 2 {
 		t.Errorf("after restore: %v, want 3 normal and 2 foil", held)
 	}
 }
@@ -112,12 +112,12 @@ func TestRemoveFromCollectionReturnsWhatItRemoved(t *testing.T) {
 // must not quietly empty a decklist imported from somewhere else.
 func TestRemoveFromCollectionLeavesDecksAlone(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.UpsertDeck(
 		DeckMeta{Name: "D", Source: "text", SourceID: "d1"},
-		[]Entry{{ScryfallID: "ulamog-id", Finish: "normal", Board: "main", Quantity: 2}},
+		[]Entry{{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 2}},
 	); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRemoveFromCollectionLeavesDecksAlone(t *testing.T) {
 // double a holding that was partly re-added between the removal and the undo.
 func TestRestoreHoldingsReplacesRatherThanAdds(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	removed, err := s.RemoveFromCollection("ulamog-id")
@@ -147,14 +147,14 @@ func TestRestoreHoldingsReplacesRatherThanAdds(t *testing.T) {
 		t.Fatalf("RemoveFromCollection: %v", err)
 	}
 	// Someone re-adds a copy by hand before hitting undo.
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard again: %v", err)
 	}
 	if err := s.RestoreHoldings("ulamog-id", removed); err != nil {
 		t.Fatalf("RestoreHoldings: %v", err)
 	}
-	if held := heldByFinish(t, s, "ulamog-id"); held["normal"] != 3 {
-		t.Errorf("normal = %d, want the 3 that were removed, not 4", held["normal"])
+	if held := heldByFinish(t, s, "ulamog-id"); held["nonfoil"] != 3 {
+		t.Errorf("normal = %d, want the 3 that were removed, not 4", held["nonfoil"])
 	}
 }
 

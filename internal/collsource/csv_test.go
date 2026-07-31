@@ -31,7 +31,7 @@ func TestManaBoxIsSniffedAndKeepsBinders(t *testing.T) {
 		t.Fatalf("got %d rows, want 3", len(c.Rows))
 	}
 	sol := c.Rows[0]
-	if sol.Quantity != 2 || sol.Binder != "Trade Binder" || sol.Finish != "normal" {
+	if sol.Quantity != 2 || sol.Binder != "Trade Binder" || sol.Finish != "nonfoil" {
 		t.Errorf("sol ring row = %+v", sol)
 	}
 	// ManaBox carries Scryfall IDs, so resolution must be exact.
@@ -114,7 +114,7 @@ func TestHoardCanonicalRoundTripsContainers(t *testing.T) {
 // rows all reading as binder rows — which is all such files ever held.
 func TestHoardCanonicalWithoutKindColumnStillParses(t *testing.T) {
 	in := "Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD\n" +
-		"2,Sol Ring,c21,125,normal,sol-id-1,Binder,main,2.00\n"
+		"2,Sol Ring,c21,125,nonfoil,sol-id-1,Binder,main,2.00\n"
 	c, err := Parse(strings.NewReader(in), "auto")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)

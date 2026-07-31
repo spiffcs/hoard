@@ -80,7 +80,7 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 		first = false
 		t.AddStyled(env.Bold(), ui.C(sec.Title))
 		for _, c := range sec.Rows {
-			// A finish column reading "normal" down every row is noise; the
+			// A finish column reading "nonfoil" down every row is noise; the
 			// foils are what want pointing out.
 			finish := ui.Finish(c.Finish)
 			// The indent lives in the name cell, so every column to its right

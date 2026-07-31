@@ -16,7 +16,7 @@ import (
 
 // cmdRepairFinishes corrects entries recorded in a finish that does not exist.
 //
-// A decklist with no foil marker imports as "normal", but plenty of printings
+// A decklist with no foil marker imports as "nonfoil", but plenty of printings
 // are foil-only: precon commanders and Duel Decks reprints among them. Such an
 // entry asks for a price that cannot exist, so the card sits at $0.00 forever
 // and no amount of price fetching will help. Scryfall knows which finishes a

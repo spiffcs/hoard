@@ -152,7 +152,7 @@ func TestCmdImportDryRunWritesNothing(t *testing.T) {
 func TestExportImportRoundTrip(t *testing.T) {
 	src := importStore(t)
 	cards := importFixtures()
-	if err := src.AddCardFinish(cards[0], "normal", 2); err != nil {
+	if err := src.AddCardFinish(cards[0], "nonfoil", 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	trade, err := src.CreateBinder("Trade")
@@ -162,7 +162,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if err := src.AddCardFinishTo(trade, cards[0], "foil", 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	if err := src.AddCardFinishTo(trade, cards[2], "normal", 3); err != nil {
+	if err := src.AddCardFinishTo(trade, cards[2], "nonfoil", 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 	// A deck too: before Container Kind existed, its cards came back as loose
@@ -171,7 +171,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := src.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]store.Entry{{ScryfallID: cards[1].ID, Finish: "normal", Board: "main", Quantity: 4}}); err != nil {
+		[]store.Entry{{ScryfallID: cards[1].ID, Finish: "nonfoil", Board: "main", Quantity: 4}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 

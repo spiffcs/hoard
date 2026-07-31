@@ -80,7 +80,7 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 		default:
 			ident = scryfall.Identifier{Name: name}
 		}
-		finish := "normal"
+		finish := "nonfoil"
 		switch strings.ToUpper(m[5]) {
 		case "*F*":
 			finish = "foil"

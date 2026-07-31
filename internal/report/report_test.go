@@ -217,7 +217,7 @@ func TestMoversTable(t *testing.T) {
 func TestMoversTableMarksOnlyInterestingFinishes(t *testing.T) {
 	got := moversTable(ui.Env{Width: 100, Clamp: true},
 		moverSections([]store.PriceChange{change("Sol Ring", 1, 2.00, 3.00)}, 10)).Render()
-	if strings.Contains(got, "normal") {
+	if strings.Contains(got, "nonfoil") {
 		t.Errorf("non-foil rows should not spell out the finish:\n%s", got)
 	}
 }
@@ -227,9 +227,9 @@ func TestMoversTableMarksOnlyInterestingFinishes(t *testing.T) {
 // printing two differently shaped tables for the same report.
 func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 	changes := []store.PriceChange{
-		{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "1", Finish: "normal",
+		{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "1", Finish: "nonfoil",
 			Copies: 40, Old: 1.00, New: 1.10},
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "normal",
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	out := moversTable(ui.Env{Width: 70, Clamp: true}, moverSections(changes, 10)).Render()
@@ -261,7 +261,7 @@ func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 	rows := []store.PriceChange{
 		{Name: "Ulamog, the Infinite Gyre", SetCode: "uma", CollectorNumber: "7",
 			Finish: "foil", Copies: 3, Old: 10.00, New: 12.50},
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "normal",
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for _, width := range []int{44, 60, 80, 120} {
@@ -284,7 +284,7 @@ func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 // given up before the arrow that points away from it.
 func TestMoversTableDropsTheArrowBeforeTheOldPrice(t *testing.T) {
 	rows := []store.PriceChange{
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "normal",
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for width := 40; width <= 120; width++ {
@@ -331,7 +331,7 @@ func TestSignedPercent(t *testing.T) {
 
 func change(name string, copies int, old, now float64) store.PriceChange {
 	return store.PriceChange{
-		Name: name, SetCode: "uma", CollectorNumber: "7", Finish: "normal",
+		Name: name, SetCode: "uma", CollectorNumber: "7", Finish: "nonfoil",
 		Copies: copies, Old: old, New: now,
 	}
 }

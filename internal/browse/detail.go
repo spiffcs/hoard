@@ -49,7 +49,7 @@ func (m *Model) openDetail() {
 	}
 	// Both finishes, not just the one held: a card owned in non-foil is often
 	// being looked at precisely because its foil is doing something.
-	for _, finish := range []string{"normal", "foil"} {
+	for _, finish := range []string{"nonfoil", "foil"} {
 		s, err := m.store.PriceSeries(c.ScryfallID, finish)
 		if err != nil {
 			m.setError(err)
@@ -114,7 +114,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		// The finish is named only when it isn't normal — the table columns'
 		// rule, minus the placeholder dash, which in a list reads as a stray mark.
 		parts := []string{ui.Qty(h.Quantity)}
-		if h.Finish != "normal" {
+		if h.Finish != "nonfoil" {
 			parts = append(parts, h.Finish)
 		}
 		add("  %s", strings.Join(append(parts, where), " · "))
@@ -124,13 +124,13 @@ func (m Model) detailLines(d detail, width int) []string {
 	if len(d.series) == 0 {
 		out = append(out, dim("  no history yet — run hoard backfill-prices for the last 90 days"))
 	}
-	for _, finish := range []string{"normal", "foil"} {
+	for _, finish := range []string{"nonfoil", "foil"} {
 		s := d.series[finish]
 		if len(s) == 0 {
 			continue
 		}
 		label := finish
-		if finish == "normal" {
+		if finish == "nonfoil" {
 			label = "non-foil"
 		}
 		spark := ui.Spark(resample(s, sparkCells), sparkCells)

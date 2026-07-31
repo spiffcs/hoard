@@ -50,8 +50,9 @@ identifiers**, not a parallel universe:
   source instead of translating at the wire). Migration **v8** rewrites
   `card_entries.finish` and `card_price_history.finish`; the whole codebase
   vocabulary follows (store validation and SQL fragments, decksource,
-  collsource — which keeps accepting legacy `normal` in old hoard CSVs —
-  export writers, tui, browse, ui display). The `internal/mtgjson` package
+  collsource, export writers, tui, browse, ui display) with no legacy
+  aliases — pre-rename vocabulary carried no users to break, only us
+  dogfooding. The `internal/mtgjson` package
   keeps `normal`: that is MTGJSON's own price-file vocabulary, and the
   package models their wire format. Snapshots and watches move to **v9**.
 - **Custom only where nothing standard exists**: containers, quantities,

@@ -13,11 +13,11 @@ func fixture() []Row {
 	return []Row{
 		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "foil",
 			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(12.5)},
-		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "normal",
+		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "nonfoil",
 			ScryfallID: "sol-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
-		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "normal",
+		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "nonfoil",
 			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(2)},
-		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78", Finish: "normal",
+		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78", Finish: "nonfoil",
 			ScryfallID: "remora-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: nil},
 		{Count: 1, Name: "Aether Vial", Set: "dst", CollectorNumber: "91", Finish: "etched",
 			ScryfallID: "vial-1", Container: "Vintage", Kind: "deck", Board: "main", PriceUSD: f(30)},
@@ -31,10 +31,10 @@ func TestWriteCanonicalIsSortedAndKeepsContainers(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
-		"1,Mystic Remora,ice,78,normal,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
-		"2,Sol Ring,c21,125,normal,sol-1,Binder,binder,main,2.00",
+		"1,Mystic Remora,ice,78,nonfoil,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
+		"2,Sol Ring,c21,125,nonfoil,sol-1,Binder,binder,main,2.00",
 		"1,Sol Ring,c21,125,foil,sol-1,Trade,binder,main,12.50",
-		"1,Sol Ring,c21,125,normal,sol-1,Trade,binder,main,2.00",
+		"1,Sol Ring,c21,125,nonfoil,sol-1,Trade,binder,main,2.00",
 		"1,Aether Vial,dst,91,etched,vial-1,Vintage,deck,main,30.00",
 		"",
 	}, "\n")
@@ -84,7 +84,7 @@ func TestWriteArchidektAggregatesAndCapitalizesFinish(t *testing.T) {
 // A name containing a comma must survive the trip: encoding/csv quotes it.
 func TestFieldsWithCommasAreQuoted(t *testing.T) {
 	rows := []Row{{Count: 1, Name: "Borrowing 100,000 Arrows", Set: "ptk",
-		CollectorNumber: "31", Finish: "normal", ScryfallID: "arrows-1",
+		CollectorNumber: "31", Finish: "nonfoil", ScryfallID: "arrows-1",
 		Container: "Binder", Board: "main"}}
 	var b strings.Builder
 	if err := WriteCanonical(&b, rows); err != nil {

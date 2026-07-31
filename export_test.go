@@ -23,7 +23,7 @@ func exportStore(t *testing.T) *store.Store {
 
 	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125", Name: "Sol Ring",
 		ScryfallURL: "http://x", PriceUSD: f(2), PriceUSDFoil: f(12.5)}
-	if err := st.AddCardFinish(sol, "normal", 2); err != nil {
+	if err := st.AddCardFinish(sol, "nonfoil", 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	trade, err := st.CreateBinder("Trade")
@@ -40,7 +40,7 @@ func exportStore(t *testing.T) *store.Store {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := st.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]store.Entry{{ScryfallID: "rem", Finish: "normal", Board: "main", Quantity: 1}}); err != nil {
+		[]store.Entry{{ScryfallID: "rem", Finish: "nonfoil", Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 	return st
@@ -58,8 +58,8 @@ func TestCmdExportWritesEverythingByDefault(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
-		"2,Sol Ring,c21,125,normal,sol,Binder,binder,main,2.00",
-		"1,Mystic Remora,ice,78,normal,rem,Fish,deck,main,",
+		"2,Sol Ring,c21,125,nonfoil,sol,Binder,binder,main,2.00",
+		"1,Mystic Remora,ice,78,nonfoil,rem,Fish,deck,main,",
 		"1,Sol Ring,c21,125,foil,sol,Trade,binder,main,12.50",
 		"",
 	}, "\n")

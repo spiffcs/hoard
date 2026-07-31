@@ -34,12 +34,12 @@ func TestCollectionByValue(t *testing.T) {
 		return r
 	}
 	in := []CollectionRow{
-		mk("cheap", "normal", 1, 1),
+		mk("cheap", "nonfoil", 1, 1),
 		// Quantity is already folded into Value by the
-		mk("bulk-but-many", "normal", 10, 50),
-		mk("unpriced-b", "normal", 3, 0),
-		mk("one-expensive", "normal", 1, 30),
-		mk("unpriced-a", "normal", 1, 0),
+		mk("bulk-but-many", "nonfoil", 10, 50),
+		mk("unpriced-b", "nonfoil", 3, 0),
+		mk("one-expensive", "nonfoil", 1, 30),
+		mk("unpriced-a", "nonfoil", 1, 0),
 		// A foil holding is its own row now, not a second column.
 		mk("foil-heavy", "foil", 2, 120),
 	}
@@ -67,13 +67,13 @@ func TestEntriesByValue(t *testing.T) {
 	}
 	in := []EntryView{
 		// Grouped by board as the store returns them, cheapest first.
-		mk("commander-cheap", "commander", "normal", 1, price(2), nil),
-		mk("main-mid", "main", "normal", 1, price(40), nil),
+		mk("commander-cheap", "commander", "nonfoil", 1, price(2), nil),
+		mk("main-mid", "main", "nonfoil", 1, price(40), nil),
 		// Quantity counts: 10 x $9 beats one $40 card.
-		mk("main-many", "main", "normal", 10, price(9), nil),
+		mk("main-many", "main", "nonfoil", 10, price(9), nil),
 		// Foil entries take the foil price.
 		mk("side-foil", "side", "foil", 1, price(1), price(75)),
-		mk("side-unpriced", "side", "normal", 1, nil, nil),
+		mk("side-unpriced", "side", "nonfoil", 1, nil, nil),
 	}
 	got := EntriesByValue(in)
 

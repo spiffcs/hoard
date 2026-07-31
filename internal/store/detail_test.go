@@ -15,14 +15,14 @@ func enriched() scryfall.Card {
 	  "set":"uma","set_name":"Ultimate Masters","collector_number":"7",
 	  "rarity":"mythic","type_line":"Legendary Creature — Eldrazi",
 	  "mana_cost":"{11}","cmc":11.0,"oracle_text":"Annihilator 4",
-	  "artist":"Mark Tedin","released_at":"2018-12-07","layout":"normal",
+	  "artist":"Mark Tedin","released_at":"2018-12-07","layout":"nonfoil",
 	  "color_identity":[]}`)
 	return c
 }
 
 func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(enriched(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(enriched(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 // that happens to be blank, and hides the fact that a refresh would fix it.
 func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil { // no Raw
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil { // no Raw
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -109,13 +109,13 @@ func TestParseColorIdentity(t *testing.T) {
 // card spread across the collection and two decks.
 func TestHoldingsOfSpansContainers(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	for _, name := range []string{"Deck A", "Deck B"} {
 		if _, err := s.UpsertDeck(
 			DeckMeta{Name: name, Source: "text", SourceID: name},
-			[]Entry{{ScryfallID: "ulamog-id", Finish: "normal", Board: "main", Quantity: 2}},
+			[]Entry{{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 2}},
 		); err != nil {
 			t.Fatalf("UpsertDeck %s: %v", name, err)
 		}
@@ -160,7 +160,7 @@ func TestHoldingsOfUnheldCard(t *testing.T) {
 
 func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "normal", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -177,7 +177,7 @@ func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 		t.Fatalf("RecordPrices: %v", err)
 	}
 
-	series, err := s.PriceSeries("ulamog-id", "normal")
+	series, err := s.PriceSeries("ulamog-id", "nonfoil")
 	if err != nil {
 		t.Fatalf("PriceSeries: %v", err)
 	}

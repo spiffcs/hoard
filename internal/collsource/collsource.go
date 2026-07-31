@@ -21,7 +21,7 @@ type Row struct {
 	Quantity int
 	Ident    scryfall.Identifier
 	Name     string
-	Finish   string // normal|foil|etched — hoard's spelling
+	Finish   string // nonfoil|foil|etched — Scryfall's spelling, hoard's too
 	// Binder is the source's own container label (ManaBox's "Binder Name",
 	// hoard's Container), empty for formats that have none. Only honored when
 	// the import asks to preserve binders.

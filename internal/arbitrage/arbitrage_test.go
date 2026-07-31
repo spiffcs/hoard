@@ -86,7 +86,7 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 
 	// The same card owned in non-foil reads the other quotes instead.
 	normal := ownedFoil("Legion Loyalty")
-	normal.Finish = "normal"
+	normal.Finish = "nonfoil"
 	op, usable, _ = Assess(normal, qs)
 	if usable != 2 || op.BuyAt != 0.42 || op.SellAt != 0.10 {
 		t.Errorf("non-foil: buy %v sell %v (%d usable), want 0.42 / 0.10",
@@ -97,7 +97,7 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 // Buylist above the cheapest retail is the only unambiguous signal here.
 func TestAssessIdentifiesRealArbitrage(t *testing.T) {
 	o := ownedFoil("Ugin's Labyrinth")
-	o.Finish = "normal"
+	o.Finish = "nonfoil"
 	qs := []mtgjson.Quote{
 		q("tcgplayer", mtgjson.Retail, "normal", 14.43),
 		q("cardkingdom", mtgjson.Buylist, "normal", 16.50),

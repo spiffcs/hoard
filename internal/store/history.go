@@ -12,7 +12,7 @@ import (
 // PriceChange is one printing-and-finish whose price moved between two
 // observations, alongside how much of it is held.
 //
-// Finish is the price's finish, 'normal' or 'foil'; etched copies are counted
+// Finish is the price's finish, 'nonfoil' or 'foil'; etched copies are counted
 // against the foil price, matching how entryValue values them.
 type PriceChange struct {
 	ScryfallID      string
@@ -54,7 +54,7 @@ func (p PriceChange) Pct() float64 {
 // instead would report a huge fake swing every time a card moved between a
 // vendor fallback and a real Scryfall price.
 const effectivePrices = `
-    SELECT c.scryfall_id AS sid, 'normal' AS pfinish, ` + effPriceUSD + ` AS price,
+    SELECT c.scryfall_id AS sid, 'nonfoil' AS pfinish, ` + effPriceUSD + ` AS price,
            CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
                 ELSE COALESCE(a.source_usd, 'fallback') END AS source
     FROM cards c ` + altJoinCards + `
@@ -69,7 +69,7 @@ const effectivePrices = `
 // a card's worth does not depend on which box it sits in.
 const ownedByPriceFinish = `
     SELECT scryfall_id AS sid,
-           CASE WHEN finish IN ('foil','etched') THEN 'foil' ELSE 'normal' END AS pfinish,
+           CASE WHEN finish IN ('foil','etched') THEN 'foil' ELSE 'nonfoil' END AS pfinish,
            SUM(quantity) AS copies
     FROM card_entries
     GROUP BY sid, pfinish`

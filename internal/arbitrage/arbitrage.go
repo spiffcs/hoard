@@ -101,6 +101,9 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 // unsupported, so the caller can say so rather than silently hiding them.
 func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCount, dropped int) {
 	op.Card = o
+	// The store speaks Scryfall's finish vocabulary (nonfoil|foil|etched);
+	// MTGJSON's price files speak their own ("normal"/"foil"). This is the
+	// one translation point between them.
 	finish := "normal"
 	if scryfall.PricedAsFoil(o.Finish) {
 		finish = "foil"

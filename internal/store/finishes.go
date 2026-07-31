@@ -24,26 +24,16 @@ type FinishFix struct {
 	Quantity  int
 }
 
-// hoardFinish translates Scryfall's finish names to the ones stored here.
-// Scryfall says "nonfoil" where card_entries says "normal"; "foil" and "etched"
-// agree.
-func hoardFinish(scryfallFinish string) string {
-	if scryfallFinish == "nonfoil" {
-		return "normal"
-	}
-	return scryfallFinish
-}
-
 // FinishIsAvailable reports whether a printing comes in the given finish.
 // available is Scryfall's finishes list for that printing; an empty list means
 // unknown, which counts as available since there is nothing to contradict it.
+// Since schema v8 the store speaks Scryfall's own finish vocabulary
+// (nonfoil|foil|etched), so this is a plain membership test.
 func FinishIsAvailable(finish string, available []string) bool {
 	if len(available) == 0 {
 		return true
 	}
-	return slices.ContainsFunc(available, func(sf string) bool {
-		return hoardFinish(sf) == finish
-	})
+	return slices.Contains(available, finish)
 }
 
 // CorrectFinish returns the finish an entry should use and whether that differs
@@ -59,12 +49,12 @@ func CorrectFinish(finish string, available []string) (string, bool) {
 	if FinishIsAvailable(finish, available) || len(available) != 1 {
 		return finish, false
 	}
-	return hoardFinish(available[0]), true
+	return available[0], true
 }
 
 // RepairFinishes corrects entries whose finish does not exist for that printing.
 //
-// A decklist with no foil marker imports as "normal", but plenty of printings
+// A decklist with no foil marker imports as "nonfoil", but plenty of printings
 // are foil-only: precon commanders and Duel Decks reprints among them. The
 // resulting entry asks for a price that cannot exist, so the card is valued at
 // zero forever and no amount of price fetching helps.
