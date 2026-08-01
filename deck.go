@@ -5,12 +5,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/store"
@@ -41,6 +43,8 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
+	// Acquiring the deck stays here — file paths and pasted URLs are
+	// frontend-shaped; everything after them is the shared capability.
 	var deck *decksource.Deck
 	if *file != "" {
 		deck, err = importTextDeck(*file, *name, *source)
@@ -53,45 +57,15 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
-	// Resolve every entry in bulk — the shared pipeline also retries misses
-	// by name and corrects finishes the printing does not come in (a decklist
-	// with no *F* marker parses as non-foil, but precon commanders are
-	// frequently foil-only, and the claimed finish would price at $0 forever).
-	res, err := cardResolver.Resolve(ctx, resolve.Requests(deck.Entries))
-	if err != nil {
-		return err
-	}
-	if err := st.UpsertPrintings(res.Found); err != nil {
-		return err
-	}
-
-	var entries []store.Entry
-	for i, e := range deck.Entries {
-		m := res.Matches[i]
-		if !m.OK {
-			continue
-		}
-		entries = append(entries, store.Entry{
-			ScryfallID: m.Card.ID,
-			Finish:     m.Finish,
-			Board:      e.Board,
-			Quantity:   e.Quantity,
-		})
-	}
-
-	id, err := st.UpsertDeck(store.DeckMeta{
-		Name:      deck.Name,
-		Source:    deck.Source,
-		SourceID:  deck.SourceID,
-		SourceURL: deck.SourceURL,
-		Format:    deck.Format,
-	}, entries)
-	if err != nil {
+	pr := stderrPrinter()
+	res, err := action.DeckAdd(ctx, addDeps(st), pr.Fn(), deck)
+	pr.Close()
+	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
 	}
 
 	fmt.Printf("Imported deck #%d %q (%s): %d cards resolved.\n",
-		id, deck.Name, deck.Source, len(entries))
+		res.ID, res.Name, res.Source, res.Resolved)
 	if res.Refinished > 0 {
 		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
 			res.Refinished)
@@ -102,17 +76,7 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 			fmt.Printf("    - %s\n", u)
 		}
 	}
-
-	// Price what Scryfall could not, now rather than on some later
-	// update-prices, so a freshly imported deck is worth what it is worth. This
-	// only downloads when the import actually left a gap.
-	if err := fillPriceGaps(ctx, st); err != nil {
-		return err
-	}
-	if n := len(res.Unresolved); n > 0 {
-		return fmt.Errorf("%d cards were skipped: %w", n, errPartial)
-	}
-	return nil
+	return err
 }
 
 func importTextDeck(path, name, source string) (*decksource.Deck, error) {

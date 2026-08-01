@@ -29,16 +29,6 @@ func newQuietFetcher(st *store.Store) *pricing.Fetcher {
 	return pricing.New(st, pricing.DefaultCacheDir())
 }
 
-// fillPriceGaps is the interim shim over action.FillGaps for the commands
-// not yet migrated (import, deck add, bulk add); it dies with them.
-func fillPriceGaps(ctx context.Context, st *store.Store) error {
-	pr := stderrPrinter()
-	defer pr.Close()
-	_, err := action.FillGaps(ctx,
-		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn())
-	return err
-}
-
 func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("update-prices", flag.ContinueOnError)
 	limit := fs.Int("limit", report.DefaultMoverRows, "risers/sinkers to list")

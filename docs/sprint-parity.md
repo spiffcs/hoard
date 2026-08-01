@@ -136,7 +136,14 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    pass; the injected test seam bypasses it untouched. Existing root import
    tests are the output lock and passed unchanged; live dry-run round trip
    of the real DB export showed the "resolving cards: 75/179" bar.
-6. **deck add / bulk add / add-by-URL** — share the resolver closure.
+6. ✅ **deck add / bulk add / add-by-URL** (landed 2026-07-31) —
+   `action.DeckAdd` (takes a parsed `*decksource.Deck`; acquiring it — file
+   paths, pasted URLs — stays frontend-shaped), `action.AddList`,
+   `action.AddByURL`, sharing `Deps.resolver(p)`, `binderTarget`, and the
+   gap-fill follow-up. The root `fillPriceGaps` shim died with its last
+   callers; `cardResolver` remains in main as the Deps wiring + test seam.
+   Existing deck/add/import tests pass unchanged (the output locks); live
+   paste showed the resolving bar end to end.
 7. **repair-finishes** — reuses the refreshing-cards machinery.
 8. **arbitrage** — `action.Arbitrage`; browse's `ArbitrageFunc` gains the
    `p` parameter; delete `newQuietFetcher`.

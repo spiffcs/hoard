@@ -4,8 +4,8 @@ package main
 // in the binder.
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,9 +13,7 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/action"
-	"github.com/spiffcs/hoard/internal/decksource"
-	"github.com/spiffcs/hoard/internal/resolve"
-	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -68,55 +66,25 @@ func looksLikeURL(arg string) bool {
 }
 
 func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty int, binderRef string) error {
-	set, number, err := scryfall.ParseCardURL(url)
+	pr := stderrPrinter()
+	res, err := action.AddByURL(ctx, addDeps(st), pr.Fn(),
+		action.AddByURLOptions{URL: url, Foil: foil, Qty: qty, BinderRef: binderRef})
+	pr.Close()
 	if err != nil {
-		return err
-	}
-	// The destination resolves before the network round-trip: a mistyped
-	// binder should fail in a millisecond, not after a fetch.
-	target, targetName, err := binderTarget(st, binderRef)
-	if err != nil {
-		return err
-	}
-	card, err := scryfall.FetchCard(ctx, set, number)
-	if err != nil {
-		return err
-	}
-	// One mapping from the flag to a finish, made here, so the stored row and
-	// the confirmation line cannot disagree.
-	finish, price := "nonfoil", card.PriceUSD
-	if foil {
-		finish, price = "foil", card.PriceUSDFoil
-	}
-	if err := st.AddCardFinishTo(target, *card, finish, qty); err != nil {
 		return err
 	}
 	fmt.Printf("Added %d× %s (%s/%s) as %s into %s — %s\n",
-		qty, card.Name, card.Set, card.CollectorNumber, finish, targetName, ui.MoneyPtr(price))
+		qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
+		res.Finish, res.Binder, ui.MoneyPtr(res.PriceUSD))
 	return nil
 }
 
-// binderTarget resolves --binder to a container id, defaulting to the
-// default binder.
-func binderTarget(st *store.Store, ref string) (int64, string, error) {
-	if ref != "" {
-		b, err := st.BinderByRef(ref)
-		if err != nil {
-			return 0, "", err
-		}
-		return b.ID, b.Name, nil
-	}
-	binders, err := st.ListBinders()
-	if err != nil {
-		return 0, "", err
-	}
-	return binders[0].ID, binders[0].Name, nil
+// addDeps is the dependency set every add path shares.
+func addDeps(st *store.Store) action.Deps {
+	return action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver}
 }
 
-// addFromList reads a pasted or exported card list — decklist-style lines —
-// and adds everything to one binder. This is the non-interactive add: the
-// same lines the deck importer reads, minus boards, plus the import ledger's
-// protection against pasting the same list twice.
+// addFromList reads a pasted or exported card list from a file or stdin.
 func addFromList(ctx context.Context, st *store.Store, path, binderRef string, again bool) error {
 	var data []byte
 	var err error
@@ -133,57 +101,23 @@ func addFromList(ctx context.Context, st *store.Store, path, binderRef string, a
 	return addList(ctx, st, data, display, binderRef, again)
 }
 
+// addList runs the paste through the action layer and renders its report.
 func addList(ctx context.Context, st *store.Store, data []byte, display, binderRef string, again bool) error {
-	hash := action.ContentHash(data)
-	if err := action.RefuseReimport(st, hash, again); err != nil {
+	pr := stderrPrinter()
+	res, err := action.AddList(ctx, addDeps(st), pr.Fn(),
+		action.AddListOptions{Data: data, Display: display, BinderRef: binderRef, Again: again})
+	pr.Close()
+	// A partial paste still added what resolved; the report renders before
+	// the exit code says "done, mostly". Any other error added nothing.
+	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
 	}
-	target, targetName, err := binderTarget(st, binderRef)
-	if err != nil {
-		return err
-	}
-
-	entries, skipped, err := decksource.ParseLoose(bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
-		if len(skipped) > 0 {
-			return fmt.Errorf("no card lines found in %s; %d lines could not be read (e.g. %s)",
-				display, len(skipped), skipped[0])
-		}
-		return fmt.Errorf("no card lines found in %s", display)
-	}
-
-	res, err := cardResolver.Resolve(ctx, resolve.Requests(entries))
-	if err != nil {
-		return err
-	}
-	copies := 0
-	adds := make([]store.CardAdd, 0, len(entries))
-	for i, e := range entries {
-		m := res.Matches[i]
-		if !m.OK {
-			continue
-		}
-		adds = append(adds, store.CardAdd{
-			ContainerID: target, Card: m.Card, Finish: m.Finish, Quantity: e.Quantity,
-		})
-		copies += e.Quantity
-	}
-	if len(adds) > 0 {
-		receipt := &store.ImportReceipt{Hash: hash, File: display, Cards: copies}
-		if _, err := st.ApplyImport(receipt, nil, adds); err != nil {
-			return err
-		}
-	}
-
-	fmt.Printf("Added %d cards into %s (%d lines resolved).\n", copies, targetName, len(adds))
+	fmt.Printf("Added %d cards into %s (%d lines resolved).\n", res.Copies, res.Binder, res.Resolved)
 	if res.Refinished > 0 {
 		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
 			res.Refinished)
 	}
-	for _, s := range skipped {
+	for _, s := range res.Skipped {
 		fmt.Printf("  Skipped %s\n", s)
 	}
 	if len(res.Unresolved) > 0 {
@@ -192,17 +126,7 @@ func addList(ctx context.Context, st *store.Store, data []byte, display, binderR
 			fmt.Printf("    - %s\n", u)
 		}
 	}
-	// Price what Scryfall could not, as import does, so the paste is worth
-	// what it is worth immediately.
-	if len(adds) > 0 {
-		if err := fillPriceGaps(ctx, st); err != nil {
-			return err
-		}
-	}
-	if n := len(skipped) + len(res.Unresolved); n > 0 {
-		return fmt.Errorf("%d lines were skipped: %w", n, errPartial)
-	}
-	return nil
+	return err
 }
 
 func addByName(ctx context.Context, st *store.Store, name string) error {
