@@ -146,8 +146,9 @@ const headerSparkCells = 24
 func (m Model) header(left, right int) string {
 	name, totals := m.viewHeader()
 
-	title := ui.Truncate(name, max(right-len(totals)-1, 0))
-	gap := max(right-lipgloss.Width(title)-len(totals), 0)
+	totals += m.opBadge()
+	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
+	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
 
 	// The hoard-value sparkline sits in the gap, beside the totals it
 	// explains. It yields first on a narrow terminal: the title and the
@@ -335,6 +336,12 @@ func (m Model) statusLine() string {
 			return errStyle.Render(m.status)
 		}
 		return m.status
+	}
+	// The op slot sits below transient statuses on purpose: pressing 's'
+	// deserves its "sorted by value" beat, and the header badge keeps the
+	// op visible meanwhile.
+	if m.op != nil {
+		return m.opStatus()
 	}
 	if m.view == viewArbitrage {
 		return m.arbitrageStatus()

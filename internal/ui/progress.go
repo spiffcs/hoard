@@ -78,7 +78,7 @@ func (p *Printer) handle(ev progress.Event) {
 		} else if ev.Note == "" && ev.Step == p.step {
 			// Piped: a count line at most every interval (Throttled already
 			// paced us), so a long download leaves a visible heartbeat.
-			fmt.Fprintf(p.w, "  %s: %s\n", ev.Step, counts(ev))
+			fmt.Fprintf(p.w, "  %s: %s\n", ev.Step, ProgressCounts(ev))
 		}
 	} else if p.tty && ev.Step != "" {
 		p.redraw(ev)
@@ -123,19 +123,26 @@ func (p *Printer) redraw(ev progress.Event) {
 	b.WriteString(ev.Step)
 	if ev.Total > 0 {
 		frac := float64(ev.Done) / float64(ev.Total)
-		bar := Bar(frac, progressBarCells)
-		b.WriteString(" " + bar + strings.Repeat("░", max(progressBarCells-len([]rune(bar)), 0)))
+		b.WriteString(" " + ProgressBar(frac, progressBarCells))
 	}
 	if ev.Done > 0 {
-		b.WriteString(" " + counts(ev))
+		b.WriteString(" " + ProgressCounts(ev))
 	}
 	fmt.Fprint(p.w, b.String())
 	p.lineOpen = true
 }
 
-// counts renders "done/total unit" (or just "done unit" when the total is
-// unknown), bytes as megabytes because nobody reasons in raw byte counts.
-func counts(ev progress.Event) string {
+// ProgressBar renders a determinate bar over a light-shade track, the shape
+// the CLI printer and the browser's status line share.
+func ProgressBar(frac float64, cells int) string {
+	bar := Bar(frac, cells)
+	return bar + strings.Repeat("░", max(cells-len([]rune(bar)), 0))
+}
+
+// ProgressCounts renders "done/total unit" (or just "done unit" when the
+// total is unknown), bytes as megabytes because nobody reasons in raw byte
+// counts.
+func ProgressCounts(ev progress.Event) string {
 	if ev.Unit == progress.UnitBytes {
 		if ev.Total > 0 {
 			return fmt.Sprintf("%.1f/%.1f MB", mb(ev.Done), mb(ev.Total))

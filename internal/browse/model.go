@@ -127,6 +127,14 @@ type Model struct {
 	commands []command
 	palette  *palette
 
+	// The injected long-running operations (nil = unavailable) and the one
+	// in flight; see opstate.go.
+	opUpdatePrices   OpFunc
+	opRepairFinishes OpFunc
+	opCatalogUpdate  OpFunc
+	op               *opState
+	opGen            int
+
 	// undoStack holds the single reversible action. See undoAction.
 	undoStack *undoAction
 
@@ -444,10 +452,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case arbitrageMsg:
 		return m.onArbitrage(msg)
+	case opProgressMsg:
+		return m.onOpProgress(msg)
+	case opDoneMsg:
+		return m.onOpDone(msg)
 	case spinner.TickMsg:
 		// Only animate while something is actually in flight, or the program
 		// wakes up forever after the fetch that needed it has finished.
-		if !m.arbLoading {
+		if !m.arbLoading && m.op == nil {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -499,6 +511,19 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "ctrl+c", "q":
+		if m.op != nil {
+			// Quitting would strand the operation's goroutine writing into
+			// a dead program; ctrl+c on the confirm itself still hard-quits.
+			title := m.op.title
+			m.confirm = &pendingConfirm{
+				prompt: title + " is still running — quit anyway?",
+				onYes: func(m *Model) tea.Cmd {
+					m.cancelOp()
+					return tea.Quit
+				},
+			}
+			return m, nil
+		}
 		return m, tea.Quit
 
 	case ":", "ctrl+p":
@@ -541,7 +566,11 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.filter.empty() {
 			m.clearFilter()
 			m.status = "filter cleared"
+			return m, nil
 		}
+		// Last in the chain, so the everyday esc reflexes above can never
+		// eat a minutes-long operation by accident.
+		m.cancelOp()
 		return m, nil
 
 	case "tab":

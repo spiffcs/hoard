@@ -21,8 +21,15 @@ func openTestPalette(t *testing.T) Model {
 // match; enter runs the selection and closes the drawer.
 func TestPaletteNarrowsAndRuns(t *testing.T) {
 	m := openTestPalette(t)
-	if len(m.palette.matches) != len(m.commands) {
-		t.Errorf("empty query shows %d of %d commands", len(m.palette.matches), len(m.commands))
+	applicable := 0
+	for i := range m.commands {
+		if m.commands[i].applies(&m) {
+			applicable++
+		}
+	}
+	if len(m.palette.matches) != applicable {
+		t.Errorf("empty query shows %d commands, want every applicable one (%d)",
+			len(m.palette.matches), applicable)
 	}
 
 	for _, r := range "unpriced" {

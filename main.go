@@ -369,11 +369,59 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	// agree about what is too cheap to be worth a shipping label.
 	const arbitrageMin = 1.0
 
+	// The catalog handle outlives each browse pass; the injected operations
+	// share it. Deps.Confirm stays nil inside the TUI — a bare download
+	// question cannot pop over an alt screen yet, and nil declines, which
+	// falls through to the API exactly as a piped run does.
+	cat := openCatalog()
+	if cat != nil {
+		defer cat.Close()
+	}
+	deps := action.Deps{
+		Store: st, Catalog: cat, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver,
+	}
+
 	for {
 		again, err := browse.Run(ctx, st,
 			browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
-				return action.Arbitrage(ctx,
-					action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, p, arbitrageMin)
+				return action.Arbitrage(ctx, deps, p, arbitrageMin)
+			}),
+			browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+				res, err := action.UpdatePrices(ctx, deps, p)
+				if err != nil {
+					return "", err
+				}
+				if res.Total == 0 {
+					return "no cards yet; nothing to update", nil
+				}
+				s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
+				if res.Gaps.Remaining > 0 {
+					s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
+				}
+				return s, nil
+			}),
+			browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
+				res, err := action.RepairFinishes(ctx, deps, p)
+				if err != nil {
+					return "", err
+				}
+				switch {
+				case res.Total == 0:
+					return "no cards yet; nothing to repair", nil
+				case len(res.Fixed) == 0 && len(res.Ambiguous) == 0:
+					return "every finish already correct", nil
+				case len(res.Ambiguous) > 0:
+					return fmt.Sprintf("finishes repaired · %d fixed · %d ambiguous (see hoard repair-finishes)",
+						len(res.Fixed), len(res.Ambiguous)), nil
+				}
+				return fmt.Sprintf("finishes repaired · %d fixed", len(res.Fixed)), nil
+			}),
+			browse.WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
+				res, err := action.CatalogUpdate(ctx, deps, p)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("catalog ready · %s cards", ui.Count(res.Cards)), nil
 			}))
 		if err != nil || !again {
 			return err

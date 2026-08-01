@@ -223,7 +223,7 @@ opens the palette (context commands revisit this in P5 with subjectCard).
 Drawer geometry invariant tested: frame height unchanged, panes shrink.
 Browse help lines gained "· : commands". model_test.go: zero changes.
 
-### ⬜ P4 — Op layer in TUI + the daily-loop trio (M)
+### ✅ P4 — Op layer in TUI + the daily-loop trio (M)
 
 `internal/browse/opstate.go`: `opState{id, title, gen, cancel, mail, last}`
 + `startOp`; spinner tick guard generalizes to
@@ -245,6 +245,21 @@ explicit `Cancel: <op>` entry). Completion: `refresh()` (cursor-preserving
 wired from main via action closures: `WithUpdatePrices`,
 `WithRepairFinishes`, `WithCatalogUpdate`. `f` key (unpriced view) +
 palette entries trigger repair.
+
+**Landed** (2026-07-31): opstate.go exactly as designed, with one shape
+choice — `OpFunc` returns `(summary string, error)`: the injecting closure
+formats its own completion line (it knows the result type; the browser only
+displays and appends the duration). Mailbox pump via `awaitOpProgress`
+(select on C()/Done() so no goroutine outlives its op); stale-gen drops
+tested for both message types. Status slot + header badge (header gap math
+switched to lipgloss.Width for the multibyte spinner). Registry gained the
+trio + `Cancel the running operation`; the add command refuses mid-op; q
+stages the quit confirm. Deviation: `f` (repair) binds wherever the op is
+injected, not only the unpriced view — a view-gated key would need where
+to hide the palette entry elsewhere, and one entry beats two. TUI Confirm
+stays nil (declines downloads; a modal confirm is future work, noted in
+main.go). ui.ProgressBar/ProgressCounts exported and shared with the CLI
+printer. Nine op tests; model_test untouched; six baselines identical.
 
 ### ⬜ P5 — Quick wins (M; independent once P2–P4 exist)
 

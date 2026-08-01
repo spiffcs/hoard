@@ -44,6 +44,14 @@ func commands() []command {
 			id: "add", title: "Add cards", aliases: "scan camera new card",
 			key: "a",
 			run: func(m *Model) tea.Cmd {
+				if m.op != nil {
+					// The add cascade hands the terminal to another program;
+					// quitting now would strand the op's goroutine writing
+					// into a dead one.
+					m.status = "wait for " + m.op.title + " to finish (esc cancels it)"
+					m.statusErr = true
+					return nil
+				}
 				// Quit with the flag set; Run's caller runs the cascade and
 				// re-enters.
 				m.wantAdd = true
@@ -108,6 +116,27 @@ func commands() []command {
 		{
 			id: "view.arbitrage", title: "View: arbitrage", aliases: "vendors spread buylist",
 			run: func(m *Model) tea.Cmd { return m.showView(viewArbitrage) },
+		},
+		{
+			id: "op.update-prices", title: "Update prices", aliases: "refresh fetch scryfall daily",
+			where: func(m *Model) bool { return m.opUpdatePrices != nil },
+			run:   func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
+		},
+		{
+			id: "op.repair-finishes", title: "Repair finishes", aliases: "fix foil unpriced zero",
+			key:   "f",
+			where: func(m *Model) bool { return m.opRepairFinishes != nil },
+			run:   func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
+		},
+		{
+			id: "op.catalog-update", title: "Update the card catalog", aliases: "download bundle scryfall rebuild",
+			where: func(m *Model) bool { return m.opCatalogUpdate != nil },
+			run:   func(m *Model) tea.Cmd { return m.startOp("updating the catalog", m.opCatalogUpdate) },
+		},
+		{
+			id: "op.cancel", title: "Cancel the running operation", aliases: "stop abort",
+			where: func(m *Model) bool { return m.op != nil },
+			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
 		},
 	}
 }
