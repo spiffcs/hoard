@@ -14,20 +14,20 @@ names the yes/no questions an operation may ask through `Deps.Confirm`.
 | catalog status | `action.CatalogStatus` | `catalog status` | — | — | — | `catalog.Status` | 0/1 | migrated |
 | catalog update | `action.CatalogUpdate` | `catalog update` | planned: palette op | downloading catalog (d, bytes) | — | `CatalogUpdateResult` | 0/1 | migrated |
 | ensure catalog | `action.EnsureCatalog` | (inside update-prices) | planned | downloading catalog (d, bytes) | build?/refresh? | usable bool | — | migrated |
-| update prices | pending | `update-prices` | planned: palette op | checking catalog (i) · downloading catalog (d) · refreshing cards (d, cards) · saving (i) · filling price gaps (i) · recording history (i) | via ensure | pending | 0/1 | pending |
-| gap fill | pending | (inside update-prices, import, adds) | — | filling price gaps (i, notes) | — | `pricing.GapReport` | — | pending |
-| backfill prices | pending | `backfill-prices` | — (next sprint) | downloading history (d, bytes) · recording (d, rows) | — | pending | 0/1 | pending |
-| import | pending | `import` | — (next sprint) | resolving cards (d, cards) | — | pending | 0/1/2 | pending |
-| deck add | pending | `deck add` | — | resolving cards (d, cards) | — | pending | 0/1/2 | pending |
-| bulk add / URL add | pending | `add --file/-`, `add <url>` | `a` (cascade) | resolving cards (d, cards) | — | pending | 0/1/2 | pending |
-| repair finishes | pending | `repair-finishes` | planned: `f` in unpriced view | refreshing cards (d, cards) | — | pending | 0/1 | pending |
-| arbitrage | pending | `arbitrage` | `v` view (bespoke async) | reading vendor prices (i) | — | `arbitrage.Result` | 0/1 | pending |
-| watch check | pending | `watch` | planned: banner + view | — | — | fired/checked | 0/1/3 | pending |
-| watch add/list/rm | pending | `watch add/list/rm` | planned: `w`, watches view | — | — | — | 0/1 | pending |
-| report | pending | `report` | — (artifact; palette later) | — | — | `report.ValuationData` | 0/1 | pending |
-| export | pending | `export` | — (next sprint) | — | — | rows | 0/1 | pending |
-| summary | pending | `hoard` (piped) / `--json` | left pane + header | — | — | totals | 0/1 | pending |
-| movers | pending | `movers` | `v` view | — | — | changes | 0/1 | pending |
-| unpriced | pending | `unpriced` | `v` view | — | — | rows | 0/1 | pending |
-| binder new/rename/rm | pending | `binder …` | planned: `n`/`R`/`d` keys | — | — | — | 0/1 | pending |
+| update prices | `action.UpdatePrices` | `update-prices` | planned: palette op | checking catalog (i) · downloading catalog (d) · refreshing cards (d, cards) · saving (i) · filling price gaps (i) · recording history (i) | via ensure | `UpdatePricesResult` | 0/1 | migrated |
+| gap fill | `action.FillGaps` | (inside update-prices, import, adds) | — | filling price gaps (i, notes) | — | `pricing.GapReport` | — | migrated |
+| backfill prices | `action.BackfillPrices` | `backfill-prices` | — (next sprint) | downloading history (d, bytes) · recording (d, rows) | — | `BackfillResult` | 0/1 | migrated |
+| import | `action.ImportCollection` | `import` | — (next sprint) | resolving cards (d, cards) | — | `ImportResult` | 0/1/2 | migrated |
+| deck add | `action.DeckAdd` | `deck add` | — | resolving cards (d, cards) | — | `DeckAddResult` | 0/1/2 | migrated |
+| bulk add / URL add | `action.AddList` / `action.AddByURL` | `add --file/-`, `add <url>` | `a` (cascade) | resolving cards (d, cards) | — | `AddListResult`/`AddByURLResult` | 0/1/2 | migrated |
+| repair finishes | `action.RepairFinishes` | `repair-finishes` | planned: `f` in unpriced view | refreshing cards (d, cards) | — | `RepairResult` | 0/1 | migrated |
+| arbitrage | `action.Arbitrage` | `arbitrage` | `v` view (bespoke async) | reading vendor prices (i) | — | `arbitrage.Result` | 0/1 | migrated |
+| watch check | `Deps.WatchCheck` | `watch` | planned: banner + view | — | — | fired/checked | 0/1/3 | migrated |
+| watch add/list/rm | `action.WatchAdd`, `Deps.WatchList/WatchRemove` | `watch add/list/rm` | planned: `w`, watches view | — | — | — | 0/1 | migrated |
+| report | `Deps.Valuation` | `report` | — (artifact; palette later) | — | — | `report.ValuationData` | 0/1 | migrated |
+| export | `Deps.ExportRows` | `export` | — (next sprint) | — | — | rows | 0/1 | migrated |
+| summary | `Deps.Summary` | `hoard` (piped) / `--json` | left pane + header | — | — | totals | 0/1 | migrated |
+| movers | `Deps.Movers` | `movers` | `v` view | — | — | changes | 0/1 | migrated |
+| unpriced | `Deps.Unpriced` | `unpriced` | `v` view | — | — | rows | 0/1 | migrated |
+| binder new/rename/rm | store-direct (by design) | `binder …` | planned: `n`/`R`/`d` keys | — | — | — | 0/1 | by design |
 | browse/filter/edit | — (TUI-native) | reverse-skew backlog: `hoard search`, quantity set/rm | `/`, `+/-`, `d`, `u` | — | — | — | — | documented gap |

@@ -30,15 +30,15 @@ func cmdMovers(st *store.Store, args []string, jsonOut bool) error {
 	}
 
 	env := ui.Detect(os.Stdout)
-	observations, oldest, err := st.PriceHistoryDepth()
+	cutoff := time.Now().UTC().Add(-window)
+	m, err := action.Deps{Store: st}.Movers(cutoff.Format(time.RFC3339))
 	if err != nil {
 		return err
 	}
-	cutoff := time.Now().UTC().Add(-window)
 	// An empty result means "nothing moved", which is indistinguishable from
 	// "nothing was ever recorded" unless the difference is stated outright —
 	// in prose for a reader, by recordedSince's absence for a script.
-	if observations == 0 {
+	if m.Observations == 0 {
 		if jsonOut {
 			return hoardjson.Write(os.Stdout,
 				hoardjson.FromMovers(cutoff.Format(time.RFC3339), "", nil))
@@ -46,11 +46,7 @@ func cmdMovers(st *store.Store, args []string, jsonOut bool) error {
 		fmt.Println(env.Dim()("No price history recorded yet. Run hoard update-prices to start."))
 		return nil
 	}
-
-	changes, err := st.Movers(cutoff.Format(time.RFC3339))
-	if err != nil {
-		return err
-	}
+	oldest, changes := m.Oldest, m.Changes
 	if jsonOut {
 		// The whole answer, not the display's top-N: --limit shapes the
 		// tables, and a consumer slices its own.
@@ -74,22 +70,11 @@ func cmdMovers(st *store.Store, args []string, jsonOut bool) error {
 	return nil
 }
 
-// cmdBackfillPrices loads the prices MTGJSON kept while hoard was not looking,
-// so a fresh hoard can answer "what moved this month" immediately.
-//
-// A one-off, and separate from update-prices for a reason: the archive is ~150 MB
-// against the 5 MB of today's file, and the download cache is pruned nightly.
-//
-// Only what is held gets backfilled — reconstructing history for cards nobody owns
-// is not worth the wait.
 // cmdBackfillPrices loads the prices MTGJSON kept while hoard was not
-// looking. A one-off, and separate from update-prices for a reason: the
-// archive is ~150 MB against the 5 MB of today's file, and the download
-// cache is pruned nightly.
-//
-// The what-is-about-to-happen header now travels as progress (stderr) —
-// closing the one documented stdout/stderr inconsistency: narration was
-// never data.
+// looking, so a fresh hoard can answer "what moved this month" immediately.
+// A one-off, and separate from update-prices for a reason: the archive is
+// ~150 MB against the 5 MB of today's file, and the download cache is
+// pruned nightly.
 func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("backfill-prices", flag.ContinueOnError)
 	if _, err := parsePositionals(fs, args); err != nil {

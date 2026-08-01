@@ -10,9 +10,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/hoardjson"
-	"github.com/spiffcs/hoard/internal/resolve"
-	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -64,50 +63,23 @@ func watchAdd(ctx context.Context, st *store.Store, args []string) error {
 	if *over > 0 {
 		op, threshold = "over", *over
 	}
-	finish := "nonfoil"
-	if *foil {
-		finish = "foil"
-	}
-
-	// Resolved once, now, through the same pipeline deck add and import use;
-	// the check never fuzzy-matches. An alert about the wrong printing is
-	// worse than no alert.
-	res, err := cardResolver.Resolve(ctx, []resolve.Request{
-		{Ident: scryfall.Identifier{Name: name}, Name: name, Finish: finish}})
+	pr := stderrPrinter()
+	res, err := action.WatchAdd(ctx, addDeps(st), pr.Fn(),
+		action.WatchAddOptions{Name: name, Foil: *foil, Op: op, Threshold: threshold})
+	pr.Close()
 	if err != nil {
-		return err
-	}
-	if len(res.Matches) == 0 || !res.Matches[0].OK {
-		return fmt.Errorf("no card matches %q", name)
-	}
-	m := res.Matches[0]
-	// The watch stores a price finish: an etched-only printing is priced as
-	// foil, and a finish the printing lacks has no price to ever cross.
-	if scryfall.PricedAsFoil(m.Finish) {
-		finish = "foil"
-	} else {
-		finish = "nonfoil"
-	}
-
-	// The card joins the catalog so update-prices keeps its price fresh even
-	// when no copy is owned — watching a card you are hoping to buy is the
-	// --under case entirely.
-	if err := st.UpsertPrintings(res.Found); err != nil {
-		return err
-	}
-	if err := st.AddWatch(m.Card.ID, m.Card.Name, finish, op, threshold); err != nil {
 		return err
 	}
 	env := ui.Detect(os.Stdout)
 	fmt.Printf("Watching %s (%s) %s — %s %s.\n",
-		m.Card.Name, ui.Printing(m.Card.Set, m.Card.CollectorNumber),
-		finish, op, ui.Money(threshold))
+		res.Card.Name, ui.Printing(res.Card.Set, res.Card.CollectorNumber),
+		res.Finish, op, ui.Money(threshold))
 	fmt.Println(env.Dim()("Checks read stored prices: hoard update-prices && hoard watch"))
 	return nil
 }
 
 func watchList(st *store.Store) error {
-	watches, err := st.ListWatches()
+	watches, err := action.Deps{Store: st}.WatchList()
 	if err != nil {
 		return err
 	}
@@ -152,11 +124,8 @@ func watchRemove(st *store.Store, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("watch rm takes one watch (an id or a name fragment)")
 	}
-	w, err := st.WatchByRef(args[0])
+	w, err := action.Deps{Store: st}.WatchRemove(args[0])
 	if err != nil {
-		return err
-	}
-	if err := st.RemoveWatch(w.ID); err != nil {
 		return err
 	}
 	fmt.Printf("Removed the %s %s watch on %s.\n", w.Op, ui.Money(w.Threshold), w.Display)
@@ -164,7 +133,7 @@ func watchRemove(st *store.Store, args []string) error {
 }
 
 func watchCheck(st *store.Store, jsonOut bool) error {
-	fired, checked, err := st.CheckWatches()
+	fired, checked, err := action.Deps{Store: st}.WatchCheck()
 	if err != nil {
 		return err
 	}

@@ -64,7 +64,7 @@ func runUpdatePrices(ctx context.Context, deps action.Deps, limit int, w io.Writ
 // from a card genuinely worth nothing. This is how you tell the difference, and
 // how you find out which deck's total is understated.
 func cmdUnpriced(st *store.Store, jsonOut bool) error {
-	rows, err := st.Unpriced()
+	rows, err := action.Deps{Store: st}.Unpriced()
 	if err != nil {
 		return err
 	}

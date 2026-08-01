@@ -390,18 +390,14 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 // writeSummary prints the hoard's totals, the output `hoard summary` used to
 // produce. It is what a non-interactive `hoard` writes.
 func writeSummary(st *store.Store, jsonOut bool) error {
-	coll, err := st.CollectionTotals()
-	if err != nil {
-		return err
-	}
-	decks, err := st.ListDecks()
+	sum, err := action.Deps{Store: st}.Summary()
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		return hoardjson.Write(os.Stdout, hoardjson.FromSummary(coll, decks))
+		return hoardjson.Write(os.Stdout, hoardjson.FromSummary(sum.Binder, sum.Decks))
 	}
-	fmt.Print(report.Summary(ui.Detect(os.Stdout), coll, decks))
+	fmt.Print(report.Summary(ui.Detect(os.Stdout), sum.Binder, sum.Decks))
 	return nil
 }
 

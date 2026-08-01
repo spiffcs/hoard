@@ -78,7 +78,7 @@ the TTY-ness explicitly (main knows; tests pass a Builder). Race-detector
 clean. Live check: SIGINT mid catalog download → "interrupted", exit 130,
 live catalog untouched (temp-file build). All six baselines identical.
 
-### ⬜ P1 — Action layer, CLI side (L; several commits)
+### ✅ P1 — Action layer, CLI side (L; landed 2026-07-31 across seven commits)
 
 First: `docs/parity.md` — the capability table (capability × action func ×
 CLI form × TUI surface × steps/units × confirm × result type × exit codes ×
@@ -152,9 +152,14 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    `browse.ArbitrageFunc` gained the `p` parameter (browser passes nil
    until the op layer consumes it); `newFetcher`/`newQuietFetcher` and
    root `fetchArbitrage` deleted. CLI output unchanged.
-9. **fast ops** (watch check, report, export, movers, binder ops) —
-   mechanical extraction for table completeness; `p` mostly unused.
-   Cuttable to a later sprint.
+9. ✅ **fast ops** (landed 2026-07-31) — `Deps.Summary/Movers/Unpriced/
+   Valuation/ExportRows/WatchCheck/WatchList/WatchRemove` +
+   `action.WatchAdd` (the one with real orchestration: resolve-once +
+   catalog upsert). Deviation, documented in parity.md: binder
+   create/rename/remove stay **store-direct by design** — the browser's
+   Editor interface needs the store methods for undo closures, and a
+   wrapper would be ceremony. docs/parity.md now reads migrated top to
+   bottom. **P1 complete.**
 
 ### ⬜ P2 — TUI mode refactor (M; behavior-preserving, lands alone)
 
