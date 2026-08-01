@@ -1,7 +1,9 @@
 # Scanning cards with an iPhone
 
 > macOS only, and it needs the `hoard-scan.app` helper built by `make all` (or
-> `make scan` on its own).
+> `make scan` on its own). Working on the scanner itself? Start with
+> [scanner-tuning.md](scanner-tuning.md) — the tuning loop and the field
+> lessons the current behavior was built from.
 
 Inside an add session (`hoard add`, or <kbd>a</kbd> in the browser), press
 <kbd>ctrl+o</kbd> to identify a card with your iPhone instead of typing its name.
