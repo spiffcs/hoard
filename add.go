@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -133,8 +134,8 @@ func addFromList(ctx context.Context, st *store.Store, path, binderRef string, a
 }
 
 func addList(ctx context.Context, st *store.Store, data []byte, display, binderRef string, again bool) error {
-	hash := contentHash(data)
-	if err := refuseReimport(st, hash, again); err != nil {
+	hash := action.ContentHash(data)
+	if err := action.RefuseReimport(st, hash, again); err != nil {
 		return err
 	}
 	target, targetName, err := binderTarget(st, binderRef)

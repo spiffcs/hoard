@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
 	"github.com/spiffcs/hoard/internal/hoardjson"
@@ -87,11 +88,9 @@ The database lives in a per-user data directory by default (e.g. on macOS
 Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
 `
 
-// errPartial marks a command that finished its work but had to skip some of
-// it — unresolved cards in an import, say. Wrapped with the specifics and
-// mapped to exit code 2, so a pipeline can distinguish "done" from "done,
-// mostly" without parsing output.
-var errPartial = errors.New("some items were skipped")
+// errPartial is the action layer's partial-completion sentinel, aliased so
+// every command in this package wraps the same value main maps to exit 2.
+var errPartial = action.ErrPartial
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

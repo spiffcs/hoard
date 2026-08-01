@@ -122,13 +122,20 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    "Fetching 90 days…" header moved from stdout to progress/stderr as
    planned. Live-verified: full archive download + "Nothing to backfill"
    stdout (link too fast for piped count lines to pass the 10s throttle —
-   the TTY path is unit-covered). **Second half still pending: the 60s
-   zero-bytes idle timeout, its own commit.**
-5. **import** — `action.ImportCollection`; result struct from import.go's
-   locals (copies/perBinder/created/skipped/refinished/dropped/unresolved);
-   `errPartial` → `action.ErrPartial` (main keeps the exit-2 mapping).
-   Resolver two-pass progress: Total may grow when the name-retry pass adds
-   identifiers — renderers re-read Total on every event.
+   the TTY path is unit-covered). Second half landed same day, own commit:
+   `idleReader` watchdog in mtgjson fetch — 60s of zero bytes closes the
+   body and surfaces "download stalled" instead of hanging forever; covers
+   both the cached and direct paths; stall test against a flushed-then-
+   silent httptest server, race-clean.
+5. ✅ **import** (landed 2026-07-31) — `action.ImportCollection` with
+   `ImportOptions`/`ImportResult`; `action.ErrPartial` (root errPartial is
+   now an alias); `ContentHash`/`RefuseReimport` exported from action (the
+   root copies died; bulk add calls them until its own migration). The
+   two-pass resolver progress lives in `Deps.resolver(p)`: a per-operation
+   resolver whose Done accumulates and Total grows across the name-retry
+   pass; the injected test seam bypasses it untouched. Existing root import
+   tests are the output lock and passed unchanged; live dry-run round trip
+   of the real DB export showed the "resolving cards: 75/179" bar.
 6. **deck add / bulk add / add-by-URL** — share the resolver closure.
 7. **repair-finishes** — reuses the refreshing-cards machinery.
 8. **arbitrage** — `action.Arbitrage`; browse's `ArbitrageFunc` gains the
