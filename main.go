@@ -337,15 +337,18 @@ func parsePositionals(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// stdinIsTTY reports whether stdin is an interactive terminal (a character
-// device), which the TUI requires.
-func stdinIsTTY() bool {
-	fi, err := os.Stdin.Stat()
+// isTTY reports whether a file is an interactive terminal (a character
+// device).
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
 }
+
+// stdinIsTTY reports whether stdin is interactive, which the TUI requires.
+func stdinIsTTY() bool { return isTTY(os.Stdin) }
 
 // cmdBrowse is what `hoard` with no arguments does: the browser at a terminal,
 // the summary table when piped, so `hoard | grep` keeps working.
@@ -402,10 +405,4 @@ func writeSummary(st *store.Store, jsonOut bool) error {
 
 // stdoutIsTTY reports whether output is going to an interactive terminal rather
 // than a pipe or a file.
-func stdoutIsTTY() bool {
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
+func stdoutIsTTY() bool { return isTTY(os.Stdout) }

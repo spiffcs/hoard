@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/progress"
 )
 
 // listingURL is Scryfall's bulk-data index: a few kilobytes describing each
@@ -196,11 +198,11 @@ type bulkCard struct {
 	} `json:"prices"`
 }
 
-// Update rebuilds the catalog from Scryfall's current bundle.
-//
-// progress is called with the running card count so a caller can show movement
-// through a download measured in minutes; it may be nil.
-func (c *Catalog) Update(ctx context.Context, progress func(cards int)) error {
+// Update rebuilds the catalog from Scryfall's current bundle, reporting
+// byte progress against the listing's compressed size — the one figure known
+// before the stream starts, which is what makes the minutes-long download
+// determinate.
+func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 	entry, err := c.listing(ctx)
 	if err != nil {
 		return err
@@ -220,7 +222,7 @@ func (c *Catalog) Update(ctx context.Context, progress func(cards int)) error {
 		return err
 	}
 
-	cards, err := tmp.build(ctx, entry.DownloadURI, progress)
+	cards, err := tmp.build(ctx, entry.DownloadURI, entry.CompressedSize, p)
 	if err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
@@ -262,9 +264,23 @@ func (c *Catalog) Update(ctx context.Context, progress func(cards int)) error {
 	return nil
 }
 
+// countingReader counts compressed bytes as they arrive, which is the only
+// place the download's true position is knowable — after gzip the byte count
+// no longer matches anything the listing promised.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // build streams the bundle into this (temporary) catalog and returns how many
 // cards it stored.
-func (c *Catalog) build(ctx context.Context, url string, progress func(int)) (int, error) {
+func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.Fn) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
@@ -280,7 +296,10 @@ func (c *Catalog) build(ctx context.Context, url string, progress func(int)) (in
 		return 0, fmt.Errorf("card bundle returned %d", resp.StatusCode)
 	}
 
-	zr, err := gzip.NewReader(resp.Body)
+	// Counted before decompression, so Done measures the same thing the
+	// listing's compressed size promises and the bar cannot overshoot 100%.
+	cr := &countingReader{r: resp.Body}
+	zr, err := gzip.NewReader(cr)
 	if err != nil {
 		return 0, fmt.Errorf("decompressing the card bundle: %w", err)
 	}
@@ -323,8 +342,9 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 				return 0, ctx.Err()
 			default:
 			}
-			if progress != nil && n > 0 {
-				progress(n)
+			if n > 0 {
+				p.Emit(progress.Event{Step: "downloading catalog",
+					Done: cr.n, Total: size, Unit: progress.UnitBytes})
 			}
 		}
 

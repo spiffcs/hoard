@@ -1,9 +1,27 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
+
+// Bytes renders a size the way a person would say it.
+//
+// The smallest tier is bytes rather than kilobytes so that a nonzero size
+// never reads as "0 KB" — a download prompt that claims to be about to
+// transfer nothing is worse than one that says an awkward number.
+func Bytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
+}
 
 // unknown is shown where a market price hasn't been fetched.
 const unknown = "—"

@@ -88,11 +88,18 @@ first; frontends only render. Doubles as the migration checklist.
 Migrations in order — **stdout locked by golden tests per command BEFORE
 each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
 
-1. **catalog** — `action.CatalogUpdate/EnsureCatalog/CatalogStatus`; change
-   `catalog.Update(ctx, progress func(int))` → `(ctx, p progress.Fn)` (two
-   call sites); countingReader over compressed bytes (Total =
-   `Catalog.DownloadSize`, already known up front), card count rides as a
-   Note. `Deps.Confirm` replaces the `confirmFn` package var.
+1. ✅ **catalog** (landed 2026-07-31) — `action.CatalogUpdate/EnsureCatalog/
+   CatalogStatus`; `catalog.Update` takes `progress.Fn`; countingReader over
+   compressed bytes (Total = the listing's CompressedSize). Deviation from
+   plan: the card count does NOT ride as a Note — Notes bypass throttling by
+   design, so a note per 2,000 cards would flood piped output; the byte bar
+   carries progress and the result line carries the final card count.
+   `Deps.Confirm` replaced `confirmFn`; `humanBytes` moved to `ui.Bytes`;
+   root `ensureCatalog` is a thin interim shim (dies with the update-prices
+   migration). Old "Downloading the card catalog…" / "  N cards..." stderr
+   lines replaced by the Printer's step/count lines (called-out stderr
+   change); "Catalog ready" line unchanged. docs/parity.md created. All six
+   baselines identical; live piped update verified the new shape.
 2. **update-prices** (the exemplar) — `refreshCards` (root catalog.go:60)
    moves into action; new `scryfall.FetchCollectionProgress(ctx, ids,
    onChunk)` (old func delegates with nil); retry/Retry-After waits emit

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
@@ -100,103 +100,22 @@ func refreshCards(ctx context.Context, cat *catalog.Catalog, st *store.Store,
 	return append(found, remote...), notFound, fromCatalog, nil
 }
 
-// ensureCatalog offers to build or refresh the catalog and reports whether its
-// prices can be trusted afterwards. It asks rather than downloading: 77 MB
-// starting because somebody typed a command is a surprise on a metered link.
-//
-// The return value matters because confirm() declines automatically without a
-// terminal. Without it a scheduled refresh would serve prices as old as the
-// catalog while reporting success, forever.
-//
-// Only prices go stale this way — identity and finishes do not — so
-// repair-finishes and the add cascade use an out-of-date catalog happily.
+// ensureCatalog is the interim shim over action.EnsureCatalog while
+// update-prices awaits its own migration: it supplies main's Deps and a
+// stderr progress printer. It disappears when cmdUpdatePrices moves into
+// the action layer.
 func ensureCatalog(ctx context.Context, cat *catalog.Catalog) (pricesUsable bool) {
-	if cat == nil {
-		return false
-	}
-	st := cat.CheckStatus(ctx)
-	switch {
-	case st.Empty():
-		if !confirmFn(fmt.Sprintf(
-			"No local card catalog yet. Download it now (%s)?", downloadSize(ctx, cat))) {
-			fmt.Fprintln(os.Stderr,
-				"  using the Scryfall API; run 'hoard catalog update' to make this fast.")
-			return false
-		}
-	case st.Checked && st.Stale:
-		if !confirmFn(fmt.Sprintf(
-			"A newer card catalog is available (yours is from %s). Update it (%s)?",
-			st.SourceUpdated.Local().Format("2 Jan"), downloadSize(ctx, cat))) {
-			fmt.Fprintln(os.Stderr,
-				"  catalog prices would be out of date, so using the Scryfall API instead.")
-			return false
-		}
-	default:
-		// Either current, or the freshness check was skipped as recent enough.
-		return !st.Empty()
-	}
-	if err := updateCatalog(ctx, cat); err != nil {
-		// A catalog that will not build is not a reason to abandon the command;
-		// everything falls through to the API.
-		fmt.Fprintf(os.Stderr, "catalog update failed, using the Scryfall API: %v\n", err)
-		return false
-	}
-	return true
+	pr := stderrPrinter()
+	defer pr.Close()
+	return action.EnsureCatalog(ctx, action.Deps{Catalog: cat, Confirm: confirm}, pr.Fn())
 }
 
-// updateCatalog rebuilds the catalog, reporting progress.
-//
-// Progress goes to stderr, like every other long wait in hoard (see
-// newFetcher): ensureCatalog runs inside update-prices, and download chatter
-// on stdout would land in the data stream of `hoard update-prices | …`.
-func updateCatalog(ctx context.Context, cat *catalog.Catalog) error {
-	fmt.Fprintf(os.Stderr, "Downloading the card catalog (%s)...\n", downloadSize(ctx, cat))
-	start := time.Now()
-	last := 0
-	err := cat.Update(ctx, func(n int) {
-		if n-last >= 25000 {
-			fmt.Fprintf(os.Stderr, "  %s cards...\n", ui.Count(n))
-			last = n
-		}
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "Catalog ready: %s cards, %s on disk, built in %s.\n",
-		ui.Count(cat.CardCount()), humanBytes(cat.Bytes()),
-		time.Since(start).Round(time.Second))
-	return nil
+// stderrPrinter is the CLI's progress renderer: narration belongs on stderr
+// (stdout is the data stream), updating in place only when stderr really is
+// a terminal.
+func stderrPrinter() *ui.Printer {
+	return ui.NewPrinter(os.Stderr, isTTY(os.Stderr))
 }
-
-// downloadSize describes the transfer a rebuild would cost, or "unknown size"
-// when the listing cannot be read.
-func downloadSize(ctx context.Context, cat *catalog.Catalog) string {
-	if n := cat.DownloadSize(ctx); n > 0 {
-		return humanBytes(n)
-	}
-	return "unknown size"
-}
-
-// humanBytes renders a size the way a person would say it.
-//
-// The smallest tier is bytes rather than kilobytes so that a nonzero size never
-// reads as "0 KB" — a download prompt that claims to be about to transfer
-// nothing is worse than one that says an awkward number.
-func humanBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d B", n)
-}
-
-// confirmFn is the prompt, indirected so tests can answer it without a
-// terminal. Production always uses confirm.
-var confirmFn = confirm
 
 // confirm asks a yes/no question, defaulting to no.
 //
@@ -231,7 +150,15 @@ func cmdCatalog(ctx context.Context, args []string) error {
 	case "", "status":
 		return catalogStatus(ctx, cat)
 	case "update":
-		return updateCatalog(ctx, cat)
+		pr := stderrPrinter()
+		res, err := action.CatalogUpdate(ctx, action.Deps{Catalog: cat}, pr.Fn())
+		pr.Close()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Catalog ready: %s cards, %s on disk, built in %s.\n",
+			ui.Count(res.Cards), ui.Bytes(res.Bytes), res.Took)
+		return nil
 	default:
 		return fmt.Errorf("unknown catalog subcommand %q (want status|update)", sub)
 	}
@@ -246,7 +173,7 @@ func catalogStatus(ctx context.Context, cat *catalog.Catalog) error {
 		return nil
 	}
 	fmt.Printf("%s cards · %s · %s\n",
-		ui.Count(st.Cards), humanBytes(st.Bytes), cat.Path())
+		ui.Count(st.Cards), ui.Bytes(st.Bytes), cat.Path())
 	fmt.Println(env.Dim()(fmt.Sprintf("Built %s from Scryfall's %s bundle.",
 		st.Built.Local().Format("2 Jan 15:04"),
 		st.SourceUpdated.Local().Format("2 Jan 15:04"))))
