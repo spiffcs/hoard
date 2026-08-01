@@ -66,6 +66,13 @@ func (m Model) View() string {
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
 	b.WriteString(m.statusLine() + "\n")
+	// The palette's match rows sit between its input line (the status slot)
+	// and the help line — the drawer the panes shrank to make room for.
+	if m.palette != nil {
+		for _, line := range m.paletteLines(m.width) {
+			b.WriteString(line + "\n")
+		}
+	}
 	b.WriteString(helpStyle.Render(ui.Truncate(m.helpLine(), m.width)))
 	return b.String()
 }
@@ -107,7 +114,9 @@ func (m Model) paneWidths() (left, right int) {
 }
 
 // visibleRows is how many list rows fit between the header and the footer.
-func (m Model) visibleRows() int { return max(m.height-chromeRows, 1) }
+// visibleRows is how many body rows the panes get; the palette drawer, when
+// open, takes its rows from here so the frame keeps its height.
+func (m Model) visibleRows() int { return max(m.height-chromeRows-m.paletteRows(), 1) }
 
 // scrollIntoView moves the focused pane's window so the cursor is inside it.
 //
@@ -312,6 +321,8 @@ func (m Model) statusLine() string {
 		return errStyle.Render(m.confirm.prompt) + helpStyle.Render("  y/n")
 	case modePrompt:
 		return m.promptLine()
+	case modePalette:
+		return ": " + m.palette.query + "▏"
 	case modeFilter:
 		bar := "/" + m.filterText + "▏"
 		if m.filterErr != "" {
@@ -373,6 +384,8 @@ func (m Model) helpLine() string {
 		return "y remove · any other key cancels"
 	case m.prompt != nil:
 		return "type the answer · enter accept · esc cancel · ctrl+u wipe"
+	case m.palette != nil:
+		return "enter run · esc close · ↑/↓ choose · type to narrow"
 	case m.filtering:
 		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
 	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
@@ -382,11 +395,11 @@ func (m Model) helpLine() string {
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · ↑/↓ move · s sort · S reverse · r reload · q quit"
+		return "v next view · : commands · ↑/↓ move · s sort · S reverse · r reload · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · / filter · s sort · S reverse · v views · a add · d remove deck · u undo · q quit"
+		return "tab cards · / filter · : commands · s sort · S reverse · v views · a add · d remove deck · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

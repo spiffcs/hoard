@@ -122,6 +122,11 @@ type Model struct {
 	// prompt is an inline one-line input when non-nil; see prompt.go.
 	prompt *prompt
 
+	// commands is the registry, built once; palette is the open drawer over
+	// it, nil when closed. See command.go and palette.go.
+	commands []command
+	palette  *palette
+
 	// undoStack holds the single reversible action. See undoAction.
 	undoStack *undoAction
 
@@ -177,7 +182,8 @@ type Model struct {
 func New(st Store, opts ...Option) (Model, error) {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background()}
+	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
+		commands: commands()}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -457,6 +463,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKey(msg)
 	case modePrompt:
 		return m.handlePromptKey(msg)
+	case modePalette:
+		return m.handlePaletteKey(msg)
 	case modeFilter:
 		return m.handleFilterKey(msg)
 	case modeDetail:
@@ -472,6 +480,11 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "enter", "backspace":
 		m.detail = nil
+	case ":", "ctrl+p":
+		// The palette is reachable from the overlay; it closes the overlay
+		// for now — context commands (P5's subjectCard) will keep it open.
+		m.detail = nil
+		m.openPalette()
 	}
 	return m, nil
 }
@@ -479,9 +492,18 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleBrowseKey is the ordinary two-pane surface: navigation, edits, and
 // everything the help line advertises.
 func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Deliberate actions live in the registry; what remains below is
+	// navigation and mode openers.
+	if cmd, ok := m.runCommand(msg.String()); ok {
+		return m, cmd
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+
+	case ":", "ctrl+p":
+		m.openPalette()
+		return m, nil
 
 	case "+", "=":
 		// "=" is the unshifted key "+" lives on, so both work.
@@ -490,11 +512,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "-", "_":
 		m.adjustQuantity(-1)
 		return m, nil
-
-	case "a":
-		// Quit with the flag set; Run's caller runs the cascade and re-enters.
-		m.wantAdd = true
-		return m, tea.Quit
 
 	case "enter":
 		if m.view == viewArbitrage {
@@ -507,13 +524,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// its cards — the same thing tab does, but where the hand already is.
 			m.focus = paneCards
 		}
-		return m, nil
-
-	case "d":
-		m.askRemoval()
-		return m, nil
-	case "u":
-		m.undoRecorded()
 		return m, nil
 
 	case "/":
@@ -574,36 +584,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scrollIntoView()
 		return m, nil
 
-	case "v":
-		// Leaving arbitrage abandons any fetch still running: the answer is no
-		// longer wanted, and a download that outlives the view is a surprise.
-		m.cancelArbitrage()
-		m.arbLoading = false
-		m.view = m.view.next()
-		m.focus = paneCards
-		if err := m.loadView(); err != nil {
-			m.setError(err)
-			return m, nil
-		}
-		m.cursor[paneCards], m.offset[paneCards] = 0, 0
-		m.status = "showing " + m.view.String()
-		m.statusErr = false
-		return m, nil
-
-	case "s":
-		m.cycleSort()
-		m.cursor[paneCards], m.offset[paneCards] = 0, 0
-		m.status, m.statusErr = "sorted by "+m.sortLabel(), false
-		return m, nil
-	case "S":
-		m.reverseSort()
-		m.cursor[paneCards], m.offset[paneCards] = 0, 0
-		m.status, m.statusErr = "sorted by "+m.sortLabel(), false
-		return m, nil
-
-	case "r":
-		m.reload()
-		return m, nil
 	}
 	return m, nil
 }

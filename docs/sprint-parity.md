@@ -189,7 +189,7 @@ is unobservable (mutually exclusive states; noted in mode.go). Six
 baselines identical. The confirm help line keeps "y remove" until a second
 confirm user exists.
 
-### ⬜ P3 — Palette + command registry (M)
+### ✅ P3 — Palette + command registry (M)
 
 `internal/browse` gains the registry (name the type `command` to avoid
 reader confusion with the action package, which browse does NOT import) +
@@ -209,6 +209,19 @@ Fuzzy via sahilm/fuzzy (promote to direct dep), matched runes bolded
 inapplicable actions; finer refusals stay in `run` as status messages (the
 `editable()` idiom — no second copy of guards). Enter closes the palette,
 then runs; argumented actions open a P2 prompt.
+
+**Landed** (2026-07-31): command.go registry (type `command`; eleven
+entries: the seven migrated keys a/d/u/s/S/r/v plus palette-only view
+jumps) + palette.go (drawer ≤8 rows windowed to the cursor, fuzzy over
+title+aliases with title-rune bolding, no-match row, `:` and unadvertised
+ctrl+p, key-hint column read from the registry). handleBrowseKey consults
+the registry first; the 'v' body became showView(viewMode) so palette
+jumps and the cycle share it. Lesson recorded: undo's where-guard ate its
+"nothing to undo" feedback — refusals belong in run, exactly as the design
+said; the guard was removed. ':' from the detail overlay closes it and
+opens the palette (context commands revisit this in P5 with subjectCard).
+Drawer geometry invariant tested: frame height unchanged, panes shrink.
+Browse help lines gained "· : commands". model_test.go: zero changes.
 
 ### ⬜ P4 — Op layer in TUI + the daily-loop trio (M)
 

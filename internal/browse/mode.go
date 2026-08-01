@@ -19,6 +19,9 @@ const (
 	// modePrompt is an inline input mid-flight (usually opened by an
 	// action); its text entry owns printable keys.
 	modePrompt
+	// modePalette is the command drawer; it precedes filter and detail so
+	// ':' works from the overlay.
+	modePalette
 	// modeFilter: while the bar is open it takes every printable key, or
 	// typing "q" in a card name would quit.
 	modeFilter
@@ -34,6 +37,8 @@ func (m Model) mode() inputMode {
 		return modeConfirm
 	case m.prompt != nil:
 		return modePrompt
+	case m.palette != nil:
+		return modePalette
 	case m.filtering:
 		return modeFilter
 	case m.detail != nil:
