@@ -161,7 +161,7 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    wrapper would be ceremony. docs/parity.md now reads migrated top to
    bottom. **P1 complete.**
 
-### ⬜ P2 — TUI mode refactor (M; behavior-preserving, lands alone)
+### ✅ P2 — TUI mode refactor (M; behavior-preserving, lands alone)
 
 `internal/browse/mode.go`: derived `inputMode` enum — precedence confirm →
 prompt → palette → filter → detail → browse — computed from the existing
@@ -176,6 +176,18 @@ filter → transient status → op progress → arbitrage → emptyNote → posi
 line — implemented as one ordered function. **model_test.go (1,660 lines)
 must be green with zero behavioral diffs before anything stacks on this;
 it is the sprint's schedule risk.**
+
+**Landed** (2026-07-31): five steps, tests green after each — mode() as a
+pure derivation, dispatch switch (detail's inline mini-switch extracted to
+handleDetailKey), pendingConfirm with onYes closures (one test assertion
+changed from the deck flag to prompt content), the dormant prompt struct +
+handler + mode slot (covered by its own tests despite no opener yet), and
+statusLine as the explicit precedence function with the prompt slot live
+and the op slot reserved by comment. model_test.go churn: ONE assertion —
+far under the feared blast radius. Confirm-first vs filter-first ordering
+is unobservable (mutually exclusive states; noted in mode.go). Six
+baselines identical. The confirm help line keeps "y remove" until a second
+confirm user exists.
 
 ### ⬜ P3 — Palette + command registry (M)
 

@@ -934,7 +934,7 @@ func TestRemoveDeckAndUndo(t *testing.T) {
 	m = key(m, "down") // → Rich Deck, focus on the container pane
 
 	m = key(m, "d")
-	if m.confirm == nil || !m.confirm.deck {
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "remove deck") {
 		t.Fatalf("d on a deck did not stage a deck removal: %+v", m.confirm)
 	}
 	m = key(m, "y")

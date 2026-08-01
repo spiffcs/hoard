@@ -60,10 +60,13 @@ type card struct {
 	AltSource       string
 }
 
-// pendingRemoval is a delete waiting on confirmation.
-type pendingRemoval struct {
+// pendingConfirm is a staged action waiting on confirmation. Only an
+// explicit y runs onYes; anything else, including enter, cancels — the safe
+// reading of a stray keystroke is "no". Removals were the first users; any
+// destructive or expensive action stages the same way.
+type pendingConfirm struct {
 	prompt string
-	deck   bool // a deck, rather than a card in the collection
+	onYes  func(*Model) tea.Cmd
 }
 
 // Model is the browser's state. Exported so tests can drive Update directly,
@@ -114,7 +117,10 @@ type Model struct {
 	// confirm is the pending destructive action, or nil. Removals ask first:
 	// a single keystroke that deletes a hundred-card deck with no way back
 	// through the same key that moves the cursor is a trap.
-	confirm *pendingRemoval
+	confirm *pendingConfirm
+
+	// prompt is an inline one-line input when non-nil; see prompt.go.
+	prompt *prompt
 
 	// undoStack holds the single reversible action. See undoAction.
 	undoStack *undoAction
@@ -446,29 +452,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// While the bar is open it takes every printable key, or typing "q" in a
-	// card name would quit.
-	if m.filtering {
-		return m.handleFilterKey(msg)
-	}
-	// A pending removal takes precedence over everything but quitting, so the
-	// prompt cannot be left hanging while the cursor wanders off the row it
-	// refers to.
-	if m.confirm != nil {
+	switch m.mode() {
+	case modeConfirm:
 		return m.handleConfirmKey(msg)
+	case modePrompt:
+		return m.handlePromptKey(msg)
+	case modeFilter:
+		return m.handleFilterKey(msg)
+	case modeDetail:
+		return m.handleDetailKey(msg)
 	}
-	// The detail overlay covers the panes, so it takes the keys that would
-	// otherwise move a cursor the reader cannot see.
-	if m.detail != nil {
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "esc", "enter", "backspace":
-			m.detail = nil
-		}
-		return m, nil
-	}
+	return m.handleBrowseKey(msg)
+}
 
+// handleDetailKey drives the card overlay: close or quit, nothing else.
+func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc", "enter", "backspace":
+		m.detail = nil
+	}
+	return m, nil
+}
+
+// handleBrowseKey is the ordinary two-pane surface: navigation, edits, and
+// everything the help line advertises.
+func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -610,10 +620,10 @@ func (m *Model) askRemoval() {
 			m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
 			return
 		}
-		m.confirm = &pendingRemoval{
-			deck: true,
+		m.confirm = &pendingConfirm{
 			prompt: fmt.Sprintf("remove deck %q and its %s cards?",
 				sel.Name, ui.Count(sel.Copies)),
+			onYes: func(m *Model) tea.Cmd { m.removeDeck(); return nil },
 		}
 		return
 	}
@@ -628,31 +638,26 @@ func (m *Model) askRemoval() {
 	if c == nil {
 		return
 	}
-	m.confirm = &pendingRemoval{
+	m.confirm = &pendingConfirm{
 		prompt: fmt.Sprintf("remove %s from the %s?", c.Name, strings.ToLower(store.LooseName)),
+		onYes:  func(m *Model) tea.Cmd { m.removeCard(); return nil },
 	}
 }
 
-// handleConfirmKey answers a pending removal. Only an explicit y proceeds:
-// anything else, including enter, cancels — the safe reading of a stray
-// keystroke is "no".
+// handleConfirmKey answers a staged confirm; see pendingConfirm for the
+// only-y-proceeds contract.
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
-	deck := m.confirm.deck
+	c := m.confirm
 	m.confirm = nil
 
 	if msg.String() != "y" {
 		m.status, m.statusErr = "cancelled", false
 		return m, nil
 	}
-	if deck {
-		m.removeDeck()
-	} else {
-		m.removeCard()
-	}
-	return m, nil
+	return m, c.onYes(&m)
 }
 
 // handleFilterKey edits the query while the bar is open.

@@ -301,11 +301,18 @@ func (m Model) window(lines []string, p pane, width int) []string {
 
 // statusLine is the filter bar when it is open, then any transient message,
 // then the position within the pane.
+// statusLine is the one line below the rule, and this function is the whole
+// precedence contract for it: confirm → prompt → filter bar → transient
+// status → (op progress, when the op layer lands) → arbitrage → empty note
+// → position. New writers claim a slot here, never an ad-hoc check
+// elsewhere, or the ordering drifts back into scattered ifs.
 func (m Model) statusLine() string {
-	if m.confirm != nil {
+	switch m.mode() {
+	case modeConfirm:
 		return errStyle.Render(m.confirm.prompt) + helpStyle.Render("  y/n")
-	}
-	if m.filtering {
+	case modePrompt:
+		return m.promptLine()
+	case modeFilter:
 		bar := "/" + m.filterText + "▏"
 		if m.filterErr != "" {
 			return bar + "  " + errStyle.Render(m.filterErr)
@@ -360,8 +367,12 @@ func (m Model) estimateNote() string {
 
 func (m Model) helpLine() string {
 	switch {
+	// Wording stays "remove" while removals are the only confirms; it
+	// generalizes when another action stages one.
 	case m.confirm != nil:
 		return "y remove · any other key cancels"
+	case m.prompt != nil:
+		return "type the answer · enter accept · esc cancel · ctrl+u wipe"
 	case m.filtering:
 		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
 	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
