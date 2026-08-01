@@ -43,17 +43,11 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Imports add quantities, so the same file twice doubles every count with
-	// no visible symptom. The ledger keys on content — a renamed copy of an
-	// already-imported export is still the same cards.
-	sum := sha256.Sum256(data)
-	hash := hex.EncodeToString(sum[:])
-	if when, cardCount, done, err := st.ImportedAt(hash); err != nil {
-		return err
-	} else if done && !*again && !*dryRun {
-		return fmt.Errorf(
-			"this file's contents were already imported on %s (%d cards) — re-running would double every quantity.\nUse --again to add them anyway",
-			when, cardCount)
+	hash := contentHash(data)
+	if !*dryRun {
+		if err := refuseReimport(st, hash, *again); err != nil {
+			return err
+		}
 	}
 
 	coll, err := collsource.Parse(bytes.NewReader(data), *format)
@@ -78,11 +72,7 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 
 	// Resolve every row through the shared pipeline — bulk lookup, name
 	// retry for set+number pairs Scryfall does not know, finish correction.
-	reqs := make([]resolve.Request, len(coll.Rows))
-	for i, r := range coll.Rows {
-		reqs[i] = resolve.Request{Ident: r.Ident, Name: r.Name, Finish: r.Finish}
-	}
-	res, err := cardResolver.Resolve(ctx, reqs)
+	res, err := cardResolver.Resolve(ctx, resolve.Requests(coll.Rows))
 	if err != nil {
 		return err
 	}
@@ -208,6 +198,30 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 	}
 	if n := len(res.Unresolved); n > 0 {
 		return fmt.Errorf("%d rows were skipped: %w", n, errPartial)
+	}
+	return nil
+}
+
+// contentHash is the import ledger's identity for a batch of cards: the
+// bytes, not the filename — a renamed copy of an already-imported export is
+// still the same cards, and a re-pasted list is still the same paste.
+func contentHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// refuseReimport rejects content the ledger has seen, unless again says the
+// doubling is intentional. Imports add quantities, so a silent re-run doubles
+// every count with no visible symptom.
+func refuseReimport(st *store.Store, hash string, again bool) error {
+	when, cardCount, done, err := st.ImportedAt(hash)
+	if err != nil {
+		return err
+	}
+	if done && !again {
+		return fmt.Errorf(
+			"this content was already imported on %s (%d cards) — re-running would double every quantity.\nUse --again to add them anyway",
+			when, cardCount)
 	}
 	return nil
 }

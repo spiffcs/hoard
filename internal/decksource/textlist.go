@@ -62,33 +62,12 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 			continue
 		}
 
-		m := lineRE.FindStringSubmatch(line)
-		if m == nil {
+		entry, ok := parseLine(line)
+		if !ok {
 			return nil, fmt.Errorf("line %d: cannot parse decklist entry %q", lineNo, line)
 		}
-		qty, _ := strconv.Atoi(m[1])
-		if qty < 1 {
-			qty = 1
-		}
-		name := strings.TrimSpace(m[2])
-		set, number := m[3], m[4]
-
-		var ident scryfall.Identifier
-		switch {
-		case set != "" && number != "":
-			ident = scryfall.Identifier{Set: strings.ToLower(set), CollectorNumber: number}
-		default:
-			ident = scryfall.Identifier{Name: name}
-		}
-		finish := "nonfoil"
-		switch strings.ToUpper(m[5]) {
-		case "*F*":
-			finish = "foil"
-		case "*E*":
-			finish = "etched"
-		}
-
-		d.Entries = append(d.Entries, Entry{Ident: ident, Name: name, Quantity: qty, Finish: finish, Board: board})
+		entry.Board = board
+		d.Entries = append(d.Entries, entry)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -97,4 +76,67 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 		return nil, fmt.Errorf("no cards found in decklist")
 	}
 	return d, nil
+}
+
+// parseLine reads one card line — "2 Sol Ring", "1x Bolt (2X2) 117 *F*" —
+// into an Entry with no board (the caller knows what section it is reading).
+func parseLine(line string) (Entry, bool) {
+	m := lineRE.FindStringSubmatch(line)
+	if m == nil {
+		return Entry{}, false
+	}
+	qty, _ := strconv.Atoi(m[1])
+	if qty < 1 {
+		qty = 1
+	}
+	name := strings.TrimSpace(m[2])
+	set, number := m[3], m[4]
+
+	var ident scryfall.Identifier
+	switch {
+	case set != "" && number != "":
+		ident = scryfall.Identifier{Set: strings.ToLower(set), CollectorNumber: number}
+	default:
+		ident = scryfall.Identifier{Name: name}
+	}
+	finish := "nonfoil"
+	switch strings.ToUpper(m[5]) {
+	case "*F*":
+		finish = "foil"
+	case "*E*":
+		finish = "etched"
+	}
+	return Entry{Ident: ident, Name: name, Quantity: qty, Finish: finish}, true
+}
+
+// ParseLoose reads a pasted card list destined for a binder: every parseable
+// line becomes a board-main entry, section headers are ignored outright (a
+// binder has no boards), and lines nothing can read are skipped and reported
+// rather than failing the paste — a hand-typed list earns a tolerant reader,
+// and the caller says what was dropped.
+func ParseLoose(r io.Reader) (entries []Entry, skipped []string, err error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lineNo := 0
+	for sc.Scan() {
+		lineNo++
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, ok := sectionHeaders[strings.ToLower(strings.TrimRight(line, ":"))]; ok {
+			continue
+		}
+		entry, ok := parseLine(line)
+		if !ok {
+			skipped = append(skipped, fmt.Sprintf("line %d: %s", lineNo, line))
+			continue
+		}
+		entry.Board = BoardMain
+		entries = append(entries, entry)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, nil, err
+	}
+	return entries, skipped, nil
 }

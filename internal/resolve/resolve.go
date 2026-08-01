@@ -25,6 +25,22 @@ type Request struct {
 	Finish string
 }
 
+// Requester is anything that can state itself as a Request — deck entries,
+// collection rows, pasted lines. It exists so the callers stop copying the
+// same build loop; the third copy was the sign it belonged here.
+type Requester interface {
+	Request() Request
+}
+
+// Requests builds the pipeline's input from any source's rows.
+func Requests[T Requester](items []T) []Request {
+	out := make([]Request, len(items))
+	for i, item := range items {
+		out[i] = item.Request()
+	}
+	return out
+}
+
 // Match is one request's answer. When OK, Card is the printing and Finish the
 // finish to store — corrected away from the request's claim when the printing
 // does not come in it, which Refinished reports.

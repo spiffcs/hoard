@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
@@ -29,8 +30,13 @@ type Entry struct {
 	Ident    scryfall.Identifier
 	Name     string
 	Quantity int
-	Finish   string // normal|foil|etched
+	Finish   string // nonfoil|foil|etched
 	Board    string // main|commander|side|maybe
+}
+
+// Request states this entry as the resolve pipeline's input.
+func (e Entry) Request() resolve.Request {
+	return resolve.Request{Ident: e.Ident, Name: e.Name, Finish: e.Finish}
 }
 
 // Deck is a normalized, provider-agnostic deck import.

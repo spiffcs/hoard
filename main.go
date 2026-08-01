@@ -38,6 +38,8 @@ still works.
 
 Collection commands:
   add                                              Add cards interactively by name
+  add <scryfall-url> [--foil] [--qty N]            Add one card by its Scryfall link
+  add --file LIST | - [--binder B] [--again]       Add a pasted/exported card list (or pipe one in)
   update-prices [--limit N]                        Refresh prices (Scryfall updates daily)
   movers [--since 30d] [--limit N]                 Biggest risers and sinkers you hold
   backfill-prices                                  Load 90 days of past prices from MTGJSON

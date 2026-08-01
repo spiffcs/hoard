@@ -9,6 +9,7 @@
 package collsource
 
 import (
+	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
@@ -32,6 +33,11 @@ type Row struct {
 	// deck rows: pouring a deck's contents into a binder would count those
 	// cards twice the moment the deck itself is re-imported.
 	Kind string
+}
+
+// Request states this row as the resolve pipeline's input.
+func (r Row) Request() resolve.Request {
+	return resolve.Request{Ident: r.Ident, Name: r.Name, Finish: r.Finish}
 }
 
 // Collection is a parsed export file.

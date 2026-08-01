@@ -172,7 +172,7 @@ result, not a failure). JSON is the `watch` document kind, schema **1.0.2**;
 (met/waiting/unpriced states) → first check fired exit 3 → second quiet
 exit 0.
 
-## ⬜ E. Bulk paste entry
+## ✅ E. Bulk paste entry
 
 - `hoard add --file LIST` (or `-`/piped stdin): lenient text-list parse
   (skip-and-report bad lines, ignore board headers), resolve through the
@@ -183,20 +183,29 @@ exit 0.
 - `--binder REF` on `hoard add` picks the destination — also closing the
   deferred URL-add `--binder`.
 
-## ⬜ F. Progress UI for long-running commands
+**Landed** (2026-07-31): `decksource.ParseLoose` (shared `parseLine` with
+ParseText; headers ignored, everything board-main, bad lines skipped with
+line numbers); `resolve.Requests` over a `Requester` interface that
+decksource.Entry and collsource.Row implement (deck add, import, and the
+paste all call it); `hoard add --file/-` with piped-stdin autodetection
+(`pbpaste | hoard add` just works), `--binder` on both list and URL adds
+(destination resolves before the network round-trip), `--again` over the
+shared `contentHash`/`refuseReimport` helpers extracted from import.
+Partial pastes add what resolved and exit 2; a re-paste of the same bytes
+refuses with exit 1. Live-verified against the real DB via stdin.
 
-`update-prices`, `backfill-prices`, `catalog update`, first-of-day arbitrage,
-and large imports can run many seconds with ad-hoc stderr lines or silence —
-a quiet stretch reads as a hang.
+## ✅→ F. Progress UI — superseded by the parity sprint
 
-**Pick this up with a dedicated plan-mode design session before any code.**
-The UI angles need deliberate comparison: spinner vs progress bar vs step
-checklist; determinate (bytes, chunks-of-75, card counts are mostly knowable)
-vs indeterminate; TTY detection so piped runs keep plain stderr lines and
-`--json` streams stay clean; whether `pricing.WithProgress` and
-`catalog.Update`'s count callback generalize into one progress contract; how
-cancellation is communicated. Ingredients: the browse TUI's spinner idiom,
-`ui.Env` capability detection, the WithProgress inversion pattern.
+**Pivot (2026-07-31, maintainer decision):** the CLI grew ten commands the
+TUI cannot reach, and the TUI grew editing/filtering the CLI cannot. The
+progress UI is no longer a standalone phase: it is one pillar of the next
+sprint, the **parity sprint**, because the TUI's missing big rocks
+(update-prices, backfill, catalog update, import/export) are blocked on
+exactly it. See "The way forward" below. The design constraints recorded
+here (spinner vs bar vs checklist, determinate counts, TTY detection, one
+progress contract generalizing `pricing.WithProgress` + catalog's count
+callback, cancellation) carry into that sprint's opening design session
+unchanged.
 
 ## Verification discipline (unchanged from last sprint)
 
@@ -225,15 +234,42 @@ invariance is itself a verification target.
 
 ## The way forward (after this sprint)
 
-1. **Distribution**: goreleaser + Homebrew tap + version wired into
+1. **The parity sprint** (next; replaces phase F). Principle: every
+   capability is a function in an internal package with a progress seam; the
+   CLI and the TUI are both thin frontends, and a gap between them is a
+   decision, not an accident — tracked in a parity table that every phase
+   updates. **Opens with a plan-mode design session** covering three things
+   as one conversation: the action-layer contract, the progress UI (phase
+   F's constraints, recorded above), and a TUI command palette (`:`-style,
+   fuzzy over every action — the scalable mirror of the CLI verb list;
+   dedicated keys stay for frequent actions, the palette is the floor).
+   Then: quick wins first (watches view + fired-on-open banner +
+   add-watch-from-selected-card, binder new/rename/rm keys in the left
+   pane, repair-finishes from the unpriced view, movers window cycling to
+   match `--since`), the progress-dependent big rocks second (update-prices,
+   backfill, catalog update, import/export inside the TUI).
+2. **UI beautification sprint** (docs/sprint-ui-beautification.md, queued):
+   deliberately *after* parity — polishing half a surface would lock the
+   skew in.
+3. **Distribution**: goreleaser + Homebrew tap + version wired into
    buildinfo — the "other people can use this" release; pairs with the new
    README. (Ground is favourable: pure Go, no cgo, Swift helper already
    decoupled from `go build`.)
-2. **backup/doctor**: on-demand `VACUUM INTO` + integrity_check — the
+4. **backup/doctor**: on-demand `VACUUM INTO` + integrity_check — the
    irreplaceable-price-history safety valve from the architecture audit.
-3. Want lists with arbitrage-powered best-vendor pricing — portfolio's
+5. Want lists with arbitrage-powered best-vendor pricing — portfolio's
    continuation on top of watch.
-4. Condition/language columns → lossless ManaBox import, real Moxfield
+6. Condition/language columns → lossless ManaBox import, real Moxfield
    condition export.
-5. Then: duplicates report, location/set-completion tracking, Dragon Shield
+7. Then: duplicates report, location/set-completion tracking, Dragon Shield
    import, scanner sleeve/glare fixtures, resolve/catalog unification.
+
+**Reverse-skew backlog** (user A's ledger — the TUI can do these and the CLI
+cannot; explicit so parity is honest in both directions):
+
+- `hoard search <query>` — the browser's filter grammar (`finish:foil
+  qty>2 rarity:mythic`, bare words as name search) as a read command, with
+  `--json` via the holdings document.
+- CLI quantity edit/remove — `hoard set <card> <qty>` / `hoard rm <card>`
+  or similar: today the only non-TUI ways to shrink a holding are export →
+  edit → re-import, which is not an answer.

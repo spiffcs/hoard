@@ -57,11 +57,7 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 	// by name and corrects finishes the printing does not come in (a decklist
 	// with no *F* marker parses as non-foil, but precon commanders are
 	// frequently foil-only, and the claimed finish would price at $0 forever).
-	reqs := make([]resolve.Request, len(deck.Entries))
-	for i, e := range deck.Entries {
-		reqs[i] = resolve.Request{Ident: e.Ident, Name: e.Name, Finish: e.Finish}
-	}
-	res, err := cardResolver.Resolve(ctx, reqs)
+	res, err := cardResolver.Resolve(ctx, resolve.Requests(deck.Entries))
 	if err != nil {
 		return err
 	}

@@ -71,3 +71,45 @@ func TestParseTextErrors(t *testing.T) {
 		t.Error("expected parse error for unrecognized line")
 	}
 }
+
+// ParseLoose is the paste reader: headers vanish (a binder has no boards),
+// bad lines are reported rather than fatal, and everything lands on main.
+func TestParseLoose(t *testing.T) {
+	in := `Deck
+4 Sol Ring (C21) 125
+what even is this line
+1x Lightning Bolt *F*
+Sideboard
+2 Mystic Remora
+
+// a comment
+`
+	entries, skipped, err := ParseLoose(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseLoose: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entries = %+v, want 3", entries)
+	}
+	for _, e := range entries {
+		if e.Board != BoardMain {
+			t.Errorf("%s is on board %q, want main — a paste has no sections", e.Name, e.Board)
+		}
+	}
+	if entries[0].Quantity != 4 || entries[0].Ident.Set != "c21" {
+		t.Errorf("first entry = %+v", entries[0])
+	}
+	if entries[1].Finish != "foil" {
+		t.Errorf("Bolt finish = %q, want the *F* marker honored", entries[1].Finish)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "line 3") {
+		t.Errorf("skipped = %v, want the unreadable line reported with its number", skipped)
+	}
+}
+
+func TestParseLooseEmpty(t *testing.T) {
+	entries, skipped, err := ParseLoose(strings.NewReader("# nothing\n\n"))
+	if err != nil || len(entries) != 0 || len(skipped) != 0 {
+		t.Errorf("empty paste = %v, %v, %v", entries, skipped, err)
+	}
+}
