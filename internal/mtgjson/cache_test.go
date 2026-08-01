@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A 200 that is not gzip — a captive portal, an outage page — must not become
@@ -99,5 +100,45 @@ func TestProgressReportsDownloadBytes(t *testing.T) {
 	}
 	if len(dones) != 0 {
 		t.Errorf("Progress fired %d times on a cache hit, want silence", len(dones))
+	}
+}
+
+// A download that stops delivering bytes must fail with a clear error, not
+// hang forever — the pre-timeout behavior for a silently dead connection
+// under a ~150 MB archive.
+func TestStalledDownloadFailsInsteadOfHanging(t *testing.T) {
+	oldIdle := idleAfter
+	idleAfter = 100 * time.Millisecond
+	t.Cleanup(func() { idleAfter = oldIdle })
+
+	hang := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A few real bytes, then silence: the connection is alive, the data
+		// is not coming.
+		w.Header().Set("Content-Length", "1048576")
+		w.Write([]byte{0x1f, 0x8b})
+		w.(http.Flusher).Flush()
+		<-hang
+	}))
+	t.Cleanup(srv.Close)
+	// Registered after srv.Close so it runs first (cleanups are LIFO):
+	// Close waits for the handler, and the handler waits for this.
+	t.Cleanup(func() { close(hang) })
+	oldBase := apiBase
+	apiBase = srv.URL
+	t.Cleanup(func() { apiBase = oldBase })
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := SetIdentifiers(context.Background(), Options{CacheDir: t.TempDir()}, "m3c")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stalled") {
+			t.Errorf("err = %v, want a stall error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled download still hanging after 5s — the idle timeout did not fire")
 	}
 }

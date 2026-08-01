@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/buildinfo"
@@ -98,6 +99,48 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// idleAfter is how long a download may deliver zero bytes before it is
+// declared stalled. The transport already bounds the header wait; this
+// bounds the body — the ~150 MB archive on a connection that silently died
+// used to hang forever, printing nothing. Sixty seconds of literally no
+// bytes is not a slow link, it is a dead one. A var so tests can shrink it.
+var idleAfter = 60 * time.Second
+
+// idleReader fails a read that has produced no bytes for idleAfter, by
+// closing the underlying body from a watchdog timer — the only way to
+// unblock a Read parked inside the transport.
+type idleReader struct {
+	r       io.ReadCloser
+	timer   *time.Timer
+	wait    time.Duration
+	stalled atomic.Bool
+}
+
+func newIdleReader(r io.ReadCloser, wait time.Duration) *idleReader {
+	ir := &idleReader{r: r, wait: wait}
+	ir.timer = time.AfterFunc(wait, func() {
+		ir.stalled.Store(true)
+		r.Close()
+	})
+	return ir
+}
+
+func (ir *idleReader) Read(p []byte) (int, error) {
+	n, err := ir.r.Read(p)
+	if err != nil && ir.stalled.Load() {
+		return n, fmt.Errorf("mtgjson download stalled: no data for %s — check the connection and try again", ir.wait)
+	}
+	if n > 0 {
+		ir.timer.Reset(ir.wait)
+	}
+	return n, err
+}
+
+func (ir *idleReader) Close() error {
+	ir.timer.Stop()
+	return ir.r.Close()
+}
+
 // fetch returns the bytes of one MTGJSON file, from the cache when possible.
 // The caller closes the returned reader.
 //
@@ -142,8 +185,9 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 		resp.Body.Close()
 		return nil, fmt.Errorf("mtgjson %s returned %d", name, resp.StatusCode)
 	}
+	body := newIdleReader(resp.Body, idleAfter)
 	if cachePath == "" {
-		return resp.Body, nil
+		return body, nil
 	}
 
 	// Write through to the cache, then serve from it. A partial download must
@@ -152,20 +196,20 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	// body is returned instead — which is why the close cannot be deferred
 	// here; it would fire before the caller ever read from that body.
 	if err := os.MkdirAll(o.CacheDir, 0o755); err != nil {
-		return resp.Body, nil //nolint:nilerr // caching is best-effort
+		return body, nil //nolint:nilerr // caching is best-effort
 	}
 	pruneCache(o.CacheDir)
 	tmp, err := os.CreateTemp(o.CacheDir, "dl-*")
 	if err != nil {
-		return resp.Body, nil //nolint:nilerr // caching is best-effort
+		return body, nil //nolint:nilerr // caching is best-effort
 	}
-	defer resp.Body.Close()
+	defer body.Close()
 	dst := io.Writer(tmp)
 	if o.Progress != nil {
 		// ContentLength is -1 when unknown; 0 means indeterminate here.
 		dst = &progressWriter{w: tmp, total: max(resp.ContentLength, 0), fn: o.Progress}
 	}
-	if _, err := io.Copy(dst, resp.Body); err != nil {
+	if _, err := io.Copy(dst, body); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return nil, err
