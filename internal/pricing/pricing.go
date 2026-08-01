@@ -46,6 +46,9 @@ type Fetcher struct {
 	// progress reports work worth waiting through. Nil is silent, which is what
 	// tests want and what keeps output decisions in the command layer.
 	progress func(string)
+	// bytes watches downloads land, for callers rendering a determinate bar
+	// over the multi-megabyte bundles. Nil is silent.
+	bytes func(done, total int64)
 }
 
 // New returns a Fetcher reading through cacheDir.
@@ -57,6 +60,17 @@ func New(st *store.Store, cacheDir string) *Fetcher {
 func (f *Fetcher) WithProgress(fn func(string)) *Fetcher {
 	f.progress = fn
 	return f
+}
+
+// WithBytes attaches a download byte-count reporter.
+func (f *Fetcher) WithBytes(fn func(done, total int64)) *Fetcher {
+	f.bytes = fn
+	return f
+}
+
+// options is what every mtgjson call reads through.
+func (f *Fetcher) options() mtgjson.Options {
+	return mtgjson.Options{CacheDir: f.cacheDir, Progress: f.bytes}
 }
 
 func (f *Fetcher) say(format string, args ...any) {
@@ -71,12 +85,12 @@ func (f *Fetcher) say(format string, args ...any) {
 // The int is how many refs resolved, so a caller can report the printings it
 // could not ask about without resolving them all a second time.
 func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, what string,
-	read func(context.Context, string, map[string]bool) (map[string]T, error)) (map[string]T, int, error) {
+	read func(context.Context, mtgjson.Options, map[string]bool) (map[string]T, error)) (map[string]T, int, error) {
 	byUUID, toScryfall, err := f.want(ctx, refs)
 	if err != nil || len(byUUID) == 0 {
 		return nil, 0, err
 	}
-	got, err := read(ctx, f.cacheDir, byUUID)
+	got, err := read(ctx, f.options(), byUUID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("mtgjson %s: %w", what, err)
 	}
@@ -169,7 +183,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	}
 	learned := make(map[string]string)
 	for setCode, sids := range bySet {
-		ids, err := mtgjson.SetIdentifiers(ctx, f.cacheDir, setCode)
+		ids, err := mtgjson.SetIdentifiers(ctx, f.options(), setCode)
 		if errors.Is(err, mtgjson.ErrNoSuchSet) {
 			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
 			// rather than abandon every other card.

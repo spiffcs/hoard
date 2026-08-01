@@ -115,11 +115,15 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    the outcome summary both flow as "filling price gaps" Notes with the
    old wording; root `fillPriceGaps` remains only as a shim for the
    unmigrated callers (import, deck add, bulk add) and dies with them.
-4. **backfill** — `action.BackfillPrices`; mtgjson gains
-   `Options{CacheDir, Progress func(done, total int64)}` + a counting
-   reader; **separate commit**: the 60s zero-bytes idle timeout. Deliberate
-   fix folded in: the "Fetching 90 days…" header moves from stdout to
-   progress/stderr (closes the documented convention inconsistency).
+4. ✅ **backfill** (landed 2026-07-31, first half) — `action.BackfillPrices`
+   with `BackfillResult`; mtgjson gained `Options{CacheDir, Progress}` with
+   a progressWriter over the cache download (total = Content-Length; cache
+   hits silent — unit-tested); `pricing.Fetcher.WithBytes` threads it. The
+   "Fetching 90 days…" header moved from stdout to progress/stderr as
+   planned. Live-verified: full archive download + "Nothing to backfill"
+   stdout (link too fast for piped count lines to pass the 10s throttle —
+   the TTY path is unit-covered). **Second half still pending: the 60s
+   zero-bytes idle timeout, its own commit.**
 5. **import** — `action.ImportCollection`; result struct from import.go's
    locals (copies/perBinder/created/skipped/refinished/dropped/unresolved);
    `errPartial` → `action.ErrPartial` (main keeps the exit-2 mapping).

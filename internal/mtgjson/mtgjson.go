@@ -72,6 +72,32 @@ func headerBoundedTransport() *http.Transport {
 // today is a var so tests can pin the cache key.
 var today = func() string { return time.Now().Format("2006-01-02") }
 
+// Options configures a fetch: where downloads cache, and who watches the
+// bytes arrive.
+type Options struct {
+	// CacheDir, when non-empty, keeps downloaded files so repeated runs on
+	// the same day don't re-fetch them.
+	CacheDir string
+	// Progress receives cumulative downloaded bytes against the response's
+	// total (0 when the server did not say). Only a genuine download
+	// reports; a cache hit is instant and silent. Nil is silent.
+	Progress func(done, total int64)
+}
+
+// progressWriter tees byte counts to Options.Progress as a download lands.
+type progressWriter struct {
+	w           io.Writer
+	done, total int64
+	fn          func(done, total int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.done += int64(n)
+	p.fn(p.done, p.total)
+	return n, err
+}
+
 // fetch returns the bytes of one MTGJSON file, from the cache when possible.
 // The caller closes the returned reader.
 //
@@ -80,10 +106,10 @@ var today = func() string { return time.Now().Format("2006-01-02") }
 // price stays a gap forever, and without a cache every single update-prices
 // would re-download the whole bundle chasing it. MTGJSON rebuilds nightly, so
 // entries are keyed by date and yesterday's are simply never read again.
-func fetch(ctx context.Context, cacheDir, name string) (io.ReadCloser, error) {
+func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	var cachePath string
-	if cacheDir != "" {
-		cachePath = filepath.Join(cacheDir, today()+"-"+name)
+	if o.CacheDir != "" {
+		cachePath = filepath.Join(o.CacheDir, today()+"-"+name)
 		if f, err := os.Open(cachePath); err == nil {
 			if gzipMagic(f) {
 				return f, nil
@@ -125,16 +151,21 @@ func fetch(ctx context.Context, cacheDir, name string) (io.ReadCloser, error) {
 	// Caching is best-effort: if the cache directory cannot be used, the live
 	// body is returned instead — which is why the close cannot be deferred
 	// here; it would fire before the caller ever read from that body.
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(o.CacheDir, 0o755); err != nil {
 		return resp.Body, nil //nolint:nilerr // caching is best-effort
 	}
-	pruneCache(cacheDir)
-	tmp, err := os.CreateTemp(cacheDir, "dl-*")
+	pruneCache(o.CacheDir)
+	tmp, err := os.CreateTemp(o.CacheDir, "dl-*")
 	if err != nil {
 		return resp.Body, nil //nolint:nilerr // caching is best-effort
 	}
 	defer resp.Body.Close()
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	dst := io.Writer(tmp)
+	if o.Progress != nil {
+		// ContentLength is -1 when unknown; 0 means indeterminate here.
+		dst = &progressWriter{w: tmp, total: max(resp.ContentLength, 0), fn: o.Progress}
+	}
+	if _, err := io.Copy(dst, resp.Body); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return nil, err
@@ -209,8 +240,8 @@ var ErrNoSuchSet = errors.New("no such MTGJSON set")
 //
 // Per-set files are small (under a megabyte gzipped), which is why this is done
 // set by set: the equivalent whole-catalog file, AllIdentifiers, is over 200 MB.
-func SetIdentifiers(ctx context.Context, cacheDir, setCode string) (map[string]string, error) {
-	body, err := fetch(ctx, cacheDir, strings.ToUpper(setCode)+".json.gz")
+func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]string, error) {
+	body, err := fetch(ctx, o, strings.ToUpper(setCode)+".json.gz")
 	if err != nil {
 		if errors.Is(err, ErrNoSuchSet) {
 			return nil, err
@@ -281,9 +312,9 @@ const (
 // Comparing vendors is the whole point here, so nothing is collapsed: a card
 // with three retail quotes and a buylist offer yields four Quotes. Cardmarket is
 // still excluded, since a euro price cannot be compared against dollar ones.
-func TodayQuotes(ctx context.Context, cacheDir string, want map[string]bool) (map[string][]Quote, error) {
+func TodayQuotes(ctx context.Context, o Options, want map[string]bool) (map[string][]Quote, error) {
 	out := map[string][]Quote{}
-	err := streamPrices(ctx, cacheDir, todayFile, want, func(uuid string, rec priceRecord) {
+	err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
 		var qs []Quote
 		for _, name := range providerOrder {
 			v, ok := rec.Paper[name]
@@ -333,11 +364,11 @@ const (
 // records not asked for are skipped without being built. Scan cost is the same
 // whether one card is wanted or every card is, which is why callers need not
 // keep want small.
-func streamPrices(ctx context.Context, cacheDir, file string, want map[string]bool, visit func(string, priceRecord)) error {
+func streamPrices(ctx context.Context, o Options, file string, want map[string]bool, visit func(string, priceRecord)) error {
 	if len(want) == 0 {
 		return nil
 	}
-	body, err := fetch(ctx, cacheDir, file)
+	body, err := fetch(ctx, o, file)
 	if err != nil {
 		return fmt.Errorf("fetching prices: %w", err)
 	}
@@ -379,9 +410,9 @@ func streamPrices(ctx context.Context, cacheDir, file string, want map[string]bo
 // AllPricesToday is ~5 MB gzipped but around 50 MB decoded and covers every card
 // in Magic, so it is streamed and filtered against `want` rather than decoded
 // whole. Only UUIDs asked for are retained.
-func TodayPrices(ctx context.Context, cacheDir string, want map[string]bool) (map[string]Price, error) {
+func TodayPrices(ctx context.Context, o Options, want map[string]bool) (map[string]Price, error) {
 	out := make(map[string]Price, len(want))
-	err := streamPrices(ctx, cacheDir, todayFile, want, func(uuid string, rec priceRecord) {
+	err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
 		if p, ok := bestUSD(uuid, rec); ok {
 			out[uuid] = p
 		}
@@ -421,9 +452,9 @@ const historyProvider = "tcgplayer"
 // This reads AllPrices rather than AllPricesToday: ~150 MB on the wire against
 // 5 MB, and thirty times the rows, which is why nothing calls it on a schedule.
 // Observations come back in no particular order; callers that care sort them.
-func PriceHistory(ctx context.Context, cacheDir string, want map[string]bool) (map[string][]Observation, error) {
+func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[string][]Observation, error) {
 	out := make(map[string][]Observation, len(want))
-	err := streamPrices(ctx, cacheDir, archiveFile, want, func(uuid string, rec priceRecord) {
+	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
 		v, ok := rec.Paper[historyProvider]
 		if !ok || v.Currency != "USD" {
 			return

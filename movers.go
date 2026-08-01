@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/report"
@@ -81,70 +82,41 @@ func cmdMovers(st *store.Store, args []string, jsonOut bool) error {
 //
 // Only what is held gets backfilled — reconstructing history for cards nobody owns
 // is not worth the wait.
+// cmdBackfillPrices loads the prices MTGJSON kept while hoard was not
+// looking. A one-off, and separate from update-prices for a reason: the
+// archive is ~150 MB against the 5 MB of today's file, and the download
+// cache is pruned nightly.
+//
+// The what-is-about-to-happen header now travels as progress (stderr) —
+// closing the one documented stdout/stderr inconsistency: narration was
+// never data.
 func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("backfill-prices", flag.ContinueOnError)
 	if _, err := parsePositionals(fs, args); err != nil {
 		return err
 	}
-
 	env := ui.Detect(os.Stdout)
-	owned, err := st.OwnedByFinish()
+	pr := stderrPrinter()
+	res, err := action.BackfillPrices(ctx,
+		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn())
+	pr.Close()
 	if err != nil {
 		return err
 	}
-	if len(owned) == 0 {
+	if res.Printings == 0 {
 		fmt.Println(env.Dim()("Nothing owned yet."))
 		return nil
 	}
-	_, oldest, err := st.PriceHistoryDepth()
-	if err != nil {
-		return err
-	}
-
-	refs := make([]pricing.Ref, len(owned))
-	printings := map[string]bool{}
-	for i, o := range owned {
-		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
-		printings[o.ScryfallID] = true
-	}
-
-	fmt.Printf("Fetching 90 days of prices for %s printings from MTGJSON (~150 MB)...\n",
-		ui.Count(len(printings)))
-	byCard, resolvable, err := newFetcher(st).History(ctx, refs)
-	if err != nil {
-		return err
-	}
-
-	inserted, cards, err := st.BackfillPrices(byCard, oldest)
-	if err != nil {
-		return err
-	}
-
-	printBackfill(env, backfillResult{
-		printings: len(printings), unmapped: len(printings) - resolvable,
-		unquoted: resolvable - len(byCard), inserted: inserted, cards: cards,
-		hadHistorySince: oldest,
-	})
+	printBackfill(env, res)
 	return nil
 }
 
-// backfillResult is what one import did, and what it could not reach.
-type backfillResult struct {
-	printings, unmapped, unquoted, inserted, cards int
-	hadHistorySince                                string
-}
-
 // printBackfill reports the import, including what it missed.
-//
-// The misses are not filler. Movers joins a card against its own baseline, so a
-// printing with no backfilled history simply stops appearing in any window that
-// predates hoard — the list quietly gets shorter rather than visibly incomplete.
-// Saying how many were skipped is the only place that becomes visible.
-func printBackfill(env ui.Env, r backfillResult) {
+func printBackfill(env ui.Env, r action.BackfillResult) {
 	dim := env.Dim()
-	if r.inserted == 0 {
-		if r.hadHistorySince != "" {
-			if t, err := time.Parse(time.RFC3339, r.hadHistorySince); err == nil {
+	if r.Inserted == 0 {
+		if r.HadHistorySince != "" {
+			if t, err := time.Parse(time.RFC3339, r.HadHistorySince); err == nil {
 				fmt.Println(dim(fmt.Sprintf(
 					"Nothing to backfill: prices are already recorded from %s.",
 					t.Local().Format("2 Jan 2006"))))
@@ -156,15 +128,15 @@ func printBackfill(env ui.Env, r backfillResult) {
 	}
 
 	fmt.Printf("Backfilled %s observations across %s printings.\n",
-		ui.Count(r.inserted), ui.Count(r.cards))
-	if r.unmapped > 0 {
+		ui.Count(r.Inserted), ui.Count(r.Cards))
+	if r.Unmapped > 0 {
 		fmt.Println(dim(fmt.Sprintf(
-			"  %s printings have no MTGJSON id and were skipped.", ui.Count(r.unmapped))))
+			"  %s printings have no MTGJSON id and were skipped.", ui.Count(r.Unmapped))))
 	}
-	if r.unquoted > 0 {
+	if r.Unquoted > 0 {
 		fmt.Println(dim(fmt.Sprintf(
 			"  %s have no TCGplayer price history — the same gap 'unpriced' reports.",
-			ui.Count(r.unquoted))))
+			ui.Count(r.Unquoted))))
 	}
 	fmt.Println(dim("Prices come from TCGplayer, the source Scryfall itself quotes."))
 	fmt.Println()

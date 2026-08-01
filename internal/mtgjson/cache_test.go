@@ -17,7 +17,7 @@ func TestNonGzipResponseIsNotCached(t *testing.T) {
 	serve(t, map[string][]byte{"/M3C.json.gz": []byte("<html>service maintenance</html>")})
 	cacheDir := t.TempDir()
 
-	_, err := SetIdentifiers(context.Background(), cacheDir, "m3c")
+	_, err := SetIdentifiers(context.Background(), Options{CacheDir: cacheDir}, "m3c")
 	if err == nil {
 		t.Fatal("a non-gzip 200 resolved, want an error")
 	}
@@ -52,7 +52,7 @@ func TestPoisonedCacheEntryIsReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := SetIdentifiers(context.Background(), cacheDir, "m3c")
+	got, err := SetIdentifiers(context.Background(), Options{CacheDir: cacheDir}, "m3c")
 	if err != nil {
 		t.Fatalf("SetIdentifiers over a poisoned cache: %v", err)
 	}
@@ -60,7 +60,44 @@ func TestPoisonedCacheEntryIsReplaced(t *testing.T) {
 		t.Errorf("hits=%d ids=%d, want a single re-download resolving both ids", hits, len(got))
 	}
 	// And the healed entry serves the next call without the network.
-	if _, err := SetIdentifiers(context.Background(), cacheDir, "m3c"); err != nil || hits != 1 {
+	if _, err := SetIdentifiers(context.Background(), Options{CacheDir: cacheDir}, "m3c"); err != nil || hits != 1 {
 		t.Errorf("second call: err=%v hits=%d, want cached", err, hits)
+	}
+}
+
+// Options.Progress sees the download land: cumulative bytes against the
+// Content-Length total — and nothing at all on a cache hit, where there is
+// no wait worth narrating.
+func TestProgressReportsDownloadBytes(t *testing.T) {
+	payload := gzipped(t, `{"data": {}}`)
+	serve(t, map[string][]byte{"/M3C.json.gz": payload})
+	cacheDir := t.TempDir()
+
+	var dones []int64
+	var lastTotal int64
+	o := Options{CacheDir: cacheDir, Progress: func(done, total int64) {
+		dones = append(dones, done)
+		lastTotal = total
+	}}
+	if _, err := SetIdentifiers(context.Background(), o, "m3c"); err != nil {
+		t.Fatalf("SetIdentifiers: %v", err)
+	}
+	if len(dones) == 0 {
+		t.Fatal("Progress never fired during a genuine download")
+	}
+	if got := dones[len(dones)-1]; got != int64(len(payload)) {
+		t.Errorf("final done = %d, want the full body (%d)", got, len(payload))
+	}
+	if lastTotal != int64(len(payload)) {
+		t.Errorf("total = %d, want Content-Length (%d)", lastTotal, len(payload))
+	}
+
+	// Second read is a cache hit: silent.
+	dones = nil
+	if _, err := SetIdentifiers(context.Background(), o, "m3c"); err != nil {
+		t.Fatalf("SetIdentifiers (cached): %v", err)
+	}
+	if len(dones) != 0 {
+		t.Errorf("Progress fired %d times on a cache hit, want silence", len(dones))
 	}
 }

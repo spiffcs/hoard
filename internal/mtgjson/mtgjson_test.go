@@ -81,7 +81,7 @@ const priceFile = `{
 func TestTodayPricesResolvesEachFinishSeparately(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
 
-	got, err := TodayPrices(context.Background(), "", map[string]bool{"uuid-ripple": true})
+	got, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-ripple": true})
 	if err != nil {
 		t.Fatalf("TodayPrices: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
 
 	want := map[string]bool{"uuid-tcg": true, "uuid-ck": true, "uuid-eur-only": true, "uuid-stale": true}
-	got, err := TodayPrices(context.Background(), "", want)
+	got, err := TodayPrices(context.Background(), Options{}, want)
 	if err != nil {
 		t.Fatalf("TodayPrices: %v", err)
 	}
@@ -159,7 +159,7 @@ const quoteFile = `{
 func TestTodayQuotesReturnsEveryVendorAndSide(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, quoteFile)})
 
-	got, err := TodayQuotes(context.Background(), "", map[string]bool{"uuid-legion": true})
+	got, err := TodayQuotes(context.Background(), Options{}, map[string]bool{"uuid-legion": true})
 	if err != nil {
 		t.Fatalf("TodayQuotes: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestTodayQuotesEmptyRequestSkipsDownload(t *testing.T) {
 	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
 	defer func() { apiBase = old }()
 
-	got, err := TodayQuotes(context.Background(), "", nil)
+	got, err := TodayQuotes(context.Background(), Options{}, nil)
 	if err != nil || len(got) != 0 {
 		t.Errorf("TodayQuotes(nil) = %v, %v; want empty with no request", got, err)
 	}
@@ -214,7 +214,7 @@ func TestTodayPricesEmptyRequestSkipsDownload(t *testing.T) {
 	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
 	defer func() { apiBase = old }()
 
-	got, err := TodayPrices(context.Background(), "", nil)
+	got, err := TodayPrices(context.Background(), Options{}, nil)
 	if err != nil || got != nil {
 		t.Errorf("TodayPrices(nil) = %v, %v; want nil, nil with no request", got, err)
 	}
@@ -224,7 +224,7 @@ func TestTodayPricesRejectsTruncatedGzip(t *testing.T) {
 	full := gzipped(t, priceFile)
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": full[:len(full)/2]})
 
-	if _, err := TodayPrices(context.Background(), "", map[string]bool{"uuid-tcg": true}); err == nil {
+	if _, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-tcg": true}); err == nil {
 		t.Error("want an error for a truncated download, got nil")
 	}
 }
@@ -242,7 +242,7 @@ func TestSetIdentifiers(t *testing.T) {
 	serve(t, map[string][]byte{"/M3C.json.gz": gzipped(t, m3cFile)})
 
 	// Lower-case set codes come from Scryfall; MTGJSON file names are upper.
-	got, err := SetIdentifiers(context.Background(), "", "m3c")
+	got, err := SetIdentifiers(context.Background(), Options{}, "m3c")
 	if err != nil {
 		t.Fatalf("SetIdentifiers: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestCacheAvoidsRefetchAndPrunesOldDays(t *testing.T) {
 
 	want := map[string]bool{"uuid-tcg": true}
 	for i := range 3 {
-		if _, err := TodayPrices(context.Background(), cacheDir, want); err != nil {
+		if _, err := TodayPrices(context.Background(), Options{CacheDir: cacheDir}, want); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestSetIdentifiersUnknownSet(t *testing.T) {
 
 	// Scryfall and MTGJSON disagree on some promo sets. That must be skippable,
 	// not fatal, so it gets its own sentinel.
-	_, err := SetIdentifiers(context.Background(), "", "nope")
+	_, err := SetIdentifiers(context.Background(), Options{}, "nope")
 	if !errors.Is(err, ErrNoSuchSet) {
 		t.Errorf("err = %v, want ErrNoSuchSet", err)
 	}
@@ -329,7 +329,7 @@ const archiveFileBody = `{
 func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
-	got, err := PriceHistory(context.Background(), "", map[string]bool{"uuid-hist": true})
+	got, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-hist": true})
 	if err != nil {
 		t.Fatalf("PriceHistory: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestPriceHistorySkipsNonUSDAndAbsentProvider(t *testing.T) {
 	// A EUR tcgplayer series and a card tcgplayer never quoted are both absent
 	// rather than converted or substituted: a euro price in a USD total is a
 	// lie, and another vendor's series would not join up with Scryfall's.
-	got, err := PriceHistory(context.Background(), "",
+	got, err := PriceHistory(context.Background(), Options{},
 		map[string]bool{"uuid-eur-tcg": true, "uuid-no-tcg": true})
 	if err != nil {
 		t.Fatalf("PriceHistory: %v", err)
@@ -373,7 +373,7 @@ func TestPriceHistoryEmptyRequestSkipsDownload(t *testing.T) {
 	defer func() { apiBase = old }()
 
 	// Nothing owned must not pull 150 MB to discover that.
-	got, err := PriceHistory(context.Background(), "", nil)
+	got, err := PriceHistory(context.Background(), Options{}, nil)
 	if err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v; want empty and no error", got, err)
 	}
@@ -398,7 +398,7 @@ func TestUnusableCacheDirStillServes(t *testing.T) {
 	}
 	dir := filepath.Join(blocker, "cache")
 
-	got, err := TodayPrices(context.Background(), dir, map[string]bool{"uuid-tcg": true})
+	got, err := TodayPrices(context.Background(), Options{CacheDir: dir}, map[string]bool{"uuid-tcg": true})
 	if err != nil {
 		t.Fatalf("TodayPrices with an unusable cache dir: %v", err)
 	}
