@@ -11,9 +11,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
@@ -99,6 +101,13 @@ func main() {
 		if errors.Is(err, errWatchFired) {
 			os.Exit(3)
 		}
+		// An interrupt is the user's own doing; echoing a stack of wrapped
+		// context errors at them would bury the one word that matters.
+		// 130 is the shell convention for died-on-SIGINT.
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "interrupted")
+			os.Exit(130)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		if errors.Is(err, errPartial) {
 			os.Exit(2)
@@ -151,7 +160,18 @@ func run(args []string) error {
 		fmt.Fprintf(os.Stderr, "Initialized hoard database at %s\n", dbPath)
 	}
 
-	ctx := context.Background()
+	// Ctrl-C cancels the context instead of killing the process, so a
+	// half-done operation unwinds through its own error paths — every write
+	// is a single transaction or a temp-file rename, so cancellation leaves
+	// nothing torn. The handler unregisters itself once fired: a second
+	// ctrl-c gets the default treatment and kills a hung unwind instantly.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+
 	switch cmd {
 	case "":
 		return cmdBrowse(ctx, st, jsonOut)

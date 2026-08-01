@@ -1,9 +1,9 @@
 # Sprint: Parity — action layer, progress, palette
 
-**Status: PLANNED, not started.** Designed 2026-07-31 in a plan-mode session
-(two design passes: action-layer contract, TUI interaction model); saved for
-later. Written so a fresh session — human or AI — can execute with zero
-prior context. Update the status markers as phases land. See
+**Status: IN PROGRESS** (started 2026-07-31). Designed the same day in a
+plan-mode session (two design passes: action-layer contract, TUI
+interaction model). Written so a fresh session — human or AI — can execute
+with zero prior context. Update the status markers as phases land. See
 [sprints.md](sprints.md) for where this sits among the other sprints.
 
 ## Why this sprint
@@ -62,7 +62,7 @@ after, on a complete TUI — polishing half a surface would lock the skew in.
 
 ## Phases
 
-### ⬜ P0 — Groundwork (S)
+### ✅ P0 — Groundwork (S)
 
 `internal/progress` (+tests: Mailbox replace semantics; Throttled passes
 Step transitions and Notes immediately); `ui.Printer` (+golden tests, TTY
@@ -70,6 +70,13 @@ and piped modes); `signal.NotifyContext(os.Interrupt, SIGTERM)` in
 `main.run` (main.go:154 today), second ^C restores default handling,
 `context.Canceled` → "interrupted" on stderr + exit 130. No other output
 changes.
+
+**Landed** (2026-07-31): as specified. Mailbox carries a `Done()` channel +
+idempotent `Close()` so the TUI pump can't leak a goroutine after an op
+ends; `Fn.Emit` centralizes the nil check; `ui.NewPrinter(w, tty)` takes
+the TTY-ness explicitly (main knows; tests pass a Builder). Race-detector
+clean. Live check: SIGINT mid catalog download → "interrupted", exit 130,
+live catalog untouched (temp-file build). All six baselines identical.
 
 ### ⬜ P1 — Action layer, CLI side (L; several commits)
 

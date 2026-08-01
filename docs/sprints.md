@@ -16,7 +16,7 @@ stable and looks the part.
 |---|--------|--------|-----|
 | 1 | Binders + interop | ✅ complete | [sprint-binders-interop.md](sprint-binders-interop.md) |
 | 2 | Portfolio + scriptability | ✅ complete (A–E; F superseded by parity) | [sprint-portfolio-scriptability.md](sprint-portfolio-scriptability.md) |
-| 3 | Parity — action layer, progress, palette | 📋 planned, not started | [sprint-parity.md](sprint-parity.md) |
+| 3 | Parity — action layer, progress, palette | 🔨 in progress (started 2026-07-31) | [sprint-parity.md](sprint-parity.md) |
 | 4 | UI beautification — WUBRG identity | 📋 planned, not started | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
 | 5 | Distribution | 💭 backlog (unplanned) | — |
 
