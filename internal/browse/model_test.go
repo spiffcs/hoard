@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -1259,7 +1260,7 @@ func opp(name string, buy, sell float64) arbitrage.Opportunity {
 // because the user cycled past it.
 func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 	var calls int
-	m := arbModel(t, func(context.Context) (arbitrage.Result, error) {
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		calls++
 		return arbitrage.Result{}, nil
 	})
@@ -1282,7 +1283,7 @@ func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
 		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20), opp("Liquid", 10, 9)},
 		Compared:      2,
 	}
-	m := arbModel(t, func(context.Context) (arbitrage.Result, error) { return res, nil })
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
 	for range 3 {
 		m = key(m, "v")
 	}
@@ -1319,7 +1320,7 @@ func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
 
 // A reply to a request the user has already left must not overwrite the pane.
 func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
-	m := arbModel(t, func(context.Context) (arbitrage.Result, error) {
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, nil
 	})
 	for range 3 {
@@ -1357,7 +1358,7 @@ func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 
 // A genuine failure is shown, unlike a cancellation.
 func TestArbitrageErrorIsShown(t *testing.T) {
-	m := arbModel(t, func(context.Context) (arbitrage.Result, error) {
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, errFake{}
 	})
 	for range 3 {
@@ -1375,7 +1376,7 @@ func TestArbitrageErrorIsShown(t *testing.T) {
 // Editing keys have no meaning against vendor quotes, and the cursor indexes a
 // different slice here.
 func TestArbitrageRefusesHoldingActions(t *testing.T) {
-	m := arbModel(t, func(context.Context) (arbitrage.Result, error) {
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, nil
 	})
 	for range 3 {
@@ -1395,7 +1396,7 @@ func TestArbitrageRefusesHoldingActions(t *testing.T) {
 // it. Watching the context is both simpler and closer to what matters.
 type capturingArb struct{ ctx context.Context }
 
-func (c *capturingArb) fetch(ctx context.Context) (arbitrage.Result, error) {
+func (c *capturingArb) fetch(ctx context.Context, _ progress.Fn) (arbitrage.Result, error) {
 	c.ctx = ctx
 	<-ctx.Done() // stand in for a slow download
 	return arbitrage.Result{}, ctx.Err()

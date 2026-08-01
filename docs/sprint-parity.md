@@ -144,9 +144,14 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    callers; `cardResolver` remains in main as the Deps wiring + test seam.
    Existing deck/add/import tests pass unchanged (the output locks); live
    paste showed the resolving bar end to end.
-7. **repair-finishes** — reuses the refreshing-cards machinery.
-8. **arbitrage** — `action.Arbitrage`; browse's `ArbitrageFunc` gains the
-   `p` parameter; delete `newQuietFetcher`.
+7. ✅ **repair-finishes** (landed 2026-07-31) — `action.RepairFinishes` with
+   `RepairResult{Total, Fixed, Ambiguous}`; now narrates its card refresh
+   (deliberate stderr improvement over its old silence).
+8. ✅ **arbitrage** (landed 2026-07-31) — `action.Arbitrage` ("reading
+   vendor prices" step: fetcher prose as Notes, bundle download as bytes);
+   `browse.ArbitrageFunc` gained the `p` parameter (browser passes nil
+   until the op layer consumes it); `newFetcher`/`newQuietFetcher` and
+   root `fetchArbitrage` deleted. CLI output unchanged.
 9. **fast ops** (watch check, report, export, movers, binder ops) —
    mechanical extraction for table completeness; `p` mostly unused.
    Cuttable to a later sprint.

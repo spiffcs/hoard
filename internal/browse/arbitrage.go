@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -21,7 +22,9 @@ import (
 // that returns instantly, fails, or blocks forever.
 //
 // It must honour ctx: the browser cancels it when the user leaves the view.
-type ArbitrageFunc func(ctx context.Context) (arbitrage.Result, error)
+// The progress callback follows the action layer's contract; the browser
+// passes nil today and gains a live consumer with the op layer.
+type ArbitrageFunc func(ctx context.Context, p progress.Fn) (arbitrage.Result, error)
 
 // arbitrageRows is how many rows each of the three questions contributes.
 const arbitrageRows = 15
@@ -58,7 +61,7 @@ func (m *Model) startArbitrage() tea.Cmd {
 	gen, fetch := m.arbGen, m.arbitrage
 
 	return tea.Batch(m.spinner.Tick, func() tea.Msg {
-		res, err := fetch(ctx)
+		res, err := fetch(ctx, nil)
 		return arbitrageMsg{gen: gen, res: res, err: err}
 	})
 }

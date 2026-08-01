@@ -21,6 +21,8 @@ import (
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
 	"github.com/spiffcs/hoard/internal/hoardjson"
+	"github.com/spiffcs/hoard/internal/pricing"
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -369,8 +371,9 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 
 	for {
 		again, err := browse.Run(ctx, st,
-			browse.WithArbitrage(func(ctx context.Context) (arbitrage.Result, error) {
-				return fetchArbitrage(ctx, newQuietFetcher(st), st, arbitrageMin)
+			browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
+				return action.Arbitrage(ctx,
+					action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, p, arbitrageMin)
 			}))
 		if err != nil || !again {
 			return err

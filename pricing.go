@@ -15,20 +15,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// newFetcher builds the MTGJSON price reader, wired to report progress on
-// stderr so long waits are visible without the package deciding how to print.
-func newFetcher(st *store.Store) *pricing.Fetcher {
-	return pricing.New(st, pricing.DefaultCacheDir()).
-		WithProgress(func(msg string) { fmt.Fprintf(os.Stderr, "  %s\n", msg) })
-}
-
-// newQuietFetcher is newFetcher without the progress wiring, for the browse
-// TUI: its alt screen owns the terminal, and stderr lines printed mid-fetch
-// land inside the rendered frame.
-func newQuietFetcher(st *store.Store) *pricing.Fetcher {
-	return pricing.New(st, pricing.DefaultCacheDir())
-}
-
 func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("update-prices", flag.ContinueOnError)
 	limit := fs.Int("limit", report.DefaultMoverRows, "risers/sinkers to list")
