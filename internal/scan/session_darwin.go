@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Session is a running capture helper: one camera window, held open across many
@@ -26,9 +28,38 @@ type Session struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	events chan Event
+	// log receives a timestamped copy of every helper line when
+	// HOARD_SCAN_LOG names a file — the telemetry tap for tuning sessions
+	// where the TUI, not a terminal, owns the helper's pipes.
+	log *os.File
 
 	mu     sync.Mutex
 	closed bool
+}
+
+// logLine appends one timestamped line to the telemetry log, if one is open.
+// The prefix separates the streams: "<" for helper events, "!" for its stderr.
+func (s *Session) logLine(prefix string, line []byte) {
+	if s.log == nil {
+		return
+	}
+	fmt.Fprintf(s.log, "%s %s %s\n", time.Now().Format("15:04:05.000"), prefix, line)
+}
+
+// logWriter tees a helper stream into the telemetry log chunk-wise; stderr
+// arrives line-buffered from the helper, so per-Write stamping reads fine.
+type logWriter struct {
+	s      *Session
+	prefix string
+}
+
+func (w logWriter) Write(p []byte) (int, error) {
+	for _, line := range bytes.Split(bytes.TrimRight(p, "\n"), []byte("\n")) {
+		if len(bytes.TrimSpace(line)) > 0 {
+			w.s.logLine(w.prefix, line)
+		}
+	}
+	return len(p), nil
 }
 
 // Open starts a capture session on the given camera. deviceID may be empty to
@@ -54,14 +85,30 @@ func Open(ctx context.Context, deviceID string, rotation int) (*Session, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	s := &Session{cmd: cmd, stdin: stdin, events: make(chan Event, 8)}
+	// HOARD_SCAN_LOG tees the helper's streams, timestamped, to a file — the
+	// only way to watch the live feed while the TUI owns the pipes. Append
+	// mode, so one file collects a whole tuning session across camera reopens.
+	if path := os.Getenv("HOARD_SCAN_LOG"); path != "" {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			s.log = f
+		}
+	}
 	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	if s.log != nil {
+		cmd.Stderr = io.MultiWriter(&stderr, logWriter{s: s, prefix: "!"})
+	} else {
+		cmd.Stderr = &stderr
+	}
 
 	if err := cmd.Start(); err != nil {
+		if s.log != nil {
+			_ = s.log.Close()
+		}
 		return nil, err
 	}
 
-	s := &Session{cmd: cmd, stdin: stdin, events: make(chan Event, 8)}
 	go s.pump(stdout, &stderr)
 	return s, nil
 }
@@ -71,6 +118,11 @@ func Open(ctx context.Context, deviceID string, rotation int) (*Session, error) 
 // startup — no camera, denied permission — and its stderr is the useful message.
 func (s *Session) pump(stdout io.Reader, stderr *bytes.Buffer) {
 	defer close(s.events)
+	defer func() {
+		if s.log != nil {
+			_ = s.log.Close()
+		}
+	}()
 
 	var sawEvent bool
 	sc := bufio.NewScanner(stdout)
@@ -81,6 +133,7 @@ func (s *Session) pump(stdout io.Reader, stderr *bytes.Buffer) {
 		if len(line) == 0 {
 			continue
 		}
+		s.logLine("<", line)
 		ev, err := parseEvent(line)
 		if err != nil {
 			continue // ignore anything that isn't one of our events
@@ -113,6 +166,22 @@ func (s *Session) Events() <-chan Event { return s.events }
 
 // Capture asks for a photo. The result arrives later as an EventScan.
 func (s *Session) Capture() error { return s.send("capture") }
+
+// Auto turns the helper's hands-free capture trigger on or off. Helpers that
+// predate the feature answer with a live error event and stay up; callers
+// gate on the ready event's feature list to avoid even that.
+func (s *Session) Auto(on bool) error {
+	if on {
+		return s.send("auto-on")
+	}
+	return s.send("auto-off")
+}
+
+// Rearm nudges a parked auto trigger back to searching. The caller sends it
+// when it suspects a card was placed that the trigger's geometry couldn't see
+// (stacked squarely on the pile), and discards the re-read if it turns out to
+// be the card it already processed.
+func (s *Session) Rearm() error { return s.send("rearm") }
 
 // Rotate turns the preview a quarter-turn; the new angle arrives as an
 // EventRotation so it can be persisted.

@@ -117,6 +117,64 @@ func TestCardListFallsBackToFlatFields(t *testing.T) {
 	}
 }
 
+func TestParseEventConfidenceFields(t *testing.T) {
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","confidence":0.94,"bandAnchored":true,"auto":true,` +
+			`"cards":[{"name":"Sol Ring","confidence":0.94,"source":"crop"}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if ev.Confidence != 0.94 || !ev.BandAnchored || !ev.Auto {
+		t.Errorf("event signals = %v/%v/%v, want 0.94/true/true",
+			ev.Confidence, ev.BandAnchored, ev.Auto)
+	}
+	if c := ev.Cards[0]; c.Confidence != 0.94 || c.Source != "crop" {
+		t.Errorf("card signals = %v/%q, want 0.94/crop", c.Confidence, c.Source)
+	}
+
+	// An old helper omits every new field; zero values must read as unknown,
+	// not as an error.
+	ev, err = parseEvent([]byte(`{"event":"scan","name":"Sol Ring"}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if ev.Confidence != 0 || ev.BandAnchored || ev.Auto {
+		t.Errorf("old-helper event should carry zero signals, got %+v", ev)
+	}
+
+	// The ready event's feature list and the auto event's state ride the same
+	// struct.
+	ev, err = parseEvent([]byte(`{"event":"ready","device":"iPhone","features":["auto"]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if len(ev.Features) != 1 || ev.Features[0] != "auto" {
+		t.Errorf("features = %v, want [auto]", ev.Features)
+	}
+	ev, err = parseEvent([]byte(`{"event":"auto","state":"held"}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if ev.Kind != EventAuto || ev.State != "held" {
+		t.Errorf("auto event = %+v, want state held", ev)
+	}
+}
+
+func TestCardListCarriesAnchoringIntoFallback(t *testing.T) {
+	// The synthesized flat-fields card borrows Source's vocabulary: its
+	// collector read is card-anchored exactly when the band was.
+	ev, _ := parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","collectorNumber":"125","setCode":"C21",` +
+			`"confidence":0.9,"bandAnchored":true}`))
+	if c := ev.CardList()[0]; c.Source != "crop" || c.Confidence != 0.9 {
+		t.Errorf("anchored fallback card = %+v, want source crop", c)
+	}
+	ev, _ = parseEvent([]byte(`{"event":"scan","name":"Sol Ring"}`))
+	if c := ev.CardList()[0]; c.Source != "frame" {
+		t.Errorf("unanchored fallback card = %+v, want source frame", c)
+	}
+}
+
 func TestCardListPassesThroughCards(t *testing.T) {
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Ulamog, the Infinite Gyre",` +

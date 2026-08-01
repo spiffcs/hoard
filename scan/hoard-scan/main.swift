@@ -62,6 +62,26 @@ struct Event: Encodable {
     /// the frame-wide read, so an older hoard keeps working against this
     /// helper.
     var cards: [CardEntry]? = nil
+    /// Vision's confidence (0–1) in the line chosen as the title. Optional so
+    /// events that carry no read keep their old wire shape; an older hoard
+    /// ignores it.
+    var confidence: Float? = nil
+    /// Whether the collector band was anchored to a detected card rectangle
+    /// (true) or fell back to the frame's lower half (false). An anchored band
+    /// is the only one whose collector read deserves trust.
+    var bandAnchored: Bool? = nil
+    /// True when this scan was fired by the auto trigger rather than a capture
+    /// command or the space key.
+    var auto: Bool? = nil
+    /// Capabilities this helper supports, advertised on the ready event so the
+    /// parent can feature-detect instead of probing with commands.
+    var features: [String]? = nil
+    /// Auto-trigger state, carried by "auto" events only.
+    var state: String? = nil
+    /// Collector blocks beyond the primary flat fields — see CardEntry.
+    var collectorAlts: [CollectorRead]? = nil
+    /// The primary block's printed finish marker; see CollectorRead.finish.
+    var finishHint: String? = nil
 }
 
 /// Device is one camera the helper can capture from, as listed by --list-devices.
@@ -116,6 +136,16 @@ struct CardRead {
     var setCode: String = ""
     var bottomLines: [String] = []
     var lines: [Line] = []
+    /// Vision's confidence in the line chosen as name.
+    var nameConfidence: Float = 0
+    /// Whether the collector band was anchored to a detected card rectangle.
+    var bandAnchored: Bool = false
+    /// Collector blocks beyond the primary one — a stacked card's sliver, or a
+    /// second plausible read.
+    var collectorAlts: [CollectorRead] = []
+    /// The finish the primary block's separator marked: "foil" (printed star),
+    /// "nonfoil" (bullet), or "" when the frame carries no marker.
+    var finishHint = ""
 }
 
 /// CardEntry is one card of a capture, as the scan event reports it: the title
@@ -129,6 +159,19 @@ struct CardEntry: Encodable {
     var candidates: [String] = []
     var collectorNumber: String = ""
     var setCode: String = ""
+    /// Vision's confidence in this entry's title read.
+    var confidence: Float = 0
+    /// Which channel produced the entry: "crop" (a perspective-corrected card
+    /// rectangle — collector info, when present, is card-anchored by
+    /// construction) or "frame" (the frame-wide title pass, which never carries
+    /// collector info).
+    var source: String = ""
+    /// Collector blocks beyond the primary one, so the caller can keep the
+    /// number that actually matches a printing when a stacked card's border
+    /// shares the band.
+    var collectorAlts: [CollectorRead]? = nil
+    /// The primary block's printed finish marker; see CollectorRead.finish.
+    var finishHint: String = ""
 }
 
 /// collectorBandFraction is how far up the *card* the collector band reaches, as a
@@ -168,10 +211,34 @@ let frameBandFallback: CGFloat = 0.5
 // ordinary prose — "cards equal to the sacrificed" uppercases to a tidy
 // "EQUAL TO" and yields a set code of "EQUAL".
 let cardLanguages = "EN|DE|FR|IT|ES|PT|JA|JP|KO|RU|ZH|ZHS|ZHT|CS|CT|HE|LA|AR|SA|PH"
-let collectorPairRE = try! NSRegularExpression(pattern: #"(\d{1,5})\s*/\s*\d{1,5}"#)
-let collectorSoloRE = try! NSRegularExpression(pattern: #"^#?\s*(\d{1,5})\s*[A-Z]?$"#)
+let collectorPairRE = try! NSRegularExpression(pattern: #"(\d{1,5})\s*/\s*(\d{1,5})"#)
+// The rarity letter may trail the number (M15 frames: "330 R") or lead it
+// (Marvel frames: "R 0330", where mythic's M also arrives as Cyrillic М until
+// asciify folds it).
+let collectorSoloRE = try! NSRegularExpression(pattern: #"^[A-Z]?\s*#?\s*(\d{1,5})\s*[A-Z]?$"#)
+// The separator is captured, not skipped: modern frames print it as the foil
+// marker — a star (★) on foil printings, a plain bullet (•) on nonfoil ones.
+// Vision renders the star as "*", "+", and at this glyph size even as a
+// letter (K, X, A, T — all observed live). Letter misreads get their own
+// alternation that REQUIRES leading whitespace: "MSH KEN" is a starred
+// border, but "KRAKEN" and "MOLTEN" contain the same letter-EN shape with no
+// space, and matching those would boilerplate-kill real card titles. Older
+// frames carry no marker; a bare-space match leaves both groups empty and
+// the finish unknown.
 let setLangRE = try! NSRegularExpression(
-    pattern: #"\b([0-9A-Z]{3,5})(?:\s*[•·∙*★+.,:;|/\\―—–-]\s*|\s+)(?:"# + cardLanguages + #")\b"#)
+    pattern: #"\b([0-9A-Z]{3,5})(?:\s*([•·∙*★✦✧✶+.,:;|/\\―—–-])\s*|\s+([KXAT])\s*|\s+)(?:"#
+        + cardLanguages + #")\b"#)
+
+/// finishFromSeparator classifies a set/language separator glyph: star-shaped
+/// reads (including the letter misreads) mean the printed foil marker,
+/// dot-shaped ones the nonfoil bullet, and anything else (or nothing) stays
+/// unknown rather than guessed.
+func finishFromSeparator(_ sep: String) -> String {
+    if sep.isEmpty { return "" }
+    if "★✦✧✶*+KXAT".contains(sep) { return "foil" }
+    if "•·∙.,:;|/\\―—–-".contains(sep) { return "nonfoil" }
+    return ""
+}
 
 /// confusables maps the non-ASCII lookalikes Vision returns for this text to the
 /// ASCII the patterns expect. With language correction off and glyphs barely 1% of
@@ -232,45 +299,88 @@ func lowercaseCount(_ s: String) -> Int {
     s.filter { $0.isLowercase }.count
 }
 
-/// parseCollectorInfo pulls a collector number and set code out of the bottom
-/// band's text. That covers both places the number appears: the bottom-left block
-/// on M15-frame cards (2014 onward) and the bottom centre on older ones.
+/// CollectorRead is one parsed border block: a collector number, the set code
+/// printed beside it, and the finish the set line's separator marked — "foil"
+/// for the printed star, "nonfoil" for the bullet, "" when the frame carries
+/// no marker.
+struct CollectorRead: Encodable {
+    var number = ""
+    var set = ""
+    var finish = ""
+}
+
+/// parseCollectorInfo pulls every collector-number candidate out of the bottom
+/// band's text. That covers both places the number appears — the bottom-left
+/// block on M15-frame cards (2014 onward) and the bottom centre on older ones —
+/// and, crucially, more than one card's border at once: a card scanned off the
+/// top of a stack shows a sliver of the card beneath it, whose block parses
+/// exactly as well as the target's (observed live). Reporting all candidates
+/// lets the caller keep the one that matches a real printing.
 ///
-/// `lines` should arrive bottom-most first. Candidates are then tried in order of
-/// how little prose they contain, falling back to that bottom-up order for ties, so
-/// the real border block always outranks rules text that merely looks like it. This
-/// is a preference and not a filter: when the only line on offer is a messy one, it
-/// is still used rather than nothing.
-func parseCollectorInfo(_ lines: [String]) -> (number: String, set: String) {
+/// `lines` should arrive bottom-most first. Candidates are ranked by how little
+/// prose they contain, falling back to that bottom-up order for ties, so real
+/// border blocks outrank rules text that merely looks like them. Each number is
+/// paired with the set code read nearest it in the band — the two lines of a
+/// border block arrive adjacent.
+func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
     let ranked = lines.enumerated()
         .sorted { a, b in
             let (la, lb) = (lowercaseCount(a.element), lowercaseCount(b.element))
             return la == lb ? a.offset < b.offset : la < lb
         }
-        .map { asciify($0.element) }
+        .map { (offset: $0.offset, text: asciify($0.element)) }
 
-    var number = "", set = ""
-    for line in ranked {
-        if number.isEmpty, let n = group(collectorPairRE, line) {
-            number = normalizeNumber(n)
-        }
-        if set.isEmpty, let s = group(setLangRE, line) {
-            set = s
-        }
-    }
-    // Only fall back to a bare number once the "x/y" form has been ruled out —
-    // a lone number is much easier to confuse with a planeswalker's loyalty or a
-    // copyright year.
-    if number.isEmpty {
-        for line in ranked {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if let n = group(collectorSoloRE, t), !looksLikeAYear(n) {
-                number = normalizeNumber(n)
-                break
-            }
+    var sets: [(offset: Int, code: String, finish: String)] = []
+    for l in ranked {
+        if let s = group(setLangRE, l.text) {
+            // The separator lands in group 2 (symbols) or 3 (letter misreads
+            // of the star); whichever matched carries the finish.
+            let sep = group(setLangRE, l.text, 2) ?? group(setLangRE, l.text, 3) ?? ""
+            sets.append((l.offset, s, finishFromSeparator(sep)))
         }
     }
-    return (number, set)
+    func setNear(_ offset: Int) -> (code: String, finish: String) {
+        // The number line and its set line print adjacently, but the band's
+        // bottom-up ordering interleaves them with the right column's
+        // copyright lines — so "near" has to reach a few indices, with
+        // nearest-wins keeping a stacked neighbour's set from stealing in.
+        let nearest = sets.min { abs($0.offset - offset) < abs($1.offset - offset) }
+        guard let nearest, abs(nearest.offset - offset) <= 4 else { return ("", "") }
+        return (nearest.code, nearest.finish)
+    }
+
+    var reads: [CollectorRead] = []
+    var seen = Set<String>()
+    func add(_ offset: Int, _ n: String) {
+        let near = setNear(offset)
+        let read = CollectorRead(number: normalizeNumber(n), set: near.code, finish: near.finish)
+        let key = read.number + "/" + read.set
+        if !seen.contains(key) {
+            seen.insert(key)
+            reads.append(read)
+        }
+    }
+    // Pair form first: it is the harder shape to fake. A creature's
+    // power/toughness reads exactly like a collector pair and shares the band
+    // on frames whose stat box sits low (observed live: "2/2" became collector
+    // number 2); what separates them is the total — no printed set counts
+    // fewer than 20 cards — with the numerator width of zero-padded prints
+    // ("0087/0383") as a second signal.
+    for l in ranked {
+        if let n = group(collectorPairRE, l.text), let total = group(collectorPairRE, l.text, 2),
+           (Int(total) ?? 0) >= 20 || n.count >= 3 {
+            add(l.offset, n)
+        }
+    }
+    // Bare numbers after: a lone number is much easier to confuse with a
+    // planeswalker's loyalty or a copyright year.
+    for l in ranked {
+        let t = l.text.trimmingCharacters(in: .whitespaces)
+        if let n = group(collectorSoloRE, t), !looksLikeAYear(n) {
+            add(l.offset, n)
+        }
+    }
+    return Array(reads.prefix(4))
 }
 
 /// findCard locates the card in the frame, so the collector band can be anchored
@@ -304,10 +414,12 @@ func findCard(_ cg: CGImage) -> VNRectangleObservation? {
 
 /// collectorBand returns the region of interest to search for collector info: the
 /// frame up to a ceiling set just above the detected card's bottom border, or the
-/// frame's lower half when no card could be located.
-func collectorBand(_ cg: CGImage) -> CGRect {
+/// frame's lower half when no card could be located. anchored reports which of
+/// the two it was — a card-anchored band is the only one whose collector read
+/// deserves trust downstream.
+func collectorBand(_ cg: CGImage) -> (band: CGRect, anchored: Bool) {
     guard let card = findCard(cg) else {
-        return CGRect(x: 0, y: 0, width: 1, height: frameBandFallback)
+        return (CGRect(x: 0, y: 0, width: 1, height: frameBandFallback), false)
     }
     // Work from the corner points, not the axis-aligned bounding box. A card is
     // never perfectly square to the camera, and for a tilted one the bounding box
@@ -330,7 +442,7 @@ func collectorBand(_ cg: CGImage) -> CGRect {
     // small is sensitive to the shape of the region it is given, and the wider strip
     // reads marginal borders more reliably than a tight crop does.
     let height = top + edge * collectorBandFraction + pad
-    return CGRect(x: 0, y: 0, width: 1, height: min(1, height))
+    return (CGRect(x: 0, y: 0, width: 1, height: min(1, height)), true)
 }
 
 /// readCard runs Vision text recognition on a CGImage and returns the best guess
@@ -356,7 +468,8 @@ func readCard(_ cg: CGImage) -> CardRead {
     bottom.recognitionLanguages = ["en-US"]
     // Normalized, origin bottom-left. The frame is already upright and
     // rotation-normalized by this point, so the band is stable across orientations.
-    bottom.regionOfInterest = collectorBand(cg)
+    let (band, bandAnchored) = collectorBand(cg)
+    bottom.regionOfInterest = band
 
     let handler = VNImageRequestHandler(cgImage: cg, options: [:])
     do {
@@ -366,6 +479,7 @@ func readCard(_ cg: CGImage) -> CardRead {
     }
 
     var read = CardRead()
+    read.bandAnchored = bandAnchored
 
     // Bottom band first: it stands alone, so a title failure doesn't cost us the
     // collector number. Sorted bottom-most first, which is what parseCollectorInfo
@@ -379,7 +493,11 @@ func readCard(_ cg: CGImage) -> CardRead {
         .sorted { $0.0 < $1.0 }
         .map { $0.1 }
     read.bottomLines = bottomLines
-    (read.collectorNumber, read.setCode) = parseCollectorInfo(bottomLines)
+    let collectorReads = parseCollectorInfo(bottomLines)
+    read.collectorNumber = collectorReads.first?.number ?? ""
+    read.setCode = collectorReads.first?.set ?? ""
+    read.finishHint = collectorReads.first?.finish ?? ""
+    read.collectorAlts = Array(collectorReads.dropFirst())
 
     var lines: [Line] = []
     for obs in request.results ?? [] {
@@ -414,6 +532,7 @@ func readCard(_ cg: CGImage) -> CardRead {
     read.name = primary
     read.candidates = candidates
     read.lines = plausible
+    read.nameConfidence = plausible.first?.confidence ?? ranked.first!.confidence
     return read
 }
 
@@ -521,6 +640,18 @@ func titleLike(_ s: String) -> Bool {
     guard let first = words.first?.first, first.isLetter else { return false }
     let tokens = words.map { String($0.lowercased().filter { $0.isLetter }) }
     if tokens.contains(where: { typeLineWords.contains($0) }) { return false }
+    // Rules text that opens a line with its trigger word capitalizes like a
+    // title ("Whenever Black Panther…"). No card is named "Whenever …", so the
+    // lead token alone is a safe rejection.
+    if tokens.first == "whenever" { return false }
+    // The border block prints in small caps and reads as (nearly) all caps —
+    // "KEy WALKER", "IN & C", a mangled set line — while real card titles are
+    // Title Case with plenty of lowercase. A multi-word line with at most one
+    // lowercase letter is frame furniture; left alone, an artist credit fuzzy-
+    // resolves to a real card and ghosts into the queue (observed live: Kev
+    // Walker the artist became Kiln Walker the card).
+    let letters = s.filter { $0.isLetter }
+    if letters.count >= 6 && letters.filter({ $0.isLowercase }).count <= 1 { return false }
     var caps = 0
     for w in words where w.first?.isUppercase == true { caps += 1 }
     // Titles capitalize everything but connectors; sentences capitalize
@@ -567,14 +698,32 @@ func sameTitle(_ a: String, _ b: String) -> Bool {
 }
 
 /// boilerplate matches the card frame's own print that reads at title-like
-/// isolation and capitalization — the copyright border line and the artist
-/// credit — which would otherwise become phantom queue entries on every
-/// capture that shows a card's bottom.
+/// isolation and capitalization — the copyright border line, the artist
+/// credit, and the collector block — which would otherwise become phantom
+/// queue entries on every capture that shows a card's bottom.
 func boilerplate(_ s: String) -> Bool {
     let t = s.lowercased()
-    return t.contains("wizards of the coast") || t.hasPrefix("illus")
+    if t.contains("wizards of the coast") || t.hasPrefix("illus")
         || s.hasPrefix("™") || s.hasPrefix("©")
-        || s.contains("•") // the collector line's separator; never in a name
+        || s.contains("•") { // the collector line's separator; never in a name
+        return true
+    }
+    // The set/language line survives the bullet check whenever Vision reads
+    // the bullet as "*" or a bare space ("MSH *EN ADI GRANOY"). If the line
+    // parses as a set code beside a language code, it is the border, whatever
+    // the separator became.
+    if group(setLangRE, asciify(s)) != nil {
+        return true
+    }
+    // Licensed frames add their own brand line, and "© MARVEL" reads as
+    // "C MARVEL" or "O MARVEL." at this glyph size: a lone character in front
+    // of a brand word is a mangled © symbol, not a card name.
+    let words = t.split(whereSeparator: { $0.isWhitespace })
+        .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+    if words.count == 2, words[0].count == 1, words[1] == "marvel" {
+        return true
+    }
+    return false
 }
 
 /// scanFrame is the whole capture read: the frame-wide single-card read the
@@ -597,8 +746,9 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
     let ciContext = CIContext()
 
     // Entries carry their anchor height so the final list reads top-to-bottom,
-    // the order a person reads a fan.
-    var entries: [(top: CGFloat, entry: CardEntry)] = []
+    // the order a person reads a fan — and the title line's full box, so a
+    // crop can be matched to its card by geometry when its title read can't.
+    var entries: [(top: CGFloat, box: CGRect?, entry: CardEntry)] = []
 
     for line in read.lines {
         if !titleLike(line.text) {
@@ -610,7 +760,8 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
             continue
         }
         multiDebug("line entry: \"\(line.text)\"")
-        entries.append((line.top, CardEntry(name: line.text, candidates: [line.text])))
+        entries.append((line.top, line.box, CardEntry(name: line.text, candidates: [line.text],
+                                                      confidence: line.confidence, source: "frame")))
     }
 
     for (i, r) in rects.enumerated() {
@@ -620,26 +771,95 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
         if cropRead.name.isEmpty {
             continue // a quad that reads as nothing is desk, not card
         }
-        var e = CardEntry(name: cropRead.name, candidates: Array(cropRead.candidates.prefix(8)))
+        var e = CardEntry(name: cropRead.name, candidates: Array(cropRead.candidates.prefix(8)),
+                          confidence: cropRead.nameConfidence, source: "crop")
         // A bare number off a crop is a mana cost or power box as often as a
         // collector number; only a set-and-number pair is worth reporting.
         if !cropRead.setCode.isEmpty && !cropRead.collectorNumber.isEmpty {
             e.setCode = cropRead.setCode
             e.collectorNumber = cropRead.collectorNumber
         }
+        // The crop's band is anchored to this card, so its alternates and
+        // finish marker are per-card by construction.
+        if !cropRead.collectorAlts.isEmpty {
+            e.collectorAlts = cropRead.collectorAlts
+        }
+        e.finishHint = cropRead.finishHint
+        // mergeInto folds the crop's card-anchored printing and foil marker
+        // into an existing entry without touching its (better) name.
+        func mergeInto(_ idx: Int, why: String) {
+            if entries[idx].entry.collectorNumber.isEmpty && !e.collectorNumber.isEmpty {
+                entries[idx].entry.setCode = e.setCode
+                entries[idx].entry.collectorNumber = e.collectorNumber
+            }
+            if entries[idx].entry.collectorAlts == nil {
+                entries[idx].entry.collectorAlts = e.collectorAlts
+            }
+            if entries[idx].entry.finishHint.isEmpty {
+                entries[idx].entry.finishHint = e.finishHint
+            }
+            multiDebug("crop \(i) pins \"\(entries[idx].entry.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber) (\(why), crop read \"\(e.name)\")")
+        }
+        let frameIdxs = entries.indices.filter { entries[$0].entry.source == "frame" }
         if let idx = entries.firstIndex(where: { sameTitle($0.entry.name, e.name) }) {
             // The crop read the same title off straightened pixels — usually
             // the cleaner read — and may carry the printing.
             entries[idx].entry = e
             multiDebug("crop \(i) refines \"\(e.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber)")
-        } else {
-            entries.append((r.boundingBox.maxY, e))
+        } else if let idx = entries.indices
+            .filter({ i in
+                guard let b = entries[i].box else { return false }
+                return r.boundingBox.contains(CGPoint(x: b.midX, y: b.midY))
+            })
+            // Of the contained lines, the top-most is the card's title; a
+            // surviving border-line entry sits at the bottom and must not
+            // steal the printing (observed live).
+            .max(by: { (entries[$0].box?.midY ?? 0) < (entries[$1].box?.midY ?? 0) }) {
+            // The crop misread its title — the type line, a rules fragment —
+            // but geometry says which card it is: the frame's title line sits
+            // inside this very rectangle. Without this, the collector block
+            // lands beside the real card instead of on it, and the card
+            // queues as unverified (observed live).
+            mergeInto(idx, why: "contains its title")
+        } else if !titleLike(e.name), frameIdxs.count == 1 {
+            // A crop whose "title" isn't title-like — "MEL", a type line, a
+            // rules fragment — is a misread of a card that already has an
+            // entry, not a new card. With exactly one real title in the
+            // scene there is nothing to mispair with, so its printing lands
+            // there; junk names resolving to real-but-unscanned cards is how
+            // ghosts joined the review queue (observed live).
+            mergeInto(frameIdxs[0], why: "only title in scene")
+        } else if titleLike(e.name) || entries.isEmpty {
+            entries.append((r.boundingBox.maxY, nil, e))
             multiDebug("crop \(i) adds \"\(e.name)\"")
+        } else {
+            multiDebug("crop \(i) discarded — junk title \"\(e.name)\" beside \(frameIdxs.count) real titles")
         }
     }
 
     entries.sort { $0.top > $1.top }
-    return (read, entries.map { $0.entry })
+    var cards = entries.map { $0.entry }
+    // When no entry carries collector info, the frame-wide border read is
+    // attached to the top-most entry — the title position, which in a
+    // single-card scene is the card the border belongs to, while surviving
+    // phantom entries (misread border lines, rules fragments) sit below it.
+    // This is what lets a borderless or hard-to-outline card still arrive
+    // with its printing pinned. A wrong attachment in a fan is commit-safe by
+    // construction: collector numbers are per-card within a set, so a
+    // neighbour's number cannot verify against the wrong card's printings —
+    // it queues, exactly as an unattached read would have.
+    if !cards.isEmpty, !cards.contains(where: { !$0.collectorNumber.isEmpty }),
+       !read.collectorNumber.isEmpty || !read.setCode.isEmpty {
+        cards[0].collectorNumber = read.collectorNumber
+        cards[0].setCode = read.setCode
+        if cards[0].collectorAlts == nil, !read.collectorAlts.isEmpty {
+            cards[0].collectorAlts = read.collectorAlts
+        }
+        if cards[0].finishHint.isEmpty {
+            cards[0].finishHint = read.finishHint
+        }
+    }
+    return (read, cards)
 }
 
 /// decodePhoto turns a captured photo into a CGImage plus the orientation Vision
@@ -769,6 +989,355 @@ func kindLabel(_ d: AVCaptureDevice) -> String {
     d.deviceType == .continuityCamera ? "iPhone" : "camera"
 }
 
+// MARK: - Auto-capture trigger
+
+/// autoDebug traces the auto-trigger's decisions to stderr when asked, mirroring
+/// multiDebug. Purely diagnostic: nothing downstream parses these lines.
+func autoDebug(_ s: @autoclosure () -> String) {
+    guard ProcessInfo.processInfo.environment["HOARD_SCAN_AUTO"] != nil else { return }
+    FileHandle.standardError.write(Data("auto: \(s())\n".utf8))
+}
+
+/// envDouble reads a numeric tunable from the environment, the same override
+/// pattern HOARD_SCAN_WAIT uses, so thresholds can be tuned live without a
+/// recompile.
+func envDouble(_ name: String, _ fallback: Double) -> Double {
+    ProcessInfo.processInfo.environment[name].flatMap(Double.init) ?? fallback
+}
+
+/// How often the auto trigger samples the video stream. Vision's rectangle
+/// detector on a ≤1080p buffer costs a few milliseconds, so 5 Hz is nearly free
+/// and still reacts within a beat of a card being set down.
+let autoInterval = envDouble("HOARD_SCAN_AUTO_INTERVAL", 0.2)
+/// Consecutive still samples before firing (~0.6 s at the default interval). A
+/// hand still moving jitters the detected bounds and never accumulates this
+/// streak — which is also what keeps motion blur out of the captures.
+let autoStableSamples = Int(envDouble("HOARD_SCAN_AUTO_STABLE", 3))
+/// Consecutive changed samples before re-arming after a capture, so
+/// auto-exposure flicker on a card that hasn't moved doesn't refire.
+let autoRearmSamples = Int(envDouble("HOARD_SCAN_AUTO_REARM", 3))
+// (Hold re-arming pools empty and moved samples into one disruption counter,
+// bounded by autoRearmSamples — see the hold phase for why the kinds must not
+// reset each other.)
+/// Two samples "match" when every paired rectangle overlaps at least this much.
+let autoIoU = envDouble("HOARD_SCAN_AUTO_IOU", 0.65)
+/// Consecutive bad samples (detection dropout or box jitter) tolerated while a
+/// card stabilizes. Vision's rectangle detection flickers on hard cards —
+/// foils, borderless frames, low contrast against the desk (one borderless
+/// card blinked out on a third of all samples) — and without tolerance a
+/// single missed sample restarts the whole stillness streak. Real hand motion
+/// fails sample after sample and still resets.
+let autoGraceSamples = Int(envDouble("HOARD_SCAN_AUTO_GRACE", 3))
+/// A rectangle overlapping a background rectangle at least this much is that
+/// background rectangle, not a newly placed card.
+let autoBackgroundIoU = envDouble("HOARD_SCAN_AUTO_BG_IOU", 0.5)
+
+/// AutoTrigger decides when a framed card has settled enough to shutter without
+/// a keypress. It is deliberately camera-free — rectangle boxes in, fire/phase
+/// callbacks out — so the state machine can be reasoned about (and traced)
+/// apart from AVFoundation.
+///
+/// Every method must be called on the main thread; the controller hops there
+/// after Vision finishes on its analysis queue, which keeps the machine
+/// lock-free alongside the capture path (already main-thread).
+final class AutoTrigger {
+    enum Phase: String {
+        case off, searching, stabilizing, capturing, hold
+    }
+
+    private(set) var phase: Phase = .off
+    /// fire is called exactly once per SEARCHING→…→CAPTURING pass.
+    var onFire: (() -> Void)?
+    /// onPhase is called on every transition, for the preview overlay and the
+    /// wire events.
+    var onPhase: ((Phase) -> Void)?
+    /// onBoxes is called every sample with the rectangles the trigger is
+    /// actually considering — new-since-armed, background excluded — so the
+    /// preview outline shows candidates, not the desk.
+    var onBoxes: (([CGRect]) -> Void)?
+
+    /// The scene signature is the candidate boxes sorted largest-first: stable
+    /// enough to compare across samples, cheap enough to compare at 4 Hz.
+    private var prevSig: [CGRect] = []
+    private var lastNovel: [CGRect] = []
+    private var heldSig: [CGRect] = []
+    private var stableCount = 0
+    private var graceCount = 0
+    private var disruptCount = 0
+    /// Rectangles that are furniture, not cards: whatever was in frame when
+    /// auto armed (a desk has notepads and coasters — rectangles all), plus
+    /// anything that fired and then photographed as no-card. Only a rectangle
+    /// not in this set can arm the trigger.
+    private var background: [CGRect] = []
+    private var needBaseline = true
+
+    func setEnabled(_ on: Bool) {
+        if on {
+            guard phase == .off else { return }
+            stableCount = 0
+            disruptCount = 0
+            prevSig = []
+            heldSig = []
+            background = []
+            needBaseline = true
+            move(to: .searching)
+        } else {
+            guard phase != .off else { return }
+            move(to: .off)
+        }
+    }
+
+    /// observe feeds one sampled frame's detected rectangles through the
+    /// machine.
+    func observe(_ boxes: [CGRect]) {
+        let sig = boxes.sorted { $0.width * $0.height > $1.width * $1.height }
+        if phase == .off {
+            onBoxes?([])
+            return
+        }
+        if needBaseline {
+            background = sig
+            needBaseline = false
+            autoDebug("baseline: \(sig.count) background rect(s)")
+        }
+        let novel = sig.filter { b in
+            !background.contains { iou($0, b) >= autoBackgroundIoU }
+        }
+        // Per-sample firehose for diagnosing a card the trigger won't see:
+        // every sample's raw and candidate counts, with the largest box's
+        // size, gated behind its own env so ordinary traces stay readable.
+        if ProcessInfo.processInfo.environment["HOARD_SCAN_AUTO_TRACE"] != nil {
+            let biggest = sig.first.map {
+                String(format: "%.2fx%.2f", $0.width, $0.height)
+            } ?? "-"
+            autoDebug("sample \(phase.rawValue): rects=\(sig.count) novel=\(novel.count) biggest=\(biggest)")
+        }
+        lastNovel = novel
+        onBoxes?(novel)
+        switch phase {
+        case .off, .capturing:
+            return
+        case .searching:
+            if !novel.isEmpty {
+                prevSig = novel
+                stableCount = 1
+                graceCount = 0
+                move(to: .stabilizing)
+            }
+        case .stabilizing:
+            // A bad sample — the detector missed the card, or its box jittered
+            // past the IoU bar — is tolerated a few times with the streak
+            // frozen: Vision flickers on foils and borderless frames. Only a
+            // sustained miss (card gone) or sustained mismatch (hand still
+            // moving) restarts anything.
+            if novel.isEmpty {
+                graceCount += 1
+                if graceCount > autoGraceSamples {
+                    move(to: .searching)
+                }
+                return
+            }
+            if fragmentsOf(prevSig, novel) {
+                // Borderless art crumbles under the detector: a sample often
+                // returns a high-contrast SLIVER of the very card it found
+                // whole a beat earlier. A fragment inside the known box is
+                // evidence of stillness, not motion — count it toward the
+                // streak, but keep the remembered box at full size.
+                graceCount = 0
+                stableCount += 1
+                autoDebug("fragment counted, stable \(stableCount)/\(autoStableSamples)")
+                if stableCount >= autoStableSamples {
+                    move(to: .capturing)
+                    onFire?()
+                }
+                return
+            }
+            if !matches(prevSig, novel) {
+                graceCount += 1
+                if graceCount > autoGraceSamples {
+                    autoDebug("scene moved, streak reset (\(novel.count) candidate(s))")
+                    stableCount = 1
+                    graceCount = 0
+                    prevSig = novel
+                } else {
+                    autoDebug("flicker tolerated \(graceCount)/\(autoGraceSamples)")
+                }
+                return
+            }
+            graceCount = 0
+            stableCount += 1
+            autoDebug("stable \(stableCount)/\(autoStableSamples), \(novel.count) candidate(s)")
+            if stableCount >= autoStableSamples {
+                move(to: .capturing)
+                onFire?()
+                return
+            }
+            prevSig = novel
+        case .hold:
+            // The held card flickers like any hard card: a blink of empty
+            // detection is not a removal, and a jittered-but-overlapping box
+            // is not a swap. What re-arms is accumulated DISRUPTION of either
+            // kind — occlusion and box motion pool into one counter, because
+            // a hand placing the next card on top of the pile (stacking is a
+            // supported rhythm, not a mistake) alternates between the two.
+            // Calm samples DECAY the counter rather than zeroing it: live
+            // traces showed placement disruption arriving in 1–2 sample
+            // bursts with settled samples interleaved, sawing a hard-reset
+            // counter between 1 and 2 forever while the user reached for the
+            // spacebar. An isolated blink still dies to the decay; a real
+            // placement out-accumulates it. After the re-arm, the new top
+            // card fires even though it sits exactly where the last one did —
+            // novelty is judged against the desk baseline, never against the
+            // card just shot.
+            if !novel.isEmpty && holdMatches(heldSig, novel) {
+                if disruptCount > 0 {
+                    disruptCount -= 1
+                }
+            } else {
+                disruptCount += 1
+                autoDebug("disrupted \(disruptCount)/\(autoRearmSamples)")
+                if disruptCount >= autoRearmSamples {
+                    stableCount = 0
+                    prevSig = novel
+                    nudged = false // the scene really changed; fires announce again
+                    move(to: .searching)
+                }
+            }
+        }
+    }
+
+    /// captureBegan holds the machine while any capture — auto or the space
+    /// key — is in flight, so a manual shutter in auto mode can't double-fire.
+    func captureBegan() {
+        guard phase != .off else { return }
+        if phase != .capturing { move(to: .capturing) }
+    }
+
+    /// nudged marks that the current arming came from the parent's rearm
+    /// nudge rather than the scene changing — the fire it produces is a quiet
+    /// recheck, not a capture worth announcing.
+    private(set) var nudged = false
+
+    /// forceRearm is the parent's content-aware nudge: geometry cannot tell a
+    /// card stacked squarely on the pile from the card just shot, but the
+    /// parent knows what it already processed — it re-arms, the scene fires,
+    /// and an identical read is its to discard.
+    func forceRearm() {
+        guard phase == .hold else { return }
+        stableCount = 0
+        disruptCount = 0
+        prevSig = []
+        nudged = true
+        autoDebug("rearm nudge from parent")
+        move(to: .searching)
+    }
+
+    /// captureFinished parks the machine on the candidates it just shot; only
+    /// a changed scene (card swapped, removed, or stacked over) re-arms it.
+    ///
+    /// A shot that reads as no card is deliberately NOT learned as background.
+    /// That rule existed to silence furniture that fired once — but telemetry
+    /// showed it absorbing the scanning pile itself after one glared empty
+    /// read, killing auto capture at the exact spot every subsequent card
+    /// lands on. HOLD already stops a no-card rectangle from re-firing until
+    /// it moves, which is all the protection furniture needs.
+    func captureFinished() {
+        guard phase != .off else { return }
+        heldSig = lastNovel
+        disruptCount = 0
+        nudged = false
+        move(to: .hold)
+    }
+
+    private func move(to next: Phase) {
+        guard next != phase else { return }
+        autoDebug("\(phase.rawValue) → \(next.rawValue)")
+        phase = next
+        onPhase?(next)
+    }
+
+    private func matches(_ a: [CGRect], _ b: [CGRect]) -> Bool {
+        guard a.count == b.count else { return false }
+        for (x, y) in zip(a, b) where iou(x, y) < autoIoU { return false }
+        return true
+    }
+
+    /// holdMatches is the forgiving variant for the parked phase: the shot
+    /// card's box wobbles as exposure hunts over foil, and holding it only
+    /// needs "still roughly the same rectangle", not stillness.
+    private func holdMatches(_ a: [CGRect], _ b: [CGRect]) -> Bool {
+        guard a.count == b.count else { return false }
+        for (x, y) in zip(a, b) where iou(x, y) < autoBackgroundIoU { return false }
+        return true
+    }
+
+    /// fragmentsOf reports whether every current box sits (almost) inside some
+    /// remembered box — the crumbled detection a borderless card produces
+    /// while sitting perfectly still.
+    private func fragmentsOf(_ prev: [CGRect], _ cur: [CGRect]) -> Bool {
+        guard !prev.isEmpty, !cur.isEmpty else { return false }
+        return cur.allSatisfy { c in
+            prev.contains { p in
+                let inter = p.intersection(c)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let area = c.width * c.height
+                return area > 0 && (inter.width * inter.height) / area >= 0.8
+            }
+        }
+    }
+
+    private func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let inter = a.intersection(b)
+        if inter.isNull || inter.isEmpty { return 0 }
+        let i = inter.width * inter.height
+        let u = a.width * a.height + b.width * b.height - i
+        return u > 0 ? i / u : 0
+    }
+}
+
+/// triggerRects runs the rectangle detector the trigger samples with. Only the
+/// boxes matter here, never the text — but which boxes matters a great deal:
+/// the raw detector also returns the rectangles *inside* a card (the art frame
+/// and the text box) and any speck of desk clutter, and since the stability
+/// check compares whole rectangle sets between samples, one flickering speck
+/// resets the stillness streak forever. So this filters harder than cardRects:
+/// a real size floor, a containment pass that keeps only outermost boxes, and
+/// a cap at the few largest — the cards, not their furniture.
+///
+/// No orientation is passed on purpose: Vision's aspect-ratio bounds are
+/// shorter-dimension over longer-dimension, so a sideways card passes the same
+/// filter and the trigger doesn't care which way up the sensor is.
+func triggerRects(_ buffer: CVPixelBuffer) -> [CGRect] {
+    let req = VNDetectRectanglesRequest()
+    req.minimumAspectRatio = 0.3
+    req.maximumAspectRatio = 1.0
+    req.minimumSize = 0.1
+    // Low enough to keep seeing the hard cards — foils and borderless frames
+    // flicker at higher bars — while the size floor, the containment pass and
+    // the background baseline absorb what a lower bar lets through.
+    req.minimumConfidence = 0.35
+    req.quadratureTolerance = 25
+    req.maximumObservations = 8
+    do {
+        try VNImageRequestHandler(cvPixelBuffer: buffer, options: [:]).perform([req])
+    } catch {
+        return []
+    }
+    let boxes = (req.results ?? []).map { $0.boundingBox }
+        .sorted { $0.width * $0.height > $1.width * $1.height }
+    var kept: [CGRect] = []
+    for b in boxes {
+        let swallowed = kept.contains { k in
+            let inter = k.intersection(b)
+            return !inter.isNull && inter.width * inter.height > 0.7 * b.width * b.height
+        }
+        if !swallowed { kept.append(b) }
+    }
+    // The largest few are the cards; anything past that is noise whose coming
+    // and going would only reset the stillness streak.
+    return Array(kept.prefix(4))
+}
+
 // MARK: - Live capture (AppKit window + AVFoundation)
 
 final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
@@ -788,9 +1357,34 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
 
-    init(deviceID: String?, rotation: Int) {
+    // Auto-capture. The video output feeds the trigger only — stills always go
+    // through photoOutput, so auto and manual captures are identical on the
+    // wire apart from the auto tag.
+    fileprivate let videoOutput = AVCaptureVideoDataOutput()
+    private let analysisQueue = DispatchQueue(label: "hoard-scan.analysis")
+    fileprivate var lastAnalysis = Date.distantPast
+    fileprivate let autoTrigger = AutoTrigger()
+    /// Whether the session could attach a video tap; when false, auto mode is
+    /// unavailable and the ready event doesn't advertise it.
+    private var autoAvailable = false
+    /// Whether the user asked for auto mode (--auto, auto-on, or the a key).
+    private var autoRequested: Bool
+    /// Set between an auto fire and its photo delegate, to tag the scan event.
+    private var pendingAuto = false
+    /// A monotonic counter so an auto session's debug images don't overwrite
+    /// each other the way a single "capture-ocr.png" would.
+    private var captureCount = 0
+    /// When the last capture's processing ended. Video samples taken before
+    /// this are stale — they queued up behind the OCR on the main thread and
+    /// describe the shutter moment, not the present — and replaying them
+    /// against HOLD faked a full disruption burst in a single millisecond
+    /// (observed live: instant double-fires).
+    private var lastCaptureFinishedAt = Date.distantPast
+
+    init(deviceID: String?, rotation: Int, auto: Bool = false) {
         self.deviceID = deviceID
         self.manualRotation = ((rotation / 90) % 4 + 4) % 4 * 90
+        self.autoRequested = auto
         super.init()
     }
 
@@ -828,6 +1422,18 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         session.addInput(input)
         session.addOutput(photoOutput)
 
+        // The video tap is best-effort: a session that refuses it just means no
+        // auto mode, which the ready event's feature list reports honestly.
+        if session.canAddOutput(videoOutput) {
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(self, queue: analysisQueue)
+            session.addOutput(videoOutput)
+            autoAvailable = true
+        }
+        autoTrigger.onFire = { [weak self] in self?.autoFire() }
+        autoTrigger.onPhase = { [weak self] phase in self?.autoPhaseChanged(phase) }
+        autoTrigger.onBoxes = { [weak self] novel in self?.updateOutlines(novel) }
+
         buildWindow()
         trackRotation(of: device)
         DispatchQueue.global(qos: .userInitiated).async { [session] in
@@ -849,7 +1455,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                 }
                 spinRunLoop(seconds: 0.75) { false }
                 emit(Event(event: "ready", rotation: self.manualRotation,
-                           device: self.deviceName))
+                           device: self.deviceName,
+                           features: self.autoAvailable ? ["auto", "rearm"] : nil))
+                if self.autoRequested { self.setAuto(true) }
             }
         }
     }
@@ -902,6 +1510,12 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         if let conn = photoOutput.connection(with: .video), conn.isVideoRotationAngleSupported(0) {
             conn.videoRotationAngle = 0
         }
+        // The analysis buffers stay unrotated too: the trigger's rectangle
+        // filter is orientation-free, and the outline drawing converts from
+        // sensor space — a rotated buffer would put the cue a quarter-turn off.
+        if let conn = videoOutput.connection(with: .video), conn.isVideoRotationAngleSupported(0) {
+            conn.videoRotationAngle = 0
+        }
         updateTitle()
     }
 
@@ -918,8 +1532,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// angle contributed — so a wrong orientation is diagnosable at a glance.
     private func updateTitle() {
         let total = Int(autoPreviewAngle) + manualRotation
-        window?.title = "hoard — \(deviceName) · \(total % 360)° "
-            + "(auto \(Int(autoPreviewAngle))°) · Space capture · ←/→ rotate · Esc cancel"
+        let mode = autoTrigger.phase == .off ? "" : "AUTO · "
+        window?.title = "hoard — \(deviceName) · \(mode)\(total % 360)° "
+            + "(auto \(Int(autoPreviewAngle))°) · Space capture · A auto · ←/→ rotate · Esc cancel"
     }
 
     private func buildWindow() {
@@ -937,12 +1552,21 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         view.wantsLayer = true
         view.layer = preview
         self.previewLayer = preview
+        let outline = CAShapeLayer()
+        outline.frame = view.bounds
+        outline.fillColor = nil
+        outline.lineWidth = 3
+        outline.strokeColor = NSColor.systemYellow.cgColor
+        outline.isHidden = true
+        preview.addSublayer(outline)
+        view.outlineLayer = outline
         view.onKey = { [weak self] key in
             switch key {
             case .space: self?.capture()
             case .escape: self?.shutdown()
             case .rotateLeft: self?.rotate(clockwise: false)
             case .rotateRight: self?.rotate(clockwise: true)
+            case .autoToggle: self?.setAuto(self?.autoTrigger.phase == .off)
             }
         }
         win.contentView = view
@@ -956,7 +1580,102 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         // Re-level right before the shutter in case the phone moved since the
         // last KVO notification.
         applyRotation()
+        // Any shutter — auto or manual — parks the trigger, so pressing space
+        // in auto mode can't be followed by an auto fire on the same card.
+        autoTrigger.captureBegan()
         photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
+    }
+
+    /// autoFire is the trigger's shutter: identical to a space press except the
+    /// resulting scan event is tagged auto. A nudge-armed fire is a quiet
+    /// recheck of a scene the parent may already know — no shutter pop, so a
+    /// slow moment between cards doesn't sound like the scanner acting up.
+    private func autoFire() {
+        pendingAuto = true
+        if !autoTrigger.nudged {
+            NSSound(named: "Pop")?.play()
+        }
+        capture()
+    }
+
+    /// setAuto turns the trigger on or off, keeping the window chrome honest.
+    fileprivate func setAuto(_ on: Bool) {
+        guard autoAvailable else {
+            if on { emit(Event(event: "error", message: "auto capture unavailable on this session")) }
+            return
+        }
+        autoRequested = on
+        autoTrigger.setEnabled(on)
+        updateTitle()
+    }
+
+    /// autoPhaseChanged relays trigger transitions to the wire and the preview
+    /// overlay. Only settled phases go on the wire — searching↔stabilizing
+    /// flapping is visual, not protocol — and consecutive repeats are deduped.
+    private var lastWireState = ""
+    private func autoPhaseChanged(_ phase: AutoTrigger.Phase) {
+        updateOutlines(lastBoxes)
+        let wire: String
+        switch phase {
+        case .searching, .stabilizing: wire = "armed"
+        case .capturing: wire = "capturing"
+        case .hold: wire = "held"
+        case .off: wire = "off"
+        }
+        guard wire != lastWireState else { return }
+        lastWireState = wire
+        emit(Event(event: "auto", rotation: manualRotation, state: wire))
+    }
+
+    /// The rectangles the trigger last saw, kept so a phase change can recolor
+    /// the outline without waiting for the next sample.
+    private var lastBoxes: [CGRect] = []
+
+    /// updateOutlines traces the trigger's cue around the cards themselves —
+    /// yellow while one settles, green once it's shot — rather than bordering
+    /// the whole window. Drawing what the detector actually sees also makes a
+    /// reluctant trigger diagnosable at a glance: no outline means no
+    /// rectangle, a jumping outline means the scene never reads as still.
+    ///
+    /// Vision reports boxes normalized with a bottom-left origin in buffer
+    /// space; flipping y gives metadata-output space, and the preview layer's
+    /// own converter carries that into layer coordinates, aspect fit and
+    /// preview rotation included.
+    private func updateOutlines(_ boxes: [CGRect]) {
+        lastBoxes = boxes
+        guard let preview = previewLayer,
+              let outline = (window?.contentView as? PreviewView)?.outlineLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let phase = autoTrigger.phase
+        if phase == .off || boxes.isEmpty {
+            outline.isHidden = true
+            return
+        }
+        let path = CGMutablePath()
+        for b in boxes {
+            let metadataRect = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+            path.addRect(preview.layerRectConverted(fromMetadataOutputRect: metadataRect))
+        }
+        outline.path = path
+        outline.strokeColor = outlineColor(phase)
+        outline.lineWidth = phase == .capturing ? 5 : 3
+        outline.isHidden = false
+    }
+
+    private func outlineColor(_ phase: AutoTrigger.Phase) -> CGColor {
+        switch phase {
+        case .stabilizing:
+            return NSColor.systemYellow.cgColor
+        case .capturing:
+            return NSColor.systemGreen.cgColor
+        case .hold:
+            // Parked on the shot card: a quiet green says "already counted".
+            return NSColor.systemGreen.withAlphaComponent(0.45).cgColor
+        case .searching, .off:
+            return NSColor.white.withAlphaComponent(0.35).cgColor
+        }
     }
 
     /// shutdown closes the window and ends the process. The rotation rides along
@@ -975,6 +1694,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         case "capture": capture()
         case "rotate-left": rotate(clockwise: false)
         case "rotate-right": rotate(clockwise: true)
+        case "auto-on": setAuto(true)
+        case "auto-off": setAuto(false)
+        case "rearm": autoTrigger.forceRearm()
         case "quit": shutdown()
         default: emit(Event(event: "error", message: "unknown command: \(command)"))
         }
@@ -984,33 +1706,81 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// frame shouldn't tear down a session the user is mid-way through.
     func photoOutput(_ output: AVCapturePhotoOutput,
                      didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        let wasAuto = pendingAuto
+        pendingAuto = false
         if let error {
+            // Park without absorbing: a transient capture failure says nothing
+            // about whether the rectangle is a card.
+            autoTrigger.captureFinished()
+            lastCaptureFinishedAt = Date()
             emit(Event(event: "error", message: "capture failed: \(error.localizedDescription)"))
             return
         }
         guard let (cg, orientation) = decodePhoto(photo) else {
+            autoTrigger.captureFinished()
+            lastCaptureFinishedAt = Date()
             emit(Event(event: "error", message: "no image from capture"))
             return
         }
         // Normalize the capture's own orientation first, then match the framing
         // the user corrected in the preview. Exactly one rotation each.
-        saveDebugImage(cg, "capture-raw.png")
+        captureCount += 1
+        saveDebugImage(cg, "capture-\(captureCount)-raw.png")
         let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: effectiveRotation)
-        saveDebugImage(forOCR, "capture-ocr.png")
+        saveDebugImage(forOCR, "capture-\(captureCount)-ocr.png")
         let (read, cards) = scanFrame(forOCR)
+        autoTrigger.captureFinished()
+        lastCaptureFinishedAt = Date()
         // Emit and stay live: the window persists so the next card can be framed
         // and captured without relaunching the camera.
         emit(Event(event: "scan", name: read.name, candidates: read.candidates,
                    rotation: manualRotation,
                    collectorNumber: read.collectorNumber, setCode: read.setCode,
-                   bottomLines: read.bottomLines, cards: cards))
+                   bottomLines: read.bottomLines, cards: cards,
+                   confidence: read.nameConfidence, bandAnchored: read.bandAnchored,
+                   auto: wasAuto ? true : nil,
+                   collectorAlts: read.collectorAlts.isEmpty ? nil : read.collectorAlts,
+                   finishHint: read.finishHint.isEmpty ? nil : read.finishHint))
+    }
+}
+
+// MARK: - Video tap (auto-trigger sampling)
+
+extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        // Runs on analysisQueue. The time gate throttles to autoInterval no
+        // matter what frame rate the camera delivers, and Vision running
+        // synchronously here self-throttles: late frames are discarded, never
+        // queued behind a slow pass.
+        guard autoTrigger.phase != .off else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastAnalysis) >= autoInterval else { return }
+        lastAnalysis = now
+        guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let boxes = triggerRects(buffer)
+        let sampledAt = Date()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // Samples taken before the last capture finished are stale: they
+            // queued behind the OCR and describe the shutter moment. Feeding
+            // them to HOLD faked instant disruption bursts.
+            guard sampledAt > self.lastCaptureFinishedAt else { return }
+            // The trigger decides which of these are candidates (vs desk
+            // furniture) and drives the outline through onBoxes.
+            self.autoTrigger.observe(boxes)
+        }
     }
 }
 
 /// PreviewView hosts the camera preview layer and forwards key presses.
 final class PreviewView: NSView {
-    enum Key { case space, escape, rotateLeft, rotateRight }
+    enum Key { case space, escape, rotateLeft, rotateRight, autoToggle }
     var previewLayer: AVCaptureVideoPreviewLayer?
+    /// The auto-trigger's cue: an outline traced around each rectangle the
+    /// trigger currently sees, kept sized to the view by layout().
+    var outlineLayer: CAShapeLayer?
     var onKey: ((Key) -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) {
@@ -1019,8 +1789,17 @@ final class PreviewView: NSView {
         case 53: onKey?(.escape)       // esc
         case 123: onKey?(.rotateLeft)  // left arrow
         case 124: onKey?(.rotateRight) // right arrow
+        case 0: onKey?(.autoToggle)    // a
         default: super.keyDown(with: event)
         }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        outlineLayer?.frame = bounds
+        CATransaction.commit()
     }
 }
 
@@ -1139,7 +1918,10 @@ if let i = args.firstIndex(of: "--image") {
     emit(Event(event: "scan", name: read.name, candidates: read.candidates,
                rotation: requestedRotation,
                collectorNumber: read.collectorNumber, setCode: read.setCode,
-               bottomLines: read.bottomLines, cards: cards))
+               bottomLines: read.bottomLines, cards: cards,
+               confidence: read.nameConfidence, bandAnchored: read.bandAnchored,
+               collectorAlts: read.collectorAlts.isEmpty ? nil : read.collectorAlts,
+               finishHint: read.finishHint.isEmpty ? nil : read.finishHint))
     exit(read.name.isEmpty && cards.isEmpty ? 3 : 0)
 }
 
@@ -1150,7 +1932,8 @@ if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
 }
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let controller = CaptureController(deviceID: requestedDevice, rotation: requestedRotation)
+let controller = CaptureController(deviceID: requestedDevice, rotation: requestedRotation,
+                                   auto: args.contains("--auto"))
 
 // Held in a top-level binding: NSApplication does not retain its delegate.
 let appDelegate = AppDelegate(controller: controller)

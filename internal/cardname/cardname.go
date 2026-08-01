@@ -34,7 +34,21 @@ const (
 	// 0.71 — over the bar above, and close enough to it that no threshold on
 	// similarity alone separates them.
 	MaxLengthRatio = 0.15
+	// AutoCommitSimilarity is the bar a fuzzy match must clear before a scanned
+	// card may be written to the collection without a human confirming it.
+	// Deliberately far above MinSimilarity: 0.7 means "worth showing a person",
+	// this means "right often enough to act on silently".
+	AutoCommitSimilarity = 0.90
 )
+
+// Match describes how a fuzzy resolution earned its answer, so callers can
+// distinguish a certain hit from a plausible-but-shaky one. Exact means the
+// normalized text equalled the normalized canonical name; Similarity is 1 for
+// an exact hit and the edit-distance score otherwise.
+type Match struct {
+	Exact      bool
+	Similarity float64
+}
 
 // Plausible reports whether canonical is a believable reading of some text.
 //
@@ -63,6 +77,14 @@ func Plausible(text, canonical string) bool {
 	// read is legitimately much shorter than its name, which is the one case
 	// where a large length difference means nothing is wrong.
 	if strings.HasPrefix(c, o) {
+		return true
+	}
+	// The mirror case: OCR glues the title to the line below it ("Inspired
+	// Fire deals + tam", observed live), so the read *starts with* the whole
+	// name. Anchored at the start and floored on length, this stays clear of
+	// the containment bug — "option" starts with "opt", but a three-letter
+	// name never clears the floor.
+	if len(c) >= 8 && strings.HasPrefix(o, c) {
 		return true
 	}
 	if lengthRatio(o, c) > MaxLengthRatio {

@@ -3,8 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -12,7 +14,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -34,6 +35,11 @@ const (
 	stateDestPick
 	stateQty
 	stateConfirm
+	// stateQueueReview lists the cards that scanned but didn't auto-commit;
+	// stateClosePrompt is the "you still have queued cards" gate on closing
+	// the camera.
+	stateQueueReview
+	stateClosePrompt
 )
 
 var (
@@ -74,23 +80,6 @@ type sessionEventMsg struct {
 	gen int
 	ev  scan.Event
 	ok  bool
-}
-
-// fuzzyMsg carries the canonical card name resolved from OCR text via Scryfall's
-// fuzzy match; ocr is the original scanned text, kept so it can pre-fill the
-// prompt on a miss.
-type fuzzyMsg struct {
-	canonical string
-	ocr       string
-	// set and number are the collector info read off the card's bottom border,
-	// carried through untouched so the printing picker can rank by them. Both are
-	// empty for cards that don't print them.
-	set    string
-	number string
-	// seq is the model's fuzzySeq when the lookup was issued; a mismatch on
-	// arrival means the user skipped or abandoned this card mid-resolve.
-	seq int
-	err error
 }
 
 // --- list item types ---
@@ -194,16 +183,46 @@ type model struct {
 	scannedSet    string
 	scannedNumber string
 
-	// queue holds a capture's remaining cards while the user walks the batch —
-	// a fanned spread scans as several cards, confirmed one cascade at a time.
-	// batchTotal is the capture's card count, for the "card k of N" badge; zero
-	// means no batch is active (a single-card capture never starts one).
-	queue      []scan.Card
-	batchTotal int
-	// fuzzySeq invalidates in-flight fuzzy resolutions: skipping or abandoning
-	// mid-resolve must not let the abandoned card's answer hijack whatever the
-	// user moved on to. fuzzyMsg carries the seq it was issued under.
-	fuzzySeq int
+	// The hands-free scan flow (see autoscan.go). Every capture resolves in
+	// the background under a generation number — bumping resolveGen lands any
+	// in-flight straggler dead. Confident cards commit themselves; the rest
+	// accumulate in review, walked mid-session (tab) or at camera close.
+	review        []queueItem
+	nextResolveID int
+	resolveGen    int
+	resolving     int // in-flight background resolutions
+	// current is the review item whose cascade is running; walking means the
+	// close-time sequential walk rather than a tab visit.
+	current *queueItem
+	walking bool
+	// recent auto-commits, for the duplicate window; now is injectable so the
+	// window is testable.
+	recent []recentCommit
+	now    func() time.Time
+	// tally is the capture view's live receipt of auto-commits; summary is the
+	// whole session's, returned to the caller when the program exits.
+	tally   []string
+	summary Summary
+	// autoState mirrors the helper's trigger phase ("armed", "held", …) for
+	// the capture view; empty when the helper has no auto capture.
+	autoState string
+	// The rearm nudge (see autoscan.go): autoCapable marks a helper that
+	// understands it, nudgeGen voids stale timers, nudgeSentAt stamps the
+	// last sent nudge (a time window, not a consumed flag — a real scan can
+	// race the nudge onto the wire, and the flag was observed being spent on
+	// the racing scan while the true echo slipped through), lastScanNudged
+	// tags scans inside that window, nudgeDrops counts echoes, and
+	// lastAutoName identifies the most recently processed card.
+	autoCapable    bool
+	nudgeGen       int
+	nudgeSentAt    time.Time
+	lastScanNudged bool
+	nudgeDrops     int
+	lastAutoName   string
+	// The session destination is asked once, when the camera opens;
+	// destForSession marks the picker as that ask rather than the per-card one.
+	destPicked     bool
+	destForSession bool
 
 	// camera choice, remembered for the session so bulk scanning doesn't ask
 	// every time. cameraChosen distinguishes "no camera picked yet" from a
@@ -260,6 +279,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		list:      l,
 		width:     80,
 		height:    22,
+		now:       time.Now,
 	}
 	if len(dests) > 0 {
 		m.dest = dests[0]
@@ -333,7 +353,25 @@ func nextEventCmd(s ScanSession, gen int) tea.Cmd {
 // beginScan opens the camera, first choosing one if this run hasn't yet. force
 // re-opens the picker even when a camera is already chosen. An already-open
 // session just gets focus back rather than being reopened.
+//
+// With several destinations, the first scan of the session asks where cards
+// land — once. Every auto-commit and every queued card defaults there; the
+// per-card cascade can still override.
 func (m *model) beginScan(force bool) tea.Cmd {
+	if len(m.dests) > 1 && !m.destPicked {
+		m.status = ""
+		m.destForSession = true
+		showPicker(m, "Scanned cards go to", m.dests, stateDestPick, func(_ int, d Destination) list.Item {
+			return destItem{d}
+		})
+		for i, d := range m.dests {
+			if d.ID == m.dest.ID {
+				m.list.Select(i)
+				break
+			}
+		}
+		return nil
+	}
 	if m.session != nil && !force {
 		m.status = ""
 		m.state = stateCapture
@@ -363,50 +401,6 @@ func (m *model) closeSession() {
 // maxFuzzyTries bounds how many OCR lines are tried against Scryfall, so a
 // text-heavy capture can't turn into a burst of lookups.
 const maxFuzzyTries = 5
-
-// namedFuzzyCmd resolves noisy OCR text to a canonical card name, trying each
-// recognized line in order until one matches. Only the first line is a real
-// guess at the title — the rest are the fallback for when that guess is wrong,
-// which is what a skewed or misrotated capture produces.
-// set and number are the collector info read off the same capture; they take no
-// part in resolving the name and are simply carried through to the printing step.
-func (m model) namedFuzzyCmd(lines []string, set, number string) tea.Cmd {
-	seq := m.fuzzySeq
-	return func() tea.Msg {
-		var firstErr error
-		for i, line := range lines {
-			if i >= maxFuzzyTries {
-				break
-			}
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			card, err := m.searcher.NamedFuzzy(m.ctx, line)
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			if card != nil && cardname.Plausible(line, card.Name) {
-				return fuzzyMsg{canonical: card.Name, ocr: line, set: set, number: number, seq: seq}
-			}
-		}
-		// Report the best-guess line: it's what gets pre-filled for editing.
-		var top string
-		if len(lines) > 0 {
-			top = lines[0]
-		}
-		return fuzzyMsg{ocr: top, set: set, number: number, seq: seq, err: firstErr}
-	}
-}
-
-// startCardCmd begins one card's cascade: resolve its OCR lines against
-// Scryfall, its own collector info riding along. The caller bumps fuzzySeq
-// first, so any lookup still in flight for a previous card lands dead.
-func (m model) startCardCmd(c scan.Card) tea.Cmd {
-	return m.namedFuzzyCmd(c.Lines(), c.SetCode, c.CollectorNumber)
-}
 
 // --- update ---
 
@@ -438,8 +432,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		return m.onSessionEvent(msg)
 
-	case fuzzyMsg:
-		return m.onFuzzy(msg)
+	case resolveDoneMsg:
+		return m.onResolveDone(msg)
+
+	case nudgeMsg:
+		return m.onNudge(msg)
 
 	case errMsg:
 		return m.failToName(msg.err.Error())
@@ -455,24 +452,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// ctrl+s skips the current card of a batch, wherever its cascade is: the
-	// queue's whole point is that one unwanted card costs a keystroke, not the
-	// capture. Gated on an active batch, so the key stays free elsewhere, and
-	// on the list's filter, which must keep every printable.
-	if msg.Type == tea.KeyCtrlS && m.batchTotal > 1 && !m.list.SettingFilter() {
+	// ctrl+s skips the review item whose cascade is running, wherever it is:
+	// one unwanted card should cost a keystroke, not the session. Gated on the
+	// list's filter, which must keep every printable.
+	if msg.Type == tea.KeyCtrlS && m.reviewing() && !m.list.SettingFilter() {
+		m.recordSkip(*m.current)
 		m.status, m.statusErr = "skipped", false
-		return m.advanceQueue()
-	}
-	// Esc must be able to abandon a batch even between cards, while the next
-	// one is still resolving — stateLoading has no esc of its own, and a queue
-	// that cannot be escaped mid-stride is a trap.
-	if msg.Type == tea.KeyEsc && m.batchTotal > 1 && m.state == stateLoading {
-		return m.cancelToName()
+		return m.afterCard()
 	}
 	switch m.state {
 	case stateName:
 		switch msg.Type {
 		case tea.KeyEsc:
+			// Reviewing a card that never resolved a name puts the cascade on
+			// this prompt; esc there abandons the item, not the program.
+			if m.reviewing() {
+				return m.cancelToName()
+			}
 			return m, tea.Quit
 		case tea.KeyCtrlO, tea.KeyCtrlR:
 			// Ctrl-R re-opens the camera picker even when this session already
@@ -512,6 +508,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeySpace, tea.KeyEnter:
 			return m.requestCapture()
+		case tea.KeyTab:
+			if len(m.review) > 0 {
+				return m.showReviewList()
+			}
+			return m, nil
 		case tea.KeyLeft:
 			return m.rotatePreview(true)
 		case tea.KeyRight:
@@ -522,7 +523,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.beginScan(true)
 			return m, cmd
 		case tea.KeyEsc:
-			// Close the camera without ending the add session.
+			// Closing the camera with unprocessed cards — queued or still
+			// resolving — deserves a decision, not a silent drop. The session
+			// stays open until it's made, so esc-again costs nothing.
+			if len(m.review) > 0 || m.resolving > 0 {
+				m.state = stateClosePrompt
+				return m, nil
+			}
 			m.closeSession()
 			return m.cancelToName()
 		}
@@ -530,8 +537,73 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The shutter is already pressed; esc abandons the whole camera rather
 		// than leaving the user staring at a spinner.
 		if msg.Type == tea.KeyEsc {
+			if len(m.review) > 0 || m.resolving > 0 {
+				m.state = stateClosePrompt
+				return m, nil
+			}
 			m.closeSession()
 			return m.cancelToName()
+		}
+	case stateQueueReview:
+		if m.list.SettingFilter() {
+			break
+		}
+		switch msg.Type {
+		case tea.KeyTab, tea.KeyEsc:
+			// Back to the camera; the queue keeps whatever it holds.
+			m.state = stateCapture
+			return m, nil
+		case tea.KeyEnter:
+			ri, ok := m.list.SelectedItem().(reviewItem)
+			if !ok {
+				return m, nil
+			}
+			m.takeFromReview(ri.it.id)
+			return m.startReview(ri.it)
+		case tea.KeyCtrlS:
+			ri, ok := m.list.SelectedItem().(reviewItem)
+			if !ok {
+				return m, nil
+			}
+			m.takeFromReview(ri.it.id)
+			m.recordSkip(ri.it)
+			if len(m.review) == 0 {
+				m.state = stateCapture
+				return m, nil
+			}
+			return m.showReviewList()
+		}
+	case stateClosePrompt:
+		switch {
+		case msg.Type == tea.KeyEnter || msg.String() == "r":
+			// Walk what's queued through the cascade, camera closed.
+			m.closeSession()
+			m.walking = true
+			if len(m.review) == 0 {
+				// Everything still resolving; late arrivals join the walk as
+				// they land (onResolveDone sees walking with no cascade).
+				m.state = stateLoading
+				return m, m.spinner.Tick
+			}
+			next := m.review[0]
+			m.review = m.review[1:]
+			return m.startReview(next)
+		case msg.String() == "d":
+			// Discard: kill in-flight resolves and drop the queue.
+			m.closeSession()
+			m.resolveGen++
+			dropped := len(m.review) + m.resolving
+			m.resolving = 0
+			m.review = nil
+			if dropped > 0 {
+				m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
+			}
+			m.status = fmt.Sprintf("%d scanned cards discarded", dropped)
+			m.statusErr = false
+			return m.resetForNext()
+		case msg.Type == tea.KeyEsc:
+			m.state = stateCapture
+			return m, nil
 		}
 	case stateNamePick:
 		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
@@ -576,6 +648,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return nil, nil, false
 			}
 			m.dest = di.d
+			// The session-start ask: remember the answer for every auto-commit
+			// and continue into the camera rather than a per-card cascade.
+			if m.destForSession {
+				m.destForSession = false
+				m.destPicked = true
+				cmd := m.beginScan(false)
+				return m, cmd, true
+			}
 			next, cmd := m.toQty()
 			return next, cmd, true
 		}); ok {
@@ -607,7 +687,7 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
-	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick:
+	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick, stateQueueReview:
 		m.list, cmd = m.list.Update(msg)
 	case stateLoading, stateCapturing, stateCameraBusy:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -779,6 +859,11 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		m.session = nil
 		m.sessionGen++
+		if len(m.review) > 0 || m.resolving > 0 {
+			// The window died with cards still queued — same decision as esc.
+			m.state = stateClosePrompt
+			return m, nil
+		}
 		if m.state == stateCapture || m.state == stateCapturing {
 			return m.cancelToName()
 		}
@@ -792,18 +877,29 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		if len(cards) == 0 {
 			m.status = "nothing readable in that frame — reframe and capture again"
 			m.statusErr = true
-			m.state = stateCapture
+			if m.state == stateCapturing {
+				m.state = stateCapture
+			}
 			return m, again
 		}
-		// A spread becomes a queue walked one cascade at a time; a single card
-		// is a batch of one, which never shows the badge and never queues.
-		// Each card's collector info travels with its own lines — pooling them
-		// per frame is how one card's name got another card's printing.
-		m.batchTotal = len(cards)
-		m.queue = cards[1:]
-		m.fuzzySeq++
-		m.state = stateLoading
-		return m, tea.Batch(m.spinner.Tick, m.startCardCmd(cards[0]), again)
+		// Every card resolves in the background — the camera stays interactive
+		// the whole time. Confident cards commit themselves as their lookups
+		// land; the rest queue. Each card's collector info travels with its own
+		// lines — pooling them per frame is how one card's name once got
+		// another card's printing.
+		m.lastScanNudged = !m.nudgeSentAt.IsZero() &&
+			m.now().Sub(m.nudgeSentAt) < nudgeEchoWindow
+		m.nudgeGen++ // a real capture voids any armed quiet-period timer
+		cmds := []tea.Cmd{again}
+		for _, c := range cards {
+			m.nextResolveID++
+			m.resolving++
+			cmds = append(cmds, m.resolveCardCmd(m.nextResolveID, c, len(cards)))
+		}
+		if m.state == stateCapturing {
+			m.state = stateCapture
+		}
+		return m, tea.Batch(cmds...)
 
 	case scan.EventError:
 		// The window is still up, so stay on the capture step and let them retry.
@@ -816,67 +912,213 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 
 	case scan.EventClosed:
 		m.closeSession()
+		if len(m.review) > 0 || m.resolving > 0 {
+			m.state = stateClosePrompt
+			return m, nil
+		}
 		return m.cancelToName()
 
 	case scan.EventReady:
 		if msg.ev.Device != "" {
 			m.cameraName = msg.ev.Device
 		}
+		// A helper that can fire itself is asked to: hands-free is the point.
+		// Feature-gated, so an old helper is never sent a command it would
+		// answer with an error event.
+		if slices.Contains(msg.ev.Features, "auto") {
+			_ = m.session.Auto(true)
+			m.autoState = "armed"
+			m.autoCapable = true
+		}
+		return m, again
+
+	case scan.EventAuto:
+		m.autoState = msg.ev.State
 		return m, again
 	}
 	// EventRotation and anything unrecognized: nothing to do but keep listening.
 	return m, again
 }
 
-// onFuzzy handles the fuzzy-name resolution of scanned text. On a match it looks
-// up printings (reusing the normal cascade); on a miss it drops back to the
-// prompt with the OCR text pre-filled so the user can correct it.
-func (m model) onFuzzy(msg fuzzyMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.fuzzySeq {
-		return m, nil // the user skipped or abandoned this card mid-resolve
+// onResolveDone lands one background resolution: a confident card writes
+// itself and shows up on the tally; anything else joins the review queue. The
+// UI state is deliberately untouched — captures keep flowing while this fires.
+func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.resolveGen {
+		return m, nil // a discarded session's straggler
 	}
-	if msg.err != nil {
-		return m.scanMissToName(msg.ocr, "scan: "+msg.err.Error())
+	if m.resolving > 0 {
+		m.resolving--
 	}
-	if msg.canonical == "" {
-		return m.scanMissToName(msg.ocr, fmt.Sprintf("couldn't identify %q — edit and press enter", msg.ocr))
+	it := msg.item
+
+	// A nudge-fired re-read of the very card just processed is the trigger
+	// seeing what we already know — swallow it, and stop nudging: one echo is
+	// confirmation enough that the card is parked, and further nudges would
+	// photograph the same card forever (observed live at a slow start).
+	// Nudging resumes with the next real scan. Only nudge echoes are dropped
+	// this way: a disruption-fired identical read still dup-queues, so a
+	// deliberately stacked playset copy survives.
+	if it.fromNudge && it.canonical != "" && it.canonical == m.lastAutoName {
+		m.nudgeDrops++
+		m.status = fmt.Sprintf("still seeing %s — waiting for the next card", it.canonical)
+		m.statusErr = false
+		return m, nil
 	}
-	m.scanned = msg.canonical
-	m.scannedOCR = msg.ocr
-	m.scannedSet = msg.set
-	m.scannedNumber = msg.number
-	m.state = stateLoading
-	return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.canonical))
+
+	// A multi-card capture's unresolvable entries are phantoms — ability names,
+	// brand lines, stray prose that read title-like — and they die here with a
+	// note rather than queueing, exactly as the batch flow always skipped them.
+	// A single-card capture keeps queueing: the only card of a shot must never
+	// vanish silently.
+	if it.canonical == "" && it.errText == "" && it.siblings > 1 {
+		m.status = fmt.Sprintf("ignored %q — not a card", it.ocrLine)
+		m.statusErr = false
+		return m, m.scheduleNudge()
+	}
+
+	if it.canonical != "" {
+		m.lastAutoName = it.canonical
+		m.nudgeDrops = 0
+	}
+
+	auto, finish, note := verdict(it)
+	if auto && isRecentDup(m.recent, it.prints[0].ID, finish, m.now()) {
+		auto = false
+		it.dup = true
+		note = "possible duplicate — same card auto-added just now"
+	}
+	if auto {
+		card := it.prints[0]
+		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
+		if err := m.adder(res); err != nil {
+			nudge := m.scheduleNudge()
+			it.note = "add failed: " + err.Error()
+			m.review = append(m.review, it)
+			next, cmd := m.reviewChanged()
+			return next, tea.Batch(cmd, nudge)
+		}
+		m.recent = recordCommit(m.recent, card.ID, finish, m.now())
+		m.addedCount++
+		line := fmt.Sprintf("%s (%s/%s) %s — %s", card.Name,
+			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
+		m.tally = append(m.tally, line)
+		m.summary.add("auto", line)
+		return m, m.scheduleNudge()
+	}
+
+	it.note = note
+	m.review = append(m.review, it)
+	nudge := m.scheduleNudge()
+	next, cmd := m.reviewChanged()
+	return next, tea.Batch(cmd, nudge)
 }
 
-// scanMissToName returns to the name prompt with the OCR text pre-filled and an
-// error banner, so a failed scan is never a dead end.
-func (m model) scanMissToName(ocr, msg string) (tea.Model, tea.Cmd) {
-	// Mid-batch, one unidentifiable card must not strand the rest of the
-	// capture at the prompt: banner the miss and walk on. Phantom reads — a
-	// keycap, a box lid — die here, which is the queue working as designed.
-	if m.batchTotal > 1 {
-		m.status = msg
-		m.statusErr = true
-		return m.advanceQueue()
+// reviewChanged reacts to the queue growing: the close-time walk consumes the
+// arrival immediately if it was waiting on one, and an open review list is
+// rebuilt in place. Anywhere else, the counters in the chrome are enough.
+func (m model) reviewChanged() (tea.Model, tea.Cmd) {
+	if m.walking && m.current == nil && len(m.review) > 0 {
+		next := m.review[0]
+		m.review = m.review[1:]
+		return m.startReview(next)
 	}
-	m.queue = nil
-	m.batchTotal = 0
-	m.prints = nil
-	m.chosen = nil
-	m.finish = ""
-	m.qtyErr = ""
-	m.scanned = ""
-	m.scannedOCR = ""
-	m.scannedSet = ""
-	m.scannedNumber = ""
-	m.nameInput.SetValue(ocr)
-	m.nameInput.CursorEnd()
-	m.nameInput.Focus()
-	m.status = msg
-	m.statusErr = true
-	m.state = stateName
-	return m, textinput.Blink
+	if m.state == stateQueueReview {
+		return m.showReviewList()
+	}
+	return m, nil
+}
+
+// reviewing reports whether a review item's cascade is running.
+func (m model) reviewing() bool { return m.current != nil }
+
+// takeFromReview removes an item from the queue by id.
+func (m *model) takeFromReview(id int) {
+	for i, it := range m.review {
+		if it.id == id {
+			m.review = append(m.review[:i], m.review[i+1:]...)
+			return
+		}
+	}
+}
+
+// recordSkip notes a dropped review item in the session summary.
+func (m *model) recordSkip(it queueItem) {
+	m.summary.add("skipped", reviewItem{it}.Title())
+}
+
+// showReviewList opens the queue as a picker.
+func (m model) showReviewList() (tea.Model, tea.Cmd) {
+	showPicker(&m, fmt.Sprintf("Review queue (%d)", len(m.review)), m.review, stateQueueReview,
+		func(_ int, it queueItem) list.Item { return reviewItem{it} })
+	return m, nil
+}
+
+// startReview re-enters the interactive cascade for one queued card, at
+// whatever depth its background resolution reached: printings already fetched
+// go straight to the picker (or auto-advance past it), a name alone refetches
+// printings, and a card that never resolved lands on the prompt with its OCR
+// text pre-filled. The item's note rides along as the banner, so the cascade
+// opens by saying why the card queued.
+func (m model) startReview(it queueItem) (tea.Model, tea.Cmd) {
+	m.current = &it
+	m.scanned = it.canonical
+	m.scannedOCR = it.ocrLine
+	m.scannedSet = it.raw.SetCode
+	m.scannedNumber = it.raw.CollectorNumber
+	m.status, m.statusErr = "", false
+	if it.note != "" {
+		m.status, m.statusErr = it.note, true
+	}
+	if it.canonical == "" {
+		m.prints = nil
+		m.chosen = nil
+		m.finish = ""
+		m.qtyErr = ""
+		m.nameInput.SetValue(it.ocrLine)
+		m.nameInput.CursorEnd()
+		m.nameInput.Focus()
+		m.state = stateName
+		return m, textinput.Blink
+	}
+	if len(it.prints) == 0 {
+		m.state = stateLoading
+		return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(it.canonical))
+	}
+	// Printings were fetched and ranked in the background; onPrints re-ranks
+	// idempotently and handles the single-printing auto-advance.
+	return m.onPrints(printsMsg{name: it.canonical, cards: it.prints})
+}
+
+// afterCard is where a finished card — confirmed, skipped, or failed — hands
+// control back: the close-time walk pulls the next queued card, a tab visit
+// returns to the list, and the plain flow resets for the next capture or name.
+func (m model) afterCard() (tea.Model, tea.Cmd) {
+	if !m.reviewing() {
+		return m.resetForNext()
+	}
+	m.current = nil
+	if m.walking {
+		if len(m.review) > 0 {
+			next := m.review[0]
+			m.review = m.review[1:]
+			return m.startReview(next)
+		}
+		if m.resolving > 0 {
+			// The queue is dry but lookups are still in flight; hold on the
+			// spinner and let reviewChanged pull the next arrival in.
+			m.scanned = ""
+			m.scannedOCR = ""
+			m.state = stateLoading
+			return m, m.spinner.Tick
+		}
+		m.walking = false
+		return m.resetForNext()
+	}
+	if len(m.review) > 0 {
+		return m.showReviewList()
+	}
+	return m.resetForNext()
 }
 
 // advanceAfterPrint moves past printing selection: it auto-skips the finish step
@@ -894,6 +1136,16 @@ func (m model) advanceAfterPrint() (tea.Model, tea.Cmd) {
 	showPicker(&m, "Select a finish", finishes, stateFinishPick, func(_ int, f string) list.Item {
 		return finishItem(f)
 	})
+	// A reviewed card's printed foil marker pre-selects its finish — the
+	// cursor lands on what the border said, and enter accepts it.
+	if m.reviewing() && m.current.finishHint != "" {
+		for i, f := range finishes {
+			if f == m.current.finishHint {
+				m.list.Select(i)
+				break
+			}
+		}
+	}
 	return m, nil
 }
 
@@ -933,57 +1185,59 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 		m.status += " → " + m.dest.Name
 	}
 	m.statusErr = false
-	return m.advanceQueue()
-}
-
-// advanceQueue moves the batch to its next card, or ends it. The camera is
-// not returned to until the queue drains — walking every card of the capture
-// first is the batch's whole point. When no batch is active this is exactly
-// resetForNext, which keeps every single-card path byte-identical.
-func (m model) advanceQueue() (tea.Model, tea.Cmd) {
-	if len(m.queue) == 0 {
-		m.batchTotal = 0
-		return m.resetForNext()
+	if m.reviewing() {
+		kind := "reviewed"
+		if m.current.dup {
+			kind = "duplicate-confirmed"
+		}
+		m.summary.add(kind, fmt.Sprintf("%d× %s (%s/%s) %s",
+			res.Qty, res.Card.Name, strings.ToUpper(res.Card.Set),
+			res.Card.CollectorNumber, res.Finish))
 	}
-	next := m.queue[0]
-	m.queue = m.queue[1:]
-	m.prints = nil
-	m.chosen = nil
-	m.finish = ""
-	m.qtyErr = ""
-	m.scanned = ""
-	m.scannedOCR = ""
-	m.scannedSet = ""
-	m.scannedNumber = ""
-	m.fuzzySeq++
-	m.state = stateLoading
-	return m, tea.Batch(m.spinner.Tick, m.startCardCmd(next))
+	return m.afterCard()
 }
 
-// cancelToName abandons the in-progress add — and with it any queued batch:
-// esc means "get me out", and silently continuing a queue the user just
-// escaped would be the opposite.
+// cancelToName abandons the in-progress add: esc means "get me out".
 func (m model) cancelToName() (tea.Model, tea.Cmd) {
-	m.status = ""
-	if m.batchTotal > 1 {
-		dropped := len(m.queue) + 1 // the current card and everything behind it
-		m.status = fmt.Sprintf("batch abandoned — %d of %d cards not added", dropped, m.batchTotal)
-		m.statusErr = false
+	if m.reviewing() {
+		return m.cancelReview()
 	}
-	m.queue = nil
-	m.batchTotal = 0
-	m.fuzzySeq++
+	m.status = ""
+	m.destForSession = false
 	return m.resetForNext()
 }
 
+// cancelReview is esc during a review item's cascade. Mid-walk it means what
+// esc always meant for a batch — get me out, dropping what's left; from a tab
+// visit it just puts the card back and returns to the list.
+func (m model) cancelReview() (tea.Model, tea.Cmd) {
+	it := *m.current
+	m.current = nil
+	if m.walking {
+		m.walking = false
+		m.resolveGen++
+		dropped := len(m.review) + m.resolving + 1
+		m.resolving = 0
+		m.review = nil
+		m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
+		m.status = fmt.Sprintf("review abandoned — %d cards not added", dropped)
+		m.statusErr = false
+		return m.resetForNext()
+	}
+	m.review = append([]queueItem{it}, m.review...)
+	m.status, m.statusErr = "", false
+	return m.showReviewList()
+}
+
 // failToName shows an error banner and returns to the name prompt, keeping the
-// session alive — or, mid-batch, walks on to the next card: one card's failed
-// write should cost that card, not the capture.
+// session alive — or, mid-review, walks on: one card's failed write should
+// cost that card, not the session.
 func (m model) failToName(msg string) (tea.Model, tea.Cmd) {
 	m.status = msg
 	m.statusErr = true
-	if m.batchTotal > 1 {
-		return m.advanceQueue()
+	if m.reviewing() {
+		m.summary.add("skipped", reviewItem{*m.current}.Title()+" — "+msg)
+		return m.afterCard()
 	}
 	return m.resetForNext()
 }
@@ -1102,10 +1356,11 @@ func (m model) listHeight() int {
 
 // --- view ---
 
-// batchHelp appends the skip key to a cascade help line while a batch is
-// active — the key only exists then, so advertising it elsewhere would lie.
+// batchHelp appends the skip key to a cascade help line while a review item's
+// cascade is running — the key only exists then, so advertising it elsewhere
+// would lie.
 func (m model) batchHelp(base string) string {
-	if m.batchTotal > 1 {
+	if m.reviewing() {
 		return base + " · ctrl+s skip card"
 	}
 	return base
@@ -1114,12 +1369,16 @@ func (m model) batchHelp(base string) string {
 // scanHeader renders the fixed banner shown for the rest of the cascade after a
 // camera scan, so the user can confirm the OCR landed on the right card. When
 // the raw OCR text differs from the canonical name, it's shown alongside so a
-// wrong-but-plausible match is obvious. A multi-card capture prefixes its
-// progress — the badge is what makes N manual printing picks bearable.
+// wrong-but-plausible match is obvious. A review cascade prefixes how many
+// cards are still waiting — the badge is what makes a long queue bearable.
 func (m model) scanHeader() string {
 	var badge string
-	if m.batchTotal > 1 {
-		badge = fmt.Sprintf("card %d of %d", m.batchTotal-len(m.queue), m.batchTotal)
+	if m.reviewing() {
+		if left := len(m.review); left > 0 {
+			badge = fmt.Sprintf("reviewing · %d more queued", left)
+		} else {
+			badge = "reviewing"
+		}
 	}
 	if m.scanned == "" {
 		if badge == "" {
@@ -1179,12 +1438,52 @@ func (m model) View() string {
 			}
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
-		b.WriteString("Frame the next card, then press space.\n\n")
+		// The live tally: the last few auto-commits, so an unattended write is
+		// visible the moment it happens.
+		const tallyShown = 4
+		for _, line := range m.tally[max(0, len(m.tally)-tallyShown):] {
+			b.WriteString(okStyle.Render("✓ Auto-added: "+line) + "\n")
+		}
+		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
+			counter := fmt.Sprintf("%d auto-added · %d need review", len(m.tally), len(m.review))
+			if m.resolving > 0 {
+				counter += fmt.Sprintf(" · %d resolving", m.resolving)
+			}
+			b.WriteString(helpStyle.Render(counter) + "\n")
+		}
+		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
+			b.WriteString("\n")
+		}
+		switch m.autoState {
+		case "armed":
+			b.WriteString("Set a card down — it captures by itself (space still works).\n\n")
+		case "held":
+			b.WriteString("Captured. Swap in the next card.\n\n")
+		default:
+			b.WriteString("Frame the next card, then press space.\n\n")
+		}
 		help := "space capture · ←/→ rotate · esc close camera · ctrl+c quit"
+		if len(m.review) > 0 {
+			help = fmt.Sprintf("tab review (%d) · %s", len(m.review), help)
+		}
 		if m.addedCount > 0 {
 			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
 		}
 		b.WriteString(helpStyle.Render(help + "\n(space and ←/→ also work in the camera window)"))
+		return b.String()
+	case stateQueueReview:
+		return m.list.View() + "\n" +
+			helpStyle.Render("↑/↓ move · enter fix this card · ctrl+s drop it · tab/esc back to camera · ctrl+c quit")
+	case stateClosePrompt:
+		var b strings.Builder
+		b.WriteString(titleStyle.Render("Close the camera?") + "\n\n")
+		n := len(m.review)
+		line := fmt.Sprintf("%d scanned cards are waiting for review", n)
+		if m.resolving > 0 {
+			line += fmt.Sprintf(" (%d still resolving)", m.resolving)
+		}
+		b.WriteString(line + ".\n\n")
+		b.WriteString(helpStyle.Render("enter review them now · d discard them · esc back to camera"))
 		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",

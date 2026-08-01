@@ -18,6 +18,7 @@ const (
 	EventRotation = "rotation" // the user turned the preview
 	EventError    = "error"    // capture failed; the session is still alive
 	EventClosed   = "closed"   // the window closed; the session is over
+	EventAuto     = "auto"     // auto-trigger state change; see Event.State
 )
 
 // Event is one message from a capture session.
@@ -44,6 +45,40 @@ type Event struct {
 	// spread yields one entry per card. Empty from helpers that predate
 	// multi-card scanning; use CardList, which falls back to the flat fields.
 	Cards []Card `json:"cards"`
+	// Confidence is Vision's confidence (0–1) in the line chosen as the title.
+	// Zero from helpers that predate confidence reporting — treat zero as
+	// unknown, never as "definitely bad".
+	Confidence float64 `json:"confidence"`
+	// BandAnchored reports whether the collector band was anchored to a
+	// detected card rectangle rather than falling back to the frame's lower
+	// half. Only an anchored band's collector read deserves trust.
+	BandAnchored bool `json:"bandAnchored"`
+	// Auto is true when the helper's auto trigger fired this scan rather than
+	// a capture command or the space key.
+	Auto bool `json:"auto"`
+	// Features lists helper capabilities, advertised on EventReady ("auto"
+	// means the helper understands auto-on/auto-off).
+	Features []string `json:"features"`
+	// State is the auto-trigger state carried by EventAuto.
+	State string `json:"state"`
+	// CollectorAlts are collector blocks beyond the primary flat fields: a
+	// card scanned off a stack shows a sliver of the card beneath it, whose
+	// border parses as well as the target's. The caller keeps whichever
+	// candidate matches a real printing.
+	CollectorAlts []CollectorAlt `json:"collectorAlts"`
+	// FinishHint is the primary block's printed finish marker: modern frames
+	// star the set/language separator on foil printings and bullet it on
+	// nonfoil ones. Empty means no marker was read — never a guess.
+	FinishHint string `json:"finishHint"`
+}
+
+// CollectorAlt is one alternative collector block read from the band. Finish
+// is the printed marker beside the set code — "foil" (star), "nonfoil"
+// (bullet), or "" on frames that carry no marker.
+type CollectorAlt struct {
+	Number string `json:"number"`
+	Set    string `json:"set"`
+	Finish string `json:"finish"`
 }
 
 // Card is one card of a capture. Name and Candidates mirror the event's flat
@@ -56,6 +91,19 @@ type Card struct {
 	Candidates      []string `json:"candidates"`
 	CollectorNumber string   `json:"collectorNumber"`
 	SetCode         string   `json:"setCode"`
+	// Confidence is Vision's confidence in this entry's title read. Zero from
+	// old helpers means unknown.
+	Confidence float64 `json:"confidence"`
+	// Source is the channel that produced the entry: "crop" (perspective-
+	// corrected card rectangle — collector info is card-anchored by
+	// construction) or "frame" (frame-wide title pass, never carries collector
+	// info). Empty from old helpers.
+	Source string `json:"source"`
+	// CollectorAlts are collector blocks beyond the primary fields; see
+	// Event.CollectorAlts.
+	CollectorAlts []CollectorAlt `json:"collectorAlts"`
+	// FinishHint is the printed finish marker; see Event.FinishHint.
+	FinishHint string `json:"finishHint"`
 }
 
 // Lines returns the card's OCR'd text, best guess first, falling back to Name
@@ -92,11 +140,22 @@ func (e Event) CardList() []Card {
 	if len(e.Lines()) == 0 {
 		return nil
 	}
+	// The flat fields describe the frame-wide read. Its collector info is
+	// card-anchored exactly when the band was, which is the property Source
+	// encodes for real entries — so borrow the same vocabulary here.
+	source := "frame"
+	if e.BandAnchored {
+		source = "crop"
+	}
 	return []Card{{
 		Name:            e.Name,
 		Candidates:      e.Candidates,
 		CollectorNumber: e.CollectorNumber,
 		SetCode:         e.SetCode,
+		Confidence:      e.Confidence,
+		Source:          source,
+		CollectorAlts:   e.CollectorAlts,
+		FinishHint:      e.FinishHint,
 	}}
 }
 

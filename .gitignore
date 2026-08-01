@@ -46,3 +46,7 @@ hoard.db
 # Claude Code local session state (worktrees, caches); device settings live
 # in ~/.claude, so nothing here is shared project config
 .claude/
+
+# Scan-tuning artifacts: personal card photos and session telemetry
+scan-fixtures/
+leader-debug/

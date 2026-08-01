@@ -145,9 +145,9 @@ func (c *countingSearcher) SearchPrints(context.Context, string) ([]scryfall.Car
 	return c.cards, nil
 }
 
-func (c *countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, error) {
+func (c *countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, cardname.Match, error) {
 	c.fuzzy++
-	return c.card, nil
+	return c.card, cardname.Match{}, nil
 }
 
 // A nil catalog is a supported state: hoard behaves exactly as it did before the
@@ -185,22 +185,34 @@ func TestNewSearcherIgnoresAnEmptyCatalog(t *testing.T) {
 	}
 }
 
-// A confident local "no" is final. Asking Scryfall afterwards would hand exactly
-// the rejected cases to the endpoint that resolves "option" to "Opt" —
-// reintroducing the bug the local check exists to prevent.
-func TestFuzzyRefusalIsNotRetriedRemotely(t *testing.T) {
-	remote := &countingSearcher{card: &scryfall.Card{Name: "Opt"}}
+// A local miss — including a refusal — falls through to the API: a card from
+// a set newer than the catalog build looks exactly like junk to the catalog,
+// and a final local "no" made every newly-released card unscannable.
+func TestLocalMissFallsThroughToRemoteFuzzy(t *testing.T) {
+	remote := &countingSearcher{card: &scryfall.Card{ID: "new", Name: "Brand New Card"}}
 	s := layeredSearcher{local: &fakeLocal{}, remote: remote}
 
-	got, err := s.NamedFuzzy(context.Background(), "option")
+	got, _, err := s.NamedFuzzy(context.Background(), "Brand New Card")
 	if err != nil {
 		t.Fatalf("NamedFuzzy: %v", err)
 	}
-	if got != nil {
-		t.Errorf("got %q, want the local refusal to stand", got.Name)
+	if got == nil || got.Name != "Brand New Card" {
+		t.Errorf("got %v, want the API's answer for a post-catalog card", got)
 	}
-	if remote.fuzzy != 0 {
-		t.Error("a rejected read was sent to Scryfall's fuzzy search anyway")
+	if remote.fuzzy != 1 {
+		t.Errorf("api fuzzy called %d times, want 1", remote.fuzzy)
+	}
+}
+
+// What keeps that fallthrough safe: the Scryfall adapter is an identity check,
+// not a search. The API resolves "option" to the card "Opt" because the query
+// contains the name; the adapter must refuse an answer that doesn't plausibly
+// explain what was read.
+func TestRemoteFuzzyRejectsImplausibleAnswer(t *testing.T) {
+	// scryfallSearcher itself would call the network; exercise the same gate
+	// it applies, against the case that motivated it.
+	if cardname.Plausible("option", "Opt") {
+		t.Fatal("the option→Opt case must be implausible, or the adapter gate is vacuous")
 	}
 }
 
@@ -216,7 +228,7 @@ func TestLocalHitsSkipTheAPI(t *testing.T) {
 	if got, _ := s.SearchPrints(ctx, "Sol Ring"); len(got) == 0 {
 		t.Error("no local printings")
 	}
-	if got, _ := s.NamedFuzzy(ctx, "Sol Rlng"); got == nil {
+	if got, _, _ := s.NamedFuzzy(ctx, "Sol Rlng"); got == nil {
 		t.Error("no local fuzzy match")
 	}
 	if remote.auto+remote.prints+remote.fuzzy != 0 {
@@ -278,15 +290,18 @@ func (f *fakeLocal) SearchPrints(_ context.Context, name string) ([]scryfall.Car
 
 // NamedFuzzy resolves a plausible read and refuses anything else, exactly as the
 // catalog's own matcher does.
-func (f *fakeLocal) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, error) {
+func (f *fakeLocal) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	f.fuzzy++
 	if f.err != nil {
-		return nil, f.err
+		return nil, cardname.Match{}, f.err
 	}
 	if cardname.Plausible(text, "Sol Ring") {
-		return &scryfall.Card{ID: "sol", Name: "Sol Ring"}, nil
+		n := cardname.Normalize(text)
+		c := cardname.Normalize("Sol Ring")
+		return &scryfall.Card{ID: "sol", Name: "Sol Ring"},
+			cardname.Match{Exact: n == c, Similarity: cardname.Similarity(n, c)}, nil
 	}
-	return nil, nil
+	return nil, cardname.Match{}, nil
 }
 
 func TestExtractJSONFlag(t *testing.T) {

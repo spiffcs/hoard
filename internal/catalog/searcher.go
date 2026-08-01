@@ -93,36 +93,42 @@ const fuzzyCandidates = 50
 // stray word in frame becomes a card. Here the same rule that used to reject the
 // API's answer decides the answer, so the check cannot be skipped by accident.
 //
-// Returns (nil, nil) when nothing is a believable reading, matching the API
-// client so callers fall back to manual entry the same way.
-func (c *Catalog) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error) {
+// Returns a nil card when nothing is a believable reading, matching the API
+// client so callers fall back to manual entry the same way. The Match reports
+// how a non-nil answer was earned: an exact normalized hit, or a fuzzy match
+// with its similarity score — the score bestNameFor always computed and used
+// to discard, now surfaced for the auto-commit decision.
+func (c *Catalog) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	norm := cardname.Normalize(text)
 	if norm == "" {
-		return nil, nil
+		return nil, cardname.Match{}, nil
 	}
 
 	// An exact normalized hit needs no ranking and no candidate generation.
 	var name string
 	err := c.db.QueryRow(`SELECT name FROM names WHERE name_norm = ?`, norm).Scan(&name)
 	if err == nil {
-		return c.newestPrinting(ctx, name)
+		card, err := c.newestPrinting(ctx, name)
+		return card, cardname.Match{Exact: true, Similarity: 1}, err
 	}
 
-	best, err := c.bestNameFor(norm)
+	best, score, err := c.bestNameFor(norm)
 	if err != nil || best == "" {
-		return nil, err
+		return nil, cardname.Match{}, err
 	}
 	if !cardname.Plausible(text, best) {
-		return nil, nil
+		return nil, cardname.Match{}, nil
 	}
-	return c.newestPrinting(ctx, best)
+	card, err := c.newestPrinting(ctx, best)
+	return card, cardname.Match{Similarity: score}, err
 }
 
-// bestNameFor ranks trigram candidates by edit distance and returns the closest.
-func (c *Catalog) bestNameFor(norm string) (string, error) {
+// bestNameFor ranks trigram candidates by edit distance and returns the
+// closest with its similarity score.
+func (c *Catalog) bestNameFor(norm string) (string, float64, error) {
 	tris := cardname.Trigrams(norm)
 	if len(tris) == 0 {
-		return "", nil
+		return "", 0, nil
 	}
 	args := make([]any, len(tris))
 	for i, t := range tris {
@@ -138,7 +144,7 @@ GROUP BY t.name_norm
 ORDER BY hits DESC
 LIMIT ?`, args...)
 	if err != nil {
-		return "", fmt.Errorf("catalog: finding candidates: %w", err)
+		return "", 0, fmt.Errorf("catalog: finding candidates: %w", err)
 	}
 	defer rows.Close()
 
@@ -151,15 +157,15 @@ LIMIT ?`, args...)
 		var name string
 		var hits int
 		if err := rows.Scan(&name, &hits); err != nil {
-			return "", err
+			return "", 0, err
 		}
 		cands = append(cands, scored{name, cardname.Similarity(norm, cardname.Normalize(name))})
 	}
 	if err := rows.Err(); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if len(cands) == 0 {
-		return "", nil
+		return "", 0, nil
 	}
 
 	// Ties broken by the shorter name: with equal edit distance the shorter one
@@ -171,7 +177,7 @@ LIMIT ?`, args...)
 		}
 		return len(cands[i].name) < len(cands[j].name)
 	})
-	return cands[0].name, nil
+	return cands[0].name, cands[0].score, nil
 }
 
 // newestPrinting is the most recent paper printing of a name, which is what the

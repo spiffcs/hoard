@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/tui"
@@ -51,28 +52,25 @@ func (s layeredSearcher) SearchPrints(ctx context.Context, name string) ([]scryf
 	return s.remote.SearchPrints(ctx, name)
 }
 
-// NamedFuzzy is the one lookup where a local miss is meaningful.
-//
-// The local matcher refuses text it cannot explain — that is its job, and the
-// refusal is what stops a keycap or a line of rules text becoming a card. Asking
-// Scryfall afterwards would hand exactly those cases to the endpoint that
-// resolves "option" to "Opt", reintroducing the bug the check exists to prevent.
-//
-// So the API is consulted only when the catalog had nothing to match *against*:
-// a name it has never seen, which means a printing newer than the last build.
-// A confident local "no" is final.
-func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error) {
+// NamedFuzzy prefers the catalog and falls through to the API on any local
+// miss — including a local refusal. A card from a set newer than the last
+// catalog build looks exactly like junk to the catalog (nothing plausible to
+// match against), and treating that "no" as final made every newly-released
+// card unscannable. What keeps the fallthrough safe from the endpoint that
+// resolves "option" to "Opt" is that the remote adapter applies the same
+// cardname.Plausible identity check the catalog does — junk dies in either
+// layer; a genuinely new card dies only in the stale one. The match rides
+// along from whichever layer answered, computed with the same cardname
+// functions, so a score means the same thing either way.
+func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	if s.local == nil {
 		return s.remote.NamedFuzzy(ctx, text)
 	}
-	card, err := s.local.NamedFuzzy(ctx, text)
+	card, match, err := s.local.NamedFuzzy(ctx, text)
 	if err == nil && card != nil {
-		return card, nil
+		return card, match, nil
 	}
-	if err != nil {
-		return s.remote.NamedFuzzy(ctx, text)
-	}
-	return nil, nil
+	return s.remote.NamedFuzzy(ctx, text)
 }
 
 // scryfallSearcher adapts the package-level scryfall functions to tui.Searcher.
@@ -86,6 +84,25 @@ func (scryfallSearcher) Autocomplete(ctx context.Context, q string) ([]string, e
 func (scryfallSearcher) SearchPrints(ctx context.Context, name string) ([]scryfall.Card, error) {
 	return scryfall.SearchPrints(ctx, name)
 }
-func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error) {
-	return scryfall.NamedFuzzy(ctx, text)
+
+// NamedFuzzy wraps the unchanged API call and computes the match itself, with
+// the same cardname functions the catalog uses — the API doesn't report how it
+// matched, and inventing a different scoring here would let the two layers
+// disagree about what "exact" means.
+//
+// The Plausible gate makes this an identity check like the catalog's own:
+// Scryfall's endpoint is a *search* that resolves "option" to the card "Opt"
+// because the query contains the name, which is right for a human typing and
+// wrong for OCR. Refusing implausible answers here is what makes it safe for
+// the layered searcher to consult the API on every local miss.
+func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
+	card, err := scryfall.NamedFuzzy(ctx, text)
+	if err != nil || card == nil {
+		return card, cardname.Match{}, err
+	}
+	if !cardname.Plausible(text, card.Name) {
+		return nil, cardname.Match{}, nil
+	}
+	n, c := cardname.Normalize(text), cardname.Normalize(card.Name)
+	return card, cardname.Match{Exact: n == c, Similarity: cardname.Similarity(n, c)}, nil
 }

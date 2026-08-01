@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/cardname"
 )
 
 // stocked builds a catalog holding a handful of real card names, including the
@@ -127,7 +129,7 @@ func TestNamedFuzzy(t *testing.T) {
 		{"", "", "nothing read"},
 	}
 	for _, tc := range cases {
-		got, err := c.NamedFuzzy(context.Background(), tc.text)
+		got, _, err := c.NamedFuzzy(context.Background(), tc.text)
 		if err != nil {
 			t.Fatalf("NamedFuzzy(%q): %v", tc.text, err)
 		}
@@ -141,11 +143,47 @@ func TestNamedFuzzy(t *testing.T) {
 	}
 }
 
+// The match report is what the auto-commit decision keys on: an exact
+// normalized hit must say so, and a fuzzy hit must carry the score bestNameFor
+// ranked it by rather than discarding it.
+func TestNamedFuzzyReportsExactAndSimilarity(t *testing.T) {
+	c := stocked(t)
+
+	_, match, err := c.NamedFuzzy(context.Background(), "Sol Ring")
+	if err != nil {
+		t.Fatalf("NamedFuzzy: %v", err)
+	}
+	if !match.Exact || match.Similarity != 1 {
+		t.Errorf("clean read match = %+v, want exact with similarity 1", match)
+	}
+
+	// Punctuation and case vanish in normalization, so this is still exact.
+	_, match, err = c.NamedFuzzy(context.Background(), "elspeth knight errant")
+	if err != nil {
+		t.Fatalf("NamedFuzzy: %v", err)
+	}
+	if !match.Exact {
+		t.Errorf("normalized-equal read match = %+v, want exact", match)
+	}
+
+	got, match, err := c.NamedFuzzy(context.Background(), "Sol Rlng")
+	if err != nil || got == nil {
+		t.Fatalf("NamedFuzzy: %v, %v", got, err)
+	}
+	if match.Exact {
+		t.Error("an OCR slip must not report an exact match")
+	}
+	want := cardname.Similarity(cardname.Normalize("Sol Rlng"), cardname.Normalize("Sol Ring"))
+	if match.Similarity != want {
+		t.Errorf("similarity = %v, want the real score %v", match.Similarity, want)
+	}
+}
+
 // The representative printing has to be a real, complete card: the add cascade
 // takes its name onward to SearchPrints and shows its price.
 func TestNamedFuzzyReturnsAUsablePrinting(t *testing.T) {
 	c := stocked(t)
-	got, err := c.NamedFuzzy(context.Background(), "Sol Rlng")
+	got, _, err := c.NamedFuzzy(context.Background(), "Sol Rlng")
 	if err != nil || got == nil {
 		t.Fatalf("NamedFuzzy: %v, %v", got, err)
 	}
@@ -168,7 +206,7 @@ func TestNamedFuzzyRefusesUnrelatedText(t *testing.T) {
 		"zzzzqqqqxxxx",
 		"3/4",
 	} {
-		got, err := c.NamedFuzzy(context.Background(), text)
+		got, _, err := c.NamedFuzzy(context.Background(), text)
 		if err != nil {
 			t.Fatalf("NamedFuzzy(%q): %v", text, err)
 		}
@@ -189,7 +227,7 @@ func TestSearchOnAnEmptyCatalog(t *testing.T) {
 	if got, err := c.SearchPrints(ctx, "Sol Ring"); err != nil || len(got) != 0 {
 		t.Errorf("SearchPrints = %v, %v", got, err)
 	}
-	if got, err := c.NamedFuzzy(ctx, "Sol Ring"); err != nil || got != nil {
+	if got, _, err := c.NamedFuzzy(ctx, "Sol Ring"); err != nil || got != nil {
 		t.Errorf("NamedFuzzy = %v, %v", got, err)
 	}
 }

@@ -89,7 +89,43 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	return tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name, dests)
+	sum, err := tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name, dests)
+	if err != nil {
+		return err
+	}
+	printScanSummary(sum)
+	return nil
+}
+
+// printScanSummary leaves the session's receipt in the terminal scrollback:
+// scanning writes to the collection without a per-card confirm, so the record
+// of what it did has to outlive the alternate screen.
+func printScanSummary(sum tui.Summary) {
+	if len(sum.Entries) == 0 {
+		return
+	}
+	auto, reviewed := sum.Count("auto"), sum.Count("reviewed")+sum.Count("duplicate-confirmed")
+	skipped, discarded := sum.Count("skipped"), sum.Count("discarded")
+	line := fmt.Sprintf("Scan session: %d auto-added, %d reviewed", auto, reviewed)
+	if skipped > 0 {
+		line += fmt.Sprintf(", %d skipped", skipped)
+	}
+	if discarded > 0 {
+		line += fmt.Sprintf(", %d discarded", discarded)
+	}
+	fmt.Println(line)
+	for _, e := range sum.Entries {
+		switch e.Kind {
+		case "auto":
+			fmt.Printf("  ✓ %s\n", e.Line)
+		case "reviewed", "duplicate-confirmed":
+			fmt.Printf("  + %s\n", e.Line)
+		case "skipped":
+			fmt.Printf("  - skipped %s\n", e.Line)
+		case "discarded":
+			fmt.Printf("  - %s\n", e.Line)
+		}
+	}
 }
 
 // destinations lists everywhere an add can land: the binders (default first),

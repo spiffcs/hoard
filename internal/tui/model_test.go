@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -17,7 +18,8 @@ import (
 type fakeSearcher struct {
 	auto   map[string][]string
 	prints map[string][]scryfall.Card
-	fuzzy  map[string]string // ocr text -> canonical name
+	fuzzy  map[string]string         // ocr text -> canonical name
+	match  map[string]cardname.Match // optional override; else computed for real
 }
 
 func (f fakeSearcher) Autocomplete(_ context.Context, q string) ([]string, error) {
@@ -26,11 +28,18 @@ func (f fakeSearcher) Autocomplete(_ context.Context, q string) ([]string, error
 func (f fakeSearcher) SearchPrints(_ context.Context, name string) ([]scryfall.Card, error) {
 	return f.prints[name], nil
 }
-func (f fakeSearcher) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, error) {
+func (f fakeSearcher) NamedFuzzy(_ context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	if name, ok := f.fuzzy[text]; ok {
-		return &scryfall.Card{Name: name}, nil
+		if m, ok := f.match[text]; ok {
+			return &scryfall.Card{Name: name}, m, nil
+		}
+		// Compute the match for real, so tests mapping an exact name get an
+		// exact match without saying so twice.
+		n, c := cardname.Normalize(text), cardname.Normalize(name)
+		return &scryfall.Card{Name: name},
+			cardname.Match{Exact: n == c, Similarity: cardname.Similarity(n, c)}, nil
 	}
-	return nil, nil
+	return nil, cardname.Match{}, nil
 }
 
 // recordingAdder captures confirmed results and can be made to fail.
@@ -81,11 +90,28 @@ type fakeSession struct {
 	events   chan scan.Event
 	captures int
 	rotates  int
+	autoOn   int
+	autoOff  int
+	rearms   int
 	closed   bool
+}
+
+func (s *fakeSession) Rearm() error {
+	s.rearms++
+	return nil
 }
 
 func (s *fakeSession) Capture() error {
 	s.captures++
+	return nil
+}
+
+func (s *fakeSession) Auto(on bool) error {
+	if on {
+		s.autoOn++
+	} else {
+		s.autoOff++
+	}
 	return nil
 }
 
@@ -103,9 +129,6 @@ func (s *fakeSession) Close() error {
 	}
 	return nil
 }
-
-// emit queues an event as the helper would.
-func (s *fakeSession) emit(ev scan.Event) { s.events <- ev }
 
 func cam(id, name, kind string) scan.Device {
 	return scan.Device{ID: id, Name: name, Kind: kind}
@@ -292,8 +315,10 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 	}
 }
 
-func TestScanResolvesToPrintingPicker(t *testing.T) {
-	// Two printings so we land in the printing picker after a scan.
+func TestScanResolvesInBackgroundAndQueues(t *testing.T) {
+	// Two printings and no collector info: the card resolves but cannot commit
+	// itself, so it queues while the camera stays interactive — and reviewing
+	// it re-enters the printing picker with the scan header pinned.
 	cards := []scryfall.Card{
 		{ID: "a", Name: "Sol Ring", Set: "c21", CollectorNumber: "263", Finishes: []string{"nonfoil"}},
 		{ID: "b", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil", "foil"}},
@@ -306,7 +331,7 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 	m := newModel(context.Background(), fs, noopAdder, sc, "", nil)
 
 	// ctrl+o looks for cameras; a lone camera is opened without asking.
-	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	if mm.(model).state != stateCameraBusy {
 		t.Fatalf("ctrl+o should enter stateCameraBusy, got %v", mm.(model).state)
 	}
@@ -316,27 +341,38 @@ func TestScanResolvesToPrintingPicker(t *testing.T) {
 	if mm.(model).state != stateCapture {
 		t.Fatalf("an open session should wait at stateCapture, got %v", mm.(model).state)
 	}
-	// A capture reads text → fuzzy → prints. Drive the messages.
-	gen := mm.(model).sessionGen
-	mm, _ = mm.(model).onSessionEvent(sessionEventMsg{gen: gen, ok: true,
-		ev: scan.Event{Kind: scan.EventScan, Name: "Sol Rlng", Candidates: []string{"Sol Rlng"}}})
-	mm, _ = mm.(model).onFuzzy(fuzzyMsg{canonical: "Sol Ring", ocr: "Sol Rlng", seq: mm.(model).fuzzySeq})
-	mm, _ = mm.(model).Update(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Rlng", Candidates: []string{"Sol Rlng"}}
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = mm.(model)
+	if got.state != stateCapture {
+		t.Fatalf("resolution must run behind the camera, got state %v", got.state)
+	}
+	// Run the background resolve as the command would, and land its result.
+	mm, _ = got.Update(got.resolveCardCmd(1, ev.CardList()[0], 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Fatalf("review queue = %d, want the unverified card queued", len(got.review))
+	}
+	if got.state != stateCapture {
+		t.Errorf("queueing must not change state, got %v", got.state)
+	}
+
+	// Review it: the cascade re-enters at the printing picker, no refetch.
+	mm, _ = got.startReview(got.review[0])
+	got = mm.(model)
 	if got.state != statePrintPick {
-		t.Fatalf("state = %v, want statePrintPick after scan→fuzzy→search", got.state)
+		t.Fatalf("state = %v, want statePrintPick on review", got.state)
 	}
 	if len(got.list.Items()) != 2 {
 		t.Errorf("printing list = %d items, want 2", len(got.list.Items()))
 	}
-	// The scanned name stays pinned as a header through the rest of the cascade.
 	if got.scanned != "Sol Ring" {
 		t.Errorf("scanned header name = %q, want %q", got.scanned, "Sol Ring")
 	}
 	if !strings.Contains(got.View(), "Sol Ring") {
 		t.Error("printing picker should show the scanned card name as a header")
 	}
-	_ = cmd
 }
 
 // solRingPrints is a stand-in for a heavily reprinted card, in Scryfall's
@@ -506,17 +542,23 @@ func TestClosingCameraWindowReturnsToPrompt(t *testing.T) {
 
 func TestScanFallsBackToLaterOcrLines(t *testing.T) {
 	// The top-line guess is rules text (what a misrotated capture yields); the
-	// real title is further down the list and should still resolve.
+	// real title is further down the list and should still resolve — and the
+	// line index says it was a fallback, which the auto-commit bar refuses.
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 
 	lines := []string{"control have indestructible.\"", "Volkan Baga", "Elspeth, Knight-Errant"}
-	msg := m.namedFuzzyCmd(lines, "", "")().(fuzzyMsg)
-	if msg.canonical != "Elspeth, Knight-Errant" {
-		t.Errorf("canonical = %q, want the title found on a later line", msg.canonical)
+	canonical, ocr, idx, _, err := resolveName(context.Background(), fs, lines)
+	if err != nil {
+		t.Fatalf("resolveName: %v", err)
 	}
-	if msg.ocr != "Elspeth, Knight-Errant" {
-		t.Errorf("ocr = %q, want the line that actually matched", msg.ocr)
+	if canonical != "Elspeth, Knight-Errant" {
+		t.Errorf("canonical = %q, want the title found on a later line", canonical)
+	}
+	if ocr != "Elspeth, Knight-Errant" {
+		t.Errorf("ocr = %q, want the line that actually matched", ocr)
+	}
+	if idx != 2 {
+		t.Errorf("line index = %d, want 2 — the verdict needs to know it was a fallback", idx)
 	}
 }
 
@@ -547,6 +589,11 @@ func TestPlausibleMatch(t *testing.T) {
 		// Card text must not resolve to a card.
 		{"control have indestructible", "Opt", false, "rules text"},
 		{"Volkan Baga", "Elspeth, Knight-Errant", false, "artist line"},
+
+		// OCR glues the title to the line below it; the read starting with
+		// the whole (long enough) name is that name.
+		{"Inspired Fire deals + tam", "Inspired Fire", true, "title glued to rules text"},
+		{"option please", "Opt", false, "the prefix mirror must not revive the Opt bug"},
 	}
 	for _, c := range cases {
 		if got := cardname.Plausible(c.ocr, c.canonical); got != c.want {
@@ -563,22 +610,39 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 		"option":                 "Opt",
 		"Elspeth, Knight-Errant": "Elspeth, Knight-Errant",
 	}}
-	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
-
-	msg := m.namedFuzzyCmd([]string{"option", "Elspeth, Knight-Errant"}, "", "")().(fuzzyMsg)
-	if msg.canonical != "Elspeth, Knight-Errant" {
-		t.Errorf("canonical = %q, want the real card rather than the Opt false positive",
-			msg.canonical)
+	canonical, _, _, _, _ := resolveName(context.Background(), fs,
+		[]string{"option", "Elspeth, Knight-Errant"})
+	if canonical != "Elspeth, Knight-Errant" {
+		t.Errorf("canonical = %q, want the real card rather than the Opt false positive", canonical)
 	}
 }
 
 func TestScanFuzzyMissReportsTopLine(t *testing.T) {
 	// Nothing matches → the best-guess line is what gets pre-filled for editing.
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	msg := m.namedFuzzyCmd([]string{"Blrgh", "Nonsense"}, "", "")().(fuzzyMsg)
-	if msg.canonical != "" || msg.ocr != "Blrgh" {
-		t.Errorf("miss: canonical=%q ocr=%q, want empty canonical and the top line",
-			msg.canonical, msg.ocr)
+	canonical, ocr, _, _, _ := resolveName(context.Background(), fakeSearcher{},
+		[]string{"Blrgh", "Nonsense"})
+	if canonical != "" || ocr != "Blrgh" {
+		t.Errorf("miss: canonical=%q ocr=%q, want empty canonical and the top line", canonical, ocr)
+	}
+}
+
+func TestFallbackLinesWithTypeWordsNeverResolve(t *testing.T) {
+	// "creature." as a fallback line fuzzy-resolved to the real card Creature
+	// Guy (observed live). Type-line vocabulary on a non-primary line is frame
+	// furniture; on the primary line it may be the actual title.
+	fs := fakeSearcher{fuzzy: map[string]string{
+		"creature.":    "Creature Guy",
+		"Creature Guy": "Creature Guy",
+	}}
+	canonical, _, _, _, _ := resolveName(context.Background(), fs,
+		[]string{"Inspired Fire deals + tam garbage xyz", "creature.", "flavor text"})
+	if canonical != "" {
+		t.Errorf("canonical = %q, want no match — the type-word fallback line must be skipped", canonical)
+	}
+	// The same text as the primary line still resolves: that IS the card.
+	canonical, _, _, _, _ = resolveName(context.Background(), fs, []string{"Creature Guy"})
+	if canonical != "Creature Guy" {
+		t.Errorf("canonical = %q, want the primary line to stay eligible", canonical)
 	}
 }
 
@@ -586,13 +650,12 @@ func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
 	// A text-heavy capture must not turn into an unbounded burst of lookups.
 	var tries int
 	counting := countingSearcher{onFuzzy: func() { tries++ }}
-	m := newModel(context.Background(), counting, noopAdder, nil, "", nil)
 
 	lines := make([]string, 20)
 	for i := range lines {
 		lines[i] = "line"
 	}
-	m.namedFuzzyCmd(lines, "", "")()
+	resolveName(context.Background(), counting, lines)
 	if tries != maxFuzzyTries {
 		t.Errorf("made %d lookups, want %d", tries, maxFuzzyTries)
 	}
@@ -604,22 +667,38 @@ type countingSearcher struct {
 	onFuzzy func()
 }
 
-func (c countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, error) {
+func (c countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, cardname.Match, error) {
 	c.onFuzzy()
-	return nil, nil
+	return nil, cardname.Match{}, nil
 }
 
-func TestScanMissPrefillsOcrText(t *testing.T) {
-	// Fuzzy match fails → back to prompt with OCR text pre-filled for editing.
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder,
-		&fakeScanner{}, "", nil)
-	mm, _ := m.onFuzzy(fuzzyMsg{ocr: "Blrgh Nonsense", seq: m.fuzzySeq}) // canonical empty = miss
+func TestReviewItemWithFuzzyMissPrefillsName(t *testing.T) {
+	// A card that never resolved a name reviews at the prompt, its OCR text
+	// pre-filled for editing and the queue reason as the banner.
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	it := queueItem{id: 1, ocrLine: "Blrgh Nonsense", note: `couldn't identify "Blrgh Nonsense"`}
+	mm, _ := m.startReview(it)
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr {
-		t.Fatalf("miss should show error banner on prompt: state=%v statusErr=%v", got.state, got.statusErr)
+		t.Fatalf("miss should review at the prompt with a banner: state=%v statusErr=%v",
+			got.state, got.statusErr)
 	}
 	if got.nameInput.Value() != "Blrgh Nonsense" {
 		t.Errorf("OCR text not pre-filled: %q", got.nameInput.Value())
+	}
+	if !got.reviewing() {
+		t.Error("the cascade should know it is reviewing a queued card")
+	}
+	// esc there abandons the item, not the program.
+	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if isQuit(cmd) {
+		t.Error("esc while reviewing must not quit the program")
+	}
+	if s := mm.(model).state; s != stateQueueReview {
+		t.Errorf("esc from a tab review should return to the queue list, got %v", s)
+	}
+	if n := len(mm.(model).review); n != 1 {
+		t.Errorf("the abandoned item should go back to the queue, have %d", n)
 	}
 }
 
@@ -943,180 +1022,679 @@ func TestSingleDestinationSkipsThePicker(t *testing.T) {
 	}
 }
 
-// batchFixture is a three-card capture and a searcher that resolves each name.
-func batchFixture() (scan.Event, fakeSearcher) {
-	ev := scan.Event{Kind: scan.EventScan, Name: "Ulamog, the Infinite Gyre", Cards: []scan.Card{
-		{Name: "Ulamog, the Infinite Gyre", Candidates: []string{"Ulamog, the Infinite Gyre"}, SetCode: "UMA", CollectorNumber: "7"},
-		{Name: "Emrakul, the World Anew", Candidates: []string{"Emrakul, the World Anew"}},
-		{Name: "Kozilek, the Broken Reality", Candidates: []string{"Kozilek, the Broken Reality"}},
-	}}
-	fs := fakeSearcher{
-		fuzzy: map[string]string{
-			"Ulamog, the Infinite Gyre":   "Ulamog, the Infinite Gyre",
-			"Emrakul, the World Anew":     "Emrakul, the World Anew",
-			"Kozilek, the Broken Reality": "Kozilek, the Broken Reality",
-		},
+// confidentEvent is a scan whose card clears every auto-commit gate against
+// solRingPrints: exact name, set+number pinning MH3 #123, high confidence.
+func confidentEvent() scan.Event {
+	return scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
+		Candidates: []string{"Sol Ring"}, SetCode: "MH3", CollectorNumber: "123",
+		Confidence: 0.95, BandAnchored: true}
+}
+
+func confidentFixture() (scan.Event, fakeSearcher) {
+	return confidentEvent(), fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": solRingPrints()},
 	}
-	return ev, fs
 }
 
-// single returns a one-printing, one-finish card so a batch test's cascade
-// auto-skips straight to quantity.
-func single(id, name string) scryfall.Card {
-	return scryfall.Card{ID: id, Name: name, Set: "uma", CollectorNumber: "1",
-		Finishes: []string{"nonfoil"}}
-}
-
-// runCard walks one queued card from its fuzzy resolution through confirm.
-func runCard(t *testing.T, m model, name string, card scryfall.Card) model {
+// resolve runs one card's background resolution synchronously and lands it.
+func resolve(t *testing.T, m model, c scan.Card) model {
 	t.Helper()
-	mm, _ := m.onFuzzy(fuzzyMsg{canonical: name, ocr: name, seq: m.fuzzySeq})
-	mm, _ = mm.(model).Update(printsMsg{name: name, cards: []scryfall.Card{card}})
-	got := mm.(model)
-	if got.state != stateQty {
-		t.Fatalf("%s: state = %v, want stateQty", name, got.state)
-	}
-	mm, _ = got.submitQty()
-	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	mm, _ := m.Update(m.resolveCardCmd(m.nextResolveID, c, 1)())
 	return mm.(model)
 }
 
-// One capture with three cards walks three cascades, in order, each carrying
-// its own collector info — nothing pooled, nothing cross-paired.
-func TestBatchWalksEveryCard(t *testing.T) {
-	ev, fs := batchFixture()
+func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
+	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := mm.(model)
-	if got.batchTotal != 3 || len(got.queue) != 2 || got.state != stateLoading {
-		t.Fatalf("batch = %d/%d state=%v, want 3 with 2 queued, loading", got.batchTotal, len(got.queue), got.state)
+	if got.state != stateCapture || got.resolving != 1 {
+		t.Fatalf("scan should resolve behind the camera: state=%v resolving=%d",
+			got.state, got.resolving)
 	}
+	got = resolve(t, got, ev.CardList()[0])
 
-	got = runCard(t, got, "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
-	if got.state != stateLoading || len(got.queue) != 1 {
-		t.Fatalf("after card 1: state=%v queue=%d, want loading card 2", got.state, len(got.queue))
+	// No keys pressed, and the card is in the collection.
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1", len(ra.got))
 	}
-	// The badge counts up, and card 1's collector info did not leak forward.
-	if !strings.Contains(got.scanHeader(), "card 2 of 3") {
-		t.Errorf("header = %q, want the card 2 of 3 badge", got.scanHeader())
-	}
-	if got.scannedSet != "" || got.scannedNumber != "" {
-		t.Errorf("card 1's collector info leaked into card 2: %q/%q", got.scannedSet, got.scannedNumber)
-	}
-
-	got = runCard(t, got, "Emrakul, the World Anew", single("e1", "Emrakul, the World Anew"))
-	got = runCard(t, got, "Kozilek, the Broken Reality", single("k1", "Kozilek, the Broken Reality"))
-
-	if len(ra.got) != 3 {
-		t.Fatalf("adder got %d cards, want 3", len(ra.got))
-	}
-	if got.state != stateCapture || got.batchTotal != 0 {
-		t.Errorf("after the batch: state=%v batchTotal=%d, want back at capture with no batch", got.state, got.batchTotal)
-	}
-}
-
-// The first card's fuzzy carries its own set and number — the cross-pairing
-// regression the per-card protocol exists to prevent.
-func TestBatchCarriesPerCardCollectorInfo(t *testing.T) {
-	ev, fs := batchFixture()
-	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
-	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
-	got := mm.(model)
-
-	// Execute the real fuzzy command for card 1 and inspect what it carries.
-	msg := got.startCardCmd(ev.Cards[0])().(fuzzyMsg)
-	if msg.set != "UMA" || msg.number != "7" {
-		t.Errorf("card 1 fuzzy carries %q/%q, want UMA/7", msg.set, msg.number)
-	}
-}
-
-// ctrl+s drops exactly the current card; the rest of the batch continues.
-func TestBatchSkipAdvances(t *testing.T) {
-	ev, fs := batchFixture()
-	ra := &recordingAdder{}
-	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
-	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
-	got := runCard(t, mm.(model), "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
-
-	// Skip card 2 while it is still resolving.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
-	got = mm.(model)
-	if got.state != stateLoading || len(got.queue) != 0 {
-		t.Fatalf("after skip: state=%v queue=%d, want loading card 3", got.state, len(got.queue))
-	}
-	got = runCard(t, got, "Kozilek, the Broken Reality", single("k1", "Kozilek, the Broken Reality"))
-
-	if len(ra.got) != 2 || ra.got[1].Card.Name != "Kozilek, the Broken Reality" {
-		t.Errorf("adder got %+v, want Ulamog and Kozilek only", len(ra.got))
-	}
-}
-
-// A stale fuzzy answer from a skipped card must not hijack its successor.
-func TestBatchSkipDropsStaleFuzzy(t *testing.T) {
-	ev, fs := batchFixture()
-	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
-	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
-	got := mm.(model)
-	staleSeq := got.fuzzySeq
-
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS}) // skip card 1 mid-resolve
-	got = mm.(model)
-	mm, _ = got.onFuzzy(fuzzyMsg{canonical: "Ulamog, the Infinite Gyre", ocr: "x", seq: staleSeq})
-	got = mm.(model)
-	if got.scanned == "Ulamog, the Infinite Gyre" {
-		t.Error("a skipped card's fuzzy answer took over the cascade")
-	}
-}
-
-// Esc abandons the whole batch: get-me-out must not quietly keep queueing.
-func TestBatchEscAbandons(t *testing.T) {
-	ev, fs := batchFixture()
-	ra := &recordingAdder{}
-	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
-	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
-	got := runCard(t, mm.(model), "Ulamog, the Infinite Gyre", single("u1", "Ulamog, the Infinite Gyre"))
-
-	// Card 2 is loading; esc bails out of everything.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	got = mm.(model)
-	if got.batchTotal != 0 || got.queue != nil {
-		t.Fatalf("esc left a batch behind: total=%d queue=%d", got.batchTotal, len(got.queue))
-	}
-	if !strings.Contains(got.status, "abandoned") {
-		t.Errorf("status = %q, want the abandonment named", got.status)
+	r := ra.got[0]
+	if r.Qty != 1 || r.Finish != "nonfoil" || !strings.EqualFold(r.Card.Set, "mh3") {
+		t.Errorf("result = %+v, want 1× the MH3 printing, nonfoil", r)
 	}
 	if got.state != stateCapture {
-		t.Errorf("state = %v, want back at the live camera", got.state)
+		t.Errorf("state = %v, want the camera still interactive", got.state)
 	}
-	if len(ra.got) != 1 {
-		t.Errorf("adder got %d, want just the confirmed card", len(ra.got))
+	if len(got.tally) != 1 || !strings.Contains(got.View(), "Auto-added") {
+		t.Errorf("the tally should show the commit: tally=%v", got.tally)
+	}
+	if got.summary.Count("auto") != 1 || len(got.review) != 0 || got.resolving != 0 {
+		t.Errorf("summary auto=%d review=%d resolving=%d, want 1/0/0",
+			got.summary.Count("auto"), len(got.review), got.resolving)
 	}
 }
 
-// A card nobody can identify banners and walks on — phantom reads (a keycap,
-// a box lid) cost a banner, not the capture.
-func TestBatchMissContinues(t *testing.T) {
-	ev, fs := batchFixture()
+func TestMultiPrintNoCollectorNeverAutoCommits(t *testing.T) {
+	// The headline never-rule: a clean name match with several printings and no
+	// collector verification queues — newest-first would guess the wrong set.
+	_, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
+		Candidates: []string{"Sol Ring"}, Confidence: 0.99}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 0 {
+		t.Fatalf("adder called %d times, want 0 — printing was never verified", len(ra.got))
+	}
+	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "printing unverified") {
+		t.Fatalf("review = %+v, want the card queued with a printing note", got.review)
+	}
+	if !strings.Contains(got.View(), "review") {
+		t.Error("the capture view should show the queue count")
+	}
+}
+
+func TestUncertainScanQueues(t *testing.T) {
+	// A shaky fuzzy score queues when the printing evidence is short of a
+	// full set+number verification — a bare number match is not enough to
+	// carry a name this weak. (With set+number the same score commits: see
+	// TestVerdict's carry rows.)
+	_, fs := confidentFixture()
+	fs.fuzzy["Sol Rmg"] = "Sol Ring"
+	fs.match = map[string]cardname.Match{"Sol Rmg": {Similarity: 0.75}}
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Rmg", Candidates: []string{"Sol Rmg"},
+		CollectorNumber: "263"} // number-only: unique among the printings, no set read
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 0 {
+		t.Fatalf("adder called %d times, want 0", len(ra.got))
+	}
+	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "uncertain name") {
+		t.Fatalf("review = %+v, want an uncertain-name note", got.review)
+	}
+}
+
+func TestVerdict(t *testing.T) {
+	verified := solRingPrints()[2:] // the MH3 printing first
+	multi := solRingPrints()
+	foilOnly := []scryfall.Card{{ID: "f", Name: "Foily", Set: "sld",
+		CollectorNumber: "1", Finishes: []string{"foil"}}}
+	exact := cardname.Match{Exact: true, Similarity: 1}
+
+	multiFinish := []scryfall.Card{{ID: "mf", Name: "Sol Ring", Set: "mh3",
+		CollectorNumber: "123", Finishes: []string{"nonfoil", "foil"}}}
+
+	cases := []struct {
+		name     string
+		it       queueItem
+		wantAuto bool
+		finish   string
+		note     string
+	}{
+		{"exact set+number commits nonfoil",
+			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
+				rank: scanMatchSetAndNumber, raw: scan.Card{Confidence: 0.95}},
+			true, "nonfoil", ""},
+		{"printed star commits as foil",
+			queueItem{canonical: "Sol Ring", match: exact, prints: multiFinish,
+				rank: scanMatchSetAndNumber, finishHint: "foil"},
+			true, "foil", ""},
+		{"printed bullet commits as nonfoil",
+			queueItem{canonical: "Sol Ring", match: exact, prints: multiFinish,
+				rank: scanMatchSetAndNumber, finishHint: "nonfoil"},
+			true, "nonfoil", ""},
+		{"foil marker on a nonfoil-only printing is ignored",
+			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
+				rank: scanMatchSetAndNumber, finishHint: "foil"},
+			true, "nonfoil", ""},
+		{"single foil-only printing commits as foil",
+			queueItem{canonical: "Foily", match: exact, prints: foilOnly,
+				rank: scanMatchSinglePrint},
+			true, "foil", ""},
+		{"unknown confidence decides by name and printing alone",
+			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
+				rank: scanMatchNumberOnly},
+			true, "nonfoil", ""},
+		{"lookup error queues",
+			queueItem{errText: "api down"}, false, "", "lookup failed"},
+		{"no name queues",
+			queueItem{ocrLine: "Blrgh"}, false, "", "couldn't identify"},
+		{"fallback-line match queues",
+			queueItem{canonical: "Sol Ring", lineIdx: 2, match: exact,
+				prints: verified, rank: scanMatchSetAndNumber},
+			false, "", "fallback"},
+		{"set+number verification carries a shaky name",
+			// Glare truncated the title (observed live: "Danther Wakandan
+			// King"), but the collector block pinned the printing — and a
+			// wrong-card resolution could not have matched these printings.
+			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.79},
+				prints: verified, rank: scanMatchSetAndNumber},
+			true, "nonfoil", ""},
+		{"set+number verification carries low OCR confidence",
+			// A trailing glare glyph drags the line confidence to 0.5 while
+			// the normalized name matches exactly (observed live every run on
+			// one foil).
+			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
+				rank: scanMatchSetAndNumber, raw: scan.Card{Confidence: 0.5}},
+			true, "nonfoil", ""},
+		{"shaky similarity without strong printing queues",
+			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.8},
+				prints: verified[:1], rank: scanMatchNumberOnly},
+			false, "", "uncertain name"},
+		{"low OCR confidence on a fuzzy name without strong printing queues",
+			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.95},
+				prints: verified[:1], rank: scanMatchNumberOnly,
+				raw: scan.Card{Confidence: 0.5}},
+			false, "", "low OCR confidence"},
+		{"exact name with low confidence and weak printing still commits",
+			// Exact normalized equality IS the confidence check: the text
+			// matched a real card name letter for letter.
+			queueItem{canonical: "Sol Ring", match: exact, prints: verified[:1],
+				rank: scanMatchNumberOnly, raw: scan.Card{Confidence: 0.5}},
+			true, "nonfoil", ""},
+		{"ambiguous number queues",
+			queueItem{canonical: "Sol Ring", match: exact, prints: multi,
+				rank: scanMatchNumberAmbiguous},
+			false, "", "printing unverified"},
+		{"multi-print no collector queues",
+			queueItem{canonical: "Sol Ring", match: exact, prints: multi,
+				rank: scanMatchNone},
+			false, "", "printing unverified"},
+		{"no printings queues",
+			queueItem{canonical: "Sol Ring", match: exact}, false, "", "no printings"},
+	}
+	for _, c := range cases {
+		auto, finish, note := verdict(c.it)
+		if auto != c.wantAuto {
+			t.Errorf("%s: auto = %v, want %v", c.name, auto, c.wantAuto)
+			continue
+		}
+		if auto && finish != c.finish {
+			t.Errorf("%s: finish = %q, want %q", c.name, finish, c.finish)
+		}
+		if !auto && !strings.Contains(note, c.note) {
+			t.Errorf("%s: note = %q, want it to mention %q", c.name, note, c.note)
+		}
+	}
+}
+
+func TestRankByScanStrength(t *testing.T) {
+	cards := solRingPrints()
+	if _, s := rankByScanStrength(cards, "MH3", "123"); s != scanMatchSetAndNumber {
+		t.Errorf("set+number strength = %v, want scanMatchSetAndNumber", s)
+	}
+	if _, s := rankByScanStrength(cards, "", "263"); s != scanMatchNumberOnly {
+		t.Errorf("unique number strength = %v, want scanMatchNumberOnly", s)
+	}
+	dupes := []scryfall.Card{
+		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
+		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
+	}
+	if _, s := rankByScanStrength(dupes, "", "7"); s != scanMatchNumberAmbiguous {
+		t.Errorf("shared number strength = %v, want scanMatchNumberAmbiguous", s)
+	}
+	if _, s := rankByScanStrength(cards[:1], "", ""); s != scanMatchSinglePrint {
+		t.Errorf("single printing strength = %v, want scanMatchSinglePrint", s)
+	}
+	// A number that matches nothing makes even a lone printing suspect: the
+	// name match may have landed on the wrong card entirely.
+	if _, s := rankByScanStrength(cards[:1], "", "999"); s != scanMatchNone {
+		t.Errorf("conflicting number strength = %v, want scanMatchNone", s)
+	}
+	if _, s := rankByScanStrength(cards, "", ""); s != scanMatchNone {
+		t.Errorf("no signal strength = %v, want scanMatchNone", s)
+	}
+}
+
+func TestDedupeQueuesRefire(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
+	}
+
+	// The same card re-fires seconds later: queued as a possible duplicate,
+	// never silently dropped — a playset is legitimate.
+	clock = clock.Add(2 * time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("a refire inside the window must not auto-commit, adder got %d", len(ra.got))
+	}
+	if len(got.review) != 1 || !got.review[0].dup ||
+		!strings.Contains(got.review[0].note, "duplicate") {
+		t.Fatalf("review = %+v, want the refire queued as a possible duplicate", got.review)
+	}
+
+	// Past the window it is just the next copy, and commits.
+	clock = clock.Add(dupWindow + time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("past the window the same card should commit again, adder got %d", len(ra.got))
+	}
+}
+
+func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
+	// Two captures in flight; the user tabs into the review list before either
+	// resolves. Both land regardless of UI state, out of order.
+	_, fs := confidentFixture()
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
+
+	unknown := scan.Event{Kind: scan.EventScan, Name: "Blrgh", Candidates: []string{"Blrgh"}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: unknown})
+	got := mm.(model)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: unknown})
+	got = mm.(model)
+	if got.resolving != 2 {
+		t.Fatalf("resolving = %d, want 2 in flight", got.resolving)
+	}
+
+	// Seed one queued item so tab has something to show, then tab away.
+	got.review = append(got.review, queueItem{id: 99, ocrLine: "seed", note: "seeded"})
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got = mm.(model)
+	if got.state != stateQueueReview {
+		t.Fatalf("tab should open the review list, got %v", got.state)
+	}
+
+	// The second capture's resolution lands first, then the first's.
+	second := got.resolveCardCmd(2, unknown.CardList()[0], 1)().(resolveDoneMsg)
+	first := got.resolveCardCmd(1, unknown.CardList()[0], 1)().(resolveDoneMsg)
+	mm, _ = got.Update(second)
+	mm, _ = mm.(model).Update(first)
+	got = mm.(model)
+	if len(got.review) != 3 || got.resolving != 0 {
+		t.Errorf("review = %d resolving = %d, want 3/0 — arrivals land in any order, any state",
+			len(got.review), got.resolving)
+	}
+	if got.state != stateQueueReview {
+		t.Errorf("landing resolutions must not yank the user out of the list, got %v", got.state)
+	}
+	if len(got.list.Items()) != 3 {
+		t.Errorf("open review list should refresh in place: %d items", len(got.list.Items()))
+	}
+}
+
+func TestFoilMarkerCommitsAsFoil(t *testing.T) {
+	// The printed star beside the language code is the foil marker; a starred
+	// card whose printing offers both finishes commits as foil with no keys.
+	prints := []scryfall.Card{{ID: "f1", Name: "Sol Ring", Set: "mh3",
+		CollectorNumber: "123", Finishes: []string{"nonfoil", "foil"}}}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	card := scan.Card{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
+		SetCode: "MH3", CollectorNumber: "123", FinishHint: "foil", Confidence: 0.95}
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring", Cards: []scan.Card{card}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), card)
+
+	if len(ra.got) != 1 || ra.got[0].Finish != "foil" {
+		t.Fatalf("adder got %+v, want the starred card committed as foil", ra.got)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %d, want none", len(got.review))
+	}
+}
+
+func TestAltCollectorCandidateVerifiesStackScan(t *testing.T) {
+	// A card scanned off the top of a stack: the primary collector read is the
+	// neighbour card's sliver (which matches no printing of the resolved
+	// name), and the true block rides in the alternates. The alternate that
+	// verifies wins, and the card auto-commits. Observed live: Green Goblin
+	// MSC #657 with a stacked card's MSH #286 parsed first.
+	prints := solRingPrints() // has MH3 #123
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	card := scan.Card{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
+		SetCode: "MSH", CollectorNumber: "286", // the neighbour's border
+		CollectorAlts: []scan.CollectorAlt{{Number: "123", Set: "MH3"}},
+		Confidence:    0.95}
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring", Cards: []scan.Card{card}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), card)
+
+	if len(ra.got) != 1 || !strings.EqualFold(ra.got[0].Card.Set, "mh3") {
+		t.Fatalf("adder got %+v, want the alternate-verified MH3 printing committed", ra.got)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %d, want none — the alternate verified", len(got.review))
+	}
+}
+
+func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
+	// After a commit, the model nudges the parked trigger; the nudge re-reads
+	// the same sitting card. That echo must neither re-commit nor dup-queue —
+	// but the same read arriving WITHOUT a nudge (a real disruption fired it)
+	// still dup-queues, which is what keeps stacked playset copies alive.
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: first scan should commit, got %d", len(ra.got))
+	}
+
+	// The nudged re-read of the same card: dropped. The tag is a time window
+	// rather than a consumed flag, so it survives a real scan racing the
+	// nudge onto the wire.
+	got.nudgeSentAt = got.now()
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = mm.(model)
+	if !got.lastScanNudged {
+		t.Fatal("a scan inside the nudge window should be tagged as nudged")
+	}
+	got = resolve(t, got, ev.CardList()[0])
+	if len(ra.got) != 1 || len(got.review) != 0 {
+		t.Fatalf("echo leaked: adds=%d review=%d, want 1/0", len(ra.got), len(got.review))
+	}
+	if got.nudgeDrops != 1 {
+		t.Errorf("nudgeDrops = %d, want 1", got.nudgeDrops)
+	}
+
+	// The same card again, fired by real disruption (window long expired):
+	// dup-queue.
+	got.nudgeSentAt = time.Time{}
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(got.review) != 1 || !got.review[0].dup {
+		t.Errorf("disruption-fired identical read should dup-queue, review=%+v", got.review)
+	}
+}
+
+func TestMultiCardPhantomsDieQuietly(t *testing.T) {
+	// A licensed frame's ability names and brand lines read title-like and
+	// become entries; when the capture yielded several cards, the ones that
+	// resolve to nothing are dropped with a note, not queued. Observed live:
+	// "Survey the Realm" and "C MARVEL" beside a real Black Panther.
+	_, fs := confidentFixture()
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring", Cards: []scan.Card{
+		{Name: "Sol Ring", Candidates: []string{"Sol Ring"}, SetCode: "MH3", CollectorNumber: "123"},
+		{Name: "Survey the Realm", Candidates: []string{"Survey the Realm"}},
+	}}
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := mm.(model)
 
-	// Card 1's fuzzy comes back empty: a phantom.
-	mm, _ = got.onFuzzy(fuzzyMsg{ocr: "delete", seq: got.fuzzySeq})
+	mm, _ = got.Update(got.resolveCardCmd(2, ev.Cards[1], 2)())
 	got = mm.(model)
-	if got.state != stateLoading || len(got.queue) != 1 {
-		t.Fatalf("after miss: state=%v queue=%d, want card 2 loading", got.state, len(got.queue))
+	if len(got.review) != 0 {
+		t.Fatalf("a multi-card phantom joined the queue: %+v", got.review)
 	}
-	if !got.statusErr || got.status == "" {
-		t.Errorf("the miss should banner: %q", got.status)
+	if !strings.Contains(got.status, "Survey the Realm") || got.statusErr {
+		t.Errorf("status = %q, want a quiet ignored note", got.status)
+	}
+
+	// The same unresolvable read from a single-card capture still queues —
+	// the only card of a shot must never vanish silently.
+	mm, _ = got.Update(got.resolveCardCmd(3, ev.Cards[1], 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Fatalf("a single-card miss should queue, review = %d", len(got.review))
+	}
+}
+
+func TestTabTogglesQueueReview(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// Tab with an empty queue is a no-op.
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if s := mm.(model).state; s != stateCapture {
+		t.Fatalf("tab with nothing queued should stay at capture, got %v", s)
+	}
+
+	m.review = []queueItem{{id: 1, canonical: "Sol Ring", note: "printing unverified"}}
+	mm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got := mm.(model)
+	if got.state != stateQueueReview || len(got.list.Items()) != 1 {
+		t.Fatalf("tab should list the queue: state=%v items=%d", got.state, len(got.list.Items()))
+	}
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got = mm.(model)
+	if got.state != stateCapture || len(got.review) != 1 {
+		t.Errorf("tab back keeps the queue: state=%v review=%d", got.state, len(got.review))
+	}
+	if got.session == nil {
+		t.Error("visiting the queue must not close the camera")
+	}
+}
+
+func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
+	// enter on a queued card re-enters the cascade at the printing picker with
+	// the ← scanned marker; confirming removes it from the queue and returns to
+	// the list-or-camera.
+	_, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123")
+	m.review = []queueItem{{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
+		raw:    scan.Card{SetCode: "MH3", CollectorNumber: "123", Confidence: 0.5},
+		match:  cardname.Match{Exact: true, Similarity: 1},
+		prints: ranked, rank: rank, note: "low OCR confidence (50%)"}}
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got := mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != statePrintPick {
+		t.Fatalf("state = %v, want statePrintPick — prints were already fetched", got.state)
+	}
+	first := got.list.Items()[0].(printItem)
+	if !first.scanned || !strings.EqualFold(first.card.Set, "mh3") {
+		t.Errorf("first item = %+v, want the scanned MH3 printing marked", first)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("the item under review should leave the queue, %d remain", len(got.review))
+	}
+
+	// Walk it through: printing → qty → confirm.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != stateQty {
+		t.Fatalf("state = %v, want stateQty (single finish auto-skips)", got.state)
+	}
+	mm, _ = got.submitQty()
+	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1", len(ra.got))
+	}
+	if got.summary.Count("reviewed") != 1 {
+		t.Errorf("summary reviewed = %d, want 1", got.summary.Count("reviewed"))
+	}
+	if got.state != stateCapture {
+		t.Errorf("with the queue empty, confirming returns to the camera, got %v", got.state)
+	}
+}
+
+func TestEscWithQueuePrompts(t *testing.T) {
+	// esc with queued cards prompts instead of dropping them silently.
+	_, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, sess := openCapture(t, m)
+
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123")
+	item := queueItem{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
+		match:  cardname.Match{Exact: true, Similarity: 1},
+		prints: ranked, rank: rank, note: "queued"}
+	m.review = []queueItem{item}
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got := mm.(model)
+	if got.state != stateClosePrompt {
+		t.Fatalf("esc with a queue should prompt, got %v", got.state)
+	}
+	if sess.closed {
+		t.Fatal("the prompt must not have closed the camera yet — esc-again is free")
+	}
+
+	// esc again: changed my mind, back to the camera.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if s := mm.(model).state; s != stateCapture {
+		t.Fatalf("esc from the prompt should return to capture, got %v", s)
+	}
+
+	// enter: walk the queue through the cascade, camera closed.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if !sess.closed {
+		t.Error("choosing to review should close the camera")
+	}
+	if got.state != statePrintPick || !got.walking {
+		t.Fatalf("state = %v walking=%v, want the first item's cascade", got.state, got.walking)
+	}
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // printing
+	got = mm.(model)
+	mm, _ = got.submitQty()
+	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	got = mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1", len(ra.got))
+	}
+	if got.state != stateName || got.walking {
+		t.Errorf("after the walk: state=%v walking=%v, want the prompt", got.state, got.walking)
+	}
+}
+
+func TestEscWithQueueDiscards(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := openCapture(t, m)
+	m.review = []queueItem{{id: 1, ocrLine: "x", note: "queued"}}
+	m.resolving = 1 // one lookup still in flight
+	stale := m.resolveGen
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got := mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got = mm.(model)
+	if !sess.closed || got.state != stateName {
+		t.Fatalf("discard should close the camera and return to the prompt: closed=%v state=%v",
+			sess.closed, got.state)
+	}
+	if len(got.review) != 0 || got.resolving != 0 {
+		t.Errorf("discard left review=%d resolving=%d", len(got.review), got.resolving)
+	}
+	if got.summary.Count("discarded") != 1 {
+		t.Errorf("summary discarded = %d, want 1", got.summary.Count("discarded"))
+	}
+	// The in-flight straggler lands dead.
+	msg := resolveDoneMsg{gen: stale, item: queueItem{id: 2, canonical: "Sol Ring"}}
+	mm, _ = got.Update(msg)
+	if n := len(mm.(model).review); n != 0 {
+		t.Errorf("a discarded generation's straggler joined the queue: %d", n)
+	}
+}
+
+func TestSessionDestPickedOnceAndStampsAutoCommits(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
+	m := newModel(context.Background(), fs, ra.add, sc, "", destFixtures())
+
+	// ctrl+o asks where scanned cards land before opening the camera.
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := mm.(model)
+	if got.state != stateDestPick || !got.destForSession {
+		t.Fatalf("first scan should ask the session destination, got state=%v", got.state)
+	}
+	got.list.Select(1) // Trade binder
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != stateCameraBusy || !got.destPicked || got.dest.ID != 2 {
+		t.Fatalf("after the pick: state=%v destPicked=%v dest=%+v, want the camera opening with Trade",
+			got.state, got.destPicked, got.dest)
+	}
+	mm, _ = got.onCameras(camerasMsg{devices: sc.devices})
+	sess := &fakeSession{events: make(chan scan.Event, 8)}
+	mm, _ = mm.(model).onSession(sessionMsg{session: sess})
+	got = mm.(model)
+
+	// An auto-commit lands in the session destination.
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 || ra.got[0].ContainerID != 2 {
+		t.Fatalf("auto-commit went to container %v, want the session pick 2", ra.got)
+	}
+
+	// Closing and reopening the camera does not re-ask.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	if s := mm.(model).state; s == stateDestPick {
+		t.Error("the session destination should be asked once, not per camera open")
+	}
+}
+
+func TestReadyEventEnablesHelperAutoCapture(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	got, sess := openCapture(t, m)
+
+	// An old helper advertises nothing: no auto command is ever sent.
+	mm, _ := got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventReady, Device: "iPhone"}})
+	got = mm.(model)
+	if sess.autoOn != 0 {
+		t.Fatalf("auto-on sent to a helper that never advertised it (%d times)", sess.autoOn)
+	}
+
+	// A new helper advertises auto and gets turned on.
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventReady, Device: "iPhone", Features: []string{"auto"}}})
+	got = mm.(model)
+	if sess.autoOn != 1 {
+		t.Errorf("auto-on sent %d times, want 1", sess.autoOn)
+	}
+	if got.autoState != "armed" {
+		t.Errorf("autoState = %q, want armed", got.autoState)
+	}
+
+	// Trigger phase changes update the capture view's guidance.
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventAuto, State: "held"}})
+	got = mm.(model)
+	if !strings.Contains(got.View(), "Swap in the next card") {
+		t.Error("the capture view should follow the trigger phase")
 	}
 }
 

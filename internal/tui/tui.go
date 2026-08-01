@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -19,7 +20,10 @@ import (
 type Searcher interface {
 	Autocomplete(ctx context.Context, q string) ([]string, error)
 	SearchPrints(ctx context.Context, exactName string) ([]scryfall.Card, error)
-	NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, error)
+	// NamedFuzzy resolves possibly-imperfect text to a single card, reporting
+	// how the match earned its answer — the auto-commit decision needs to tell
+	// an exact hit from a barely-plausible one.
+	NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error)
 }
 
 // Scanner opens camera sessions for the scan action. It is optional (a nil
@@ -43,6 +47,12 @@ type ScanSession interface {
 	Capture() error
 	// Rotate turns the preview a quarter-turn.
 	Rotate(left bool) error
+	// Auto turns the helper's hands-free trigger on or off. Only sent to
+	// helpers that advertised the feature on their ready event.
+	Auto(on bool) error
+	// Rearm nudges a parked auto trigger back to searching; the caller
+	// discards the re-read if it is the card it already processed.
+	Rearm() error
 	// Events streams what the camera window reports; closed when the session is.
 	Events() <-chan scan.Event
 	// Close ends the session and shuts the window.
@@ -73,6 +83,36 @@ type Result struct {
 // session open.
 type Adder func(Result) error
 
+// SummaryEntry is one line of a session's receipt. Kind is "auto" (committed
+// without user action), "reviewed" (confirmed through the cascade), "skipped",
+// or "discarded".
+type SummaryEntry struct {
+	Kind string
+	Line string
+}
+
+// Summary is the session's receipt: what the scan flow did on its own and what
+// the user decided, in order. The caller prints it after the program exits, so
+// the terminal scrollback records every unattended write.
+type Summary struct {
+	Entries []SummaryEntry
+}
+
+// Count returns how many entries of one kind the session produced.
+func (s Summary) Count(kind string) int {
+	n := 0
+	for _, e := range s.Entries {
+		if e.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *Summary) add(kind, line string) {
+	s.Entries = append(s.Entries, SummaryEntry{Kind: kind, Line: line})
+}
+
 // Run launches an interactive add session: the user searches for a card (by
 // typing a name or scanning one with the camera), walks the cascade, and
 // confirms; each confirmed card is persisted via add and the session loops back
@@ -83,7 +123,7 @@ type Adder func(Result) error
 // asks — the single-binder flow is exactly what it always was; with more, a
 // destination step follows the finish, remembering the last pick so a bulk
 // add is one enter per card.
-func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) error {
+func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) (Summary, error) {
 	m := newModel(ctx, s, add, sc, initialName, dests)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
@@ -94,7 +134,7 @@ func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName str
 		_ = fm.session.Close()
 	}
 	if err != nil {
-		return err
+		return Summary{}, err
 	}
-	return fm.err
+	return fm.summary, fm.err
 }

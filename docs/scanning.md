@@ -16,10 +16,38 @@ asked which to use; the choice is remembered for the session so bulk scanning
 doesn't ask again, and <kbd>ctrl+r</kbd> at the prompt re-runs detection or
 switches phones.
 
-A window opens with the live feed **and stays open**. Frame a card, press
-<kbd>space</kbd>, and the add prompts run in the terminal; once the card is saved
-you're back at framing for the next one. Working through a box of cards is:
-frame, press space, confirm, repeat.
+A window opens with the live feed **and stays open** — and with a current
+helper it watches the feed itself: set a card down, hold it still for about a
+second, and the shutter fires on its own. An outline traces the card the
+trigger is watching — yellow while it settles, green once it's shot — and the
+trigger won't re-fire until the scene changes, that is, until you swap the
+card. Whatever rectangles are already in frame when auto arms (a notepad, a
+mousepad, a coaster — a desk is full of rectangles) are treated as furniture:
+they get no outline and can never fire. Two consequences worth knowing:
+**arm the camera with the staging area clear** — a card already sitting there
+when auto turns on reads as furniture until you remove and re-place it (and
+the scanning pile must grow from the first scanned card, not pre-exist) — and
+if you rearrange the desk mid-session, toggle auto off and on (<kbd>a</kbd>
+twice in the camera window) to re-learn what's furniture. <kbd>space</kbd> still captures manually at any time,
+<kbd>a</kbd> in the camera window toggles the auto trigger, and cards on a
+surface too close to their own color may need the spacebar, since the trigger
+never sees an outline there. Working through a box of cards is: set a card
+down, wait for the flash, swap in the next — **or stack the next card straight
+on top of the last one**. Stacking is a supported rhythm, not a mistake: the
+hand's moment over the pile is what re-arms the trigger, the new top card
+fires even though it sits exactly where the last one did, and the sliver of
+the card beneath showing at the bottom edge is handled by parsing every border
+block in frame and keeping the one that matches a real printing of the
+recognized card.
+
+A placement the trigger's geometry misses entirely is caught by the
+**recheck**: a couple of seconds after each processed scan, hoard quietly
+re-arms the trigger once. If the recheck finds a new card, it commits like
+any scan; if it finds the card just processed, the re-read is discarded
+silently ("still seeing … — waiting for the next card") and no further
+rechecks fire until something actually happens. Recheck shots skip the
+shutter sound — a slow moment between cards shouldn't sound like the scanner
+acting up.
 
 The card's title is read on-device with Apple's Vision OCR, then matched to a
 real card — against the [local catalog](pricing.md#the-local-catalog) when one is
@@ -37,21 +65,64 @@ The card is located in the frame first, and the border is then read relative to
 the card's own bottom edge, so the card does not need to fill the shot or sit at
 any particular height — anywhere in frame, roughly upright, is enough.
 
-It is deliberately a suggestion rather than a decision. A misread digit is
-visible before you commit, and enter is all it takes to accept. If the number
-matches none of the printings, the list is left in its normal order and hoard
-says so rather than quietly pretending nothing was read. Cards too old to carry
-a number, or a border too blurred to read, simply fall back to the ordinary
-printing picker.
+## Confident scans add themselves; the rest queue
+
+A scanned card writes itself to the collection — quantity 1, no keys
+pressed — only when the evidence adds up. The printing must be pinned: the
+collector read matched a real printing of the resolved card (or it is the
+only printing that exists). A full set-and-number verification carries the
+rest by itself — it is self-consistent, since a name misresolved to the wrong
+card could not have its number match that card's printings — so a
+glare-truncated title or a low-confidence read doesn't queue a card whose
+border already identified it. Short of that, the name has to stand on its
+own: an exact (or near-exact) match on the helper's own title-line guess,
+with the helper's OCR confidence clearing a floor when the match needed
+fuzzing. The headline rule: **a name-only match with several printings never
+commits itself** — hoard would be guessing the set, and the newest printing
+is usually the wrong guess.
+
+Every unattended write is visible twice: a live `✓ Auto-added:` tally in the
+terminal while you keep scanning, and a session summary printed to the
+scrollback when the add session ends. Foil is read off the card itself where
+the frame prints it: modern collector lines star the set/language separator on
+foil printings (`MSC ★ EN`) and bullet it on nonfoil ones (`MAR • EN`), and a
+starred card whose printing offers both finishes is recorded foil — in the
+review cascade the finish picker opens with the marker's answer pre-selected.
+Frames without the marker (roughly pre-2020) default to nonfoil, with the
+tally as the audit trail. The same card re-fired within a few seconds (a
+nudge, a re-trigger) is queued as a *possible duplicate* rather than silently
+double-counted; confirming it from the queue is the "yes, really" a real
+playset needs.
+
+Everything that doesn't clear the bar lands in a **review queue** with the
+reason it queued. <kbd>tab</kbd> at the capture step opens the queue
+mid-session — fix a card through the ordinary cascade (printing, finish,
+destination, quantity) and <kbd>tab</kbd> back to keep scanning; the camera
+and any in-flight lookups keep running the whole time. Closing the camera with
+cards still queued asks first: <kbd>enter</kbd> walks the queue, <kbd>d</kbd>
+discards it, <kbd>esc</kbd> returns to scanning. With more than one binder or
+deck, the destination is asked once when the camera opens and stamps every
+auto-add; a queued card can still override it in its cascade.
+
+For the cards that do reach the printing picker, the collector read stays a
+suggestion rather than a decision: the matched printing is promoted and marked
+`← scanned` with the cursor on it, a misread digit is visible before you
+commit, and enter is all it takes to accept. If the number matches none of the
+printings, the list is left in its normal order and hoard says so rather than
+quietly pretending nothing was read. Cards too old to carry a number, or a
+border too blurred to read, simply fall back to the ordinary printing picker.
 
 ## Scanning several cards at once
 
 Fan a spread of cards — or lay them out with gaps — and capture once: every
-readable title becomes a card, and the terminal walks you through confirming
-them one at a time with a **card k of N** header. Each card runs the ordinary
-cascade (printing, finish, destination, quantity), <kbd>ctrl+s</kbd> skips one
-card, and <kbd>esc</kbd> abandons the rest of the batch. A single card in
-frame behaves exactly as it always has — no mode, nothing to switch.
+readable title becomes a card, each resolving in the background like any other
+scan. Cards in a fan hide their bottom borders, so they rarely carry the
+collector info the auto-commit bar demands — a spread mostly lands in the
+review queue by design, walked one cascade at a time (<kbd>ctrl+s</kbd> skips
+a card). Adding cards to a spread one at a time re-captures everything
+visible; the already-added ones come back as *possible duplicates* in the
+queue rather than double-counting. A single card in frame behaves exactly the
+same — no mode, nothing to switch.
 
 Detection is two-channel: card outlines found in the frame are
 perspective-corrected and read individually (the only way collector info can
@@ -63,10 +134,23 @@ title-like but isn't a card (a keycap, a leaflet) fails the Scryfall match and
 is skipped automatically with a note.
 
 On the wire, the helper's `scan` event now carries a `cards: []` list (name,
-candidates, and per-card `setCode`/`collectorNumber` when read); the flat
-single-card fields remain populated from the frame-wide read, so an older
-hoard binary against a newer helper — or the reverse — keeps working on the
-single-card path.
+candidates, per-card `setCode`/`collectorNumber` when read, plus `confidence`
+and a `source` channel tag), flat `confidence`/`bandAnchored`/`auto` fields,
+and the `ready` event advertises `features: ["auto"]`. Auto capture is opt-in
+over stdin (`auto-on`/`auto-off`, or the `--auto` flag), and a new `auto`
+event reports the trigger's state transitions. Compatibility is by
+construction: an old hoard binary never sends `auto-on` and ignores the extra
+fields, and a new binary only enables auto on a helper that advertised it —
+an old helper against a new binary simply stays on the spacebar. The flat
+single-card fields remain populated from the frame-wide read, so the
+single-card path works across any pairing.
+
+The trigger's thresholds are tunable without recompiling, mainly for
+experimenting: `HOARD_SCAN_AUTO_INTERVAL` (sample seconds, 0.25),
+`HOARD_SCAN_AUTO_STABLE` (still samples before firing, 4),
+`HOARD_SCAN_AUTO_REARM` (changed samples before re-arming, 3), and
+`HOARD_SCAN_AUTO_IOU` (how exactly rectangles must overlap to count as
+unmoved, 0.75). `HOARD_SCAN_AUTO=1` traces the trigger's decisions to stderr.
 
 ## Rotation
 
@@ -111,8 +195,14 @@ action reports that it's unavailable rather than failing.
   way to see why a border did not read.
 - The first scan prompts for camera permission (System Settings › Privacy &
   Security › Camera). On-device OCR only, so no images leave your machine.
+- To try the auto trigger without the TUI, run the helper directly:
+  `HOARD_SCAN_AUTO=1 ./bin/hoard-scan.app/Contents/MacOS/hoard-scan --auto` —
+  events print to stdout, trigger decisions to stderr, and commands
+  (`capture`, `auto-off`, `quit`) can be typed straight into stdin.
 - Backing out is always available: <kbd>Esc</kbd> in the capture window, or
   <kbd>esc</kbd> in the terminal, cancels the scan and returns to the prompt
-  without ending the session.
-- If OCR misreads the name, you land back at the prompt with the recognized text
-  pre-filled, so you can fix it and search manually.
+  without ending the session — with a decision point first if scanned cards
+  are still waiting in the review queue.
+- If OCR misreads the name, the card waits in the review queue with the
+  recognized text pre-filled when you open it, so you can fix it and search
+  manually.
