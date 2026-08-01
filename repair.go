@@ -24,35 +24,22 @@ import (
 // printing comes in; hoard fetches that on every price refresh and has been
 // discarding it.
 func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
-	ids, err := st.AllPrintingIDs()
-	if err != nil {
-		return err
-	}
-	if len(ids) == 0 {
-		fmt.Println("No cards yet; nothing to repair.")
-		return nil
-	}
-
 	cat := openCatalog()
 	if cat != nil {
 		defer cat.Close()
 	}
-	// Progress stays nil until repair's own migration: this command was
-	// always silent here, and changing its narration belongs to that step.
-	found, _, _, err := action.RefreshCards(ctx,
-		action.Deps{Store: st, Catalog: cat, Resolver: cardResolver}, nil, ids)
+	pr := stderrPrinter()
+	res, err := action.RepairFinishes(ctx,
+		action.Deps{Store: st, Catalog: cat, Resolver: cardResolver}, pr.Fn())
+	pr.Close()
 	if err != nil {
 		return err
 	}
-	available := make(map[string][]string, len(found))
-	for _, c := range found {
-		available[c.ID] = c.Finishes
+	if res.Total == 0 {
+		fmt.Println("No cards yet; nothing to repair.")
+		return nil
 	}
-
-	fixed, ambiguous, err := st.RepairFinishes(available)
-	if err != nil {
-		return err
-	}
+	fixed, ambiguous := res.Fixed, res.Ambiguous
 
 	env := ui.Detect(os.Stdout)
 	if len(fixed) == 0 && len(ambiguous) == 0 {
