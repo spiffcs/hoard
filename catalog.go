@@ -8,8 +8,6 @@ import (
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/catalog"
-	"github.com/spiffcs/hoard/internal/scryfall"
-	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -44,60 +42,6 @@ func openCatalog() *catalog.Catalog {
 		return nil
 	}
 	return c
-}
-
-// refreshCards resolves every id to a card, preferring the local catalog.
-//
-// This is the single place the cache policy lives. Two kinds of id still have to
-// come from the API and both are bounded:
-//
-//   - ids the catalog has never seen, i.e. printings newer than its last build
-//   - ids whose stored Scryfall document is missing, since the catalog carries
-//     prices and identity but not the whole response
-//
-// The second set empties after one refresh rather than recurring, so the steady
-// state is a single listing request and no card lookups at all.
-func refreshCards(ctx context.Context, cat *catalog.Catalog, st *store.Store,
-	ids []string) (found []scryfall.Card, notFound []scryfall.Identifier, fromCatalog int, err error) {
-	need := ids
-	if cat != nil && cat.CardCount() > 0 {
-		local, err := cat.Cards(ids)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		undocumented, err := st.IDsNeedingDocuments()
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		wantDoc := make(map[string]bool, len(undocumented))
-		for _, id := range undocumented {
-			wantDoc[id] = true
-		}
-
-		need = need[:0:0]
-		for _, id := range ids {
-			c, ok := local[id]
-			if !ok || wantDoc[id] {
-				need = append(need, id)
-				continue
-			}
-			found = append(found, c)
-		}
-		fromCatalog = len(found)
-	}
-
-	if len(need) == 0 {
-		return found, nil, fromCatalog, nil
-	}
-	idents := make([]scryfall.Identifier, len(need))
-	for i, id := range need {
-		idents[i] = scryfall.Identifier{ID: id}
-	}
-	remote, notFound, err := scryfall.FetchCollection(ctx, idents)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	return append(found, remote...), notFound, fromCatalog, nil
 }
 
 // ensureCatalog is the interim shim over action.EnsureCatalog while

@@ -201,6 +201,16 @@ const collectionMax = 75
 // automatically splitting identifiers into chunks of 75. It returns the found
 // cards and the identifiers Scryfall could not match (echoed back verbatim).
 func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFound []Identifier, err error) {
+	return FetchCollectionProgress(ctx, ids, nil)
+}
+
+// FetchCollectionProgress is FetchCollection with visibility: onChunk (nil
+// fine) reports identifiers completed so far against the total after each
+// chunk, and carries a note when a chunk is waiting out a rate limit or a
+// transient failure — waits that can reach ninety seconds and used to look
+// exactly like a hang.
+func FetchCollectionProgress(ctx context.Context, ids []Identifier,
+	onChunk func(done, total int, note string)) (found []Card, notFound []Identifier, err error) {
 	for i := 0; i < len(ids); i += collectionMax {
 		if i > 0 {
 			// Stay well under Scryfall's rate limit between chunks.
@@ -209,12 +219,19 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 			}
 		}
 		end := min(i+collectionMax, len(ids))
-		chunkFound, chunkNotFound, err := fetchCollectionChunkRetrying(ctx, ids[i:end])
+		var onWait func(string)
+		if onChunk != nil {
+			onWait = func(note string) { onChunk(i, len(ids), note) }
+		}
+		chunkFound, chunkNotFound, err := fetchCollectionChunkRetrying(ctx, ids[i:end], onWait)
 		if err != nil {
 			return nil, nil, err
 		}
 		found = append(found, chunkFound...)
 		notFound = append(notFound, chunkNotFound...)
+		if onChunk != nil {
+			onChunk(end, len(ids), "")
+		}
 	}
 	return found, notFound, nil
 }
@@ -258,24 +275,31 @@ func (e errTransient) Unwrap() error { return e.err }
 // refreshed twice in a few minutes can be limited while well under the
 // per-second rate, so waiting is the correct response rather than an error
 // worth surfacing.
-func fetchCollectionChunkRetrying(ctx context.Context, ids []Identifier) ([]Card, []Identifier, error) {
+func fetchCollectionChunkRetrying(ctx context.Context, ids []Identifier,
+	onWait func(note string)) ([]Card, []Identifier, error) {
 	var lastErr error
 	for attempt := 0; attempt <= rateLimitRetries; attempt++ {
 		cards, missing, err := fetchCollectionChunk(ctx, ids)
 		var limited errRateLimited
 		var transient errTransient
 		var wait time.Duration
+		var reason string
 		switch {
 		case errors.As(err, &limited):
 			wait = limited.retryAfter
+			reason = "rate limited"
 		case errors.As(err, &transient):
 			wait = transientPause * time.Duration(attempt+1)
+			reason = "scryfall hiccup"
 		default:
 			return cards, missing, err
 		}
 		lastErr = err
 		if attempt == rateLimitRetries {
 			break
+		}
+		if onWait != nil {
+			onWait(fmt.Sprintf("%s; retrying in %s", reason, wait.Round(time.Second)))
 		}
 		if err := sleepCtx(ctx, wait); err != nil {
 			return nil, nil, err

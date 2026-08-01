@@ -100,19 +100,21 @@ each migration** (fixture DB + stubbed Deps.Resolver.Fetch):
    lines replaced by the Printer's step/count lines (called-out stderr
    change); "Catalog ready" line unchanged. docs/parity.md created. All six
    baselines identical; live piped update verified the new shape.
-2. **update-prices** (the exemplar) — `refreshCards` (root catalog.go:60)
-   moves into action; new `scryfall.FetchCollectionProgress(ctx, ids,
-   onChunk)` (old func delegates with nil); retry/Retry-After waits emit
-   Notes — visible for the first time (they can stall 90s today, silently).
-   Steps: checking catalog → (downloading catalog) → refreshing cards
-   (determinate: Done starts at fromCatalog, Total = len(ids)) → saving →
-   filling price gaps → recording history. **Preserve the stale-catalog
-   subtlety** (root pricing.go:79-82, `priceSource` vs `cat`) with a
-   dedicated test: stale catalog + declined confirm ⇒ Scryfall fetch for
-   all ids, `CatalogUsed == false`. Result struct carries everything main
-   prints; stdout byte-identical.
-3. **gap fill** — `action.FillGaps` wrapping pricing.FillGaps
-   (WithProgress prose → Notes); `newFetcher`/`fillPriceGaps` leave main.
+2. ✅ **update-prices** (landed 2026-07-31) — `action.UpdatePrices` +
+   `action.RefreshCards` (repair-finishes calls it through a silent shim
+   until its own step); `scryfall.FetchCollectionProgress` with retry-wait
+   Notes ("rate limited; retrying in 30s" — visible for the first time).
+   The network seam is `Deps.Resolver.Fetch` (the pipeline's existing test
+   seam) falling through to the real chunked endpoint. Stale-catalog
+   subtlety preserved with its dedicated test (empty catalog + declined
+   confirm ⇒ all ids fetched live, CatalogUsed false, FromCatalog 0).
+   stdout locked by `TestRunUpdatePricesStdoutGolden` via the
+   `runUpdatePrices(ctx, deps, limit, w)` render half. Live-verified on the
+   real DB: 1,568/1,573 from catalog, gap narration, movers unchanged.
+3. ✅ **gap fill** (landed with #2) — `action.FillGaps`: fetcher prose and
+   the outcome summary both flow as "filling price gaps" Notes with the
+   old wording; root `fillPriceGaps` remains only as a shim for the
+   unmigrated callers (import, deck add, bulk add) and dies with them.
 4. **backfill** — `action.BackfillPrices`; mtgjson gains
    `Options{CacheDir, Progress func(done, total int64)}` + a counting
    reader; **separate commit**: the 60s zero-bytes idle timeout. Deliberate

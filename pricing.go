@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
-	"strings"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/report"
@@ -28,29 +29,14 @@ func newQuietFetcher(st *store.Store) *pricing.Fetcher {
 	return pricing.New(st, pricing.DefaultCacheDir())
 }
 
-// fillPriceGaps prices what Scryfall could not, and says what happened — on
-// stderr, like the fetcher's own progress: it is narration about the work,
-// not the work's result, and stdout stays reserved for data.
+// fillPriceGaps is the interim shim over action.FillGaps for the commands
+// not yet migrated (import, deck add, bulk add); it dies with them.
 func fillPriceGaps(ctx context.Context, st *store.Store) error {
-	report, err := newFetcher(st).FillGaps(ctx)
-	if err != nil || report.Gaps == 0 {
-		return err
-	}
-	if report.Skipped {
-		fmt.Fprintf(os.Stderr, "  %d cards have no price for a finish you own; "+
-			"MTGJSON had none when last asked.\n", report.Gaps)
-		return nil
-	}
-	fmt.Fprintf(os.Stderr, "  %d cards have no price for a finish you own; checking MTGJSON...\n", report.Gaps)
-	if report.Filled <= 0 {
-		fmt.Fprintln(os.Stderr, "  no other source could price them either.")
-		return nil
-	}
-	fmt.Fprintf(os.Stderr, "  filled %d from %s.\n", report.Filled, strings.Join(report.Sources, ", "))
-	if report.Remaining > 0 {
-		fmt.Fprintf(os.Stderr, "  %d still unpriced anywhere.\n", report.Remaining)
-	}
-	return nil
+	pr := stderrPrinter()
+	defer pr.Close()
+	_, err := action.FillGaps(ctx,
+		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn())
+	return err
 }
 
 func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error {
@@ -59,56 +45,40 @@ func cmdUpdatePrices(ctx context.Context, st *store.Store, args []string) error 
 	if _, err := parsePositionals(fs, args); err != nil {
 		return err
 	}
-
-	ids, err := st.AllPrintingIDs()
-	if err != nil {
-		return err
-	}
-	if len(ids) == 0 {
-		fmt.Println("No cards yet; nothing to update.")
-		return nil
-	}
-
 	cat := openCatalog()
 	if cat != nil {
 		defer cat.Close()
 	}
-	// Prices are only taken from the catalog when it is current. A stale one is
-	// still fine for everything else, but this command exists to refresh prices
-	// and must not report success over yesterday's.
-	priceSource := cat
-	if !ensureCatalog(ctx, cat) {
-		priceSource = nil
+	deps := action.Deps{
+		Store: st, Catalog: cat, CacheDir: pricing.DefaultCacheDir(),
+		Confirm: confirm, Resolver: cardResolver,
 	}
-	found, notFound, local, err := refreshCards(ctx, priceSource, st, ids)
-	if err != nil {
-		return err
-	}
-	if err := st.UpsertPrintings(found); err != nil {
-		return err
-	}
-	fmt.Printf("Updated prices for %d of %d cards.\n", len(found), len(ids))
-	if local > 0 {
-		fmt.Printf("  %d from the local catalog, %d from Scryfall.\n", local, len(found)-local)
-	}
-	if len(notFound) > 0 {
-		fmt.Printf("  %d cards could not be re-fetched from Scryfall.\n", len(notFound))
-	}
-	// Scryfall's results are already committed above, so a failure in the
-	// fallback pass costs nothing that was just fetched.
-	if err := fillPriceGaps(ctx, st); err != nil {
-		return err
-	}
+	return runUpdatePrices(ctx, deps, *limit, os.Stdout)
+}
 
-	// After the gap fill, not before: a card priced from MTGJSON this run has
-	// its effective price only once that pass has committed, and recording
-	// first would log the gap and call the fill a change on the next run.
-	changes, err := st.RecordPrices()
+// runUpdatePrices is the render half of the command, split from the flag and
+// dependency glue so a test can drive it against a fixture and lock stdout.
+func runUpdatePrices(ctx context.Context, deps action.Deps, limit int, w io.Writer) error {
+	pr := stderrPrinter()
+	res, err := action.UpdatePrices(ctx, deps, pr.Fn())
+	pr.Close()
 	if err != nil {
 		return err
 	}
-	fmt.Println()
-	fmt.Print(report.Movers(ui.Detect(os.Stdout), changes, *limit, "since the last refresh"))
+	if res.Total == 0 {
+		fmt.Fprintln(w, "No cards yet; nothing to update.")
+		return nil
+	}
+	fmt.Fprintf(w, "Updated prices for %d of %d cards.\n", res.Found, res.Total)
+	if res.FromCatalog > 0 {
+		fmt.Fprintf(w, "  %d from the local catalog, %d from Scryfall.\n",
+			res.FromCatalog, res.Found-res.FromCatalog)
+	}
+	if res.NotFound > 0 {
+		fmt.Fprintf(w, "  %d cards could not be re-fetched from Scryfall.\n", res.NotFound)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprint(w, report.Movers(ui.Detect(os.Stdout), res.Changes, limit, "since the last refresh"))
 	return nil
 }
 

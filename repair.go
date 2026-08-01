@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -36,7 +37,10 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	found, _, _, err := refreshCards(ctx, cat, st, ids)
+	// Progress stays nil until repair's own migration: this command was
+	// always silent here, and changing its narration belongs to that step.
+	found, _, _, err := action.RefreshCards(ctx,
+		action.Deps{Store: st, Catalog: cat, Resolver: cardResolver}, nil, ids)
 	if err != nil {
 		return err
 	}
