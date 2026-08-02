@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -230,26 +230,26 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 	// tomb answers both the profit and the below-market question, so it
 	// appears twice with different kinds; ring has no buylist, so its
 	// sell-side fields are absent, not zero.
-	tomb := arbitrage.Opportunity{
+	tomb := market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "a", MTGJSONUUID: "uu-a", Name: "Ancient Tomb",
 			SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil", Copies: 1, Value: 60},
 		Market: 4, BuyAt: 2, BuyFrom: "cardmarket",
 		SellAt: 5, SellTo: "cardkingdom",
 		HasMarket: true, HasRetail: true, HasBuy: true,
 	}
-	ring := arbitrage.Opportunity{
+	ring := market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "b", Name: "Sol Ring",
 			SetCode: "c21", CollectorNumber: "125", Finish: "foil", Copies: 2, Value: 25},
 		Market: 20, BuyAt: 10, BuyFrom: "cardkingdom",
 		HasMarket: true, HasRetail: true,
 	}
-	got := write(t, FromArbitrage(arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{tomb, ring}, Compared: 2,
+	got := write(t, FromMarket(market.Result{
+		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
   "schemaVersion": "1.1.0",
-  "kind": "arbitrage",
-  "arbitrage": {
+  "kind": "market",
+  "market": {
     "comparedPrintings": 2,
     "opportunities": [
       {

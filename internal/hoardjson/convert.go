@@ -9,8 +9,8 @@ package hoardjson
 import (
 	"math"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -222,14 +222,14 @@ func FromWatchCheck(checked int, fired []store.WatchStatus) Document {
 	return doc
 }
 
-// FromArbitrage builds the arbitrage document: the full ranking of every
+// FromMarket builds the arbitrage document: the full ranking of every
 // opportunity, per question, without the display's top-N truncation.
-func FromArbitrage(res arbitrage.Result) Document {
-	a := &Arbitrage{
+func FromMarket(res market.Result) Document {
+	a := &Market{
 		ComparedPrintings: res.Compared,
 		Opportunities:     make([]Opportunity, 0, len(res.Opportunities)),
 	}
-	for _, r := range arbitrage.Rows(res, len(res.Opportunities)) {
+	for _, r := range market.Rows(res, len(res.Opportunities)) {
 		op := Opportunity{
 			Card: Card{
 				Name:        r.Card.Name,
@@ -260,7 +260,7 @@ func FromArbitrage(res arbitrage.Result) Document {
 		}
 		a.Opportunities = append(a.Opportunities, op)
 	}
-	doc := envelope(KindArbitrage)
-	doc.Arbitrage = a
+	doc := envelope(KindMarket)
+	doc.Market = a
 	return doc
 }

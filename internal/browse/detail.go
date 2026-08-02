@@ -39,10 +39,10 @@ func (m *Model) openDetail() {
 		if w := m.selectedWatch(); w != nil {
 			id = w.ScryfallID
 		}
-	case viewArbitrage:
+	case viewMarket:
 		// So does an arbitrage row — the quotes describe a printing you own.
-		if i := m.cursor[paneCards]; i >= 0 && i < len(m.arbRows) {
-			id = m.arbRows[i].Card.ScryfallID
+		if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
+			id = m.marketRows[i].Card.ScryfallID
 		}
 	default:
 		m.status, m.statusErr = "card detail works on holdings, watches and arbitrage — press v to come back", true

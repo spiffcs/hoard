@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -125,7 +125,7 @@ func topMovers(all []store.PriceChange, limit int, keep func(store.PriceChange) 
 
 // Arbitrage lays out one section of the vendor comparison. The three share a
 // column shape so the tables stack without the eye having to re-find the numbers.
-func Arbitrage(env ui.Env, sec arbitrage.Section) string {
+func Market(env ui.Env, sec market.Section) string {
 	t := ui.Table{
 		Env: env,
 		Cols: []ui.Col{
@@ -142,12 +142,12 @@ func Arbitrage(env ui.Env, sec arbitrage.Section) string {
 	for _, o := range sec.Rows {
 		finish := ui.Finish(o.Card.Finish)
 		switch sec.Kind {
-		case arbitrage.KindProfit:
+		case market.KindProfit:
 			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
 				ui.C("+"+ui.Money(o.Profit())))
-		case arbitrage.KindLiquid:
+		case market.KindLiquid:
 			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),

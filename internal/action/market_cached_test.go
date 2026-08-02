@@ -12,7 +12,7 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// ArbitrageCached reads only the quotes day-cache — the file an earlier
+// MarketCached reads only the quotes day-cache — the file an earlier
 // session's fetch wrote — so a fresh session can show the comparison
 // without any network.
 func TestArbitrageCachedReadsDayCache(t *testing.T) {
@@ -32,7 +32,7 @@ func TestArbitrageCachedReadsDayCache(t *testing.T) {
 	d := Deps{Store: st, CacheDir: cacheDir}
 
 	// No cache file yet: not an error, just nothing to serve.
-	if _, ok, err := ArbitrageCached(d, 0); err != nil || ok {
+	if _, ok, err := MarketCached(d, 0); err != nil || ok {
 		t.Fatalf("no cache: ok=%v err=%v, want a clean miss", ok, err)
 	}
 
@@ -49,7 +49,7 @@ func TestArbitrageCachedReadsDayCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, ok, err := ArbitrageCached(d, 0)
+	res, ok, err := MarketCached(d, 0)
 	if err != nil || !ok {
 		t.Fatalf("cached read: ok=%v err=%v", ok, err)
 	}

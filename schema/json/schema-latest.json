@@ -2,27 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/spiffcs/hoard/main/schema/json/schema-1.1.0.json",
   "$defs": {
-    "Arbitrage": {
-      "properties": {
-        "comparedPrintings": {
-          "type": "integer",
-          "description": "ComparedPrintings is how many owned printings had two or more vendors,\nso a consumer knows how much ground the analysis covered."
-        },
-        "opportunities": {
-          "items": {
-            "$ref": "#/$defs/Opportunity"
-          },
-          "type": "array"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "comparedPrintings",
-        "opportunities"
-      ],
-      "description": "Arbitrage is one pass of vendor disagreement over everything held: the full ranking behind all three tables, not the display's top-N."
-    },
     "Card": {
       "properties": {
         "name": {
@@ -203,6 +182,27 @@
         "rows"
       ],
       "description": "Holdings is every requested holding, one row per printing-finish-container, in the export's canonical order — the same data as the canonical CSV."
+    },
+    "Market": {
+      "properties": {
+        "comparedPrintings": {
+          "type": "integer",
+          "description": "ComparedPrintings is how many owned printings had two or more vendors,\nso a consumer knows how much ground the analysis covered."
+        },
+        "opportunities": {
+          "items": {
+            "$ref": "#/$defs/Opportunity"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "comparedPrintings",
+        "opportunities"
+      ],
+      "description": "Arbitrage is one pass of vendor disagreement over everything held: the full ranking behind all three tables, not the display's top-N."
     },
     "Movers": {
       "properties": {
@@ -552,7 +552,7 @@
         "holdings",
         "unpriced",
         "movers",
-        "arbitrage",
+        "market",
         "report",
         "watch"
       ]
@@ -569,8 +569,8 @@
     "movers": {
       "$ref": "#/$defs/Movers"
     },
-    "arbitrage": {
-      "$ref": "#/$defs/Arbitrage"
+    "market": {
+      "$ref": "#/$defs/Market"
     },
     "report": {
       "$ref": "#/$defs/Report"

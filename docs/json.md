@@ -7,7 +7,7 @@ The read commands emit a machine-readable document instead of a table when
 hoard --json                 # the summary: binder, decks, totals
 hoard unpriced --json        # what counts as $0.00, and where it's held
 hoard movers --json          # every price change in the window
-hoard arbitrage --json       # the full vendor-disagreement ranking
+hoard market --json          # the full vendor-vs-last-sold ranking
 hoard report --json          # the dated valuation: totals, binders, sources
 hoard watch --json           # one watch check: what just crossed a threshold
 hoard export --json          # holdings, same data as the canonical CSV
@@ -30,8 +30,8 @@ rejects `--json` rather than silently printing a table at a script.
   export order, decks by value, movers by absolute impact, opportunities
   grouped arbitrage → liquid → below-market.
 - **Everything, not the display's top-N**: `movers --json` and
-  `arbitrage --json` emit the full result; `--limit` only shapes the human
-  tables. Selection flags (`movers --since`, `arbitrage --min`,
+  `market --json` emit the full result; `--limit` only shapes the human
+  tables. Selection flags (`movers --since`, `market --min`,
   `export --binder`) still apply — they change the question, not the width of
   the answer.
 - **Absent means unknown**: an unpriced card has no `priceUsd` field at all —
@@ -65,8 +65,8 @@ hoard movers --since 30d --json |
 Cards a shop pays more for than the cheapest retail (true arbitrage):
 
 ```sh
-hoard arbitrage --json |
-  jq -r '.arbitrage.opportunities[] | select(.kind == "arbitrage") |
+hoard market --json |
+  jq -r '.market.opportunities[] | select(.kind == "arbitrage") |
          "\(.card.name): buy \(.buyUsd) at \(.buyFrom), sell \(.sellUsd) to \(.sellTo)"'
 ```
 

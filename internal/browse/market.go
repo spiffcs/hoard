@@ -8,12 +8,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// ArbitrageFunc fetches today's vendor quotes and ranks them.
+// MarketFunc fetches today's vendor quotes and ranks them.
 //
 // Injected rather than implemented here. It needs the MTGJSON id resolver,
 // which writes learned ids back to the catalog and is shared with
@@ -25,63 +25,63 @@ import (
 // It must honour ctx: the browser cancels it when the user leaves the view.
 // The progress callback follows the action layer's contract; the browser
 // passes nil today and gains a live consumer with the op layer.
-type ArbitrageFunc func(ctx context.Context, p progress.Fn) (arbitrage.Result, error)
+type MarketFunc func(ctx context.Context, p progress.Fn) (market.Result, error)
 
-// arbitrageRows is how many rows each of the three questions contributes.
-const arbitrageRows = 15
+// marketRowLimit is how many rows each of the three questions contributes.
+const marketRowLimit = 15
 
-// arbitrageMsg carries a finished fetch back into the update loop.
-type arbitrageMsg struct {
+// marketMsg carries a finished fetch back into the update loop.
+type marketMsg struct {
 	gen int // which request this answers; a stale one is discarded
-	res arbitrage.Result
+	res market.Result
 	err error
 }
 
-// startArbitrage kicks off a fetch, or explains why it cannot.
+// startMarketFetch kicks off a fetch, or explains why it cannot.
 //
 // The generation counter is what makes leaving and re-entering the view safe: a
 // reply from an abandoned request arrives with an old gen and is dropped, rather
 // than overwriting rows the user has since asked for something else.
-func (m *Model) startArbitrage() tea.Cmd {
-	if m.arbitrage == nil {
-		m.status, m.statusErr = "arbitrage is unavailable in this build", true
+func (m *Model) startMarketFetch() tea.Cmd {
+	if m.marketFetch == nil {
+		m.status, m.statusErr = "vendor quotes are unavailable in this build", true
 		return nil
 	}
-	if m.arbLoading {
+	if m.marketLoading {
 		// The key must never be silent (observed live: silence taught the
 		// user F was broken).
 		m.status, m.statusErr = "already fetching vendor prices — esc cancels", false
 		return nil
 	}
-	if m.arbLoaded {
+	if m.marketLoaded {
 		// A repeat F re-asks: quotes are cached for the day, so the refresh
 		// is cheap, and the user pressed the key on purpose.
-		m.arbLoaded = false
+		m.marketLoaded = false
 	}
 
-	m.cancelArbitrage()
+	m.cancelMarketFetch()
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.arbCancel = cancel
-	m.arbLoading = true
+	m.marketCancel = cancel
+	m.marketLoading = true
 	// Clear whatever the last keystroke left on the status line: it would
 	// otherwise sit in front of the progress this fetch is about to report.
 	m.status, m.statusErr = "", false
-	m.arbGen++
-	gen, fetch := m.arbGen, m.arbitrage
+	m.marketGen++
+	gen, fetch := m.marketGen, m.marketFetch
 
 	return tea.Batch(m.spinner.Tick, func() tea.Msg {
 		res, err := fetch(ctx, nil)
-		return arbitrageMsg{gen: gen, res: res, err: err}
+		return marketMsg{gen: gen, res: res, err: err}
 	})
 }
 
-// onArbitrage receives a finished fetch.
-func (m Model) onArbitrage(msg arbitrageMsg) (tea.Model, tea.Cmd) {
-	if msg.gen != m.arbGen {
+// onMarket receives a finished fetch.
+func (m Model) onMarket(msg marketMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.marketGen {
 		return m, nil // a reply to a request the user has already left
 	}
-	m.arbLoading = false
-	m.cancelArbitrage()
+	m.marketLoading = false
+	m.cancelMarketFetch()
 
 	if msg.err != nil {
 		// Cancellation is the user leaving, not a failure worth shouting about.
@@ -90,19 +90,19 @@ func (m Model) onArbitrage(msg arbitrageMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.arbResult = msg.res
-	m.applyArbRows()
-	m.arbLoaded = true
+	m.marketResult = msg.res
+	m.applyMarketRows()
+	m.marketLoaded = true
 	m.status = ""
 	m.clampCursor(paneCards)
 	return m, nil
 }
 
-// cancelArbitrage stops any fetch in flight.
-func (m *Model) cancelArbitrage() {
-	if m.arbCancel != nil {
-		m.arbCancel()
-		m.arbCancel = nil
+// cancelMarketFetch stops any fetch in flight.
+func (m *Model) cancelMarketFetch() {
+	if m.marketCancel != nil {
+		m.marketCancel()
+		m.marketCancel = nil
 	}
 }
 
@@ -112,42 +112,42 @@ func isCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// ArbitrageCachedFunc serves today's already-fetched quotes without the
+// MarketCachedFunc serves today's already-fetched quotes without the
 // network, or ok=false when there is nothing cached.
-type ArbitrageCachedFunc func() (arbitrage.Result, bool)
+type MarketCachedFunc func() (market.Result, bool)
 
-// loadCachedArbitrage populates the view from an earlier session's fetch
+// loadCachedMarket populates the view from an earlier session's fetch
 // when one exists, so restarting the program does not blank the tables. F
 // still re-asks for fresh numbers.
-func (m *Model) loadCachedArbitrage() {
-	if m.arbCached == nil || m.arbLoaded || m.arbLoading {
+func (m *Model) loadCachedMarket() {
+	if m.marketCached == nil || m.marketLoaded || m.marketLoading {
 		return
 	}
-	res, ok := m.arbCached()
+	res, ok := m.marketCached()
 	if !ok {
 		return
 	}
-	m.arbResult = res
-	m.applyArbRows()
-	m.arbLoaded = true
+	m.marketResult = res
+	m.applyMarketRows()
+	m.marketLoaded = true
 	m.status, m.statusErr = "vendor quotes from earlier today — F refetches", false
 }
 
-// arbitrageLines renders the ranked opportunities as the CLI's three
+// marketLines renders the ranked opportunities as the CLI's three
 // sections, stacked in one scrolling pane: each kind gets its own title
 // row and its own column headers, because the three ask different
 // questions and one shared header row was reduced to lying about at least
 // two of them (a "GAIN" over a buylist haircut, observed live). The
 // cursor still walks data rows only; section furniture scrolls past it.
-func (m Model) arbitrageLines(width int) []string {
-	if width <= 0 || len(m.arbRows) == 0 {
+func (m Model) marketLines(width int) []string {
+	if width <= 0 || len(m.marketRows) == 0 {
 		return nil
 	}
 	env := ui.Env{Width: width, Color: true, Clamp: true}
 
 	var all []string
-	rowLine := make([]int, 0, len(m.arbRows))
-	flush := func(kind arbitrage.Kind, rows []arbitrage.Row) {
+	rowLine := make([]int, 0, len(m.marketRows))
+	flush := func(kind market.Kind, rows []market.Row) {
 		if len(rows) == 0 {
 			return
 		}
@@ -155,7 +155,7 @@ func (m Model) arbitrageLines(width int) []string {
 			all = append(all, "")
 		}
 		all = append(all, titleStyle.Render(kind.Title())+"  "+helpStyle.Render(kind.Note()))
-		t := arbSectionTable(env, kind, rows)
+		t := marketSectionTable(env, kind, rows)
 		t.Env, t.Header = env, true
 		lines := t.Lines()
 		all = append(all, lines[0])
@@ -164,10 +164,10 @@ func (m Model) arbitrageLines(width int) []string {
 			all = append(all, line)
 		}
 	}
-	// m.arbRows is already in section order (profit, liquid, spread).
-	var section []arbitrage.Row
-	var kind arbitrage.Kind
-	for i, r := range m.arbRows {
+	// m.marketRows is already in section order (profit, liquid, spread).
+	var section []market.Row
+	var kind market.Kind
+	for i, r := range m.marketRows {
 		if i == 0 || r.Kind != kind {
 			flush(kind, section)
 			section, kind = section[:0], r.Kind
@@ -179,7 +179,7 @@ func (m Model) arbitrageLines(width int) []string {
 	// Cursor highlight on the selected data row, then a line window that
 	// keeps it visible — section furniture means rows and lines no longer
 	// map 1:1, so the generic pane windowing cannot be reused here.
-	cur := min(max(m.cursor[paneCards], 0), len(m.arbRows)-1)
+	cur := min(max(m.cursor[paneCards], 0), len(m.marketRows)-1)
 	cline := rowLine[cur]
 	style := inactiveStyle
 	if m.focus == paneCards {
@@ -195,9 +195,9 @@ func (m Model) arbitrageLines(width int) []string {
 	return all[startAt:min(startAt+visible, len(all))]
 }
 
-// arbSectionTable lays out one kind's rows with headers that mean what
+// marketSectionTable lays out one kind's rows with headers that mean what
 // they say for that kind alone.
-func arbSectionTable(env ui.Env, kind arbitrage.Kind, rows []arbitrage.Row) ui.Table {
+func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 6, Style: env.Dim()}
 	fin := ui.Col{Title: "FIN", Align: ui.Left, Priority: 5, Style: env.Dim()}
@@ -206,7 +206,7 @@ func arbSectionTable(env ui.Env, kind arbitrage.Kind, rows []arbitrage.Row) ui.T
 
 	var t ui.Table
 	switch kind {
-	case arbitrage.KindProfit:
+	case market.KindProfit:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
 		for _, r := range rows {
@@ -214,7 +214,7 @@ func arbSectionTable(env ui.Env, kind arbitrage.Kind, rows []arbitrage.Row) ui.T
 				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
 				ui.C("+"+ui.Money(r.Profit())))
 		}
-	case arbitrage.KindLiquid:
+	case market.KindLiquid:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
 		for _, r := range rows {
@@ -234,50 +234,50 @@ func arbSectionTable(env ui.Env, kind arbitrage.Kind, rows []arbitrage.Row) ui.T
 	return t
 }
 
-// arbitrageHeader is the right pane's title and summary while in this view.
-func (m Model) arbitrageHeader() (title, totals string) {
+// marketHeader is the right pane's title and summary while in this view.
+func (m Model) marketHeader() (title, totals string) {
 	switch {
-	case m.arbLoading:
-		return "ARBITRAGE", "asking vendors…"
-	case !m.arbLoaded:
-		return "ARBITRAGE", "press F to fetch"
+	case m.marketLoading:
+		return "MARKET", "asking vendors…"
+	case !m.marketLoaded:
+		return "MARKET", "press F to fetch"
 	}
-	return "ARBITRAGE", fmt.Sprintf("%s rows · %s printings compared",
-		ui.Count(len(m.arbRows)), ui.Count(m.arbResult.Compared))
+	return "MARKET", fmt.Sprintf("%s rows · %s printings compared",
+		ui.Count(len(m.marketRows)), ui.Count(m.marketResult.Compared))
 }
 
-// arbitrageStatus is the status line for this view, covering the three states
+// marketStatus is the status line for this view, covering the three states
 // the pane can be in before it has rows.
-func (m Model) arbitrageStatus() string {
+func (m Model) marketStatus() string {
 	switch {
-	case m.arbLoading:
+	case m.marketLoading:
 		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
-	case !m.arbLoaded:
+	case !m.marketLoaded:
 		return helpStyle.Render(
-			"arbitrage may need a download, so it waits to be asked — press F")
-	case len(m.arbRows) == 0:
+			"vendor quotes may need a download, so the view waits to be asked — press F")
+	case len(m.marketRows) == 0:
 		return helpStyle.Render("no vendor disagreed about anything you own today")
 	}
 	// The status line explains the selected row's question — the flat list
 	// has no section headers, so without this a liquid row's percentage
 	// reads as a gain when it is the size of the haircut.
 	return helpStyle.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices, not guaranteed sales",
-		m.cursor[paneCards]+1, len(m.arbRows), m.selectedArbNote()))
+		m.cursor[paneCards]+1, len(m.marketRows), m.selectedMarketNote()))
 }
 
-// selectedArbNote is one sentence on why the row under the cursor is
+// selectedMarketNote is one sentence on why the row under the cursor is
 // listed, in that row's own numbers.
-func (m Model) selectedArbNote() string {
+func (m Model) selectedMarketNote() string {
 	i := m.cursor[paneCards]
-	if i < 0 || i >= len(m.arbRows) {
+	if i < 0 || i >= len(m.marketRows) {
 		return ""
 	}
-	r := m.arbRows[i]
+	r := m.marketRows[i]
 	switch r.Kind {
-	case arbitrage.KindProfit:
+	case market.KindProfit:
 		return fmt.Sprintf("%s pays %s · it last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
-	case arbitrage.KindLiquid:
+	case market.KindLiquid:
 		return fmt.Sprintf("%s pays %s · it last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	}
@@ -285,10 +285,10 @@ func (m Model) selectedArbNote() string {
 		r.BuyFrom, ui.Money(r.BuyAt), ui.Money(r.Market))
 }
 
-// applyArbRows derives the visible rows from the last result: ranked,
+// applyMarketRows derives the visible rows from the last result: ranked,
 // mask-filtered on per-copy value, then re-sorted the way the user left it.
-func (m *Model) applyArbRows() {
-	rows := arbitrage.Rows(m.arbResult, arbitrageRows)
+func (m *Model) applyMarketRows() {
+	rows := market.Rows(m.marketResult, marketRowLimit)
 	if min := m.maskMin(); min > 0 {
 		kept := rows[:0]
 		for _, r := range rows {
@@ -302,6 +302,6 @@ func (m *Model) applyArbRows() {
 		}
 		rows = kept
 	}
-	m.arbRows = rows
+	m.marketRows = rows
 	m.sortArbRows()
 }

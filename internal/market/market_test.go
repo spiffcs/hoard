@@ -1,4 +1,4 @@
-package arbitrage
+package market
 
 import (
 	"strconv"

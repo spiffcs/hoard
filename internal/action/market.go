@@ -3,7 +3,7 @@ package action
 import (
 	"context"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 )
@@ -13,10 +13,10 @@ import (
 // byte progress); after that the day-cache answers instantly. minValue
 // filters on what you would actually pay — a 900% spread between $0.20 and
 // $1.99 is arithmetic, not an opportunity.
-func Arbitrage(ctx context.Context, d Deps, p progress.Fn, minValue float64) (arbitrage.Result, error) {
+func Market(ctx context.Context, d Deps, p progress.Fn, minValue float64) (market.Result, error) {
 	owned, err := d.Store.OwnedByFinish()
 	if err != nil || len(owned) == 0 {
-		return arbitrage.Result{}, err
+		return market.Result{}, err
 	}
 	refs := make([]pricing.Ref, len(owned))
 	for i, o := range owned {
@@ -32,21 +32,21 @@ func Arbitrage(ctx context.Context, d Deps, p progress.Fn, minValue float64) (ar
 		})
 	quotes, err := f.Quotes(ctx, refs)
 	if err != nil {
-		return arbitrage.Result{}, err
+		return market.Result{}, err
 	}
-	return arbitrage.Collect(owned, quotes, minValue), nil
+	return market.Collect(owned, quotes, minValue), nil
 }
 
-// ArbitrageCached is Arbitrage from today's quote cache alone: no network,
+// MarketCached is Arbitrage from today's quote cache alone: no network,
 // no archive parse. ok is false when no fresh cache covers the holdings —
 // the caller decides whether to fetch for real. This is what lets a
 // restarted session show the vendor comparison an earlier one fetched;
 // the data lives in the pricing day-cache (owned-quotes.json beside the
 // MTGJSON bundles), pruned nightly with them.
-func ArbitrageCached(d Deps, minValue float64) (arbitrage.Result, bool, error) {
+func MarketCached(d Deps, minValue float64) (market.Result, bool, error) {
 	owned, err := d.Store.OwnedByFinish()
 	if err != nil || len(owned) == 0 {
-		return arbitrage.Result{}, false, err
+		return market.Result{}, false, err
 	}
 	refs := make([]pricing.Ref, len(owned))
 	for i, o := range owned {
@@ -54,7 +54,7 @@ func ArbitrageCached(d Deps, minValue float64) (arbitrage.Result, bool, error) {
 	}
 	quotes, ok := pricing.New(d.Store, d.CacheDir).CachedQuotes(refs)
 	if !ok {
-		return arbitrage.Result{}, false, nil
+		return market.Result{}, false, nil
 	}
-	return arbitrage.Collect(owned, quotes, minValue), true, nil
+	return market.Collect(owned, quotes, minValue), true, nil
 }

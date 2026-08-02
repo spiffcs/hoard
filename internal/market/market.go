@@ -6,7 +6,7 @@
 // the two callers need it to happen very differently — a CLI command blocks on
 // the download and prints, while the browser has to keep drawing frames and stay
 // interruptible.
-package arbitrage
+package market
 
 import (
 	"cmp"

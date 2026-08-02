@@ -20,11 +20,11 @@ import (
 	"syscall"
 
 	"github.com/spiffcs/hoard/internal/action"
-	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/report"
@@ -42,7 +42,7 @@ Usage:
 
 Browsing replaces the old list, summary, deck list and deck show commands: it
 shows your binder and every deck beside their cards, filters by name or card trait, edits
-quantities in place, and reaches movers, unpriced and arbitrage with 'v'. Piped
+quantities in place, and reaches movers, unpriced and the market view with 'v'. Piped
 or redirected, plain 'hoard' prints the summary table instead, so 'hoard | grep'
 still works.
 
@@ -55,7 +55,7 @@ Collection commands:
   backfill-prices                                  Load 90 days of past prices from MTGJSON
   unpriced                                         Cards counting as $0.00, and why
   repair-finishes                                  Fix cards stored as a finish they lack
-  arbitrage [--min N] [--limit N]                  Where vendors disagree, as three tables
+  market [--min N] [--limit N]                     Vendor prices vs what cards last sold for
   report [--top N] [--csv] [-o FILE]               Dated valuation: totals, binders, top holdings
   watch                                            Check price watches (no network; exit 3 = fired)
   watch add <name> --under N|--over N [--foil]     Alert when a price crosses a threshold
@@ -82,7 +82,7 @@ Interop commands:
 A deck <name> can be any part of its name, as long as it matches one deck.
 
 --json prints a versioned JSON document instead of a table, on the read
-commands: hoard (the summary), unpriced, movers, arbitrage, report, watch,
+commands: hoard (the summary), unpriced, movers, market, report, watch,
 and export. See docs/json.md; the schemas live in schema/json/.
 
 Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
@@ -185,8 +185,8 @@ func run(args []string) error {
 		return cmdMovers(st, cmdArgs, jsonOut)
 	case "unpriced":
 		return cmdUnpriced(st, jsonOut)
-	case "arbitrage":
-		return cmdArbitrage(ctx, st, cmdArgs, jsonOut)
+	case "market":
+		return cmdMarket(ctx, st, cmdArgs, jsonOut)
 	case "report":
 		return cmdReport(st, cmdArgs, jsonOut)
 	case "export":
@@ -370,9 +370,9 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	if !stdoutIsTTY() {
 		return writeSummary(st, false)
 	}
-	// arbitrageMin matches the CLI command's --min default, so the two views
+	// marketMin matches the CLI command's --min default, so the two views
 	// agree about what is too cheap to be worth a shipping label.
-	const arbitrageMin = 1.0
+	const marketMin = 1.0
 
 	// One catalog handle for the whole session; the injected operations and
 	// the embedded add cascade share it.
@@ -529,11 +529,11 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			text := report.Valuation(ui.Env{Width: width, Color: true, Clamp: true}, d)
 			return strings.Split(strings.TrimRight(text, "\n"), "\n"), nil
 		}),
-		browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
-			return action.Arbitrage(ctx, deps, p, arbitrageMin)
+		browse.WithMarket(func(ctx context.Context, p progress.Fn) (market.Result, error) {
+			return action.Market(ctx, deps, p, marketMin)
 		}),
-		browse.WithArbitrageCached(func() (arbitrage.Result, bool) {
-			res, ok, err := action.ArbitrageCached(deps, arbitrageMin)
+		browse.WithMarketCached(func() (market.Result, bool) {
+			res, ok, err := action.MarketCached(deps, marketMin)
 			return res, ok && err == nil
 		}),
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {

@@ -82,16 +82,16 @@ type Store interface {
 // Option configures the browser.
 type Option func(*Model)
 
-// WithArbitrage supplies the vendor-comparison fetch. Without it the arbitrage
+// WithMarket supplies the vendor-comparison fetch. Without it the arbitrage
 // view says it is unavailable rather than pretending to have nothing to show.
-func WithArbitrage(f ArbitrageFunc) Option {
-	return func(m *Model) { m.arbitrage = f }
+func WithMarket(f MarketFunc) Option {
+	return func(m *Model) { m.marketFetch = f }
 }
 
-// WithArbitrageCached supplies the no-network read of today's quote cache,
+// WithMarketCached supplies the no-network read of today's quote cache,
 // so the view survives a restart without re-asking anyone.
-func WithArbitrageCached(f ArbitrageCachedFunc) Option {
-	return func(m *Model) { m.arbCached = f }
+func WithMarketCached(f MarketCachedFunc) Option {
+	return func(m *Model) { m.marketCached = f }
 }
 
 // ReportFunc produces the valuation report as lines already laid out for

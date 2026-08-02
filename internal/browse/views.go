@@ -24,7 +24,7 @@ const (
 	viewMovers
 	viewUnpriced
 	viewWatches
-	viewArbitrage
+	viewMarket
 )
 
 func (v viewMode) String() string {
@@ -35,13 +35,16 @@ func (v viewMode) String() string {
 		return "unpriced"
 	case viewWatches:
 		return "watches"
-	case viewArbitrage:
-		return "arbitrage"
+	case viewMarket:
+		// Renamed on screen: the view holds three market questions —
+		// arbitrage is just its first table, and a view and a table sharing
+		// one name read as a stutter.
+		return "market"
 	}
 	return "holdings"
 }
 
-func (v viewMode) next() viewMode { return (v + 1) % (viewArbitrage + 1) }
+func (v viewMode) next() viewMode { return (v + 1) % (viewMarket + 1) }
 
 // moversWindowDays are the lookbacks the movers view cycles through with
 // 'W'; the default matches `hoard movers`, so the two agree.
@@ -128,8 +131,8 @@ func (m Model) viewRowCount() int {
 		return len(m.unpriced)
 	case viewWatches:
 		return len(m.watches)
-	case viewArbitrage:
-		return len(m.arbRows)
+	case viewMarket:
+		return len(m.marketRows)
 	}
 	return len(m.cards)
 }
@@ -188,8 +191,8 @@ func (m Model) viewHeader() (title, totals string) {
 		since := m.now().Add(-m.moversWindow()).Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since,
 			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), ui.SignedMoney(net))
-	case viewArbitrage:
-		return m.arbitrageHeader()
+	case viewMarket:
+		return m.marketHeader()
 	case viewUnpriced:
 		var copies int
 		for _, r := range m.unpriced {

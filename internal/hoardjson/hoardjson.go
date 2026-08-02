@@ -29,28 +29,28 @@ const SchemaVersion = "1.1.0"
 type Kind string
 
 const (
-	KindSummary   Kind = "summary"
-	KindHoldings  Kind = "holdings"
-	KindUnpriced  Kind = "unpriced"
-	KindMovers    Kind = "movers"
-	KindArbitrage Kind = "arbitrage"
-	KindReport    Kind = "report"
-	KindWatch     Kind = "watch"
+	KindSummary  Kind = "summary"
+	KindHoldings Kind = "holdings"
+	KindUnpriced Kind = "unpriced"
+	KindMovers   Kind = "movers"
+	KindMarket   Kind = "market"
+	KindReport   Kind = "report"
+	KindWatch    Kind = "watch"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=arbitrage,enum=report,enum=watch"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch"`
 
-	Summary   *Summary    `json:"summary,omitempty"`
-	Holdings  *Holdings   `json:"holdings,omitempty"`
-	Unpriced  *Unpriced   `json:"unpriced,omitempty"`
-	Movers    *Movers     `json:"movers,omitempty"`
-	Arbitrage *Arbitrage  `json:"arbitrage,omitempty"`
-	Report    *Report     `json:"report,omitempty"`
-	Watch     *WatchCheck `json:"watch,omitempty"`
+	Summary  *Summary    `json:"summary,omitempty"`
+	Holdings *Holdings   `json:"holdings,omitempty"`
+	Unpriced *Unpriced   `json:"unpriced,omitempty"`
+	Movers   *Movers     `json:"movers,omitempty"`
+	Market   *Market     `json:"market,omitempty"`
+	Report   *Report     `json:"report,omitempty"`
+	Watch    *WatchCheck `json:"watch,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -155,7 +155,7 @@ type PriceChange struct {
 
 // Arbitrage is one pass of vendor disagreement over everything held: the full
 // ranking behind all three tables, not the display's top-N.
-type Arbitrage struct {
+type Market struct {
 	// ComparedPrintings is how many owned printings had two or more vendors,
 	// so a consumer knows how much ground the analysis covered.
 	ComparedPrintings int           `json:"comparedPrintings"`

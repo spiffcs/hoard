@@ -79,7 +79,9 @@ func commands() []command {
 			key: "s",
 			run: func(m *Model) tea.Cmd {
 				m.cycleSort()
-				m.cursor[paneCards], m.offset[paneCards] = 0, 0
+				if m.view != viewMarket {
+					m.cursor[paneCards], m.offset[paneCards] = 0, 0
+				}
 				m.status, m.statusErr = "sorted by "+m.sortLabel(), false
 				return nil
 			},
@@ -89,7 +91,9 @@ func commands() []command {
 			key: "S",
 			run: func(m *Model) tea.Cmd {
 				m.reverseSort()
-				m.cursor[paneCards], m.offset[paneCards] = 0, 0
+				if m.view != viewMarket {
+					m.cursor[paneCards], m.offset[paneCards] = 0, 0
+				}
 				m.status, m.statusErr = "sorted by "+m.sortLabel(), false
 				return nil
 			},
@@ -122,8 +126,8 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.showView(viewUnpriced) },
 		},
 		{
-			id: "view.arbitrage", title: "View: arbitrage", aliases: "vendors spread buylist",
-			run: func(m *Model) tea.Cmd { return m.showView(viewArbitrage) },
+			id: "view.market", title: "View: market", aliases: "vendors spread buylist quotes",
+			run: func(m *Model) tea.Cmd { return m.showView(viewMarket) },
 		},
 		{
 			id: "op.update-prices", title: "Update prices", aliases: "refresh fetch scryfall daily",
@@ -232,10 +236,10 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
 		},
 		{
-			id: "arb.fetch", title: "Fetch vendor prices", aliases: "arbitrage quotes compare",
-			where: func(m *Model) bool { return m.view == viewArbitrage && !m.arbLoaded },
+			id: "market.fetch", title: "Fetch vendor prices", aliases: "quotes compare buylist",
+			where: func(m *Model) bool { return m.view == viewMarket && !m.marketLoaded },
 			rank:  func(*Model) int { return 5 },
-			run:   func(m *Model) tea.Cmd { return m.startArbitrage() },
+			run:   func(m *Model) tea.Cmd { return m.startMarketFetch() },
 		},
 		{
 			id: "view.populate", title: "Fetch this view's data", aliases: "populate refresh load",
@@ -287,7 +291,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
 		},
 		{
-			id: "movers.window", title: "Movers: cycle the window", aliases: "since days lookback",
+			id: "movers.window", title: "Movers: cycle the lookback (7/30/90 days)", aliases: "since days window",
 			key:   "W",
 			where: func(m *Model) bool { return m.view == viewMovers },
 			rank:  func(*Model) int { return 2 },
@@ -338,8 +342,8 @@ func onView(v viewMode, n int) func(*Model) int {
 // prices. One key, and the view knows what it needs.
 func (m *Model) populateView() tea.Cmd {
 	switch m.view {
-	case viewArbitrage:
-		return m.startArbitrage()
+	case viewMarket:
+		return m.startMarketFetch()
 	case viewMovers:
 		return m.populateMovers()
 	case viewUnpriced:
@@ -450,8 +454,8 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	}
 	// Leaving arbitrage abandons any fetch still running: the answer is no
 	// longer wanted, and a download that outlives the view is a surprise.
-	m.cancelArbitrage()
-	m.arbLoading = false
+	m.cancelMarketFetch()
+	m.marketLoading = false
 	m.view = v
 	m.focus = paneCards
 	if err := m.loadView(); err != nil {
@@ -461,10 +465,10 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
 	m.status = "showing " + m.view.String()
 	m.statusErr = false
-	if v == viewArbitrage {
+	if v == viewMarket {
 		// An earlier session's quotes beat an empty pane; fetching stays
 		// deliberate (F), arriving stays free.
-		m.loadCachedArbitrage()
+		m.loadCachedMarket()
 	}
 	return nil
 }

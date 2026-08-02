@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	santhosh "github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -121,9 +121,9 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 			Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
 			Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 		}),
-		"arbitrage": hoardjson.FromArbitrage(arbitrage.Result{
+		"arbitrage": hoardjson.FromMarket(market.Result{
 			Compared: 1,
-			Opportunities: []arbitrage.Opportunity{{
+			Opportunities: []market.Opportunity{{
 				Card: store.OwnedFinish{ScryfallID: "a", Name: "Ancient Tomb",
 					SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil",
 					Copies: 1, Value: 60},

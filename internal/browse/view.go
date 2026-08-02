@@ -303,8 +303,8 @@ func (m Model) rightLines(width int) []string {
 		return m.moversLines(width)
 	case viewUnpriced:
 		return m.unpricedLines(width)
-	case viewArbitrage:
-		return m.arbitrageLines(width)
+	case viewMarket:
+		return m.marketLines(width)
 	}
 	return m.cardLines(width)
 }
@@ -419,8 +419,8 @@ func (m Model) statusLine() string {
 	if m.op != nil {
 		return m.opStatus()
 	}
-	if m.view == viewArbitrage {
-		return m.arbitrageStatus()
+	if m.view == viewMarket {
+		return m.marketStatus()
 	}
 	if m.emptyNote != "" {
 		return helpStyle.Render(m.emptyNote)
@@ -476,18 +476,18 @@ func (m Model) helpLine() string {
 		return "esc back · ctrl+c quit"
 	case m.text != nil:
 		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
-	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
+	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:
 		return "F fetch vendor prices · v next view · q quit"
-	case m.view == viewArbitrage && m.arbLoading:
+	case m.view == viewMarket && m.marketLoading:
 		return "esc cancel · ctrl+c quit"
-	case m.view == viewArbitrage:
+	case m.view == viewMarket:
 		return "enter detail · F refetch quotes · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
 		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W cycle window · F update prices + history · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
 		return "F refresh prices · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:

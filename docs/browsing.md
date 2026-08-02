@@ -28,7 +28,7 @@ shows what is inside whichever container you have selected.
 | <kbd>enter</kbd> | card detail — printings, where it's held, price history |
 | <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it · <kbd>ctrl+u</kbd> wipes the bar |
 | <kbd>s</kbd> | sort by value → name → quantity |
-| <kbd>v</kbd> | switch view: holdings → movers → unpriced → arbitrage |
+| <kbd>v</kbd> | switch view: holdings → movers → unpriced → watches → market |
 | <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
 | <kbd>d</kbd> | remove the card, or the deck — asks first |
 | <kbd>u</kbd> | undo the last edit |
@@ -56,8 +56,8 @@ browser, so the record of unattended writes outlives the alternate screen.
 ## Views
 
 <kbd>v</kbd> cycles through five views: holdings, movers, unpriced, watches,
-and arbitrage. All but the last are instant database reads. **Arbitrage waits
-to be asked**: it needs today's vendor quotes from MTGJSON, so cycling to it
+and market. All but the last are instant database reads. **The market view
+waits to be asked**: it needs today's vendor quotes from MTGJSON, so cycling to it
 says `press F to fetch` rather than starting a download because you passed
 through. Quotes already fetched earlier the same day come back for free —
 the view repopulates from the day cache on arrival, even across a restart,
@@ -65,18 +65,26 @@ with `F` still re-asking for fresh numbers. While it runs the pane says so,
 and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
 
 ```
-ARBITRAGE                                        45 rows · 1,260 printings compared
-WHY        NAME           SET/NUM     BUY  FROM           SELL  TO              GAIN
-arbitrage  Tarnished Ci…  ody/329   $7.81  manapool     $10.50  cardkingdom   +$2.69
-arbitrage  Thoughtseize   2xm/109   $3.12  manapool      $5.50  cardkingdom   +$2.38
-liquid     Thassa, Deep…  thb/71   $25.00  retail       $25.00  cardkingdom   100.0%
-spread     Siege-Gang L…  m3c/61    $4.49  cardkingdom  $41.68  manapool    +828.3%
+MARKET                                           45 rows · 1,260 printings compared
+ARBITRAGE  a buylist pays more than the card last sold for
+NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PROFIT
+Tarnished Ci…  ody/329  -        $7.81   $10.50  cardkingdom   +$2.69
+
+EASY TO SELL  a buylist pays at least 70% of the last-sold price
+NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PAYS
+Thassa, Deep…  thb/71   -       $25.00   $25.00  cardkingdom  100.0%
+
+BELOW MARKET  asking well under the last-sold price
+NAME           SET/NUM  FIN     ASK  AT        LAST SOLD  BELOW
+Glimmerpost    som/223  foil  $1.10  manapool      $3.99  -72.4%
 ```
 
-The CLI prints this as three tables; a scrolling pane cannot show three at once
-without burying two, so the rows keep their reading order — real arbitrage first —
-and the WHY column says which question each row answers. `hoard arbitrage` still
-gives you the three-table version with `--min` and `--limit`; see
+Everything anchors on tcgplayer's sales-derived market price — the one
+number that describes what cards actually trade at. The three tables stack
+in one scrolling pane, each with its own headers; <kbd>enter</kbd> opens any
+row's card detail, and <kbd>s</kbd>/<kbd>S</kbd> sort just the table the
+cursor is in, each keeping its own column and direction. `hoard market`
+prints the same three tables with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
 
 ## Filtering

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -19,19 +19,55 @@ import (
 // headers read. Index 0 is the default and reproduces the order rows already
 // arrive in, so an untouched pane looks exactly as it always has.
 //
-// Arbitrage has no "why" entry because the kind grouping is not a sort: it is
-// the view's reading order, and every column sorts within it (gain, the
-// default, is the ranking the sections already use).
+// The market view is absent here: its three tables each keep their own sort
+// (marketSortColumns), so its entry is a placeholder that only sizes the
+// per-view state arrays.
 var sortColumns = [...][]string{
-	viewHoldings:  {"value", "name", "set", "finish", "qty", "price"},
-	viewMovers:    {"impact", "name", "set/num", "finish", "was", "now", "change", "qty"},
-	viewUnpriced:  {"name", "set/num", "finish", "qty", "held in"},
-	viewWatches:   {"state", "name", "watch", "price"},
-	viewArbitrage: {"gain", "name", "set/num", "buy", "from", "sell", "to"},
+	viewHoldings: {"value", "name", "set", "finish", "qty", "price"},
+	viewMovers:   {"impact", "name", "set/num", "finish", "was", "now", "change", "qty"},
+	viewUnpriced: {"name", "set/num", "finish", "qty", "held in"},
+	viewWatches:  {"state", "name", "watch", "price"},
+	viewMarket:   {"per-table"},
 }
 
-// sortLabel is how the status line describes the focused view's order.
+// marketSortColumns is each market table's cycle, indexed by market.Kind.
+// Index 0 is that table's own ranking metric, reproducing arrival order.
+var marketSortColumns = [...][]string{
+	market.KindProfit:      {"profit", "name", "set/num", "last sold", "buylist", "to"},
+	market.KindLiquid:      {"pays", "name", "set/num", "last sold", "buylist", "to"},
+	market.KindBelowMarket: {"below", "name", "set/num", "ask", "at", "last sold"},
+}
+
+// selectedMarketKind is the table the cursor is in, defaulting to the first.
+func (m Model) selectedMarketKind() market.Kind {
+	if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
+		return m.marketRows[i].Kind
+	}
+	return market.KindProfit
+}
+
+// firstMarketRowOfKind is where a table starts in the flat row list.
+func (m Model) firstMarketRowOfKind(k market.Kind) int {
+	for i, r := range m.marketRows {
+		if r.Kind == k {
+			return i
+		}
+	}
+	return 0
+}
+
+// sortLabel is how the status line describes the focused view's order. On
+// the market view it names the table the sort belongs to, since each keeps
+// its own.
 func (m Model) sortLabel() string {
+	if m.view == viewMarket {
+		k := m.selectedMarketKind()
+		label := k.String() + " · " + marketSortColumns[k][m.marketSortIdx[k]]
+		if m.marketSortRev[k] {
+			label += " (reversed)"
+		}
+		return label
+	}
 	label := sortColumns[m.view][m.sortIdx[m.view]]
 	if m.sortRev[m.view] {
 		label += " (reversed)"
@@ -39,16 +75,34 @@ func (m Model) sortLabel() string {
 	return label
 }
 
-// cycleSort moves the current view to its next column, forward order.
+// cycleSort moves the current view to its next column, forward order. On
+// the market view only the cursor's table advances, and the cursor lands on
+// that table's first row so the sort's effect is on screen.
 func (m *Model) cycleSort() {
+	if m.view == viewMarket {
+		k := m.selectedMarketKind()
+		m.marketSortIdx[k] = (m.marketSortIdx[k] + 1) % len(marketSortColumns[k])
+		m.marketSortRev[k] = false
+		m.sortArbRows()
+		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
+		return
+	}
 	v := m.view
 	m.sortIdx[v] = (m.sortIdx[v] + 1) % len(sortColumns[v])
 	m.sortRev[v] = false
 	m.applySort()
 }
 
-// reverseSort flips the current column's direction.
+// reverseSort flips the current column's direction — on the market view,
+// the cursor's table's column.
 func (m *Model) reverseSort() {
+	if m.view == viewMarket {
+		k := m.selectedMarketKind()
+		m.marketSortRev[k] = !m.marketSortRev[k]
+		m.sortArbRows()
+		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
+		return
+	}
 	m.sortRev[m.view] = !m.sortRev[m.view]
 	m.applySort()
 }
@@ -63,7 +117,7 @@ func (m *Model) applySort() {
 		sortRows(m.movers, rev, moverCompare(key))
 	case viewUnpriced:
 		sortRows(m.unpriced, rev, unpricedCompare(key))
-	case viewArbitrage:
+	case viewMarket:
 		m.sortArbRows()
 	default:
 		m.sortHoldings()
@@ -78,18 +132,16 @@ func (m *Model) sortHoldings() {
 	sortRows(m.allCards, rev, cardCompare(key))
 }
 
-// sortArbRows orders the arbitrage rows by that view's own state, kept
-// separate from applySort because rows can arrive after the user has moved on.
+// sortArbRows orders the market rows: the section grouping always wins,
+// and within each section that table's own column and direction apply.
 func (m *Model) sortArbRows() {
-	key, rev := sortColumns[viewArbitrage][m.sortIdx[viewArbitrage]], m.sortRev[viewArbitrage]
-	slices.SortStableFunc(m.arbRows, func(a, b arbitrage.Row) int {
-		// The kind grouping survives both the column choice and the reversal:
-		// reversing GAIN should not put spreads above real arbitrage.
+	slices.SortStableFunc(m.marketRows, func(a, b market.Row) int {
 		if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
 			return c
 		}
-		c := arbKey(key, a, b)
-		if rev {
+		k := a.Kind
+		c := marketKeyFor(marketSortColumns[k][m.marketSortIdx[k]], a, b)
+		if m.marketSortRev[k] {
 			c = -c
 		}
 		if c != 0 {
@@ -236,52 +288,32 @@ func unpricedCompare(key string) func(a, b store.UnpricedRow) int {
 	}
 }
 
-// arbKey compares one arbitrage column. The SELL and TO columns compare what
-// the row displays: a below-market row shows the sales price there, not a
-// buylist.
-func arbKey(key string, a, b arbitrage.Row) int {
+// marketKeyFor compares one market-table column. Money and metric columns
+// lead with the larger number; vendors and names read ascending.
+func marketKeyFor(key string, a, b market.Row) int {
 	switch key {
 	case "name":
 		return strings.Compare(a.Card.Name, b.Card.Name)
 	case "set/num":
 		return comparePrinting(a.Card.SetCode, a.Card.CollectorNumber,
 			b.Card.SetCode, b.Card.CollectorNumber)
-	case "buy":
-		return cmp.Compare(b.BuyAt, a.BuyAt)
-	case "from":
-		return strings.Compare(a.BuyFrom, b.BuyFrom)
-	case "sell":
-		return cmp.Compare(arbSell(b), arbSell(a))
+	case "last sold":
+		return cmp.Compare(b.Market, a.Market)
+	case "buylist":
+		return cmp.Compare(b.SellAt, a.SellAt)
 	case "to":
-		return strings.Compare(arbTo(a), arbTo(b))
-	default: // gain, the ranking the sections arrived in
-		return cmp.Compare(arbGain(b), arbGain(a))
+		return strings.Compare(a.SellTo, b.SellTo)
+	case "ask":
+		return cmp.Compare(b.BuyAt, a.BuyAt)
+	case "at":
+		return strings.Compare(a.BuyFrom, b.BuyFrom)
+	case "pays":
+		return cmp.Compare(b.Liquidity(), a.Liquidity())
+	case "below":
+		return cmp.Compare(b.BelowMarket(), a.BelowMarket())
 	}
-}
-
-func arbSell(r arbitrage.Row) float64 {
-	if r.Kind == arbitrage.KindBelowMarket {
-		return r.Market
-	}
-	return r.SellAt
-}
-
-func arbTo(r arbitrage.Row) string {
-	if r.Kind == arbitrage.KindBelowMarket {
-		return arbitrage.MarketProvider
-	}
-	return r.SellTo
-}
-
-// arbGain is the row's own metric, so within a kind the units agree.
-func arbGain(r arbitrage.Row) float64 {
-	switch r.Kind {
-	case arbitrage.KindProfit:
-		return r.Profit()
-	case arbitrage.KindLiquid:
-		return r.Liquidity()
-	}
-	return r.BelowMarket()
+	// profit, each table's default metric
+	return cmp.Compare(b.Profit(), a.Profit())
 }
 
 // comparePrinting orders by set, then collector number — numerically when both

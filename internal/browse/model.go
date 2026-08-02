@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
@@ -167,6 +167,12 @@ type Model struct {
 	unpriced []store.UnpricedRow
 	watches  []store.WatchStatus
 
+	// The market view sorts per table: each of the three sections keeps
+	// its own column choice and direction, indexed by market.Kind, and
+	// 's' operates on the table the cursor is in.
+	marketSortIdx [3]int
+	marketSortRev [3]bool
+
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int
 
@@ -176,15 +182,15 @@ type Model struct {
 
 	// Arbitrage is the one view that needs the network, so unlike the others it
 	// is fetched on request, asynchronously, and can be abandoned part-way.
-	arbitrage  ArbitrageFunc
-	arbCached  ArbitrageCachedFunc
-	arbResult  arbitrage.Result
-	arbRows    []arbitrage.Row
-	arbLoading bool
-	arbLoaded  bool
-	arbGen     int
-	arbCancel  context.CancelFunc
-	spinner    spinner.Model
+	marketFetch   MarketFunc
+	marketCached  MarketCachedFunc
+	marketResult  market.Result
+	marketRows    []market.Row
+	marketLoading bool
+	marketLoaded  bool
+	marketGen     int
+	marketCancel  context.CancelFunc
+	spinner       spinner.Model
 
 	// ctx bounds every background fetch, so quitting the program stops them
 	// rather than leaving a download running against a closed database.
@@ -423,7 +429,7 @@ func (m *Model) cycleMask() {
 		m.setError(err)
 		return
 	}
-	m.applyArbRows()
+	m.applyMarketRows()
 	m.clampCursor(paneCards)
 	if min := m.maskMin(); min > 0 {
 		m.status, m.statusErr = fmt.Sprintf("hiding cards under %s — m cycles, unpriced view unaffected", ui.Money(min)), false
@@ -561,8 +567,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case arbitrageMsg:
-		return m.onArbitrage(msg)
+	case marketMsg:
+		return m.onMarket(msg)
 	case opProgressMsg:
 		return m.onOpProgress(msg)
 	case opDoneMsg:
@@ -577,7 +583,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-arm chains stay singular. Browse's side only animates while
 		// something is in flight, or the program wakes forever.
 		var cmds []tea.Cmd
-		if m.arbLoading || m.op != nil {
+		if m.marketLoading || m.op != nil {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)
@@ -693,9 +699,9 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status, m.statusErr = "cancelled", false
 			return m, nil
 		}
-		if m.arbLoading {
-			m.cancelArbitrage()
-			m.arbLoading = false
+		if m.marketLoading {
+			m.cancelMarketFetch()
+			m.marketLoading = false
 			m.status, m.statusErr = "cancelled", false
 			return m, nil
 		}

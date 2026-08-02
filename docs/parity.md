@@ -21,7 +21,7 @@ names the yes/no questions an operation may ask through `Deps.Confirm`.
 | deck add | `action.DeckAdd` | `deck add` | palette (Add a deck by URL…) | resolving cards (d, cards) | — | `DeckAddResult` | 0/1/2 | migrated |
 | bulk add / URL add | `action.AddList` / `action.AddByURL` | `add --file/-`, `add <url>` | `a` (embedded cascade) · palette (Add a card by Scryfall URL…) | resolving cards (d, cards) | — | `AddListResult`/`AddByURLResult` | 0/1/2 | migrated |
 | repair finishes | `action.RepairFinishes` | `repair-finishes` | `f` / palette | refreshing cards (d, cards) | — | `RepairResult` | 0/1 | migrated |
-| arbitrage | `action.Arbitrage` | `arbitrage` | `v` view (bespoke async) | reading vendor prices (i) | — | `arbitrage.Result` | 0/1 | migrated |
+| market (vendor comparison) | `action.Market` | `market` | `v` view (bespoke async, day-cached across restarts) | reading vendor prices (i) | — | `market.Result` | 0/1 | migrated |
 | watch check | `Deps.WatchCheck` | `watch` | fired banner on open (read-only) | — | — | fired/checked | 0/1/3 | migrated |
 | watch add/list/rm | `action.WatchAdd`, `Deps.WatchList/WatchRemove` | `watch add/list/rm` | `w`, watches view (`v`), `d` | — | — | — | 0/1 | migrated |
 | report | `Deps.Valuation` | `report` | palette (Report: valuation, text overlay) | — | — | `report.ValuationData` | 0/1 | migrated |

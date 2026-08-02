@@ -15,7 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/spiffcs/hoard/internal/arbitrage"
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
@@ -1174,7 +1174,7 @@ func TestViewCyclesAndLoads(t *testing.T) {
 		t.Errorf("view = %v, want watches", m.view)
 	}
 	m = key(m, "v")
-	if m.view != viewArbitrage {
+	if m.view != viewMarket {
 		t.Errorf("view = %v, want arbitrage", m.view)
 	}
 	m = key(m, "v")
@@ -1232,34 +1232,63 @@ func TestSortWorksInEveryView(t *testing.T) {
 // Arbitrage rows keep their kind grouping whatever column sorts them: the WHY
 // column is the view's reading order, and dollars must not rank against
 // percentages.
-func TestArbitrageSortStaysGrouped(t *testing.T) {
+func TestMarketSortIsPerTable(t *testing.T) {
 	m := newTestModel(t, testStore())
-	m.view = viewArbitrage
-	opp := func(name string, buy, sell, market float64) arbitrage.Opportunity {
-		o := arbitrage.Opportunity{BuyAt: buy, SellAt: sell, Market: market,
-			HasMarket: market > 0, HasRetail: true, HasBuy: sell > 0}
+	m.view = viewMarket
+	opp := func(name string, buy, sell, lastSold float64) market.Opportunity {
+		o := market.Opportunity{BuyAt: buy, SellAt: sell, Market: lastSold,
+			HasMarket: lastSold > 0, HasRetail: true, HasBuy: sell > 0}
 		o.Card.Name = name
 		return o
 	}
-	m.arbRows = []arbitrage.Row{
-		{Kind: arbitrage.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
-		{Kind: arbitrage.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
-		{Kind: arbitrage.KindBelowMarket, Opportunity: opp("Zulu Spread", 1, 0, 5)},
-		{Kind: arbitrage.KindBelowMarket, Opportunity: opp("Alpha Spread", 1, 0, 2)},
+	m.marketRows = []market.Row{
+		{Kind: market.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
+		{Kind: market.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
+		{Kind: market.KindBelowMarket, Opportunity: opp("Zulu Spread", 1, 0, 5)},
+		{Kind: market.KindBelowMarket, Opportunity: opp("Alpha Spread", 1, 0, 2)},
 	}
-	m.arbLoaded = true
+	m.marketLoaded = true
 
-	m = key(m, "s") // → name, within each kind
-	names := make([]string, len(m.arbRows))
-	for i, r := range m.arbRows {
-		names[i] = r.Card.Name
+	names := func() []string {
+		out := make([]string, len(m.marketRows))
+		for i, r := range m.marketRows {
+			out[i] = r.Card.Name
+		}
+		return out
 	}
-	want := []string{"Alpha Profit", "Zulu Profit", "Alpha Spread", "Zulu Spread"}
-	if !slices.Equal(names, want) {
-		t.Errorf("arbitrage by name = %v, want %v (profits before spreads)", names, want)
+
+	// Cursor starts in the profit table: s sorts only that table by name;
+	// below-market keeps its own default order (deepest discount first —
+	// Zulu at 80% before Alpha at 50%).
+	m = key(m, "s")
+	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Spread", "Alpha Spread"}; !slices.Equal(names(), want) {
+		t.Errorf("after sorting profits = %v, want %v", names(), want)
 	}
-	if m.sortLabel() != "name" {
-		t.Errorf("label = %q, want name", m.sortLabel())
+	if m.sortLabel() != "arbitrage · name" {
+		t.Errorf("label = %q, want the table named", m.sortLabel())
+	}
+	if m.cursor[paneCards] != 0 {
+		t.Errorf("cursor = %d, want the sorted table's first row", m.cursor[paneCards])
+	}
+
+	// Move into the below-market table and sort it too; the profit table's
+	// order is untouched, and the cursor lands on that table's first row.
+	m.cursor[paneCards] = 2
+	m = key(m, "s")
+	if want := []string{"Alpha Profit", "Zulu Profit", "Alpha Spread", "Zulu Spread"}; !slices.Equal(names(), want) {
+		t.Errorf("after sorting below-market = %v, want %v", names(), want)
+	}
+	if m.sortLabel() != "below-market · name" {
+		t.Errorf("label = %q", m.sortLabel())
+	}
+	if m.cursor[paneCards] != 2 {
+		t.Errorf("cursor = %d, want the below-market table's first row", m.cursor[paneCards])
+	}
+
+	// S reverses only the cursor's table.
+	m = key(m, "S")
+	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Spread", "Alpha Spread"}; !slices.Equal(names(), want) {
+		t.Errorf("after reversing below-market = %v, want %v", names(), want)
 	}
 }
 
@@ -1316,9 +1345,9 @@ func TestAnalyticalViewsRefuseHoldingActions(t *testing.T) {
 	}
 }
 
-func arbModel(t *testing.T, fn ArbitrageFunc) Model {
+func marketModel(t *testing.T, fn MarketFunc) Model {
 	t.Helper()
-	m, err := New(testStore(), WithArbitrage(fn))
+	m, err := New(testStore(), WithMarket(fn))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1326,8 +1355,8 @@ func arbModel(t *testing.T, fn ArbitrageFunc) Model {
 	return next.(Model)
 }
 
-func opp(name string, buy, sell float64) arbitrage.Opportunity {
-	return arbitrage.Opportunity{
+func opp(name string, buy, sell float64) market.Opportunity {
+	return market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "sf-" + name, Name: name,
 			SetCode: "mh3", CollectorNumber: "1", Finish: "nonfoil"},
 		Market:    buy, // anchored at the ask: liquid rows qualify, below-market ones don't
@@ -1343,15 +1372,15 @@ func opp(name string, buy, sell float64) arbitrage.Opportunity {
 // because the user cycled past it.
 func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 	var calls int
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
 		calls++
-		return arbitrage.Result{}, nil
+		return market.Result{}, nil
 	})
 	m = key(m, "v")
 	m = key(m, "v")
 	m = key(m, "v")
 	m = key(m, "v") // → arbitrage
-	if m.view != viewArbitrage {
+	if m.view != viewMarket {
 		t.Fatalf("view = %v", m.view)
 	}
 	if calls != 0 {
@@ -1363,17 +1392,17 @@ func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 }
 
 func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
-	res := arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20), opp("Liquid", 10, 9)},
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20), opp("Liquid", 10, 9)},
 		Compared:      2,
 	}
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
 
 	m = key(m, "F")
-	if !m.arbLoading {
+	if !m.marketLoading {
 		t.Fatal("F did not start a fetch")
 	}
 	if out := m.View(); !strings.Contains(out, "reading today's vendor prices") {
@@ -1381,13 +1410,13 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 	}
 
 	// Deliver the reply the command produces, as the runtime would.
-	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
 	m = next.(Model)
 
-	if m.arbLoading || !m.arbLoaded {
-		t.Fatalf("loading=%v loaded=%v", m.arbLoading, m.arbLoaded)
+	if m.marketLoading || !m.marketLoaded {
+		t.Fatalf("loading=%v loaded=%v", m.marketLoading, m.marketLoaded)
 	}
-	if len(m.arbRows) == 0 {
+	if len(m.marketRows) == 0 {
 		t.Fatal("no rows after a successful fetch")
 	}
 	out := m.View()
@@ -1400,29 +1429,29 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 
 // A reply to a request the user has already left must not overwrite the pane.
 func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
-		return arbitrage.Result{}, nil
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+		return market.Result{}, nil
 	})
 	for range 4 {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	stale := m.arbGen - 1
+	stale := m.marketGen - 1
 
-	next, _ = m.Update(arbitrageMsg{
+	next, _ = m.Update(marketMsg{
 		gen: stale,
-		res: arbitrage.Result{Opportunities: []arbitrage.Opportunity{opp("Ghost", 1, 5)}},
+		res: market.Result{Opportunities: []market.Opportunity{opp("Ghost", 1, 5)}},
 	})
 	m = next.(Model)
-	if m.arbLoaded || len(m.arbRows) != 0 {
-		t.Errorf("a stale reply landed: loaded=%v rows=%d", m.arbLoaded, len(m.arbRows))
+	if m.marketLoaded || len(m.marketRows) != 0 {
+		t.Errorf("a stale reply landed: loaded=%v rows=%d", m.marketLoaded, len(m.marketRows))
 	}
 }
 
 // Without an injected fetch the view says so rather than looking broken.
 func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
-	m := newTestModel(t, testStore()) // no WithArbitrage
+	m := newTestModel(t, testStore()) // no WithMarket
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -1434,15 +1463,15 @@ func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 
 // A genuine failure is shown, unlike a cancellation.
 func TestArbitrageErrorIsShown(t *testing.T) {
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
-		return arbitrage.Result{}, errFake{}
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+		return market.Result{}, errFake{}
 	})
 	for range 4 {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	next, _ = m.Update(arbitrageMsg{gen: m.arbGen, err: errFake{}})
+	next, _ = m.Update(marketMsg{gen: m.marketGen, err: errFake{}})
 	m = next.(Model)
 	if !m.statusErr {
 		t.Errorf("status = %q, want the failure surfaced", m.status)
@@ -1452,8 +1481,8 @@ func TestArbitrageErrorIsShown(t *testing.T) {
 // Editing keys have no meaning against vendor quotes, and the cursor indexes a
 // different slice here.
 func TestArbitrageRefusesHoldingActions(t *testing.T) {
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
-		return arbitrage.Result{}, nil
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+		return market.Result{}, nil
 	})
 	for range 4 {
 		m = key(m, "v")
@@ -1464,28 +1493,28 @@ func TestArbitrageRefusesHoldingActions(t *testing.T) {
 	}
 }
 
-// capturingArb records the context it was handed, so a test can assert the
+// capturingMarket records the context it was handed, so a test can assert the
 // browser cancelled it without any goroutine choreography.
 //
 // tea.Batch does not run its commands — it returns a BatchMsg for the runtime to
 // expand — so driving the fetch by calling the returned Cmd would never start
 // it. Watching the context is both simpler and closer to what matters.
-type capturingArb struct {
+type capturingMarket struct {
 	mu  sync.Mutex
 	ctx context.Context
 }
 
-func (c *capturingArb) fetch(ctx context.Context, _ progress.Fn) (arbitrage.Result, error) {
+func (c *capturingMarket) fetch(ctx context.Context, _ progress.Fn) (market.Result, error) {
 	c.mu.Lock()
 	c.ctx = ctx
 	c.mu.Unlock()
 	<-ctx.Done() // stand in for a slow download
-	return arbitrage.Result{}, ctx.Err()
+	return market.Result{}, ctx.Err()
 }
 
 // context returns the captured context; guarded because the fetch goroutine
 // writes it while the test polls.
-func (c *capturingArb) context() context.Context {
+func (c *capturingMarket) context() context.Context {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ctx
@@ -1493,16 +1522,16 @@ func (c *capturingArb) context() context.Context {
 
 // startFetch puts the model into the arbitrage view with a fetch in flight,
 // returning the capture so the test can inspect its context.
-func startFetch(t *testing.T) (Model, *capturingArb) {
+func startFetch(t *testing.T) (Model, *capturingMarket) {
 	t.Helper()
-	cap := &capturingArb{}
-	m := arbModel(t, cap.fetch)
+	cap := &capturingMarket{}
+	m := marketModel(t, cap.fetch)
 	for range 4 {
 		m = key(m, "v")
 	}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
 	m = next.(Model)
-	if cmd == nil || !m.arbLoading {
+	if cmd == nil || !m.marketLoading {
 		t.Fatal("F did not start a fetch")
 	}
 	// Run the fetch's own goroutine the way the runtime would, so the context is
@@ -1533,7 +1562,7 @@ func TestArbitrageEscapeCancels(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
-	if m.arbLoading {
+	if m.marketLoading {
 		t.Error("still loading after esc")
 	}
 	if cap.context().Err() == nil {
@@ -1541,7 +1570,7 @@ func TestArbitrageEscapeCancels(t *testing.T) {
 	}
 
 	// And the cancellation must not be reported as a failure.
-	next, _ = m.Update(arbitrageMsg{gen: m.arbGen, err: context.Canceled})
+	next, _ = m.Update(marketMsg{gen: m.marketGen, err: context.Canceled})
 	if got := next.(Model); got.statusErr {
 		t.Errorf("cancellation reported as an error: %q", got.status)
 	}
@@ -1552,7 +1581,7 @@ func TestArbitrageViewChangeCancels(t *testing.T) {
 	m, cap := startFetch(t)
 
 	m = key(m, "v") // → back to holdings
-	if m.arbLoading {
+	if m.marketLoading {
 		t.Error("still loading after leaving the view")
 	}
 	if m.view != viewHoldings {
@@ -1801,7 +1830,7 @@ func TestHelpLineIsViewSpecific(t *testing.T) {
 		t.Errorf("watches help = %q", h)
 	}
 	m.view = viewMovers
-	if h := m.helpLine(); !strings.Contains(h, "W cycle window") {
+	if h := m.helpLine(); !strings.Contains(h, "W lookback 7/30/90 days") {
 		t.Errorf("movers help = %q", h)
 	}
 	m.view = viewUnpriced
@@ -1818,19 +1847,19 @@ func TestHelpLineIsViewSpecific(t *testing.T) {
 // the edge says what fraction a shop pays, and the status line spells out
 // the loss for the selected row.
 func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
-	res := arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{
+	res := market.Result{
+		Opportunities: []market.Opportunity{
 			opp("Gilded Lotus", 10.00, 9.00),        // buylist pays 90% of sales: liquid
 			opp("Quantum Misalignment", 6.31, 2.80), // 44% of sales: noise, listed nowhere
 		},
 		Compared: 2,
 	}
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
-	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
 	m = next.(Model)
 
 	out := m.View()
@@ -1992,16 +2021,16 @@ func TestDetailPromptRendersOverOverlay(t *testing.T) {
 // F on arbitrage is never silent: fetching says so, and a repeat press on a
 // loaded view re-asks rather than doing nothing.
 func TestArbitrageFAlwaysAnswers(t *testing.T) {
-	res := arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
 		Compared:      1,
 	}
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
-	if !m.arbLoading {
+	if !m.marketLoading {
 		t.Fatal("first F did not start the fetch")
 	}
 	m = key(m, "F")
@@ -2009,13 +2038,13 @@ func TestArbitrageFAlwaysAnswers(t *testing.T) {
 		t.Fatalf("F while loading = %q, want the already-fetching status", m.status)
 	}
 
-	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
 	m = next.(Model)
-	if !m.arbLoaded {
+	if !m.marketLoaded {
 		t.Fatal("setup: fetch did not land")
 	}
 	m = key(m, "F")
-	if !m.arbLoading {
+	if !m.marketLoading {
 		t.Fatal("F on a loaded view must re-fetch, not fall silent")
 	}
 }
@@ -2023,16 +2052,16 @@ func TestArbitrageFAlwaysAnswers(t *testing.T) {
 // Enter on an arbitrage row opens the card detail, same as holdings and
 // watches.
 func TestArbitrageEnterOpensDetail(t *testing.T) {
-	res := arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
 		Compared:      1,
 	}
-	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
-	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
 	m = next.(Model)
 	m.focus = paneCards
 
@@ -2100,17 +2129,17 @@ func TestValueMaskCyclesAndFilters(t *testing.T) {
 // A restarted session shows the quotes an earlier one fetched: arriving at
 // the arbitrage view loads today's cache without a fetch; F still re-asks.
 func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
-	res := arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
 		Compared:      1,
 	}
 	fetches := 0
 	m, err := New(testStore(),
-		WithArbitrage(func(context.Context, progress.Fn) (arbitrage.Result, error) {
+		WithMarket(func(context.Context, progress.Fn) (market.Result, error) {
 			fetches++
 			return res, nil
 		}),
-		WithArbitrageCached(func() (arbitrage.Result, bool) { return res, true }))
+		WithMarketCached(func() (market.Result, bool) { return res, true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2121,7 +2150,7 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 	for range 4 {
 		m = key(m, "v")
 	}
-	if !m.arbLoaded || len(m.arbRows) == 0 {
+	if !m.marketLoaded || len(m.marketRows) == 0 {
 		t.Fatal("arrival must populate from the day cache")
 	}
 	if fetches != 0 {
@@ -2132,7 +2161,7 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 	}
 
 	m = key(m, "F")
-	if !m.arbLoading {
+	if !m.marketLoading {
 		t.Fatal("F must still refetch fresh numbers")
 	}
 }
@@ -2140,10 +2169,10 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 // Without a cache hit, arrival stays empty and F remains the fetch.
 func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
 	m, err := New(testStore(),
-		WithArbitrage(func(context.Context, progress.Fn) (arbitrage.Result, error) {
-			return arbitrage.Result{}, nil
+		WithMarket(func(context.Context, progress.Fn) (market.Result, error) {
+			return market.Result{}, nil
 		}),
-		WithArbitrageCached(func() (arbitrage.Result, bool) { return arbitrage.Result{}, false }))
+		WithMarketCached(func() (market.Result, bool) { return market.Result{}, false }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2153,7 +2182,7 @@ func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
 	for range 4 {
 		m = key(m, "v")
 	}
-	if m.arbLoaded {
+	if m.marketLoaded {
 		t.Fatal("no cache: the view must wait for F")
 	}
 }

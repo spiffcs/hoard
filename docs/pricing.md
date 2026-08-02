@@ -160,7 +160,7 @@ is safe to re-run: a second pass finds nothing.
 
 A valuation reports one price per card as though it were the truth. It isn't: the
 same card is quoted by three US vendors at once, on both sides of the counter,
-and they disagree more than a single figure suggests. `hoard arbitrage` shows
+and they disagree more than a single figure suggests. `hoard market` shows
 where, in three sections:
 
 ```
