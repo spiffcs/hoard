@@ -161,7 +161,7 @@ func TestBinderManagement(t *testing.T) {
 
 	// The default binder refuses a rename.
 	m.focus = paneContainers
-	m.cursor[paneContainers] = 0
+	m.cursor[paneContainers] = 1 // past the merged all-cards row
 	m = key(m, "R")
 	if m.prompt != nil || !strings.Contains(m.status, "cannot be renamed") {
 		t.Errorf("default rename: prompt=%v status=%q", m.prompt, m.status)
@@ -251,7 +251,7 @@ func TestPaletteRanksViewCommands(t *testing.T) {
 	st.movers = nil
 	m, err := New(st,
 		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
-		WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
+		WithBackfill(func(ctx context.Context, p progress.Fn, days int) (string, error) { return "", nil }),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -287,7 +287,7 @@ func TestPopulateMoversComposes(t *testing.T) {
 			order = append(order, "prices")
 			return "prices updated", nil
 		}),
-		WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
+		WithBackfill(func(ctx context.Context, p progress.Fn, days int) (string, error) {
 			order = append(order, "backfill")
 			return "backfilled 12", nil
 		}),
@@ -623,5 +623,51 @@ func TestWatchCommandAvailability(t *testing.T) {
 	if m.prompt == nil || !strings.Contains(m.prompt.label, "Sol Ring") ||
 		!strings.Contains(m.prompt.label, "$3.50") {
 		t.Fatalf("w on a market row opened %+v, want the threshold prompt anchored on the market price", m.prompt)
+	}
+}
+
+// A hoard opened with no catalog built offers the download before the
+// first add session needs it: y starts the catalog op, anything else
+// skips with a pointer to the palette, and no offer stages when the
+// catalog already exists.
+func TestFirstRunCatalogOffer(t *testing.T) {
+	ran := false
+	m, err := New(testStore(),
+		WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
+			ran = true
+			return "catalog ready", nil
+		}),
+		WithCatalogOffer(true))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(Model)
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "catalog") {
+		t.Fatalf("confirm = %+v, want the catalog offer", m.confirm)
+	}
+
+	// Any other key skips, with the palette pointer.
+	m2 := key(m, "x")
+	if m2.confirm != nil || !strings.Contains(m2.status, "Update the card catalog") {
+		t.Errorf("skip: confirm=%v status=%q", m2.confirm, m2.status)
+	}
+
+	// y runs the catalog op.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	pump(t, next.(Model), cmd)
+	if !ran {
+		t.Error("y on the offer did not start the catalog update")
+	}
+
+	// With a catalog already built, no offer stages.
+	quiet, err := New(testStore(),
+		WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
+		WithCatalogOffer(false))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if quiet.confirm != nil {
+		t.Error("an existing catalog must not re-trigger the first-run offer")
 	}
 }

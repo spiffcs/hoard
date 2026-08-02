@@ -120,10 +120,21 @@ func TestAddCascadeEscAtNameReturnsToBrowse(t *testing.T) {
 	m := newCascadeModel(t, &fakeStore{}, withTestCascade(ra))
 
 	m = key(m, "a")
+	// esc opens the leave gate; the cascade is still up until y-then-enter.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
+	if m.addChild == nil {
+		t.Fatal("a bare esc must ask before closing the cascade")
+	}
+	if v := m.View(); !strings.Contains(v, "Leave the add session?") {
+		t.Fatalf("no leave gate on screen:\n%s", v)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
 	if m.addChild != nil {
-		t.Fatal("esc at the empty name prompt should close the cascade")
+		t.Fatal("y then enter on the gate should close the cascade")
 	}
 	if m.mode() != modeBrowse {
 		t.Fatalf("mode = %v, want browse", m.mode())
@@ -165,11 +176,11 @@ func TestAddCascadeCommitsAndReceiptLands(t *testing.T) {
 
 	m = key(m, "a")
 	m = addOneCard(t, m, ra, "Sol Ring")
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	m = next.(Model)
 
 	if m.addChild != nil {
-		t.Fatal("cascade should be closed")
+		t.Fatal("ctrl+d should close the cascade")
 	}
 	if m.status != "added 1" {
 		t.Fatalf("status = %q, want %q", m.status, "added 1")
@@ -186,7 +197,7 @@ func TestAddCascadeReceiptAccumulatesAcrossInvocations(t *testing.T) {
 	for _, name := range []string{"Sol Ring", "Ancient Tomb"} {
 		m = key(m, "a")
 		m = addOneCard(t, m, ra, name)
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 		m = next.(Model)
 	}
 	if len(ra.got) != 2 {
@@ -302,5 +313,38 @@ func TestResizeReachesEmbeddedCascade(t *testing.T) {
 	}
 	if m.width != 40 {
 		t.Fatal("browse must track the size too")
+	}
+}
+
+// Closing an add session with new cards auto-runs the view's fetch, so
+// prices and identity arrive without anyone pressing F; a session that
+// added nothing fetches nothing.
+func TestAddCascadeAutoFetchesAfterAdds(t *testing.T) {
+	ra := &recordingChildAdder{}
+	ran := false
+	m := newCascadeModel(t, &fakeStore{}, withTestCascade(ra),
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			ran = true
+			return "prices updated", nil
+		}))
+
+	m = key(m, "a")
+	m = addOneCard(t, m, ra, "Sol Ring")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = pump(t, next.(Model), cmd)
+	if !ran {
+		t.Fatal("closing an add session with adds must start the price fetch")
+	}
+
+	ran = false
+	m = key(m, "a")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	pump(t, next.(Model), cmd)
+	if ran {
+		t.Fatal("an empty session must not fetch anything")
 	}
 }

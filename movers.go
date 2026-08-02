@@ -83,7 +83,7 @@ func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) erro
 	env := ui.Detect(os.Stdout)
 	pr := stderrPrinter()
 	res, err := action.BackfillPrices(ctx,
-		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn())
+		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn(), 90)
 	pr.Close()
 	if err != nil {
 		return err

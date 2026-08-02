@@ -270,6 +270,11 @@ func exportModel(t *testing.T, calls *[]exportCall) Model {
 		t.Fatalf("New: %v", err)
 	}
 	m.ctx = context.Background()
+	// Step past the merged all-cards row: these tests export the binder.
+	m.cursor[paneContainers] = 1
+	if err := m.loadCards(); err != nil {
+		t.Fatalf("loadCards: %v", err)
+	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	return next.(Model)
 }

@@ -340,6 +340,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	sum, err := browse.Run(ctx, st,
 		browse.WithConfirm(confirmCh),
 		browse.WithCardImage(fetchCardImage),
+		browse.WithCatalogOffer(cat != nil && cat.CardCount() == 0),
 		browse.WithDeckAddByURL(func(ctx context.Context, p progress.Fn, rawURL string) (browse.OpReport, error) {
 			deck, ferr := decksource.Fetch(ctx, rawURL)
 			if ferr != nil {
@@ -416,16 +417,6 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			r.Report = lines
 			return r, nil
-		}),
-		browse.WithAddByURL(func(ctx context.Context, p progress.Fn, cardURL string) (string, error) {
-			res, aerr := action.AddByURL(ctx, deps, p,
-				action.AddByURLOptions{URL: cardURL, Qty: 1})
-			if aerr != nil {
-				return "", aerr
-			}
-			return fmt.Sprintf("added %s (%s/%s) %s into %s",
-				res.Card.Name, strings.ToUpper(res.Card.Set), res.Card.CollectorNumber,
-				res.Finish, res.Binder), nil
 		}),
 		browse.WithExport(func(binderRef, deckRef, format, path string) (string, error) {
 			write := map[string]func(io.Writer, []export.Row) error{
@@ -510,8 +501,8 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			return fmt.Sprintf("catalog ready · %s cards", ui.Count(res.Cards)), nil
 		}),
-		browse.WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
-			res, err := action.BackfillPrices(ctx, deps, p)
+		browse.WithBackfill(func(ctx context.Context, p progress.Fn, days int) (string, error) {
+			res, err := action.BackfillPrices(ctx, deps, p, days)
 			if err != nil {
 				return "", err
 			}

@@ -36,9 +36,20 @@ func WithRepairFinishes(f OpFunc) Option { return func(m *Model) { m.opRepairFin
 // WithCatalogUpdate supplies the catalog rebuild.
 func WithCatalogUpdate(f OpFunc) Option { return func(m *Model) { m.opCatalogUpdate = f } }
 
-// WithBackfill supplies the 90-day price-history import — what makes an
-// empty movers view populate.
-func WithBackfill(f OpFunc) Option { return func(m *Model) { m.opBackfill = f } }
+// WithCatalogOffer(true) stages a first-run question when the browser
+// opens: no local catalog exists yet, and the best moment to offer the
+// download is before the first add session needs it — not after, when the
+// slow lookups it would have prevented already happened. Declining costs
+// nothing; the update-prices path asks again when it matters next.
+func WithCatalogOffer(empty bool) Option { return func(m *Model) { m.catalogOffer = empty } }
+
+// BackfillFunc imports days of price history from the MTGJSON archive —
+// what makes an empty movers view populate. The archive holds ~90 days;
+// days narrows what gets recorded.
+type BackfillFunc func(ctx context.Context, p progress.Fn, days int) (summary string, err error)
+
+// WithBackfill supplies the price-history import.
+func WithBackfill(f BackfillFunc) Option { return func(m *Model) { m.opBackfill = f } }
 
 // WatchAddFunc stands a watch by card name: the resolve-once pipeline needs
 // the network, so it runs as an operation. Direction is explicit because no
@@ -62,14 +73,6 @@ type ImportFunc func(ctx context.Context, p progress.Fn, path string, again bool
 
 // WithImportFile supplies file-based collection import for the palette.
 func WithImportFile(f ImportFunc) Option { return func(m *Model) { m.opImport = f } }
-
-// AddURLFunc adds one card by its Scryfall link (qty 1, finish read from
-// the URL's printing, default binder) — the CLI's `add <url>` reachable
-// without leaving the browser.
-type AddURLFunc func(ctx context.Context, p progress.Fn, url string) (summary string, err error)
-
-// WithAddByURL supplies link-based single-card adding for the palette.
-func WithAddByURL(f AddURLFunc) Option { return func(m *Model) { m.opAddURL = f } }
 
 // OpReport is a completed operation's outcome beyond the status line: an
 // optional multi-line report for the text takeover, and import's

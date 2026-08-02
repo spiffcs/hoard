@@ -70,6 +70,9 @@ type Store interface {
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
 	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
 
+	// The merged all-cards view: every holding across every container.
+	AllByFinish() ([]store.CollectionRow, error)
+
 	// Price watches: the view's rows, and the read-only fired preview the
 	// banner shows on open (never consuming the alert — cron's `hoard
 	// watch` stays the consumer of record).

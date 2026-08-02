@@ -329,7 +329,7 @@ func (m Model) cardLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
 		inDeck := false
 		if sel := m.selectedContainer(); sel != nil {
-			inDeck = sel.Kind != store.KindCollection
+			inDeck = sel.Kind == store.KindDeck
 		}
 
 		cols := []ui.Col{

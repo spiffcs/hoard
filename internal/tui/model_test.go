@@ -314,10 +314,17 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 		t.Error("esc mid-cascade should not quit")
 	}
 
-	// esc at the name prompt → quit.
-	_, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	// esc at the name prompt → the leave gate, and y-then-enter quits.
+	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm2.(model)
+	if got.state != stateLeaveConfirm || isQuit(cmd) {
+		t.Fatalf("esc at name: state = %v (cmd quit %v), want the leave gate", got.state, isQuit(cmd))
+	}
+	mm2, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got = mm2.(model)
+	_, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if !isQuit(cmd) {
-		t.Error("esc at name prompt should quit")
+		t.Error("y then enter on the gate should quit")
 	}
 }
 

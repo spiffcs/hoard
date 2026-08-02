@@ -15,9 +15,11 @@ Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $3
 tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
 ```
 
-The left pane lists your binders first (the default binder, then any you created
-with `hoard binder new`), followed by every deck ranked by value. The right pane
-shows what is inside whichever container you have selected.
+The left pane leads with **All cards** — every holding in the hoard, all
+binders and decks merged into one list (read-only: edit a card where it
+lives) — then your binders (the default binder, then any you created with
+`hoard binder new`), then every deck ranked by value. The right pane shows
+what is inside whichever row you have selected.
 
 ## Keys
 
@@ -46,12 +48,15 @@ without saying so.
 
 Pressing <kbd>a</kbd> opens the same interactive add flow `hoard add` runs —
 type a name or <kbd>ctrl+o</kbd> to scan with your iPhone — inside the
-browser: it takes over the screen while it runs and <kbd>esc</kbd> drops you
-back exactly where you were, cursor, filter and undo intact, with the new
-cards already in your binder and a one-line receipt on the status line. A
-long operation (a price update, a backfill) keeps running behind it. The
-full scan receipt still prints to the terminal scrollback when you quit the
-browser, so the record of unattended writes outlives the alternate screen.
+browser: it takes over the screen while it runs. <kbd>ctrl+d</kbd> finishes
+the session and drops you back exactly where you were, cursor, filter and
+undo intact, with the new cards already in your binder, a one-line receipt
+on the status line, and a price fetch already running so the new rows fill
+in without asking. <kbd>esc</kbd> also leaves, but through a gate: it
+states that confirmed cards are saved and anything mid-pick is not, and
+asks for <kbd>y</kbd> then <kbd>enter</kbd> before letting go. A long
+operation keeps running behind the cascade, and the full scan receipt
+still prints to the terminal scrollback when you quit the browser.
 
 ## Card images
 
@@ -92,7 +97,7 @@ EASY TO SELL  a buylist pays at least 70% of the last-sold price
 NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PAYS
 Thassa, Deep…  thb/71   -       $25.00   $25.00  cardkingdom  100.0%
 
-BELOW MARKET  a buylist is asking far under what the last-sold price was
+BELOW MARKET  a marketplace is asking far under what the card last sold for
 NAME           SET/NUM  FIN     ASK  AT        LAST SOLD  BELOW
 Glimmerpost    som/223  foil  $1.10  manapool      $3.99  -72.4%
 ```

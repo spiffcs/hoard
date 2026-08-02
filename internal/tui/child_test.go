@@ -14,11 +14,39 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-func TestChildEscAtNameSetsDoneAndSwallowsQuit(t *testing.T) {
+func TestChildCtrlDSetsDoneAndSwallowsQuit(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	if !c.Done() {
-		t.Fatal("esc at the empty name prompt should finish the cascade")
+		t.Fatal("ctrl+d should finish the cascade")
+	}
+	if cmd != nil {
+		t.Fatalf("the quit must be swallowed, got cmd %v", cmd)
+	}
+}
+
+// esc walks the leave gate: the first press asks, y then enter leaves, and
+// any other key stays in the session.
+func TestChildEscGatesLeavingBehindYThenEnter(t *testing.T) {
+	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if c.Done() {
+		t.Fatal("a bare esc must ask, not finish")
+	}
+	if v := c.View(); !strings.Contains(v, "Leave the add session?") {
+		t.Fatalf("no leave gate on screen:\n%s", v)
+	}
+	// A stray key cancels back to the session.
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if c.Done() {
+		t.Fatal("a stray key on the gate must stay")
+	}
+	// esc, y, enter leaves.
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !c.Done() {
+		t.Fatal("y then enter must leave the session")
 	}
 	if cmd != nil {
 		t.Fatalf("the quit must be swallowed, got cmd %v", cmd)
@@ -212,11 +240,11 @@ func TestAutoCommitAccumulatesValue(t *testing.T) {
 // standalone it says quit — the same key, labeled for what it does.
 func TestEscHelpWording(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	if v := c.View(); !strings.Contains(v, "esc back to browser") {
-		t.Fatalf("embedded help = missing back-to-browser wording:\n%s", v)
+	if v := c.View(); !strings.Contains(v, "ctrl+d done adding · esc leave (asks first)") {
+		t.Fatalf("embedded help missing the done/leave wording:\n%s", v)
 	}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	if v := m.View(); !strings.Contains(v, "esc quit") {
-		t.Fatalf("standalone help missing esc quit:\n%s", v)
+	if v := m.View(); !strings.Contains(v, "esc quit (asks first)") {
+		t.Fatalf("standalone help missing esc quit wording:\n%s", v)
 	}
 }

@@ -124,7 +124,24 @@ func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
 }
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
-func (f *fakeStore) ListWatches() ([]store.WatchStatus, error)              { return f.watches, f.err }
+
+// AllByFinish merges the loose collection with every deck's entries — the
+// fake's version of the store's cross-container union.
+func (f *fakeStore) AllByFinish() ([]store.CollectionRow, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := append([]store.CollectionRow(nil), f.collection...)
+	for _, entries := range f.deckCards {
+		for _, e := range entries {
+			r := store.CollectionRow{Card: e.Card, Finish: e.Finish, Quantity: e.Quantity}
+			r.Value = e.Value()
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) ListWatches() ([]store.WatchStatus, error) { return f.watches, f.err }
 
 func (f *fakeStore) WouldFire() ([]store.WatchStatus, error) {
 	if f.err != nil {
@@ -363,6 +380,12 @@ func newTestModel(t *testing.T, st Store) Model {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// The merged all-cards row leads the pane; most tests exercise the
+	// default binder, so step past it (the merged view has its own tests).
+	m.cursor[paneContainers] = 1
+	if err := m.loadCards(); err != nil {
+		t.Fatalf("loadCards: %v", err)
+	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	return next.(Model)
 }
@@ -412,12 +435,16 @@ func TestContainersAreCollectionThenDecksByValue(t *testing.T) {
 	for _, c := range m.containers {
 		got = append(got, c.Name)
 	}
-	want := []string{store.LooseName, "Rich Deck", "Cheap Deck"}
+	want := []string{allCardsName, store.LooseName, "Rich Deck", "Cheap Deck"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("containers = %v, want %v", got, want)
 	}
-	if m.containers[0].Value != 300 || m.containers[0].Copies != 8 {
-		t.Errorf("collection row = %+v, want the totals", m.containers[0])
+	if m.containers[1].Value != 300 || m.containers[1].Copies != 8 {
+		t.Errorf("collection row = %+v, want the totals", m.containers[1])
+	}
+	// The merged row leads with the whole hoard's totals.
+	if all := m.containers[0]; all.Kind != kindAllCards || all.Value <= m.containers[1].Value {
+		t.Errorf("all-cards row = %+v, want every container summed", all)
 	}
 }
 
@@ -454,7 +481,7 @@ func TestCardCursorDoesNotReloadCards(t *testing.T) {
 	if m.cursor[paneCards] != 1 {
 		t.Errorf("card cursor = %d, want 1", m.cursor[paneCards])
 	}
-	if m.cursor[paneContainers] != 0 {
+	if m.cursor[paneContainers] != 1 {
 		t.Errorf("container cursor moved to %d", m.cursor[paneContainers])
 	}
 }
@@ -574,8 +601,9 @@ func (errFake) Error() string { return "database is locked" }
 // An empty hoard must render rather than panic on the missing selection.
 func TestEmptyHoard(t *testing.T) {
 	m := newTestModel(t, &fakeStore{})
-	if len(m.containers) != 1 {
-		t.Fatalf("containers = %+v, want just the empty collection", m.containers)
+	// The merged row plus the empty collection.
+	if len(m.containers) != 2 || m.containers[0].Kind != kindAllCards {
+		t.Fatalf("containers = %+v, want the merged row and the empty collection", m.containers)
 	}
 	if len(m.cards) != 0 {
 		t.Errorf("cards = %v, want none", names(m.cards))
@@ -1092,8 +1120,8 @@ func TestEditRefreshesContainerTotals(t *testing.T) {
 
 	st.totals.TotalCopies = 99 // what the next read will report
 	m = key(m, "+")
-	if m.containers[0].Copies != 99 {
-		t.Errorf("collection row = %d copies, want the re-read total", m.containers[0].Copies)
+	if m.containers[1].Copies != 99 {
+		t.Errorf("collection row = %d copies, want the re-read total", m.containers[1].Copies)
 	}
 }
 
@@ -2265,5 +2293,60 @@ func TestDetailImageStacksWhenNarrow(t *testing.T) {
 	if !(name < img && img < held) {
 		t.Errorf("want card details, then image, then HELD — got name %d, image %d, held %d",
 			name, img, held)
+	}
+}
+
+// The merged all-cards row: every card from every binder and deck in one
+// list, read-only, under the whole hoard's header.
+func TestAllCardsRowMergesEveryContainer(t *testing.T) {
+	st := testStore()
+	m := newTestModel(t, st)
+	binderCount := len(m.cards)
+
+	m.focus = paneContainers
+	m.cursor[paneContainers] = 0
+	if err := m.loadCards(); err != nil {
+		t.Fatalf("loadCards: %v", err)
+	}
+	deckCards := 0
+	for _, entries := range st.deckCards {
+		deckCards += len(entries)
+	}
+	if want := binderCount + deckCards; len(m.cards) != want {
+		t.Fatalf("merged cards = %d, want %d (binder %d + decks %d)",
+			len(m.cards), want, binderCount, deckCards)
+	}
+	if out := m.View(); !strings.Contains(out, "ALL CARDS") {
+		t.Errorf("header does not name the merged view:\n%s", out)
+	}
+
+	// The merged list is read-only: a card here lives in some container,
+	// and that is where edits belong.
+	m = key(m, "tab")
+	m = key(m, "+")
+	if !m.statusErr || !strings.Contains(m.status, "merges every container") {
+		t.Errorf("edit on the merged view: status = %q, want the refusal", m.status)
+	}
+	// But enter still opens the card's detail.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next.(Model).detail == nil {
+		t.Error("enter on a merged row did not open the detail")
+	}
+}
+
+// The synthetic row itself refuses container management: no rename, no
+// removal, and its export means export-everything.
+func TestAllCardsRowRefusesContainerEdits(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.focus = paneContainers
+	m.cursor[paneContainers] = 0
+
+	m = key(m, "R")
+	if m.prompt != nil || !strings.Contains(m.status, "no name of its own") {
+		t.Errorf("rename: prompt=%v status=%q", m.prompt, m.status)
+	}
+	m = key(m, "d")
+	if m.confirm != nil || !strings.Contains(m.status, "remove its subsets") {
+		t.Errorf("remove: confirm=%v status=%q", m.confirm, m.status)
 	}
 }

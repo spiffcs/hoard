@@ -40,6 +40,10 @@ const (
 	// the camera.
 	stateQueueReview
 	stateClosePrompt
+	// stateLeaveConfirm gates esc out of the session: users read a bare esc
+	// as "did that even save?", so leaving states what is and isn't kept
+	// and asks for a deliberate y-then-enter. ctrl+d is the clean finish.
+	stateLeaveConfirm
 )
 
 // --- messages ---
@@ -210,6 +214,9 @@ type model struct {
 	// autoState mirrors the helper's trigger phase ("armed", "held", …) for
 	// the capture view; empty when the helper has no auto capture.
 	autoState string
+	// leaveTyped marks the y already pressed on the leave gate, so enter
+	// completes the y-then-enter confirmation.
+	leaveTyped bool
 	// The rearm nudge (see autoscan.go): autoCapable marks a helper that
 	// understands it, nudgeGen voids stale timers, nudgeSentAt stamps the
 	// last sent nudge (a time window, not a consumed flag — a real scan can
@@ -489,6 +496,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status, m.statusErr = "skipped", false
 		return m.afterCard()
 	}
+	// ctrl+d finishes the add session cleanly from anywhere: everything
+	// confirmed so far is already saved, and the receipt says so. Pending
+	// review work blocks it — those cards deserve the queue's own exits
+	// rather than silent loss.
+	if msg.Type == tea.KeyCtrlD {
+		if m.reviewing() || len(m.review) > 0 || m.resolving > 0 {
+			m.status, m.statusErr = "cards are still queued for review · finish or ctrl+s them first", true
+			return m, nil
+		}
+		m.done = true
+		m.closeSession()
+		return m, tea.Quit
+	}
 	switch m.state {
 	case stateName:
 		switch msg.Type {
@@ -498,8 +518,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.reviewing() {
 				return m.cancelToName()
 			}
-			m.done = true
-			return m, tea.Quit
+			// Leaving is gated: the prompt states what is saved and what
+			// leaving drops, and asks for a deliberate y-then-enter.
+			m.leaveTyped = false
+			m.state = stateLeaveConfirm
+			return m, nil
 		case tea.KeyCtrlO, tea.KeyCtrlR:
 			// Ctrl-R re-opens the camera picker even when this session already
 			// chose one.
@@ -639,6 +662,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateCapture
 			return m, nil
 		}
+	case stateLeaveConfirm:
+		switch {
+		case msg.Type == tea.KeyEnter && m.leaveTyped:
+			m.done = true
+			m.closeSession()
+			return m, tea.Quit
+		case msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y"):
+			m.leaveTyped = true
+			return m, nil
+		}
+		// Anything else stays: the safe reading of a stray keystroke on a
+		// leave gate is "don't".
+		m.leaveTyped = false
+		m.state = stateName
+		return m, textinput.Blink
 	case stateNamePick:
 		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
 			ni, ok := it.(nameItem)
@@ -1457,9 +1495,9 @@ func (m model) listHeight() int {
 // labels.
 func (m model) escHelp() string {
 	if m.embedded {
-		return "esc back to browser"
+		return "ctrl+d done adding · esc leave (asks first)"
 	}
-	return "esc quit"
+	return "ctrl+d done adding · esc quit (asks first)"
 }
 
 // batchHelp appends the skip key to a cascade help line while a review item's
@@ -1597,6 +1635,17 @@ func (m model) View() string {
 		}
 		b.WriteString(line + ".\n\n")
 		b.WriteString(m.theme.Help.Render("enter review them now · d discard them · esc back to camera"))
+		return b.String()
+	case stateLeaveConfirm:
+		var b strings.Builder
+		b.WriteString(m.theme.Title.Render("Leave the add session?") + "\n\n")
+		b.WriteString("Cards you confirmed are already saved. Anything mid-pick or still queued\n")
+		b.WriteString("is not, and leaving now drops it.\n\n")
+		ask := "type y then press enter to leave"
+		if m.leaveTyped {
+			ask = m.theme.OK.Render("y") + " · press enter to leave"
+		}
+		b.WriteString(m.theme.Help.Render(ask + " · any other key stays · ctrl+d finishes cleanly"))
 		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",

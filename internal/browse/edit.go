@@ -40,6 +40,9 @@ func (m Model) editable() (bool, string) {
 	if sel == nil {
 		return false, ""
 	}
+	if sel.Kind == kindAllCards {
+		return false, "this list merges every container · edit the card in its binder or deck"
+	}
 	if sel.Kind != store.KindCollection {
 		return false, "deck cards are owned by the imported list; edit the " +
 			strings.ToLower(store.LooseName) + " instead"

@@ -4,6 +4,44 @@ Feedback from live sessions on fresh hoards, with dispositions. Add a dated
 section per session; keep dispositions honest (done / deferred / declined,
 with why).
 
+## 2026-08-01 — round 2, post-beautification build
+
+1. **A mega list of every card, with binders/decks as subsets** — ✅ done.
+   The left pane leads with a synthetic **All cards** row (id −1, kind
+   "all"): `store.AllByFinish()` merges every container one-row-per-
+   printing-and-finish (same card in binder + deck sums), the row carries
+   the whole hoard's totals, and the card pane shows it read-only —
+   edits, rename and removal refuse with pointers to the real container;
+   its export runs the export-everything flow. Named "All cards" rather
+   than reusing "Binder".
+2. **Add-session exits were scary** — ✅ done. `ctrl+d` is the deliberate
+   "done adding" from anywhere (blocked while review items are pending —
+   those get the queue's own exits); `esc` now opens a leave gate that
+   states what is saved (confirmed cards) and what leaving drops
+   (anything mid-pick or queued), and requires `y` then `enter`.
+3. **Deck-URL prompt lacked provider help** — ✅ done. The prompt's help
+   names archidekt.com as the supported link and points Moxfield users at
+   `deck add --file`.
+4. **"Watch this card" offered from the container pane** — ✅ fixed.
+   `subjectCard` returns nothing on holdings unless the cursor is in the
+   card pane.
+5. **Manual F after every add session** — ✅ done. Closing a cascade that
+   added cards auto-runs the view's fetch (prices, identity). The smarter
+   first run landed as its own piece: opening the browser with **no
+   catalog built stages a y/n offer immediately** — before the first add
+   session, where the catalog's fast lookups actually matter — with y
+   running the catalog op and anything else skipping to a palette
+   pointer (the update-prices path still re-asks later).
+6. **Backfill windows** — ✅ done. `action.BackfillPrices` takes days
+   (ledger key includes it; observations filtered before insert); the
+   collection palette offers "Backfill 30 days", the movers view offers
+   30 and 90, and movers' F pipeline stays at 90.
+7. **"Add a card by Scryfall URL" palette entry** — ✅ removed, along
+   with its now-dead browse plumbing (`WithAddByURL` and friends); the
+   CLI `hoard add <url>` path is untouched.
+8. **"Add a watch for any card" everywhere** — ✅ now watches-only, same
+   rule as the collection picker.
+
 ## 2026-08-01 — beautification-sprint build
 
 1. **Movers offered "finish" as a sort option** — ✅ done. Dropped from

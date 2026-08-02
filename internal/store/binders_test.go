@@ -175,3 +175,35 @@ func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 		t.Errorf("trade binder rows = %+v, want 5", rows)
 	}
 }
+
+// AllByFinish is the whole hoard in one list: the same printing held in a
+// binder and a deck merges into one row with the quantities summed.
+func TestAllByFinishMergesContainers(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if _, err := s.UpsertDeck(
+		DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]Entry{
+			{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 3},
+			{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1},
+		}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+
+	rows, err := s.AllByFinish()
+	if err != nil {
+		t.Fatalf("AllByFinish: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want one per finish", rows)
+	}
+	byFinish := map[string]int{}
+	for _, r := range rows {
+		byFinish[r.Finish] = r.Quantity
+	}
+	if byFinish["nonfoil"] != 5 || byFinish["foil"] != 1 {
+		t.Errorf("quantities = %v, want binder and deck summed (nonfoil 5, foil 1)", byFinish)
+	}
+}

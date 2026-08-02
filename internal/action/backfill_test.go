@@ -35,13 +35,13 @@ func TestBackfillSkipsSameDayRerun(t *testing.T) {
 		t.Fatalf("owned: %v %d", err, len(owned))
 	}
 	if err := st.RecordReceipt(store.ImportReceipt{
-		Hash: backfillKey(owned), File: "backfill test", Cards: 1,
+		Hash: backfillKey(owned, 90), File: "backfill test", Cards: 1,
 	}); err != nil {
 		t.Fatalf("RecordReceipt: %v", err)
 	}
 
 	res, err := BackfillPrices(context.Background(),
-		Deps{Store: st, CacheDir: t.TempDir()}, nil)
+		Deps{Store: st, CacheDir: t.TempDir()}, nil, 90)
 	if err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestBackfillSkipsSameDayRerun(t *testing.T) {
 func TestBackfillKeyChangesWithHoldings(t *testing.T) {
 	st := backfillStore(t)
 	owned, _ := st.OwnedByFinish()
-	before := backfillKey(owned)
+	before := backfillKey(owned, 90)
 
 	if err := st.AddCardFinish(scryfall.Card{
 		ID: "def", Name: "Ancient Tomb", Set: "uma", CollectorNumber: "236",
@@ -67,7 +67,7 @@ func TestBackfillKeyChangesWithHoldings(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	owned, _ = st.OwnedByFinish()
-	after := backfillKey(owned)
+	after := backfillKey(owned, 90)
 	if before == after {
 		t.Fatal("key must change when holdings change")
 	}

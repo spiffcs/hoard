@@ -141,11 +141,11 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
 		},
 		{
-			id: "op.backfill", title: "Backfill 90 days of price history",
+			id: "op.backfill", title: "Backfill 30 days of price history",
 			aliases: "backdate movers history mtgjson import past",
 			// The archive's size lives in the description as prose, not a
 			// number — a hardcoded figure goes stale the day MTGJSON grows.
-			desc:  "Download MTGJSON's daily price archive (a large file) and record the past 90 days.",
+			desc:  "Download MTGJSON's daily price archive (a large file) and record the past 30 days.",
 			where: func(m *Model) bool { return m.opBackfill != nil },
 			rank: func(m *Model) int {
 				if m.view == viewMovers {
@@ -154,9 +154,19 @@ func commands() []command {
 					}
 					return 3
 				}
-				return 0
+				return onView(viewHoldings, 1)(m)
 			},
-			run: func(m *Model) tea.Cmd { return m.startOp("backfilling price history", m.opBackfill) },
+			run: func(m *Model) tea.Cmd { return m.startBackfill(30) },
+		},
+		{
+			// The deeper window lives beside the movers view it feeds; the
+			// collection palette keeps the one everyday choice.
+			id: "op.backfill.90", title: "Backfill 90 days of price history",
+			aliases: "backdate movers history mtgjson import past quarter",
+			desc:    "Download MTGJSON's daily price archive (a large file) and record the past 90 days.",
+			where:   func(m *Model) bool { return m.opBackfill != nil && m.view == viewMovers },
+			rank:    func(*Model) int { return 2 },
+			run:     func(m *Model) tea.Cmd { return m.startBackfill(90) },
 		},
 		{
 			id: "op.repair-finishes", title: "Repair finishes", aliases: "fix foil unpriced zero",
@@ -180,12 +190,6 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.promptDeckURL(); return nil },
 		},
 		{
-			id: "add.url", title: "Add a card by Scryfall URL", aliases: "link paste scryfall single",
-			desc:  "Add one card from its Scryfall page link.",
-			where: func(m *Model) bool { return m.opAddURL != nil },
-			run:   func(m *Model) tea.Cmd { m.promptCardURL(); return nil },
-		},
-		{
 			id: "export.container", title: "Export this container", aliases: "csv save backup moxfield archidekt",
 			desc: "Write the selected binder or deck to a CSV or JSON file.",
 			where: func(m *Model) bool {
@@ -195,6 +199,12 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd {
 				sel := m.selectedContainer()
 				if sel == nil {
+					return nil
+				}
+				// The merged view is everything, so exporting it is the
+				// export-everything flow under this container's name.
+				if sel.Kind == kindAllCards {
+					m.promptExport("", "", "hoard-export")
 					return nil
 				}
 				// Refs by id, not name: a name is a fragment match and can
@@ -292,8 +302,10 @@ func commands() []command {
 			// The by-name path stays for cards you don't own yet — the
 			// picker above only offers what is already held.
 			id: "watch.add-by-name", title: "Add a watch for any card", aliases: "alert threshold new unowned by name",
-			desc:  "Resolve any card by name, owned or not, and set a price alert.",
-			where: func(m *Model) bool { return m.opWatchAdd != nil },
+			desc: "Resolve any card by name, owned or not, and set a price alert.",
+			// Watches-only, like the collection picker: everywhere else the
+			// card under the cursor is the watch you'd want.
+			where: func(m *Model) bool { return m.opWatchAdd != nil && m.view == viewWatches },
 			rank:  onView(viewWatches, 2),
 			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
@@ -366,6 +378,13 @@ func (m *Model) populateView() tea.Cmd {
 	return m.startOp("updating prices", m.opUpdatePrices)
 }
 
+// startBackfill runs the price-history import at one window.
+func (m *Model) startBackfill(days int) tea.Cmd {
+	bf := m.opBackfill
+	return m.startOp("backfilling price history",
+		func(ctx context.Context, p progress.Fn) (string, error) { return bf(ctx, p, days) })
+}
+
 // populateMovers is the movers pipeline: refresh today's prices, then
 // backfill the history the view charts against — composed into one
 // operation so a single F populates an empty view end to end.
@@ -385,7 +404,7 @@ func (m *Model) populateMovers() tea.Cmd {
 			parts = append(parts, s)
 		}
 		if bf != nil {
-			s, err := bf(ctx, p)
+			s, err := bf(ctx, p, 90)
 			if err != nil {
 				return "", err
 			}

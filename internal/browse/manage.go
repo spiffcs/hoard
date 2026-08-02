@@ -112,6 +112,9 @@ func (m *Model) promptRenameBinder() {
 	case m.focus != paneContainers || sel == nil:
 		m.status, m.statusErr = "select a binder to rename (tab to the left pane)", true
 		return
+	case sel.Kind == kindAllCards:
+		m.status, m.statusErr = allCardsName+" is every container merged; it has no name of its own", true
+		return
 	case sel.Kind != store.KindCollection:
 		m.status, m.statusErr = "decks are named by their imported list", true
 		return
@@ -168,6 +171,12 @@ func (m *Model) subjectCard() *subjectRef {
 	}
 	switch m.view {
 	case viewHoldings:
+		// Only when the hand is on the card pane: with the cursor in the
+		// container list, "this card" would be whichever row happened to
+		// sit under the other pane's cursor.
+		if m.focus != paneCards {
+			return nil
+		}
 		if c := m.selectedCard(); c != nil {
 			return &subjectRef{scryfallID: c.ScryfallID, name: c.Name, finish: c.Finish, price: c.Price}
 		}

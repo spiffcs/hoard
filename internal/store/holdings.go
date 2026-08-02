@@ -91,7 +91,6 @@ func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 // normal price and a foil price whether or not either finish is owned. Splitting
 // by finish also keeps etched distinct, which a pivot folds into foil.
 func (s *Store) BinderByFinish(containerID int64) ([]CollectionRow, error) {
-	cid := containerID
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
        e.finish,
@@ -102,12 +101,37 @@ JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
 WHERE e.container_id = ?
 GROUP BY c.scryfall_id, e.finish
-ORDER BY value DESC, c.name`, cid)
+ORDER BY value DESC, c.name`, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("listing collection: %w", err)
 	}
-	defer rows.Close()
+	return scanCollectionRows(rows)
+}
 
+// AllByFinish returns every holding in the hoard — every binder and every
+// deck — merged into one row per printing and finish. This is the
+// browser's top-level view; binders and decks are subsets of it.
+func (s *Store) AllByFinish() ([]CollectionRow, error) {
+	rows, err := s.db.Query(`
+SELECT ` + cardCols(altSourceForEntry) + `,
+       e.finish,
+       SUM(e.quantity) AS quantity,
+       SUM(e.quantity * ` + entryValue + `) AS value
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+` + altJoinCards + `
+GROUP BY c.scryfall_id, e.finish
+ORDER BY value DESC, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("listing all holdings: %w", err)
+	}
+	return scanCollectionRows(rows)
+}
+
+// scanCollectionRows drains one of the by-finish listing queries; the two
+// share their projection, so they must share their scan.
+func scanCollectionRows(rows *sql.Rows) ([]CollectionRow, error) {
+	defer rows.Close()
 	var out []CollectionRow
 	for rows.Next() {
 		var r CollectionRow

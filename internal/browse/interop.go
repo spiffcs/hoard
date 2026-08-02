@@ -37,6 +37,7 @@ func expandPath(s string) string {
 func (m *Model) promptDeckURL() {
 	m.prompt = &prompt{
 		label: "deck URL",
+		help:  "archidekt.com deck links work · Moxfield blocks fetches; export the list and use 'deck add --file' · enter accept · esc cancel",
 		validate: func(text string) error {
 			u, err := url.Parse(strings.TrimSpace(text))
 			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -61,27 +62,6 @@ func (m *Model) startDeckAdd(deckURL string) tea.Cmd {
 		}
 		return opOutcome{summary: r.Summary, report: r.Report}, nil
 	})
-}
-
-// promptCardURL asks for a Scryfall card link and adds it as an operation.
-func (m *Model) promptCardURL() {
-	m.prompt = &prompt{
-		label: "Scryfall card URL",
-		validate: func(text string) error {
-			u, err := url.Parse(strings.TrimSpace(text))
-			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-				return fmt.Errorf("paste an http(s) Scryfall card link")
-			}
-			return nil
-		},
-		commit: func(m *Model, text string) tea.Cmd {
-			fn := m.opAddURL
-			cardURL := strings.TrimSpace(text)
-			return m.startOp("adding card", func(ctx context.Context, p progress.Fn) (string, error) {
-				return fn(ctx, p, cardURL)
-			})
-		},
-	}
 }
 
 // promptImportPath asks for a collection file and runs the import as an

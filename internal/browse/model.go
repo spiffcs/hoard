@@ -25,11 +25,19 @@ const (
 	paneCards
 )
 
-// container is one row of the left pane: the loose collection, or a deck.
-//
-// The collection is not a deck and has no container row of its own in the
-// listing queries, so it is synthesised here with ID 0. Kind is what the card
-// pane branches on when it loads.
+// allCardsID and kindAllCards mark the synthetic top row of the left pane:
+// every holding in the hoard, all binders and all decks merged into one
+// list. Binders and decks below it are subsets. The row is browse-only —
+// no store container backs it, hence the sentinel id.
+const allCardsID int64 = -1
+const kindAllCards = "all"
+
+// allCardsName is the merged row's on-screen name.
+const allCardsName = "All cards"
+
+// container is one row of the left pane: the merged all-cards view, the
+// loose collection, or a deck. Kind is what the card pane branches on when
+// it loads.
 type container struct {
 	ID     int64
 	Name   string
@@ -164,11 +172,11 @@ type Model struct {
 	opUpdatePrices   OpFunc
 	opRepairFinishes OpFunc
 	opCatalogUpdate  OpFunc
-	opBackfill       OpFunc
+	catalogOffer     bool
+	opBackfill       BackfillFunc
 	opWatchAdd       WatchAddFunc
 	opDeckAdd        DeckAddFunc
 	opImport         ImportFunc
-	opAddURL         AddURLFunc
 	op               *opState
 	opGen            int
 
@@ -269,6 +277,21 @@ func New(st Store, opts ...Option) (Model, error) {
 		return Model{}, err
 	}
 	m.showFiredBanner()
+	// The first-run catalog offer, staged before anything else happens:
+	// the download's whole value is fast lookups in the add flow, so the
+	// question belongs before the first add, not after it.
+	if m.catalogOffer && m.opCatalogUpdate != nil {
+		m.confirm = &pendingConfirm{
+			prompt: "No card catalog yet. Download Scryfall's bundle for instant card lookups?",
+			help:   "y download (large, one-time) · any other key skips · `:` offers it again anytime",
+			onYes: func(m *Model) tea.Cmd {
+				return m.startOp("updating the catalog", m.opCatalogUpdate)
+			},
+			onNo: func(m *Model) {
+				m.status, m.statusErr = "skipped · run \"Update the card catalog\" from : anytime", false
+			},
+		}
+	}
 	return m, nil
 }
 
@@ -317,12 +340,18 @@ func (m *Model) loadContainers() error {
 		return fmt.Errorf("reading decks: %w", err)
 	}
 
-	out := make([]container, 0, len(binders)+len(decks))
+	out := make([]container, 0, len(binders)+len(decks)+1)
+	// The merged view leads: it is the hoard itself, and everything below
+	// it is a subset.
+	all := container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards}
+	out = append(out, all)
 	for _, b := range binders {
 		out = append(out, container{
 			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
 			Copies: b.TotalCopies, Value: b.Value, isDefault: b.IsDefault,
 		})
+		out[0].Copies += b.TotalCopies
+		out[0].Value += b.Value
 	}
 	for _, d := range store.DecksByValue(decks) {
 		out = append(out, container{
@@ -333,6 +362,8 @@ func (m *Model) loadContainers() error {
 				SourceURL: d.SourceURL, Format: d.Format,
 			},
 		})
+		out[0].Copies += d.TotalCopies
+		out[0].Value += d.Value
 	}
 	m.containers = out
 	m.clampCursor(paneContainers)
@@ -348,10 +379,16 @@ func (m *Model) loadCards() error {
 	}
 
 	var out []card
-	if sel.Kind == store.KindCollection {
-		rows, err := m.store.BinderByFinish(sel.ID)
+	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection {
+		var rows []store.CollectionRow
+		var err error
+		if sel.Kind == kindAllCards {
+			rows, err = m.store.AllByFinish()
+		} else {
+			rows, err = m.store.BinderByFinish(sel.ID)
+		}
 		if err != nil {
-			return fmt.Errorf("reading binder %q: %w", sel.Name, err)
+			return fmt.Errorf("reading %q: %w", sel.Name, err)
 		}
 		for _, r := range store.CollectionByValue(rows) {
 			out = append(out, card{
@@ -789,6 +826,10 @@ func (m *Model) askRemoval() {
 		if sel == nil {
 			return
 		}
+		if sel.Kind == kindAllCards {
+			m.status, m.statusErr = allCardsName+" is every container merged; remove its subsets instead", true
+			return
+		}
 		if sel.Kind == store.KindCollection {
 			if sel.isDefault {
 				m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
@@ -873,10 +914,12 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if msg.String() != "y" {
+		// The generic receipt first, so an onNo with something better to
+		// say (the catalog offer's palette pointer) gets the last word.
+		m.status, m.statusErr = "cancelled", false
 		if c.onNo != nil {
 			c.onNo(&m)
 		}
-		m.status, m.statusErr = "cancelled", false
 	} else {
 		cmd = c.onYes(&m)
 	}

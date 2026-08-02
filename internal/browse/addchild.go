@@ -76,6 +76,14 @@ func (m Model) closeAddChild() (tea.Model, tea.Cmd) {
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 	}
+	// New cards arrive knowing only their catalog identity; prices, color
+	// identity and the rest come from their Scryfall documents. Fetch them
+	// now rather than leaving the new rows dashed until someone remembers
+	// F — and on a first run, the update's ensure-catalog confirm is what
+	// offers the catalog download at exactly the moment it starts mattering.
+	if child.Added() > 0 && m.op == nil && m.opUpdatePrices != nil {
+		return m, m.populateView()
+	}
 	return m, nil
 }
 
