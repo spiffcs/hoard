@@ -101,8 +101,15 @@ const frameWidth = 66
 // physical card is — name and cost, type and rarity, the text box, flavor,
 // the stat box bottom-right, the artist line as the frame's footer — then
 // hoard's own facts (holdings, prices) below it. Card first also means the
-// no-scroll overflow eats hoard data, never the card.
+// no-scroll overflow eats hoard data, never the card. The two halves are
+// separate functions so a narrow terminal can stack the card image between
+// them (see detailView).
 func (m Model) detailLines(d detail, width int) []string {
+	return append(m.cardFrameLines(d, width), m.hoardLines(d, width)...)
+}
+
+// cardFrameLines is the card half of the overlay.
+func (m Model) cardFrameLines(d detail, width int) []string {
 	dim := m.theme.Help.Render
 	var out []string
 
@@ -124,7 +131,7 @@ func (m Model) detailLines(d detail, width int) []string {
 	// An un-refreshed card has none of the frame fields. Say why once
 	// rather than leaving the reader to wonder what happened to the card.
 	if !c.Enriched {
-		out = append(out, dim("card details not stored yet — press : and run Update prices"))
+		out = append(out, dim("card details not stored yet · press : and run Update prices"))
 	}
 
 	if c.OracleText != nil && *c.OracleText != "" {
@@ -152,10 +159,18 @@ func (m Model) detailLines(d detail, width int) []string {
 		deref(c.Artist), deref(c.SetName),
 		ui.Printing(c.SetCode, c.CollectorNumber), deref(c.ReleasedAt))
 	out = append(out, dim(ui.Truncate(footer, width)))
+	return out
+}
+
+// hoardLines is the overlay's second half: what hoard itself knows —
+// where the card is held and what its price has done.
+func (m Model) hoardLines(d detail, width int) []string {
+	dim := m.theme.Help.Render
+	var out []string
 
 	out = append(out, "", m.theme.Title.Render("HELD"))
 	if len(d.holdings) == 0 {
-		out = append(out, dim("  nothing — this printing is catalogued but not held"))
+		out = append(out, dim("  nothing: this printing is catalogued but not held"))
 	}
 	for _, h := range d.holdings {
 		where := h.ContainerName
@@ -173,7 +188,7 @@ func (m Model) detailLines(d detail, width int) []string {
 
 	out = append(out, "", m.theme.Title.Render("PRICE"))
 	if len(d.series) == 0 {
-		out = append(out, dim("  no history yet — press : and run Backfill 90 days of price history"))
+		out = append(out, dim("  no history yet · press : and run Backfill 90 days of price history"))
 	}
 	for _, finish := range []string{"nonfoil", "foil"} {
 		s := d.series[finish]

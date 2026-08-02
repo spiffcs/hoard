@@ -102,7 +102,7 @@ func (m Model) handleAddChildKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.op != nil {
 			title := m.op.title
 			m.confirm = &pendingConfirm{
-				prompt: title + " is still running — quit anyway?",
+				prompt: title + " is still running. Quit anyway?",
 				help:   "y quit · any other key stays",
 				onYes: func(m *Model) tea.Cmd {
 					m.teardownAddChild()
@@ -141,7 +141,7 @@ func addReceiptLine(added int, value float64, s tui.Summary) string {
 		parts = append(parts, fmt.Sprintf("%d confirmed duplicate", n))
 	}
 	if len(parts) > 0 {
-		line += " — " + strings.Join(parts, ", ")
+		line += " · " + strings.Join(parts, ", ")
 	}
 	return line
 }

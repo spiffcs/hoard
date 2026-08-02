@@ -75,7 +75,7 @@ func parseFilter(s string) (filter, error) {
 		// not a key rather than that it needs a value — which would send you
 		// looking for the right value for a term that does not exist.
 		if !knownKeys[key] {
-			return filter{}, fmt.Errorf("unknown key %q — try: %s", key, keyHelp)
+			return filter{}, fmt.Errorf("unknown key %q · try: %s", key, keyHelp)
 		}
 		if value == "" {
 			return filter{}, fmt.Errorf("%s needs a value, e.g. %s:something", key, key)
@@ -123,7 +123,7 @@ func parseFilter(s string) (filter, error) {
 				f.traits.Colors = append(f.traits.Colors, string(r))
 			}
 		default:
-			return filter{}, fmt.Errorf("unknown key %q — try: %s", key, keyHelp)
+			return filter{}, fmt.Errorf("unknown key %q · try: %s", key, keyHelp)
 		}
 	}
 	return f, nil

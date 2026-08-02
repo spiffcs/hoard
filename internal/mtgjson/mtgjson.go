@@ -129,7 +129,7 @@ func newIdleReader(r io.ReadCloser, wait time.Duration) *idleReader {
 func (ir *idleReader) Read(p []byte) (int, error) {
 	n, err := ir.r.Read(p)
 	if err != nil && ir.stalled.Load() {
-		return n, fmt.Errorf("mtgjson download stalled: no data for %s — check the connection and try again", ir.wait)
+		return n, fmt.Errorf("mtgjson download stalled: no data for %s; check the connection and try again", ir.wait)
 	}
 	if n > 0 {
 		ir.timer.Reset(ir.wait)

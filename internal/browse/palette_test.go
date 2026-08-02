@@ -18,7 +18,7 @@ func openTestPalette(t *testing.T) Model {
 }
 
 // The empty query lists every applicable, visible command — the hidden key
-// reflexes (sort, mask, view cycling) never appear; typing narrows by fuzzy
+// reflexes (sort, floor, view cycling) never appear; typing narrows by fuzzy
 // match; enter runs the selection and closes the drawer.
 func TestPaletteNarrowsAndRuns(t *testing.T) {
 	m := openTestPalette(t)

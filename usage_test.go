@@ -27,7 +27,7 @@ func TestUsagePipedIsComplete(t *testing.T) {
 	printUsage(&b, ui.Env{Width: 80})
 	out := b.String()
 	for _, want := range []string{
-		"hoard — catalog valuable MTG cards and decks in SQLite",
+		"hoard: catalog valuable MTG cards and decks in SQLite",
 		"Browse the hoard",
 		"update-prices", "backfill-prices", "repair-finishes",
 		"binder rename <binder> <new-name>",

@@ -353,7 +353,7 @@ func (s *Store) migrate(path string) error {
 	// binary scribbles on it.
 	if v > schemaVersion {
 		return fmt.Errorf(
-			"database schema is v%d but this hoard understands v%d — upgrade hoard; an older build must not write here",
+			"database schema is v%d but this hoard understands v%d. Upgrade hoard; an older build must not write here",
 			v, schemaVersion)
 	}
 	if v == schemaVersion {

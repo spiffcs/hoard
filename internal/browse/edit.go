@@ -34,14 +34,14 @@ func (m Model) editable() (bool, string) {
 	// whichever holding happened to sit at the same offset — a card the reader
 	// is not looking at and did not name.
 	if m.view != viewHoldings {
-		return false, "editing works on holdings — press v to come back"
+		return false, "editing works on holdings · press v to come back"
 	}
 	sel := m.selectedContainer()
 	if sel == nil {
 		return false, ""
 	}
 	if sel.Kind != store.KindCollection {
-		return false, "deck cards are owned by the imported list — edit the " +
+		return false, "deck cards are owned by the imported list; edit the " +
 			strings.ToLower(store.LooseName) + " instead"
 	}
 	return true, ""

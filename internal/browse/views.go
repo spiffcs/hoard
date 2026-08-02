@@ -72,10 +72,10 @@ func (m *Model) loadView() error {
 			return fmt.Errorf("reading movers: %w", err)
 		}
 		changes = store.MoversByImpact(changes)
-		if m.maskMin() > 0 {
+		if m.floorMin() > 0 {
 			kept := changes[:0]
 			for _, c := range changes {
-				if !m.maskedPrice(&c.New) {
+				if !m.underFloor(&c.New) {
 					kept = append(kept, c)
 				}
 			}
@@ -97,10 +97,10 @@ func (m *Model) loadView() error {
 		if err != nil {
 			return fmt.Errorf("reading watches: %w", err)
 		}
-		if m.maskMin() > 0 {
+		if m.floorMin() > 0 {
 			kept := rows[:0]
 			for _, w := range rows {
-				if !m.maskedPrice(w.PriceUSD) {
+				if !m.underFloor(w.PriceUSD) {
 					kept = append(kept, w)
 				}
 			}

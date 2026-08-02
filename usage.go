@@ -66,7 +66,7 @@ func printUsage(w io.Writer, env ui.Env) {
 	bold := env.Bold()
 
 	var b strings.Builder
-	b.WriteString(bold("hoard — catalog valuable MTG cards and decks in SQLite") + "\n\n")
+	b.WriteString(bold("hoard: catalog valuable MTG cards and decks in SQLite") + "\n\n")
 	b.WriteString(bold("Usage:") + "\n")
 	b.WriteString("  hoard [--db PATH] [--json] [command] [args]\n")
 

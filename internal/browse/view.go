@@ -107,21 +107,24 @@ func (m Model) writeHelp(b *strings.Builder, help string) {
 //
 // It replaces the panes rather than floating over them: the oracle text and
 // price history need the width, and a box drawn over a table leaves fragments
-// of card names showing around its edges that read as corruption. When the
-// image spike has a card image, it sits to the right of the text — the text
-// keeps the left margin the eye reads from, the picture illustrates it. On a
-// terminal too narrow for both, the text wins and the image waits.
+// of card names showing around its edges that read as corruption. The card
+// image sits to the right of the text — the text keeps the left margin the
+// eye reads from, the picture illustrates it. A terminal too narrow for the
+// pair stacks instead: the card's details, then the image, then hoard's own
+// facts — and one too narrow even for the image alone goes text-only.
 func (m Model) detailView() string {
 	img := m.detail.image
-	textW := m.width
-	if len(img) > 0 && m.width >= imageCols+50 {
-		textW = m.width - imageCols - 2
-	} else {
-		img = nil
-	}
-	lines := m.detailLines(*m.detail, textW)
-	if img != nil {
-		lines = besideImage(img, lines, textW)
+	var lines []string
+	switch {
+	case len(img) > 0 && m.width >= imageCols+50:
+		textW := m.width - imageCols - 2
+		lines = besideImage(img, m.detailLines(*m.detail, textW), textW)
+	case len(img) > 0 && m.width >= imageCols:
+		lines = append(m.cardFrameLines(*m.detail, m.width), "")
+		lines = append(lines, img...)
+		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
+	default:
+		lines = m.detailLines(*m.detail, m.width)
 	}
 
 	var b strings.Builder
@@ -138,7 +141,7 @@ func (m Model) detailView() string {
 		b.WriteString(m.statusLine())
 	default:
 		if n := len(lines) - (m.visibleRows() + 1); n > 0 {
-			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d more lines — widen or lengthen the window", n)))
+			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d more lines · widen or lengthen the window", n)))
 		}
 	}
 	b.WriteString("\n")
@@ -451,10 +454,10 @@ func (m Model) statusLine() string {
 		switch m.view {
 		case viewMovers:
 			return m.theme.Help.Render(
-				"no price movement in this window — F fetches prices and 90 days of history · W widens the window")
+				"no price movement in this window · F fetches prices and 90 days of history · W widens the window")
 		case viewWatches:
 			return m.theme.Help.Render(
-				"no watches — press w on a card in holdings, or : then \"Add a watch by name\"")
+				"no watches · press w on a card in holdings, or : then \"Add a watch\"")
 		case viewUnpriced:
 			return m.theme.Help.Render("every card you own has a price")
 		}
@@ -464,8 +467,8 @@ func (m Model) statusLine() string {
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
-	if min := m.maskMin(); min > 0 {
-		pos += fmt.Sprintf(" · hiding <%s (M cycles)", ui.Money(min))
+	if min := m.floorMin(); min > 0 {
+		pos += fmt.Sprintf(" · floor %s (M cycles)", ui.Money(min))
 	}
 	return m.theme.Help.Render(pos)
 }
@@ -499,13 +502,13 @@ func (m Model) helpLine() string {
 	case m.view == viewMarket && m.marketLoading:
 		return "esc cancel · ctrl+c quit"
 	case m.view == viewMarket:
-		return "enter detail · F refetch quotes · M mask · v next view · : commands · ↑/↓ move · q quit"
+		return "enter detail · F refetch quotes · M floor · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
-		return "w edit threshold · d remove · : add a watch · enter detail · M mask · v next view · ↑/↓ move · q quit"
+		return "w edit threshold · d remove · : add a watch · enter detail · M floor · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · enter detail · M mask · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · enter detail · M floor · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
 		return "F refresh prices · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
@@ -513,9 +516,9 @@ func (m Model) helpLine() string {
 		// them here would be an invitation to a refusal.
 		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M mask · F refresh prices · v views · u undo · q quit"
+		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · M mask · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

@@ -49,7 +49,7 @@ func (m *Model) startMarketFetch() tea.Cmd {
 	if m.marketLoading {
 		// The key must never be silent (observed live: silence taught the
 		// user F was broken).
-		m.status, m.statusErr = "already fetching vendor prices — esc cancels", false
+		m.status, m.statusErr = "already fetching vendor prices · esc cancels", false
 		return nil
 	}
 	if m.marketLoaded {
@@ -129,7 +129,7 @@ func (m *Model) loadCachedMarket() {
 	m.marketResult = res
 	m.applyMarketRows()
 	m.marketLoaded = true
-	m.status, m.statusErr = "vendor quotes from earlier today — F refetches", false
+	m.status, m.statusErr = "vendor quotes from earlier today · F refetches", false
 }
 
 // marketLines renders the ranked opportunities as the CLI's three
@@ -273,7 +273,7 @@ func (m Model) marketStatus() string {
 		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
 	case !m.marketLoaded:
 		return m.theme.Help.Render(
-			"vendor quotes may need a download, so the view waits to be asked — press F")
+			"vendor quotes may need a download, so the view waits to be asked · press F")
 	case len(m.marketRows) == 0:
 		return m.theme.Help.Render("no vendor disagreed about anything you own today")
 	}
@@ -305,10 +305,10 @@ func (m Model) selectedMarketNote() string {
 }
 
 // applyMarketRows derives the visible rows from the last result: ranked,
-// mask-filtered on per-copy value, then re-sorted the way the user left it.
+// floor-filtered on per-copy value, then re-sorted the way the user left it.
 func (m *Model) applyMarketRows() {
 	rows := market.Rows(m.marketResult, marketRowLimit)
-	if min := m.maskMin(); min > 0 {
+	if min := m.floorMin(); min > 0 {
 		kept := rows[:0]
 		for _, r := range rows {
 			unit := r.Card.Value

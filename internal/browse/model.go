@@ -150,9 +150,9 @@ type Model struct {
 	// card runs the watch prompt instead of opening its detail.
 	watchPick bool
 
-	// maskIdx indexes maskLevels: the value mask hiding cards priced under
-	// the level, across every view that has prices. 0 is off.
-	maskIdx int
+	// floorIdx indexes floorLevels: the value floor hiding cards priced
+	// under it, across every view that has prices. 0 is off.
+	floorIdx int
 
 	// commands is the registry, built once; palette is the open drawer over
 	// it, nil when closed. See command.go and palette.go.
@@ -285,10 +285,10 @@ func (m *Model) showFiredBanner() {
 	switch {
 	case len(fired) == 1:
 		w := fired[0]
-		m.status = fmt.Sprintf("1 watch met its threshold — %s %s %s · v to view",
+		m.status = fmt.Sprintf("1 watch met its threshold: %s %s %s · v to view",
 			w.Name, w.Op, ui.Money(w.Threshold))
 	case len(fired) == 2:
-		m.status = fmt.Sprintf("2 watches met their threshold — %s %s %s, %s %s %s · v to view",
+		m.status = fmt.Sprintf("2 watches met their threshold: %s %s %s, %s %s %s · v to view",
 			fired[0].Name, fired[0].Op, ui.Money(fired[0].Threshold),
 			fired[1].Name, fired[1].Op, ui.Money(fired[1].Threshold))
 	default:
@@ -388,14 +388,14 @@ func (m *Model) loadCards() error {
 // trait half was resolved when the query last changed, and holding terms are
 // answered by the rows themselves.
 func (m *Model) applyFilter() {
-	if m.filter.empty() && m.maskMin() == 0 {
+	if m.filter.empty() && m.floorMin() == 0 {
 		m.cards = m.allCards
 		m.refreshEmptyNote()
 		return
 	}
 	out := make([]card, 0, len(m.allCards))
 	for _, c := range m.allCards {
-		if m.filter.matches(c, m.allowed) && !m.maskedPrice(c.Price) {
+		if m.filter.matches(c, m.allowed) && !m.underFloor(c.Price) {
 			out = append(out, c)
 		}
 	}
@@ -404,25 +404,25 @@ func (m *Model) applyFilter() {
 	m.refreshEmptyNote()
 }
 
-// maskLevels are the value-mask presets m cycles through; 0 is off.
-var maskLevels = []float64{0, 5, 10, 25}
+// floorLevels are the value-floor presets M cycles through; 0 is off.
+var floorLevels = []float64{0, 5, 10, 25}
 
-// maskMin is the active mask threshold, 0 when off.
-func (m Model) maskMin() float64 { return maskLevels[m.maskIdx] }
+// floorMin is the active mask threshold, 0 when off.
+func (m Model) floorMin() float64 { return floorLevels[m.floorIdx] }
 
-// maskedPrice reports whether a per-copy price falls under the mask. With
-// the mask on, an unknown price is under it — the mask asks for cards worth
-// at least this much, and "unknown" is not an answer.
-func (m Model) maskedPrice(p *float64) bool {
-	if min := m.maskMin(); min > 0 {
+// underFloor reports whether a per-copy price falls under the floor. With
+// a floor set, an unknown price is under it — the floor asks for cards
+// worth at least this much, and "unknown" is not an answer.
+func (m Model) underFloor(p *float64) bool {
+	if min := m.floorMin(); min > 0 {
 		return p == nil || *p < min
 	}
 	return false
 }
 
-// cycleMask advances the mask and re-derives every view through it.
-func (m *Model) cycleMask() {
-	m.maskIdx = (m.maskIdx + 1) % len(maskLevels)
+// cycleFloor advances the value floor and re-derives every view through it.
+func (m *Model) cycleFloor() {
+	m.floorIdx = (m.floorIdx + 1) % len(floorLevels)
 	m.applyFilter()
 	if err := m.loadView(); err != nil {
 		m.setError(err)
@@ -430,10 +430,10 @@ func (m *Model) cycleMask() {
 	}
 	m.applyMarketRows()
 	m.clampCursor(paneCards)
-	if min := m.maskMin(); min > 0 {
-		m.status, m.statusErr = fmt.Sprintf("hiding cards under %s — m cycles, unpriced view unaffected", ui.Money(min)), false
+	if min := m.floorMin(); min > 0 {
+		m.status, m.statusErr = fmt.Sprintf("floor %s · hiding cards worth less · M cycles, unpriced view exempt", ui.Money(min)), false
 	} else {
-		m.status, m.statusErr = "mask off", false
+		m.status, m.statusErr = "floor off", false
 	}
 }
 
@@ -457,7 +457,7 @@ func (m *Model) refreshEmptyNote() {
 	}
 	switch {
 	case enriched == 0:
-		m.emptyNote = "no card details stored yet — press : and run Update prices to filter by rarity, type or colour"
+		m.emptyNote = "no card details stored yet · press : and run Update prices to filter by rarity, type or colour"
 	case enriched < total:
 		m.emptyNote = fmt.Sprintf("no matches · %d of %d cards have details; update-prices fills the rest",
 			enriched, total)
@@ -733,7 +733,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the container pane has nothing to select, so instead of a cursor
 		// that changes nothing, tab explains itself.
 		if m.view != viewHoldings {
-			m.status, m.statusErr = "this view spans the whole hoard — the collection pane applies on holdings (v)", false
+			m.status, m.statusErr = "this view spans the whole hoard · the collection pane applies on holdings (v)", false
 			return m, nil
 		}
 		if m.focus == paneContainers {
@@ -745,7 +745,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "left", "h":
 		if m.view != viewHoldings {
-			m.status, m.statusErr = "this view spans the whole hoard — the collection pane applies on holdings (v)", false
+			m.status, m.statusErr = "this view spans the whole hoard · the collection pane applies on holdings (v)", false
 			return m, nil
 		}
 		m.focus = paneContainers
@@ -841,7 +841,7 @@ func (m *Model) stageQuit() {
 	if m.op != nil {
 		title := m.op.title
 		m.confirm = &pendingConfirm{
-			prompt: title + " is still running — quit anyway?",
+			prompt: title + " is still running. Quit anyway?",
 			help:   "y quit · any other key stays",
 			onYes: func(m *Model) tea.Cmd {
 				m.cancelOp()

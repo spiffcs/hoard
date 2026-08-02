@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -65,7 +66,7 @@ func TestFiredBannerOnOpen(t *testing.T) {
 		watchRow("Ragavan", price(46), "under", 50, ""),
 	}
 	m := newTestModel(t, st)
-	if !strings.Contains(m.status, "1 watch met its threshold — Ragavan under $50.00") {
+	if !strings.Contains(m.status, "1 watch met its threshold: Ragavan under $50.00") {
 		t.Errorf("banner = %q", m.status)
 	}
 	if st.watches[0].LastState != "" {
@@ -574,5 +575,53 @@ func TestPopulateUnpricedComposes(t *testing.T) {
 	}
 	if strings.Join(order, ",") != "prices,repair" {
 		t.Errorf("pipeline order = %v", order)
+	}
+}
+
+// "Watch this card" reaches every view that names a printing, the market
+// rows included; "Add a watch from your collection" is watches-only, the
+// one view with no collection rows to point at.
+func TestWatchCommandAvailability(t *testing.T) {
+	m := newTestModel(t, testStore())
+	pick := func(id string) *command {
+		t.Helper()
+		for i := range m.commands {
+			if m.commands[i].id == id {
+				return &m.commands[i]
+			}
+		}
+		t.Fatalf("no %s command in the registry", id)
+		return nil
+	}
+
+	if pick("watch.pick").applies(&m) {
+		t.Error("watch.pick offered on holdings, where w reaches cards directly")
+	}
+	for m.view != viewWatches {
+		m = key(m, "v")
+	}
+	if !pick("watch.pick").applies(&m) {
+		t.Error("watch.pick missing from the watches view")
+	}
+
+	m = key(m, "v") // watches → market
+	if m.view != viewMarket {
+		t.Fatalf("view = %v, want market", m.view)
+	}
+	if pick("watch.pick").applies(&m) {
+		t.Error("watch.pick offered on the market view")
+	}
+	m.marketRows = []market.Row{{Kind: market.KindProfit, Opportunity: market.Opportunity{
+		Card:   store.OwnedFinish{ScryfallID: "sf-sol", Name: "Sol Ring", Finish: "nonfoil"},
+		Market: 3.50, HasMarket: true,
+	}}}
+	m.cursor[paneCards] = 0
+	if !pick("watch.add").applies(&m) {
+		t.Error("watch.add missing from the market view")
+	}
+	m = key(m, "w")
+	if m.prompt == nil || !strings.Contains(m.prompt.label, "Sol Ring") ||
+		!strings.Contains(m.prompt.label, "$3.50") {
+		t.Fatalf("w on a market row opened %+v, want the threshold prompt anchored on the market price", m.prompt)
 	}
 }

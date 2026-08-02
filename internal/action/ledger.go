@@ -27,7 +27,7 @@ type AlreadyImportedError struct {
 
 func (e *AlreadyImportedError) Error() string {
 	return fmt.Sprintf(
-		"this content was already imported on %s (%d cards) — re-running would double every quantity.\nUse --again to add them anyway",
+		"this content was already imported on %s (%d cards); re-running would double every quantity.\nUse --again to add them anyway",
 		e.When, e.Cards)
 }
 

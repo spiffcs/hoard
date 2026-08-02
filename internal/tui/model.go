@@ -756,7 +756,7 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	if m.scannedNumber != "" && !matched {
 		// Either the digits were misread or the name match is wrong. Saying so
 		// beats silently showing an unranked list as though nothing was scanned.
-		m.status = fmt.Sprintf("card #%s isn't among these printings — pick manually", m.scannedNumber)
+		m.status = fmt.Sprintf("card #%s isn't among these printings · pick manually", m.scannedNumber)
 		m.statusErr = true
 	}
 	return m, nil
@@ -821,7 +821,7 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 	}
 	switch len(msg.devices) {
 	case 0:
-		return m.failToName("no iPhone found — scanning uses Continuity Camera; connect an iPhone and try again")
+		return m.failToName("no iPhone found: scanning uses Continuity Camera; connect an iPhone and try again")
 	case 1:
 		m.cameraID = msg.devices[0].ID
 		m.cameraName = msg.devices[0].Name
@@ -909,7 +909,7 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 	case scan.EventScan:
 		cards := msg.ev.CardList()
 		if len(cards) == 0 {
-			m.status = "nothing readable in that frame — reframe and capture again"
+			m.status = "nothing readable in that frame · reframe and capture again"
 			m.statusErr = true
 			if m.state == stateCapturing {
 				m.state = stateCapture
@@ -999,7 +999,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
 		m.nudgeDrops++
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
-		m.status = fmt.Sprintf("still seeing %s — waiting for the next card", it.canonical)
+		m.status = fmt.Sprintf("still seeing %s, waiting for the next card", it.canonical)
 		m.statusErr = false
 		return m, nil
 	}
@@ -1010,7 +1010,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// A single-card capture keeps queueing: the only card of a shot must never
 	// vanish silently.
 	if it.canonical == "" && it.errText == "" && it.siblings > 1 {
-		m.status = fmt.Sprintf("ignored %q — not a card", it.ocrLine)
+		m.status = fmt.Sprintf("ignored %q: not a card", it.ocrLine)
 		m.statusErr = false
 		return m, m.scheduleNudge()
 	}
@@ -1023,7 +1023,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// Two copies in one frame — a fanned playset. Queue for the
 				// deliberate confirm; never drop.
 				auto, it.dup = false, true
-				note = "possible duplicate — same card twice in this capture"
+				note = "possible duplicate: same card twice in this capture"
 			case it.siblings > 1 || it.fromNudge:
 				// A lingering neighbour: the card added a moment ago is still
 				// in frame beside the new one. An un-swapped pile is not a
@@ -1036,7 +1036,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			default:
 				// A deliberate solo re-scan: sequential playset scanning.
 				auto, it.dup = false, true
-				note = "possible duplicate — same card auto-added just now"
+				note = "possible duplicate: same card auto-added just now"
 			}
 		}
 	}
@@ -1058,7 +1058,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.chime()
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
-		line := fmt.Sprintf("%s (%s/%s) %s — %s", card.Name,
+		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.tally = append(m.tally, line)
 		m.summary.add("auto", line)
@@ -1080,7 +1080,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		}
 		if name, ok := similarRecent(m.recentNames, probe, now); ok {
 			m.recentNames = recordName(m.recentNames, name, now)
-			m.status = fmt.Sprintf("still seeing %s — waiting for the next card", name)
+			m.status = fmt.Sprintf("still seeing %s, waiting for the next card", name)
 			m.statusErr = false
 			return m, m.scheduleNudge()
 		}
@@ -1273,7 +1273,7 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 	}
 	m.addedCount++
 	m.addedValue += float64(res.Qty) * priceValue(res.Card, res.Finish)
-	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s — %s",
+	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s · %s",
 		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, priceForFinish(res.Card, res.Finish))
 	// Naming the destination matters exactly when there was a choice.
@@ -1316,7 +1316,7 @@ func (m model) cancelReview() (tea.Model, tea.Cmd) {
 		m.resolving = 0
 		m.review = nil
 		m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
-		m.status = fmt.Sprintf("review abandoned — %d cards not added", dropped)
+		m.status = fmt.Sprintf("review abandoned · %d cards not added", dropped)
 		m.statusErr = false
 		return m.resetForNext()
 	}
@@ -1332,7 +1332,7 @@ func (m model) failToName(msg string) (tea.Model, tea.Cmd) {
 	m.status = msg
 	m.statusErr = true
 	if m.reviewing() {
-		m.summary.add("skipped", reviewItem{*m.current}.Title()+" — "+msg)
+		m.summary.add("skipped", reviewItem{*m.current}.Title()+" · "+msg)
 		return m.afterCard()
 	}
 	return m.resetForNext()
@@ -1569,7 +1569,7 @@ func (m model) View() string {
 		}
 		switch m.autoState {
 		case "armed":
-			b.WriteString("Set a card down — it captures by itself (space still works).\n\n")
+			b.WriteString("Set a card down; it captures by itself (space still works).\n\n")
 		case "held":
 			b.WriteString("Captured. Swap in the next card.\n\n")
 		default:

@@ -124,7 +124,7 @@ func printBackfill(r action.BackfillResult) {
 		rep.Warn("%s printings have no MTGJSON id and were skipped.", ui.Count(r.Unmapped))
 	}
 	if r.Unquoted > 0 {
-		rep.Warn("%s have no TCGplayer price history — the same gap 'unpriced' reports.",
+		rep.Warn("%s have no TCGplayer price history, the same gap 'unpriced' reports.",
 			ui.Count(r.Unquoted))
 	}
 	rep.Hint("Prices come from TCGplayer, the source Scryfall itself quotes.")

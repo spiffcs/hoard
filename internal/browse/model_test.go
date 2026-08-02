@@ -2033,10 +2033,10 @@ func TestArbitrageEnterOpensDetail(t *testing.T) {
 	}
 }
 
-// The value mask hides cards priced under the level, cycling off → $5 →
+// The value floor hides cards priced under the level, cycling off → $5 →
 // $10 → $25 → off, across the priced views; the unpriced view is exempt
 // (its whole point is the $0 rows).
-func TestValueMaskCyclesAndFilters(t *testing.T) {
+func TestValueFloorCyclesAndFilters(t *testing.T) {
 	m := newTestModel(t, testStore())
 	all := len(m.cards)
 	if all == 0 {
@@ -2051,39 +2051,39 @@ func TestValueMaskCyclesAndFilters(t *testing.T) {
 	// Fixture prices span under $5 through $134+, so each level must strip
 	// at least as much as the last.
 	if !(counts[0] >= counts[1] && counts[1] >= counts[2]) {
-		t.Fatalf("mask counts not monotonic: %v", counts)
+		t.Fatalf("floor counts not monotonic: %v", counts)
 	}
 	if counts[2] >= all {
-		t.Fatalf("$25 mask hid nothing: %d of %d", counts[2], all)
+		t.Fatalf("$25 floor hid nothing: %d of %d", counts[2], all)
 	}
 	for _, c := range m.cards {
 		if c.Price == nil || *c.Price < 25 {
-			t.Fatalf("card %s under the $25 mask still visible", c.Name)
+			t.Fatalf("card %s under the $25 floor still visible", c.Name)
 		}
 	}
-	if !strings.Contains(m.status, "hiding cards under $25.00") {
+	if !strings.Contains(m.status, "floor $25.00") {
 		t.Errorf("cycle status = %q", m.status)
 	}
 	// The persistent indicator sits in the position line once the transient
 	// status clears.
 	m.status = ""
-	if !strings.Contains(m.View(), "hiding <$25.00") {
-		t.Errorf("mask indicator missing:\n%s", m.View())
+	if !strings.Contains(m.View(), "floor $25.00") {
+		t.Errorf("floor indicator missing:\n%s", m.View())
 	}
 
 	m = key(m, "M") // back to off
 	if len(m.cards) != all {
-		t.Fatalf("mask off restored %d of %d cards", len(m.cards), all)
+		t.Fatalf("floor off restored %d of %d cards", len(m.cards), all)
 	}
 
-	// The unpriced view ignores the mask entirely.
+	// The unpriced view ignores the floor entirely.
 	m = key(m, "M")
 	m = key(m, "v")
 	m = key(m, "v") // unpriced
 	before := len(m.unpriced)
 	m = key(m, "M")
 	if len(m.unpriced) != before {
-		t.Fatalf("unpriced view changed under the mask: %d → %d", before, len(m.unpriced))
+		t.Fatalf("unpriced view changed under the floor: %d → %d", before, len(m.unpriced))
 	}
 }
 
@@ -2239,5 +2239,31 @@ func TestDetailImageAttachesToItsCard(t *testing.T) {
 	m.imgTier = ui.ImageNone
 	if m.fetchDetailImage() != nil {
 		t.Error("fetch offered on an incapable terminal")
+	}
+}
+
+// A terminal too narrow for side-by-side stacks the image between the
+// card's details and hoard's HELD/PRICE facts.
+func TestDetailImageStacksWhenNarrow(t *testing.T) {
+	m := newTestModel(t, testStore())
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
+	m = next.(Model)
+	uri := "https://img/x.jpg"
+	m.detail = &detail{card: store.CardDetail{}}
+	m.detail.card.Name = "Sol Ring"
+	m.detail.card.ImageURI = &uri
+	m.detail.image = []string{"IMGROW1", "IMGROW2"}
+
+	out := m.View()
+	name := strings.Index(out, "Sol Ring")
+	img := strings.Index(out, "IMGROW1")
+	held := strings.Index(out, "HELD")
+	if name < 0 || img < 0 || held < 0 {
+		t.Fatalf("stacked layout missing a block (name %d, image %d, held %d):\n%s",
+			name, img, held, out)
+	}
+	if !(name < img && img < held) {
+		t.Errorf("want card details, then image, then HELD — got name %d, image %d, held %d",
+			name, img, held)
 	}
 }

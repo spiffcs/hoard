@@ -117,7 +117,7 @@ func TestOpOutcomeConfirmIsStaged(t *testing.T) {
 		return opOutcome{
 			summary: "already imported",
 			confirm: &pendingConfirm{
-				prompt: "imported before — import it again?",
+				prompt: "imported before. Import it again?",
 				help:   "y import again · any other key cancels",
 				onYes:  func(*Model) tea.Cmd { ran = true; return nil },
 			},
@@ -126,7 +126,7 @@ func TestOpOutcomeConfirmIsStaged(t *testing.T) {
 	done := findOpDone(t, cmd)
 	next, _ := m.Update(done)
 	m = next.(Model)
-	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "import it again") {
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "Import it again") {
 		t.Fatalf("confirm = %+v, want the follow-up staged", m.confirm)
 	}
 	if !strings.Contains(m.helpLine(), "y import again") {
@@ -219,7 +219,7 @@ func TestImportAlreadyImportedStagesConfirmAndReruns(t *testing.T) {
 	next, _ := m.Update(findOpDone(t, cmd))
 	m = next.(Model)
 
-	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "import it again?") {
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "Import it again?") {
 		t.Fatalf("confirm = %+v, want the run-again question", m.confirm)
 	}
 	// y re-runs with again=true.
@@ -369,7 +369,7 @@ func TestExportOverwriteConfirmOnlyWhenFileExists(t *testing.T) {
 	m = next.(Model)
 	m, _ = typePrompt(t, m, f)
 	m, _ = typePrompt(t, m, "")
-	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "exists — overwrite?") {
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "exists. Overwrite?") {
 		t.Fatalf("confirm = %+v, want the overwrite question", m.confirm)
 	}
 	if len(calls) != 0 {

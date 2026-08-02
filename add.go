@@ -73,7 +73,7 @@ func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty i
 	if err != nil {
 		return err
 	}
-	ui.NewReport().Success("Added %d× %s (%s/%s) as %s into %s — %s",
+	ui.NewReport().Success("Added %d× %s (%s/%s) as %s into %s · %s",
 		qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, res.Binder, ui.MoneyPtr(res.PriceUSD))
 	return nil

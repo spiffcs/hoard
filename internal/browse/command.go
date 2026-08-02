@@ -41,7 +41,7 @@ type command struct {
 	// means palette-only.
 	key string
 	// hidden keeps a command out of the palette while its key keeps
-	// working — for the pure key reflexes (sort, mask, view cycling) the
+	// working — for the pure key reflexes (sort, floor, view cycling) the
 	// palette listing was noise beside the verbs that do something.
 	hidden bool
 	// where reports whether the command applies right now; nil means
@@ -72,7 +72,7 @@ func commands() []command {
 		},
 		{
 			id: "remove", title: "Remove selected", aliases: "delete card deck",
-			desc: "Remove the selected card or deck — asks y/n first.",
+			desc: "Remove the selected card or deck, after a y/n confirm.",
 			key:  "d",
 			run:  func(m *Model) tea.Cmd { m.askRemoval(); return nil },
 		},
@@ -110,9 +110,9 @@ func commands() []command {
 			},
 		},
 		{
-			id: "mask.cycle", aliases: "value filter cheap junk minimum",
+			id: "floor.cycle", aliases: "mask value filter cheap junk minimum",
 			key: "M", hidden: true,
-			run: func(m *Model) tea.Cmd { m.cycleMask(); return nil },
+			run: func(m *Model) tea.Cmd { m.cycleFloor(); return nil },
 		},
 		{
 			id: "reload", title: "Reload from the database", aliases: "refresh",
@@ -212,7 +212,7 @@ func commands() []command {
 		},
 		{
 			id: "export.all", title: "Export everything", aliases: "csv save backup all holdings",
-			desc:  "Write every holding — all binders, all decks — to one file.",
+			desc:  "Write every holding to one file.",
 			where: func(m *Model) bool { return m.exportFn != nil },
 			run:   func(m *Model) tea.Cmd { m.promptExport("", "", "hoard-export"); return nil },
 		},
@@ -279,16 +279,20 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.promptWatch(); return nil },
 		},
 		{
-			id: "watch.pick", title: "Add a watch", aliases: "alert threshold new pick choose",
+			id: "watch.pick", title: "Add a watch from your collection", aliases: "alert threshold new pick choose",
 			desc: "Pick a card from your holdings and set its price alert.",
-			rank: onView(viewWatches, 5),
-			run:  func(m *Model) tea.Cmd { return m.startWatchPick() },
+			// Watches-only: every other view can reach a card and press w
+			// (or run "Watch this card") on it directly; the watches view
+			// is the one place with no collection rows to point at.
+			where: func(m *Model) bool { return m.view == viewWatches },
+			rank:  onView(viewWatches, 5),
+			run:   func(m *Model) tea.Cmd { return m.startWatchPick() },
 		},
 		{
 			// The by-name path stays for cards you don't own yet — the
 			// picker above only offers what is already held.
-			id: "watch.add-by-name", title: "Add a watch by name (any card)", aliases: "alert threshold new unowned",
-			desc:  "Resolve any card by name — owned or not — and set a price alert.",
+			id: "watch.add-by-name", title: "Add a watch for any card", aliases: "alert threshold new unowned by name",
+			desc:  "Resolve any card by name, owned or not, and set a price alert.",
 			where: func(m *Model) bool { return m.opWatchAdd != nil },
 			rank:  onView(viewWatches, 2),
 			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },

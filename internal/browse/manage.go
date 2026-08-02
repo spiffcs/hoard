@@ -188,6 +188,19 @@ func (m *Model) subjectCard() *subjectRef {
 			r := m.unpriced[i]
 			return &subjectRef{scryfallID: r.ScryfallID, name: r.Name, finish: r.Finish}
 		}
+	case viewMarket:
+		i := m.cursor[paneCards]
+		if i >= 0 && i < len(m.marketRows) {
+			r := m.marketRows[i]
+			ref := &subjectRef{scryfallID: r.Card.ScryfallID, name: r.Card.Name, finish: r.Card.Finish}
+			if r.HasMarket {
+				// The sales-derived anchor is the row's own idea of the
+				// price, so a bare threshold infers direction from it.
+				price := r.Market
+				ref.price = &price
+			}
+			return ref
+		}
 	}
 	return nil
 }
@@ -208,9 +221,9 @@ func (m *Model) promptWatch() {
 		finish = "foil"
 	}
 
-	label := fmt.Sprintf("watch %s (%s) — threshold", sub.name, finish)
+	label := fmt.Sprintf("watch %s (%s) · threshold", sub.name, finish)
 	if sub.price != nil {
-		label = fmt.Sprintf("watch %s (%s) · now %s — threshold",
+		label = fmt.Sprintf("watch %s (%s) · now %s · threshold",
 			sub.name, finish, ui.Money(*sub.price))
 	}
 	sid, name, price := sub.scryfallID, sub.name, sub.price
@@ -276,7 +289,7 @@ func parseThreshold(text string, price *float64) (op string, threshold float64, 
 	}
 	if op == "" {
 		if price == nil {
-			return "", 0, fmt.Errorf("no current price — say under %s or over %s", t, t)
+			return "", 0, fmt.Errorf("no current price · say under %s or over %s", t, t)
 		}
 		op = "under"
 		if n > *price {
@@ -302,8 +315,8 @@ func (m *Model) promptWatchByName() {
 		commit: func(m *Model, name string) tea.Cmd {
 			name = strings.TrimSpace(name)
 			m.prompt = &prompt{
-				label: fmt.Sprintf("watch %s — threshold", name),
-				help:  "under 40 / over 40 (direction required — no current price to infer from) · enter accept · esc cancel",
+				label: fmt.Sprintf("watch %s · threshold", name),
+				help:  "under 40 / over 40 (direction required; no current price to infer from) · enter accept · esc cancel",
 				validate: func(text string) error {
 					_, _, err := parseThreshold(text, nil)
 					return err

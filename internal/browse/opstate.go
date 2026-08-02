@@ -138,7 +138,7 @@ func (m *Model) startOpReport(title string, fn func(context.Context, progress.Fn
 		return nil
 	}
 	if m.op != nil {
-		m.status, m.statusErr = m.op.title+" is already running — esc to cancel", true
+		m.status, m.statusErr = m.op.title+" is already running · esc to cancel", true
 		return nil
 	}
 	ctx, cancel := context.WithCancel(m.ctx)

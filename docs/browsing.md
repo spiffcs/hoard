@@ -34,7 +34,7 @@ shows what is inside whichever container you have selected.
 | <kbd>u</kbd> | undo the last edit |
 | <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
 | <kbd>r</kbd> | reload |
-| <kbd>M</kbd> | value mask: hide cards under $5 → $10 → $25 → off (unpriced view exempt) |
+| <kbd>M</kbd> | value floor: hide cards under $5 → $10 → $25 → off (unpriced view exempt) |
 | <kbd>q</kbd> | quit — asks y/n first (main views only) |
 | <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
@@ -92,7 +92,7 @@ EASY TO SELL  a buylist pays at least 70% of the last-sold price
 NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PAYS
 Thassa, Deep…  thb/71   -       $25.00   $25.00  cardkingdom  100.0%
 
-BELOW MARKET  asking well under the last-sold price
+BELOW MARKET  a buylist is asking far under what the last-sold price was
 NAME           SET/NUM  FIN     ASK  AT        LAST SOLD  BELOW
 Glimmerpost    som/223  foil  $1.10  manapool      $3.99  -72.4%
 ```

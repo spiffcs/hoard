@@ -83,7 +83,7 @@ func TestNewerSchemaIsRefused(t *testing.T) {
 	}
 	raw.Close()
 
-	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "upgrade hoard") {
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "Upgrade hoard") {
 		t.Errorf("opening a v99 file: err = %v, want a refusal telling the user to upgrade", err)
 	}
 }

@@ -173,7 +173,7 @@ func (m *Model) promptExport(binderRef, deckRef, slug string) {
 					format := strings.TrimSpace(strings.ToLower(ftext))
 					if _, err := os.Stat(path); err == nil {
 						m.confirm = &pendingConfirm{
-							prompt: filepath.Base(path) + " exists — overwrite?",
+							prompt: filepath.Base(path) + " exists. Overwrite?",
 							help:   "y overwrite · any other key cancels",
 							onYes: func(m *Model) tea.Cmd {
 								m.runExport(binderRef, deckRef, format, path)
@@ -215,9 +215,9 @@ func (m *Model) startImport(path string, again bool) tea.Cmd {
 		}
 		oc := opOutcome{summary: r.Summary, report: r.Report}
 		if r.AlreadyImported != "" && !again {
-			oc.summary = "import refused — already imported"
+			oc.summary = "import refused: already imported"
 			oc.confirm = &pendingConfirm{
-				prompt: r.AlreadyImported + " — import it again?",
+				prompt: r.AlreadyImported + ". Import it again?",
 				help:   "y import again · any other key cancels",
 				onYes:  func(m *Model) tea.Cmd { return m.startImport(path, true) },
 			}

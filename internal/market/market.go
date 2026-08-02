@@ -189,7 +189,7 @@ func (k Kind) Note() string {
 	case KindLiquid:
 		return "a buylist pays at least 70% of the last-sold price"
 	}
-	return "asking well under the last-sold price"
+	return "a buylist is asking far under what the last-sold price was"
 }
 
 // liquidFloor is the least a buylist may pay, as a fraction of the sales

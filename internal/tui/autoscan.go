@@ -202,7 +202,7 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 		return false, "", fmt.Sprintf("couldn't identify %q", it.ocrLine)
 	}
 	if it.lineIdx != 0 {
-		return false, "", "matched a fallback OCR line — check it's the right card"
+		return false, "", "matched a fallback OCR line; check it's the right card"
 	}
 	if len(it.prints) == 0 {
 		return false, "", "no printings found"
@@ -210,7 +210,7 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 	switch it.rank {
 	case scanMatchSetAndNumber, scanMatchNumberOnly, scanMatchSinglePrint:
 	default:
-		return false, "", fmt.Sprintf("printing unverified — %d printings", len(it.prints))
+		return false, "", fmt.Sprintf("printing unverified: %d printings", len(it.prints))
 	}
 	// The name gates weigh in only when the printing evidence is short of a
 	// full set+number verification. That verification is self-consistent by

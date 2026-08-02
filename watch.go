@@ -71,7 +71,7 @@ func watchAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 	env := ui.Detect(os.Stdout)
-	fmt.Printf("Watching %s (%s) %s — %s %s.\n",
+	fmt.Printf("Watching %s (%s) %s: %s %s.\n",
 		res.Card.Name, ui.Printing(res.Card.Set, res.Card.CollectorNumber),
 		res.Finish, op, ui.Money(threshold))
 	fmt.Println(env.Dim()("Checks read stored prices: hoard update-prices && hoard watch"))
@@ -159,7 +159,7 @@ func watchCheck(st *store.Store, jsonOut bool) error {
 		if w.Finish == "foil" {
 			finish = " foil"
 		}
-		fmt.Printf("%s (%s)%s is %s — crossed %s %s\n",
+		fmt.Printf("%s (%s)%s is %s, crossed %s %s\n",
 			w.Name, ui.Printing(w.SetCode, w.CollectorNumber), finish,
 			env.Bold()(ui.Money(*w.PriceUSD)), w.Op, ui.Money(w.Threshold))
 	}
