@@ -1352,12 +1352,12 @@ func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("fetched %d times on arrival, want 0", calls)
 	}
-	if out := m.View(); !strings.Contains(out, "press enter") {
+	if out := m.View(); !strings.Contains(out, "press F") {
 		t.Errorf("view does not invite the fetch:\n%s", out)
 	}
 }
 
-func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
+func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 	res := arbitrage.Result{
 		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20), opp("Liquid", 10, 9)},
 		Compared:      2,
@@ -1367,20 +1367,16 @@ func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
 		m = key(m, "v")
 	}
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
+	m = key(m, "F")
 	if !m.arbLoading {
-		t.Fatal("enter did not start a fetch")
-	}
-	if cmd == nil {
-		t.Fatal("no command returned to run the fetch")
+		t.Fatal("F did not start a fetch")
 	}
 	if out := m.View(); !strings.Contains(out, "reading today's vendor prices") {
 		t.Errorf("no progress shown:\n%s", out)
 	}
 
 	// Deliver the reply the command produces, as the runtime would.
-	next, _ = m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
 	m = next.(Model)
 
 	if m.arbLoading || !m.arbLoaded {
@@ -1425,11 +1421,7 @@ func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 	for range 4 {
 		m = key(m, "v")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-	if cmd != nil {
-		t.Error("returned a command with no fetcher configured")
-	}
+	m = key(m, "F")
 	if !m.statusErr || !strings.Contains(m.status, "unavailable") {
 		t.Errorf("status = %q, want it to say arbitrage is unavailable", m.status)
 	}
@@ -1490,10 +1482,10 @@ func startFetch(t *testing.T) (Model, *capturingArb) {
 	for range 4 {
 		m = key(m, "v")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
 	m = next.(Model)
 	if cmd == nil || !m.arbLoading {
-		t.Fatal("enter did not start a fetch")
+		t.Fatal("F did not start a fetch")
 	}
 	// Run the fetch's own goroutine the way the runtime would, so the context is
 	// captured; it blocks until cancelled.

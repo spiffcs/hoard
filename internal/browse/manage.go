@@ -6,12 +6,14 @@ package browse
 // existing card/deck removals.
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -261,4 +263,42 @@ func parseThreshold(text string, price *float64) (op string, threshold float64, 
 		}
 	}
 	return op, n, nil
+}
+
+// promptWatchByName chains two prompts — card name, then threshold — and
+// runs the resolve-and-add as an operation, since pinning the printing
+// needs the network. Direction must be explicit ("under 40" / "over 40"):
+// there is no current price to infer from before the name resolves.
+func (m *Model) promptWatchByName() {
+	m.prompt = &prompt{
+		label: "watch which card (name)",
+		validate: func(text string) error {
+			if strings.TrimSpace(text) == "" {
+				return fmt.Errorf("name a card")
+			}
+			return nil
+		},
+		commit: func(m *Model, name string) tea.Cmd {
+			name = strings.TrimSpace(name)
+			m.prompt = &prompt{
+				label: fmt.Sprintf("watch %s — threshold (under 40 / over 40)", name),
+				validate: func(text string) error {
+					_, _, err := parseThreshold(text, nil)
+					return err
+				},
+				commit: func(m *Model, text string) tea.Cmd {
+					op, threshold, err := parseThreshold(text, nil)
+					if err != nil {
+						m.status, m.statusErr = err.Error(), true
+						return nil
+					}
+					fn := m.opWatchAdd
+					return m.startOp("adding watch", func(ctx context.Context, p progress.Fn) (string, error) {
+						return fn(ctx, p, name, op, threshold)
+					})
+				},
+			}
+			return nil
+		},
+	}
 }

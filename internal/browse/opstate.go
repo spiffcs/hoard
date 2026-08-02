@@ -36,6 +36,18 @@ func WithRepairFinishes(f OpFunc) Option { return func(m *Model) { m.opRepairFin
 // WithCatalogUpdate supplies the catalog rebuild.
 func WithCatalogUpdate(f OpFunc) Option { return func(m *Model) { m.opCatalogUpdate = f } }
 
+// WithBackfill supplies the 90-day price-history import — what makes an
+// empty movers view populate.
+func WithBackfill(f OpFunc) Option { return func(m *Model) { m.opBackfill = f } }
+
+// WatchAddFunc stands a watch by card name: the resolve-once pipeline needs
+// the network, so it runs as an operation. Direction is explicit because no
+// current price is known before the name resolves.
+type WatchAddFunc func(ctx context.Context, p progress.Fn, name, op string, threshold float64) (string, error)
+
+// WithWatchAddByName supplies name-based watch creation for the palette.
+func WithWatchAddByName(f WatchAddFunc) Option { return func(m *Model) { m.opWatchAdd = f } }
+
 // opState is one operation in flight.
 type opState struct {
 	title   string

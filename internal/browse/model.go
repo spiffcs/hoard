@@ -135,6 +135,8 @@ type Model struct {
 	opUpdatePrices   OpFunc
 	opRepairFinishes OpFunc
 	opCatalogUpdate  OpFunc
+	opBackfill       OpFunc
+	opWatchAdd       WatchAddFunc
 	op               *opState
 	opGen            int
 
@@ -571,9 +573,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		if m.view == viewArbitrage {
-			return m, m.startArbitrage()
-		}
 		if m.focus == paneCards {
 			m.openDetail()
 		} else {

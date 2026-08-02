@@ -12,6 +12,7 @@ package browse
 // hide the very rows that give contextual commands their subject.
 
 import (
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +20,14 @@ import (
 
 	"github.com/spiffcs/hoard/internal/ui"
 )
+
+// commandRank resolves a command's ordering weight for the current state.
+func commandRank(m *Model, c *command) int {
+	if c.rank == nil {
+		return 0
+	}
+	return c.rank(m)
+}
 
 // paletteMaxRows is the most matches the drawer shows at once; the query
 // narrows the rest into view.
@@ -63,9 +72,14 @@ func (m *Model) refreshPalette() {
 	}
 
 	if p.query == "" {
+		// Rank-ordered: the commands that help this view lead the list. The
+		// sort is stable, so equal ranks keep registry order.
 		for _, idx := range applicable {
 			p.matches = append(p.matches, paletteMatch{index: idx})
 		}
+		slices.SortStableFunc(p.matches, func(a, b paletteMatch) int {
+			return commandRank(m, &m.commands[b.index]) - commandRank(m, &m.commands[a.index])
+		})
 	} else {
 		for _, fm := range fuzzy.Find(p.query, targets) {
 			idx := applicable[fm.Index]

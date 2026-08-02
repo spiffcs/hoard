@@ -422,6 +422,30 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 					return "", err
 				}
 				return fmt.Sprintf("catalog ready · %s cards", ui.Count(res.Cards)), nil
+			}),
+			browse.WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
+				res, err := action.BackfillPrices(ctx, deps, p)
+				if err != nil {
+					return "", err
+				}
+				switch {
+				case res.Printings == 0:
+					return "nothing owned yet", nil
+				case res.Inserted == 0:
+					return "nothing to backfill · history already recorded", nil
+				}
+				return fmt.Sprintf("backfilled %s observations across %s printings",
+					ui.Count(res.Inserted), ui.Count(res.Cards)), nil
+			}),
+			browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
+				name, op string, threshold float64) (string, error) {
+				res, err := action.WatchAdd(ctx, deps, p,
+					action.WatchAddOptions{Name: name, Op: op, Threshold: threshold})
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("watching %s (%s) %s %s",
+					res.Card.Name, res.Finish, op, ui.Money(threshold)), nil
 			}))
 		if err != nil || !again {
 			return err

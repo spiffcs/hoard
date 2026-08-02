@@ -151,7 +151,7 @@ func (m Model) arbitrageHeader() (title, totals string) {
 	case m.arbLoading:
 		return "ARBITRAGE", "asking vendors…"
 	case !m.arbLoaded:
-		return "ARBITRAGE", "press enter to fetch"
+		return "ARBITRAGE", "press F to fetch"
 	}
 	return "ARBITRAGE", fmt.Sprintf("%s rows · %s printings compared",
 		ui.Count(len(m.arbRows)), ui.Count(m.arbResult.Compared))
@@ -165,7 +165,7 @@ func (m Model) arbitrageStatus() string {
 		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
 	case !m.arbLoaded:
 		return helpStyle.Render(
-			"arbitrage may need a download, so it waits to be asked — press enter")
+			"arbitrage may need a download, so it waits to be asked — press F")
 	case len(m.arbRows) == 0:
 		return helpStyle.Render("no vendor disagreed about anything you own today")
 	}

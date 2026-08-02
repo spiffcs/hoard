@@ -1,11 +1,13 @@
 package browse
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -237,5 +239,164 @@ func TestMoversWindowCycle(t *testing.T) {
 	m = key(m, "W")
 	if m.status != before {
 		t.Errorf("W outside movers changed status to %q", m.status)
+	}
+}
+
+// The empty-query palette leads with the commands that help the current
+// view: on an empty movers view, updating and backfilling prices outrank
+// the generic verbs.
+func TestPaletteRanksViewCommands(t *testing.T) {
+	st := testStore()
+	st.movers = nil
+	m, err := New(st,
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
+		WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+	m = key(m, "v") // movers, empty
+	m = key(m, ":")
+
+	top := []string{
+		m.commands[m.palette.matches[0].index].id,
+		m.commands[m.palette.matches[1].index].id,
+	}
+	for _, id := range top {
+		if id != "op.update-prices" && id != "op.backfill" {
+			t.Errorf("top palette entries on empty movers = %v, want the price ops leading", top)
+		}
+	}
+	// The empty movers view says how to fill itself.
+	m.palette = nil
+	if line := m.statusLine(); !strings.Contains(line, "F fetches prices") {
+		t.Errorf("empty movers status = %q, want the populate guidance", line)
+	}
+}
+
+// F composes the movers pipeline: update prices, then backfill, as one
+// operation with a joined summary.
+func TestPopulateMoversComposes(t *testing.T) {
+	st := testStore()
+	var order []string
+	m, err := New(st,
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			order = append(order, "prices")
+			return "prices updated", nil
+		}),
+		WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
+			order = append(order, "backfill")
+			return "backfilled 12", nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+	m = key(m, "v") // movers
+	cmd := (&m).populateView()
+	if cmd == nil || m.op == nil {
+		t.Fatal("F did not start the movers pipeline")
+	}
+	// Run the composed op synchronously through the returned command batch:
+	// execute the op function directly via the done message it will send.
+	msg := findOpDone(t, cmd)
+	if msg.summary != "prices updated · backfilled 12" {
+		t.Errorf("summary = %q", msg.summary)
+	}
+	if strings.Join(order, ",") != "prices,backfill" {
+		t.Errorf("pipeline order = %v", order)
+	}
+}
+
+// findOpDone digs the opDoneMsg out of a startOp command batch by running
+// its constituent Cmds; the runner is the one that yields it.
+func findOpDone(t *testing.T, cmd tea.Cmd) opDoneMsg {
+	t.Helper()
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case opDoneMsg:
+			return msg
+		case tea.BatchMsg:
+			for _, b := range msg {
+				queue = append(queue, b)
+			}
+		}
+	}
+	t.Fatal("no opDoneMsg in the command tree")
+	return opDoneMsg{}
+}
+
+// The palette's watch-by-name flow chains two prompts and runs the add as
+// an operation.
+func TestWatchByNameChainedPrompts(t *testing.T) {
+	st := testStore()
+	var gotName, gotOp string
+	var gotThreshold float64
+	m, err := New(st, WithWatchAddByName(func(ctx context.Context, p progress.Fn,
+		name, op string, threshold float64) (string, error) {
+		gotName, gotOp, gotThreshold = name, op, threshold
+		return "watching " + name, nil
+	}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+
+	typeText := func(m Model, text string) Model {
+		for _, r := range text {
+			if r == ' ' {
+				next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+				m = next.(Model)
+				continue
+			}
+			m = key(m, string(r))
+		}
+		return m
+	}
+
+	(&m).promptWatchByName()
+	m = typeText(m, "Sol Ring")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || !strings.Contains(m.prompt.label, "threshold") {
+		t.Fatalf("second prompt = %+v", m.prompt)
+	}
+
+	// A bare number is refused — no price to infer direction from.
+	m = typeText(m, "40")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.err == "" {
+		t.Fatal("bare threshold accepted without a direction")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = next.(Model)
+	m = typeText(m, "under 40")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.op == nil {
+		t.Fatal("commit did not start the watch-add operation")
+	}
+
+	// Run the op through its own command tree and feed the outcome back.
+	done := findOpDone(t, cmd)
+	if gotName != "Sol Ring" || gotOp != "under" || gotThreshold != 40 {
+		t.Errorf("op got %q %q %v, want Sol Ring under 40", gotName, gotOp, gotThreshold)
+	}
+	next, _ = m.Update(done)
+	m = next.(Model)
+	if !strings.Contains(m.status, "watching Sol Ring") {
+		t.Errorf("status = %q", m.status)
 	}
 }

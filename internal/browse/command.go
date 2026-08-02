@@ -14,9 +14,13 @@ package browse
 // "down" would be noise.
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/spiffcs/hoard/internal/progress"
 )
 
 type command struct {
@@ -34,6 +38,10 @@ type command struct {
 	// fall through. Finer contextual refusals belong in run as status
 	// messages — the palette must not need a second copy of every guard.
 	where func(*Model) bool
+	// rank orders the empty-query palette: higher first, so the commands
+	// that help the current view lead the list. Nil means 0. A fuzzy query
+	// overrides it entirely — typing means the user knows what they want.
+	rank func(*Model) int
 	// run performs the command. It may stage a confirm or a prompt.
 	run func(*Model) tea.Cmd
 }
@@ -44,7 +52,8 @@ func commands() []command {
 	return []command{
 		{
 			id: "add", title: "Add cards", aliases: "scan camera new card",
-			key: "a",
+			key:  "a",
+			rank: onView(viewHoldings, 1),
 			run: func(m *Model) tea.Cmd {
 				if m.op != nil {
 					// The add cascade hands the terminal to another program;
@@ -122,12 +131,37 @@ func commands() []command {
 		{
 			id: "op.update-prices", title: "Update prices", aliases: "refresh fetch scryfall daily",
 			where: func(m *Model) bool { return m.opUpdatePrices != nil },
-			run:   func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
+			rank: func(m *Model) int {
+				switch {
+				case m.view == viewMovers && len(m.movers) == 0:
+					return 5
+				case m.view == viewMovers, m.view == viewUnpriced, m.view == viewWatches:
+					return 3
+				}
+				return 2
+			},
+			run: func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
+		},
+		{
+			id: "op.backfill", title: "Backfill 90 days of price history (~150 MB)",
+			aliases: "backdate movers history mtgjson import past",
+			where:   func(m *Model) bool { return m.opBackfill != nil },
+			rank: func(m *Model) int {
+				if m.view == viewMovers {
+					if len(m.movers) == 0 {
+						return 5
+					}
+					return 3
+				}
+				return 0
+			},
+			run: func(m *Model) tea.Cmd { return m.startOp("backfilling price history", m.opBackfill) },
 		},
 		{
 			id: "op.repair-finishes", title: "Repair finishes", aliases: "fix foil unpriced zero",
 			key:   "f",
 			where: func(m *Model) bool { return m.opRepairFinishes != nil },
+			rank:  onView(viewUnpriced, 4),
 			run:   func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
 		},
 		{
@@ -138,13 +172,38 @@ func commands() []command {
 		{
 			id: "op.cancel", title: "Cancel the running operation", aliases: "stop abort",
 			where: func(m *Model) bool { return m.op != nil },
+			rank:  func(*Model) int { return 10 },
 			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
+		},
+		{
+			id: "arb.fetch", title: "Fetch vendor prices", aliases: "arbitrage quotes compare",
+			where: func(m *Model) bool { return m.view == viewArbitrage && !m.arbLoaded },
+			rank:  func(*Model) int { return 5 },
+			run:   func(m *Model) tea.Cmd { return m.startArbitrage() },
+		},
+		{
+			id: "view.populate", title: "Fetch this view's data", aliases: "populate refresh load",
+			key:  "F",
+			rank: func(*Model) int { return 4 },
+			run:  func(m *Model) tea.Cmd { return m.populateView() },
 		},
 		{
 			id: "watch.add", title: "Watch this card…", aliases: "alert threshold price under over",
 			key:   "w",
 			where: func(m *Model) bool { return m.subjectCard() != nil },
-			run:   func(m *Model) tea.Cmd { m.promptWatch(); return nil },
+			rank: func(m *Model) int {
+				if m.view == viewWatches {
+					return 4
+				}
+				return onView(viewHoldings, 2)(m)
+			},
+			run: func(m *Model) tea.Cmd { m.promptWatch(); return nil },
+		},
+		{
+			id: "watch.add-by-name", title: "Add a watch by name…", aliases: "alert threshold new card",
+			where: func(m *Model) bool { return m.opWatchAdd != nil },
+			rank:  onView(viewWatches, 5),
+			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
 			id: "binder.new", title: "New binder…", aliases: "create folder",
@@ -160,6 +219,7 @@ func commands() []command {
 			id: "movers.window", title: "Movers: cycle the window", aliases: "since days lookback",
 			key:   "W",
 			where: func(m *Model) bool { return m.view == viewMovers },
+			rank:  func(*Model) int { return 2 },
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
 		},
 		{
@@ -189,6 +249,68 @@ func (m *Model) cycleMoversWindow() tea.Cmd {
 	m.status = fmt.Sprintf("movers · last %d days", moversWindowDays[m.moversDaysIdx])
 	m.statusErr = false
 	return nil
+}
+
+// onView is a rank helper: n on one view, 0 elsewhere.
+func onView(v viewMode, n int) func(*Model) int {
+	return func(m *Model) int {
+		if m.view == v {
+			return n
+		}
+		return 0
+	}
+}
+
+// populateView runs whatever fills the current view with fresh data — the
+// per-view F key: arbitrage fetches quotes, movers refreshes prices and
+// backfills history, unpriced repairs finishes, everything else refreshes
+// prices. One key, and the view knows what it needs.
+func (m *Model) populateView() tea.Cmd {
+	switch m.view {
+	case viewArbitrage:
+		return m.startArbitrage()
+	case viewMovers:
+		return m.populateMovers()
+	case viewUnpriced:
+		return m.startOp("repairing finishes", m.opRepairFinishes)
+	case viewWatches:
+		if err := m.loadView(); err != nil {
+			m.setError(err)
+			return nil
+		}
+		m.status, m.statusErr = "watches refreshed against stored prices", false
+		return nil
+	}
+	return m.startOp("updating prices", m.opUpdatePrices)
+}
+
+// populateMovers is the movers pipeline: refresh today's prices, then
+// backfill the history the view charts against — composed into one
+// operation so a single F populates an empty view end to end.
+func (m *Model) populateMovers() tea.Cmd {
+	up, bf := m.opUpdatePrices, m.opBackfill
+	if up == nil && bf == nil {
+		m.status, m.statusErr = "price operations are unavailable in this build", true
+		return nil
+	}
+	return m.startOp("populating price history", func(ctx context.Context, p progress.Fn) (string, error) {
+		var parts []string
+		if up != nil {
+			s, err := up(ctx, p)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, s)
+		}
+		if bf != nil {
+			s, err := bf(ctx, p)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, " · "), nil
+	})
 }
 
 // jumpMovers goes straight to the movers view at one lookback.

@@ -354,6 +354,18 @@ func (m Model) statusLine() string {
 
 	n := m.rowCount(m.focus)
 	if n == 0 {
+		// An empty analytical view says how to fill it — the feedback that
+		// turned "nothing here" into a dead end during dogfooding.
+		switch m.view {
+		case viewMovers:
+			return helpStyle.Render(
+				"no price movement in this window — F fetches prices and 90 days of history · W widens the window")
+		case viewWatches:
+			return helpStyle.Render(
+				"no watches — press w on a card in holdings, or : then \"Add a watch by name\"")
+		case viewUnpriced:
+			return helpStyle.Render("every card you own has a price")
+		}
 		return helpStyle.Render("nothing here")
 	}
 	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sortLabel())
@@ -398,13 +410,13 @@ func (m Model) helpLine() string {
 	case m.filtering:
 		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
 	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
-		return "enter fetch vendor prices · v next view · q quit"
+		return "F fetch vendor prices · v next view · q quit"
 	case m.view == viewArbitrage && m.arbLoading:
 		return "esc cancel · q quit"
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · : commands · ↑/↓ move · s sort · S reverse · r reload · q quit"
+		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
 		return "tab cards · / filter · : commands · s sort · S reverse · v views · a add · d remove deck · u undo · q quit"
 	}
