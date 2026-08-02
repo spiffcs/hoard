@@ -357,7 +357,60 @@ first output surface that responds to terminal width. Section headers Bold,
 prose paragraphs Dim. The `"error:"` prefix at `main.go:89` gets Err style
 on a TTY. Per-subcommand `-h` stays stock `flag` output; no cobra.
 
-## ⬜ F. Spike: card images in the detail overlay + MTG-card layout
+## ✅ F. Spike: card images in the detail overlay + MTG-card layout
+### (F1 ✅ 2026-08-01 · F2 ✅ 2026-08-01, live smoke pending)
+
+### F2 findings (the spike's deliverable)
+
+**What shipped**, all behind `HOARD_CARD_IMAGES=1`:
+`ui.DetectImageTier` (env-based, decided before the program starts;
+`NO_COLOR` kills it with the rest of the color) → `ImageKitty` for
+Kitty/Ghostty/WezTerm, `ImageHalfblock` for any truecolor terminal
+including iTerm2, `ImageNone` otherwise. `ui.Halfblocks` renders two
+pixels per `▀` cell with a dependency-free nearest-neighbour sampler;
+`ui.KittyImage` builds the virtual-placement transmit (PNG, chunked,
+quiet) plus the U+10EEEE placeholder lines that place it — plain text, so
+they survive the cell-diffing renderer. Browse fetches async on detail
+open (`WithCardImage`, injected from main like every network dependency;
+cache in `UserCacheDir()/hoard/images/`, temp-write→rename, immutable
+entries) and the overlay fills its image slot when the fetch lands — text
+never waits. The image sits to the right of the text at ≤26 cells (shrunk
+to fit the window's rows), so the text keeps the left margin the eye
+reads from; below ~76 columns the text wins and no image renders.
+
+**Decisions and caveats:**
+- **iTerm2's OSC 1337 was cut without being built** — it is
+  cursor-anchored, and a cell-diffing altscreen renderer overdraws it by
+  construction. iTerm2 takes the halfblock tier, which it renders well.
+- The kitty transmit is written straight to stdout from the fetch
+  goroutine (bubbletea v1 has no raw-write API). Worst case is one torn
+  frame that the next repaint fixes; the placement itself is repaint-safe.
+  One image id (91) is reused, so each open replaces the last and no
+  cleanup is needed.
+- All tiers use the `normal` scan (the only URL v11 projects). If
+  halfblocks prove too muddy at 26 cells, `art_crop` is a one-line v12
+  column away.
+- tmux passthrough is explicitly out of scope.
+
+**Go/no-go: GO — productionized 2026-08-01.** The live smoke passed
+("looks great"), so the spike gate flipped to default-on:
+`HOARD_CARD_IMAGES` is now an override — `0`/`off` disables, `kitty` or
+`halfblock` forces a tier past the fingerprinting (an explicit force wins
+over everything, NO_COLOR included — the user typed it). Production
+hardenings added at the flip: tmux/screen get no images (passthrough is
+its own project, and mangled cells are worse than no picture), and the
+image sits to the right of the detail text (user-requested). Documented
+in docs/browsing.md "Card images".
+
+*F1 as-landed:* migration v11 (`cardFaceDetails`) projects `power`,
+`toughness`, `loyalty`, `flavor_text` and `image_uri` as VIRTUAL columns
+with the face-0 COALESCE; `store.CardDetail` carries them (P/T as text —
+the game prints `*`). `detailLines` reorders into card-frame order:
+name+cost → type·rarity → oracle box → dim flavor → stat box anchored to
+the frame's right edge (`frameWidth` 66 caps the text block so wide
+terminals don't stretch it into a ribbon) → dim artist·set·printing·date
+footer → HELD/PRICE below. `wrap()` measures `ansi.StringWidth` now. The
+migration-rewind test learned to drop the v11 columns.
 
 Added 2026-07-31. Two commits: F1 (layout — real work, ships regardless)
 then F2 (images — timeboxed, go/no-go deliverable). Runs last; needs D2.

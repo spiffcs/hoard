@@ -116,6 +116,68 @@ func TestParseColorIdentity(t *testing.T) {
 	}
 }
 
+// The card-frame fields (migration v11) resolve like the rest of the
+// derived columns: root first, face 0 for multi-faced cards, nil until a
+// document is stored.
+func TestCardDetailCardFrameFields(t *testing.T) {
+	s := newTestStore(t)
+	mk := func(id, raw string) scryfall.Card {
+		c := ulamog()
+		c.ID = id
+		if raw != "" {
+			c.Raw = []byte(raw)
+		}
+		return c
+	}
+	cards := []scryfall.Card{
+		mk("creature", `{"power":"10","toughness":"10","flavor_text":"A force of nature.",
+		  "image_uris":{"normal":"https://img/creature.jpg"}}`),
+		mk("walker", `{"loyalty":"4"}`),
+		mk("dfc", `{"card_faces":[{"power":"2","toughness":"3",
+		  "image_uris":{"normal":"https://img/face0.jpg"}}]}`),
+		mk("bare", ""),
+	}
+	if err := s.UpsertPrintings(cards); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	get := func(id string) CardDetail {
+		t.Helper()
+		d, err := s.CardDetail(id)
+		if err != nil {
+			t.Fatalf("CardDetail(%s): %v", id, err)
+		}
+		return d
+	}
+
+	c := get("creature")
+	if deref(c.Power) != "10" || deref(c.Toughness) != "10" {
+		t.Errorf("creature P/T = %v/%v", c.Power, c.Toughness)
+	}
+	if deref(c.FlavorText) != "A force of nature." {
+		t.Errorf("FlavorText = %v", c.FlavorText)
+	}
+	if deref(c.ImageURI) != "https://img/creature.jpg" {
+		t.Errorf("ImageURI = %v", c.ImageURI)
+	}
+
+	if w := get("walker"); deref(w.Loyalty) != "4" || w.Power != nil {
+		t.Errorf("walker loyalty = %v, power = %v", w.Loyalty, w.Power)
+	}
+	if d := get("dfc"); deref(d.Power) != "2" || deref(d.ImageURI) != "https://img/face0.jpg" {
+		t.Errorf("dfc face-0 fallback: power = %v, image = %v", d.Power, d.ImageURI)
+	}
+	if b := get("bare"); b.Power != nil || b.Loyalty != nil || b.FlavorText != nil || b.ImageURI != nil {
+		t.Errorf("unenriched card must read all-nil, got %+v", b)
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // The listing queries carry the same identity the detail view resolves, so
 // the browse tables can tint names without a per-row detail read.
 func TestListingsCarryColorIdentity(t *testing.T) {

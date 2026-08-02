@@ -1,6 +1,8 @@
 package browse
 
 import (
+	"github.com/charmbracelet/x/ansi"
+
 	"fmt"
 	"strings"
 	"time"
@@ -20,13 +22,17 @@ type detail struct {
 	holdings []store.Holding
 	series   map[string][]store.PricePoint // by finish
 	err      error
+	// image is the rendered card image block (halfblock cells or kitty
+	// placeholders), nil until the async fetch lands — or forever, when
+	// the terminal can't draw one. The overlay never waits for it.
+	image []string
 }
 
 // openDetail loads the selected card's detail.
 //
-// Each view indexes its own row slice, so every view that names a single
-// printing needs its own case here; movers is the odd one out, aggregating
-// across finishes.
+// Each view indexes its own row slice, so every view needs its own case
+// here — but every view's rows name a single printing, so enter answers
+// "what is this card?" everywhere.
 func (m *Model) openDetail() {
 	var id string
 	switch m.view {
@@ -49,9 +55,12 @@ func (m *Model) openDetail() {
 		if i := m.cursor[paneCards]; i >= 0 && i < len(m.unpriced) {
 			id = m.unpriced[i].ScryfallID
 		}
-	default:
-		m.status, m.statusErr = "card detail works on holdings, watches, market and unpriced — press v to come back", true
-		return
+	case viewMovers:
+		// And a mover — each row is one printing in one finish, and the
+		// detail's sparklines answer the question its delta raises.
+		if i := m.cursor[paneCards]; i >= 0 && i < len(m.movers) {
+			id = m.movers[i].ScryfallID
+		}
 	}
 	if id == "" {
 		return
@@ -82,39 +91,38 @@ func (m *Model) openDetail() {
 	m.detail = &d
 }
 
-// detailLines renders the overlay.
+// frameWidth is the widest the card-frame block draws. Oracle text at a
+// couple hundred columns is a ribbon, not a text box, and the stat line is
+// anchored to this block's right edge — the terminal's far corner would
+// disown it.
+const frameWidth = 66
+
+// detailLines renders the overlay: the card first, laid out the way the
+// physical card is — name and cost, type and rarity, the text box, flavor,
+// the stat box bottom-right, the artist line as the frame's footer — then
+// hoard's own facts (holdings, prices) below it. Card first also means the
+// no-scroll overflow eats hoard data, never the card.
 func (m Model) detailLines(d detail, width int) []string {
 	dim := m.theme.Help.Render
 	var out []string
-	add := func(format string, args ...any) {
-		out = append(out, ui.Truncate(fmt.Sprintf(format, args...), width))
-	}
 
 	c := d.card
-	// The name wears its identity — bold, tinted the way its row in the
-	// table is; the fullest expression of the theme lives here.
-	name := m.theme.Identity(c.ColorIdentity).Bold(true).Render(ui.Truncate(c.Name, width))
-	out = append(out, name)
+	cardW := min(width, frameWidth)
 
-	// The type line and mana cost sit together the way they do on the card,
-	// the cost's symbols in their pip colors.
-	if line := joinNonEmpty("  ", deref(c.TypeLine), m.theme.ManaCost(deref(c.ManaCost))); line != "" {
+	// The name wears its identity — bold, tinted the way its row in the
+	// table is — with the printed cost beside it, symbols in pip colors.
+	name := m.theme.Identity(c.ColorIdentity).Bold(true).Render(ui.Truncate(c.Name, width))
+	if cost := deref(c.ManaCost); cost != "" {
+		name += "  " + m.theme.ManaCost(cost)
+	}
+	out = append(out, ui.Truncate(name, width))
+
+	if line := joinNonEmpty(" · ", deref(c.TypeLine), deref(c.Rarity)); line != "" {
 		out = append(out, ui.Truncate(line, width))
 	}
-	printing := ui.Printing(c.SetCode, c.CollectorNumber)
-	if c.SetName != nil {
-		printing = *c.SetName + " · " + printing
-	}
-	if c.Rarity != nil {
-		printing += " · " + *c.Rarity
-	}
-	out = append(out, dim(ui.Truncate(printing, width)))
-	if meta := joinNonEmpty(" · ", deref(c.Artist), deref(c.ReleasedAt)); meta != "" {
-		out = append(out, dim(ui.Truncate(meta, width)))
-	}
 
-	// An un-refreshed card has none of the above. Say why once rather than
-	// leaving the reader to wonder what happened to the card's details.
+	// An un-refreshed card has none of the frame fields. Say why once
+	// rather than leaving the reader to wonder what happened to the card.
 	if !c.Enriched {
 		out = append(out, dim("card details not stored yet — press : and run Update prices"))
 	}
@@ -122,9 +130,28 @@ func (m Model) detailLines(d detail, width int) []string {
 	if c.OracleText != nil && *c.OracleText != "" {
 		out = append(out, "")
 		for _, para := range strings.Split(*c.OracleText, "\n") {
-			out = append(out, wrap(para, width)...)
+			out = append(out, wrap(para, cardW)...)
 		}
 	}
+	if flavor := deref(c.FlavorText); flavor != "" {
+		out = append(out, "")
+		for _, para := range strings.Split(flavor, "\n") {
+			for _, line := range wrap(para, cardW) {
+				out = append(out, dim(line))
+			}
+		}
+	}
+	// The stat box, bottom-right of the frame the way the card prints it:
+	// power/toughness for creatures, loyalty for planeswalkers.
+	if stat := statBox(c); stat != "" {
+		styled := m.theme.Title.Render(stat)
+		out = append(out, strings.Repeat(" ", max(cardW-len(stat), 0))+styled)
+	}
+	// The frame's footer: who drew it, where and when it was printed.
+	footer := joinNonEmpty(" · ",
+		deref(c.Artist), deref(c.SetName),
+		ui.Printing(c.SetCode, c.CollectorNumber), deref(c.ReleasedAt))
+	out = append(out, dim(ui.Truncate(footer, width)))
 
 	out = append(out, "", m.theme.Title.Render("HELD"))
 	if len(d.holdings) == 0 {
@@ -141,7 +168,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		if h.Finish != "nonfoil" {
 			parts = append(parts, h.Finish)
 		}
-		add("  %s", strings.Join(append(parts, where), " · "))
+		out = append(out, ui.Truncate("  "+strings.Join(append(parts, where), " · "), width))
 	}
 
 	out = append(out, "", m.theme.Title.Render("PRICE"))
@@ -204,7 +231,20 @@ func safeFrac(delta, base float64) float64 {
 	return delta / base
 }
 
-// wrap breaks a paragraph to width, on spaces.
+// statBox is the card's bottom-right stat: "10/10" for a creature,
+// "loyalty 4" for a planeswalker, empty for everything else.
+func statBox(c store.CardDetail) string {
+	if p, t := deref(c.Power), deref(c.Toughness); p != "" || t != "" {
+		return p + "/" + t
+	}
+	if l := deref(c.Loyalty); l != "" {
+		return "loyalty " + l
+	}
+	return ""
+}
+
+// wrap breaks a paragraph to width, on spaces, measuring display cells —
+// em dashes and pips are one cell however many bytes they take.
 func wrap(s string, width int) []string {
 	if width <= 0 {
 		return nil
@@ -216,7 +256,7 @@ func wrap(s string, width int) []string {
 	var out []string
 	line := words[0]
 	for _, w := range words[1:] {
-		if len(line)+1+len(w) > width {
+		if ansi.StringWidth(line)+1+ansi.StringWidth(w) > width {
 			out = append(out, line)
 			line = w
 			continue

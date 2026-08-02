@@ -91,9 +91,12 @@ type Model struct {
 	// stdout by New, pinned by WithEnv in tests. Its Color field is what
 	// makes browse honor NO_COLOR; width still arrives per-frame from
 	// WindowSizeMsg. theme is the shared ui palette; no styles are defined
-	// in this package.
-	env   ui.Env
-	theme ui.Theme
+	// in this package. imgTier is what DetectImageTier decided the terminal
+	// can draw (the card-image spike); imageFetch is its injected fetch.
+	env        ui.Env
+	theme      ui.Theme
+	imgTier    ui.ImageTier
+	imageFetch CardImageFunc
 
 	width, height int
 	ready         bool
@@ -254,7 +257,7 @@ func New(st Store, opts ...Option) (Model, error) {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
-		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(),
+		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		commands: commands()}
 	for _, opt := range opts {
 		opt(&m)
@@ -565,6 +568,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case marketMsg:
 		return m.onMarket(msg)
+	case imageMsg:
+		return m.onImage(msg)
 	case opProgressMsg:
 		return m.onOpProgress(msg)
 	case opDoneMsg:
@@ -677,6 +682,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.openDetail()
+			return m, m.fetchDetailImage()
 		} else {
 			// Enter on a container is "show me this one", which means moving to
 			// its cards — the same thing tab does, but where the hand already is.

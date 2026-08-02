@@ -38,6 +38,7 @@ var migrations = []migration{
 	{8, renameNonfoil},
 	{9, valueSnapshots},
 	{10, watchesTable},
+	{11, cardFaceDetails},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -310,6 +311,31 @@ CREATE TABLE watches (
     last_state  TEXT NOT NULL DEFAULT '',
     UNIQUE(scryfall_id, finish, op)
 );`
+
+// cardFaceDetails projects the fields the card-frame detail layout reads:
+// the stat box (power/toughness for creatures, loyalty for planeswalkers),
+// the flavor text, and the card image's URL for the terminals that can
+// draw one. Same one-line-ALTER pattern as richCardData (v5): VIRTUAL
+// columns over raw_json, so nothing is rebuilt and unenriched rows read
+// NULL. Multi-faced cards COALESCE to face 0, the face the columns above
+// already show; image_uris in particular is absent at the root on
+// transform/modal_dfc layouts.
+const cardFaceDetails = `
+ALTER TABLE cards ADD COLUMN power TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.power'),
+                                  json_extract(raw_json,'$.card_faces[0].power'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN toughness TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.toughness'),
+                                  json_extract(raw_json,'$.card_faces[0].toughness'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN loyalty TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.loyalty'),
+                                  json_extract(raw_json,'$.card_faces[0].loyalty'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN flavor_text TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.flavor_text'),
+                                  json_extract(raw_json,'$.card_faces[0].flavor_text'))) VIRTUAL;
+ALTER TABLE cards ADD COLUMN image_uri TEXT
+    GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.image_uris.normal'),
+                                  json_extract(raw_json,'$.card_faces[0].image_uris.normal'))) VIRTUAL;`
 
 // migrate brings the database up to schemaVersion, backing it up first.
 //

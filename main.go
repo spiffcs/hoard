@@ -339,6 +339,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 
 	sum, err := browse.Run(ctx, st,
 		browse.WithConfirm(confirmCh),
+		browse.WithCardImage(fetchCardImage),
 		browse.WithDeckAddByURL(func(ctx context.Context, p progress.Fn, rawURL string) (browse.OpReport, error) {
 			deck, ferr := decksource.Fetch(ctx, rawURL)
 			if ferr != nil {

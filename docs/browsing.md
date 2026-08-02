@@ -25,7 +25,7 @@ shows what is inside whichever container you have selected.
 |---|---|
 | <kbd>tab</kbd> / <kbd>←</kbd> <kbd>→</kbd> / <kbd>h</kbd> <kbd>l</kbd> | switch pane |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd> | move · <kbd>pgup</kbd>/<kbd>pgdn</kbd> page · <kbd>g</kbd>/<kbd>G</kbd> jump to ends |
-| <kbd>enter</kbd> | card detail — printings, where it's held, price history |
+| <kbd>enter</kbd> | card detail — printings, where it's held, price history (from every view) |
 | <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it · <kbd>ctrl+u</kbd> wipes the bar |
 | <kbd>s</kbd> | sort by value → name → quantity |
 | <kbd>v</kbd> | switch view: holdings → movers → unpriced → watches → market |
@@ -52,6 +52,24 @@ cards already in your binder and a one-line receipt on the status line. A
 long operation (a price update, a backfill) keeps running behind it. The
 full scan receipt still prints to the terminal scrollback when you quit the
 browser, so the record of unattended writes outlives the alternate screen.
+
+## Card images
+
+The detail view draws the card itself to the right of its text when the
+terminal can: Ghostty, Kitty and WezTerm get the real image (kitty
+graphics protocol); iTerm2 and any other truecolor terminal get a
+halfblock rendering. Each card's scan is fetched once from Scryfall
+(~100 KB) and cached in the per-user cache directory (macOS:
+`~/Library/Caches/hoard/images`) — never in hoard.db, so the database
+backup stays lean and losing the cache costs only a refetch. The text
+never waits on the picture, and a terminal too narrow for both shows
+text only.
+
+`HOARD_CARD_IMAGES=0` turns images off; `=kitty` or `=halfblock` forces
+a tier past the terminal detection (say, a terminal that speaks the
+kitty protocol under a name hoard doesn't know). `NO_COLOR` disables
+them along with everything else, and tmux/screen show no images —
+graphics passthrough through a multiplexer is not supported.
 
 ## Views
 

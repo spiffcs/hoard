@@ -94,9 +94,22 @@ func (m Model) writeHelp(b *strings.Builder, help string) {
 //
 // It replaces the panes rather than floating over them: the oracle text and
 // price history need the width, and a box drawn over a table leaves fragments
-// of card names showing around its edges that read as corruption.
+// of card names showing around its edges that read as corruption. When the
+// image spike has a card image, it sits to the right of the text — the text
+// keeps the left margin the eye reads from, the picture illustrates it. On a
+// terminal too narrow for both, the text wins and the image waits.
 func (m Model) detailView() string {
-	lines := m.detailLines(*m.detail, m.width)
+	img := m.detail.image
+	textW := m.width
+	if len(img) > 0 && m.width >= imageCols+50 {
+		textW = m.width - imageCols - 2
+	} else {
+		img = nil
+	}
+	lines := m.detailLines(*m.detail, textW)
+	if img != nil {
+		lines = besideImage(img, lines, textW)
+	}
 
 	var b strings.Builder
 	for i := range m.visibleRows() + 1 {
@@ -123,6 +136,25 @@ func (m Model) detailView() string {
 	}
 	m.writeHelp(&b, m.helpLine())
 	return b.String()
+}
+
+// besideImage lays the image block to the right of the text block: each
+// text line is padded to the text column's width so the image's left edge
+// stays straight, and rows past the image's bottom need no padding at all.
+func besideImage(img, text []string, textW int) []string {
+	out := make([]string, 0, max(len(img), len(text)))
+	for i := range max(len(img), len(text)) {
+		var left string
+		if i < len(text) {
+			left = text[i]
+		}
+		if i >= len(img) {
+			out = append(out, left)
+			continue
+		}
+		out = append(out, fit(left, textW)+"  "+img[i])
+	}
+	return out
 }
 
 // paneWidths splits the terminal between the two panes.
@@ -451,7 +483,7 @@ func (m Model) helpLine() string {
 		// here once hid that watches can be added at all.
 		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
 		return "F refresh prices · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:

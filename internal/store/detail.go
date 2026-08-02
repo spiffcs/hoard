@@ -25,6 +25,16 @@ type CardDetail struct {
 	Layout     *string
 	CMC        *float64
 
+	// The card-frame fields (migration v11): the stat box — Power and
+	// Toughness for creatures, Loyalty for planeswalkers — the flavor
+	// text, and the normal-size card image's URL. Power and toughness are
+	// text because the game prints non-numbers there ("*", "1+*").
+	Power      *string
+	Toughness  *string
+	Loyalty    *string
+	FlavorText *string
+	ImageURI   *string
+
 	// Enriched is false when no Scryfall document is stored for this printing,
 	// so a caller can say "run update-prices" once rather than printing unknown
 	// against every field in turn.
@@ -37,6 +47,7 @@ var cardDetailCols = `
 SELECT ` + cardCols(altSourceExpr) + `,
        c.rarity, c.set_name, c.type_line, c.oracle_text,
        c.artist, c.released_at, c.layout, c.cmc,
+       c.power, c.toughness, c.loyalty, c.flavor_text, c.image_uri,
        c.raw_json IS NOT NULL
 FROM cards c ` + altJoinCards
 
@@ -49,6 +60,7 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 	if err := row.Scan(append(cardScanDest(&d.Card, &aux),
 		&d.Rarity, &d.SetName, &d.TypeLine, &d.OracleText,
 		&d.Artist, &d.ReleasedAt, &d.Layout, &d.CMC,
+		&d.Power, &d.Toughness, &d.Loyalty, &d.FlavorText, &d.ImageURI,
 		&d.Enriched)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}

@@ -2,6 +2,7 @@ package browse
 
 import (
 	"context"
+	"image"
 	"slices"
 	"strconv"
 	"strings"
@@ -1348,7 +1349,7 @@ func TestViewRowCountFollowsTheMode(t *testing.T) {
 func TestAnalyticalViewsRefuseHoldingActions(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		{Name: "Riser", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
+		{ScryfallID: "riser-id", Name: "Riser", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
 	}
 	m := newTestModel(t, st)
 	before := len(st.collection)
@@ -1365,11 +1366,14 @@ func TestAnalyticalViewsRefuseHoldingActions(t *testing.T) {
 		t.Error("staged a removal from the movers view")
 	}
 
+	// A detail lookup is not an edit: a mover names one printing and its
+	// sparklines answer the very question the row's delta raises.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if m.detail != nil {
-		t.Error("opened card detail from the movers view")
+	if m.detail == nil {
+		t.Fatal("enter on a mover did not open the card detail")
 	}
+	m = key(m, "esc") // close the overlay before walking on
 
 	// Nothing was touched.
 	m = key(m, "v")
@@ -2141,5 +2145,99 @@ func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
 	}
 	if m.marketLoaded {
 		t.Fatal("no cache: the view must wait for F")
+	}
+}
+
+// The detail overlay reads like the card: name and cost, type and rarity,
+// the text box, flavor, the stat bottom-right, the artist footer — then
+// hoard's own facts below, so overflow eats them and never the card.
+func TestDetailLinesCardFrameOrder(t *testing.T) {
+	m := newTestModel(t, testStore())
+	p := func(s string) *string { return &s }
+	d := detail{card: store.CardDetail{
+		Card: store.Card{Name: "Ulamog, the Infinite Gyre", SetCode: "uma",
+			CollectorNumber: "7", ColorIdentity: []string{}, ManaCost: p("{11}")},
+		TypeLine: p("Legendary Creature — Eldrazi"), Rarity: p("mythic"),
+		OracleText: p("Annihilator 4"), FlavorText: p("A rising dread."),
+		Power: p("10"), Toughness: p("10"),
+		Artist: p("Mark Tedin"), SetName: p("Ultimate Masters"), ReleasedAt: p("2018-12-07"),
+		Enriched: true,
+	}}
+	lines := m.detailLines(d, 80)
+	joined := strings.Join(lines, "\n")
+
+	last := -1
+	for _, want := range []string{
+		"Ulamog, the Infinite Gyre", "{11}",
+		"Legendary Creature — Eldrazi · mythic",
+		"Annihilator 4",
+		"A rising dread.",
+		"10/10",
+		"Mark Tedin · Ultimate Masters · uma/7 · 2018-12-07",
+		"HELD", "PRICE",
+	} {
+		i := strings.Index(joined, want)
+		if i < 0 {
+			t.Fatalf("detail is missing %q:\n%s", want, joined)
+		}
+		if i < last {
+			t.Errorf("%q renders out of card-frame order:\n%s", want, joined)
+		}
+		last = i
+	}
+	for _, l := range lines {
+		if strings.HasSuffix(strings.TrimRight(l, " "), "10/10") && !strings.HasPrefix(l, "  ") {
+			t.Errorf("the stat box is not anchored right: %q", l)
+		}
+	}
+
+	// An unenriched card keeps its remedy line, above everything hoard says.
+	bare := detail{card: store.CardDetail{Card: store.Card{Name: "Mystery"}}}
+	if got := strings.Join(m.detailLines(bare, 80), "\n"); !strings.Contains(got, "run Update prices") {
+		t.Errorf("unenriched detail lost its remedy line:\n%s", got)
+	}
+}
+
+// The image spike: the fetch command renders the tier's block and the
+// message attaches only to the detail that asked — a slow fetch must not
+// decorate a card the user has since navigated to.
+func TestDetailImageAttachesToItsCard(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.imgTier = ui.ImageHalfblock
+	m.imageFetch = func(ctx context.Context, id, url string) (image.Image, error) {
+		img := image.NewRGBA(image.Rect(0, 0, 2, 4))
+		return img, nil
+	}
+	uri := "https://img/card.jpg"
+	m.detail = &detail{card: store.CardDetail{}}
+	m.detail.card.ScryfallID = "sf1"
+	m.detail.card.ImageURI = &uri
+
+	cmd := m.fetchDetailImage()
+	if cmd == nil {
+		t.Fatal("no fetch command despite tier, fetcher and URL")
+	}
+	msg, ok := cmd().(imageMsg)
+	if !ok || msg.scryfallID != "sf1" || len(msg.lines) == 0 {
+		t.Fatalf("fetch produced %#v", msg)
+	}
+
+	next, _ := m.Update(msg)
+	if got := next.(Model).detail.image; len(got) == 0 {
+		t.Error("image did not attach to its detail")
+	}
+
+	// The same message against a different open card attaches nothing.
+	m.detail = &detail{card: store.CardDetail{}}
+	m.detail.card.ScryfallID = "other"
+	next, _ = m.Update(msg)
+	if got := next.(Model).detail.image; got != nil {
+		t.Error("a stale image decorated the wrong card")
+	}
+
+	// No tier → no fetch, whatever else is present.
+	m.imgTier = ui.ImageNone
+	if m.fetchDetailImage() != nil {
+		t.Error("fetch offered on an incapable terminal")
 	}
 }
