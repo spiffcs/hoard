@@ -1,6 +1,6 @@
 # Sprint: Parity — action layer, progress, palette
 
-**Status: IN PROGRESS** (started 2026-07-31). Designed the same day in a
+**Status: COMPLETE** (started and finished 2026-07-31; ~15 commits). Designed the same day in a
 plan-mode session (two design passes: action-layer contract, TUI
 interaction model). Written so a fresh session — human or AI — can execute
 with zero prior context. Update the status markers as phases land. See
@@ -261,7 +261,7 @@ stays nil (declines downloads; a modal confirm is future work, noted in
 main.go). ui.ProgressBar/ProgressCounts exported and shared with the CLI
 printer. Nine op tests; model_test untouched; six baselines identical.
 
-### ⬜ P5 — Quick wins (M; independent once P2–P4 exist)
+### ✅ P5 — Quick wins (M; independent once P2–P4 exist)
 
 - **Watches view**: in the `v` cycle before arbitrage (holdings → movers →
   unpriced → watches → arbitrage — the network view keeps the last slot).
@@ -292,6 +292,21 @@ printer. Nine op tests; model_test untouched; six baselines identical.
 - **Movers window `W`**: `moversWindow` const → `m.moversDays` cycling
   7 → 30 → 90; `loadView` re-query (milliseconds); header already names
   the date; palette gets direct jumps (`Movers: last 7 days`…).
+
+**Landed** (2026-07-31), all five: watches view in the v cycle (met rows
+bold and leading via the "state" default sort; enter opens card detail —
+openDetail now accepts watches rows; d removes with re-add undo; w edits
+via the same prompt), the read-only fired banner (WouldFire; 1/2/many
+phrasings; dismissed by any status-clearing key; state verified untouched),
+w add-watch from subjectCard (holdings/movers/watches/unpriced rows and
+the open detail; parseThreshold handles bare/under/over/</>/$ forms with
+direction inferred from the current price, refusing bare numbers on
+unpriced cards and etched subjects), binder n/R/d with undo pairs
+(create↔delete, rename↔back; default binder refuses both; store's
+non-empty refusal flows to the status line; IsDefault carried on
+DeckSummary), and W cycling 30→7→90 with palette direct jumps. The v-cycle
+tests updated for five views — the one expected behavioral change.
+**Sprint complete: P0–P5 all landed 2026-07-31.**
 
 ## Verification
 

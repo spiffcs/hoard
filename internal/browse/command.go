@@ -14,6 +14,8 @@ package browse
 // "down" would be noise.
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -138,7 +140,67 @@ func commands() []command {
 			where: func(m *Model) bool { return m.op != nil },
 			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
 		},
+		{
+			id: "watch.add", title: "Watch this card…", aliases: "alert threshold price under over",
+			key:   "w",
+			where: func(m *Model) bool { return m.subjectCard() != nil },
+			run:   func(m *Model) tea.Cmd { m.promptWatch(); return nil },
+		},
+		{
+			id: "binder.new", title: "New binder…", aliases: "create folder",
+			key: "n",
+			run: func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
+		},
+		{
+			id: "binder.rename", title: "Rename binder…", aliases: "name folder",
+			key: "R",
+			run: func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
+		},
+		{
+			id: "movers.window", title: "Movers: cycle the window", aliases: "since days lookback",
+			key:   "W",
+			where: func(m *Model) bool { return m.view == viewMovers },
+			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
+		},
+		{
+			id: "movers.7", title: "Movers: last 7 days", aliases: "week window since",
+			run: func(m *Model) tea.Cmd { return m.jumpMovers(7) },
+		},
+		{
+			id: "movers.30", title: "Movers: last 30 days", aliases: "month window since",
+			run: func(m *Model) tea.Cmd { return m.jumpMovers(30) },
+		},
+		{
+			id: "movers.90", title: "Movers: last 90 days", aliases: "quarter window since",
+			run: func(m *Model) tea.Cmd { return m.jumpMovers(90) },
+		},
 	}
+}
+
+// cycleMoversWindow advances the movers lookback and re-queries — a
+// milliseconds-cheap read, exactly what the CLI's --since parameterizes.
+func (m *Model) cycleMoversWindow() tea.Cmd {
+	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(moversWindowDays)
+	if err := m.loadView(); err != nil {
+		m.setError(err)
+		return nil
+	}
+	m.cursor[paneCards], m.offset[paneCards] = 0, 0
+	m.status = fmt.Sprintf("movers · last %d days", moversWindowDays[m.moversDaysIdx])
+	m.statusErr = false
+	return nil
+}
+
+// jumpMovers goes straight to the movers view at one lookback.
+func (m *Model) jumpMovers(days int) tea.Cmd {
+	for i, d := range moversWindowDays {
+		if d == days {
+			m.moversDaysIdx = i
+		}
+	}
+	cmd := m.showView(viewMovers)
+	m.status = fmt.Sprintf("movers · last %d days", days)
+	return cmd
 }
 
 // applies reports whether a command is available right now.

@@ -34,6 +34,9 @@ type container struct {
 	Kind   string
 	Copies int
 	Value  float64
+	// isDefault marks the built-in binder, which cannot be renamed or
+	// removed; carried from the store rather than inferred from position.
+	isDefault bool
 
 	// meta is what a deck needs to be recreated after it is removed. Carried on
 	// the row rather than re-read at deletion time because by then the container
@@ -143,6 +146,10 @@ type Model struct {
 	view     viewMode
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
+	watches  []store.WatchStatus
+
+	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
+	moversDaysIdx int
 
 	// valueSeries backs the holdings header's sparkline: the whole hoard's
 	// worth over time, loaded once and on reload like everything else.
@@ -204,7 +211,32 @@ func New(st Store, opts ...Option) (Model, error) {
 	if err := m.loadValueSeries(); err != nil {
 		return Model{}, err
 	}
+	m.showFiredBanner()
 	return m, nil
+}
+
+// showFiredBanner previews the watches whose thresholds hold unacknowledged
+// — read-only, never consuming the alert (cron's `hoard watch` stays the
+// consumer of record), which is why it repeats on every open until a real
+// check runs. It is a transient status: the first status-clearing key
+// dismisses it.
+func (m *Model) showFiredBanner() {
+	fired, err := m.store.WouldFire()
+	if err != nil || len(fired) == 0 {
+		return
+	}
+	switch {
+	case len(fired) == 1:
+		w := fired[0]
+		m.status = fmt.Sprintf("1 watch met its threshold — %s %s %s · v to view",
+			w.Name, w.Op, ui.Money(w.Threshold))
+	case len(fired) == 2:
+		m.status = fmt.Sprintf("2 watches met their threshold — %s %s %s, %s %s %s · v to view",
+			fired[0].Name, fired[0].Op, ui.Money(fired[0].Threshold),
+			fired[1].Name, fired[1].Op, ui.Money(fired[1].Threshold))
+	default:
+		m.status = fmt.Sprintf("%d watches met their threshold · v to view", len(fired))
+	}
 }
 
 // loadValueSeries reads the hoard-value history behind the header sparkline.
@@ -242,7 +274,7 @@ func (m *Model) loadContainers() error {
 	for _, b := range binders {
 		out = append(out, container{
 			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
-			Copies: b.TotalCopies, Value: b.Value,
+			Copies: b.TotalCopies, Value: b.Value, isDefault: b.IsDefault,
 		})
 	}
 	for _, d := range store.DecksByValue(decks) {
@@ -626,7 +658,11 @@ func (m *Model) askRemoval() {
 			return
 		}
 		if sel.Kind == store.KindCollection {
-			m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
+			if sel.isDefault {
+				m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
+				return
+			}
+			m.askBinderRemoval(sel)
 			return
 		}
 		m.confirm = &pendingConfirm{
@@ -634,6 +670,15 @@ func (m *Model) askRemoval() {
 				sel.Name, ui.Count(sel.Copies)),
 			onYes: func(m *Model) tea.Cmd { m.removeDeck(); return nil },
 		}
+		return
+	}
+
+	// On the watches view, 'd' removes the watch under the cursor.
+	if w := m.selectedWatch(); w != nil {
+		m.askWatchRemoval(*w)
+		return
+	}
+	if m.view == viewWatches {
 		return
 	}
 

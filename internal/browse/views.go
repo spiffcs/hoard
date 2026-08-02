@@ -23,6 +23,7 @@ const (
 	viewHoldings viewMode = iota
 	viewMovers
 	viewUnpriced
+	viewWatches
 	viewArbitrage
 )
 
@@ -32,6 +33,8 @@ func (v viewMode) String() string {
 		return "movers"
 	case viewUnpriced:
 		return "unpriced"
+	case viewWatches:
+		return "watches"
 	case viewArbitrage:
 		return "arbitrage"
 	}
@@ -40,9 +43,18 @@ func (v viewMode) String() string {
 
 func (v viewMode) next() viewMode { return (v + 1) % (viewArbitrage + 1) }
 
-// moversWindow is how far back the movers view looks. The same default as
-// `hoard movers`, so the two agree.
-const moversWindow = 30 * 24 * time.Hour
+// moversWindowDays are the lookbacks the movers view cycles through with
+// 'W'; the default matches `hoard movers`, so the two agree.
+var moversWindowDays = []int{30, 7, 90}
+
+// moversWindow is the current lookback.
+func (m Model) moversWindow() time.Duration {
+	days := moversWindowDays[0]
+	if m.moversDaysIdx > 0 {
+		days = moversWindowDays[m.moversDaysIdx%len(moversWindowDays)]
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
 
 // loadView reads whichever analysis the right pane is showing.
 //
@@ -51,7 +63,7 @@ const moversWindow = 30 * 24 * time.Hour
 func (m *Model) loadView() error {
 	switch m.view {
 	case viewMovers:
-		since := m.now().Add(-moversWindow).UTC().Format(time.RFC3339)
+		since := m.now().Add(-m.moversWindow()).UTC().Format(time.RFC3339)
 		changes, err := m.store.Movers(since)
 		if err != nil {
 			return fmt.Errorf("reading movers: %w", err)
@@ -65,6 +77,14 @@ func (m *Model) loadView() error {
 			return fmt.Errorf("reading unpriced cards: %w", err)
 		}
 		m.unpriced = rows
+		m.applySort()
+		return nil
+	case viewWatches:
+		rows, err := m.store.ListWatches()
+		if err != nil {
+			return fmt.Errorf("reading watches: %w", err)
+		}
+		m.watches = rows
 		m.applySort()
 		return nil
 	}
@@ -87,6 +107,8 @@ func (m Model) viewRowCount() int {
 		return len(m.movers)
 	case viewUnpriced:
 		return len(m.unpriced)
+	case viewWatches:
+		return len(m.watches)
 	case viewArbitrage:
 		return len(m.arbRows)
 	}
@@ -144,7 +166,7 @@ func (m Model) viewHeader() (title, totals string) {
 		for _, c := range m.movers {
 			net += c.TotalDelta()
 		}
-		since := m.now().Add(-moversWindow).Local().Format("2 Jan")
+		since := m.now().Add(-m.moversWindow()).Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since,
 			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), ui.SignedMoney(net))
 	case viewArbitrage:
@@ -156,6 +178,15 @@ func (m Model) viewHeader() (title, totals string) {
 		}
 		return "UNPRICED", fmt.Sprintf("%s printings · %s copies",
 			ui.Count(len(m.unpriced)), ui.Count(copies))
+	case viewWatches:
+		met := 0
+		for _, w := range m.watches {
+			if w.Met() {
+				met++
+			}
+		}
+		return "WATCHES", fmt.Sprintf("%s watches · %s met",
+			ui.Count(len(m.watches)), ui.Count(met))
 	}
 	if sel := m.selectedContainer(); sel != nil {
 		return "CARDS · " + strings.ToUpper(sel.Name),

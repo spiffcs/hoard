@@ -223,6 +223,8 @@ func (m Model) containerLines(width int) []string {
 // rightLines renders whichever analysis the right pane is showing.
 func (m Model) rightLines(width int) []string {
 	switch m.view {
+	case viewWatches:
+		return m.watchesLines(width)
 	case viewMovers:
 		return m.moversLines(width)
 	case viewUnpriced:

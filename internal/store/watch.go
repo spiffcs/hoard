@@ -207,3 +207,22 @@ func (s *Store) RemoveWatch(id int64) error {
 	}
 	return nil
 }
+
+// WouldFire returns the watches whose condition holds now but did not at
+// the last recorded check — exactly what CheckWatches would report —
+// without writing any state. The browser's banner previews alerts this
+// way: a glance at the TUI is not an acknowledgment, and consuming the
+// crossing here would silently eat the alert a cron report depends on.
+func (s *Store) WouldFire() ([]WatchStatus, error) {
+	all, err := s.ListWatches()
+	if err != nil {
+		return nil, err
+	}
+	var fired []WatchStatus
+	for _, w := range all {
+		if w.PriceUSD != nil && w.Met() && w.LastState != "met" {
+			fired = append(fired, w)
+		}
+	}
+	return fired, nil
+}

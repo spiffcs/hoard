@@ -41,6 +41,7 @@ func (s *Store) ListBinders() ([]DeckSummary, error) {
 	}
 	rows, err := s.db.Query(`
 SELECT ct.id, `+containerLabel+`, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
+       ct.source_id = '`+collectionSourceID+`' AS is_default,
        COUNT(e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
        COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
@@ -62,7 +63,7 @@ ORDER BY CASE WHEN ct.source_id = '`+collectionSourceID+`' THEN 0 ELSE 1 END, ct
 		var d DeckSummary
 		d.Kind = KindCollection
 		if err := rows.Scan(&d.ID, &d.Name, &d.Source, &d.SourceURL, &d.Format,
-			&d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
+			&d.IsDefault, &d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

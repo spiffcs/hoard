@@ -136,6 +136,10 @@ type DeckSummary struct {
 	DistinctCards int
 	TotalCopies   int
 	Value         float64
+	// IsDefault marks the built-in binder ListBinders puts first — carried
+	// on the row so no caller has to rely on its position to know which
+	// binder cannot be renamed or removed.
+	IsDefault bool
 }
 
 // SQL fragments for reading prices with the MTGJSON fallback applied. They are

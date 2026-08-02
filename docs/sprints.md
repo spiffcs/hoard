@@ -16,7 +16,7 @@ stable and looks the part.
 |---|--------|--------|-----|
 | 1 | Binders + interop | ✅ complete | [sprint-binders-interop.md](sprint-binders-interop.md) |
 | 2 | Portfolio + scriptability | ✅ complete (A–E; F superseded by parity) | [sprint-portfolio-scriptability.md](sprint-portfolio-scriptability.md) |
-| 3 | Parity — action layer, progress, palette | 🔨 in progress (started 2026-07-31) | [sprint-parity.md](sprint-parity.md) |
+| 3 | Parity — action layer, progress, palette | ✅ complete (2026-07-31) | [sprint-parity.md](sprint-parity.md) |
 | 4 | UI beautification — WUBRG identity | 📋 planned, not started | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
 | 5 | Distribution | 💭 backlog (unplanned) | — |
 
@@ -31,12 +31,11 @@ stable and looks the part.
   header sparkline, `hoard watch` with exit-3 alerts, bulk paste entry.
   Phase F (progress UI) was superseded — it became a pillar of the parity
   sprint.
-- **Parity** (planned): every capability becomes an internal action
-  function with a uniform progress contract; CLI and TUI turn into thin
-  frontends; the TUI gains a `:` command palette, in-TUI
-  update-prices/repair/catalog with live progress, a watches view +
-  fired-watch banner, binder management, and movers window cycling. Key
-  design decisions are already made and recorded in the doc.
+- **Parity** (complete): every capability is an action function with a
+  uniform progress contract; CLI and TUI are thin frontends; the TUI has a
+  `:` command palette, in-TUI update-prices/repair/catalog with live
+  progress, a watches view + fired-watch banner, binder management, and
+  movers window cycling.
 - **UI beautification** (planned): MTG color identity (WUBRG) as the
   design core; runs after parity so it polishes a complete surface.
 - **Distribution** (backlog): goreleaser + Homebrew tap + version in

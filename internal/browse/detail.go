@@ -28,29 +28,39 @@ type detail struct {
 // cursor there indexes a different slice and this would open a card the reader
 // is not pointing at.
 func (m *Model) openDetail() {
-	if m.view != viewHoldings {
-		m.status, m.statusErr = "card detail works on holdings — press v to come back", true
+	var id string
+	switch m.view {
+	case viewHoldings:
+		if c := m.selectedCard(); c != nil {
+			id = c.ScryfallID
+		}
+	case viewWatches:
+		// A watch row names one printing just as well as a holding row.
+		if w := m.selectedWatch(); w != nil {
+			id = w.ScryfallID
+		}
+	default:
+		m.status, m.statusErr = "card detail works on holdings and watches — press v to come back", true
 		return
 	}
-	c := m.selectedCard()
-	if c == nil {
+	if id == "" {
 		return
 	}
 	d := detail{series: map[string][]store.PricePoint{}}
 
 	var err error
-	if d.card, err = m.store.CardDetail(c.ScryfallID); err != nil {
+	if d.card, err = m.store.CardDetail(id); err != nil {
 		m.setError(err)
 		return
 	}
-	if d.holdings, err = m.store.HoldingsOf(c.ScryfallID); err != nil {
+	if d.holdings, err = m.store.HoldingsOf(id); err != nil {
 		m.setError(err)
 		return
 	}
 	// Both finishes, not just the one held: a card owned in non-foil is often
 	// being looked at precisely because its foil is doing something.
 	for _, finish := range []string{"nonfoil", "foil"} {
-		s, err := m.store.PriceSeries(c.ScryfallID, finish)
+		s, err := m.store.PriceSeries(id, finish)
 		if err != nil {
 			m.setError(err)
 			return

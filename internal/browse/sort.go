@@ -26,6 +26,7 @@ var sortColumns = [...][]string{
 	viewHoldings:  {"value", "name", "set/num", "finish", "qty", "price"},
 	viewMovers:    {"impact", "name", "set/num", "finish", "was", "now", "change", "qty"},
 	viewUnpriced:  {"name", "set/num", "finish", "qty", "held in"},
+	viewWatches:   {"state", "name", "watch", "price"},
 	viewArbitrage: {"gain", "name", "set/num", "buy", "from", "sell", "to"},
 }
 
@@ -56,6 +57,8 @@ func (m *Model) reverseSort() {
 func (m *Model) applySort() {
 	key, rev := sortColumns[m.view][m.sortIdx[m.view]], m.sortRev[m.view]
 	switch m.view {
+	case viewWatches:
+		sortRows(m.watches, rev, watchCompare(key))
 	case viewMovers:
 		sortRows(m.movers, rev, moverCompare(key))
 	case viewUnpriced:
@@ -129,6 +132,43 @@ func cardCompare(key string) func(a, b card) int {
 			c = cmp.Compare(priceOrder(b.Price), priceOrder(a.Price))
 		default: // value
 			c = cmp.Compare(b.Value, a.Value)
+		}
+		if c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Finish, b.Finish)
+	}
+}
+
+// watchCompare orders the watches view. The default "state" leads with the
+// watches that have met their threshold — the rows the view exists to
+// surface — then unpriced last, then name.
+func watchCompare(key string) func(a, b store.WatchStatus) int {
+	rank := func(w store.WatchStatus) int {
+		switch {
+		case w.Met():
+			return 0
+		case w.PriceUSD != nil:
+			return 1
+		}
+		return 2 // unpriced
+	}
+	return func(a, b store.WatchStatus) int {
+		var c int
+		switch key {
+		case "name":
+			c = strings.Compare(a.Name, b.Name)
+		case "watch":
+			if c = strings.Compare(a.Op, b.Op); c == 0 {
+				c = cmp.Compare(b.Threshold, a.Threshold)
+			}
+		case "price":
+			c = cmp.Compare(priceOrder(b.PriceUSD), priceOrder(a.PriceUSD))
+		default: // state
+			c = cmp.Compare(rank(a), rank(b))
 		}
 		if c != 0 {
 			return c

@@ -24,6 +24,15 @@ import (
 // a deck removal: RemoveContainer cascades, so the deck is rebuilt from what
 // was read before the delete.
 type Editor interface {
+	// Watches and binders join the edit surface with the parity sprint;
+	// binder methods are store-direct by design (the undo closures need
+	// them).
+	AddWatch(scryfallID, display, finish, op string, threshold float64) error
+	RemoveWatch(id int64) error
+	CreateBinder(name string) (int64, error)
+	RenameBinder(id int64, name string) error
+	DeleteBinder(id int64) error
+
 	SetHoldingQuantityIn(containerID int64, scryfallID, finish string, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)
 	RestoreHoldings(scryfallID string, holdings []store.Holding) error
@@ -59,6 +68,12 @@ type Store interface {
 
 	// The whole hoard over time, for the header sparkline.
 	ValueSnapshots() ([]store.ValuePoint, error)
+
+	// Price watches: the view's rows, and the read-only fired preview the
+	// banner shows on open (never consuming the alert — cron's `hoard
+	// watch` stays the consumer of record).
+	ListWatches() ([]store.WatchStatus, error)
+	WouldFire() ([]store.WatchStatus, error)
 }
 
 // Option configures the browser.

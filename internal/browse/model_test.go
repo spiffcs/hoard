@@ -32,6 +32,9 @@ type fakeStore struct {
 	traits    map[string][]string
 	enriched  int
 	snapshots []store.ValuePoint
+	watches   []store.WatchStatus
+	binders   map[int64]string // extra binders beside the default
+	nextID    int64
 
 	err error // when set, every read fails
 
@@ -93,11 +96,18 @@ func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 		DistinctCards: f.totals.DistinctCards,
 		TotalCopies:   f.totals.TotalCopies,
 		Value:         f.totals.Value,
+		IsDefault:     true,
 	}
 	b.ID = defaultBinderID
 	b.Name = store.LooseName
 	b.Kind = store.KindCollection
-	return []store.DeckSummary{b}, nil
+	out := []store.DeckSummary{b}
+	for id, name := range f.binders {
+		nb := store.DeckSummary{}
+		nb.ID, nb.Name, nb.Kind = id, name, store.KindCollection
+		out = append(out, nb)
+	}
+	return out, nil
 }
 func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) { return f.decks, f.err }
 func (f *fakeStore) BinderByFinish(int64) ([]store.CollectionRow, error) {
@@ -112,6 +122,69 @@ func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
 func (f *fakeStore) ValueSnapshots() ([]store.ValuePoint, error)            { return f.snapshots, f.err }
+func (f *fakeStore) ListWatches() ([]store.WatchStatus, error)              { return f.watches, f.err }
+
+func (f *fakeStore) WouldFire() ([]store.WatchStatus, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var fired []store.WatchStatus
+	for _, w := range f.watches {
+		if w.PriceUSD != nil && w.Met() && w.LastState != "met" {
+			fired = append(fired, w)
+		}
+	}
+	return fired, nil
+}
+
+func (f *fakeStore) AddWatch(id, display, finish, op string, threshold float64) error {
+	if f.err != nil {
+		return f.err
+	}
+	w := store.WatchStatus{Name: display}
+	w.ScryfallID, w.Display, w.Finish, w.Op, w.Threshold = id, display, finish, op, threshold
+	f.watches = append(f.watches, w)
+	return nil
+}
+
+func (f *fakeStore) RemoveWatch(id int64) error {
+	for i, w := range f.watches {
+		if w.ID == id {
+			f.watches = append(f.watches[:i], f.watches[i+1:]...)
+			return nil
+		}
+	}
+	return f.err
+}
+
+func (f *fakeStore) CreateBinder(name string) (int64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if f.binders == nil {
+		f.binders = map[int64]string{}
+	}
+	f.nextID++
+	id := 100 + f.nextID
+	f.binders[id] = name
+	return id, nil
+}
+
+func (f *fakeStore) RenameBinder(id int64, name string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.binders[id] = name
+	return nil
+}
+
+func (f *fakeStore) DeleteBinder(id int64) error {
+	if f.err != nil {
+		return f.err
+	}
+	delete(f.binders, id)
+	return nil
+}
 
 // SetHoldingQuantity mutates the fixture the way the store mutates the
 // database, so an edit followed by an undo is observable end to end.
@@ -1095,6 +1168,10 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	}
 
 	m = key(m, "v")
+	if m.view != viewWatches {
+		t.Errorf("view = %v, want watches", m.view)
+	}
+	m = key(m, "v")
 	if m.view != viewArbitrage {
 		t.Errorf("view = %v, want arbitrage", m.view)
 	}
@@ -1140,6 +1217,7 @@ func TestSortWorksInEveryView(t *testing.T) {
 	}
 
 	// The movers view kept its own reversed-name sort while we were away.
+	m = key(m, "v") // watches
 	m = key(m, "v") // arbitrage
 	m = key(m, "v") // holdings
 	m = key(m, "v") // movers again
@@ -1266,6 +1344,7 @@ func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 	})
 	m = key(m, "v")
 	m = key(m, "v")
+	m = key(m, "v")
 	m = key(m, "v") // → arbitrage
 	if m.view != viewArbitrage {
 		t.Fatalf("view = %v", m.view)
@@ -1284,7 +1363,7 @@ func TestArbitrageFetchesOnEnterAndRenders(t *testing.T) {
 		Compared:      2,
 	}
 	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 
@@ -1323,7 +1402,7 @@ func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
 	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, nil
 	})
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1343,7 +1422,7 @@ func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
 // Without an injected fetch the view says so rather than looking broken.
 func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 	m := newTestModel(t, testStore()) // no WithArbitrage
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1361,7 +1440,7 @@ func TestArbitrageErrorIsShown(t *testing.T) {
 	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, errFake{}
 	})
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1379,7 +1458,7 @@ func TestArbitrageRefusesHoldingActions(t *testing.T) {
 	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) {
 		return arbitrage.Result{}, nil
 	})
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	m = key(m, "+")
@@ -1408,7 +1487,7 @@ func startFetch(t *testing.T) (Model, *capturingArb) {
 	t.Helper()
 	cap := &capturingArb{}
 	m := arbModel(t, cap.fetch)
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
