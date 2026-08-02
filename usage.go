@@ -32,7 +32,7 @@ var usageSections = []struct {
 		{"backfill-prices", "Load 90 days of past prices from MTGJSON"},
 		{"unpriced", "Cards counting as $0.00, and why"},
 		{"repair-finishes", "Fix cards stored as a finish they lack"},
-		{"market [--min N] [--limit N]", "Vendor prices vs what cards last sold for"},
+		{"market [--min N] [--limit N]", "Vendor prices vs TCGplayer's last-sold prices"},
 		{"report [--top N] [--csv] [-o FILE]", "Dated valuation: totals, binders, top holdings"},
 		{"watch", "Check price watches (no network; exit 3 = fired)"},
 		{"watch add <name> --under N|--over N [--foil]", "Alert when a price crosses a threshold"},

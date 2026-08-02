@@ -98,44 +98,48 @@ and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
 
 ```
 MARKET                                           45 rows · 1,260 printings compared
-ARBITRAGE  a buylist pays more than the card last sold for
-NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PROFIT
+ARBITRAGE  buylist pays more than last-sold
+NAME           SET/NUM  FIN  TCG SOLD  BUYLIST  TO           PROFIT
 Tarnished Ci…  ody/329  -        $7.81   $10.50  cardkingdom   +$2.69
 
-EASY TO SELL  a buylist pays at least 70% of the last-sold price
-NAME           SET/NUM  FIN  LAST SOLD  BUYLIST  TO           PAYS
-Thassa, Deep…  thb/71   -       $25.00   $25.00  cardkingdom  100.0%
+EASY TO SELL  buylist pays at least 70% of last-sold · 1–8 of 32
+NAME           SET/NUM  FIN  TCG SOLD  BUYLIST    PAYS
+Thassa, Deep…  thb/71   -       $25.00   $25.00  100.0%
 
-BELOW MARKET  a marketplace is asking far under what the card last sold for
-NAME           SET/NUM  FIN     ASK  AT        LAST SOLD  BELOW
-Glimmerpost    som/223  foil  $1.10  manapool      $3.99  -72.4%
-
-COMPS  a list comparing vendor prices
-NAME           SET/NUM  FIN     MP     CK  AT         MARKET    LOW  BUYLIST  SPREAD
-Ancient Tomb   uma/236  foil    —   $65.00 tcgplayer  $60.00  $60.00   $42.00   30.0%
+COMPS · SELL  vendor sale prices
+NAME           SET/NUM  FIN  TCG SOLD     MP      CK  BUYLIST  SPREAD
+Ancient Tomb   uma/236  foil    $60.00     —   $65.00   $42.00   30.0%
 ```
 
 Everything anchors on tcgplayer's sales-derived market price — the one
-number that describes what cards actually trade at. The four tables hold
+number that describes what cards actually trade at. The three tables hold
 fixed regions of the pane, each with its own headers, and each scrolls
 independently when its rows overflow — the title line says where you are
-(`ARBITRAGE … · 2–4 of 15`), and a table emptied by the collection filter
-keeps its title over a note rather than vanishing. <kbd>]</kbd>/<kbd>[</kbd>
-jump straight to the next or previous table, so reaching COMPS never means
-scrolling three tables' rows one by one. <kbd>enter</kbd> opens any
-row's card detail, and <kbd>s</kbd>/<kbd>S</kbd> sort just the table the
-cursor is in, each keeping its own column and direction. `hoard market`
-prints the same tables with `--min` and `--limit`; see
+(`EASY TO SELL … · 1–8 of 32`), which is how the 70–80% pays tail stays
+reachable rather than hidden under the top of the ranking. A table emptied
+by the collection filter keeps its title over a note rather than
+vanishing. <kbd>]</kbd>/<kbd>[</kbd> jump straight to the next or previous
+table. <kbd>enter</kbd> opens any row's card detail, and
+<kbd>s</kbd>/<kbd>S</kbd> sort just the table the cursor is in, each
+keeping its own column and direction. `hoard market` prints the fuller
+CLI report — including the BELOW MARKET section the browser dropped for
+comps room — with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
 
-**COMPS** is the comp sheet sellers build by hand: for each owned printing,
-tcgplayer's market price (actual sales), each vendor's ask, the lowest of
-them, and the best buylist bid — the card's real value bracket. **SPREAD**
-is retail minus buylist over retail, the hobby's confidence signal: 20–30%
-marks a liquid staple dealers can flip, around 50% is typical, and 80–90%
-means the retail price spiked and no dealer believes it yet — the column
-grades green as it tightens. A dash means no buylist bid today (Card
-Kingdom runs the only buylist in the MTGJSON feed). The comps sort cycles
+**COMPS** is the comp sheet sellers build by hand, and it has two halves —
+<kbd>b</kbd> flips between them. The **sell side** (default) is the comp
+proper: each point of sale's number for the card side by side — tcg's
+last-sold price, manapool's ask, cardkingdom's ask — with the cash bid as
+the floor. **TCG SOLD** is always tcgplayer's sales-derived price, and
+the table's note says so — TCGplayer has no separate ask column because
+that one figure is both its price and its market anchor. The **buy side**
+answers the opposite question, the cheapest copy to acquire: the same
+asks, the lowest of them, and who asks it. **SPREAD** is retail minus
+buylist over retail, the hobby's confidence signal: 20–30% marks a liquid
+staple dealers can flip, around 50% is typical, and 80–90% means the
+retail price spiked and no dealer believes it yet — the column grades
+green as it tightens. A dash means no buylist bid today (Card Kingdom
+runs the only buylist in the MTGJSON feed). The comps sort cycles
 value → spread → market → low → buylist → name; spread sorts tightest
 first.
 

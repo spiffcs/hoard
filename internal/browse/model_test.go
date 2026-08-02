@@ -1365,8 +1365,8 @@ func TestMarketSortIsPerTable(t *testing.T) {
 	m.marketRows = []market.Row{
 		{Kind: market.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
 		{Kind: market.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
-		{Kind: market.KindBelowMarket, Opportunity: opp("Zulu Spread", 1, 0, 5)},
-		{Kind: market.KindBelowMarket, Opportunity: opp("Alpha Spread", 1, 0, 2)},
+		{Kind: market.KindLiquid, Opportunity: opp("Zulu Liquid", 1, 4, 5)},
+		{Kind: market.KindLiquid, Opportunity: opp("Alpha Liquid", 1, 1, 2)},
 	}
 	m.marketLoaded = true
 
@@ -1379,10 +1379,10 @@ func TestMarketSortIsPerTable(t *testing.T) {
 	}
 
 	// Cursor starts in the profit table: s sorts only that table by name;
-	// below-market keeps its own default order (deepest discount first —
-	// Zulu at 80% before Alpha at 50%).
+	// the liquid table keeps its own default order (best pays first — Zulu
+	// at 80% before Alpha at 50%).
 	m = key(m, "s")
-	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Spread", "Alpha Spread"}; !slices.Equal(names(), want) {
+	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Liquid", "Alpha Liquid"}; !slices.Equal(names(), want) {
 		t.Errorf("after sorting profits = %v, want %v", names(), want)
 	}
 	if m.sortLabel() != "arbitrage · name" {
@@ -1392,24 +1392,24 @@ func TestMarketSortIsPerTable(t *testing.T) {
 		t.Errorf("cursor = %d, want the sorted table's first row", m.cursor[paneCards])
 	}
 
-	// Move into the below-market table and sort it too; the profit table's
+	// Move into the liquid table and sort it too; the profit table's
 	// order is untouched, and the cursor lands on that table's first row.
 	m.cursor[paneCards] = 2
 	m = key(m, "s")
-	if want := []string{"Alpha Profit", "Zulu Profit", "Alpha Spread", "Zulu Spread"}; !slices.Equal(names(), want) {
-		t.Errorf("after sorting below-market = %v, want %v", names(), want)
+	if want := []string{"Alpha Profit", "Zulu Profit", "Alpha Liquid", "Zulu Liquid"}; !slices.Equal(names(), want) {
+		t.Errorf("after sorting liquid = %v, want %v", names(), want)
 	}
-	if m.sortLabel() != "below-market · name" {
+	if m.sortLabel() != "liquid · name" {
 		t.Errorf("label = %q", m.sortLabel())
 	}
 	if m.cursor[paneCards] != 2 {
-		t.Errorf("cursor = %d, want the below-market table's first row", m.cursor[paneCards])
+		t.Errorf("cursor = %d, want the liquid table's first row", m.cursor[paneCards])
 	}
 
 	// S reverses only the cursor's table.
 	m = key(m, "S")
-	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Spread", "Alpha Spread"}; !slices.Equal(names(), want) {
-		t.Errorf("after reversing below-market = %v, want %v", names(), want)
+	if want := []string{"Alpha Profit", "Zulu Profit", "Zulu Liquid", "Alpha Liquid"}; !slices.Equal(names(), want) {
+		t.Errorf("after reversing liquid = %v, want %v", names(), want)
 	}
 }
 
@@ -1545,7 +1545,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		t.Fatal("no rows after a successful fetch")
 	}
 	out := m.View()
-	for _, want := range []string{"ARBITRAGE", "a buylist pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
+	for _, want := range []string{"ARBITRAGE", "buylist pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
@@ -1912,7 +1912,7 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	out := m.View()
 	// The liquid section carries its own honest headers: what the card
 	// sells for, what the buylist pays, and the fraction.
-	for _, want := range []string{"EASY TO SELL", "LAST SOLD", "BUYLIST", "PAYS", "90.0%"} {
+	for _, want := range []string{"EASY TO SELL", "TCG SOLD", "BUYLIST", "PAYS", "90.0%"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("liquid section missing %q:\n%s", want, out)
 		}
@@ -1921,7 +1921,7 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	if strings.Contains(out, "Quantum Misalignment") {
 		t.Errorf("sub-floor row must not be listed at all:\n%s", out)
 	}
-	if !strings.Contains(out, "pays $9.00 · it last sold for $10.00") {
+	if !strings.Contains(out, "pays $9.00 · tcg last sold for $10.00") {
 		t.Errorf("status should state both prices plainly:\n%s", out)
 	}
 }

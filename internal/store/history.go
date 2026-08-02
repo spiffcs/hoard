@@ -302,16 +302,25 @@ func backfillStamp(date string) string { return date + "T00:00:00Z" }
 // BackfillPrices loads observations recorded before hoard was watching, and
 // reports how many rows and cards it wrote.
 //
-// `before` bounds the import to the era with no history of its own (pass the
-// oldest as_of from PriceHistoryDepth). Not tidiness: the two sources snapshot at
-// different hours, so an imported point beside a real one for the same day shows
-// up in Movers as movement that never happened.
+// Each series is bounded to the era with no live history of its own: the
+// import stops where that card and finish's own first observation begins.
+// Not tidiness: the two sources snapshot at different hours, so an imported
+// point beside a real one for the same day shows up in Movers as movement
+// that never happened. Per card rather than hoard-wide, because a card
+// added months into the hoard's history has months of archive the rest of
+// the hoard already lived through — a single hoard-wide bound silently
+// discarded all of it, and every deck imported after day one arrived with
+// no baselines (observed live, the Tricky Terrain bug).
 //
-// Where an import collides with a live row the live one stands — it is what was
-// observed, this is what was reconstructed.
-func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation, before string) (inserted, cards int, err error) {
+// Where an import collides with a live row the live one stands — it is what
+// was observed, this is what was reconstructed.
+func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	if len(byCard) == 0 {
 		return 0, 0, nil
+	}
+	firstLive, err := s.firstObservations()
+	if err != nil {
+		return 0, 0, err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -330,7 +339,20 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 
 	for sid, obs := range byCard {
 		var wrote bool
-		for _, o := range compactSeries(obs, before) {
+		// MTGJSON speaks "normal"; the store has spoken "nonfoil" since
+		// schema v8. Translate before compaction so the bound lookup, the
+		// series grouping and the stored row all agree — untranslated rows
+		// join nothing and Movers never sees them (schema v12 repaired the
+		// ones written before this line existed).
+		normalized := make([]mtgjson.Observation, len(obs))
+		for i, o := range obs {
+			if o.Finish == "normal" {
+				o.Finish = "nonfoil"
+			}
+			normalized[i] = o
+		}
+		bound := func(finish string) string { return firstLive[sid+"|"+finish] }
+		for _, o := range compactSeries(normalized, bound) {
 			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
 			if err != nil {
 				return 0, 0, fmt.Errorf("backfilling prices for %s: %w", sid, err)
@@ -350,8 +372,30 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	return inserted, cards, nil
 }
 
+// firstObservations maps every (card, finish) with history to the moment
+// its live history began — the per-series bound BackfillPrices imports up
+// to.
+func (s *Store) firstObservations() (map[string]string, error) {
+	rows, err := s.db.Query(`
+SELECT scryfall_id, finish, MIN(as_of) FROM card_price_history
+GROUP BY scryfall_id, finish`)
+	if err != nil {
+		return nil, fmt.Errorf("reading history bounds: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var sid, finish, oldest string
+		if err := rows.Scan(&sid, &finish, &oldest); err != nil {
+			return nil, err
+		}
+		out[sid+"|"+finish] = oldest
+	}
+	return out, rows.Err()
+}
+
 // compactSeries reduces one card's observations to the days its price moved, per
-// finish, discarding anything at or after before.
+// finish, discarding anything at or after that finish's own bound.
 //
 // MTGJSON quotes every one of its ninety days whether or not the price changed;
 // storing all of them would say nothing new in two orders of magnitude more rows.
@@ -361,13 +405,16 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 // its own. The cutoff compares dates, not timestamps: the two sources snapshot at
 // different hours, and an imported midnight price under an observed morning one is
 // the same-day overlap the bound exists to prevent.
-func compactSeries(obs []mtgjson.Observation, before string) []mtgjson.Observation {
-	if len(before) > len("2006-01-02") {
-		before = before[:len("2006-01-02")]
+func compactSeries(obs []mtgjson.Observation, before func(finish string) string) []mtgjson.Observation {
+	day := func(ts string) string {
+		if len(ts) > len("2006-01-02") {
+			return ts[:len("2006-01-02")]
+		}
+		return ts
 	}
 	byFinish := map[string][]mtgjson.Observation{}
 	for _, o := range obs {
-		if before != "" && o.Date >= before {
+		if b := day(before(o.Finish)); b != "" && o.Date >= b {
 			continue
 		}
 		byFinish[o.Finish] = append(byFinish[o.Finish], o)

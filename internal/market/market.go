@@ -195,11 +195,11 @@ func (k Kind) Title() string {
 func (k Kind) Note() string {
 	switch k {
 	case KindProfit:
-		return "a buylist pays more than the card last sold for"
+		return "CK buylist pays more than TCG last-sold"
 	case KindLiquid:
-		return "a buylist pays at least 70% of the last-sold price"
+		return "CK buylist pays at least 70% of TCG last-sold"
 	}
-	return "a marketplace is asking far under what the card last sold for"
+	return "a marketplace is asking far under tcg's last-sold price"
 }
 
 // liquidFloor is the least a buylist may pay, as a fraction of the sales

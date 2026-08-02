@@ -340,6 +340,20 @@ func commands() []command {
 			where: func(m *Model) bool { return m.view == viewMarket },
 			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(-1); return nil },
 		},
+		{
+			id: "market.comps.side", aliases: "comps buy sell asks bids side",
+			key: "b", hidden: true,
+			where: func(m *Model) bool { return m.view == viewMarket },
+			run: func(m *Model) tea.Cmd {
+				m.compsBuySide = !m.compsBuySide
+				if m.compsBuySide {
+					m.status, m.statusErr = "comps · buy side: every vendor's ask", false
+				} else {
+					m.status, m.statusErr = "comps · sell side: what a sale brings", false
+				}
+				return nil
+			},
+		},
 	}
 }
 

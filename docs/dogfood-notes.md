@@ -58,6 +58,39 @@ with why).
    top-15 per table — and its four tables now hold fixed regions that
    scroll independently, position on the title line, a filtered-empty
    table keeping its title over "none in this collection".
+10. **"Only 4 movers in a 100-card deck" → backfill bug** — ✅ fixed. The
+    store bounded history imports to the era before the *hoard's* oldest
+    observation, so once any card had history, a later-added card could
+    never receive archive points (the archive only reaches ~90 days back,
+    all after that bound). Live diagnosis: 91 of Tricky Terrain's 97
+    printings had history starting on their July 29 import day — no
+    30-day baseline, invisible to Movers by design. The bound is now per
+    card and finish (`firstObservations`), so a new deck backfills up to
+    each card's own first live observation; the same-day-overlap
+    protection is intact per series. `backfillKey` gained a v2 salt so
+    same-day receipts written by the broken path don't mask the fix.
+    The live re-run then exposed a second bug the first had been hiding:
+    the backfill stored observations under MTGJSON's finish vocabulary
+    (`normal`), which Movers' joins (speaking the schema's `nonfoil`)
+    never see — 47k rows inserted, nothing on screen. v8's rename was a
+    one-time repair; the ingest path never translated. Fixed at the store
+    boundary (BackfillPrices maps normal→nonfoil before the bound lookup
+    and compaction) plus schema v12 renaming the stranded rows, same-day
+    collisions keeping the first-recorded row. Residual honesty: foil-held
+    collector printings whose MTGJSON archive only quotes the nonfoil
+    series still have no foil baselines — their history accrues from live
+    observations; a nonfoil archive must not stand in for a foil holding.
+11. **MARKET table feedback** — ✅ done, four changes. The per-table cap
+    rose 15 → 50 (the old cap predates per-section scrolling and was why
+    nothing overflowed and EASY TO SELL never reached its 70–80% tail).
+    BELOW MARKET left the browser — its space serves the comps; the CLI
+    still prints it. The status position counts within the cursor's table
+    (1/50 of the comps), not the flat row space. And COMPS split into two
+    halves on `b`: the sell side (default) is the comp proper — each
+    point of sale's number side by side (last sold, MP/CK asks) with the
+    cash bid as the floor (a first cut graded the bid against last sold;
+    the owner correctly called that a ratio, not a comp) — and the buy
+    side leads with the cheapest ask and who asks it.
 
 ## 2026-08-01 — beautification-sprint build
 

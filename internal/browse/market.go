@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -26,8 +27,11 @@ import (
 // passes nil today and gains a live consumer with the op layer.
 type MarketFunc func(ctx context.Context, p progress.Fn) (market.Result, error)
 
-// marketRowLimit is how many rows each of the three questions contributes.
-const marketRowLimit = 15
+// marketRowLimit is how many rows each table contributes. Generous, not
+// unbounded: the fixed regions scroll, so the tail of a ranking (the 70%
+// pays rows, the cheaper comps) is reachable — but a table is still a
+// ranked answer, not a dump of everything compared.
+const marketRowLimit = 50
 
 // marketMsg carries a finished fetch back into the update loop.
 type marketMsg struct {
@@ -135,10 +139,10 @@ func (m *Model) loadCachedMarket() {
 // marketLines renders the four tables in fixed regions: each section gets
 // a share of the height (marketSectionBudgets) and scrolls its own rows
 // inside it, rather than the pane scrolling as one document — so the
-// four-chart shape holds still while the cursor digs into any one of them.
-// Each section keeps its own title row and column headers, because the
-// four ask different questions and one shared header row was reduced to
-// lying about at least two of them (a "GAIN" over a buylist haircut,
+// three-chart shape holds still while the cursor digs into any one of
+// them. Each section keeps its own title row and column headers, because
+// the tables ask different questions and one shared header row was reduced
+// to lying about at least two of them (a "GAIN" over a buylist haircut,
 // observed live). An overflowing section says where it is in its rows on
 // the title line; an empty one keeps its title over a note, so a table
 // emptied by the container filter reads as filtered, not missing.
@@ -170,7 +174,10 @@ func (m Model) marketLines(width int) []string {
 		if i > 0 {
 			out = append(out, "")
 		}
-		title, note := market.CompsTitle, market.CompsNote
+		title, note := market.CompsTitle+" · SELL", compsSellNote
+		if m.compsBuySide {
+			title, note = market.CompsTitle+" · BUY", compsBuyNote
+		}
 		if i != compsSection {
 			title, note = market.Kind(i).Title(), market.Kind(i).Note()
 		}
@@ -187,7 +194,7 @@ func (m Model) marketLines(width int) []string {
 
 		var t ui.Table
 		if i == compsSection {
-			t = compsSectionTable(env, m.marketComps)
+			t = compsSectionTable(env, m.marketComps, m.compsBuySide)
 		} else {
 			t = marketSectionTable(env, market.Kind(i), m.marketRows[sec.start:sec.start+sec.count])
 		}
@@ -230,7 +237,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 	switch kind {
 	case market.KindProfit:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
+			money("TCG SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
 		for _, r := range rows {
 			// A profit is the one genuine gain on this screen; the ratios in
 			// the other sections stay uncolored — a below-market discount in
@@ -240,19 +247,23 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 				ui.Cell{Text: "+" + ui.Money(r.Profit()), Style: env.Gain()})...)
 		}
 	case market.KindLiquid:
+		// No TO column: Card Kingdom runs the only buylist in the feed, so
+		// a vendor column repeated one name down every row. The status note
+		// still names the bidder, and the column comes back the day a
+		// second buylist source exists.
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
+			money("TCG SOLD"), money("BUYLIST"), money("PAYS")}}
 		for _, r := range rows {
 			// The ratio columns grade on a color ramp — how close to the
 			// section's ideal, not a gain/loss direction.
 			t.Add(append(cardCells(r),
-				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
+				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)),
 				ui.Cell{Text: ui.Percent(r.Liquidity()),
 					Style: env.Grade(market.LiquidityGrade(r.Liquidity()))})...)
 		}
 	default:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("ASK"), vendor("AT"), money("LAST SOLD"), money("BELOW")}}
+			money("ASK"), vendor("AT"), money("TCG SOLD"), money("BELOW")}}
 		for _, r := range rows {
 			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
@@ -296,22 +307,46 @@ func (m Model) marketStatus() string {
 	// The status line explains the selected row's question — the flat list
 	// has no section headers, so without this a liquid row's percentage
 	// reads as a gain when it is the size of the haircut.
+	// Position within the cursor's own table, not the flat row space: a
+	// reader on the comps sheet is 1/50 of the comps, wherever the other
+	// tables' counts happen to sit.
+	secs := m.marketSections()
+	sec, idx := m.marketCursorPos()
 	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices",
-		m.cursor[paneCards]+1, m.marketTotalRows(), m.selectedMarketNote()))
+		idx+1, secs[sec].count, m.selectedMarketNote()))
 }
 
 // selectedMarketNote is one sentence on why the row under the cursor is
 // listed, in that row's own numbers.
 func (m Model) selectedMarketNote() string {
-	// A comps row explains its own bracket: the low ask, the bid, and the
-	// spread between them (or the absence of a bid).
+	// A comps row explains the side it is showing, in that side's own
+	// terms — a sell note quoting a low ask read as apples against
+	// oranges (observed live).
 	if c := m.selectedComp(); c != nil {
-		if c.HasSpread() {
-			return fmt.Sprintf("low ask %s at %s · %s pays %s · spread %s",
-				ui.Money(c.Low), c.LowFrom, c.BuylistTo, ui.Money(c.Buylist),
-				ui.Percent(c.Spread()))
+		if m.compsBuySide {
+			if c.HasMarket {
+				return fmt.Sprintf("low ask %s at %s · tcg last sold for %s",
+					ui.Money(c.Low), c.LowFrom, ui.Money(c.Market))
+			}
+			return fmt.Sprintf("low ask %s at %s · no sales figure today", ui.Money(c.Low), c.LowFrom)
 		}
-		return fmt.Sprintf("low ask %s at %s · no buylist bid today", ui.Money(c.Low), c.LowFrom)
+		// The sell side reads the comp out venue by venue.
+		var parts []string
+		if c.HasMarket {
+			parts = append(parts, "last sold "+ui.Money(c.Market))
+		}
+		if c.HasManapool {
+			parts = append(parts, "mp asks "+ui.Money(c.Manapool))
+		}
+		if c.HasCK {
+			parts = append(parts, "ck asks "+ui.Money(c.CK))
+		}
+		if c.HasBuylist {
+			parts = append(parts, c.BuylistTo+" pays "+ui.Money(c.Buylist))
+		} else {
+			parts = append(parts, "no buylist bid today")
+		}
+		return strings.Join(parts, " · ")
 	}
 	i := m.cursor[paneCards]
 	if i < 0 || i >= len(m.marketRows) {
@@ -320,13 +355,13 @@ func (m Model) selectedMarketNote() string {
 	r := m.marketRows[i]
 	switch r.Kind {
 	case market.KindProfit:
-		return fmt.Sprintf("%s pays %s · it last sold for %s",
+		return fmt.Sprintf("%s pays %s · tcg last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	case market.KindLiquid:
-		return fmt.Sprintf("%s pays %s · it last sold for %s",
+		return fmt.Sprintf("%s pays %s · tcg last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	}
-	return fmt.Sprintf("%s asks %s · it last sold for %s",
+	return fmt.Sprintf("%s asks %s · tcg last sold for %s",
 		r.BuyFrom, ui.Money(r.BuyAt), ui.Money(r.Market))
 }
 
@@ -352,37 +387,45 @@ func (m *Model) applyMarketRows() {
 		res = scoped
 	}
 	rows := market.Rows(res, marketRowLimit)
-	if min := m.floorMin(); min > 0 {
-		kept := rows[:0]
-		for _, r := range rows {
+	kept := rows[:0]
+	for _, r := range rows {
+		// The browser dropped its BELOW MARKET table — the space serves the
+		// comps better (owner's call, dogfooding). The CLI still prints the
+		// kind, so the analysis itself is untouched; only this surface
+		// filters it out, and marketSections depends on the kinds here
+		// never reaching compsSection's slot.
+		if r.Kind == market.KindBelowMarket {
+			continue
+		}
+		if min := m.floorMin(); min > 0 {
 			unit := r.Card.Value
 			if r.Card.Copies > 1 {
 				unit /= float64(r.Card.Copies)
 			}
-			if unit >= min {
-				kept = append(kept, r)
+			if unit < min {
+				continue
 			}
 		}
-		rows = kept
+		kept = append(kept, r)
 	}
-	m.marketRows = rows
+	m.marketRows = kept
 	m.sortArbRows()
 	m.applyMarketComps(res.Comps)
 	// The rows under the old scroll positions are gone; every section
 	// starts back at its top.
-	m.marketSecOffset = [4]int{}
+	m.marketSecOffset = [3]int{}
 }
 
 // marketSectionBudgets divides the pane's rows among the four sections:
 // equal shares, with a section that needs less than its share donating the
 // slack to the ones that need more. Deterministic, sums to at most the
 // pool, and never exceeds a section's own row count.
-func (m Model) marketSectionBudgets() [4]int {
+func (m Model) marketSectionBudgets() [3]int {
 	secs := m.marketSections()
 	// Furniture: a separator above each section but the first, and a title
 	// plus one line (the column header, or the empty note) per section.
-	pool := max(m.visibleRows()-(3+4*2), 0)
-	var budget [4]int
+	pool := max(m.visibleRows()-(2+3*2), 0)
+	var budget [3]int
 	var active []int
 	for i, s := range secs {
 		if s.count > 0 {

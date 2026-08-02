@@ -39,6 +39,7 @@ var migrations = []migration{
 	{9, valueSnapshots},
 	{10, watchesTable},
 	{11, cardFaceDetails},
+	{12, renormalizeHistoryFinish},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -274,6 +275,16 @@ CREATE TABLE IF NOT EXISTS import_ledger (
 const renameNonfoil = `
 UPDATE card_entries SET finish = 'nonfoil' WHERE finish = 'normal';
 UPDATE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';`
+
+// v12: history backfilled after v8 carried MTGJSON's "normal" again — the
+// ingest path never translated, and v8 only repaired the rows that existed
+// when it ran. Movers joins on the store's vocabulary, so every such row
+// was invisible (observed live: a 47k-row backfill that changed nothing on
+// screen). Where a day exists under both names the nonfoil row stands — it
+// was recorded first — and the leftovers drop.
+const renormalizeHistoryFinish = `
+UPDATE OR IGNORE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';
+DELETE FROM card_price_history WHERE finish = 'normal';`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

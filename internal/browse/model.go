@@ -215,9 +215,14 @@ type Model struct {
 	compsSortRev  bool
 
 	// marketSecOffset is each market section's scroll position inside its
-	// fixed region (0=profit, 1=liquid, 2=below market, 3=comps); the four
-	// tables scroll independently rather than as one document.
-	marketSecOffset [4]int
+	// fixed region (0=profit, 1=liquid, 2=comps); the tables scroll
+	// independently rather than as one document.
+	marketSecOffset [3]int
+
+	// compsBuySide flips the COMPS table from its default sell side (what
+	// a sale brings: anchor, bid, ratio) to the buy side (every vendor's
+	// ask). 'b' toggles; selling is the default question.
+	compsBuySide bool
 
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int

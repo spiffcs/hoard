@@ -211,6 +211,59 @@ func altPriceColumns(t *testing.T, db *sql.DB) map[string]bool {
 	return out
 }
 
+// v12 repairs the history rows the backfill wrote in MTGJSON's finish
+// vocabulary after v8's one-time rename: they move to the store's word, a
+// same-day collision keeps the row that was there first, and nothing stays
+// behind under "normal".
+func TestMigrateRenormalizesHistoryFinish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hoard.db")
+	seedRawDB(t, path, schemaV1+`
+CREATE TABLE card_price_history (
+    scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    finish      TEXT NOT NULL,
+    price_usd   REAL NOT NULL,
+    source      TEXT NOT NULL,
+    as_of       TEXT NOT NULL,
+    PRIMARY KEY (scryfall_id, finish, as_of)
+);
+INSERT INTO cards VALUES ('c1','mh3','1','Fblthp',1.0,NULL,'http://x','x');
+INSERT INTO card_price_history VALUES ('c1','nonfoil',10.0,'scryfall','2026-07-10T05:00:00Z');
+INSERT INTO card_price_history VALUES ('c1','normal',9.9,'tcgplayer','2026-07-10T05:00:00Z');
+INSERT INTO card_price_history VALUES ('c1','normal',8.0,'tcgplayer','2026-07-01T00:00:00Z');
+PRAGMA user_version = 11;`)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	defer s.Close()
+
+	rows, err := s.db.Query(`SELECT finish, price_usd, as_of FROM card_price_history ORDER BY as_of`)
+	if err != nil {
+		t.Fatalf("reading history: %v", err)
+	}
+	defer rows.Close()
+	type h struct {
+		finish, asOf string
+		price        float64
+	}
+	var got []h
+	for rows.Next() {
+		var r h
+		if err := rows.Scan(&r.finish, &r.price, &r.asOf); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	want := []h{
+		{"nonfoil", "2026-07-01T00:00:00Z", 8.0},
+		{"nonfoil", "2026-07-10T05:00:00Z", 10.0},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("history after v12 = %+v, want %+v", got, want)
+	}
+}
+
 // Reopening an already-current database must do nothing at all: no migration,
 // no backup file, no version change.
 func TestMigrationIsIdempotent(t *testing.T) {

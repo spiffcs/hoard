@@ -209,9 +209,9 @@ func TestMarketRowsFollowContainer(t *testing.T) {
 	}
 }
 
-// The four market tables hold fixed regions: each scrolls its own rows
-// inside its budget, an overflowing section says where it is on its title
-// line, and an empty one keeps its title over a note.
+// The market tables hold fixed regions: each scrolls its own rows inside
+// its budget, an overflowing section says where it is on its title line,
+// and an empty one keeps its title over a note.
 func TestMarketSectionRegionsScroll(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -220,45 +220,48 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 	for _, n := range []string{"P1", "P2", "P3", "P4", "P5", "P6"} {
 		m.marketRows = append(m.marketRows, market.Row{Kind: market.KindProfit, Opportunity: opp(n, 1, 10)})
 	}
-	m.marketComps = []market.Comp{comp("C1", 60, 55, 44), comp("C2", 50, 45, 40), comp("C3", 40, 35, 30)}
+	m.marketComps = []market.Comp{
+		comp("C1", 60, 55, 44), comp("C2", 50, 45, 40), comp("C3", 40, 35, 30),
+		comp("C4", 30, 25, 20), comp("C5", 20, 15, 10),
+	}
 
 	// Height 22 → 16 visible rows (the market help line wraps once at this
-	// width); 11 lines of furniture leave a pool of 5. Both live sections
-	// are overfull, so they share it: profit 3, comps 2.
+	// width); 8 lines of furniture leave a pool of 8. Both live sections
+	// are overfull, so they split it: profit 4, comps 4.
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 22})
 	m = next.(Model)
-	if got := m.marketSectionBudgets(); got != [4]int{3, 0, 0, 2} {
-		t.Fatalf("budgets = %v, want [3 0 0 2]", got)
+	if got := m.marketSectionBudgets(); got != [3]int{4, 0, 4} {
+		t.Fatalf("budgets = %v, want [4 0 4]", got)
 	}
 
 	view := strings.Join(m.marketLines(110), "\n")
-	if !strings.Contains(view, "1–3 of 6") || !strings.Contains(view, "1–2 of 3") {
+	if !strings.Contains(view, "1–4 of 6") || !strings.Contains(view, "1–4 of 5") {
 		t.Fatalf("overflow positions missing:\n%s", view)
 	}
-	if strings.Count(view, "nothing today") != 2 {
-		t.Errorf("empty sections should keep their titles over a note:\n%s", view)
+	if strings.Count(view, "nothing today") != 1 {
+		t.Errorf("the empty section should keep its title over a note:\n%s", view)
 	}
-	if !strings.Contains(view, "P1") || strings.Contains(view, "P4") {
-		t.Errorf("profit region should show rows 1–3 only:\n%s", view)
+	if !strings.Contains(view, "P1") || strings.Contains(view, "P5") {
+		t.Errorf("profit region should show rows 1–4 only:\n%s", view)
 	}
 
 	// Walking past the region's bottom scrolls only that section.
-	for range 3 {
+	for range 4 {
 		m = key(m, "down")
 	}
-	if m.marketSecOffset != [4]int{1, 0, 0, 0} {
+	if m.marketSecOffset != [3]int{1, 0, 0} {
 		t.Fatalf("offsets = %v, want the profit section scrolled once", m.marketSecOffset)
 	}
 	view = strings.Join(m.marketLines(110), "\n")
-	if !strings.Contains(view, "2–4 of 6") || !strings.Contains(view, "C1") {
+	if !strings.Contains(view, "2–5 of 6") || !strings.Contains(view, "C1") {
 		t.Errorf("profit scrolled without disturbing comps:\n%s", view)
 	}
 
 	// Crossing into comps scrolls that region independently.
-	for range 5 {
+	for range 6 {
 		m = key(m, "down")
 	}
-	if sec, idx := m.marketCursorPos(); sec != compsSection || idx != 2 {
+	if sec, idx := m.marketCursorPos(); sec != compsSection || idx != 4 {
 		t.Fatalf("cursor at (%d,%d), want the last comp", sec, idx)
 	}
 	if m.marketSecOffset[compsSection] != 1 {
@@ -266,12 +269,81 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 	}
 
 	// An underfull section donates its slack: with one comp, comps takes 1
-	// and the profit table gets the rest of the pool.
+	// and the profit table gets everything it can use.
 	m.marketComps = m.marketComps[:1]
 	m.cursor[paneCards] = 0
-	m.marketSecOffset = [4]int{}
-	if got := m.marketSectionBudgets(); got != [4]int{4, 0, 0, 1} {
+	m.marketSecOffset = [3]int{}
+	if got := m.marketSectionBudgets(); got != [3]int{6, 0, 1} {
 		t.Errorf("budgets = %v, want the slack donated to the overfull table", got)
+	}
+}
+
+// b flips the comps table between its two halves: the sell side judges the
+// bid against the sale price, the buy side lines up the asks.
+func TestCompsSidesToggle(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.view = viewMarket
+	m.marketLoaded = true
+	m.focus = paneCards
+	m.marketComps = []market.Comp{comp("Sheeted", 60, 55, 44)}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m = next.(Model)
+
+	view := strings.Join(m.marketLines(110), "\n")
+	if !strings.Contains(view, "COMPS · SELL") || !strings.Contains(view, "BUYLIST") ||
+		!strings.Contains(view, "SPREAD") {
+		t.Fatalf("default side should comp the points of sale with the bid:\n%s", view)
+	}
+	if strings.Contains(view, "LOW") {
+		t.Errorf("the cheapest-copy columns belong to the buy side:\n%s", view)
+	}
+	note := m.selectedMarketNote()
+	if !strings.Contains(note, "last sold") || !strings.Contains(note, "pays") ||
+		strings.Contains(note, "low ask") {
+		t.Errorf("sell note = %q, want the venues read out with the bid", note)
+	}
+
+	m = key(m, "b")
+	if !m.compsBuySide {
+		t.Fatal("b did not flip to the buy side")
+	}
+	view = strings.Join(m.marketLines(110), "\n")
+	if !strings.Contains(view, "COMPS · BUY") || !strings.Contains(view, "LOW") {
+		t.Fatalf("buy side should lead with the cheapest ask:\n%s", view)
+	}
+	if strings.Contains(view, "BUYLIST") {
+		t.Errorf("the buy side must not mix the bid in:\n%s", view)
+	}
+	if note := m.selectedMarketNote(); !strings.Contains(note, "low ask") {
+		t.Errorf("buy note = %q, want the ask side explained", note)
+	}
+	m = key(m, "b")
+	if m.compsBuySide {
+		t.Error("b must toggle back to the sell side")
+	}
+}
+
+// The market status counts within the cursor's own table — 36/50 across
+// every table read as nonsense on the comps sheet (observed live).
+func TestMarketStatusCountsPerTable(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.view = viewMarket
+	m.marketLoaded = true
+	m.focus = paneCards
+	for _, n := range []string{"P1", "P2", "P3"} {
+		m.marketRows = append(m.marketRows, market.Row{Kind: market.KindProfit, Opportunity: opp(n, 1, 10)})
+	}
+	m.marketComps = []market.Comp{comp("C1", 60, 55, 44), comp("C2", 50, 45, 40)}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m = next.(Model)
+
+	m.cursor[paneCards] = 1 // second profit row
+	if got := m.marketStatus(); !strings.Contains(got, "2/3") {
+		t.Errorf("status = %q, want 2/3 within the profit table", got)
+	}
+	m.cursor[paneCards] = 3 // first comp
+	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
+		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
 }
 

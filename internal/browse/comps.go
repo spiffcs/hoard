@@ -34,15 +34,16 @@ func (m Model) selectedComp() *market.Comp {
 // marketSection is one table's run of the flat cursor space.
 type marketSection struct{ start, count int }
 
-// compsSection indexes the comps table in the four-section layout; the
-// three below it are the market.Kind values.
-const compsSection = 3
+// compsSection indexes the comps table in the three-section layout; the
+// two below it are KindProfit and KindLiquid (BELOW MARKET left the
+// browser — applyMarketRows guarantees its kind never reaches this file).
+const compsSection = 2
 
-// marketSections maps the four tables into flat cursor space: the three
-// Kind runs in m.marketRows — always grouped in Kind order, sortArbRows
-// keeps that invariant — then the comps.
-func (m Model) marketSections() [4]marketSection {
-	var s [4]marketSection
+// marketSections maps the three tables into flat cursor space: the Kind
+// runs in m.marketRows — always grouped in Kind order, sortArbRows keeps
+// that invariant — then the comps.
+func (m Model) marketSections() [3]marketSection {
+	var s [3]marketSection
 	for _, r := range m.marketRows {
 		s[r.Kind].count++
 	}
@@ -134,29 +135,59 @@ func spreadOrInf(c market.Comp) float64 {
 	return c.Spread()
 }
 
-// compsSectionTable lays out the comps rows, headers included — the
-// browse-side twin of report.Comps, sharing its column shape.
-func compsSectionTable(env ui.Env, comps []market.Comp) ui.Table {
-	t := ui.Table{Cols: []ui.Col{
-		{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
-		{Title: "SET/NUM", Align: ui.Left, Priority: 8, Style: env.Dim()},
-		{Title: "FIN", Align: ui.Left, Priority: 7, Style: env.Dim()},
+// compsSellNote and compsBuyNote describe each side of the sheet; TCG
+// SOLD names its own source. The CLI keeps market.CompsNote for its one
+// full-width table.
+const (
+	compsSellNote = "vendor sale price, CK Buylist"
+	compsBuyNote  = "vendor ask, tcgplayer's last-sold"
+)
+
+// compsSectionTable lays out the comps rows, headers included. The sheet
+// has two halves and the table shows one at a time. The sell side is the
+// comp proper: each point of sale's number for the card side by side —
+// tcgplayer's last-sold, the vendors' asks — with the cash bid as the
+// floor and the spread as the confidence signal. The buy side asks the
+// opposite question, which copy is cheapest to acquire, so it leads with
+// LOW and who asks it.
+func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
+	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
+	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 8, Style: env.Dim()}
+	fin := ui.Col{Title: "FIN", Align: ui.Left, Priority: 7, Style: env.Dim()}
+
+	if buySide {
+		t := ui.Table{Cols: []ui.Col{name, setNum, fin,
+			{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
+			{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
+			{Title: "AT", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "LOW", Align: ui.Right},
+			{Title: "TCG SOLD", Align: ui.Right},
+		}}
+		for _, c := range comps {
+			t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
+				ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+				ui.C(compMoney(c.HasManapool, c.Manapool)),
+				ui.C(compMoney(c.HasCK, c.CK)),
+				ui.C(c.LowFrom),
+				ui.C(ui.Money(c.Low)),
+				ui.C(compMoney(c.HasMarket, c.Market)))
+		}
+		return t
+	}
+
+	t := ui.Table{Cols: []ui.Col{name, setNum, fin,
+		{Title: "TCG SOLD", Align: ui.Right},
 		{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
 		{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
-		{Title: "AT", Align: ui.Left, Priority: 4, Style: env.Dim()},
-		{Title: "MARKET", Align: ui.Right},
-		{Title: "LOW", Align: ui.Right},
 		{Title: "BUYLIST", Align: ui.Right},
-		{Title: "SPREAD", Align: ui.Right},
+		{Title: "SPREAD", Align: ui.Right, Priority: 4},
 	}}
 	for _, c := range comps {
 		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
 			ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+			ui.C(compMoney(c.HasMarket, c.Market)),
 			ui.C(compMoney(c.HasManapool, c.Manapool)),
 			ui.C(compMoney(c.HasCK, c.CK)),
-			ui.C(c.LowFrom),
-			ui.C(compMoney(c.HasMarket, c.Market)),
-			ui.C(ui.Money(c.Low)),
 			ui.C(compMoney(c.HasBuylist, c.Buylist)),
 			compSpreadCell(env, c))
 	}

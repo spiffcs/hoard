@@ -43,6 +43,11 @@ type BackfillResult struct {
 // same day with the same cards and window is provably a no-op; adding a
 // card — or asking for a deeper window — changes the key and forces a real
 // run.
+//
+// The v2 salt retires the receipts written while the store's import bound
+// was hoard-wide: those runs recorded "done" after discarding everything
+// for cards added since the hoard's first observation, and honoring them
+// would hide the fix for a day.
 func backfillKey(owned []store.OwnedFinish, days int) string {
 	ids := make([]string, 0, len(owned))
 	for _, o := range owned {
@@ -50,7 +55,7 @@ func backfillKey(owned []store.OwnedFinish, days int) string {
 	}
 	sort.Strings(ids)
 	day := time.Now().Format("2006-01-02")
-	return ContentHash([]byte(fmt.Sprintf("backfill|%s|%d|%s", day, days, strings.Join(ids, ","))))
+	return ContentHash([]byte(fmt.Sprintf("backfill|v2|%s|%d|%s", day, days, strings.Join(ids, ","))))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was
@@ -138,7 +143,10 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	}
 
 	p.Emit(progress.Event{Step: "recording history"})
-	res.Inserted, res.Cards, err = d.Store.BackfillPrices(byCard, oldest)
+	// The store bounds each series to the era before that card's own live
+	// history — a card added yesterday gets its archive depth even when the
+	// hoard has watched other cards for months.
+	res.Inserted, res.Cards, err = d.Store.BackfillPrices(byCard)
 	if err != nil {
 		return res, err
 	}
