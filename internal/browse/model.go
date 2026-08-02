@@ -184,11 +184,25 @@ type Model struct {
 	undoStack *undoAction
 
 	// view is what the right pane is showing: the selected container's
-	// holdings, or a hoard-wide analysis.
+	// holdings, or an analysis filtered to it.
 	view     viewMode
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
 	watches  []store.WatchStatus
+
+	// The pristine analytical rows as queried; the floor and the container
+	// filter derive the visible slices above from these (deriveView), so
+	// cycling either never re-reads the database.
+	allMovers   []store.PriceChange
+	allUnpriced []store.UnpricedRow
+	allWatches  []store.WatchStatus
+
+	// entryIndex answers "does this container hold this printing":
+	// containerID → "scryfallID|finish". viewEligible marks the containers
+	// selectable on views that grey the rest out, nil when all are. Both
+	// live in containerfilter.go.
+	entryIndex   map[int64]map[string]bool
+	viewEligible map[int64]bool
 
 	// The market view sorts per table: each of the three sections keeps
 	// its own column choice and direction, indexed by market.Kind, and
@@ -199,6 +213,11 @@ type Model struct {
 	marketComps   []market.Comp
 	compsSortIdx  int
 	compsSortRev  bool
+
+	// marketSecOffset is each market section's scroll position inside its
+	// fixed region (0=profit, 1=liquid, 2=below market, 3=comps); the four
+	// tables scroll independently rather than as one document.
+	marketSecOffset [4]int
 
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int
@@ -275,6 +294,9 @@ func New(st Store, opts ...Option) (Model, error) {
 		opt(&m)
 	}
 	if err := m.loadContainers(); err != nil {
+		return Model{}, err
+	}
+	if err := m.rebuildEntryIndex(); err != nil {
 		return Model{}, err
 	}
 	if err := m.loadCards(); err != nil {
@@ -450,15 +472,12 @@ func (m Model) underFloor(p *float64) bool {
 	return false
 }
 
-// cycleFloor advances the value floor and re-derives every view through it.
+// cycleFloor advances the value floor and re-derives the current view
+// through it — from the pristine slices, so no database read.
 func (m *Model) cycleFloor() {
 	m.floorIdx = (m.floorIdx + 1) % len(floorLevels)
 	m.applyFilter()
-	if err := m.loadView(); err != nil {
-		m.setError(err)
-		return
-	}
-	m.applyMarketRows()
+	m.deriveView()
 	m.clampCursor(paneCards)
 	if min := m.floorMin(); min > 0 {
 		m.status, m.statusErr = fmt.Sprintf("floor %s · hiding cards worth less · M cycles, unpriced view exempt", ui.Money(min)), false
@@ -770,13 +789,8 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		// Tab is what people press without thinking in a two-pane layout, so it
-		// toggles rather than only ever moving one way. On a hoard-wide view
-		// the container pane has nothing to select, so instead of a cursor
-		// that changes nothing, tab explains itself.
-		if m.view != viewHoldings {
-			m.status, m.statusErr = "this view spans the whole hoard · the collection pane applies on holdings (v)", false
-			return m, nil
-		}
+		// toggles rather than only ever moving one way. The container pane
+		// applies on every view: it filters the analysis to the selection.
 		if m.focus == paneContainers {
 			m.focus = paneCards
 		} else {
@@ -785,10 +799,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "left", "h":
-		if m.view != viewHoldings {
-			m.status, m.statusErr = "this view spans the whole hoard · the collection pane applies on holdings (v)", false
-			return m, nil
-		}
 		m.focus = paneContainers
 		m.status = ""
 		return m, nil
@@ -810,12 +820,10 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.move(m.visibleRows())
 		return m, nil
 	case "home", "g":
-		m.cursor[m.focus] = 0
-		m.scrollIntoView()
+		m.moveTo(0)
 		return m, nil
 	case "end", "G":
-		m.cursor[m.focus] = max(m.rowCount(m.focus)-1, 0)
-		m.scrollIntoView()
+		m.moveTo(m.rowCount(m.focus) - 1)
 		return m, nil
 
 	}
@@ -1012,21 +1020,72 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // move walks the focused pane's cursor, clamping at both ends rather than
 // wrapping: a list that jumps from the last row to the first loses your place
-// on a long collection.
+// on a long collection. On views that grey out empty containers the left
+// cursor steps over them rather than resting on a row it cannot select.
 func (m *Model) move(delta int) {
 	n := m.rowCount(m.focus)
 	if n == 0 {
 		return
 	}
-	m.cursor[m.focus] = min(max(m.cursor[m.focus]+delta, 0), n-1)
-	m.scrollIntoView()
+	if m.focus == paneContainers && m.viewSkips() {
+		m.cursor[paneContainers] = m.stepEligible(m.cursor[paneContainers], delta)
+	} else {
+		m.cursor[m.focus] = min(max(m.cursor[m.focus]+delta, 0), n-1)
+	}
+	m.onCursorMoved()
+}
 
-	// Moving in the container pane changes what the card pane is showing.
-	if m.focus == paneContainers {
-		if err := m.loadCards(); err != nil {
-			m.setError(err)
+// moveTo jumps the focused cursor to target — the home/end keys. An
+// ineligible target walks back toward All cards, which is always eligible.
+func (m *Model) moveTo(target int) {
+	n := m.rowCount(m.focus)
+	if n == 0 {
+		return
+	}
+	target = min(max(target, 0), n-1)
+	if m.focus == paneContainers && m.viewSkips() {
+		for target > 0 && !m.containerEligible(target) {
+			target--
 		}
 	}
+	m.cursor[m.focus] = target
+	m.onCursorMoved()
+}
+
+// stepEligible walks up to |delta| eligible container rows in delta's
+// direction, landing on the furthest one found; with none in that
+// direction the cursor stays put.
+func (m Model) stepEligible(from, delta int) int {
+	if delta == 0 {
+		return from
+	}
+	dir, steps := 1, delta
+	if delta < 0 {
+		dir, steps = -1, -delta
+	}
+	last := from
+	for pos := from + dir; pos >= 0 && pos < len(m.containers) && steps > 0; pos += dir {
+		if m.containerEligible(pos) {
+			last = pos
+			steps--
+		}
+	}
+	return last
+}
+
+// onCursorMoved is what every cursor move ends with: the scroll follows,
+// and a move in the container pane re-scopes both the card pane and the
+// current view's rows.
+func (m *Model) onCursorMoved() {
+	m.scrollIntoView()
+	if m.focus != paneContainers {
+		return
+	}
+	if err := m.loadCards(); err != nil {
+		m.setError(err)
+		return
+	}
+	m.deriveView()
 }
 
 // reload re-reads both panes, keeping the cursor where it was. This is what
@@ -1037,7 +1096,18 @@ func (m *Model) reload() {
 		m.setError(err)
 		return
 	}
+	if err := m.rebuildEntryIndex(); err != nil {
+		m.setError(err)
+		return
+	}
 	if err := m.loadCards(); err != nil {
+		m.setError(err)
+		return
+	}
+	// The analytical views re-read too: they now depend on the membership
+	// this reload may have changed, and "reloaded" must not mean "except
+	// the rows you are looking at".
+	if err := m.loadView(); err != nil {
 		m.setError(err)
 		return
 	}

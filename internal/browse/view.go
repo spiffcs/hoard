@@ -55,14 +55,6 @@ func (m Model) View() string {
 	left, right := m.paneWidths()
 	leftLines := m.containerLines(left)
 	rightLines := m.rightLines(right)
-	if m.view != viewHoldings {
-		// A hoard-wide view spans every container, so the container pane
-		// has nothing to select; it dims to say so before anyone tabs at
-		// it (the tab key explains the rest).
-		for i, l := range leftLines {
-			leftLines[i] = ui.Restyle(l, m.theme.Inactive)
-		}
-	}
 
 	var b strings.Builder
 	b.WriteString(m.header(left, right) + "\n")
@@ -241,6 +233,12 @@ func (m Model) visibleRows() int {
 func (m *Model) scrollIntoView() {
 	rows := max(m.visibleRows()-1, 1)
 	for p := range m.offset {
+		if pane(p) == paneCards && m.view == viewMarket {
+			// The market pane scrolls per section, not as one document;
+			// m.offset stays untouched for it.
+			m.scrollMarketIntoView()
+			continue
+		}
 		if m.cursor[p] < m.offset[p] {
 			m.offset[p] = m.cursor[p]
 		}
@@ -269,11 +267,7 @@ func (m Model) header(left, right int) string {
 // paneTitle is the title style focus decides: accent when the cursor lives
 // here, plain title bold otherwise. Bold rather than Inactive for the
 // unfocused side — both panes stay readable; only one advertises the hand.
-// On a hoard-wide view the container pane dims wholesale, title included.
 func (m Model) paneTitle(p pane) lipgloss.Style {
-	if p == paneContainers && m.view != viewHoldings {
-		return m.theme.Inactive
-	}
 	if m.focus == p {
 		return m.theme.Accent
 	}
@@ -295,14 +289,20 @@ func (m Model) paneLines(p pane, width int, build func(env ui.Env) ui.Table) []s
 	return m.window(t.Lines(), p, width)
 }
 
-// containerLines renders the left pane, one line per container.
+// containerLines renders the left pane, one line per container. On views
+// that grey out containers with nothing to show, the ineligible rows dim —
+// the cursor skips them, and a row that cannot be selected must look it.
 func (m Model) containerLines(width int) []string {
 	return m.paneLines(paneContainers, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8},
 			{Title: "VALUE", Align: ui.Right},
 		}}
-		for _, c := range m.containers {
+		for i, c := range m.containers {
+			if !m.containerEligible(i) {
+				t.AddStyled(env.Dim(), ui.C(c.Name), ui.C(ui.Money(c.Value)))
+				continue
+			}
 			t.Add(ui.C(c.Name), ui.C(ui.Money(c.Value)))
 		}
 		return t
@@ -396,9 +396,13 @@ func (m Model) window(lines []string, p pane, width int) []string {
 			// because the reverse is re-asserted past every embedded reset,
 			// and the row's identity tints show through it.
 			line = ui.Restyle(line, m.theme.Cursor)
-		case i == m.cursor[p]:
+		case i == m.cursor[p] && (p == paneContainers || m.view == viewHoldings):
 			// The unfocused pane keeps a mark on its row so switching back is
-			// not a hunt for where the cursor was.
+			// not a hunt for where the cursor was. Not on the analytical
+			// views' rows, though: moving the container cursor resets the
+			// card cursor to the top, so the mark always sat on row one —
+			// reading as a dimmed first card, not a remembered place —
+			// and dim already means ineligible in the pane beside it.
 			line = ui.Restyle(line, m.theme.Inactive)
 		}
 		out = append(out, line)
@@ -450,15 +454,31 @@ func (m Model) statusLine() string {
 	n := m.rowCount(m.focus)
 	if n == 0 {
 		// An empty analytical view says how to fill it — the feedback that
-		// turned "nothing here" into a dead end during dogfooding.
+		// turned "nothing here" into a dead end during dogfooding. When the
+		// container filter is what emptied it, say that instead: "no price
+		// movement" would be a lie about the hoard.
+		sel := m.selectedContainer()
+		scoped := sel != nil && sel.Kind != kindAllCards && m.view != viewHoldings
 		switch m.view {
 		case viewMovers:
+			if scoped {
+				return m.theme.Help.Render(fmt.Sprintf(
+					"no price movement in %s this window · All cards shows every container", sel.Name))
+			}
 			return m.theme.Help.Render(
 				"no price movement in this window · F fetches prices and 90 days of history · W widens the window")
 		case viewWatches:
+			if scoped {
+				return m.theme.Help.Render(fmt.Sprintf(
+					"no watches shown for %s · All cards shows every container", sel.Name))
+			}
 			return m.theme.Help.Render(
 				"no watches · press w on a card in holdings, or : then \"Add a watch\"")
 		case viewUnpriced:
+			if scoped {
+				return m.theme.Help.Render(fmt.Sprintf(
+					"no unpriced cards in %s · All cards shows every container", sel.Name))
+			}
 			return m.theme.Help.Render("every card you own has a price")
 		}
 		return m.theme.Help.Render("nothing here")
@@ -502,19 +522,19 @@ func (m Model) helpLine() string {
 	case m.view == viewMarket && m.marketLoading:
 		return "esc cancel · ctrl+c quit"
 	case m.view == viewMarket:
-		return "enter detail · F refetch quotes · M floor · v next view · : commands · ↑/↓ move · q quit"
+		return "enter detail · ]/[ next/prev table · F refetch quotes · M floor · tab collections · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
-		return "w edit threshold · d remove · : add a watch · enter detail · M floor · v next view · ↑/↓ move · q quit"
+		return "w edit threshold · d remove · : add a watch · enter detail · M floor · tab collections · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · enter detail · M floor · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · enter detail · M floor · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
-		return "F refresh prices · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "F refresh prices · enter detail · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
-		// The editing keys do not apply to a hoard-wide analysis, so offering
+		// The editing keys do not apply to an analytical view, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
+		return "tab collections · v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
 		// The merged all-cards row is read-only, so its help drops the
 		// verbs that would only ever answer with a refusal.

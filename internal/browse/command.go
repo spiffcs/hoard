@@ -328,6 +328,18 @@ func commands() []command {
 			where: func(m *Model) bool { return m.view == viewMovers },
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
 		},
+		{
+			id: "market.table.next", aliases: "next table section",
+			key: "]", hidden: true,
+			where: func(m *Model) bool { return m.view == viewMarket },
+			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(1); return nil },
+		},
+		{
+			id: "market.table.prev", aliases: "previous table section",
+			key: "[", hidden: true,
+			where: func(m *Model) bool { return m.view == viewMarket },
+			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(-1); return nil },
+		},
 	}
 }
 
@@ -479,6 +491,21 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
 	m.status = "showing " + m.view.String()
 	m.statusErr = false
+	// A selection this view greys out cannot stay selected — the cursor
+	// would rest on a row advertised as unselectable, over a pane whose
+	// emptiness reads as "none exist anywhere". Snap to All cards and say so.
+	if !m.containerEligible(m.cursor[paneContainers]) {
+		sel := m.selectedContainer()
+		m.cursor[paneContainers], m.offset[paneContainers] = 0, 0
+		if err := m.loadCards(); err != nil {
+			m.setError(err)
+			return nil
+		}
+		m.deriveView()
+		if sel != nil {
+			m.status = fmt.Sprintf("%s has no %s · showing all cards", sel.Name, m.view.String())
+		}
+	}
 	if v == viewMarket {
 		// An earlier session's quotes beat an empty pane; fetching stays
 		// deliberate (F), arriving stays free.

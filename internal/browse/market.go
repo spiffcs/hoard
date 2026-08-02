@@ -132,85 +132,80 @@ func (m *Model) loadCachedMarket() {
 	m.status, m.statusErr = "vendor quotes from earlier today · F refetches", false
 }
 
-// marketLines renders the ranked opportunities as the CLI's three
-// sections, stacked in one scrolling pane: each kind gets its own title
-// row and its own column headers, because the three ask different
-// questions and one shared header row was reduced to lying about at least
-// two of them (a "GAIN" over a buylist haircut, observed live). The
-// cursor still walks data rows only; section furniture scrolls past it.
+// marketLines renders the four tables in fixed regions: each section gets
+// a share of the height (marketSectionBudgets) and scrolls its own rows
+// inside it, rather than the pane scrolling as one document — so the
+// four-chart shape holds still while the cursor digs into any one of them.
+// Each section keeps its own title row and column headers, because the
+// four ask different questions and one shared header row was reduced to
+// lying about at least two of them (a "GAIN" over a buylist haircut,
+// observed live). An overflowing section says where it is in its rows on
+// the title line; an empty one keeps its title over a note, so a table
+// emptied by the container filter reads as filtered, not missing.
 func (m Model) marketLines(width int) []string {
-	if width <= 0 || m.marketTotalRows() == 0 {
+	_, filtered := m.filterContainerID()
+	if width <= 0 {
+		return nil
+	}
+	if m.marketTotalRows() == 0 && !(m.marketLoaded && filtered) {
+		// Not loaded (the status line explains the fetch states), or loaded
+		// and genuinely empty hoard-wide.
 		return nil
 	}
 	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
+	secs := m.marketSections()
+	budgets := m.marketSectionBudgets()
+	// The bar only draws while the pane has focus — same reasoning as the
+	// generic windowing: an Inactive mark on an analytical row reads as a
+	// dimmed card, not a remembered place.
+	cursorSec, cursorIdx := m.marketCursorPos()
+	hasCursor := m.focus == paneCards
+	emptyNote := "nothing today"
+	if filtered {
+		emptyNote = "none in this collection"
+	}
 
-	var all []string
-	rowLine := make([]int, 0, m.marketTotalRows())
-	flush := func(kind market.Kind, rows []market.Row) {
-		if len(rows) == 0 {
-			return
+	var out []string
+	for i, sec := range secs {
+		if i > 0 {
+			out = append(out, "")
 		}
-		if len(all) > 0 {
-			all = append(all, "")
+		title, note := market.CompsTitle, market.CompsNote
+		if i != compsSection {
+			title, note = market.Kind(i).Title(), market.Kind(i).Note()
 		}
-		all = append(all, m.theme.Title.Render(kind.Title())+"  "+m.theme.Help.Render(kind.Note()))
-		t := marketSectionTable(env, kind, rows)
+		head := m.theme.Title.Render(title) + "  " + m.theme.Help.Render(note)
+		if off := m.marketSecOffset[i]; sec.count > budgets[i] && budgets[i] > 0 {
+			head += m.theme.Help.Render(fmt.Sprintf(" · %d–%d of %d",
+				off+1, off+budgets[i], sec.count))
+		}
+		out = append(out, head)
+		if sec.count == 0 {
+			out = append(out, m.theme.Help.Render(emptyNote))
+			continue
+		}
+
+		var t ui.Table
+		if i == compsSection {
+			t = compsSectionTable(env, m.marketComps)
+		} else {
+			t = marketSectionTable(env, market.Kind(i), m.marketRows[sec.start:sec.start+sec.count])
+		}
 		t.Env, t.Header = env, true
 		lines := t.Lines()
-		all = append(all, lines[0])
-		for _, line := range lines[1:] {
-			rowLine = append(rowLine, len(all))
-			all = append(all, line)
+		out = append(out, lines[0])
+		off := m.marketSecOffset[i]
+		for r := off; r < min(off+budgets[i], sec.count); r++ {
+			line := lines[1+r]
+			if hasCursor && i == cursorSec && r == cursorIdx {
+				// Restyle, not strip: the bar spans the row and the identity
+				// tints show through it, same as the generic pane windowing.
+				line = ui.Restyle(fit(line, width), m.theme.Cursor)
+			}
+			out = append(out, line)
 		}
 	}
-	// m.marketRows is already in section order (profit, liquid, spread).
-	var section []market.Row
-	var kind market.Kind
-	for i, r := range m.marketRows {
-		if i == 0 || r.Kind != kind {
-			flush(kind, section)
-			section, kind = section[:0], r.Kind
-		}
-		section = append(section, r)
-	}
-	flush(kind, section)
-
-	// The comps section renders last: the same furniture shape, its rows
-	// continuing the flat cursor index past the Kind sections.
-	if len(m.marketComps) > 0 {
-		if len(all) > 0 {
-			all = append(all, "")
-		}
-		all = append(all, m.theme.Title.Render(market.CompsTitle)+"  "+m.theme.Help.Render(market.CompsNote))
-		t := compsSectionTable(env, m.marketComps)
-		t.Env, t.Header = env, true
-		lines := t.Lines()
-		all = append(all, lines[0])
-		for _, line := range lines[1:] {
-			rowLine = append(rowLine, len(all))
-			all = append(all, line)
-		}
-	}
-
-	// Cursor highlight on the selected data row, then a line window that
-	// keeps it visible — section furniture means rows and lines no longer
-	// map 1:1, so the generic pane windowing cannot be reused here.
-	cur := min(max(m.cursor[paneCards], 0), m.marketTotalRows()-1)
-	cline := rowLine[cur]
-	style := m.theme.Inactive
-	if m.focus == paneCards {
-		style = m.theme.Cursor
-	}
-	// Restyle, not strip: the bar spans the row and the identity tints
-	// show through it, same as the generic pane windowing.
-	all[cline] = ui.Restyle(fit(all[cline], width), style)
-
-	visible := m.visibleRows()
-	startAt := 0
-	if cline >= visible {
-		startAt = cline - visible + 1
-	}
-	return all[startAt:min(startAt+visible, len(all))]
+	return out
 }
 
 // marketSectionTable lays out one kind's rows with headers that mean what
@@ -271,13 +266,14 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 
 // marketHeader is the right pane's title and summary while in this view.
 func (m Model) marketHeader() (title, totals string) {
+	name := "MARKET" + m.viewScope()
 	switch {
 	case m.marketLoading:
-		return "MARKET", "asking vendors…"
+		return name, "asking vendors…"
 	case !m.marketLoaded:
-		return "MARKET", "press F to fetch"
+		return name, "press F to fetch"
 	}
-	return "MARKET", fmt.Sprintf("%s rows · %s printings compared",
+	return name, fmt.Sprintf("%s rows · %s printings compared",
 		ui.Count(m.marketTotalRows()), ui.Count(m.marketResult.Compared))
 }
 
@@ -291,6 +287,10 @@ func (m Model) marketStatus() string {
 		return m.theme.Help.Render(
 			"vendor quotes may need a download, so the view waits to be asked · press F")
 	case m.marketTotalRows() == 0:
+		if sel := m.selectedContainer(); sel != nil && sel.Kind != kindAllCards {
+			return m.theme.Help.Render(fmt.Sprintf(
+				"no market rows in %s · All cards shows every container", sel.Name))
+		}
 		return m.theme.Help.Render("no vendor disagreed about anything you own today")
 	}
 	// The status line explains the selected row's question — the flat list
@@ -330,10 +330,28 @@ func (m Model) selectedMarketNote() string {
 		r.BuyFrom, ui.Money(r.BuyAt), ui.Money(r.Market))
 }
 
-// applyMarketRows derives the visible rows from the last result: ranked,
-// floor-filtered on per-copy value, then re-sorted the way the user left it.
+// applyMarketRows derives the visible rows from the last result: scoped to
+// the selected container first — the filter runs before the per-section
+// ranking, so a deck gets its own top rows rather than whatever survived
+// the hoard-wide cut — then ranked, floor-filtered on per-copy value, and
+// re-sorted the way the user left it.
 func (m *Model) applyMarketRows() {
-	rows := market.Rows(m.marketResult, marketRowLimit)
+	res := m.marketResult
+	if cid, filtered := m.filterContainerID(); filtered {
+		scoped := market.Result{Compared: res.Compared}
+		for _, o := range res.Opportunities {
+			if m.inContainer(cid, o.Card.ScryfallID, o.Card.Finish) {
+				scoped.Opportunities = append(scoped.Opportunities, o)
+			}
+		}
+		for _, c := range res.Comps {
+			if m.inContainer(cid, c.Card.ScryfallID, c.Card.Finish) {
+				scoped.Comps = append(scoped.Comps, c)
+			}
+		}
+		res = scoped
+	}
+	rows := market.Rows(res, marketRowLimit)
 	if min := m.floorMin(); min > 0 {
 		kept := rows[:0]
 		for _, r := range rows {
@@ -349,5 +367,120 @@ func (m *Model) applyMarketRows() {
 	}
 	m.marketRows = rows
 	m.sortArbRows()
-	m.applyMarketComps()
+	m.applyMarketComps(res.Comps)
+	// The rows under the old scroll positions are gone; every section
+	// starts back at its top.
+	m.marketSecOffset = [4]int{}
+}
+
+// marketSectionBudgets divides the pane's rows among the four sections:
+// equal shares, with a section that needs less than its share donating the
+// slack to the ones that need more. Deterministic, sums to at most the
+// pool, and never exceeds a section's own row count.
+func (m Model) marketSectionBudgets() [4]int {
+	secs := m.marketSections()
+	// Furniture: a separator above each section but the first, and a title
+	// plus one line (the column header, or the empty note) per section.
+	pool := max(m.visibleRows()-(3+4*2), 0)
+	var budget [4]int
+	var active []int
+	for i, s := range secs {
+		if s.count > 0 {
+			active = append(active, i)
+		}
+	}
+	for len(active) > 0 {
+		share := pool / len(active)
+		if share == 0 {
+			break
+		}
+		kept := active[:0]
+		satisfied := false
+		for _, i := range active {
+			if secs[i].count <= share {
+				budget[i] = secs[i].count
+				pool -= secs[i].count
+				satisfied = true
+				continue
+			}
+			kept = append(kept, i)
+		}
+		active = kept
+		if satisfied {
+			continue // the slack returns to the pool; re-share it
+		}
+		// Everyone left is overfull: the share each, remainder one row at a
+		// time in section order.
+		for _, i := range active {
+			budget[i] = share
+			pool -= share
+		}
+		for _, i := range active {
+			if pool == 0 {
+				break
+			}
+			if budget[i] < secs[i].count {
+				budget[i]++
+				pool--
+			}
+		}
+		break
+	}
+	// The cursor's section always shows at least its selected row, even at
+	// a pathological height — steal one from the largest budget.
+	sec, _ := m.marketCursorPos()
+	if budget[sec] == 0 && secs[sec].count > 0 {
+		big := 0
+		for i := range budget {
+			if budget[i] > budget[big] {
+				big = i
+			}
+		}
+		if budget[big] > 0 {
+			budget[big]--
+			budget[sec] = 1
+		}
+	}
+	return budget
+}
+
+// jumpMarketSection moves the cursor to the first row of the next (+1) or
+// previous (-1) non-empty market table — the ]/[ keys, so reaching COMPS
+// never means walking three tables' overflow row by row.
+func (m *Model) jumpMarketSection(dir int) {
+	secs := m.marketSections()
+	cur, _ := m.marketCursorPos()
+	for i := cur + dir; i >= 0 && i < len(secs); i += dir {
+		if secs[i].count == 0 {
+			continue
+		}
+		m.cursor[paneCards] = secs[i].start
+		// The jump is a card-pane gesture wherever the hand was.
+		m.focus = paneCards
+		m.scrollIntoView()
+		return
+	}
+}
+
+// scrollMarketIntoView keeps the cursor visible inside its section's
+// region, and every section's offset inside its rows — the market pane's
+// counterpart to the generic offset walk.
+func (m *Model) scrollMarketIntoView() {
+	secs := m.marketSections()
+	budgets := m.marketSectionBudgets()
+	if m.marketTotalRows() > 0 {
+		sec, idx := m.marketCursorPos()
+		if b := budgets[sec]; b > 0 {
+			if idx < m.marketSecOffset[sec] {
+				m.marketSecOffset[sec] = idx
+			}
+			if idx >= m.marketSecOffset[sec]+b {
+				m.marketSecOffset[sec] = idx - b + 1
+			}
+		}
+	}
+	for i := range m.marketSecOffset {
+		m.marketSecOffset[i] = min(max(m.marketSecOffset[i], 0),
+			max(secs[i].count-budgets[i], 0))
+	}
 }

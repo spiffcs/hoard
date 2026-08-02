@@ -31,10 +31,47 @@ func (m Model) selectedComp() *market.Comp {
 	return &m.marketComps[i]
 }
 
-// applyMarketComps derives the visible comp sheets from the last result:
-// top-N by value, then the same per-copy value floor the Kind rows get.
-func (m *Model) applyMarketComps() {
-	comps := market.TopComps(m.marketResult.Comps, marketRowLimit)
+// marketSection is one table's run of the flat cursor space.
+type marketSection struct{ start, count int }
+
+// compsSection indexes the comps table in the four-section layout; the
+// three below it are the market.Kind values.
+const compsSection = 3
+
+// marketSections maps the four tables into flat cursor space: the three
+// Kind runs in m.marketRows — always grouped in Kind order, sortArbRows
+// keeps that invariant — then the comps.
+func (m Model) marketSections() [4]marketSection {
+	var s [4]marketSection
+	for _, r := range m.marketRows {
+		s[r.Kind].count++
+	}
+	s[compsSection].count = len(m.marketComps)
+	start := 0
+	for i := range s {
+		s[i].start = start
+		start += s[i].count
+	}
+	return s
+}
+
+// marketCursorPos maps the flat cursor to (section, index within it).
+func (m Model) marketCursorPos() (sec, idx int) {
+	cur := min(max(m.cursor[paneCards], 0), max(m.marketTotalRows()-1, 0))
+	secs := m.marketSections()
+	for i := len(secs) - 1; i >= 0; i-- {
+		if secs[i].count > 0 && cur >= secs[i].start {
+			return i, min(cur-secs[i].start, secs[i].count-1)
+		}
+	}
+	return 0, 0
+}
+
+// applyMarketComps derives the visible comp sheets from the given (already
+// container-filtered) comps: top-N by value, then the same per-copy value
+// floor the Kind rows get.
+func (m *Model) applyMarketComps(all []market.Comp) {
+	comps := market.TopComps(all, marketRowLimit)
 	if min := m.floorMin(); min > 0 {
 		kept := comps[:0]
 		for _, c := range comps {

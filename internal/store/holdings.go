@@ -197,6 +197,36 @@ ORDER BY value DESC, c.name`)
 	return out, rows.Err()
 }
 
+// EntryKey identifies one (container, printing, finish) membership fact —
+// the join key the browser filters its analytical views with. Container ids
+// rather than labels, because labels are not unique: two decks can share a
+// name, and a deck can share one with a binder.
+type EntryKey struct {
+	ContainerID int64
+	ScryfallID  string
+	Finish      string
+}
+
+// EntryKeys returns every distinct membership fact in the hoard. Boards
+// collapse: a card main and side in the same deck is one fact.
+func (s *Store) EntryKeys() ([]EntryKey, error) {
+	rows, err := s.db.Query(`
+SELECT DISTINCT container_id, scryfall_id, finish FROM card_entries`)
+	if err != nil {
+		return nil, fmt.Errorf("listing entry keys: %w", err)
+	}
+	defer rows.Close()
+	var out []EntryKey
+	for rows.Next() {
+		var k EntryKey
+		if err := rows.Scan(&k.ContainerID, &k.ScryfallID, &k.Finish); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 // CollectionTotals rolls the loose collection up the same way DeckSummary rolls
 // up a deck, so `summary` can present the two alike.
 type CollectionTotals struct {

@@ -94,6 +94,7 @@ func (m *Model) cycleSort() {
 			m.compsSortRev = false
 			m.sortCompRows()
 			m.cursor[paneCards] = len(m.marketRows) // the comps section's first row
+			m.scrollIntoView()
 			return
 		}
 		k := m.selectedMarketKind()
@@ -101,6 +102,7 @@ func (m *Model) cycleSort() {
 		m.marketSortRev[k] = false
 		m.sortArbRows()
 		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
+		m.scrollIntoView()
 		return
 	}
 	v := m.view
@@ -117,12 +119,14 @@ func (m *Model) reverseSort() {
 			m.compsSortRev = !m.compsSortRev
 			m.sortCompRows()
 			m.cursor[paneCards] = len(m.marketRows)
+			m.scrollIntoView()
 			return
 		}
 		k := m.selectedMarketKind()
 		m.marketSortRev[k] = !m.marketSortRev[k]
 		m.sortArbRows()
 		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
+		m.scrollIntoView()
 		return
 	}
 	m.sortRev[m.view] = !m.sortRev[m.view]

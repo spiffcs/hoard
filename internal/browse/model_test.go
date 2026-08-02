@@ -37,7 +37,13 @@ type fakeStore struct {
 	enriched int
 	watches  []store.WatchStatus
 	binders  map[int64]string // extra binders beside the default
-	nextID   int64
+	// binderRows holds an extra binder's cards; an extra binder without an
+	// entry falls back to the default collection, the fake's old behavior.
+	binderRows map[int64][]store.CollectionRow
+	// entryKeys, when set, overrides the membership facts EntryKeys derives
+	// from the fixture — for tests that stage eligibility directly.
+	entryKeys []store.EntryKey
+	nextID    int64
 
 	err error // when set, every read fails
 
@@ -113,8 +119,43 @@ func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 	return out, nil
 }
 func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) { return f.decks, f.err }
-func (f *fakeStore) BinderByFinish(int64) ([]store.CollectionRow, error) {
+func (f *fakeStore) BinderByFinish(id int64) ([]store.CollectionRow, error) {
+	if rows, ok := f.binderRows[id]; ok {
+		return rows, f.err
+	}
 	return f.collection, f.err
+}
+
+// EntryKeys mirrors the fake's container mapping: the default binder holds
+// the collection, extra binders their binderRows (or the collection,
+// matching BinderByFinish's fallback), decks their deckCards.
+func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.entryKeys != nil {
+		return f.entryKeys, nil
+	}
+	var out []store.EntryKey
+	addRows := func(cid int64, rows []store.CollectionRow) {
+		for _, r := range rows {
+			out = append(out, store.EntryKey{ContainerID: cid, ScryfallID: r.ScryfallID, Finish: r.Finish})
+		}
+	}
+	addRows(defaultBinderID, f.collection)
+	for id := range f.binders {
+		if rows, ok := f.binderRows[id]; ok {
+			addRows(id, rows)
+		} else {
+			addRows(id, f.collection)
+		}
+	}
+	for id, entries := range f.deckCards {
+		for _, e := range entries {
+			out = append(out, store.EntryKey{ContainerID: id, ScryfallID: e.Card.ScryfallID, Finish: e.Finish})
+		}
+	}
+	return out, nil
 }
 func (f *fakeStore) DeckEntries(id int64) ([]store.EntryView, error) {
 	return f.deckCards[id], f.err
@@ -348,9 +389,12 @@ func entry(name, board, finish string, qty int, usd float64) store.EntryView {
 func testStore() *fakeStore {
 	return &fakeStore{
 		totals: store.CollectionTotals{DistinctCards: 3, TotalCopies: 8, Value: 300},
+		// Deck ids live in the 200s: membership now joins on container id,
+		// and a deck sharing id 1 with the default binder would silently
+		// merge the two containers' holdings.
 		decks: []store.DeckSummary{
-			deck(1, "Cheap Deck", 100, 50),
-			deck(2, "Rich Deck", 100, 500),
+			deck(201, "Cheap Deck", 100, 50),
+			deck(202, "Rich Deck", 100, 500),
 		},
 		collection: []store.CollectionRow{
 			row("Bitterblossom", "uma", "85", "nonfoil", 4, 136),
@@ -364,8 +408,8 @@ func testStore() *fakeStore {
 		},
 		enriched: 3,
 		deckCards: map[int64][]store.EntryView{
-			2: {entry("Solitude", "main", "nonfoil", 1, 34), entry("Force of Will", "side", "foil", 2, 90)},
-			1: {entry("Llanowar Elves", "main", "nonfoil", 1, 1)},
+			202: {entry("Solitude", "main", "nonfoil", 1, 34), entry("Force of Will", "side", "foil", 2, 90)},
+			201: {entry("Llanowar Elves", "main", "nonfoil", 1, 1)},
 		},
 	}
 }
@@ -388,6 +432,19 @@ func newTestModel(t *testing.T, st Store) Model {
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	return next.(Model)
+}
+
+// atAllCards moves the container cursor to the merged All cards row and
+// re-derives the panes. Analytical tests seed rows the fixture binder does
+// not hold, and the views now filter to the selection newTestModel pins.
+func atAllCards(t *testing.T, m Model) Model {
+	t.Helper()
+	m.cursor[paneContainers] = 0
+	if err := m.loadCards(); err != nil {
+		t.Fatalf("loadCards: %v", err)
+	}
+	m.deriveView()
+	return m
 }
 
 func key(m Model, k string) Model {
@@ -926,7 +983,7 @@ func TestEmptyTraitResultExplainsAnUnrefreshedCatalog(t *testing.T) {
 // one deck, and re-typing it for every container would make it useless.
 func TestFilterPersistsAcrossContainers(t *testing.T) {
 	st := testStore()
-	st.deckCards[2] = append(st.deckCards[2], entry("Sol Ring", "main", "nonfoil", 1, 2))
+	st.deckCards[202] = append(st.deckCards[202], entry("Sol Ring", "main", "nonfoil", 1, 2))
 	m := newTestModel(t, st)
 	m = typeFilter(m, "ring")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1190,7 +1247,7 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	st.unpriced = []store.UnpricedRow{
 		{Name: "No Price", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
 	}
-	m := newTestModel(t, st)
+	m := atAllCards(t, newTestModel(t, st))
 
 	m = key(m, "v")
 	if m.view != viewMovers {
@@ -1259,7 +1316,7 @@ func TestSortWorksInEveryView(t *testing.T) {
 		{Name: "Zebra", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
 		{Name: "Aardvark", SetCode: "d", CollectorNumber: "4", Finish: "nonfoil", Copies: 5, HeldIn: "Deck"},
 	}
-	m := newTestModel(t, st)
+	m := atAllCards(t, newTestModel(t, st))
 
 	m = key(m, "v") // movers, impact order: Sinker ($40) first
 	m = key(m, "s") // → name
@@ -1365,6 +1422,7 @@ func TestViewRowCountFollowsTheMode(t *testing.T) {
 	if got := m.rowCount(paneCards); got != 3 {
 		t.Errorf("holdings rowCount = %d, want 3", got)
 	}
+	m = atAllCards(t, m)
 	m = key(m, "v")
 	if got := m.rowCount(paneCards); got != 2 {
 		t.Errorf("movers rowCount = %d, want 2", got)
@@ -1379,7 +1437,7 @@ func TestAnalyticalViewsRefuseHoldingActions(t *testing.T) {
 	st.movers = []store.PriceChange{
 		{ScryfallID: "riser-id", Name: "Riser", Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
 	}
-	m := newTestModel(t, st)
+	m := atAllCards(t, newTestModel(t, st))
 	before := len(st.collection)
 	qty := m.cards[0].Quantity
 

@@ -12,11 +12,10 @@ import (
 
 // viewMode is what the right pane is showing.
 //
-// Movers and unpriced are properties of the whole hoard rather than of the
-// selected container, so in those modes the left pane keeps its cursor but stops
-// driving the right one. The alternative — filtering them to the selected
-// container — would make "what moved" mean something different depending on
-// where a cursor happened to be sitting.
+// Every mode reads through the container pane: All cards is the whole
+// hoard, and any other selection narrows the view to what that container
+// holds — the same contract the holdings view has always had. The header
+// names the selection so a filtered table says so.
 type viewMode int
 
 const (
@@ -59,9 +58,10 @@ func (m Model) moversWindow() time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// loadView reads whichever analysis the right pane is showing.
+// loadView reads whichever analysis the right pane is showing, into the
+// pristine slice — deriveView narrows it to what is visible.
 //
-// Both are plain database reads and return in milliseconds, so they are loaded
+// All are plain database reads and return in milliseconds, so they are loaded
 // synchronously like the holdings. Nothing here touches the network.
 func (m *Model) loadView() error {
 	switch m.view {
@@ -71,46 +71,94 @@ func (m *Model) loadView() error {
 		if err != nil {
 			return fmt.Errorf("reading movers: %w", err)
 		}
-		changes = store.MoversByImpact(changes)
-		if m.floorMin() > 0 {
-			kept := changes[:0]
-			for _, c := range changes {
-				if !m.underFloor(&c.New) {
-					kept = append(kept, c)
-				}
-			}
-			changes = kept
-		}
-		m.movers = changes
-		m.applySort()
-		return nil
+		m.allMovers = store.MoversByImpact(changes)
 	case viewUnpriced:
 		rows, err := m.store.Unpriced()
 		if err != nil {
 			return fmt.Errorf("reading unpriced cards: %w", err)
 		}
-		m.unpriced = rows
-		m.applySort()
-		return nil
+		m.allUnpriced = rows
 	case viewWatches:
 		rows, err := m.store.ListWatches()
 		if err != nil {
 			return fmt.Errorf("reading watches: %w", err)
 		}
-		if m.floorMin() > 0 {
-			kept := rows[:0]
-			for _, w := range rows {
-				if !m.underFloor(w.PriceUSD) {
-					kept = append(kept, w)
+		m.allWatches = rows
+	}
+	m.deriveView()
+	return nil
+}
+
+// deriveView applies the value floor and the container filter to the
+// pristine slices, rebuilds the eligibility set on the views that grey
+// containers out, and re-clamps the card cursor. Cheap and re-runnable: no
+// database, no network — cycling the floor or moving the left cursor lands
+// here.
+//
+// Eligibility is computed from the pristine (floor-ignored) rows so the
+// grey set holds still while M cycles; the floor only thins visible rows.
+func (m *Model) deriveView() {
+	m.viewEligible = nil
+	cid, filtered := m.filterContainerID()
+	switch m.view {
+	case viewMovers:
+		rows := make([]store.PriceChange, 0, len(m.allMovers))
+		for _, c := range m.allMovers {
+			if m.underFloor(&c.New) {
+				continue
+			}
+			if filtered && !m.inContainerPriced(cid, c.ScryfallID, c.Finish) {
+				continue
+			}
+			rows = append(rows, c)
+		}
+		m.movers = rows
+		m.applySort()
+	case viewUnpriced:
+		rows := make([]store.UnpricedRow, 0, len(m.allUnpriced))
+		for _, r := range m.allUnpriced {
+			if filtered && !m.inContainer(cid, r.ScryfallID, r.Finish) {
+				continue
+			}
+			rows = append(rows, r)
+		}
+		m.unpriced = rows
+		m.viewEligible = m.eligibleContainers(func(id int64) bool {
+			for _, r := range m.allUnpriced {
+				if m.inContainer(id, r.ScryfallID, r.Finish) {
+					return true
 				}
 			}
-			rows = kept
+			return false
+		})
+		m.applySort()
+	case viewWatches:
+		rows := make([]store.WatchStatus, 0, len(m.allWatches))
+		for _, w := range m.allWatches {
+			if m.underFloor(w.PriceUSD) {
+				continue
+			}
+			if filtered && !m.inContainerPriced(cid, w.ScryfallID, w.Finish) {
+				continue
+			}
+			rows = append(rows, w)
 		}
 		m.watches = rows
+		m.viewEligible = m.eligibleContainers(func(id int64) bool {
+			for _, w := range m.allWatches {
+				if m.inContainerPriced(id, w.ScryfallID, w.Finish) {
+					return true
+				}
+			}
+			return false
+		})
 		m.applySort()
-		return nil
+	case viewMarket:
+		m.applyMarketRows()
+	default:
+		return
 	}
-	return nil
+	m.clampCursor(paneCards)
 }
 
 // now is a var so tests can pin the movers window rather than depending on when
@@ -196,7 +244,7 @@ func (m Model) viewHeader() (title, totals string) {
 			net += c.TotalDelta()
 		}
 		since := m.now().Add(-m.moversWindow()).Local().Format("2 Jan")
-		return "MOVERS · SINCE " + since,
+		return "MOVERS · SINCE " + since + m.viewScope(),
 			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), ui.SignedMoney(net))
 	case viewMarket:
 		return m.marketHeader()
@@ -205,7 +253,7 @@ func (m Model) viewHeader() (title, totals string) {
 		for _, r := range m.unpriced {
 			copies += r.Copies
 		}
-		return "UNPRICED", fmt.Sprintf("%s printings · %s copies",
+		return "UNPRICED" + m.viewScope(), fmt.Sprintf("%s printings · %s copies",
 			ui.Count(len(m.unpriced)), ui.Count(copies))
 	case viewWatches:
 		met := 0
@@ -214,7 +262,7 @@ func (m Model) viewHeader() (title, totals string) {
 				met++
 			}
 		}
-		return "WATCHES", fmt.Sprintf("%s watches · %s met",
+		return "WATCHES" + m.viewScope(), fmt.Sprintf("%s watches · %s met",
 			ui.Count(len(m.watches)), ui.Count(met))
 	}
 	if sel := m.selectedContainer(); sel != nil {

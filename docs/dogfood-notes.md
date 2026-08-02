@@ -45,6 +45,19 @@ with why).
    CLI `hoard add <url>` path is untouched.
 8. **"Add a watch for any card" everywhere** — ✅ now watches-only, same
    rule as the collection picker.
+9. **The collection pane filters every view** — ✅ done (follow-up to the
+   All cards work). The "this view spans the whole hoard" tab refusal was
+   the smell: the pane now scopes movers, unpriced, watches and market to
+   the selection, All cards restoring the hoard-wide picture, headers
+   naming the scope. Membership joins on container id via a
+   `store.EntryKeys` index (labels are not unique); movers and watches
+   join on the price finish (etched folds into foil). Unpriced and
+   watches grey out containers with nothing to show and the cursor skips
+   them; arriving there with an empty selection snaps to All cards with a
+   note. The market view filters *before* ranking — a deck gets its own
+   top-15 per table — and its four tables now hold fixed regions that
+   scroll independently, position on the title line, a filtered-empty
+   table keeping its title over "none in this collection".
 
 ## 2026-08-01 — beautification-sprint build
 

@@ -198,6 +198,10 @@ func (m *Model) refresh() {
 		m.setError(err)
 		return
 	}
+	if err := m.rebuildEntryIndex(); err != nil {
+		m.setError(err)
+		return
+	}
 	m.cursor[paneContainers] = containers
 	m.clampCursor(paneContainers)
 	if err := m.loadCards(); err != nil {
@@ -206,5 +210,13 @@ func (m *Model) refresh() {
 	}
 	m.cursor[paneCards] = cards
 	m.clampCursor(paneCards)
+	// A container verb can run while an analytical view shows, and the
+	// view's rows filter through the membership this edit changed.
+	if m.view != viewHoldings {
+		if err := m.loadView(); err != nil {
+			m.setError(err)
+			return
+		}
+	}
 	m.scrollIntoView()
 }

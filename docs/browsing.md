@@ -79,8 +79,17 @@ graphics passthrough through a multiplexer is not supported.
 ## Views
 
 <kbd>v</kbd> cycles through five views: holdings, movers, unpriced, watches,
-and market. All but the last are instant database reads. **The market view
-waits to be asked**: it needs today's vendor quotes from MTGJSON, so cycling to it
+and market. All but the last are instant database reads.
+
+**Every view reads through the collection pane.** All cards is the whole
+hoard; selecting a binder or deck narrows the view to what it holds, and
+the header names the selection (`MOVERS · SINCE 2 Jul · RICH DECK`). On
+unpriced and watches the pane greys out containers with nothing to show
+and the cursor skips them; arriving at one of those views with an empty
+selection snaps back to All cards and says so.
+
+**The market view waits to be asked**: it needs today's vendor quotes from
+MTGJSON, so cycling to it
 says `press F to fetch` rather than starting a download because you passed
 through. Quotes already fetched earlier the same day come back for free —
 the view repopulates from the day cache on arrival, even across a restart,
@@ -107,8 +116,13 @@ Ancient Tomb   uma/236  foil    —   $65.00 tcgplayer  $60.00  $60.00   $42.00 
 ```
 
 Everything anchors on tcgplayer's sales-derived market price — the one
-number that describes what cards actually trade at. The four tables stack
-in one scrolling pane, each with its own headers; <kbd>enter</kbd> opens any
+number that describes what cards actually trade at. The four tables hold
+fixed regions of the pane, each with its own headers, and each scrolls
+independently when its rows overflow — the title line says where you are
+(`ARBITRAGE … · 2–4 of 15`), and a table emptied by the collection filter
+keeps its title over a note rather than vanishing. <kbd>]</kbd>/<kbd>[</kbd>
+jump straight to the next or previous table, so reaching COMPS never means
+scrolling three tables' rows one by one. <kbd>enter</kbd> opens any
 row's card detail, and <kbd>s</kbd>/<kbd>S</kbd> sort just the table the
 cursor is in, each keeping its own column and direction. `hoard market`
 prints the same tables with `--min` and `--limit`; see

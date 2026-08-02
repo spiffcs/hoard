@@ -148,6 +148,9 @@ func (m *Model) focusContainer(id int64) {
 		if c.ID == id {
 			m.cursor[paneContainers] = i
 			m.scrollIntoView()
+			// The selection scopes the analytical views, so a programmatic
+			// jump re-derives like a cursor move would.
+			m.deriveView()
 			return
 		}
 	}

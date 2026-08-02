@@ -65,6 +65,10 @@ type Store interface {
 	Movers(since string) ([]store.PriceChange, error)
 	Unpriced() ([]store.UnpricedRow, error)
 
+	// EntryKeys feeds the membership index that lets the container pane
+	// filter the analytical views; see containerfilter.go.
+	EntryKeys() ([]store.EntryKey, error)
+
 	// One printing in depth.
 	CardDetail(scryfallID string) (store.CardDetail, error)
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
