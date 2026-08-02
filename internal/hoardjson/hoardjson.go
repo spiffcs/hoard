@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.1.1"
+const SchemaVersion = "1.1.2"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -164,6 +164,29 @@ type Market struct {
 	// so a consumer knows how much ground the analysis covered.
 	ComparedPrintings int           `json:"comparedPrintings"`
 	Opportunities     []Opportunity `json:"opportunities"`
+	// Comps is every compared printing's per-vendor sheet, ordered by
+	// valueUsd descending — the data behind the COMPS table.
+	Comps []Comp `json:"comps"`
+}
+
+// Comp is one owned printing's comp sheet: each vendor's USD figure for
+// the owned finish. Vendor fields are present only when that vendor
+// quoted the card; spread — (lowUsd − buylistUsd) / lowUsd, a fraction —
+// is present only when a buylist bid exists.
+type Comp struct {
+	Card     Card    `json:"card"`
+	Copies   int     `json:"copies"`
+	ValueUsd float64 `json:"valueUsd"`
+
+	// MarketUsd is tcgplayer's sales-derived market price.
+	MarketUsd      *float64 `json:"marketUsd,omitempty"`
+	CardKingdomUsd *float64 `json:"cardKingdomUsd,omitempty"`
+	ManapoolUsd    *float64 `json:"manapoolUsd,omitempty"`
+	LowUsd         float64  `json:"lowUsd"`
+	LowFrom        string   `json:"lowFrom"`
+	BuylistUsd     *float64 `json:"buylistUsd,omitempty"`
+	BuylistTo      string   `json:"buylistTo,omitempty"`
+	Spread         *float64 `json:"spread,omitempty"`
 }
 
 // Opportunity is one owned printing-and-finish with the vendor quotes that

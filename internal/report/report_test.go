@@ -276,8 +276,10 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 	}}}
 
 	out := Market(ui.Env{Width: 100, Color: true, Clamp: true}, sec)
-	if !strings.Contains(out, "mW\x1b[0m") || !strings.Contains(out, "mU\x1b[0m") {
-		t.Errorf("market row lost its pips:\n%q", out)
+	// No pips column in the market tables — the name's tint alone carries
+	// the identity in these money-dense rows.
+	if strings.Contains(out, "mW\x1b[0m\x1b[38") {
+		t.Errorf("market row still renders a pips column:\n%q", out)
 	}
 	if !strings.Contains(out, "38;2;") {
 		t.Errorf("market row lost its identity tint:\n%q", out)
@@ -289,9 +291,6 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 	plain := Market(ui.Env{Width: 100, Clamp: true}, sec)
 	if strings.Contains(plain, "\x1b[") {
 		t.Errorf("piped market output carries escapes:\n%q", plain)
-	}
-	if !strings.Contains(plain, "WU") {
-		t.Errorf("piped market output lost the plain pips:\n%q", plain)
 	}
 }
 
@@ -492,5 +491,51 @@ func TestValuationCSV(t *testing.T) {
 	}, "\n")
 	if sb.String() != want {
 		t.Errorf("valuation CSV:\n%s\nwant:\n%s", sb.String(), want)
+	}
+}
+
+// The comps table: piped bytes carry the plain letters and dashes; with
+// color, only the spread cell grades (tight green) and the name block
+// tints — money in place stays uncolored.
+func TestCompsSpreadColorsAndDashes(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	comps := []market.Comp{
+		{
+			Card: store.OwnedFinish{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
+				Finish: "nonfoil", Copies: 1, Value: 60, ColorIdentity: []string{}},
+			Market: 60, HasMarket: true, CK: 65, HasCK: true,
+			Low: 60, LowFrom: "tcgplayer",
+			Buylist: 48, BuylistTo: "cardkingdom", HasBuylist: true, // 20% spread → full green
+		},
+		{
+			Card: store.OwnedFinish{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
+				Finish: "nonfoil", Copies: 4, Value: 8},
+			Low: 1.99, LowFrom: "manapool", Manapool: 1.99, HasManapool: true,
+		},
+	}
+
+	out := Comps(ui.Env{Width: 110, Color: true, Clamp: true}, comps)
+	if !strings.Contains(out, "COMPS") || !strings.Contains(out, "SPREAD") {
+		t.Fatalf("comps section missing its furniture:\n%s", out)
+	}
+	if !strings.Contains(out, "20.0%") {
+		t.Errorf("spread percent missing:\n%s", out)
+	}
+	// The 20% spread saturates the ramp's green end — asserted through the
+	// ramp itself, since termenv's hex round-trip can drift a channel.
+	wantGreen := ui.Env{Color: true}.Grade(market.SpreadGrade(0.20))("20.0%")
+	if !strings.Contains(out, wantGreen) {
+		t.Errorf("tight spread not graded green: want %q in:\n%q", wantGreen, out)
+	}
+
+	plain := Comps(ui.Env{Width: 110, Clamp: true}, comps)
+	if strings.Contains(plain, "\x1b[") {
+		t.Errorf("piped comps output carries escapes:\n%q", plain)
+	}
+	if !strings.Contains(plain, "—") {
+		t.Errorf("missing vendors must render the dash:\n%s", plain)
 	}
 }

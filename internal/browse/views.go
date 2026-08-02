@@ -132,7 +132,7 @@ func (m Model) viewRowCount() int {
 	case viewWatches:
 		return len(m.watches)
 	case viewMarket:
-		return len(m.marketRows)
+		return m.marketTotalRows()
 	}
 	return len(m.cards)
 }

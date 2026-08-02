@@ -48,10 +48,15 @@ func cmdMarket(ctx context.Context, st *store.Store, args []string, jsonOut bool
 		fmt.Print(report.Market(env, sec))
 		fmt.Println()
 	}
+	if comps := market.TopComps(res.Comps, *limit); len(comps) > 0 {
+		fmt.Print(report.Comps(env, comps))
+		fmt.Println()
+	}
 
 	fmt.Println(env.Dim()(fmt.Sprintf(
 		"%s owned printings had two or more vendors. Anchored on tcgplayer's\n"+
-			"sales-derived market price; asks and offers are one day's, not guaranteed.",
+			"sales-derived market price; asks and offers are one day's, not guaranteed.\n"+
+			"Spread is retail minus buylist over retail: tight means the price is real.",
 		ui.Count(res.Compared))))
 	return nil
 }

@@ -33,7 +33,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -79,7 +79,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -127,7 +127,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -167,7 +167,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -213,7 +213,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -247,7 +247,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -310,7 +310,8 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         "marketUsd": 20,
         "belowMarket": 0.5
       }
-    ]
+    ],
+    "comps": []
   }
 }
 `
@@ -340,7 +341,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -424,7 +425,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -454,7 +455,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -464,5 +465,43 @@ func TestWatchDocumentWithNothingFired(t *testing.T) {
 `
 	if got != want {
 		t.Errorf("quiet watch document:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The market document carries the comp sheets: vendor fields omitted when
+// absent, spread an unrounded fraction, rows in the value order Collect
+// established.
+func TestMarketDocumentCarriesComps(t *testing.T) {
+	full := market.Comp{
+		Card: store.OwnedFinish{ScryfallID: "a", Name: "Ancient Tomb", SetCode: "uma",
+			CollectorNumber: "236", Finish: "foil", Copies: 1, Value: 60},
+		Market: 60, HasMarket: true, CK: 65, HasCK: true,
+		Low: 60, LowFrom: "tcgplayer",
+		Buylist: 42, BuylistTo: "cardkingdom", HasBuylist: true,
+	}
+	bare := market.Comp{
+		Card: store.OwnedFinish{ScryfallID: "b", Name: "Sol Ring", SetCode: "c21",
+			CollectorNumber: "125", Finish: "nonfoil", Copies: 2, Value: 4},
+		Low: 1.99, LowFrom: "manapool", Manapool: 1.99, HasManapool: true,
+	}
+	doc := FromMarket(market.Result{Comps: []market.Comp{full, bare}, Compared: 2})
+
+	comps := doc.Market.Comps
+	if len(comps) != 2 {
+		t.Fatalf("comps = %d rows", len(comps))
+	}
+	c := comps[0]
+	if c.MarketUsd == nil || *c.MarketUsd != 60 || c.CardKingdomUsd == nil || c.ManapoolUsd != nil {
+		t.Errorf("vendor fields = %+v, want present-only-when-quoted", c)
+	}
+	if c.Spread == nil || *c.Spread < 0.2999 || *c.Spread > 0.3001 {
+		t.Errorf("spread = %v, want the 30%% fraction", c.Spread)
+	}
+	b := comps[1]
+	if b.Spread != nil || b.BuylistUsd != nil {
+		t.Errorf("no buylist must mean no spread: %+v", b)
+	}
+	if b.LowUsd != 1.99 || b.LowFrom != "manapool" {
+		t.Errorf("low = %v from %q", b.LowUsd, b.LowFrom)
 	}
 }

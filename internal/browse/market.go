@@ -139,13 +139,13 @@ func (m *Model) loadCachedMarket() {
 // two of them (a "GAIN" over a buylist haircut, observed live). The
 // cursor still walks data rows only; section furniture scrolls past it.
 func (m Model) marketLines(width int) []string {
-	if width <= 0 || len(m.marketRows) == 0 {
+	if width <= 0 || m.marketTotalRows() == 0 {
 		return nil
 	}
 	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
 
 	var all []string
-	rowLine := make([]int, 0, len(m.marketRows))
+	rowLine := make([]int, 0, m.marketTotalRows())
 	flush := func(kind market.Kind, rows []market.Row) {
 		if len(rows) == 0 {
 			return
@@ -175,10 +175,27 @@ func (m Model) marketLines(width int) []string {
 	}
 	flush(kind, section)
 
+	// The comps section renders last: the same furniture shape, its rows
+	// continuing the flat cursor index past the Kind sections.
+	if len(m.marketComps) > 0 {
+		if len(all) > 0 {
+			all = append(all, "")
+		}
+		all = append(all, m.theme.Title.Render(market.CompsTitle)+"  "+m.theme.Help.Render(market.CompsNote))
+		t := compsSectionTable(env, m.marketComps)
+		t.Env, t.Header = env, true
+		lines := t.Lines()
+		all = append(all, lines[0])
+		for _, line := range lines[1:] {
+			rowLine = append(rowLine, len(all))
+			all = append(all, line)
+		}
+	}
+
 	// Cursor highlight on the selected data row, then a line window that
 	// keeps it visible — section furniture means rows and lines no longer
 	// map 1:1, so the generic pane windowing cannot be reused here.
-	cur := min(max(m.cursor[paneCards], 0), len(m.marketRows)-1)
+	cur := min(max(m.cursor[paneCards], 0), m.marketTotalRows()-1)
 	cline := rowLine[cur]
 	style := m.theme.Inactive
 	if m.focus == paneCards {
@@ -200,17 +217,16 @@ func (m Model) marketLines(width int) []string {
 // they say for that kind alone.
 func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
-	// Identity pips beside the name, first column to give way when narrow.
-	id := ui.Col{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 6, Style: env.Dim()}
 	fin := ui.Col{Title: "FIN", Align: ui.Left, Priority: 5, Style: env.Dim()}
 	vendor := func(t string) ui.Col { return ui.Col{Title: t, Align: ui.Left, Priority: 4, Style: env.Dim()} }
 	money := func(t string) ui.Col { return ui.Col{Title: t, Align: ui.Right} }
-	// The name block every section shares: tinted name, pips, printing, finish.
+	// The name block every section shares: tinted name, printing, finish.
+	// No pips column here — the market tables are dense with money, and
+	// the name's identity tint already carries the color story.
 	cardCells := func(r market.Row) []ui.Cell {
 		return []ui.Cell{
 			{Text: r.Card.Name, Style: env.Identity(r.Card.ColorIdentity)},
-			ui.C(ui.Pips(r.Card.ColorIdentity)),
 			ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
 		}
 	}
@@ -218,7 +234,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 	var t ui.Table
 	switch kind {
 	case market.KindProfit:
-		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
 		for _, r := range rows {
 			// A profit is the one genuine gain on this screen; the ratios in
@@ -229,7 +245,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 				ui.Cell{Text: "+" + ui.Money(r.Profit()), Style: env.Gain()})...)
 		}
 	case market.KindLiquid:
-		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
 		for _, r := range rows {
 			// The ratio columns grade on a color ramp — how close to the
@@ -240,7 +256,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 					Style: env.Grade(market.LiquidityGrade(r.Liquidity()))})...)
 		}
 	default:
-		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
 			money("ASK"), vendor("AT"), money("LAST SOLD"), money("BELOW")}}
 		for _, r := range rows {
 			t.Add(append(cardCells(r),
@@ -262,7 +278,7 @@ func (m Model) marketHeader() (title, totals string) {
 		return "MARKET", "press F to fetch"
 	}
 	return "MARKET", fmt.Sprintf("%s rows · %s printings compared",
-		ui.Count(len(m.marketRows)), ui.Count(m.marketResult.Compared))
+		ui.Count(m.marketTotalRows()), ui.Count(m.marketResult.Compared))
 }
 
 // marketStatus is the status line for this view, covering the three states
@@ -274,19 +290,29 @@ func (m Model) marketStatus() string {
 	case !m.marketLoaded:
 		return m.theme.Help.Render(
 			"vendor quotes may need a download, so the view waits to be asked · press F")
-	case len(m.marketRows) == 0:
+	case m.marketTotalRows() == 0:
 		return m.theme.Help.Render("no vendor disagreed about anything you own today")
 	}
 	// The status line explains the selected row's question — the flat list
 	// has no section headers, so without this a liquid row's percentage
 	// reads as a gain when it is the size of the haircut.
-	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices, not guaranteed sales",
-		m.cursor[paneCards]+1, len(m.marketRows), m.selectedMarketNote()))
+	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices",
+		m.cursor[paneCards]+1, m.marketTotalRows(), m.selectedMarketNote()))
 }
 
 // selectedMarketNote is one sentence on why the row under the cursor is
 // listed, in that row's own numbers.
 func (m Model) selectedMarketNote() string {
+	// A comps row explains its own bracket: the low ask, the bid, and the
+	// spread between them (or the absence of a bid).
+	if c := m.selectedComp(); c != nil {
+		if c.HasSpread() {
+			return fmt.Sprintf("low ask %s at %s · %s pays %s · spread %s",
+				ui.Money(c.Low), c.LowFrom, c.BuylistTo, ui.Money(c.Buylist),
+				ui.Percent(c.Spread()))
+		}
+		return fmt.Sprintf("low ask %s at %s · no buylist bid today", ui.Money(c.Low), c.LowFrom)
+	}
 	i := m.cursor[paneCards]
 	if i < 0 || i >= len(m.marketRows) {
 		return ""
@@ -323,4 +349,5 @@ func (m *Model) applyMarketRows() {
 	}
 	m.marketRows = rows
 	m.sortArbRows()
+	m.applyMarketComps()
 }

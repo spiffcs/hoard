@@ -2363,3 +2363,124 @@ func TestAllCardsRowRefusesContainerEdits(t *testing.T) {
 		t.Errorf("remove: confirm=%v status=%q", m.confirm, m.status)
 	}
 }
+
+// comp builds a comps fixture row.
+func comp(name string, value, low, buylist float64) market.Comp {
+	c := market.Comp{
+		Card: store.OwnedFinish{ScryfallID: "sf-" + name, Name: name,
+			SetCode: "mh3", CollectorNumber: "9", Finish: "nonfoil", Copies: 1, Value: value},
+		Market: low, HasMarket: true, Low: low, LowFrom: "tcgplayer",
+	}
+	if buylist > 0 {
+		c.Buylist, c.BuylistTo, c.HasBuylist = buylist, "cardkingdom", true
+	}
+	return c
+}
+
+// The COMPS section renders after the three Kind tables, the cursor walks
+// into it, enter opens the row's detail, and w seeds its watch prompt from
+// the market anchor.
+func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
+		Comps:         []market.Comp{comp("Sheeted", 60, 55, 44)},
+		Compared:      2,
+	}
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
+	m = next.(Model)
+	m.focus = paneCards
+
+	view := strings.Join(m.marketLines(110), "\n")
+	if !strings.Contains(view, "COMPS") || !strings.Contains(view, "SPREAD") {
+		t.Fatalf("comps section missing:\n%s", view)
+	}
+	if a, b := strings.Index(view, "ARBITRAGE"), strings.Index(view, "COMPS"); a > b {
+		t.Errorf("COMPS renders before the Kind sections")
+	}
+
+	// The flat cursor spans into the comps rows.
+	if got := m.marketTotalRows(); got != 2 {
+		t.Fatalf("total rows = %d, want the opportunity and the comp", got)
+	}
+	m.cursor[paneCards] = 1
+	if c := m.selectedComp(); c == nil || c.Card.Name != "Sheeted" {
+		t.Fatalf("selectedComp = %+v", c)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next.(Model).detail == nil {
+		t.Fatal("enter on a comps row must open the detail")
+	}
+	m = key(m, "w")
+	if m.prompt == nil || !strings.Contains(m.prompt.label, "Sheeted") ||
+		!strings.Contains(m.prompt.label, "$55.00") {
+		t.Fatalf("w on a comps row opened %+v, want the market-anchored prompt", m.prompt)
+	}
+}
+
+// The comps sort is its own: cycling it re-orders only the comps rows and
+// labels itself, leaving the Kind tables' state untouched.
+func TestCompsSortIsIndependent(t *testing.T) {
+	res := market.Result{
+		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
+		Comps: []market.Comp{
+			comp("Wide", 90, 100, 20), // 80% spread
+			comp("Tight", 50, 50, 40), // 20% spread
+			comp("NoBid", 70, 30, 0),  // undefined spread sorts last
+		},
+		Compared: 4,
+	}
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
+	m = next.(Model)
+	m.focus = paneCards
+
+	// Arrival order is value-descending: Wide, NoBid, Tight.
+	if m.marketComps[0].Card.Name != "Wide" {
+		t.Fatalf("arrival order = %v", m.marketComps[0].Card.Name)
+	}
+	m.cursor[paneCards] = len(m.marketRows) // first comps row
+	m = key(m, "s")                         // value → spread
+	if got := m.sortLabel(); got != "comps · spread" {
+		t.Fatalf("label = %q", got)
+	}
+	names := []string{m.marketComps[0].Card.Name, m.marketComps[1].Card.Name, m.marketComps[2].Card.Name}
+	if names[0] != "Tight" || names[2] != "NoBid" {
+		t.Errorf("spread order = %v, want tightest first and no-bid last", names)
+	}
+	if m.marketSortIdx != [3]int{} {
+		t.Errorf("kind tables' sort state moved: %v", m.marketSortIdx)
+	}
+}
+
+// The value floor filters comps rows like every other priced row.
+func TestCompsRespectValueFloor(t *testing.T) {
+	res := market.Result{
+		Comps:    []market.Comp{comp("Rich", 60, 55, 44), comp("Penny", 2, 1.5, 1)},
+		Compared: 2,
+	}
+	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
+	m = next.(Model)
+
+	if len(m.marketComps) != 2 {
+		t.Fatalf("comps = %d before the floor", len(m.marketComps))
+	}
+	m = key(m, "M") // floor $5
+	if len(m.marketComps) != 1 || m.marketComps[0].Card.Name != "Rich" {
+		t.Errorf("floored comps = %+v, want only the rich row", m.marketComps)
+	}
+}

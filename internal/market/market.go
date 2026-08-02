@@ -78,6 +78,9 @@ func (o Opportunity) Printing() string {
 // Result is a whole pass over the collection.
 type Result struct {
 	Opportunities []Opportunity
+	// Comps is every compared printing's per-vendor sheet, value-ranked —
+	// the fourth section, parallel to the Kind-filtered Opportunities.
+	Comps []Comp
 	// Compared is how many owned printings had two or more vendors to
 	// compare, reported so a caller can say how much ground the analysis
 	// actually covered.
@@ -101,11 +104,18 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 		op, retailCount := Assess(o, qs)
 		if retailCount >= 2 {
 			res.Compared++
+			// The comps population is exactly the compared one: a sheet
+			// with one vendor on it compares nothing. minValue filters on
+			// the low ask, same as the opportunities.
+			if c := AssessComp(o, qs); c.Low >= minValue {
+				res.Comps = append(res.Comps, c)
+			}
 		}
 		if op.HasRetail && op.BuyAt >= minValue {
 			res.Opportunities = append(res.Opportunities, op)
 		}
 	}
+	sortComps(res.Comps)
 	return res
 }
 

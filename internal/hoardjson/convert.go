@@ -231,6 +231,41 @@ func FromMarket(res market.Result) Document {
 	a := &Market{
 		ComparedPrintings: res.Compared,
 		Opportunities:     make([]Opportunity, 0, len(res.Opportunities)),
+		Comps:             make([]Comp, 0, len(res.Comps)),
+	}
+	for _, c := range res.Comps {
+		jc := Comp{
+			Card: Card{
+				Name:          c.Card.Name,
+				ScryfallID:    c.Card.ScryfallID,
+				MTGJSONUUID:   c.Card.MTGJSONUUID,
+				SetCode:       c.Card.SetCode,
+				Number:        c.Card.CollectorNumber,
+				Finish:        c.Card.Finish,
+				ColorIdentity: c.Card.ColorIdentity,
+			},
+			Copies:   c.Card.Copies,
+			ValueUsd: cents(c.Card.Value),
+			LowUsd:   cents(c.Low),
+			LowFrom:  c.LowFrom,
+		}
+		if c.HasMarket {
+			jc.MarketUsd = centsPtr(&c.Market)
+		}
+		if c.HasCK {
+			jc.CardKingdomUsd = centsPtr(&c.CK)
+		}
+		if c.HasManapool {
+			jc.ManapoolUsd = centsPtr(&c.Manapool)
+		}
+		if c.HasBuylist {
+			jc.BuylistUsd, jc.BuylistTo = centsPtr(&c.Buylist), c.BuylistTo
+		}
+		if c.HasSpread() {
+			s := c.Spread()
+			jc.Spread = &s
+		}
+		a.Comps = append(a.Comps, jc)
 	}
 	for _, r := range market.Rows(res, len(res.Opportunities)) {
 		op := Opportunity{

@@ -198,6 +198,17 @@ func (m *Model) subjectCard() *subjectRef {
 			return &subjectRef{scryfallID: r.ScryfallID, name: r.Name, finish: r.Finish}
 		}
 	case viewMarket:
+		if c := m.selectedComp(); c != nil {
+			ref := &subjectRef{scryfallID: c.Card.ScryfallID, name: c.Card.Name, finish: c.Card.Finish}
+			if c.HasMarket {
+				price := c.Market
+				ref.price = &price
+			} else if c.Low > 0 {
+				price := c.Low
+				ref.price = &price
+			}
+			return ref
+		}
 		i := m.cursor[paneCards]
 		if i >= 0 && i < len(m.marketRows) {
 			r := m.marketRows[i]

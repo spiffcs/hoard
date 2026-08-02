@@ -100,15 +100,30 @@ Thassa, Deep…  thb/71   -       $25.00   $25.00  cardkingdom  100.0%
 BELOW MARKET  a marketplace is asking far under what the card last sold for
 NAME           SET/NUM  FIN     ASK  AT        LAST SOLD  BELOW
 Glimmerpost    som/223  foil  $1.10  manapool      $3.99  -72.4%
+
+COMPS  a list comparing vendor prices
+NAME           SET/NUM  FIN     MP     CK  AT         MARKET    LOW  BUYLIST  SPREAD
+Ancient Tomb   uma/236  foil    —   $65.00 tcgplayer  $60.00  $60.00   $42.00   30.0%
 ```
 
 Everything anchors on tcgplayer's sales-derived market price — the one
-number that describes what cards actually trade at. The three tables stack
+number that describes what cards actually trade at. The four tables stack
 in one scrolling pane, each with its own headers; <kbd>enter</kbd> opens any
 row's card detail, and <kbd>s</kbd>/<kbd>S</kbd> sort just the table the
 cursor is in, each keeping its own column and direction. `hoard market`
-prints the same three tables with `--min` and `--limit`; see
+prints the same tables with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
+
+**COMPS** is the comp sheet sellers build by hand: for each owned printing,
+tcgplayer's market price (actual sales), each vendor's ask, the lowest of
+them, and the best buylist bid — the card's real value bracket. **SPREAD**
+is retail minus buylist over retail, the hobby's confidence signal: 20–30%
+marks a liquid staple dealers can flip, around 50% is typical, and 80–90%
+means the retail price spiked and no dealer believes it yet — the column
+grades green as it tightens. A dash means no buylist bid today (Card
+Kingdom runs the only buylist in the MTGJSON feed). The comps sort cycles
+value → spread → market → low → buylist → name; spread sorts tightest
+first.
 
 ## Filtering
 

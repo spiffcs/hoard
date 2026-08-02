@@ -61,6 +61,15 @@ func (m Model) firstMarketRowOfKind(k market.Kind) int {
 // its own.
 func (m Model) sortLabel() string {
 	if m.view == viewMarket {
+		// Checked before selectedMarketKind, which defaults to the profit
+		// table for any cursor outside the Kind sections.
+		if m.selectedComp() != nil {
+			label := "comps · " + compsSortColumns[m.compsSortIdx]
+			if m.compsSortRev {
+				label += " (reversed)"
+			}
+			return label
+		}
 		k := m.selectedMarketKind()
 		label := k.String() + " · " + marketSortColumns[k][m.marketSortIdx[k]]
 		if m.marketSortRev[k] {
@@ -80,6 +89,13 @@ func (m Model) sortLabel() string {
 // that table's first row so the sort's effect is on screen.
 func (m *Model) cycleSort() {
 	if m.view == viewMarket {
+		if m.selectedComp() != nil {
+			m.compsSortIdx = (m.compsSortIdx + 1) % len(compsSortColumns)
+			m.compsSortRev = false
+			m.sortCompRows()
+			m.cursor[paneCards] = len(m.marketRows) // the comps section's first row
+			return
+		}
 		k := m.selectedMarketKind()
 		m.marketSortIdx[k] = (m.marketSortIdx[k] + 1) % len(marketSortColumns[k])
 		m.marketSortRev[k] = false
@@ -97,6 +113,12 @@ func (m *Model) cycleSort() {
 // the cursor's table's column.
 func (m *Model) reverseSort() {
 	if m.view == viewMarket {
+		if m.selectedComp() != nil {
+			m.compsSortRev = !m.compsSortRev
+			m.sortCompRows()
+			m.cursor[paneCards] = len(m.marketRows)
+			return
+		}
 		k := m.selectedMarketKind()
 		m.marketSortRev[k] = !m.marketSortRev[k]
 		m.sortArbRows()

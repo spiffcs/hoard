@@ -46,8 +46,11 @@ func (m *Model) openDetail() {
 			id = w.ScryfallID
 		}
 	case viewMarket:
-		// So does an arbitrage row — the quotes describe a printing you own.
-		if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
+		// So does an arbitrage row — the quotes describe a printing you
+		// own — and a comps row past the Kind sections just the same.
+		if c := m.selectedComp(); c != nil {
+			id = c.Card.ScryfallID
+		} else if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
 			id = m.marketRows[i].Card.ScryfallID
 		}
 	case viewUnpriced:

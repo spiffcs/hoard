@@ -192,9 +192,13 @@ type Model struct {
 
 	// The market view sorts per table: each of the three sections keeps
 	// its own column choice and direction, indexed by market.Kind, and
-	// 's' operates on the table the cursor is in.
+	// 's' operates on the table the cursor is in. The comps section has
+	// no Kind, so it keeps its own slice and sort state (see comps.go).
 	marketSortIdx [3]int
 	marketSortRev [3]bool
+	marketComps   []market.Comp
+	compsSortIdx  int
+	compsSortRev  bool
 
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int

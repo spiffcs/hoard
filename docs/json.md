@@ -42,6 +42,13 @@ rejects `--json` rather than silently printing a table at a script.
 - **Money is whole cents**: every `*Usd` field is rounded to two decimals at
   the boundary, so summed totals don't leak binary-float noise into diffs.
   Ratios (`belowMarket`, `liquidity`) are unrounded fractions.
+- **The market document carries comps**: `market.comps` is every compared
+  printing's per-vendor sheet — `marketUsd` (tcgplayer's sales-derived
+  price), `cardKingdomUsd`, `manapoolUsd`, the derived `lowUsd`/`lowFrom`,
+  `buylistUsd`/`buylistTo`, and `spread` ((low − buylist) ÷ low, a
+  fraction, present only when a bid exists) — ordered by `valueUsd`.
+  Tightest spreads: `hoard market --json | jq '[.market.comps[] |
+  select(.spread != null)] | sort_by(.spread) | .[:5]'`.
 - **Card references travel with identifiers**: every card carries
   `scryfallId` (+ `mtgjsonUuid` when mapped) plus `setCode`/`number`, so a
   document joins directly against Scryfall bulk data or MTGJSON AllPrintings

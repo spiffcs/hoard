@@ -139,8 +139,6 @@ func Market(env ui.Env, sec market.Section) string {
 		Env: env,
 		Cols: []ui.Col{
 			{Align: ui.Left, Flex: true, Min: 16},
-			// Identity pips beside the name; the first column to drop.
-			{Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
 			{Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Align: ui.Right},
@@ -150,14 +148,14 @@ func Market(env ui.Env, sec market.Section) string {
 			{Align: ui.Right},
 		},
 	}
-	// The name block every section shares: tinted name, pips, printing,
-	// finish. A profit is the one genuine gain here; the other sections'
+	// The name block every section shares: tinted name, printing, finish —
+	// no pips column, the tint alone carries the identity in these dense
+	// tables. A profit is the one genuine gain here; the other sections'
 	// ratios stay uncolored — a below-market discount in red would read as
 	// a loss when it is a reason to buy.
 	cardCells := func(o market.Opportunity) []ui.Cell {
 		return []ui.Cell{
 			{Text: o.Card.Name, Style: env.Identity(o.Card.ColorIdentity)},
-			ui.C(ui.Pips(o.Card.ColorIdentity)),
 			ui.C(o.Printing()), ui.C(ui.Finish(o.Card.Finish)),
 		}
 	}
@@ -185,6 +183,62 @@ func Market(env ui.Env, sec market.Section) string {
 		}
 	}
 	return env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()) + "\n" + t.Render()
+}
+
+// Comps lays out the comp-sheet section: its header line, then one row
+// per owned printing with every vendor's number — the market anchor, each
+// ask, the buylist bid, and the spread between ask and bid graded so a
+// tight (trustworthy) spread reads green.
+func Comps(env ui.Env, comps []market.Comp) string {
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 16},
+			// The card furniture gives way before any vendor column — the
+			// per-vendor numbers are this table's whole point.
+			{Title: "SET/NUM", Align: ui.Left, Priority: 8, Style: env.Dim()},
+			{Title: "FIN", Align: ui.Left, Priority: 7, Style: env.Dim()},
+			{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
+			{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
+			{Title: "AT", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "MARKET", Align: ui.Right},
+			{Title: "LOW", Align: ui.Right},
+			{Title: "BUYLIST", Align: ui.Right},
+			{Title: "SPREAD", Align: ui.Right},
+		},
+	}
+	for _, c := range comps {
+		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
+			ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+			ui.C(compMoney(c.HasManapool, c.Manapool)),
+			ui.C(compMoney(c.HasCK, c.CK)),
+			ui.C(c.LowFrom),
+			ui.C(compMoney(c.HasMarket, c.Market)),
+			ui.C(ui.Money(c.Low)),
+			ui.C(compMoney(c.HasBuylist, c.Buylist)),
+			spreadCell(env, c))
+	}
+	return env.Bold()(market.CompsTitle) + env.Dim()("  "+market.CompsNote) + "\n" + t.Render()
+}
+
+// compMoney renders a vendor's figure, or the unknown dash when that
+// vendor did not quote the card.
+func compMoney(has bool, v float64) string {
+	if !has {
+		return "—"
+	}
+	return ui.Money(v)
+}
+
+// spreadCell grades a defined spread on the tight-is-green ramp; an
+// undefined one (no buylist bid) renders the dash, dim.
+func spreadCell(env ui.Env, c market.Comp) ui.Cell {
+	if !c.HasSpread() {
+		return ui.Cell{Text: "—", Style: env.Dim()}
+	}
+	s := c.Spread()
+	return ui.Cell{Text: ui.Percent(s), Style: env.Grade(market.SpreadGrade(s))}
 }
 
 // Movers renders the risers and sinkers, and what they did to the hoard.

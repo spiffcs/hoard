@@ -230,3 +230,125 @@ func TestCollectFiltersByPrice(t *testing.T) {
 		t.Errorf("Compared = %d, want 2", res.Compared)
 	}
 }
+
+// AssessComp builds the full sheet: each vendor's own column, the cheapest
+// ask as Low, and cardkingdom's bid on the buylist side.
+func TestAssessCompBuildsTheSheet(t *testing.T) {
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
+		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
+		q("manapool", mtgjson.Retail, "foil", 4.10),
+		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
+	}
+	c := AssessComp(ownedFoil("Legion Loyalty"), qs)
+	if !c.HasMarket || c.Market != 3.20 {
+		t.Errorf("market = %v (has %v)", c.Market, c.HasMarket)
+	}
+	if !c.HasCK || c.CK != 2.49 || !c.HasManapool || c.Manapool != 4.10 {
+		t.Errorf("vendor columns = ck %v mp %v", c.CK, c.Manapool)
+	}
+	if c.Low != 2.49 || c.LowFrom != "cardkingdom" {
+		t.Errorf("low = %v from %q, want the cheapest ask", c.Low, c.LowFrom)
+	}
+	if !c.HasBuylist || c.Buylist != 0.75 || c.BuylistTo != "cardkingdom" {
+		t.Errorf("buylist = %v to %q", c.Buylist, c.BuylistTo)
+	}
+}
+
+// The comp sheet reads only the owned finish, like everything else.
+func TestAssessCompUsesOnlyTheOwnedFinish(t *testing.T) {
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "normal", 0.42),
+		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
+		q("cardkingdom", mtgjson.Buylist, "normal", 0.10),
+	}
+	c := AssessComp(ownedFoil("Legion Loyalty"), qs)
+	if c.HasMarket || c.Low != 2.49 || c.HasBuylist {
+		t.Errorf("comp read across finishes: %+v", c)
+	}
+}
+
+// Spread is (low − bid)/low, defined only when both sides exist; a bid
+// above the low ask goes negative — genuine arbitrage, maximally real.
+func TestCompSpreadMath(t *testing.T) {
+	c := Comp{Low: 26.00, Buylist: 18.20, HasBuylist: true}
+	if !c.HasSpread() {
+		t.Fatal("both sides present, spread must be defined")
+	}
+	if s := c.Spread(); s < 0.2999 || s > 0.3001 {
+		t.Errorf("spread = %v, want 30%%", s)
+	}
+	neg := Comp{Low: 2.00, Buylist: 2.50, HasBuylist: true}
+	if neg.Spread() >= 0 {
+		t.Errorf("bid above ask should read negative, got %v", neg.Spread())
+	}
+	if none := (Comp{Low: 5.00}); none.HasSpread() {
+		t.Error("no buylist bid means no spread")
+	}
+}
+
+// The ramp anchors on the hobby's landmarks: 20% saturates green, 85%
+// floors amber, and the negative-arbitrage case clamps to full green.
+func TestSpreadGradeAnchors(t *testing.T) {
+	if g := SpreadGrade(0.20); g != 1 {
+		t.Errorf("20%% = %v, want 1", g)
+	}
+	if g := SpreadGrade(0.85); g != 0 {
+		t.Errorf("85%% = %v, want 0", g)
+	}
+	if g := SpreadGrade(0.525); g < 0.49 || g > 0.51 {
+		t.Errorf("midpoint = %v, want ~0.5", g)
+	}
+	if g := SpreadGrade(-0.10); g != 1 {
+		t.Errorf("negative spread = %v, want the full green clamp", g)
+	}
+}
+
+// Collect gates comps at two retail quotes, filters on the low ask, and
+// ranks by value with the truncation-stable tiebreak.
+func TestCollectBuildsComps(t *testing.T) {
+	cheap := ownedFoil("Penny Card")
+	cheap.ScryfallID, cheap.Value = "penny", 0.30
+	rich := ownedFoil("Rich Card")
+	rich.ScryfallID, rich.Value = "rich", 90
+	lone := ownedFoil("One Vendor")
+	lone.ScryfallID, lone.Value = "lone", 50
+
+	quotes := map[string][]mtgjson.Quote{
+		"penny": {q("tcgplayer", mtgjson.Retail, "foil", 0.30),
+			q("cardkingdom", mtgjson.Retail, "foil", 0.35)},
+		"rich": {q("tcgplayer", mtgjson.Retail, "foil", 80),
+			q("cardkingdom", mtgjson.Retail, "foil", 85),
+			q("cardkingdom", mtgjson.Buylist, "foil", 60)},
+		"lone": {q("cardkingdom", mtgjson.Retail, "foil", 55)},
+	}
+	res := Collect([]store.OwnedFinish{cheap, rich, lone}, quotes, 1.0)
+
+	if len(res.Comps) != 1 || res.Comps[0].Card.ScryfallID != "rich" {
+		t.Fatalf("comps = %+v, want only the rich two-vendor card", res.Comps)
+	}
+	if res.Compared != 2 {
+		t.Errorf("Compared = %d, want 2 (the gate is unchanged)", res.Compared)
+	}
+
+	// Without the value filter the penny card joins, ranked below.
+	res = Collect([]store.OwnedFinish{cheap, rich}, quotes, 0)
+	if len(res.Comps) != 2 || res.Comps[0].Card.ScryfallID != "rich" {
+		t.Fatalf("comps order = %+v, want value-descending", res.Comps)
+	}
+}
+
+func TestTopCompsTruncates(t *testing.T) {
+	comps := []Comp{{Low: 1}, {Low: 2}, {Low: 3}}
+	if got := TopComps(comps, 2); len(got) != 2 {
+		t.Errorf("TopComps(2) = %d rows", len(got))
+	}
+	if got := TopComps(comps, 0); len(got) != 3 {
+		t.Errorf("TopComps(0) = %d rows, want everything", len(got))
+	}
+	got := TopComps(comps, 3)
+	got[0].Low = 99
+	if comps[0].Low == 99 {
+		t.Error("TopComps must copy, not alias")
+	}
+}

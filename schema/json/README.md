@@ -48,6 +48,9 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.1.2** — ADDITION: `market.comps` — every compared printing's
+  per-vendor comp sheet (tcgplayer market, cardkingdom, manapool, the low
+  ask, the buylist bid, and the spread as a fraction), ordered by value.
 - **1.1.1** — ADDITION: `card.colorIdentity` (Scryfall `color_identity`
   letters; `[]` means colorless, absent means unknown to hoard) on the
   holdings, unpriced and movers card objects.
