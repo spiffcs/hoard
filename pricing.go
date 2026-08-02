@@ -41,20 +41,24 @@ func runUpdatePrices(ctx context.Context, deps action.Deps, limit int, w io.Writ
 	if err != nil {
 		return err
 	}
+	// One Env for everything written to w — the movers table used to sniff
+	// os.Stdout even when w was a test buffer.
+	r := &ui.Report{Out: w, Err: os.Stderr,
+		OutEnv: ui.Detect(os.Stdout), ErrEnv: ui.Detect(os.Stderr)}
 	if res.Total == 0 {
-		fmt.Fprintln(w, "No cards yet; nothing to update.")
+		r.Result("No cards yet; nothing to update.")
 		return nil
 	}
-	fmt.Fprintf(w, "Updated prices for %d of %d cards.\n", res.Found, res.Total)
+	r.Result("Updated prices for %d of %d cards.", res.Found, res.Total)
 	if res.FromCatalog > 0 {
-		fmt.Fprintf(w, "  %d from the local catalog, %d from Scryfall.\n",
+		r.Detail("%d from the local catalog, %d from Scryfall.",
 			res.FromCatalog, res.Found-res.FromCatalog)
 	}
 	if res.NotFound > 0 {
-		fmt.Fprintf(w, "  %d cards could not be re-fetched from Scryfall.\n", res.NotFound)
+		r.Detail("%d cards could not be re-fetched from Scryfall.", res.NotFound)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprint(w, report.Movers(ui.Detect(os.Stdout), res.Changes, limit, "since the last refresh"))
+	fmt.Fprint(w, report.Movers(r.OutEnv, res.Changes, limit, "since the last refresh"))
 	return nil
 }
 

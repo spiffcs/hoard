@@ -18,7 +18,7 @@ stable and looks the part.
 | 2 | Portfolio + scriptability | ✅ complete (A–E; F superseded by parity) | [sprint-portfolio-scriptability.md](sprint-portfolio-scriptability.md) |
 | 3 | Parity — action layer, progress, palette | ✅ complete (2026-07-31) | [sprint-parity.md](sprint-parity.md) |
 | 4 | TUI completion — seamless add + parity ledger | ✅ implemented 2026-07-31 (live smoke of the embedded cascade pending) | [sprint-tui-completion.md](sprint-tui-completion.md) |
-| 5 | UI beautification — WUBRG identity | 🔨 in progress (A ✅ 2026-07-31, B ✅ 2026-08-01; C–F pending) | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
+| 5 | UI beautification — WUBRG identity | 🔨 in progress (A ✅ 2026-07-31, B–C ✅ 2026-08-01; D–F pending) | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
 | 6 | Distribution | 💭 backlog (unplanned) | — |
 
 ## One-line summaries

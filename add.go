@@ -73,7 +73,7 @@ func addByURL(ctx context.Context, st *store.Store, url string, foil bool, qty i
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Added %d× %s (%s/%s) as %s into %s — %s\n",
+	ui.NewReport().Success("Added %d× %s (%s/%s) as %s into %s — %s",
 		qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, res.Binder, ui.MoneyPtr(res.PriceUSD))
 	return nil
@@ -112,18 +112,19 @@ func addList(ctx context.Context, st *store.Store, data []byte, display, binderR
 	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
 	}
-	fmt.Printf("Added %d cards into %s (%d lines resolved).\n", res.Copies, res.Binder, res.Resolved)
+	r := ui.NewReport()
+	r.Result("Added %d cards into %s (%d lines resolved).", res.Copies, res.Binder, res.Resolved)
 	if res.Refinished > 0 {
-		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
+		r.Detail("%d recorded as foil: the list said otherwise but the printing has no non-foil.",
 			res.Refinished)
 	}
 	for _, s := range res.Skipped {
-		fmt.Printf("  Skipped %s\n", s)
+		r.Detail("Skipped %s", s)
 	}
 	if len(res.Unresolved) > 0 {
-		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(res.Unresolved))
+		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
 		for _, u := range res.Unresolved {
-			fmt.Printf("    - %s\n", u)
+			r.Item(u)
 		}
 	}
 	return err
@@ -173,6 +174,8 @@ func printScanSummary(sum tui.Summary) {
 	if len(sum.Entries) == 0 {
 		return
 	}
+	r := ui.NewReport()
+	ok := r.OutEnv.OK()
 	auto, reviewed := sum.Count("auto"), sum.Count("reviewed")+sum.Count("duplicate-confirmed")
 	skipped, discarded := sum.Count("skipped"), sum.Count("discarded")
 	line := fmt.Sprintf("Scan session: %d auto-added, %d reviewed", auto, reviewed)
@@ -182,17 +185,20 @@ func printScanSummary(sum tui.Summary) {
 	if discarded > 0 {
 		line += fmt.Sprintf(", %d discarded", discarded)
 	}
-	fmt.Println(line)
+	r.Result("%s", line)
+	// The receipt already speaks the glyph vocabulary — ✓ auto-added, +
+	// reviewed, - dropped — so only the ✓ gains the ok color; the piped
+	// bytes stay exactly as they were.
 	for _, e := range sum.Entries {
 		switch e.Kind {
 		case "auto":
-			fmt.Printf("  ✓ %s\n", e.Line)
+			r.Detail("%s %s", ok("✓"), e.Line)
 		case "reviewed", "duplicate-confirmed":
-			fmt.Printf("  + %s\n", e.Line)
+			r.Detail("+ %s", e.Line)
 		case "skipped":
-			fmt.Printf("  - skipped %s\n", e.Line)
+			r.Detail("- skipped %s", e.Line)
 		case "discarded":
-			fmt.Printf("  - %s\n", e.Line)
+			r.Detail("- %s", e.Line)
 		}
 	}
 }

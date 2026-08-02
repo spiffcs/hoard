@@ -16,6 +16,7 @@ import (
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func cmdDeck(ctx context.Context, st *store.Store, args []string) error {
@@ -64,16 +65,17 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Imported deck #%d %q (%s): %d cards resolved.\n",
+	r := ui.NewReport()
+	r.Result("Imported deck #%d %q (%s): %d cards resolved.",
 		res.ID, res.Name, res.Source, res.Resolved)
 	if res.Refinished > 0 {
-		fmt.Printf("  %d recorded as foil: the list said otherwise but the printing has no non-foil.\n",
+		r.Detail("%d recorded as foil: the list said otherwise but the printing has no non-foil.",
 			res.Refinished)
 	}
 	if len(res.Unresolved) > 0 {
-		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(res.Unresolved))
+		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
 		for _, u := range res.Unresolved {
-			fmt.Printf("    - %s\n", u)
+			r.Item(u)
 		}
 	}
 	return err
@@ -103,7 +105,7 @@ func cmdDeckRemove(st *store.Store, args []string) error {
 	if _, err := st.RemoveContainer(deck.ID); err != nil {
 		return err
 	}
-	fmt.Printf("Removed deck #%d %q\n", deck.ID, deck.Name)
+	ui.NewReport().Success("Removed deck #%d %q", deck.ID, deck.Name)
 	return nil
 }
 

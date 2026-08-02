@@ -92,45 +92,44 @@ func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) erro
 		fmt.Println(env.Dim()("Nothing owned yet."))
 		return nil
 	}
-	printBackfill(env, res)
+	printBackfill(res)
 	return nil
 }
 
-// printBackfill reports the import, including what it missed.
-func printBackfill(env ui.Env, r action.BackfillResult) {
-	dim := env.Dim()
+// printBackfill reports the import, including what it missed. The outcome
+// goes to stdout; the partial-outcome warnings (printings the archive
+// could not cover) go to stderr — this used to put everything on stdout,
+// so piping the result meant filtering the caveats out by hand.
+func printBackfill(r action.BackfillResult) {
+	rep := ui.NewReport()
 	if r.AlreadyToday != "" {
-		fmt.Println(dim(
-			"Already backfilled today for these holdings; the archive only changes daily."))
+		rep.Hint("Already backfilled today for these holdings; the archive only changes daily.")
 		return
 	}
 	if r.Inserted == 0 {
 		if r.HadHistorySince != "" {
 			if t, err := time.Parse(time.RFC3339, r.HadHistorySince); err == nil {
-				fmt.Println(dim(fmt.Sprintf(
-					"Nothing to backfill: prices are already recorded from %s.",
-					t.Local().Format("2 Jan 2006"))))
+				rep.Hint("Nothing to backfill: prices are already recorded from %s.",
+					t.Local().Format("2 Jan 2006"))
 				return
 			}
 		}
-		fmt.Println(dim("MTGJSON had no earlier prices for anything you hold."))
+		rep.Hint("MTGJSON had no earlier prices for anything you hold.")
 		return
 	}
 
-	fmt.Printf("Backfilled %s observations across %s printings.\n",
+	rep.Result("Backfilled %s observations across %s printings.",
 		ui.Count(r.Inserted), ui.Count(r.Cards))
 	if r.Unmapped > 0 {
-		fmt.Println(dim(fmt.Sprintf(
-			"  %s printings have no MTGJSON id and were skipped.", ui.Count(r.Unmapped))))
+		rep.Warn("%s printings have no MTGJSON id and were skipped.", ui.Count(r.Unmapped))
 	}
 	if r.Unquoted > 0 {
-		fmt.Println(dim(fmt.Sprintf(
-			"  %s have no TCGplayer price history — the same gap 'unpriced' reports.",
-			ui.Count(r.Unquoted))))
+		rep.Warn("%s have no TCGplayer price history — the same gap 'unpriced' reports.",
+			ui.Count(r.Unquoted))
 	}
-	fmt.Println(dim("Prices come from TCGplayer, the source Scryfall itself quotes."))
-	fmt.Println()
-	fmt.Println("Try: hoard movers --since 30d")
+	rep.Hint("Prices come from TCGplayer, the source Scryfall itself quotes.")
+	rep.Result("")
+	rep.Hint("Try: hoard movers --since 30d")
 }
 
 // parseWindow reads a lookback like 7d, 2w or 48h.

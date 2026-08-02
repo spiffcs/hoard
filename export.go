@@ -13,6 +13,7 @@ import (
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // writeHoldingsJSON is the JSON member of the format table, matching the CSV
@@ -77,6 +78,6 @@ func cmdExport(st *store.Store, args []string, jsonOut bool) error {
 	for _, r := range rows {
 		copies += r.Count
 	}
-	fmt.Printf("Exported %d cards to %s\n", copies, *out)
+	ui.NewReport().Result("Exported %d cards to %s", copies, *out)
 	return nil
 }

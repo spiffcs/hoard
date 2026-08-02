@@ -217,7 +217,20 @@ add-flow picker holds a `scryfall.Card` and never touches the store.
 per the rules in schema/json/README.md) — scriptability consumers get the
 same data the UI renders.
 
-## ⬜ C. Prose vocabulary for mutating commands
+## ✅ C. Prose vocabulary for mutating commands (implemented 2026-08-01)
+
+*As-landed notes:* `Report` landed exactly as specified (no `Step` —
+`ui.Printer`/`internal/progress` already own event-stream progress; the
+planned D4 largely shipped before this sprint). `Hint` stays on stdout —
+advice is part of the answer, matching the unpriced report's precedent.
+Stream/byte changes, deliberate: `add <url>` and `deck remove` now lead
+with the gh-style `✓ ` (Success); backfill's unmapped/unquoted skip notes
+moved stdout→stderr as `  ! ` warnings (the recorded stream bug); the
+catalog-update summary and first-run line kept their stream, gained dim.
+The `confirmFn` indirection was already gone — `confirm()` now delegates
+to `ui.Confirm` with os.Stdin injected. `catalog.Open` remembers when a
+schema bump discarded a populated catalog (`ReplacedOutdated`) and
+`openCatalog` announces the coming full rebuild — the B4 requirement.
 
 `internal/ui/report.go` (new). One dialect for command narration, grounded
 in the patterns already in the code (headline, 2-space detail, 4-space

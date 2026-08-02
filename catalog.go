@@ -41,6 +41,12 @@ func openCatalog() *catalog.Catalog {
 		fmt.Fprintf(os.Stderr, "catalog unavailable, using the Scryfall API: %v\n", err)
 		return nil
 	}
+	if c.ReplacedOutdated() {
+		// The schema bump wiped a populated catalog; without this line the
+		// next download prompt reads as "your catalog vanished".
+		ui.NewReport().Progress(
+			"The local catalog predates this hoard's format; the next update rebuilds it in full.")
+	}
 	return c
 }
 
@@ -63,20 +69,17 @@ func stderrPrinter() *ui.Printer {
 
 // confirm asks a yes/no question, defaulting to no.
 //
-// Anything but an explicit yes declines: the questions this asks all precede
-// spending somebody's bandwidth, and the safe reading of a stray keystroke is
-// "don't". A non-interactive stdin declines outright rather than blocking a
-// script forever on a prompt nobody will answer. The prompt itself goes to
-// stderr — it is conversation with the user, not command output, and it must
-// not leak into a pipe that happens to still have a terminal on stdin.
+// A non-interactive stdin declines outright rather than blocking a script
+// forever on a prompt nobody will answer. The prompt itself goes to stderr —
+// it is conversation with the user, not command output, and it must not
+// leak into a pipe that happens to still have a terminal on stdin. The ask
+// itself is ui.Confirm, the same [y/N] every confirm in hoard speaks.
 func confirm(question string) bool {
 	if !stdinIsTTY() {
 		return false
 	}
-	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
-	var answer string
-	fmt.Scanln(&answer)
-	return answer == "y" || answer == "Y" || answer == "yes"
+	ok, err := ui.Confirm(os.Stdin, os.Stderr, question)
+	return err == nil && ok
 }
 
 func cmdCatalog(ctx context.Context, args []string) error {
@@ -100,7 +103,7 @@ func cmdCatalog(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Catalog ready: %s cards, %s on disk, built in %s.\n",
+		ui.NewReport().Progress("Catalog ready: %s cards, %s on disk, built in %s.",
 			ui.Count(res.Cards), ui.Bytes(res.Bytes), res.Took)
 		return nil
 	default:

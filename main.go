@@ -163,7 +163,7 @@ func run(args []string) error {
 	}
 	defer st.Close()
 	if newDB {
-		fmt.Fprintf(os.Stderr, "Initialized hoard database at %s\n", dbPath)
+		ui.NewReport().Progress("Initialized hoard database at %s", dbPath)
 	}
 
 	// Ctrl-C cancels the context instead of killing the process, so a

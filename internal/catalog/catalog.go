@@ -97,6 +97,9 @@ type Catalog struct {
 	// and the download URL are three questions about the same few KB of JSON,
 	// and asking per question meant one update-prices fetched it four times.
 	entry *bundle
+	// replacedOutdated marks that Open discarded a populated catalog whose
+	// schema predates this build — see ReplacedOutdated.
+	replacedOutdated bool
 }
 
 // Open opens the catalog in dir, creating an empty one if there is none.
@@ -115,17 +118,32 @@ func Open(dir string) (*Catalog, error) {
 	}
 	path := filepath.Join(dir, fileName)
 
+	replacedOutdated := false
 	if c, err := openAt(dir, path); err == nil {
 		if v, _ := c.metaInt(keySchema); v == schemaVersion {
 			return c, nil
 		}
+		// A populated catalog in an older format is about to be discarded.
+		// Remember that, so the caller can say why the catalog is suddenly
+		// empty — a silent wipe reads as data loss, and the next update
+		// being a full ~100k-card rebuild deserves a sentence.
+		replacedOutdated = c.CardCount() > 0
 		c.db.Close()
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("catalog: replacing unusable catalog: %w", err)
 	}
-	return openAt(dir, path)
+	c, err := openAt(dir, path)
+	if err != nil {
+		return nil, err
+	}
+	c.replacedOutdated = replacedOutdated
+	return c, nil
 }
+
+// ReplacedOutdated reports that Open discarded a populated catalog built
+// with an older schema version; the next update rebuilds it in full.
+func (c *Catalog) ReplacedOutdated() bool { return c.replacedOutdated }
 
 // openAt opens or creates the database at path and ensures the schema exists.
 func openAt(dir, path string) (*Catalog, error) {

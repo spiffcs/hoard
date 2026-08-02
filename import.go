@@ -15,6 +15,7 @@ import (
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func cmdImport(ctx context.Context, st *store.Store, args []string) error {
@@ -53,37 +54,38 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
+	r := ui.NewReport()
 	verb := "Imported"
 	if *dryRun {
 		verb = "Would import"
 	}
-	fmt.Printf("%s %d cards (%s format): %d rows resolved.\n", verb, res.Copies, res.Format, res.Resolved)
+	r.Result("%s %d cards (%s format): %d rows resolved.", verb, res.Copies, res.Format, res.Resolved)
 	for _, name := range sortedKeys(res.PerBinder) {
 		note := ""
 		if slices.Contains(res.Created, name) {
 			note = " (new binder)"
 		}
-		fmt.Printf("  %d into %s%s\n", res.PerBinder[name], name, note)
+		r.Detail("%d into %s%s", res.PerBinder[name], name, note)
 	}
 	if res.SkippedDeckRows > 0 {
-		fmt.Printf("  Skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards.\n",
+		r.Detail("Skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards.",
 			res.SkippedDeckRows)
 	}
 	if res.Refinished > 0 {
-		fmt.Printf("  %d recorded as foil: the file said otherwise but the printing has no non-foil.\n",
+		r.Detail("%d recorded as foil: the file said otherwise but the printing has no non-foil.",
 			res.Refinished)
 	}
 	for _, field := range sortedKeys(res.Dropped) {
-		fmt.Printf("  Dropped %s on %d rows: hoard does not track it.\n", field, res.Dropped[field])
+		r.Detail("Dropped %s on %d rows: hoard does not track it.", field, res.Dropped[field])
 	}
 	if len(res.Unresolved) > 0 {
-		fmt.Printf("  %d cards could not be resolved and were skipped:\n", len(res.Unresolved))
+		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
 		for _, u := range res.Unresolved {
-			fmt.Printf("    - %s\n", u)
+			r.Item(u)
 		}
 	}
 	if *dryRun {
-		fmt.Println("Dry run: nothing was written.")
+		r.Hint("Dry run: nothing was written.")
 	}
 	return err
 }
