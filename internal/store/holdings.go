@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -136,6 +137,9 @@ type OwnedFinish struct {
 	// Value is what hoard currently thinks these copies are worth, so a caller
 	// can compare a vendor quote against the figure `summary` reports.
 	Value float64
+	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
+	// same semantics as Card.ColorIdentity.
+	ColorIdentity []string
 }
 
 // OwnedByFinish returns every printing held, split by finish.
@@ -144,7 +148,8 @@ func (s *Store) OwnedByFinish() ([]OwnedFinish, error) {
 SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
        c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
-       SUM(e.quantity * ` + entryValue + `) AS value
+       SUM(e.quantity * ` + entryValue + `) AS value,
+       c.color_identity
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 ` + altJoinCards + `
@@ -157,10 +162,12 @@ ORDER BY value DESC, c.name`)
 	var out []OwnedFinish
 	for rows.Next() {
 		var o OwnedFinish
+		var colors sql.NullString
 		if err := rows.Scan(&o.ScryfallID, &o.MTGJSONUUID, &o.Name, &o.SetCode,
-			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value); err != nil {
+			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &colors); err != nil {
 			return nil, err
 		}
+		o.ColorIdentity = parseColorIdentity(colors)
 		out = append(out, o)
 	}
 	return out, rows.Err()

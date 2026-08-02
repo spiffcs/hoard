@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -259,6 +260,41 @@ func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 // With color on, the delta columns carry direction as color too: gains in
 // the ok green (SGR 92), losses in the error red (SGR 91). Everything else
 // in the row stays bold/dim — money in place is never colored.
+// The market sections carry the same identity treatment as every other
+// card table — tinted name, per-letter pips — and the profit column is the
+// one gain-colored number (ratios stay plain; a below-market discount in
+// red would read as a loss). Piped output stays escape-free.
+func TestMarketIdentityAndProfitColors(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	sec := market.Section{Kind: market.KindProfit, Rows: []market.Opportunity{{
+		Card: store.OwnedFinish{Name: "Absorb", SetCode: "rna", CollectorNumber: "151",
+			Finish: "nonfoil", Copies: 1, ColorIdentity: []string{"W", "U"}},
+		Market: 1.00, SellAt: 3.00, SellTo: "cardkingdom", HasMarket: true, HasBuy: true,
+	}}}
+
+	out := Market(ui.Env{Width: 100, Color: true, Clamp: true}, sec)
+	if !strings.Contains(out, "mW\x1b[0m") || !strings.Contains(out, "mU\x1b[0m") {
+		t.Errorf("market row lost its pips:\n%q", out)
+	}
+	if !strings.Contains(out, "38;2;") {
+		t.Errorf("market row lost its identity tint:\n%q", out)
+	}
+	if !strings.Contains(out, "\x1b[92m+$2.00\x1b[0m") {
+		t.Errorf("profit not gain-colored:\n%q", out)
+	}
+
+	plain := Market(ui.Env{Width: 100, Clamp: true}, sec)
+	if strings.Contains(plain, "\x1b[") {
+		t.Errorf("piped market output carries escapes:\n%q", plain)
+	}
+	if !strings.Contains(plain, "WU") {
+		t.Errorf("piped market output lost the plain pips:\n%q", plain)
+	}
+}
+
 func TestMoversDeltaColors(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)

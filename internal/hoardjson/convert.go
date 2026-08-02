@@ -235,12 +235,13 @@ func FromMarket(res market.Result) Document {
 	for _, r := range market.Rows(res, len(res.Opportunities)) {
 		op := Opportunity{
 			Card: Card{
-				Name:        r.Card.Name,
-				ScryfallID:  r.Card.ScryfallID,
-				MTGJSONUUID: r.Card.MTGJSONUUID,
-				SetCode:     r.Card.SetCode,
-				Number:      r.Card.CollectorNumber,
-				Finish:      r.Card.Finish,
+				Name:          r.Card.Name,
+				ScryfallID:    r.Card.ScryfallID,
+				MTGJSONUUID:   r.Card.MTGJSONUUID,
+				SetCode:       r.Card.SetCode,
+				Number:        r.Card.CollectorNumber,
+				Finish:        r.Card.Finish,
+				ColorIdentity: r.Card.ColorIdentity,
 			},
 			Copies:   r.Card.Copies,
 			ValueUsd: cents(r.Card.Value),

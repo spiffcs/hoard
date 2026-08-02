@@ -704,14 +704,27 @@ func TestSelectionBarSpansTheWholeRow(t *testing.T) {
 	if sel == "" {
 		t.Fatalf("no reverse-video line contains the selected card %q", name)
 	}
-	// The bar must survive past the dim BOARD cell to the SET/NUM column: an
-	// embedded style reset would switch the reverse off after the first styled
-	// cell, and everything to its right would render unhighlighted.
+	// The bar must survive past the dim BOARD cell to the SET/NUM column.
+	// The row's own styling is kept now (that is what lets identity tints
+	// show through the bar), so resets do appear mid-row — the invariant is
+	// that every one of them is immediately followed by a re-assertion of
+	// the reverse, so no visible character renders unhighlighted.
 	if !strings.Contains(sel, "mh3/1") {
 		t.Fatalf("selected row lost its SET/NUM column: %q", sel)
 	}
-	if seg := sel[strings.Index(sel, "\x1b[7m"):strings.Index(sel, "mh3/1")]; strings.Contains(seg, "\x1b[0m") {
-		t.Errorf("selection bar is reset before SET/NUM: %q", sel)
+	if !strings.Contains(sel, "\x1b[2m") {
+		t.Errorf("the dim BOARD cell lost its own styling under the bar: %q", sel)
+	}
+	body := strings.TrimSuffix(sel[strings.Index(sel, "\x1b[7m"):], "\x1b[0m")
+	for rest := body; ; {
+		j := strings.Index(rest, "\x1b[0m")
+		if j < 0 {
+			break
+		}
+		rest = rest[j+len("\x1b[0m"):]
+		if !strings.HasPrefix(rest, "\x1b[7m") {
+			t.Fatalf("a reset mid-row is not followed by the bar re-assertion: %q", sel)
+		}
 	}
 }
 

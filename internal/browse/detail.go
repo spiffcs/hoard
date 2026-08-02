@@ -91,11 +91,15 @@ func (m Model) detailLines(d detail, width int) []string {
 	}
 
 	c := d.card
-	out = append(out, m.theme.Title.Render(ui.Truncate(c.Name, width)))
+	// The name wears its identity — bold, tinted the way its row in the
+	// table is; the fullest expression of the theme lives here.
+	name := m.theme.Identity(c.ColorIdentity).Bold(true).Render(ui.Truncate(c.Name, width))
+	out = append(out, name)
 
-	// The type line and mana cost sit together the way they do on the card.
-	if line := joinNonEmpty("  ", deref(c.TypeLine), deref(c.ManaCost)); line != "" {
-		add("%s", line)
+	// The type line and mana cost sit together the way they do on the card,
+	// the cost's symbols in their pip colors.
+	if line := joinNonEmpty("  ", deref(c.TypeLine), m.theme.ManaCost(deref(c.ManaCost))); line != "" {
+		out = append(out, ui.Truncate(line, width))
 	}
 	printing := ui.Printing(c.SetCode, c.CollectorNumber)
 	if c.SetName != nil {

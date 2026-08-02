@@ -192,9 +192,13 @@ type model struct {
 	resolveGen    int
 	resolving     int // in-flight background resolutions
 	// current is the review item whose cascade is running; walking means the
-	// close-time sequential walk rather than a tab visit.
-	current *queueItem
-	walking bool
+	// close-time sequential walk rather than a tab visit. walkDone counts
+	// the cards the walk has finished — the walk is the one phase with a
+	// true fraction to show, since the camera is closed and the queue has
+	// stopped growing (late in-flight resolutions can still nudge it).
+	current  *queueItem
+	walking  bool
+	walkDone int
 	// recent auto-commits, for the duplicate window; now is injectable so the
 	// window is testable.
 	recent []recentCommit
@@ -268,10 +272,17 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	qi.CharLimit = 6
 	qi.Width = 10
 
+	// One theme for the model, its inputs and its list delegate.
+	th := ui.DefaultTheme()
+	for _, in := range []*textinput.Model{&ni, &qi} {
+		in.PromptStyle = th.Prompt
+		in.Cursor.Style = th.Accent
+	}
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	l := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	l := list.New(nil, cascadeDelegate{theme: th}, 0, 0)
 	l.SetShowStatusBar(false)
 	l.SetShowTitle(false)
 	// The list widget's own quit keys (q, esc as quit) would end the whole
@@ -284,7 +295,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		searcher:  s,
 		adder:     add,
 		scanner:   sc,
-		theme:     ui.DefaultTheme(),
+		theme:     th,
 		dests:     dests,
 		nameInput: ni,
 		qtyInput:  qi,
@@ -601,6 +612,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Walk what's queued through the cascade, camera closed.
 			m.closeSession()
 			m.walking = true
+			m.walkDone = 0
 			if len(m.review) == 0 {
 				// Everything still resolving; late arrivals join the walk as
 				// they land (onResolveDone sees walking with no cascade).
@@ -1181,6 +1193,7 @@ func (m model) afterCard() (tea.Model, tea.Cmd) {
 	}
 	m.current = nil
 	if m.walking {
+		m.walkDone++
 		if len(m.review) > 0 {
 			next := m.review[0]
 			m.review = m.review[1:]
@@ -1467,9 +1480,16 @@ func (m model) batchHelp(base string) string {
 func (m model) scanHeader() string {
 	var badge string
 	if m.reviewing() {
-		if left := len(m.review); left > 0 {
-			badge = fmt.Sprintf("reviewing · %d more queued", left)
-		} else {
+		switch {
+		case m.walking:
+			// The close-out walk is the one phase with a true fraction —
+			// computed at render, since a late resolution can still land
+			// and lengthen the walk.
+			badge = fmt.Sprintf("reviewing %d of %d",
+				m.walkDone+1, m.walkDone+1+len(m.review))
+		case len(m.review) > 0:
+			badge = fmt.Sprintf("reviewing · %d more queued", len(m.review))
+		default:
 			badge = "reviewing"
 		}
 	}

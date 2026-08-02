@@ -139,6 +139,8 @@ func Market(env ui.Env, sec market.Section) string {
 		Env: env,
 		Cols: []ui.Col{
 			{Align: ui.Left, Flex: true, Min: 16},
+			// Identity pips beside the name; the first column to drop.
+			{Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
 			{Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Align: ui.Right},
@@ -148,24 +150,34 @@ func Market(env ui.Env, sec market.Section) string {
 			{Align: ui.Right},
 		},
 	}
+	// The name block every section shares: tinted name, pips, printing,
+	// finish. A profit is the one genuine gain here; the other sections'
+	// ratios stay uncolored — a below-market discount in red would read as
+	// a loss when it is a reason to buy.
+	cardCells := func(o market.Opportunity) []ui.Cell {
+		return []ui.Cell{
+			{Text: o.Card.Name, Style: env.Identity(o.Card.ColorIdentity)},
+			ui.C(ui.Pips(o.Card.ColorIdentity)),
+			ui.C(o.Printing()), ui.C(ui.Finish(o.Card.Finish)),
+		}
+	}
 	for _, o := range sec.Rows {
-		finish := ui.Finish(o.Card.Finish)
 		switch sec.Kind {
 		case market.KindProfit:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
+			t.Add(append(cardCells(o),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
-				ui.C("+"+ui.Money(o.Profit())))
+				ui.Cell{Text: "+" + ui.Money(o.Profit()), Style: env.Gain()})...)
 		case market.KindLiquid:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
+			t.Add(append(cardCells(o),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
-				ui.C(ui.Percent(o.Liquidity())))
+				ui.C(ui.Percent(o.Liquidity())))...)
 		default:
-			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
+			t.Add(append(cardCells(o),
 				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
-				ui.C("-"+ui.Percent(o.BelowMarket())))
+				ui.C("-"+ui.Percent(o.BelowMarket())))...)
 		}
 	}
 	return env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()) + "\n" + t.Render()

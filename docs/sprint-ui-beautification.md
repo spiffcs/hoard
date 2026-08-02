@@ -272,7 +272,34 @@ to stdout), `main.go:138`.
 Testing: injected buffers; exact output at `Color:false`, SGR presence at
 `Color:true`; `Confirm` via `strings.Reader`.
 
-## ⬜ D. Visible polish (independent slices)
+## ✅ D. Visible polish (implemented 2026-08-01)
+
+*As-landed notes:* `ui.Restyle` shipped (no fallback needed): the outer
+SGR is re-asserted after every embedded SGR sequence, so the selection
+bar spans the row while identity tints show through it; both `ansi.Strip`
+sites now restyle instead. The selection-bar test's invariant changed
+accordingly (every mid-row reset must be followed by a re-assertion).
+Unfocused pane titles stay bold Title (not Inactive) — both panes remain
+readable; only the accent moves. D3 landed re-scoped as decided: the
+cascade delegate (`internal/tui/delegate.go`) is single-line with the
+accent `▌`, bold filter-match runes, pips after printings (nothing, not a
+dash, for unknown identity), dim annotations; batch progress is the
+honest count — "reviewing · N queued" while the camera runs, "reviewing
+k of n" during the close-out walk (`walkDone`); `bubbles/progress`
+deliberately not imported. Text inputs styled from the theme. D4 was an
+audit, and it passed: all 12 long-op sites route `stderrPrinter()`, the
+catalog rebuild is determinate. The optional dim on TTY printer lines
+was skipped — `Printer` has no color knowledge, and teaching it some
+just to dim a transient line would risk `NO_COLOR` correctness.
+
+*Follow-up (user-requested, same day):* the market view — missed by B3's
+list — got the full treatment: `store.OwnedFinish` carries identity, both
+the browse sections and `report.Market` render tinted names + a pips
+column, the PROFIT column is gain-green (the ratios stay uncolored — a
+below-market discount in red would read as a loss when it is a reason to
+buy), the market cursor line uses `Restyle` so tints survive selection,
+and `market --json` populates `card.colorIdentity` (the 1.1.1 field —
+population only, no schema bump).
 
 **D1. Browse.** Focused-pane title in Accent, unfocused in Dim (today focus
 is only discoverable via the cursor). `ui.Restyle(line, style)` (new

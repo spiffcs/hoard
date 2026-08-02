@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -200,16 +199,28 @@ func (m *Model) scrollIntoView() {
 }
 
 // header labels each pane and puts the selected container's totals on the right,
-// where the card pane they describe begins.
+// where the card pane they describe begins. The focused pane's title takes
+// the accent — before this, focus was only discoverable by finding which
+// cursor was solid.
 func (m Model) header(left, right int) string {
 	name, totals := m.viewHeader()
 
 	totals += m.opBadge()
 	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
 	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
-	return m.theme.Title.Render(fit("COLLECTION", left)) +
+	return m.paneTitle(paneContainers).Render(fit("COLLECTION", left)) +
 		strings.Repeat(" ", paneGap) +
-		m.theme.Title.Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
+		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
+}
+
+// paneTitle is the title style focus decides: accent when the cursor lives
+// here, plain title bold otherwise. Bold rather than Inactive for the
+// unfocused side — both panes stay readable; only one advertises the hand.
+func (m Model) paneTitle(p pane) lipgloss.Style {
+	if m.focus == p {
+		return m.theme.Accent
+	}
+	return m.theme.Title
 }
 
 // paneLines renders one pane's table. Every pane shares the same Env, the
@@ -324,14 +335,14 @@ func (m Model) window(lines []string, p pane, width int) []string {
 		line := fit(rows[i], width)
 		switch {
 		case i == m.cursor[p] && m.focus == p:
-			// The row's own styling is stripped first: a dim cell's reset would
-			// end the reverse video mid-line, leaving a selection bar that stops
-			// at whichever column happened to be styled.
-			line = m.theme.Cursor.Render(ansi.Strip(line))
+			// Restyle rather than strip-and-reverse: the bar spans the row
+			// because the reverse is re-asserted past every embedded reset,
+			// and the row's identity tints show through it.
+			line = ui.Restyle(line, m.theme.Cursor)
 		case i == m.cursor[p]:
 			// The unfocused pane keeps a mark on its row so switching back is
 			// not a hunt for where the cursor was.
-			line = m.theme.Inactive.Render(ansi.Strip(line))
+			line = ui.Restyle(line, m.theme.Inactive)
 		}
 		out = append(out, line)
 	}

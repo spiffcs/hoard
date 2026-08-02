@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
@@ -185,7 +184,9 @@ func (m Model) marketLines(width int) []string {
 	if m.focus == paneCards {
 		style = m.theme.Cursor
 	}
-	all[cline] = style.Render(ansi.Strip(fit(all[cline], width)))
+	// Restyle, not strip: the bar spans the row and the identity tints
+	// show through it, same as the generic pane windowing.
+	all[cline] = ui.Restyle(fit(all[cline], width), style)
 
 	visible := m.visibleRows()
 	startAt := 0
@@ -199,36 +200,49 @@ func (m Model) marketLines(width int) []string {
 // they say for that kind alone.
 func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
+	// Identity pips beside the name, first column to give way when narrow.
+	id := ui.Col{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 6, Style: env.Dim()}
 	fin := ui.Col{Title: "FIN", Align: ui.Left, Priority: 5, Style: env.Dim()}
 	vendor := func(t string) ui.Col { return ui.Col{Title: t, Align: ui.Left, Priority: 4, Style: env.Dim()} }
 	money := func(t string) ui.Col { return ui.Col{Title: t, Align: ui.Right} }
+	// The name block every section shares: tinted name, pips, printing, finish.
+	cardCells := func(r market.Row) []ui.Cell {
+		return []ui.Cell{
+			{Text: r.Card.Name, Style: env.Identity(r.Card.ColorIdentity)},
+			ui.C(ui.Pips(r.Card.ColorIdentity)),
+			ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
+		}
+	}
 
 	var t ui.Table
 	switch kind {
 	case market.KindProfit:
-		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
 		for _, r := range rows {
-			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
+			// A profit is the one genuine gain on this screen; the ratios in
+			// the other sections stay uncolored — a below-market discount in
+			// red would read as a loss when it is a reason to buy.
+			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
-				ui.C("+"+ui.Money(r.Profit())))
+				ui.Cell{Text: "+" + ui.Money(r.Profit()), Style: env.Gain()})...)
 		}
 	case market.KindLiquid:
-		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
 		for _, r := range rows {
-			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
+			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
-				ui.C(ui.Percent(r.Liquidity())))
+				ui.C(ui.Percent(r.Liquidity())))...)
 		}
 	default:
-		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
+		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
 			money("ASK"), vendor("AT"), money("LAST SOLD"), money("BELOW")}}
 		for _, r := range rows {
-			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
+			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
-				ui.C(ui.Money(r.Market)), ui.C("-"+ui.Percent(r.BelowMarket())))
+				ui.C(ui.Money(r.Market)), ui.C("-"+ui.Percent(r.BelowMarket())))...)
 		}
 	}
 	return t

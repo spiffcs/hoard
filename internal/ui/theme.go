@@ -203,6 +203,42 @@ type Theme struct {
 	ColorlessID lipgloss.Style
 }
 
+// Identity is the Theme-side of Env.Identity: the lipgloss style for a
+// card's whole color identity — one color tints, several read gold,
+// colorless reads wastes, unknown (nil) stays unstyled.
+func (t Theme) Identity(colors []string) lipgloss.Style {
+	st, ok := identityStyle(colors)
+	if !ok {
+		return lipgloss.NewStyle()
+	}
+	return st
+}
+
+// PipString styles a string character by character, each identity letter in
+// its own pip color, everything else untouched — the Theme-side of
+// Env.PipsStyle.
+func (t Theme) PipString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r < 128 {
+			if st, ok := t.Pips[byte(r)]; ok {
+				b.WriteString(st.Render(string(r)))
+				continue
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// ManaCost renders a printed cost ("{2}{W}{U}") with each colored symbol in
+// its pip color. Braces, numbers and the symbols outside the wheel ({X},
+// {T}, the phyrexian/hybrid punctuation) stay plain — only W/U/B/R/G/C
+// carry meaning as color. Unknown or empty costs pass through untouched.
+func (t Theme) ManaCost(cost string) string {
+	return t.PipString(cost)
+}
+
 // DefaultTheme builds the Theme from the shared definitions.
 func DefaultTheme() Theme {
 	pips := make(map[byte]lipgloss.Style, len(identityColors))
