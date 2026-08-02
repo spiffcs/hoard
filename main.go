@@ -33,68 +33,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-const usage = `hoard — catalog valuable MTG cards and decks in SQLite
-
-Usage:
-  hoard [--db PATH] [--json] [command] [args]
-
-  hoard                                            Browse the hoard (no arguments)
-
-Browsing replaces the old list, summary, deck list and deck show commands: it
-shows your binder and every deck beside their cards, filters by name or card trait, edits
-quantities in place, and reaches movers, unpriced and the market view with 'v'. Piped
-or redirected, plain 'hoard' prints the summary table instead, so 'hoard | grep'
-still works.
-
-Collection commands:
-  add                                              Add cards interactively by name
-  add <scryfall-url> [--foil] [--qty N]            Add one card by its Scryfall link
-  add --file LIST | - [--binder B] [--again]       Add a pasted/exported card list (or pipe one in)
-  update-prices [--limit N]                        Refresh prices (Scryfall updates daily)
-  movers [--since 30d] [--limit N]                 Biggest risers and sinkers you hold
-  backfill-prices                                  Load 90 days of past prices from MTGJSON
-  unpriced                                         Cards counting as $0.00, and why
-  repair-finishes                                  Fix cards stored as a finish they lack
-  market [--min N] [--limit N]                     Vendor prices vs what cards last sold for
-  report [--top N] [--csv] [-o FILE]               Dated valuation: totals, binders, top holdings
-  watch                                            Check price watches (no network; exit 3 = fired)
-  watch add <name> --under N|--over N [--foil]     Alert when a price crosses a threshold
-  watch list | watch rm <id|name>                  Your watches, and removing one
-  catalog [status|update]                          The local copy of Scryfall's card data
-
-Binder commands:
-  binder list                                      Your binders, with counts and value
-  binder new <name>                                Create a named binder
-  binder rename <binder> <new-name>                Rename a binder
-  binder rm <binder>                               Remove an empty binder
-
-Deck commands:
-  deck add <archidekt-url>                         Import/refresh a deck from a link
-  deck add --file <path> [--name NAME] [--source S]  Import a text/exported decklist
-  deck remove <name>                               Delete a deck
-
-Interop commands:
-  export [--binder B | --deck D | --all] [-o FILE] Holdings as CSV or JSON (everything by
-         [--format csv|json|moxfield|archidekt]       default) in hoard's format or theirs
-  import FILE [--binder B | --preserve-binders]    Add a collection CSV export (ManaBox,
-         [--format F] [--dry-run]                    Moxfield, Delver Lens, hoard)
-
-A deck <name> can be any part of its name, as long as it matches one deck.
-
---json prints a versioned JSON document instead of a table, on the read
-commands: hoard (the summary), unpriced, movers, market, report, watch,
-and export. See docs/json.md; the schemas live in schema/json/.
-
-Exit codes: 0 success · 1 error · 2 finished but skipped items (e.g. an import
-with unresolvable cards) · 3 a price watch crossed its threshold — so a script
-can tell "done" from "done, mostly", and a cron can branch on an alert.
-
-The database lives in a per-user data directory by default (e.g. on macOS
-~/Library/Application Support/hoard/hoard.db, on Linux $XDG_DATA_HOME/hoard/hoard.db)
-— so it's the same hoard from any directory. Override with --db or $HOARD_DB.
-Moxfield's API is Cloudflare-blocked; export that deck to text and use 'deck add --file'.
-`
-
 // errPartial is the action layer's partial-completion sentinel, aliased so
 // every command in this package wraps the same value main maps to exit 2.
 var errPartial = action.ErrPartial
@@ -114,7 +52,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "interrupted")
 			os.Exit(130)
 		}
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, ui.Detect(os.Stderr).Err()("error:"), err)
 		if errors.Is(err, errPartial) {
 			os.Exit(2)
 		}
@@ -125,7 +63,7 @@ func main() {
 func run(args []string) error {
 	rest, dbFlag, err := extractDBFlag(args)
 	if err != nil {
-		fmt.Fprint(os.Stderr, usage)
+		printUsage(os.Stderr, ui.Detect(os.Stderr))
 		return err
 	}
 	rest, jsonOut := extractJSONFlag(rest)
@@ -140,7 +78,7 @@ func run(args []string) error {
 	}
 
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
-		fmt.Print(usage)
+		printUsage(os.Stdout, ui.Detect(os.Stdout))
 		return nil
 	}
 
@@ -200,7 +138,7 @@ func run(args []string) error {
 	// ignored is worse than an error, because the caller is a script that
 	// expects to parse what comes back.
 	if jsonOut {
-		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, arbitrage, report, watch, export", cmd)
+		return fmt.Errorf("%s has no JSON output; --json works on: hoard, unpriced, movers, market, report, watch, export", cmd)
 	}
 	switch cmd {
 	case "add":
@@ -220,7 +158,7 @@ func run(args []string) error {
 	case "deck":
 		return cmdDeck(ctx, st, cmdArgs)
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		printUsage(os.Stderr, ui.Detect(os.Stderr))
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }

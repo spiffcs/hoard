@@ -338,7 +338,17 @@ unknown-duration stages (MTGJSON fetch); those keep narration lines.
 Coordinate with phase F of the previous sprint (progress UI) if it slipped:
 D4 is its concrete descendant — fold that design debt in here.
 
-## ⬜ E. Usage/help text
+## ✅ E. Usage/help text (implemented 2026-08-01)
+
+*As-landed notes:* the ~70-line hand-aligned const became data in
+`usage.go` — four command sections rendered as one `ui.Table` (bold
+headers as styled rows, so the description column aligns globally) with
+dim, width-wrapped prose between. Help-asked-for renders to stdout at
+stdout's Env; the two error paths render to stderr at stderr's. The
+invocation column carries a Min so the layout engine can shrink it on
+narrow terminals instead of hitting its give-up backstop. `"error:"`
+gets the Err style on a TTY; the stale `"arbitrage"` in the --json error
+is fixed. Per-subcommand `-h` stays stock flag; no cobra.
 
 Extract the ~70-line hand-aligned `usage` string (`main.go:26-79`) into
 structured `{invocation, description}` sections in a new `usage.go` (main
