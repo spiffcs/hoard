@@ -237,7 +237,8 @@ func unpricedCompare(key string) func(a, b store.UnpricedRow) int {
 }
 
 // arbKey compares one arbitrage column. The SELL and TO columns compare what
-// the row displays: a spread row shows the dearest retail there, not a buylist.
+// the row displays: a below-market row shows the sales price there, not a
+// buylist.
 func arbKey(key string, a, b arbitrage.Row) int {
 	switch key {
 	case "name":
@@ -259,15 +260,15 @@ func arbKey(key string, a, b arbitrage.Row) int {
 }
 
 func arbSell(r arbitrage.Row) float64 {
-	if r.Kind == arbitrage.KindSpread {
-		return r.DearAt
+	if r.Kind == arbitrage.KindBelowMarket {
+		return r.Market
 	}
 	return r.SellAt
 }
 
 func arbTo(r arbitrage.Row) string {
-	if r.Kind == arbitrage.KindSpread {
-		return r.DearFrom
+	if r.Kind == arbitrage.KindBelowMarket {
+		return arbitrage.MarketProvider
 	}
 	return r.SellTo
 }
@@ -280,7 +281,7 @@ func arbGain(r arbitrage.Row) float64 {
 	case arbitrage.KindLiquid:
 		return r.Liquidity()
 	}
-	return r.Spread()
+	return r.BelowMarket()
 }
 
 // comparePrinting orders by set, then collector number — numerically when both

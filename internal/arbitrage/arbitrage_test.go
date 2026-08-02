@@ -21,48 +21,46 @@ func q(provider, kind, finish string, price float64) mtgjson.Quote {
 // The listing this guard exists for. Manapool quotes Legion Loyalty foil at
 // $138,518.78 against Card Kingdom's $2.49; it is real data in MTGJSON, and a
 // naive "widest spread first" ranking puts it at the top of the first screen.
-func TestAssessDropsUnsupportedListing(t *testing.T) {
+// The listing this design exists for. Manapool quotes Legion Loyalty foil at
+// $138,518.78 against Card Kingdom's $2.49 — real data in MTGJSON. Anchored
+// on the sales price, a lone high ask simply never becomes a row: only
+// asks *below* what cards actually sell for are interesting.
+func TestAssessAnchorsOnMarket(t *testing.T) {
 	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
 		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
 		q("manapool", mtgjson.Retail, "foil", 138518.78),
 		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
 	}
-	op, usable, dropped := Assess(ownedFoil("Legion Loyalty"), qs)
+	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 
-	if dropped != 1 {
-		t.Errorf("dropped = %d, want the manapool listing discarded", dropped)
+	if usable != 3 {
+		t.Errorf("usable retail = %d, want 3", usable)
 	}
-	if usable != 1 {
-		t.Errorf("usable retail = %d, want 1", usable)
+	if !op.HasMarket || op.Market != 3.20 {
+		t.Errorf("market = %v (has %v), want the tcgplayer sales price", op.Market, op.HasMarket)
 	}
 	if op.BuyAt != 2.49 || op.BuyFrom != "cardkingdom" {
-		t.Errorf("buy = %v from %q, want 2.49 cardkingdom", op.BuyAt, op.BuyFrom)
+		t.Errorf("buy = %v from %q, want the cheapest ask", op.BuyAt, op.BuyFrom)
 	}
-	// With the bogus quote gone the only survivor is also the cheapest, so there
-	// is no spread left to report.
-	if op.DearAt != 2.49 {
-		t.Errorf("dear = %v, want the surviving quote", op.DearAt)
-	}
-	if op.Spread() != 0 {
-		t.Errorf("spread = %v, want none once the outlier is gone", op.Spread())
+	if op.SellAt != 0.75 {
+		t.Errorf("sell = %v, want 0.75", op.SellAt)
 	}
 }
 
-// The widest genuine disagreement measured was 9.3x. It must survive.
-func TestAssessKeepsWideButRealSpread(t *testing.T) {
+// Without a tcgplayer quote there is no anchor: the row can still say what
+// is buyable and what a shop pays, but the market-relative sections skip it.
+func TestAssessWithoutMarketAnchor(t *testing.T) {
 	qs := []mtgjson.Quote{
 		q("cardkingdom", mtgjson.Retail, "foil", 4.49),
 		q("manapool", mtgjson.Retail, "foil", 41.68),
 	}
-	op, _, dropped := Assess(ownedFoil("Siege-Gang Lieutenant"), qs)
-	if dropped != 0 {
-		t.Errorf("dropped %d, want a 9.3x spread kept", dropped)
+	op, _ := Assess(ownedFoil("Siege-Gang Lieutenant"), qs)
+	if op.HasMarket {
+		t.Errorf("market = %v, want none without a tcgplayer quote", op.Market)
 	}
-	if op.DearAt != 41.68 || op.DearFrom != "manapool" {
-		t.Errorf("dear = %v from %q, want 41.68 manapool", op.DearAt, op.DearFrom)
-	}
-	if got := op.Spread(); got < 8.2 || got > 8.3 {
-		t.Errorf("spread = %v, want about 8.28 (i.e. +828%%)", got)
+	if op.BuyAt != 4.49 {
+		t.Errorf("buy = %v, want the cheapest ask", op.BuyAt)
 	}
 }
 
@@ -76,7 +74,7 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 		q("cardkingdom", mtgjson.Buylist, "normal", 0.10),
 		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
 	}
-	op, usable, _ := Assess(ownedFoil("Legion Loyalty"), qs)
+	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 	if usable != 1 || op.BuyAt != 2.49 {
 		t.Errorf("buy = %v (%d usable), want only the foil retail 2.49", op.BuyAt, usable)
 	}
@@ -87,7 +85,7 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 	// The same card owned in non-foil reads the other quotes instead.
 	normal := ownedFoil("Legion Loyalty")
 	normal.Finish = "nonfoil"
-	op, usable, _ = Assess(normal, qs)
+	op, usable = Assess(normal, qs)
 	if usable != 2 || op.BuyAt != 0.42 || op.SellAt != 0.10 {
 		t.Errorf("non-foil: buy %v sell %v (%d usable), want 0.42 / 0.10",
 			op.BuyAt, op.SellAt, usable)
@@ -102,32 +100,34 @@ func TestAssessIdentifiesRealArbitrage(t *testing.T) {
 		q("tcgplayer", mtgjson.Retail, "normal", 14.43),
 		q("cardkingdom", mtgjson.Buylist, "normal", 16.50),
 	}
-	op, _, _ := Assess(o, qs)
+	op, _ := Assess(o, qs)
 	if !op.HasBuy || op.Profit() < 2.06 || op.Profit() > 2.08 {
 		t.Errorf("profit = %v, want about 2.07", op.Profit())
 	}
 	if op.Liquidity() <= 1 {
-		t.Errorf("liquidity = %v, want above 1 when a shop pays over retail", op.Liquidity())
+		t.Errorf("liquidity = %v, want above 1 when a shop pays over the sales price", op.Liquidity())
 	}
 }
 
 // A card nobody quotes must not reach the report at all.
 func TestAssessWithNoRetailIsSkipped(t *testing.T) {
-	op, usable, dropped := Assess(ownedFoil("Unquoted"), []mtgjson.Quote{
+	op, usable := Assess(ownedFoil("Unquoted"), []mtgjson.Quote{
 		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
 	})
-	if op.HasRetail || usable != 0 || dropped != 0 {
-		t.Errorf("op = %+v (%d usable, %d dropped), want nothing usable", op, usable, dropped)
+	if op.HasRetail || usable != 0 {
+		t.Errorf("op = %+v (%d usable), want nothing usable", op, usable)
 	}
 }
 
-// mk builds an opportunity with just the fields a ranking test reads.
-func mk(name string, buy, dear, sell float64) Opportunity {
+// mk builds an opportunity with just the fields a ranking test reads:
+// the sales-price anchor, the cheapest ask, and the best buylist.
+func mk(name string, market, buy, sell float64) Opportunity {
 	return Opportunity{
 		Card:      store.OwnedFinish{Name: name},
+		Market:    market,
 		BuyAt:     buy,
-		DearAt:    dear,
 		SellAt:    sell,
+		HasMarket: market > 0,
 		HasRetail: true,
 		HasBuy:    sell > 0,
 	}
@@ -135,12 +135,14 @@ func mk(name string, buy, dear, sell float64) Opportunity {
 
 func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{
-		mk("profit-small", 10, 11, 12), // +$2 profit
-		mk("profit-big", 2, 8, 20),     // +$18 profit
-		mk("liquid", 10, 11, 9),        // no profit, 90% liquidity
-		mk("illiquid", 10, 11, 1),      // no profit, 10% liquidity
-		mk("spread-big", 1, 9, 0),      // +800% spread, the widest, no buylist
+		mk("profit-small", 10, 10, 12), // +$2 profit
+		mk("profit-big", 8, 2, 20),     // +$18 profit (also 75% below market)
+		mk("liquid", 10, 10, 9),        // no profit, buylist pays 90% of sales
+		mk("illiquid", 10, 10, 1),      // no profit, 10% — under the floor
+		mk("under-big", 10, 2, 0),      // asking 80% below the sales price
+		mk("under-small", 10, 7, 0),    // 30% below
 		mk("flat", 5, 5, 0),            // nothing to say
+		mk("no-anchor", 0, 1, 0.9),     // no market: excluded from anchored sections
 	}}
 
 	byKind := map[Kind][]string{}
@@ -164,16 +166,18 @@ func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 	if got := byKind[KindLiquid]; len(got) != 1 || got[0] != "liquid" {
 		t.Errorf("liquid = %v, want only the row above the 70%% floor", got)
 	}
-	// Spread covers everything where vendors disagree, profitable or not.
-	if got := byKind[KindSpread]; len(got) != 5 || got[0] != "spread-big" {
-		t.Errorf("spread = %v, want the widest first and the flat card excluded", got)
+	// Below market lists real asks under the sales price, deepest discount
+	// first; a flat ask and an unanchored row say nothing.
+	if got := byKind[KindBelowMarket]; len(got) != 3 ||
+		got[0] != "under-big" || got[1] != "profit-big" || got[2] != "under-small" {
+		t.Errorf("below market = %v, want the deepest discounts in order", got)
 	}
 }
 
 func TestSectionsRespectTheLimit(t *testing.T) {
 	var res Result
 	for i := range 20 {
-		res.Opportunities = append(res.Opportunities, mk("c"+strconv.Itoa(i), 1, 2, 5))
+		res.Opportunities = append(res.Opportunities, mk("c"+strconv.Itoa(i), 2, 1, 5))
 	}
 	for _, sec := range Sections(res, 3) {
 		if len(sec.Rows) > 3 {
@@ -186,8 +190,8 @@ func TestSectionsRespectTheLimit(t *testing.T) {
 // real arbitrage and still says which question each row answers.
 func TestRowsFlattenInSectionOrder(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{
-		mk("profit", 2, 8, 20),
-		mk("liquid", 10, 11, 9),
+		mk("profit", 8, 2, 20),
+		mk("liquid", 10, 10, 9),
 	}}
 	rows := Rows(res, 10)
 	if len(rows) == 0 {

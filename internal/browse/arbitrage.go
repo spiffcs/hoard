@@ -91,8 +91,7 @@ func (m Model) onArbitrage(msg arbitrageMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.arbResult = msg.res
-	m.arbRows = arbitrage.Rows(msg.res, arbitrageRows)
-	m.sortArbRows()
+	m.applyArbRows()
 	m.arbLoaded = true
 	m.status = ""
 	m.clampCursor(paneCards)
@@ -111,6 +110,27 @@ func (m *Model) cancelArbitrage() {
 // the user leaving the view, not something worth putting on screen.
 func isCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// ArbitrageCachedFunc serves today's already-fetched quotes without the
+// network, or ok=false when there is nothing cached.
+type ArbitrageCachedFunc func() (arbitrage.Result, bool)
+
+// loadCachedArbitrage populates the view from an earlier session's fetch
+// when one exists, so restarting the program does not blank the tables. F
+// still re-asks for fresh numbers.
+func (m *Model) loadCachedArbitrage() {
+	if m.arbCached == nil || m.arbLoaded || m.arbLoading {
+		return
+	}
+	res, ok := m.arbCached()
+	if !ok {
+		return
+	}
+	m.arbResult = res
+	m.applyArbRows()
+	m.arbLoaded = true
+	m.status, m.statusErr = "vendor quotes from earlier today — F refetches", false
 }
 
 // arbitrageLines renders the ranked opportunities as the CLI's three
@@ -188,27 +208,27 @@ func arbSectionTable(env ui.Env, kind arbitrage.Kind, rows []arbitrage.Row) ui.T
 	switch kind {
 	case arbitrage.KindProfit:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("BUY"), vendor("FROM"), money("SELL"), vendor("TO"), money("PROFIT")}}
+			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
 		for _, r := range rows {
 			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
-				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
-				ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo), ui.C("+"+ui.Money(r.Profit())))
+				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
+				ui.C("+"+ui.Money(r.Profit())))
 		}
 	case arbitrage.KindLiquid:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("RETAIL"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
+			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
 		for _, r := range rows {
 			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
-				ui.C(ui.Money(r.BuyAt)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
+				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
 				ui.C(ui.Percent(r.Liquidity())))
 		}
 	default:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("LOW"), vendor("AT"), money("HIGH"), vendor("AT"), money("APART")}}
+			money("ASK"), vendor("AT"), money("LAST SOLD"), money("BELOW")}}
 		for _, r := range rows {
 			t.Add(ui.C(r.Card.Name), ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
 				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
-				ui.C(ui.Money(r.DearAt)), ui.C(r.DearFrom), ui.C("+"+ui.Percent(r.Spread())))
+				ui.C(ui.Money(r.Market)), ui.C("-"+ui.Percent(r.BelowMarket())))
 		}
 	}
 	return t
@@ -255,12 +275,33 @@ func (m Model) selectedArbNote() string {
 	r := m.arbRows[i]
 	switch r.Kind {
 	case arbitrage.KindProfit:
-		return fmt.Sprintf("%s pays %s · retail is %s at %s",
-			r.SellTo, ui.Money(r.SellAt), ui.Money(r.BuyAt), r.BuyFrom)
+		return fmt.Sprintf("%s pays %s · it last sold for %s",
+			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	case arbitrage.KindLiquid:
-		return fmt.Sprintf("%s pays %s · retail is %s",
-			r.SellTo, ui.Money(r.SellAt), ui.Money(r.BuyAt))
+		return fmt.Sprintf("%s pays %s · it last sold for %s",
+			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	}
-	return fmt.Sprintf("%s asks %s · %s asks %s",
-		r.BuyFrom, ui.Money(r.BuyAt), r.DearFrom, ui.Money(r.DearAt))
+	return fmt.Sprintf("%s asks %s · it last sold for %s",
+		r.BuyFrom, ui.Money(r.BuyAt), ui.Money(r.Market))
+}
+
+// applyArbRows derives the visible rows from the last result: ranked,
+// mask-filtered on per-copy value, then re-sorted the way the user left it.
+func (m *Model) applyArbRows() {
+	rows := arbitrage.Rows(m.arbResult, arbitrageRows)
+	if min := m.maskMin(); min > 0 {
+		kept := rows[:0]
+		for _, r := range rows {
+			unit := r.Card.Value
+			if r.Card.Copies > 1 {
+				unit /= float64(r.Card.Copies)
+			}
+			if unit >= min {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+	m.arbRows = rows
+	m.sortArbRows()
 }

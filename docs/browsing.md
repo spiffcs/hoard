@@ -12,7 +12,7 @@ Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $13
 Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
 ──────────────────────────────────────────────────────────────────────────────────────────
 1/23 · sorted by value
-tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · esc quit
+tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
 ```
 
 The left pane lists your binders first (the default binder, then any you created
@@ -34,6 +34,8 @@ shows what is inside whichever container you have selected.
 | <kbd>u</kbd> | undo the last edit |
 | <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
 | <kbd>r</kbd> | reload |
+| <kbd>M</kbd> | value mask: hide cards under $5 → $10 → $25 → off (unpriced view exempt) |
+| <kbd>q</kbd> | quit — asks y/n first (main views only) |
 | <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
 Binder cards are editable in place (<kbd>+</kbd>, <kbd>-</kbd>, <kbd>d</kbd>,
@@ -57,7 +59,9 @@ browser, so the record of unattended writes outlives the alternate screen.
 and arbitrage. All but the last are instant database reads. **Arbitrage waits
 to be asked**: it needs today's vendor quotes from MTGJSON, so cycling to it
 says `press F to fetch` rather than starting a download because you passed
-through. While it runs the pane says so,
+through. Quotes already fetched earlier the same day come back for free —
+the view repopulates from the day cache on arrival, even across a restart,
+with `F` still re-asking for fresh numbers. While it runs the pane says so,
 and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
 
 ```

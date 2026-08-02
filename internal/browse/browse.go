@@ -88,6 +88,12 @@ func WithArbitrage(f ArbitrageFunc) Option {
 	return func(m *Model) { m.arbitrage = f }
 }
 
+// WithArbitrageCached supplies the no-network read of today's quote cache,
+// so the view survives a restart without re-asking anyone.
+func WithArbitrageCached(f ArbitrageCachedFunc) Option {
+	return func(m *Model) { m.arbCached = f }
+}
+
 // ReportFunc produces the valuation report as lines already laid out for
 // the given width. A fast local read — it runs synchronously in a command's
 // run, not through the op layer.

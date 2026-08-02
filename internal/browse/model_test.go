@@ -1235,16 +1235,17 @@ func TestSortWorksInEveryView(t *testing.T) {
 func TestArbitrageSortStaysGrouped(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.view = viewArbitrage
-	opp := func(name string, buy, sell, dear float64) arbitrage.Opportunity {
-		o := arbitrage.Opportunity{BuyAt: buy, SellAt: sell, DearAt: dear, HasRetail: true, HasBuy: sell > 0}
+	opp := func(name string, buy, sell, market float64) arbitrage.Opportunity {
+		o := arbitrage.Opportunity{BuyAt: buy, SellAt: sell, Market: market,
+			HasMarket: market > 0, HasRetail: true, HasBuy: sell > 0}
 		o.Card.Name = name
 		return o
 	}
 	m.arbRows = []arbitrage.Row{
 		{Kind: arbitrage.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
 		{Kind: arbitrage.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
-		{Kind: arbitrage.KindSpread, Opportunity: opp("Zulu Spread", 1, 0, 5)},
-		{Kind: arbitrage.KindSpread, Opportunity: opp("Alpha Spread", 1, 0, 2)},
+		{Kind: arbitrage.KindBelowMarket, Opportunity: opp("Zulu Spread", 1, 0, 5)},
+		{Kind: arbitrage.KindBelowMarket, Opportunity: opp("Alpha Spread", 1, 0, 2)},
 	}
 	m.arbLoaded = true
 
@@ -1327,10 +1328,12 @@ func arbModel(t *testing.T, fn ArbitrageFunc) Model {
 
 func opp(name string, buy, sell float64) arbitrage.Opportunity {
 	return arbitrage.Opportunity{
-		Card:      store.OwnedFinish{Name: name, SetCode: "mh3", CollectorNumber: "1", Finish: "nonfoil"},
+		Card: store.OwnedFinish{ScryfallID: "sf-" + name, Name: name,
+			SetCode: "mh3", CollectorNumber: "1", Finish: "nonfoil"},
+		Market:    buy, // anchored at the ask: liquid rows qualify, below-market ones don't
 		BuyAt:     buy,
-		DearAt:    buy * 2,
 		SellAt:    sell,
+		HasMarket: true,
 		HasRetail: true,
 		HasBuy:    sell > 0,
 	}
@@ -1388,7 +1391,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		t.Fatal("no rows after a successful fetch")
 	}
 	out := m.View()
-	for _, want := range []string{"ARBITRAGE", "a shop pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
+	for _, want := range []string{"ARBITRAGE", "a buylist pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
@@ -1734,15 +1737,23 @@ func TestHeaderValueSparkMarkerClearsWhenObservationsDominate(t *testing.T) {
 	}
 }
 
-// One quit chord: q never quits, esc at the top frame asks first.
+// The quit policy: q and esc-at-top both stage a y/n confirm on the main
+// views; ctrl+c quits immediately; q stays inert inside overlays.
 func TestQuitPolicy(t *testing.T) {
 	m := newTestModel(t, testStore())
 
-	// q is inert on the browse surface.
+	// q asks first rather than quitting outright.
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	m = next.(Model)
 	if cmd != nil {
-		t.Fatal("q must never quit")
+		t.Fatal("q must not quit without asking")
+	}
+	if m.confirm == nil || m.confirm.prompt != "quit hoard?" {
+		t.Fatalf("q staged %+v, want the quit confirm", m.confirm)
+	}
+	m = key(m, "n")
+	if m.confirm != nil {
+		t.Fatal("declining q must stay")
 	}
 
 	// esc with nothing to back out of stages the quit confirm.
@@ -1798,8 +1809,8 @@ func TestHelpLineIsViewSpecific(t *testing.T) {
 		t.Errorf("unpriced help = %q", h)
 	}
 	m.view = viewHoldings
-	if h := m.helpLine(); strings.Contains(h, "q quit") {
-		t.Errorf("holdings help still advertises q: %q", h)
+	if h := m.helpLine(); !strings.Contains(h, "q quit") {
+		t.Errorf("holdings help must advertise q again: %q", h)
 	}
 }
 
@@ -1809,8 +1820,8 @@ func TestHelpLineIsViewSpecific(t *testing.T) {
 func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	res := arbitrage.Result{
 		Opportunities: []arbitrage.Opportunity{
-			opp("Gilded Lotus", 10.00, 9.00),        // 90%: genuinely liquid
-			opp("Quantum Misalignment", 6.31, 2.80), // 44%: below the floor, not listed
+			opp("Gilded Lotus", 10.00, 9.00),        // buylist pays 90% of sales: liquid
+			opp("Quantum Misalignment", 6.31, 2.80), // 44% of sales: noise, listed nowhere
 		},
 		Compared: 2,
 	}
@@ -1823,21 +1834,18 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	m = next.(Model)
 
 	out := m.View()
-	// The liquid section carries its own honest headers: what retail asks,
-	// what the buylist pays, and the fraction — no GAIN column to misread.
-	for _, want := range []string{"EASY TO SELL", "RETAIL", "BUYLIST", "PAYS", "90.0%"} {
+	// The liquid section carries its own honest headers: what the card
+	// sells for, what the buylist pays, and the fraction.
+	for _, want := range []string{"EASY TO SELL", "LAST SOLD", "BUYLIST", "PAYS", "90.0%"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("liquid section missing %q:\n%s", want, out)
 		}
 	}
-	// The 44%%-of-retail card appears only in the spread section, never as
-	// liquid.
-	if i := strings.Index(out, "Quantum Misalignment"); i >= 0 {
-		if j := strings.Index(out, "CHEAPEST VS DEAREST"); j < 0 || i < j {
-			t.Errorf("sub-floor row listed outside the spread section:\n%s", out)
-		}
+	// A buylist at 44%% of the sales price is noise, not a section row.
+	if strings.Contains(out, "Quantum Misalignment") {
+		t.Errorf("sub-floor row must not be listed at all:\n%s", out)
 	}
-	if !strings.Contains(out, "pays $9.00 · retail is $10.00") {
+	if !strings.Contains(out, "pays $9.00 · it last sold for $10.00") {
 		t.Errorf("status should state both prices plainly:\n%s", out)
 	}
 }
@@ -1906,7 +1914,7 @@ func TestHelpLineWrapsInsteadOfTruncating(t *testing.T) {
 		}
 	}
 	out := m.View()
-	if !strings.Contains(out, "esc quit") {
+	if !strings.Contains(out, "q quit") {
 		t.Error("the last help entry must survive the wrap")
 	}
 	if strings.Contains(out, "…") {
@@ -2009,5 +2017,143 @@ func TestArbitrageFAlwaysAnswers(t *testing.T) {
 	m = key(m, "F")
 	if !m.arbLoading {
 		t.Fatal("F on a loaded view must re-fetch, not fall silent")
+	}
+}
+
+// Enter on an arbitrage row opens the card detail, same as holdings and
+// watches.
+func TestArbitrageEnterOpensDetail(t *testing.T) {
+	res := arbitrage.Result{
+		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+		Compared:      1,
+	}
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	m = next.(Model)
+	m.focus = paneCards
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("enter on an arbitrage row must open the detail")
+	}
+}
+
+// The value mask hides cards priced under the level, cycling off → $5 →
+// $10 → $25 → off, across the priced views; the unpriced view is exempt
+// (its whole point is the $0 rows).
+func TestValueMaskCyclesAndFilters(t *testing.T) {
+	m := newTestModel(t, testStore())
+	all := len(m.cards)
+	if all == 0 {
+		t.Fatal("setup: no cards")
+	}
+
+	counts := []int{}
+	for range 3 {
+		m = key(m, "M")
+		counts = append(counts, len(m.cards))
+	}
+	// Fixture prices span under $5 through $134+, so each level must strip
+	// at least as much as the last.
+	if !(counts[0] >= counts[1] && counts[1] >= counts[2]) {
+		t.Fatalf("mask counts not monotonic: %v", counts)
+	}
+	if counts[2] >= all {
+		t.Fatalf("$25 mask hid nothing: %d of %d", counts[2], all)
+	}
+	for _, c := range m.cards {
+		if c.Price == nil || *c.Price < 25 {
+			t.Fatalf("card %s under the $25 mask still visible", c.Name)
+		}
+	}
+	if !strings.Contains(m.status, "hiding cards under $25.00") {
+		t.Errorf("cycle status = %q", m.status)
+	}
+	// The persistent indicator sits in the position line once the transient
+	// status clears.
+	m.status = ""
+	if !strings.Contains(m.View(), "hiding <$25.00") {
+		t.Errorf("mask indicator missing:\n%s", m.View())
+	}
+
+	m = key(m, "M") // back to off
+	if len(m.cards) != all {
+		t.Fatalf("mask off restored %d of %d cards", len(m.cards), all)
+	}
+
+	// The unpriced view ignores the mask entirely.
+	m = key(m, "M")
+	m = key(m, "v")
+	m = key(m, "v") // unpriced
+	before := len(m.unpriced)
+	m = key(m, "M")
+	if len(m.unpriced) != before {
+		t.Fatalf("unpriced view changed under the mask: %d → %d", before, len(m.unpriced))
+	}
+}
+
+// A restarted session shows the quotes an earlier one fetched: arriving at
+// the arbitrage view loads today's cache without a fetch; F still re-asks.
+func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
+	res := arbitrage.Result{
+		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+		Compared:      1,
+	}
+	fetches := 0
+	m, err := New(testStore(),
+		WithArbitrage(func(context.Context, progress.Fn) (arbitrage.Result, error) {
+			fetches++
+			return res, nil
+		}),
+		WithArbitrageCached(func() (arbitrage.Result, bool) { return res, true }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ctx = context.Background()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+
+	for range 4 {
+		m = key(m, "v")
+	}
+	if !m.arbLoaded || len(m.arbRows) == 0 {
+		t.Fatal("arrival must populate from the day cache")
+	}
+	if fetches != 0 {
+		t.Fatal("arrival must not fetch")
+	}
+	if !strings.Contains(m.status, "earlier today") {
+		t.Fatalf("status = %q, want the from-cache note", m.status)
+	}
+
+	m = key(m, "F")
+	if !m.arbLoading {
+		t.Fatal("F must still refetch fresh numbers")
+	}
+}
+
+// Without a cache hit, arrival stays empty and F remains the fetch.
+func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
+	m, err := New(testStore(),
+		WithArbitrage(func(context.Context, progress.Fn) (arbitrage.Result, error) {
+			return arbitrage.Result{}, nil
+		}),
+		WithArbitrageCached(func() (arbitrage.Result, bool) { return arbitrage.Result{}, false }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ctx = context.Background()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+	for range 4 {
+		m = key(m, "v")
+	}
+	if m.arbLoaded {
+		t.Fatal("no cache: the view must wait for F")
 	}
 }

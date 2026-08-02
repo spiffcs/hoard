@@ -68,7 +68,17 @@ func (m *Model) loadView() error {
 		if err != nil {
 			return fmt.Errorf("reading movers: %w", err)
 		}
-		m.movers = store.MoversByImpact(changes)
+		changes = store.MoversByImpact(changes)
+		if m.maskMin() > 0 {
+			kept := changes[:0]
+			for _, c := range changes {
+				if !m.maskedPrice(&c.New) {
+					kept = append(kept, c)
+				}
+			}
+			changes = kept
+		}
+		m.movers = changes
 		m.applySort()
 		return nil
 	case viewUnpriced:
@@ -83,6 +93,15 @@ func (m *Model) loadView() error {
 		rows, err := m.store.ListWatches()
 		if err != nil {
 			return fmt.Errorf("reading watches: %w", err)
+		}
+		if m.maskMin() > 0 {
+			kept := rows[:0]
+			for _, w := range rows {
+				if !m.maskedPrice(w.PriceUSD) {
+					kept = append(kept, w)
+				}
+			}
+			rows = kept
 		}
 		m.watches = rows
 		m.applySort()

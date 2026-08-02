@@ -33,7 +33,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -79,7 +79,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -127,7 +127,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -167,7 +167,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -213,7 +213,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -227,30 +227,30 @@ func TestMoversDocumentWithNoHistory(t *testing.T) {
 }
 
 func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
-	// tomb answers both the profit and the spread question, so it appears
-	// twice with different kinds; ring has no buylist, so its sell-side
-	// fields are absent, not zero.
+	// tomb answers both the profit and the below-market question, so it
+	// appears twice with different kinds; ring has no buylist, so its
+	// sell-side fields are absent, not zero.
 	tomb := arbitrage.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "a", MTGJSONUUID: "uu-a", Name: "Ancient Tomb",
 			SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil", Copies: 1, Value: 60},
-		BuyAt: 4, BuyFrom: "tcgplayer", DearAt: 6, DearFrom: "cardmarket",
-		SellAt: 5, SellTo: "cardkingdom", HasRetail: true, HasBuy: true,
+		Market: 4, BuyAt: 2, BuyFrom: "cardmarket",
+		SellAt: 5, SellTo: "cardkingdom",
+		HasMarket: true, HasRetail: true, HasBuy: true,
 	}
 	ring := arbitrage.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "b", Name: "Sol Ring",
 			SetCode: "c21", CollectorNumber: "125", Finish: "foil", Copies: 2, Value: 25},
-		BuyAt: 10, BuyFrom: "tcgplayer", DearAt: 15, DearFrom: "cardhoarder",
-		HasRetail: true,
+		Market: 20, BuyAt: 10, BuyFrom: "cardkingdom",
+		HasMarket: true, HasRetail: true,
 	}
 	got := write(t, FromArbitrage(arbitrage.Result{
-		Opportunities: []arbitrage.Opportunity{tomb, ring}, Compared: 2, Ignored: 1,
+		Opportunities: []arbitrage.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "arbitrage",
   "arbitrage": {
     "comparedPrintings": 2,
-    "ignoredListings": 1,
     "opportunities": [
       {
         "card": {
@@ -264,11 +264,10 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         "copies": 1,
         "valueUsd": 60,
         "kind": "arbitrage",
-        "buyUsd": 4,
-        "buyFrom": "tcgplayer",
-        "dearUsd": 6,
-        "dearFrom": "cardmarket",
-        "spread": 0.5,
+        "buyUsd": 2,
+        "buyFrom": "cardmarket",
+        "marketUsd": 4,
+        "belowMarket": 0.5,
         "sellUsd": 5,
         "sellTo": "cardkingdom",
         "profitUsd": 1,
@@ -285,12 +284,11 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         },
         "copies": 1,
         "valueUsd": 60,
-        "kind": "spread",
-        "buyUsd": 4,
-        "buyFrom": "tcgplayer",
-        "dearUsd": 6,
-        "dearFrom": "cardmarket",
-        "spread": 0.5,
+        "kind": "below-market",
+        "buyUsd": 2,
+        "buyFrom": "cardmarket",
+        "marketUsd": 4,
+        "belowMarket": 0.5,
         "sellUsd": 5,
         "sellTo": "cardkingdom",
         "profitUsd": 1,
@@ -306,12 +304,11 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         },
         "copies": 2,
         "valueUsd": 25,
-        "kind": "spread",
+        "kind": "below-market",
         "buyUsd": 10,
-        "buyFrom": "tcgplayer",
-        "dearUsd": 15,
-        "dearFrom": "cardhoarder",
-        "spread": 0.5
+        "buyFrom": "cardkingdom",
+        "marketUsd": 20,
+        "belowMarket": 0.5
       }
     ]
   }
@@ -343,7 +340,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -427,7 +424,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -457,7 +454,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "watch",
   "watch": {
     "checked": 2,

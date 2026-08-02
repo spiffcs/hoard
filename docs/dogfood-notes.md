@@ -118,10 +118,16 @@ All landed same-day, in feedback order:
    liquid rows label the buy side `retail` and say "pays N%" instead of a
    GAIN column; the status line states both prices plainly with no
    editorial; the section gained a 70%-of-retail floor (a shop paying 27%
-   of retail is not liquidity); and per the follow-up, the flat table was
-   the smell itself — the view now renders the CLI's three sections
-   stacked in one scrolling pane, each with its own title row and honest
-   column headers (PROFIT / RETAIL·BUYLIST·PAYS / LOW·HIGH·APART).
+   of retail is not liquidity); per the follow-up, the flat table was the
+   smell itself — the view now renders three sections stacked in one
+   scrolling pane, each with its own title row and honest headers; and per
+   the final follow-up the whole analysis re-anchored on **tcgplayer's
+   sales-derived market price**: liquidity is buylist÷sales-price, the
+   spread section became BELOW MARKET (real asks ≥25% under what the card
+   actually sells for), and lone high marketplace asks — scalper noise —
+   produce no rows at all. Enter on any arbitrage row opens the card
+   detail. JSON schema bumped to 1.1.0 (marketUsd/belowMarket replace
+   dearUsd/dearFrom/spread; ignoredListings dropped).
 5. **Help lines** — wrap between entries on narrow terminals instead of
    truncating (extra rows come out of the panes; frame height invariant);
    view-specific verbs lead each analytical view; unpriced dropped the

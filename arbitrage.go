@@ -51,8 +51,8 @@ func cmdArbitrage(ctx context.Context, st *store.Store, args []string, jsonOut b
 	}
 
 	fmt.Println(env.Dim()(fmt.Sprintf(
-		"%s owned printings had two or more vendors. %s listings ignored as unsupported.\n"+
-			"Vendor asking and offering prices for one day, not guaranteed sales.",
-		ui.Count(res.Compared), ui.Count(res.Ignored))))
+		"%s owned printings had two or more vendors. Anchored on tcgplayer's\n"+
+			"sales-derived market price; asks and offers are one day's, not guaranteed.",
+		ui.Count(res.Compared))))
 	return nil
 }

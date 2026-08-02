@@ -36,3 +36,25 @@ func Arbitrage(ctx context.Context, d Deps, p progress.Fn, minValue float64) (ar
 	}
 	return arbitrage.Collect(owned, quotes, minValue), nil
 }
+
+// ArbitrageCached is Arbitrage from today's quote cache alone: no network,
+// no archive parse. ok is false when no fresh cache covers the holdings —
+// the caller decides whether to fetch for real. This is what lets a
+// restarted session show the vendor comparison an earlier one fetched;
+// the data lives in the pricing day-cache (owned-quotes.json beside the
+// MTGJSON bundles), pruned nightly with them.
+func ArbitrageCached(d Deps, minValue float64) (arbitrage.Result, bool, error) {
+	owned, err := d.Store.OwnedByFinish()
+	if err != nil || len(owned) == 0 {
+		return arbitrage.Result{}, false, err
+	}
+	refs := make([]pricing.Ref, len(owned))
+	for i, o := range owned {
+		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
+	}
+	quotes, ok := pricing.New(d.Store, d.CacheDir).CachedQuotes(refs)
+	if !ok {
+		return arbitrage.Result{}, false, nil
+	}
+	return arbitrage.Collect(owned, quotes, minValue), true, nil
+}

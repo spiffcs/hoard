@@ -532,6 +532,10 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
 			return action.Arbitrage(ctx, deps, p, arbitrageMin)
 		}),
+		browse.WithArbitrageCached(func() (arbitrage.Result, bool) {
+			res, ok, err := action.ArbitrageCached(deps, arbitrageMin)
+			return res, ok && err == nil
+		}),
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.UpdatePrices(ctx, deps, p)
 			if err != nil {

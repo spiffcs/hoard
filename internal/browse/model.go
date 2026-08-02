@@ -135,6 +135,10 @@ type Model struct {
 	// card runs the watch prompt instead of opening its detail.
 	watchPick bool
 
+	// maskIdx indexes maskLevels: the value mask hiding cards priced under
+	// the level, across every view that has prices. 0 is off.
+	maskIdx int
+
 	// commands is the registry, built once; palette is the open drawer over
 	// it, nil when closed. See command.go and palette.go.
 	commands []command
@@ -173,6 +177,7 @@ type Model struct {
 	// Arbitrage is the one view that needs the network, so unlike the others it
 	// is fetched on request, asynchronously, and can be abandoned part-way.
 	arbitrage  ArbitrageFunc
+	arbCached  ArbitrageCachedFunc
 	arbResult  arbitrage.Result
 	arbRows    []arbitrage.Row
 	arbLoading bool
@@ -378,20 +383,53 @@ func (m *Model) loadCards() error {
 // trait half was resolved when the query last changed, and holding terms are
 // answered by the rows themselves.
 func (m *Model) applyFilter() {
-	if m.filter.empty() {
+	if m.filter.empty() && m.maskMin() == 0 {
 		m.cards = m.allCards
 		m.refreshEmptyNote()
 		return
 	}
 	out := make([]card, 0, len(m.allCards))
 	for _, c := range m.allCards {
-		if m.filter.matches(c, m.allowed) {
+		if m.filter.matches(c, m.allowed) && !m.maskedPrice(c.Price) {
 			out = append(out, c)
 		}
 	}
 	m.cards = out
 	m.clampCursor(paneCards)
 	m.refreshEmptyNote()
+}
+
+// maskLevels are the value-mask presets m cycles through; 0 is off.
+var maskLevels = []float64{0, 5, 10, 25}
+
+// maskMin is the active mask threshold, 0 when off.
+func (m Model) maskMin() float64 { return maskLevels[m.maskIdx] }
+
+// maskedPrice reports whether a per-copy price falls under the mask. With
+// the mask on, an unknown price is under it — the mask asks for cards worth
+// at least this much, and "unknown" is not an answer.
+func (m Model) maskedPrice(p *float64) bool {
+	if min := m.maskMin(); min > 0 {
+		return p == nil || *p < min
+	}
+	return false
+}
+
+// cycleMask advances the mask and re-derives every view through it.
+func (m *Model) cycleMask() {
+	m.maskIdx = (m.maskIdx + 1) % len(maskLevels)
+	m.applyFilter()
+	if err := m.loadView(); err != nil {
+		m.setError(err)
+		return
+	}
+	m.applyArbRows()
+	m.clampCursor(paneCards)
+	if min := m.maskMin(); min > 0 {
+		m.status, m.statusErr = fmt.Sprintf("hiding cards under %s — m cycles, unpriced view unaffected", ui.Money(min)), false
+	} else {
+		m.status, m.statusErr = "mask off", false
+	}
 }
 
 // refreshEmptyNote explains an empty filtered pane, computed here — when the
@@ -605,25 +643,18 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg.String() {
-	// One quit chord for the whole experience: ctrl+c. q never quits — it
-	// reads as "quit" in one view and as a typo in another, and the cost of
-	// the mistake is the whole session.
+	// ctrl+c quits immediately (with a confirm only when an op would be
+	// stranded); q asks first — quit intent from a single printable key
+	// deserves a y/n, not a dumped session.
 	case "ctrl+c":
 		if m.op != nil {
-			// Quitting would strand the operation's goroutine writing into
-			// a dead program; ctrl+c on the confirm itself still hard-quits.
-			title := m.op.title
-			m.confirm = &pendingConfirm{
-				prompt: title + " is still running — quit anyway?",
-				help:   "y quit · any other key stays",
-				onYes: func(m *Model) tea.Cmd {
-					m.cancelOp()
-					return tea.Quit
-				},
-			}
+			m.stageQuit()
 			return m, nil
 		}
 		return m, tea.Quit
+	case "q":
+		m.stageQuit()
+		return m, nil
 
 	case ":", "ctrl+p":
 		m.openPalette()
@@ -682,11 +713,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Nothing left to back out of: esc at the top frame asks about
 		// leaving, so backing "up" one frame too many never dumps the
 		// session without warning.
-		m.confirm = &pendingConfirm{
-			prompt: "quit hoard?",
-			help:   "y quit · any other key stays",
-			onYes:  func(*Model) tea.Cmd { return tea.Quit },
-		}
+		m.stageQuit()
 		return m, nil
 
 	case "tab":
@@ -786,6 +813,29 @@ func (m *Model) askRemoval() {
 
 // handleConfirmKey answers a staged confirm; see pendingConfirm for the
 // only-y-proceeds contract.
+// stageQuit asks before leaving: the plain quit confirm, or — with an
+// operation still running — the variant whose yes also cancels it so no
+// goroutine writes into a dead program.
+func (m *Model) stageQuit() {
+	if m.op != nil {
+		title := m.op.title
+		m.confirm = &pendingConfirm{
+			prompt: title + " is still running — quit anyway?",
+			help:   "y quit · any other key stays",
+			onYes: func(m *Model) tea.Cmd {
+				m.cancelOp()
+				return tea.Quit
+			},
+		}
+		return
+	}
+	m.confirm = &pendingConfirm{
+		prompt: "quit hoard?",
+		help:   "y quit · any other key stays",
+		onYes:  func(*Model) tea.Cmd { return tea.Quit },
+	}
+}
+
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		// Hard exit, but nobody gets left hanging: a bridge worker blocked

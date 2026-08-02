@@ -19,39 +19,38 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// OutlierFactor is how far above the cheapest quote a price may sit before it is
-// treated as unsupported rather than as an opportunity.
-//
-// Chosen from the real spread distribution: the widest genuine disagreement
-// measured was 9.3x (Siege-Gang Lieutenant, $4.49 against $41.68), while
-// Manapool lists one card at 55,600x what two other vendors charge. Twenty
-// leaves room on both sides of that gap.
-const OutlierFactor = 20
+// MarketProvider is the vendor whose figure anchors every comparison.
+// TCGplayer's price in MTGJSON is its market price — computed from actual
+// completed sales, not from what anyone is asking — so it is the one number
+// here that describes what cards really trade at. Everything else renders
+// as a deviation from it.
+const MarketProvider = "tcgplayer"
 
 // Opportunity is one owned printing-and-finish, with the vendor quotes that make
 // it interesting.
 type Opportunity struct {
 	Card store.OwnedFinish
 
-	BuyAt     float64 // cheapest retail
+	Market    float64 // the sales-derived anchor (see MarketProvider)
+	BuyAt     float64 // cheapest ask, any vendor — a listing is buyable
 	BuyFrom   string
-	DearAt    float64 // dearest retail that another vendor corroborates
-	DearFrom  string
 	SellAt    float64 // best buylist offer
 	SellTo    string
+	HasMarket bool
 	HasRetail bool
 	HasBuy    bool
 }
 
-// Spread is how much dearer the priciest vendor is than the cheapest.
-func (o Opportunity) Spread() float64 { return o.DearAt/o.BuyAt - 1 }
+// Liquidity is the fraction of the last-sold price a shop will pay.
+func (o Opportunity) Liquidity() float64 { return o.SellAt / o.Market }
 
-// Liquidity is the fraction of the cheapest retail price a shop will pay.
-func (o Opportunity) Liquidity() float64 { return o.SellAt / o.BuyAt }
+// BelowMarket is how far under the last-sold price the cheapest ask sits.
+func (o Opportunity) BelowMarket() float64 { return 1 - o.BuyAt/o.Market }
 
-// Profit is what is left after buying at the cheapest retail and selling to the
-// best buylist. Positive is genuine arbitrage.
-func (o Opportunity) Profit() float64 { return o.SellAt - o.BuyAt }
+// Profit is what a buylist pays over the last-sold price: selling an owned
+// copy there beats what the card actually trades at. Positive is genuine
+// arbitrage; anchored on Market, not on anyone's ask.
+func (o Opportunity) Profit() float64 { return o.SellAt - o.Market }
 
 // Printing is the set/number label for this opportunity's card.
 func (o Opportunity) Printing() string {
@@ -61,11 +60,10 @@ func (o Opportunity) Printing() string {
 // Result is a whole pass over the collection.
 type Result struct {
 	Opportunities []Opportunity
-	// Compared is how many owned printings had two or more vendors to compare;
-	// Ignored is how many listings were discarded as unsupported. Both are
-	// reported so a caller can say what was left out rather than hiding it.
+	// Compared is how many owned printings had two or more vendors to
+	// compare, reported so a caller can say how much ground the analysis
+	// actually covered.
 	Compared int
-	Ignored  int
 }
 
 // Collect turns holdings and their quotes into ranked opportunities. quotes is
@@ -82,8 +80,7 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 		if len(qs) == 0 {
 			continue
 		}
-		op, retailCount, dropped := Assess(o, qs)
-		res.Ignored += dropped
+		op, retailCount := Assess(o, qs)
 		if retailCount >= 2 {
 			res.Compared++
 		}
@@ -94,12 +91,9 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 	return res
 }
 
-// Assess reduces one card's quotes to the best buy, the best corroborated sell,
-// and the best buylist offer, for the finish actually owned.
-//
-// It reports how many retail quotes were usable and how many were discarded as
-// unsupported, so the caller can say so rather than silently hiding them.
-func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCount, dropped int) {
+// Assess reduces one card's quotes to the sales-price anchor, the cheapest
+// ask, and the best buylist offer, for the finish actually owned.
+func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCount int) {
 	op.Card = o
 	// The store speaks Scryfall's finish vocabulary (nonfoil|foil|etched);
 	// MTGJSON's price files speak their own ("normal"/"foil"). This is the
@@ -109,38 +103,26 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 		finish = "foil"
 	}
 
-	var retail []mtgjson.Quote
 	for _, q := range qs {
 		if q.Finish != finish || q.Price <= 0 {
 			continue
 		}
 		switch q.Kind {
 		case mtgjson.Retail:
-			retail = append(retail, q)
+			retailCount++
+			if q.Provider == MarketProvider {
+				op.Market, op.HasMarket = q.Price, true
+			}
+			if !op.HasRetail || q.Price < op.BuyAt {
+				op.BuyAt, op.BuyFrom, op.HasRetail = q.Price, q.Provider, true
+			}
 		case mtgjson.Buylist:
 			if q.Price > op.SellAt {
 				op.SellAt, op.SellTo, op.HasBuy = q.Price, q.Provider, true
 			}
 		}
 	}
-	if len(retail) == 0 {
-		return op, 0, 0
-	}
-
-	slices.SortFunc(retail, func(a, b mtgjson.Quote) int { return cmp.Compare(a.Price, b.Price) })
-	op.BuyAt, op.BuyFrom, op.HasRetail = retail[0].Price, retail[0].Provider, true
-
-	// Walk down from the dearest until one is close enough to the cheapest to be
-	// believable. A lone vendor quoting many times what everyone else charges is
-	// a broken listing, not an opportunity, and it would otherwise top the list.
-	for i := len(retail) - 1; i >= 0; i-- {
-		if retail[i].Price <= op.BuyAt*OutlierFactor {
-			op.DearAt, op.DearFrom = retail[i].Price, retail[i].Provider
-			break
-		}
-		dropped++
-	}
-	return op, len(retail) - dropped, dropped
+	return op, retailCount
 }
 
 // Kind is which question an opportunity answers. The same card can answer more
@@ -148,13 +130,17 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 type Kind int
 
 const (
-	// KindProfit is real arbitrage: a shop pays more than the cheapest retail.
+	// KindProfit is real arbitrage: a buylist pays more than the card last
+	// sold for.
 	KindProfit Kind = iota
-	// KindLiquid is where a buylist is close to retail — not a profit, but the
-	// card is easy to turn back into money.
+	// KindLiquid is where a buylist pays close to the sales price — not a
+	// profit, but the card is easy to turn back into money.
 	KindLiquid
-	// KindSpread is where vendors simply disagree about the price.
-	KindSpread
+	// KindBelowMarket is a real ask sitting well under what the card
+	// actually sells for — the useful direction of vendor disagreement.
+	// The other direction (a lone listing far above the sales price) is
+	// scalper noise and is deliberately not a section.
+	KindBelowMarket
 )
 
 func (k Kind) String() string {
@@ -164,7 +150,7 @@ func (k Kind) String() string {
 	case KindLiquid:
 		return "liquid"
 	}
-	return "spread"
+	return "below-market"
 }
 
 // Title and Note describe a Kind for a section heading.
@@ -175,26 +161,30 @@ func (k Kind) Title() string {
 	case KindLiquid:
 		return "EASY TO SELL"
 	}
-	return "CHEAPEST VS DEAREST"
+	return "BELOW MARKET"
 }
 
 func (k Kind) Note() string {
 	switch k {
 	case KindProfit:
-		return "a shop pays more than the cheapest retail"
+		return "a buylist pays more than the card last sold for"
 	case KindLiquid:
-		return "a buylist pays at least 70% of retail"
+		return "a buylist pays at least 70% of the last-sold price"
 	}
-	return "where the vendors disagree"
+	return "asking well under the last-sold price"
 }
 
-// liquidFloor is the least a buylist may pay, as a fraction of the cheapest
-// retail, to count as liquidity. Typical buylists sit near half of retail;
-// 70% marks the cards genuinely easy to turn back into money.
+// liquidFloor is the least a buylist may pay, as a fraction of the sales
+// price, to count as liquidity. Typical buylists sit near half of it; 70%
+// marks the cards genuinely easy to turn back into money.
 const liquidFloor = 0.7
 
+// belowMarketFloor is how far under the sales price an ask must sit to be
+// worth listing — a quarter off is a deal, a few percent is noise.
+const belowMarketFloor = 0.25
+
 // Kinds is every question, in the order they are worth reading.
-var Kinds = []Kind{KindProfit, KindLiquid, KindSpread}
+var Kinds = []Kind{KindProfit, KindLiquid, KindBelowMarket}
 
 // Section is one Kind's best rows.
 type Section struct {
@@ -232,22 +222,24 @@ func Rows(r Result, limit int) []Row {
 
 // top filters and ranks the opportunities that answer one question.
 func top(all []Opportunity, limit int, k Kind) []Opportunity {
-	keep := func(o Opportunity) bool { return o.HasBuy && o.Profit() > 0 }
+	keep := func(o Opportunity) bool { return o.HasBuy && o.HasMarket && o.Profit() > 0 }
 	order := func(a, b Opportunity) int { return cmp.Compare(b.Profit(), a.Profit()) }
 	switch k {
 	case KindLiquid:
 		// The floor is the section's meaning: "liquid" promises a buylist
-		// close to retail, and without a threshold the section fills with
-		// whatever unprofitable rows a small collection has — a shop paying
-		// 27% of retail is not liquidity, it is every card ever printed
-		// (observed live, and fairly called nonsense).
+		// close to the sales price, and without a threshold the section
+		// fills with whatever unprofitable rows a small collection has — a
+		// shop paying 27% of it is not liquidity, it is every card ever
+		// printed (observed live, and fairly called nonsense).
 		keep = func(o Opportunity) bool {
-			return o.HasBuy && o.Profit() <= 0 && o.Liquidity() >= liquidFloor
+			return o.HasBuy && o.HasMarket && o.Profit() <= 0 && o.Liquidity() >= liquidFloor
 		}
 		order = func(a, b Opportunity) int { return cmp.Compare(b.Liquidity(), a.Liquidity()) }
-	case KindSpread:
-		keep = func(o Opportunity) bool { return o.DearAt > o.BuyAt }
-		order = func(a, b Opportunity) int { return cmp.Compare(b.Spread(), a.Spread()) }
+	case KindBelowMarket:
+		keep = func(o Opportunity) bool {
+			return o.HasRetail && o.HasMarket && o.BelowMarket() >= belowMarketFloor
+		}
+		order = func(a, b Opportunity) int { return cmp.Compare(b.BelowMarket(), a.BelowMarket()) }
 	}
 
 	var out []Opportunity

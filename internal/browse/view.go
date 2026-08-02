@@ -446,6 +446,9 @@ func (m Model) statusLine() string {
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
+	if min := m.maskMin(); min > 0 {
+		pos += fmt.Sprintf(" · hiding <%s (M cycles)", ui.Money(min))
+	}
 	return helpStyle.Render(pos)
 }
 
@@ -474,25 +477,27 @@ func (m Model) helpLine() string {
 	case m.text != nil:
 		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
 	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
-		return "F fetch vendor prices · v next view · esc quit"
+		return "F fetch vendor prices · v next view · q quit"
 	case m.view == viewArbitrage && m.arbLoading:
 		return "esc cancel · ctrl+c quit"
+	case m.view == viewArbitrage:
+		return "enter detail · F refetch quotes · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
-		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · esc quit"
+		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W cycle window · F update prices + history · v next view · : commands · ↑/↓ move · s sort · esc quit"
+		return "W cycle window · F update prices + history · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
-		return "F refresh prices · v next view · : commands · ↑/↓ move · s sort · esc quit"
+		return "F refresh prices · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · esc quit"
+		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · a add cards · n new binder · R rename · d remove · : import/export · / filter · v views · u undo · esc quit"
+		return "tab cards · a add cards · n new binder · R rename · d remove · : import/export · / filter · v views · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · esc quit"
+	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

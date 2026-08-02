@@ -95,6 +95,11 @@ func commands() []command {
 			},
 		},
 		{
+			id: "mask.cycle", title: "Mask: hide cards under $5 / $10 / $25", aliases: "value filter cheap junk minimum",
+			key: "M",
+			run: func(m *Model) tea.Cmd { m.cycleMask(); return nil },
+		},
+		{
 			id: "reload", title: "Reload from the database", aliases: "refresh",
 			key: "r",
 			run: func(m *Model) tea.Cmd { m.reload(); return nil },
@@ -456,5 +461,10 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
 	m.status = "showing " + m.view.String()
 	m.statusErr = false
+	if v == viewArbitrage {
+		// An earlier session's quotes beat an empty pane; fetching stays
+		// deliberate (F), arriving stays free.
+		m.loadCachedArbitrage()
+	}
 	return nil
 }

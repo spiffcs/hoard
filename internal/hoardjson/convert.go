@@ -227,7 +227,6 @@ func FromWatchCheck(checked int, fired []store.WatchStatus) Document {
 func FromArbitrage(res arbitrage.Result) Document {
 	a := &Arbitrage{
 		ComparedPrintings: res.Compared,
-		IgnoredListings:   res.Ignored,
 		Opportunities:     make([]Opportunity, 0, len(res.Opportunities)),
 	}
 	for _, r := range arbitrage.Rows(res, len(res.Opportunities)) {
@@ -245,14 +244,19 @@ func FromArbitrage(res arbitrage.Result) Document {
 			Kind:     r.Kind.String(),
 			BuyUsd:   cents(r.BuyAt),
 			BuyFrom:  r.BuyFrom,
-			DearUsd:  cents(r.DearAt),
-			DearFrom: r.DearFrom,
-			Spread:   r.Spread(),
+		}
+		if r.HasMarket {
+			market, below := cents(r.Market), r.BelowMarket()
+			op.MarketUsd, op.BelowMarket = &market, &below
 		}
 		if r.HasBuy {
-			sell, profit, liq := cents(r.SellAt), cents(r.Profit()), r.Liquidity()
+			sell, profit := cents(r.SellAt), cents(r.Profit())
 			op.SellUsd, op.SellTo = &sell, r.SellTo
-			op.ProfitUsd, op.Liquidity = &profit, &liq
+			op.ProfitUsd = &profit
+			if r.HasMarket {
+				liq := r.Liquidity()
+				op.Liquidity = &liq
+			}
 		}
 		a.Opportunities = append(a.Opportunities, op)
 	}

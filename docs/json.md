@@ -28,7 +28,7 @@ rejects `--json` rather than silently printing a table at a script.
 - **Deterministic**: the same data produces the same bytes, so outputs diff
   cleanly in git. Ordering is part of the shape — holdings in the canonical
   export order, decks by value, movers by absolute impact, opportunities
-  grouped arbitrage → liquid → spread.
+  grouped arbitrage → liquid → below-market.
 - **Everything, not the display's top-N**: `movers --json` and
   `arbitrage --json` emit the full result; `--limit` only shapes the human
   tables. Selection flags (`movers --since`, `arbitrage --min`,
@@ -39,7 +39,7 @@ rejects `--json` rather than silently printing a table at a script.
   `mtgjsonUuid`.
 - **Money is whole cents**: every `*Usd` field is rounded to two decimals at
   the boundary, so summed totals don't leak binary-float noise into diffs.
-  Ratios (`spread`, `liquidity`) are unrounded fractions.
+  Ratios (`belowMarket`, `liquidity`) are unrounded fractions.
 - **Card references travel with identifiers**: every card carries
   `scryfallId` (+ `mtgjsonUuid` when mapped) plus `setCode`/`number`, so a
   document joins directly against Scryfall bulk data or MTGJSON AllPrintings

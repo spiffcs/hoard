@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.0.2"
+const SchemaVersion = "1.1.0"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -156,11 +156,9 @@ type PriceChange struct {
 // Arbitrage is one pass of vendor disagreement over everything held: the full
 // ranking behind all three tables, not the display's top-N.
 type Arbitrage struct {
-	// ComparedPrintings is how many owned printings had two or more vendors;
-	// IgnoredListings is how many quotes were discarded as unsupported
-	// outliers. Reported so a consumer knows what was left out.
+	// ComparedPrintings is how many owned printings had two or more vendors,
+	// so a consumer knows how much ground the analysis covered.
 	ComparedPrintings int           `json:"comparedPrintings"`
-	IgnoredListings   int           `json:"ignoredListings"`
 	Opportunities     []Opportunity `json:"opportunities"`
 }
 
@@ -172,23 +170,26 @@ type Arbitrage struct {
 //
 // The sell-side fields are present only when some buylist quoted the card.
 // Spread and Liquidity are fractions, not percentages: a spread of 0.5 means
-// the dearest corroborated retail is 50% above the cheapest.
+// each row carries the tcgplayer sales-derived market price as its anchor.
 type Opportunity struct {
 	Card     Card    `json:"card"`
 	Copies   int     `json:"copies"`
 	ValueUsd float64 `json:"valueUsd"`
-	Kind     string  `json:"kind" jsonschema:"enum=arbitrage,enum=liquid,enum=spread"`
+	Kind     string  `json:"kind" jsonschema:"enum=arbitrage,enum=liquid,enum=below-market"`
 
-	BuyUsd   float64  `json:"buyUsd"`
-	BuyFrom  string   `json:"buyFrom"`
-	DearUsd  float64  `json:"dearUsd"`
-	DearFrom string   `json:"dearFrom"`
-	Spread   float64  `json:"spread"`
-	SellUsd  *float64 `json:"sellUsd,omitempty"`
-	SellTo   string   `json:"sellTo,omitempty"`
-	// ProfitUsd is sellUsd − buyUsd per copy; positive is genuine arbitrage.
+	BuyUsd  float64 `json:"buyUsd"`
+	BuyFrom string  `json:"buyFrom"`
+	// MarketUsd is tcgplayer's market price — computed from actual sales —
+	// when the printing has one; every ranking anchors on it.
+	MarketUsd *float64 `json:"marketUsd,omitempty"`
+	// BelowMarket is the fraction the cheapest ask sits under marketUsd.
+	BelowMarket *float64 `json:"belowMarket,omitempty"`
+	SellUsd     *float64 `json:"sellUsd,omitempty"`
+	SellTo      string   `json:"sellTo,omitempty"`
+	// ProfitUsd is sellUsd − marketUsd per copy: what a buylist pays over
+	// the last-sold price. Positive is genuine arbitrage.
 	ProfitUsd *float64 `json:"profitUsd,omitempty"`
-	// Liquidity is the fraction of the cheapest retail a shop will pay.
+	// Liquidity is the fraction of marketUsd a shop will pay.
 	Liquidity *float64 `json:"liquidity,omitempty"`
 }
 

@@ -109,7 +109,7 @@ func TestCmdExportJSON(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	want := `{
-  "schemaVersion": "1.0.2",
+  "schemaVersion": "1.1.0",
   "kind": "holdings",
   "holdings": {
     "rows": [

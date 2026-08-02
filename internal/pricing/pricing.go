@@ -114,6 +114,14 @@ func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Pr
 // printings — the full bundle is a ~50 MB scan for a few tens of kilobytes of
 // quotes about cards actually owned, and vendor prices only change with the
 // bundle, once a day.
+// CachedQuotes serves today's vendor quotes from the day-cache without any
+// network or parse work — nil, false when today's cache is missing or does
+// not cover every requested printing. It is how a fresh session can show
+// the quotes an earlier one already fetched.
+func (f *Fetcher) CachedQuotes(refs []Ref) (map[string][]mtgjson.Quote, bool) {
+	return f.cachedQuotes(refs)
+}
+
 func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.Quote, error) {
 	if out, ok := f.cachedQuotes(refs); ok {
 		return out, nil

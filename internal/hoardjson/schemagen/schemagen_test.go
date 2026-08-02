@@ -122,13 +122,14 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 			Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 		}),
 		"arbitrage": hoardjson.FromArbitrage(arbitrage.Result{
-			Compared: 1, Ignored: 0,
+			Compared: 1,
 			Opportunities: []arbitrage.Opportunity{{
 				Card: store.OwnedFinish{ScryfallID: "a", Name: "Ancient Tomb",
 					SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil",
 					Copies: 1, Value: 60},
-				BuyAt: 4, BuyFrom: "tcgplayer", DearAt: 6, DearFrom: "cardmarket",
-				SellAt: 5, SellTo: "cardkingdom", HasRetail: true, HasBuy: true}}}),
+				Market: 8, BuyAt: 4, BuyFrom: "cardmarket",
+				SellAt: 5, SellTo: "cardkingdom",
+				HasMarket: true, HasRetail: true, HasBuy: true}}}),
 	}
 	for name, doc := range docs {
 		if err := validate(t, sch, doc); err != nil {

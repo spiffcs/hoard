@@ -144,19 +144,19 @@ func Arbitrage(env ui.Env, sec arbitrage.Section) string {
 		switch sec.Kind {
 		case arbitrage.KindProfit:
 			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
-				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
+				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
 				ui.C("+"+ui.Money(o.Profit())))
 		case arbitrage.KindLiquid:
 			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
-				ui.C(ui.Money(o.BuyAt)), ui.C("retail"),
+				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
 				ui.C(ui.Percent(o.Liquidity())))
 		default:
 			t.Add(ui.C(o.Card.Name), ui.C(o.Printing()), ui.C(finish),
 				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
-				ui.C(ui.Money(o.DearAt)), ui.C(o.DearFrom),
-				ui.C("+"+ui.Percent(o.Spread())))
+				ui.C(ui.Money(o.Market)), ui.C("last sold"),
+				ui.C("-"+ui.Percent(o.BelowMarket())))
 		}
 	}
 	return t.Render()
