@@ -33,9 +33,17 @@ type command struct {
 	title string
 	// aliases are extra fuzzy fodder, never displayed.
 	aliases string
+	// desc is the one-line explanation shown under the palette's help line
+	// while the command is highlighted. Every palette-visible command has
+	// one; unhidden commands without a desc render nothing there.
+	desc string
 	// key is the direct binding, shown as the palette's hint column; ""
 	// means palette-only.
 	key string
+	// hidden keeps a command out of the palette while its key keeps
+	// working — for the pure key reflexes (sort, mask, view cycling) the
+	// palette listing was noise beside the verbs that do something.
+	hidden bool
 	// where reports whether the command applies right now; nil means
 	// always. Hidden commands are absent from the palette and their keys
 	// fall through. Finer contextual refusals belong in run as status
@@ -55,6 +63,7 @@ func commands() []command {
 	return []command{
 		{
 			id: "add", title: "Add cards", aliases: "scan camera new card",
+			desc: "Open the add flow: type a card name, or scan with your iPhone.",
 			key:  "a",
 			rank: onView(viewHoldings, 3),
 			// The cascade runs as an embedded child takeover, so ops keep
@@ -63,20 +72,22 @@ func commands() []command {
 		},
 		{
 			id: "remove", title: "Remove selected", aliases: "delete card deck",
-			key: "d",
-			run: func(m *Model) tea.Cmd { m.askRemoval(); return nil },
+			desc: "Remove the selected card or deck — asks y/n first.",
+			key:  "d",
+			run:  func(m *Model) tea.Cmd { m.askRemoval(); return nil },
 		},
 		{
 			// No where guard: an empty undo stack answers "nothing to undo"
 			// through run — the feedback is the point, and hiding the command
 			// would swallow it.
 			id: "undo", title: "Undo last edit", aliases: "revert restore",
-			key: "u",
-			run: func(m *Model) tea.Cmd { m.undoRecorded(); return nil },
+			desc: "Put back whatever the last quantity edit or removal changed.",
+			key:  "u",
+			run:  func(m *Model) tea.Cmd { m.undoRecorded(); return nil },
 		},
 		{
-			id: "sort", title: "Sort: next column", aliases: "order by",
-			key: "s",
+			id: "sort", aliases: "order by",
+			key: "s", hidden: true,
 			run: func(m *Model) tea.Cmd {
 				m.cycleSort()
 				if m.view != viewMarket {
@@ -87,8 +98,8 @@ func commands() []command {
 			},
 		},
 		{
-			id: "sort.reverse", title: "Sort: reverse", aliases: "order descending ascending",
-			key: "S",
+			id: "sort.reverse", aliases: "order descending ascending",
+			key: "S", hidden: true,
 			run: func(m *Model) tea.Cmd {
 				m.reverseSort()
 				if m.view != viewMarket {
@@ -99,38 +110,24 @@ func commands() []command {
 			},
 		},
 		{
-			id: "mask.cycle", title: "Mask: hide cards under $5 / $10 / $25", aliases: "value filter cheap junk minimum",
-			key: "M",
+			id: "mask.cycle", aliases: "value filter cheap junk minimum",
+			key: "M", hidden: true,
 			run: func(m *Model) tea.Cmd { m.cycleMask(); return nil },
 		},
 		{
 			id: "reload", title: "Reload from the database", aliases: "refresh",
-			key: "r",
-			run: func(m *Model) tea.Cmd { m.reload(); return nil },
+			desc: "Re-read everything from disk, keeping your place.",
+			key:  "r",
+			run:  func(m *Model) tea.Cmd { m.reload(); return nil },
 		},
 		{
-			id: "view.next", title: "Next view", aliases: "cycle switch",
-			key: "v",
+			id: "view.next", aliases: "cycle switch",
+			key: "v", hidden: true,
 			run: func(m *Model) tea.Cmd { return m.showView(m.view.next()) },
 		},
 		{
-			id: "view.holdings", title: "View: holdings", aliases: "cards binder",
-			run: func(m *Model) tea.Cmd { return m.showView(viewHoldings) },
-		},
-		{
-			id: "view.movers", title: "View: movers", aliases: "risers sinkers prices changed",
-			run: func(m *Model) tea.Cmd { return m.showView(viewMovers) },
-		},
-		{
-			id: "view.unpriced", title: "View: unpriced", aliases: "zero gaps missing",
-			run: func(m *Model) tea.Cmd { return m.showView(viewUnpriced) },
-		},
-		{
-			id: "view.market", title: "View: market", aliases: "vendors spread buylist quotes",
-			run: func(m *Model) tea.Cmd { return m.showView(viewMarket) },
-		},
-		{
 			id: "op.update-prices", title: "Update prices", aliases: "refresh fetch scryfall daily",
+			desc:  "Fetch today's prices from Scryfall for every card you hold.",
 			where: func(m *Model) bool { return m.opUpdatePrices != nil },
 			rank: func(m *Model) int {
 				switch {
@@ -144,9 +141,12 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
 		},
 		{
-			id: "op.backfill", title: "Backfill 90 days of price history (~150 MB)",
+			id: "op.backfill", title: "Backfill 90 days of price history",
 			aliases: "backdate movers history mtgjson import past",
-			where:   func(m *Model) bool { return m.opBackfill != nil },
+			// The archive's size lives in the description as prose, not a
+			// number — a hardcoded figure goes stale the day MTGJSON grows.
+			desc:  "Download MTGJSON's daily price archive (a large file) and record the past 90 days.",
+			where: func(m *Model) bool { return m.opBackfill != nil },
 			rank: func(m *Model) int {
 				if m.view == viewMovers {
 					if len(m.movers) == 0 {
@@ -160,6 +160,7 @@ func commands() []command {
 		},
 		{
 			id: "op.repair-finishes", title: "Repair finishes", aliases: "fix foil unpriced zero",
+			desc:  "Move cards stored in a finish their printing lacks onto one it has.",
 			key:   "f",
 			where: func(m *Model) bool { return m.opRepairFinishes != nil },
 			rank:  onView(viewUnpriced, 4),
@@ -167,22 +168,26 @@ func commands() []command {
 		},
 		{
 			id: "op.catalog-update", title: "Update the card catalog", aliases: "download bundle scryfall rebuild",
+			desc:  "Download Scryfall's card bundle so lookups answer instantly and offline.",
 			where: func(m *Model) bool { return m.opCatalogUpdate != nil },
 			run:   func(m *Model) tea.Cmd { return m.startOp("updating the catalog", m.opCatalogUpdate) },
 		},
 		{
 			id: "deck.add-url", title: "Add a deck by URL", aliases: "import archidekt moxfield deckstats link",
+			desc:  "Fetch a deck list from its link and import it as a deck.",
 			where: func(m *Model) bool { return m.opDeckAdd != nil },
 			rank:  onView(viewHoldings, 2),
 			run:   func(m *Model) tea.Cmd { m.promptDeckURL(); return nil },
 		},
 		{
 			id: "add.url", title: "Add a card by Scryfall URL", aliases: "link paste scryfall single",
+			desc:  "Add one card from its Scryfall page link.",
 			where: func(m *Model) bool { return m.opAddURL != nil },
 			run:   func(m *Model) tea.Cmd { m.promptCardURL(); return nil },
 		},
 		{
 			id: "export.container", title: "Export this container", aliases: "csv save backup moxfield archidekt",
+			desc: "Write the selected binder or deck to a CSV or JSON file.",
 			where: func(m *Model) bool {
 				return m.exportFn != nil && m.view == viewHoldings && m.selectedContainer() != nil
 			},
@@ -207,17 +212,20 @@ func commands() []command {
 		},
 		{
 			id: "export.all", title: "Export everything", aliases: "csv save backup all holdings",
+			desc:  "Write every holding — all binders, all decks — to one file.",
 			where: func(m *Model) bool { return m.exportFn != nil },
 			run:   func(m *Model) tea.Cmd { m.promptExport("", "", "hoard-export"); return nil },
 		},
 		{
 			id: "import.file", title: "Import a collection CSV", aliases: "manabox moxfield delver csv file",
+			desc:  "Add a collection export from ManaBox, Moxfield, Delver Lens or hoard.",
 			where: func(m *Model) bool { return m.opImport != nil },
 			rank:  onView(viewHoldings, 2),
 			run:   func(m *Model) tea.Cmd { m.promptImportPath(); return nil },
 		},
 		{
 			id: "report.view", title: "Report: valuation", aliases: "insurance worth top holdings dated",
+			desc:  "A dated valuation: totals, per-binder breakdown, top holdings, price sources.",
 			where: func(m *Model) bool { return m.reportFn != nil },
 			run: func(m *Model) tea.Cmd {
 				lines, err := m.reportFn(10, m.width)
@@ -231,19 +239,22 @@ func commands() []command {
 		},
 		{
 			id: "op.cancel", title: "Cancel the running operation", aliases: "stop abort",
+			desc:  "Stop the operation currently running, keeping what it finished.",
 			where: func(m *Model) bool { return m.op != nil },
 			rank:  func(*Model) int { return 10 },
 			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
 		},
 		{
 			id: "market.fetch", title: "Fetch vendor prices", aliases: "quotes compare buylist",
+			desc:  "Download today's vendor quotes and rank the disagreements.",
 			where: func(m *Model) bool { return m.view == viewMarket && !m.marketLoaded },
 			rank:  func(*Model) int { return 5 },
 			run:   func(m *Model) tea.Cmd { return m.startMarketFetch() },
 		},
 		{
 			id: "view.populate", title: "Fetch this view's data", aliases: "populate refresh load",
-			key: "F",
+			desc: "Run whatever fills this view: quotes, prices, history, repairs.",
+			key:  "F",
 			// Leads the analytical views, where F is the verb that makes an
 			// empty pane useful; on holdings the collection verbs matter more.
 			rank: func(m *Model) int {
@@ -256,6 +267,7 @@ func commands() []command {
 		},
 		{
 			id: "watch.add", title: "Watch this card", aliases: "alert threshold price under over",
+			desc:  "Set a price threshold on the selected card; `hoard watch` fires the alert.",
 			key:   "w",
 			where: func(m *Model) bool { return m.subjectCard() != nil },
 			rank: func(m *Model) int {
@@ -268,6 +280,7 @@ func commands() []command {
 		},
 		{
 			id: "watch.pick", title: "Add a watch", aliases: "alert threshold new pick choose",
+			desc: "Pick a card from your holdings and set its price alert.",
 			rank: onView(viewWatches, 5),
 			run:  func(m *Model) tea.Cmd { return m.startWatchPick() },
 		},
@@ -275,39 +288,29 @@ func commands() []command {
 			// The by-name path stays for cards you don't own yet — the
 			// picker above only offers what is already held.
 			id: "watch.add-by-name", title: "Add a watch by name (any card)", aliases: "alert threshold new unowned",
+			desc:  "Resolve any card by name — owned or not — and set a price alert.",
 			where: func(m *Model) bool { return m.opWatchAdd != nil },
 			rank:  onView(viewWatches, 2),
 			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
 			id: "binder.new", title: "New binder", aliases: "create folder",
+			desc: "Create a named binder and switch to it, ready for cards.",
 			key:  "n",
 			rank: onView(viewHoldings, 2),
 			run:  func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
 		},
 		{
 			id: "binder.rename", title: "Rename binder", aliases: "name folder",
-			key: "R",
-			run: func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
+			desc: "Rename the selected binder.",
+			key:  "R",
+			run:  func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
 		},
 		{
-			id: "movers.window", title: "Movers: cycle the lookback (7/30/90 days)", aliases: "since days window",
-			key:   "W",
+			id: "movers.window", aliases: "since days window",
+			key: "W", hidden: true,
 			where: func(m *Model) bool { return m.view == viewMovers },
-			rank:  func(*Model) int { return 2 },
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
-		},
-		{
-			id: "movers.7", title: "Movers: last 7 days", aliases: "week window since",
-			run: func(m *Model) tea.Cmd { return m.jumpMovers(7) },
-		},
-		{
-			id: "movers.30", title: "Movers: last 30 days", aliases: "month window since",
-			run: func(m *Model) tea.Cmd { return m.jumpMovers(30) },
-		},
-		{
-			id: "movers.90", title: "Movers: last 90 days", aliases: "quarter window since",
-			run: func(m *Model) tea.Cmd { return m.jumpMovers(90) },
 		},
 	}
 }
@@ -415,18 +418,6 @@ func (m *Model) populateUnpriced() tea.Cmd {
 		}
 		return strings.Join(parts, " · "), nil
 	})
-}
-
-// jumpMovers goes straight to the movers view at one lookback.
-func (m *Model) jumpMovers(days int) tea.Cmd {
-	for i, d := range moversWindowDays {
-		if d == days {
-			m.moversDaysIdx = i
-		}
-	}
-	cmd := m.showView(viewMovers)
-	m.status = fmt.Sprintf("movers · last %d days", days)
-	return cmd
 }
 
 // applies reports whether a command is available right now.

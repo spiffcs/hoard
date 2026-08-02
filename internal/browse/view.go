@@ -55,6 +55,14 @@ func (m Model) View() string {
 	left, right := m.paneWidths()
 	leftLines := m.containerLines(left)
 	rightLines := m.rightLines(right)
+	if m.view != viewHoldings {
+		// A hoard-wide view spans every container, so the container pane
+		// has nothing to select; it dims to say so before anyone tabs at
+		// it (the tab key explains the rest).
+		for i, l := range leftLines {
+			leftLines[i] = ui.Restyle(l, m.theme.Inactive)
+		}
+	}
 
 	var b strings.Builder
 	b.WriteString(m.header(left, right) + "\n")
@@ -81,12 +89,17 @@ func (m Model) View() string {
 }
 
 // writeHelp renders the wrapped help rows, last line without a newline.
+// While the palette is open, the highlighted command's description renders
+// beneath — the drawer names the verbs, this line says what they do.
 func (m Model) writeHelp(b *strings.Builder, help string) {
 	for i, line := range wrapHelp(help, m.width) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(m.theme.Help.Render(line))
+	}
+	if desc := m.paletteDesc(); desc != "" {
+		b.WriteString("\n" + m.theme.Help.Render(ui.Truncate(desc, m.width)))
 	}
 }
 
@@ -198,12 +211,17 @@ func wrapHelp(s string, width int) []string {
 	return lines
 }
 
-// helpRows is how many rows the wrapped help line costs right now.
+// helpRows is how many rows the wrapped help line costs right now,
+// including the palette's description line when one is showing.
 func (m Model) helpRows() int {
 	if !m.ready {
 		return 1
 	}
-	return len(wrapHelp(m.helpLine(), m.width))
+	rows := len(wrapHelp(m.helpLine(), m.width))
+	if m.paletteDesc() != "" {
+		rows++
+	}
+	return rows
 }
 
 // visibleRows is how many body rows the panes get; the palette drawer and
@@ -248,7 +266,11 @@ func (m Model) header(left, right int) string {
 // paneTitle is the title style focus decides: accent when the cursor lives
 // here, plain title bold otherwise. Bold rather than Inactive for the
 // unfocused side — both panes stay readable; only one advertises the hand.
+// On a hoard-wide view the container pane dims wholesale, title included.
 func (m Model) paneTitle(p pane) lipgloss.Style {
+	if p == paneContainers && m.view != viewHoldings {
+		return m.theme.Inactive
+	}
 	if m.focus == p {
 		return m.theme.Accent
 	}
@@ -477,13 +499,13 @@ func (m Model) helpLine() string {
 	case m.view == viewMarket && m.marketLoading:
 		return "esc cancel · ctrl+c quit"
 	case m.view == viewMarket:
-		return "enter detail · F refetch quotes · v next view · : commands · ↑/↓ move · q quit"
+		return "enter detail · F refetch quotes · M mask · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
-		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · q quit"
+		return "w edit threshold · d remove · : add a watch · enter detail · M mask · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · enter detail · M mask · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
 		return "F refresh prices · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
@@ -491,9 +513,9 @@ func (m Model) helpLine() string {
 		// them here would be an invitation to a refusal.
 		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · F refresh prices · v views · u undo · q quit"
+		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M mask · F refresh prices · v views · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · M mask · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

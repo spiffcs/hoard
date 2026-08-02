@@ -64,7 +64,9 @@ func (m *Model) refreshPalette() {
 	applicable := make([]int, 0, len(m.commands))
 	targets := make([]string, 0, len(m.commands))
 	for i := range m.commands {
-		if !m.commands[i].applies(m) {
+		// Hidden commands keep their keys but never list: the palette is
+		// for the verbs, not the navigation reflexes.
+		if m.commands[i].hidden || !m.commands[i].applies(m) {
 			continue
 		}
 		applicable = append(applicable, i)
@@ -193,6 +195,17 @@ func (m Model) paletteLines(width int) []string {
 		lines = append(lines, ui.Truncate(line, width))
 	}
 	return lines
+}
+
+// paletteDesc is the highlighted command's one-line explanation, rendered
+// under the palette's help line; empty when the palette is closed, nothing
+// matches, or the command carries no description.
+func (m Model) paletteDesc() string {
+	p := m.palette
+	if p == nil || len(p.matches) == 0 || p.cursor >= len(p.matches) {
+		return ""
+	}
+	return m.commands[p.matches[p.cursor].index].desc
 }
 
 // boldRunes bolds the matched rune positions of s — the palette's only

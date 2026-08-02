@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -111,6 +112,29 @@ func (e Env) Delta(v float64) Style {
 
 // Accent styles the focused element: pane titles, selection markers.
 func (e Env) Accent() Style { return e.styled(lgAccent) }
+
+// gradeLo and gradeHi anchor the Grade ramp: a muted amber for "barely
+// qualifies" blending to the gain green for "as good as this column gets".
+// Truecolor values; lipgloss degrades them to the nearest 256/16 color.
+var (
+	gradeLo = [3]uint8{0xb0, 0x8a, 0x2a}
+	gradeHi = [3]uint8{0x37, 0xc4, 0x5c}
+)
+
+// Grade styles a normalized 0..1 ratio on a color ramp — the market view's
+// PAYS and BELOW columns, where "how good" is a position on a scale rather
+// than a gain/loss direction. Callers normalize with the domain's own
+// floors (market.LiquidityGrade and friends); this only paints.
+func (e Env) Grade(frac float64) Style {
+	if !e.Color {
+		return plain
+	}
+	frac = min(max(frac, 0), 1)
+	lerp := func(a, b uint8) uint8 { return uint8(float64(a) + (float64(b)-float64(a))*frac) }
+	c := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+		lerp(gradeLo[0], gradeHi[0]), lerp(gradeLo[1], gradeHi[1]), lerp(gradeLo[2], gradeHi[2])))
+	return e.styled(lipgloss.NewStyle().Foreground(c))
+}
 
 // Pip styles one identity letter with its own color: W parchment, U island,
 // and so on. Unknown letters render plain.

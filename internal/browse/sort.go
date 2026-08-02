@@ -24,7 +24,7 @@ import (
 // per-view state arrays.
 var sortColumns = [...][]string{
 	viewHoldings: {"value", "name", "set", "finish", "qty", "price"},
-	viewMovers:   {"impact", "name", "set/num", "finish", "was", "now", "change", "qty"},
+	viewMovers:   {"impact", "name", "set/num", "was", "now", "change", "qty"},
 	viewUnpriced: {"name", "set/num", "finish", "qty", "held in"},
 	viewWatches:  {"state", "name", "watch", "price"},
 	viewMarket:   {"per-table"},
@@ -246,8 +246,6 @@ func moverCompare(key string) func(a, b store.PriceChange) int {
 			c = strings.Compare(a.Name, b.Name)
 		case "set/num":
 			c = comparePrinting(a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber)
-		case "finish":
-			c = strings.Compare(a.Finish, b.Finish)
 		case "was":
 			c = cmp.Compare(b.Old, a.Old)
 		case "now":

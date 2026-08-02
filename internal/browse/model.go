@@ -729,7 +729,13 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		// Tab is what people press without thinking in a two-pane layout, so it
-		// toggles rather than only ever moving one way.
+		// toggles rather than only ever moving one way. On a hoard-wide view
+		// the container pane has nothing to select, so instead of a cursor
+		// that changes nothing, tab explains itself.
+		if m.view != viewHoldings {
+			m.status, m.statusErr = "this view spans the whole hoard — the collection pane applies on holdings (v)", false
+			return m, nil
+		}
 		if m.focus == paneContainers {
 			m.focus = paneCards
 		} else {
@@ -738,6 +744,10 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "left", "h":
+		if m.view != viewHoldings {
+			m.status, m.statusErr = "this view spans the whole hoard — the collection pane applies on holdings (v)", false
+			return m, nil
+		}
 		m.focus = paneContainers
 		m.status = ""
 		return m, nil

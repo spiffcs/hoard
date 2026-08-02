@@ -90,6 +90,14 @@ func (m *Model) promptNewBinder() {
 			})
 			m.refresh()
 			m.focusContainer(id)
+			// The card pane follows the selection to the new binder's empty
+			// state — refresh() reloaded it for the cursor's old position,
+			// and a "created" receipt over someone else's cards reads as
+			// the create having gone somewhere it didn't.
+			if err := m.loadCards(); err != nil {
+				m.setError(err)
+				return nil
+			}
 			m.status, m.statusErr = "created binder "+text, false
 			return nil
 		},

@@ -232,9 +232,12 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
 			money("LAST SOLD"), money("BUYLIST"), vendor("TO"), money("PAYS")}}
 		for _, r := range rows {
+			// The ratio columns grade on a color ramp — how close to the
+			// section's ideal, not a gain/loss direction.
 			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
-				ui.C(ui.Percent(r.Liquidity())))...)
+				ui.Cell{Text: ui.Percent(r.Liquidity()),
+					Style: env.Grade(market.LiquidityGrade(r.Liquidity()))})...)
 		}
 	default:
 		t = ui.Table{Cols: []ui.Col{name, id, setNum, fin,
@@ -242,7 +245,9 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 		for _, r := range rows {
 			t.Add(append(cardCells(r),
 				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
-				ui.C(ui.Money(r.Market)), ui.C("-"+ui.Percent(r.BelowMarket())))...)
+				ui.C(ui.Money(r.Market)),
+				ui.Cell{Text: "-" + ui.Percent(r.BelowMarket()),
+					Style: env.Grade(market.BelowMarketGrade(r.BelowMarket()))})...)
 		}
 	}
 	return t

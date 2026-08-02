@@ -169,15 +169,19 @@ func Market(env ui.Env, sec market.Section) string {
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
 				ui.Cell{Text: "+" + ui.Money(o.Profit()), Style: env.Gain()})...)
 		case market.KindLiquid:
+			// The ratio columns grade on a color ramp — how close to the
+			// section's ideal, not a gain/loss direction.
 			t.Add(append(cardCells(o),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
-				ui.C(ui.Percent(o.Liquidity())))...)
+				ui.Cell{Text: ui.Percent(o.Liquidity()),
+					Style: env.Grade(market.LiquidityGrade(o.Liquidity()))})...)
 		default:
 			t.Add(append(cardCells(o),
 				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
 				ui.C(ui.Money(o.Market)), ui.C("last sold"),
-				ui.C("-"+ui.Percent(o.BelowMarket())))...)
+				ui.Cell{Text: "-" + ui.Percent(o.BelowMarket()),
+					Style: env.Grade(market.BelowMarketGrade(o.BelowMarket()))})...)
 		}
 	}
 	return env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()) + "\n" + t.Render()

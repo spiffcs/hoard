@@ -4,6 +4,40 @@ Feedback from live sessions on fresh hoards, with dispositions. Add a dated
 section per session; keep dispositions honest (done / deferred / declined,
 with why).
 
+## 2026-08-01 — beautification-sprint build
+
+1. **Movers offered "finish" as a sort option** — ✅ done. Dropped from
+   the movers sort cycle (and its compare case); the other views keep it.
+2. **PAYS and BELOW percentages should grade on a gradient** — ✅ done.
+   `Env.Grade` ramps amber → green over a normalized 0..1; the
+   normalizers (`market.LiquidityGrade`/`BelowMarketGrade`) live beside
+   the section floors they read (70% liquidity, 25% discount, saturating
+   at 100%/60%), so the TUI and CLI can never disagree about the scale.
+3. **The collection pane does nothing on the market view** — ✅ resolved
+   as "say so": every hoard-wide view (movers, unpriced, watches, market)
+   now dims the container pane wholesale, title included, and tab/left
+   explain — "this view spans the whole hoard" — instead of moving a
+   cursor that changes nothing. Making the pane *filter* those views is a
+   real feature for the backlog, not a quick fix.
+4. **Palette noise** — ✅ done. The key reflexes left the palette but
+   kept their keys (`hidden` on the registry): sort, sort reverse, mask,
+   view cycle, movers lookback. The keyless view jumps and the fixed
+   movers-window commands (7/30/90) were deleted outright — `v` and `W`
+   are faster than typing either.
+5. **New binder didn't show its empty state** — ✅ fixed. The create
+   commit reloaded the card pane before moving the selection; now it
+   reloads after, so the new binder's empty pane appears selected.
+6. **"(~150 MB)" hardcoded in the backfill label** — ✅ done. The size
+   moved into the description as prose ("a large file") — a number goes
+   stale the day MTGJSON grows.
+7. **Palette commands need explanations** — ✅ done. Every visible
+   command carries a one-line `desc`, rendered dim under the palette's
+   help line for whichever command is highlighted; the description costs
+   a chrome row so the frame keeps its height.
+8. **M mask missing from help lines** — ✅ done. Added to every view it
+   applies on: both holdings lines, movers, watches, market. Unpriced is
+   exempt by design and stays silent about it.
+
 ## 2026-07-31 — fresh hoard, scan telemetry at /tmp/scan-telemetry.log
 
 1. **Auto-add sometimes silent** — ✅ fixed, then widened per follow-up.

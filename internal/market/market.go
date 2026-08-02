@@ -44,6 +44,24 @@ type Opportunity struct {
 // Liquidity is the fraction of the last-sold price a shop will pay.
 func (o Opportunity) Liquidity() float64 { return o.SellAt / o.Market }
 
+// LiquidityGrade positions a liquidity ratio on 0..1 for display
+// gradients: the 70% floor (the least a row can pay and still be listed)
+// is 0, paying the full sales price is 1. Defined beside the floor it
+// reads from, so the two frontends coloring the column cannot disagree.
+func LiquidityGrade(r float64) float64 { return grade(r, liquidFloor, 1.0) }
+
+// BelowMarketGrade positions a discount on 0..1: the 25% listing floor is
+// 0, and 60% under the sales price — deep-discount territory — saturates.
+func BelowMarketGrade(b float64) float64 { return grade(b, belowMarketFloor, 0.6) }
+
+// grade is the shared clamp-and-normalize.
+func grade(v, lo, hi float64) float64 {
+	if hi <= lo {
+		return 0
+	}
+	return min(max((v-lo)/(hi-lo), 0), 1)
+}
+
 // BelowMarket is how far under the last-sold price the cheapest ask sits.
 func (o Opportunity) BelowMarket() float64 { return 1 - o.BuyAt/o.Market }
 

@@ -17,30 +17,34 @@ func openTestPalette(t *testing.T) Model {
 	return m
 }
 
-// The empty query lists every applicable command; typing narrows by fuzzy
+// The empty query lists every applicable, visible command — the hidden key
+// reflexes (sort, mask, view cycling) never appear; typing narrows by fuzzy
 // match; enter runs the selection and closes the drawer.
 func TestPaletteNarrowsAndRuns(t *testing.T) {
 	m := openTestPalette(t)
-	applicable := 0
+	visible := 0
 	for i := range m.commands {
-		if m.commands[i].applies(&m) {
-			applicable++
+		if !m.commands[i].hidden && m.commands[i].applies(&m) {
+			visible++
 		}
 	}
-	if len(m.palette.matches) != applicable {
-		t.Errorf("empty query shows %d commands, want every applicable one (%d)",
-			len(m.palette.matches), applicable)
+	if visible == len(m.commands) {
+		t.Fatal("no hidden commands left — this test no longer proves the filter")
+	}
+	if len(m.palette.matches) != visible {
+		t.Errorf("empty query shows %d commands, want every visible one (%d)",
+			len(m.palette.matches), visible)
 	}
 
-	for _, r := range "unpriced" {
+	for _, r := range "reload" {
 		m = key(m, string(r))
 	}
 	if len(m.palette.matches) == 0 {
-		t.Fatal("query 'unpriced' matched nothing")
+		t.Fatal("query 'reload' matched nothing")
 	}
 	top := m.commands[m.palette.matches[0].index]
-	if top.id != "view.unpriced" {
-		t.Errorf("top match = %s, want view.unpriced", top.id)
+	if top.id != "reload" {
+		t.Errorf("top match = %s, want reload", top.id)
 	}
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -48,8 +52,41 @@ func TestPaletteNarrowsAndRuns(t *testing.T) {
 	if m.palette != nil {
 		t.Error("palette still open after enter")
 	}
-	if m.view != viewUnpriced {
-		t.Errorf("view = %v, want the palette-run jump to unpriced", m.view)
+	if m.status != "reloaded" {
+		t.Errorf("status = %q, want the reload receipt", m.status)
+	}
+}
+
+// Hidden commands stay bound: their keys work exactly as before.
+func TestHiddenCommandsKeepTheirKeys(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	m = key(m, "s")
+	if !strings.HasPrefix(m.status, "sorted by ") {
+		t.Errorf("status = %q, want the sort receipt from the hidden command", m.status)
+	}
+	m = key(m, "v")
+	if m.view != viewMovers {
+		t.Errorf("view = %v, want movers from the hidden view-cycle command", m.view)
+	}
+}
+
+// The highlighted command's description renders under the help line — and
+// costs a chrome row, so the frame keeps its height.
+func TestPaletteShowsSelectedDescription(t *testing.T) {
+	m := openTestPalette(t)
+	desc := m.paletteDesc()
+	if desc == "" {
+		t.Fatal("the first palette command has no description")
+	}
+	if out := m.View(); !strings.Contains(out, desc) {
+		t.Errorf("view does not show the highlighted description %q", desc)
+	}
+	if h1, h2 := strings.Count(m.View(), "\n"), func() int {
+		m2 := newTestModel(t, testStore())
+		return strings.Count(m2.View(), "\n")
+	}(); h1 != h2 {
+		t.Errorf("frame height changed with the palette open: %d vs %d", h1, h2)
 	}
 }
 
