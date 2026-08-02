@@ -67,7 +67,22 @@ with why).
    Drops and swallows stay silent by design — the chime remains the receipt
    for a *handled* card (auto-added or queued), not for the scanner
    recognizing something it already did.
-7. **Palette add exits the TUI / should add be seamless?** — 🔶 deferred,
+7. **Phantom "Doctor Doom" queued from Aerial Doombot's flavor text** —
+   ✅ fixed in the helper. The flavor attribution ("—Doctor Doom") OCR'd
+   with its dash dropped, passed the title-shape check, and — being a real
+   card in the same set — was *vouched for* by the Scryfall backstop that
+   kills other junk. Same failure family as the Kev-Walker artist ghost,
+   and structural to licensed sets where quote characters are cards. Two
+   rejections in the helper: an explicit leading-attribution-dash check in
+   `titleLike`, and `flavorAttribution` — a title-shaped line centered
+   inside or just below a line ending in a closing quote mark is an
+   attribution, never a card. Geometry lesson baked into the comment: a
+   tilted card's axis-aligned boxes bleed, so the fixture's quote box
+   vertically *contained* its attribution and a clean-gap test never fired.
+   Verified by replaying all 18 captures of the session's fixture directory
+   (`HOARD_SCAN_DEBUG_DIR`) through `--image`: capture 9 loses exactly the
+   phantom, the other 17 are byte-identical.
+8. **Palette add exits the TUI / should add be seamless?** — 🔶 deferred,
    design decision. Two bubbletea programs cannot share a terminal, so
    the add cascade hands off via quit-and-return today. Making it seamless
    means either embedding the cascade as a child model inside browse (big:

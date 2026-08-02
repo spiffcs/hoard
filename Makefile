@@ -1,4 +1,4 @@
-.PHONY: build scan test vet all clean generate-json-schema
+.PHONY: build scan scan-check test vet all clean generate-json-schema
 
 # Build the hoard binary.
 build:
@@ -7,6 +7,11 @@ build:
 # Build the macOS camera-scan helper (bin/hoard-scan.app). macOS + Xcode only.
 scan:
 	./build-scan.sh
+
+# Replay the checked-in scan fixtures through the built helper and diff the
+# extracted card lists against their goldens (macOS only; needs `make scan`).
+scan-check:
+	./scan/fixtures/sweep.sh
 
 # Build everything needed for the full experience (binary + scan helper).
 all: build scan

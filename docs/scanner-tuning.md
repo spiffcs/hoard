@@ -38,9 +38,13 @@ The loop that made every failure reproducible offline:
    ```
 
    Once a problem card is on disk, iterate offline: change the helper, re-run
-   the sweep over every fixture, and diff. Keep the fixture directory around
-   (gitignored — the frames are photos of your desk) and re-sweep it after
-   any parser or trigger change; it is the scanner's regression suite.
+   the sweep over every fixture, and diff. Session directories stay out of
+   the repo (gitignored — the frames are photos of your desk), but a frame
+   that pinned a decision gets distilled into `scan/fixtures/` with a golden
+   card list: `make scan-check` sweeps the checked-in set, and
+   `scan/fixtures/README.md` says what each frame pins and how to add one.
+   Re-run the sweep after any parser or trigger change; it is the scanner's
+   regression suite.
 
 3. **Diagnose the trigger with the per-sample firehose.** For a card the
    trigger won't see, `HOARD_SCAN_AUTO_TRACE=1` logs every sample's raw

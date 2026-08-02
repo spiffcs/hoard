@@ -637,6 +637,10 @@ func titleLike(_ s: String) -> Bool {
     if boilerplate(s) { return false }
     let words = s.split(whereSeparator: { $0.isWhitespace })
     guard words.count >= 2 else { return false }
+    // A leading dash is a flavor attribution ("—Doctor Doom"), never a
+    // title. The first-letter guard below happens to reject these today;
+    // explicit so the intent survives any loosening of that guard.
+    if let first = s.first, "—–-―‒−".contains(first) { return false }
     guard let first = words.first?.first, first.isLetter else { return false }
     let tokens = words.map { String($0.lowercased().filter { $0.isLetter }) }
     if tokens.contains(where: { typeLineWords.contains($0) }) { return false }
@@ -658,6 +662,39 @@ func titleLike(_ s: String) -> Bool {
     // little. Strictly more than half keeps "Erebos. God of the Dead" and
     // rejects "companion Animals".
     return caps * 2 > words.count
+}
+
+/// flavorAttribution reports whether a line hangs directly beneath a flavor
+/// quote — the "—Doctor Doom" under "Beneath me." An attribution names a
+/// character, and in licensed sets the character is usually a card in the
+/// same set, so the Scryfall backstop that kills other junk *vouches* for
+/// this phantom instead (observed live: Aerial Doombot's flavor text queued
+/// a Doctor Doom). OCR routinely drops the attribution dash, so the quote
+/// above is the reliable signal. On a tilted card the axis-aligned boxes of
+/// adjacent lines bleed into each other — the fixture's quote box vertically
+/// *contains* its attribution — so the relation is "centered inside or just
+/// below the quote's vertical span", not a clean gap between boxes. A
+/// neighbouring card's real title band sits past an attribution line, a
+/// bottom margin, and a border — well below the reach of the allowance.
+func flavorAttribution(_ line: Line, among all: [Line]) -> Bool {
+    let cy = line.box.midY
+    for other in all {
+        if other.box == line.box { continue } // a stray quote glyph on a title must not self-match
+        guard endsQuoted(other.text) else { continue }
+        // Vision origin is bottom-left: lower on the card is smaller Y.
+        guard cy < other.box.maxY, cy > other.box.minY - 1.5 * line.box.height else { continue }
+        if min(other.box.maxX, line.box.maxX) > max(other.box.minX, line.box.minX) {
+            return true
+        }
+    }
+    return false
+}
+
+/// endsQuoted matches a flavor quote's closing mark, whatever glyph Vision
+/// chose for it.
+func endsQuoted(_ s: String) -> Bool {
+    guard let last = s.trimmingCharacters(in: .whitespaces).last else { return false }
+    return "\"\u{201D}\u{00BB}'\u{2019}".contains(last)
 }
 
 /// normTitle reduces a read title to the characters worth comparing.
@@ -753,6 +790,10 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
     for line in read.lines {
         if !titleLike(line.text) {
             multiDebug("line not title-like: \"\(line.text)\"")
+            continue
+        }
+        if flavorAttribution(line, among: read.lines) {
+            multiDebug("line is a flavor attribution: \"\(line.text)\"")
             continue
         }
         if entries.contains(where: { sameTitle($0.entry.name, line.text) }) {

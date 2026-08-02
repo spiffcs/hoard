@@ -143,7 +143,11 @@ title bands of overlapped cards are picked out of the whole-frame text. Titles
 survive fanning; outlines and bottom borders don't, so cards in a fan usually
 resolve by name and land in the normal printing picker. Something that reads
 title-like but isn't a card (a keycap, a leaflet) fails the Scryfall match and
-is skipped automatically with a note.
+is skipped automatically with a note. Flavor-text attributions get their own
+filter in the helper: "—Doctor Doom" under a quote names a character who often
+*is* a card in the same set, so Scryfall would vouch for the phantom rather
+than kill it — a title-shaped line hanging directly beneath a line that ends
+in a closing quote is recognized as an attribution and never becomes a card.
 
 On the wire, the helper's `scan` event now carries a `cards: []` list (name,
 candidates, per-card `setCode`/`collectorNumber` when read, plus `confidence`
