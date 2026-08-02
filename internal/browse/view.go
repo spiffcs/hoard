@@ -210,11 +210,6 @@ func (m *Model) scrollIntoView() {
 	}
 }
 
-// headerSparkCells is how wide the hoard-value sparkline draws. Narrower than
-// the detail view's: it shares the header row with the title and the totals,
-// both of which matter more.
-const headerSparkCells = 24
-
 // header labels each pane and puts the selected container's totals on the right,
 // where the card pane they describe begins.
 func (m Model) header(left, right int) string {
@@ -223,46 +218,9 @@ func (m Model) header(left, right int) string {
 	totals += m.opBadge()
 	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
 	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
-
-	// The hoard-value sparkline sits in the gap, beside the totals it
-	// explains. It yields first on a narrow terminal: the title and the
-	// numbers are the header's job, the chart is a bonus.
-	middle := strings.Repeat(" ", gap)
-	if spark := m.valueSpark(); spark != "" && gap >= lipgloss.Width(spark)+2 {
-		middle = strings.Repeat(" ", gap-lipgloss.Width(spark)-1) +
-			helpStyle.Render(spark) + " "
-	}
 	return titleStyle.Render(fit("COLLECTION", left)) +
 		strings.Repeat(" ", paneGap) +
-		titleStyle.Render(title) + middle + helpStyle.Render(totals)
-}
-
-// valueSpark is the hoard's worth over time as a one-line chart: empty
-// outside the holdings view, or until two snapshots exist to draw a line
-// between. A "≈" prefix marks a chart still mostly built from seeded points —
-// values reconstructed from today's quantities, estimates rather than
-// observations. Seeded rows never leave the series, so the marker clears not
-// when they vanish but when genuine observations outnumber them.
-func (m Model) valueSpark() string {
-	if m.view != viewHoldings || len(m.valueSeries) < 2 {
-		return ""
-	}
-	points := make([]ui.TimePoint, len(m.valueSeries))
-	seeded := 0
-	for i, p := range m.valueSeries {
-		points[i] = ui.TimePoint{AsOf: p.AsOf, Value: p.Total}
-		if p.Seeded {
-			seeded++
-		}
-	}
-	spark := ui.Spark(ui.Resample(points, headerSparkCells), headerSparkCells)
-	if spark == "" {
-		return ""
-	}
-	if seeded*2 >= len(m.valueSeries) {
-		spark = "≈" + spark
-	}
-	return spark
+		titleStyle.Render(title) + strings.Repeat(" ", gap) + helpStyle.Render(totals)
 }
 
 // paneLines renders one pane's table. Every pane shares the same Env, the
@@ -467,11 +425,11 @@ func (m Model) helpLine() string {
 	case m.palette != nil:
 		return "enter run · esc close · ↑/↓ choose · type to narrow"
 	case m.filtering && m.watchPick:
-		return "type to find the card · ↑/↓ move · enter watch it · esc cancel"
+		return "type to find the card · ↑/↓ move · enter watch it · tab decks/binders · esc cancel"
 	case m.filtering:
 		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
 	case m.watchPick:
-		return "↑/↓ pick the card · enter watch it · / filter · esc cancel"
+		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
 	case m.detail != nil:
 		return "esc back · ctrl+c quit"
 	case m.text != nil:
@@ -489,15 +447,15 @@ func (m Model) helpLine() string {
 	case m.view == viewMovers:
 		return "W lookback 7/30/90 days · F update prices + history · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
-		return "F refresh prices · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "F refresh prices · enter detail · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
 		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
-		return "tab cards · a add cards · n new binder · R rename · d remove · : import/export · / filter · v views · u undo · q quit"
+		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · F refresh prices · v views · u undo · q quit"
 	}
-	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

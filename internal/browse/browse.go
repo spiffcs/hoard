@@ -69,9 +69,6 @@ type Store interface {
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
 	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
 
-	// The whole hoard over time, for the header sparkline.
-	ValueSnapshots() ([]store.ValuePoint, error)
-
 	// Price watches: the view's rows, and the read-only fired preview the
 	// banner shows on open (never consuming the alert — cron's `hoard
 	// watch` stays the consumer of record).

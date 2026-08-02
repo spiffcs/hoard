@@ -30,6 +30,9 @@ type prompt struct {
 	// commit runs on an accepted enter, after the prompt closes — it may
 	// open the next prompt or a confirm.
 	commit func(*Model, string) tea.Cmd
+	// cancel, when set, runs after esc closes the prompt — for a prompt
+	// opened by a flow that must put the reader back where it began.
+	cancel func(*Model) tea.Cmd
 }
 
 // handlePromptKey edits the pending answer.
@@ -38,8 +41,12 @@ func (m Model) handlePromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
 	case tea.KeyEsc:
+		p := m.prompt
 		m.prompt = nil
 		m.status, m.statusErr = "cancelled", false
+		if p.cancel != nil {
+			return m, p.cancel(&m)
+		}
 		return m, nil
 	case tea.KeyEnter:
 		p := m.prompt

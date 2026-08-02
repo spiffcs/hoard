@@ -31,10 +31,9 @@ type fakeStore struct {
 
 	// traits maps a scryfall id to the trait terms it satisfies, standing in
 	// for the generated columns without a database.
-	traits    map[string][]string
-	enriched  int
-	snapshots []store.ValuePoint
-	watches   []store.WatchStatus
+	traits   map[string][]string
+	enriched int
+	watches  []store.WatchStatus
 	binders   map[int64]string // extra binders beside the default
 	nextID    int64
 
@@ -123,7 +122,6 @@ func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
 }
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
-func (f *fakeStore) ValueSnapshots() ([]store.ValuePoint, error)            { return f.snapshots, f.err }
 func (f *fakeStore) ListWatches() ([]store.WatchStatus, error)              { return f.watches, f.err }
 
 func (f *fakeStore) WouldFire() ([]store.WatchStatus, error) {
@@ -1183,6 +1181,26 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	}
 }
 
+// Enter on an unpriced row opens the card detail: the row names one printing,
+// only its price is missing.
+func TestUnpricedEnterOpensDetail(t *testing.T) {
+	st := testStore()
+	st.unpriced = []store.UnpricedRow{
+		{ScryfallID: "sf1", Name: "No Price", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "v") // movers
+	m = key(m, "v") // unpriced
+	if m.view != viewUnpriced {
+		t.Fatalf("view = %v, want unpriced", m.view)
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("enter on an unpriced row did not open the card detail")
+	}
+}
+
 // Each view sorts its own rows by its own columns — pressing s outside the
 // holdings view used to announce a sort and change nothing.
 func TestSortWorksInEveryView(t *testing.T) {
@@ -1686,84 +1704,6 @@ func (m *multiBinderStore) ListBinders() ([]store.DeckSummary, error) {
 	b.Name = "Trade Stock"
 	b.Kind = store.KindCollection
 	return append(bs, b), nil
-}
-
-// The header sparkline: drawn from value snapshots on the holdings view,
-// marked "≈" when any point is a migration-seeded estimate, and absent
-// entirely when there is nothing to chart.
-func TestHeaderValueSpark(t *testing.T) {
-	st := testStore()
-	st.snapshots = []store.ValuePoint{
-		{AsOf: "2026-05-01T00:00:00Z", Total: 100},
-		{AsOf: "2026-05-10T00:00:00Z", Total: 140},
-	}
-	m := newTestModel(t, st)
-	if spark := m.valueSpark(); !strings.ContainsAny(spark, "▁▂▃▄▅▆▇█") {
-		t.Errorf("valueSpark = %q, want block glyphs", spark)
-	} else if strings.Contains(spark, "≈") {
-		t.Errorf("valueSpark = %q claims an estimate for observed points", spark)
-	}
-	if !strings.ContainsAny(m.View(), "▁▂▃▄▅▆▇█") {
-		t.Error("the header does not draw the sparkline")
-	}
-
-	st.snapshots[0].Seeded = true
-	m = newTestModel(t, st)
-	if spark := m.valueSpark(); !strings.HasPrefix(spark, "≈") {
-		t.Errorf("valueSpark = %q, want the ≈ estimate marker", spark)
-	}
-}
-
-func TestHeaderValueSparkYields(t *testing.T) {
-	st := testStore()
-	st.snapshots = []store.ValuePoint{
-		{AsOf: "2026-05-01T00:00:00Z", Total: 100},
-		{AsOf: "2026-05-10T00:00:00Z", Total: 140},
-	}
-	m := newTestModel(t, st)
-
-	// One snapshot is a dot, not a line — nothing to draw.
-	st.snapshots = st.snapshots[:1]
-	if err := m.loadValueSeries(); err != nil {
-		t.Fatalf("loadValueSeries: %v", err)
-	}
-	if spark := m.valueSpark(); spark != "" {
-		t.Errorf("valueSpark = %q with a single point, want none", spark)
-	}
-
-	// Off the holdings view the hoard total is not what the header describes.
-	st.snapshots = append(st.snapshots, store.ValuePoint{AsOf: "2026-05-10T00:00:00Z", Total: 140})
-	if err := m.loadValueSeries(); err != nil {
-		t.Fatalf("loadValueSeries: %v", err)
-	}
-	m.view = viewUnpriced
-	if spark := m.valueSpark(); spark != "" {
-		t.Errorf("valueSpark = %q on the unpriced view, want none", spark)
-	}
-
-	// A narrow terminal keeps the title and totals; the chart goes first.
-	m.view = viewHoldings
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 46, Height: 20})
-	m = next.(Model)
-	if out := m.View(); strings.ContainsAny(out, "▁▂▃▄▅▆▇█") {
-		t.Error("a 46-column terminal still draws the sparkline")
-	}
-}
-
-// The estimate marker clears when genuine observations outnumber the seeded
-// reconstruction — seeded rows never leave the series, so "no seeded points"
-// would keep the marker forever.
-func TestHeaderValueSparkMarkerClearsWhenObservationsDominate(t *testing.T) {
-	st := testStore()
-	st.snapshots = []store.ValuePoint{
-		{AsOf: "2026-05-01T00:00:00Z", Total: 100, Seeded: true},
-		{AsOf: "2026-05-02T00:00:00Z", Total: 110},
-		{AsOf: "2026-05-03T00:00:00Z", Total: 120},
-	}
-	m := newTestModel(t, st)
-	if spark := m.valueSpark(); strings.Contains(spark, "≈") {
-		t.Errorf("valueSpark = %q, want no marker once observed points dominate", spark)
-	}
 }
 
 // The quit policy: q and esc-at-top both stage a y/n confirm on the main

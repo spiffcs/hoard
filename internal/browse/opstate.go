@@ -204,10 +204,6 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	took := m.now().Sub(op.started).Round(time.Second)
 	m.status, m.statusErr = fmt.Sprintf("%s · in %s", msg.outcome.summary, took), false
 	m.refresh()
-	if err := m.loadValueSeries(); err != nil {
-		m.setError(err)
-		return m, nil
-	}
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 		return m, nil

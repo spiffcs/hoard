@@ -73,10 +73,6 @@ func (m Model) closeAddChild() (tea.Model, tea.Cmd) {
 		m.status, m.statusErr = addReceiptLine(child.Added(), child.AddedValue(), child.Summary()), false
 	}
 	m.refresh()
-	if err := m.loadValueSeries(); err != nil {
-		m.setError(err)
-		return m, nil
-	}
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 	}

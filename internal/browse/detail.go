@@ -24,9 +24,9 @@ type detail struct {
 
 // openDetail loads the selected card's detail.
 //
-// Only from the holdings view: the analytical panes list different rows, so the
-// cursor there indexes a different slice and this would open a card the reader
-// is not pointing at.
+// Each view indexes its own row slice, so every view that names a single
+// printing needs its own case here; movers is the odd one out, aggregating
+// across finishes.
 func (m *Model) openDetail() {
 	var id string
 	switch m.view {
@@ -44,8 +44,13 @@ func (m *Model) openDetail() {
 		if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
 			id = m.marketRows[i].Card.ScryfallID
 		}
+	case viewUnpriced:
+		// And an unpriced row — the gap is the price, not the card.
+		if i := m.cursor[paneCards]; i >= 0 && i < len(m.unpriced) {
+			id = m.unpriced[i].ScryfallID
+		}
 	default:
-		m.status, m.statusErr = "card detail works on holdings, watches and arbitrage — press v to come back", true
+		m.status, m.statusErr = "card detail works on holdings, watches, market and unpriced — press v to come back", true
 		return
 	}
 	if id == "" {

@@ -176,10 +176,6 @@ type Model struct {
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int
 
-	// valueSeries backs the holdings header's sparkline: the whole hoard's
-	// worth over time, loaded once and on reload like everything else.
-	valueSeries []store.ValuePoint
-
 	// Arbitrage is the one view that needs the network, so unlike the others it
 	// is fetched on request, asynchronously, and can be abandoned part-way.
 	marketFetch   MarketFunc
@@ -256,9 +252,6 @@ func New(st Store, opts ...Option) (Model, error) {
 	if err := m.loadCards(); err != nil {
 		return Model{}, err
 	}
-	if err := m.loadValueSeries(); err != nil {
-		return Model{}, err
-	}
 	m.showFiredBanner()
 	return m, nil
 }
@@ -285,16 +278,6 @@ func (m *Model) showFiredBanner() {
 	default:
 		m.status = fmt.Sprintf("%d watches met their threshold · v to view", len(fired))
 	}
-}
-
-// loadValueSeries reads the hoard-value history behind the header sparkline.
-func (m *Model) loadValueSeries() error {
-	series, err := m.store.ValueSnapshots()
-	if err != nil {
-		return fmt.Errorf("reading value snapshots: %w", err)
-	}
-	m.valueSeries = series
-	return nil
 }
 
 // pricePoints adapts a price series to the resampler's shape.
@@ -695,9 +678,12 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "esc":
 		if m.watchPick {
+			// The pick began on the watches view; cancelling puts the
+			// reader back there rather than stranding them on holdings.
 			m.watchPick = false
-			m.status, m.statusErr = "cancelled", false
-			return m, nil
+			cmd := m.showView(viewWatches)
+			m.status, m.statusErr = "watch cancelled", false
+			return m, cmd
 		}
 		if m.marketLoading {
 			m.cancelMarketFetch()
@@ -886,7 +872,25 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.KeyEsc:
 		// Escape abandons the whole query; enter keeps it and closes the bar.
+		// In a watch pick it abandons the pick with it, back to the watches
+		// view the flow began on — the help line says "esc cancel", and a
+		// cancel that leaves you somewhere new is not one.
 		m.clearFilter()
+		if m.watchPick {
+			m.watchPick = false
+			cmd := m.showView(viewWatches)
+			m.status, m.statusErr = "watch cancelled", false
+			return m, cmd
+		}
+		return m, nil
+	case tea.KeyTab:
+		// Tab keeps the query but crosses to the containers pane: picking a
+		// watch target (or plain filtering) may need another binder's cards.
+		m.filtering = false
+		if m.filter.empty() {
+			m.filterText = ""
+		}
+		m.focus = paneContainers
 		return m, nil
 	case tea.KeyEnter:
 		m.filtering = false
@@ -958,10 +962,6 @@ func (m *Model) reload() {
 		return
 	}
 	if err := m.loadCards(); err != nil {
-		m.setError(err)
-		return
-	}
-	if err := m.loadValueSeries(); err != nil {
 		m.setError(err)
 		return
 	}

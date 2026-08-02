@@ -336,8 +336,8 @@ func (m *Model) startWatchPick() tea.Cmd {
 
 // finishWatchPick runs the watch prompt for the picked card, and — because
 // the flow started from the watches view — jumps back there once the watch
-// lands, so the new entry is on screen. A refusal stays put: the error
-// belongs where the user still is.
+// lands or the prompt is escaped, so the reader ends where they began. A
+// refusal stays put: the error belongs where the user still is.
 func (m *Model) finishWatchPick() {
 	m.watchPick = false
 	m.promptWatch()
@@ -351,5 +351,10 @@ func (m *Model) finishWatchPick() {
 			return cmd
 		}
 		return tea.Batch(cmd, m.showView(viewWatches))
+	}
+	m.prompt.cancel = func(m *Model) tea.Cmd {
+		cmd := m.showView(viewWatches)
+		m.status, m.statusErr = "watch cancelled", false
+		return cmd
 	}
 }

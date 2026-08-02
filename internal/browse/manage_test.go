@@ -443,16 +443,64 @@ func TestWatchPickFlow(t *testing.T) {
 func TestWatchPickEscCancels(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m, _ = runPaletteCommand(t, m, "watch.pick")
-	// First esc clears the filter bar, second cancels the pick.
+	// One esc abandons the pick — filter bar and all — and puts the reader
+	// back on the watches view the flow began on.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(Model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
 	if m.watchPick {
 		t.Fatal("esc must cancel the pick")
 	}
+	if m.view != viewWatches {
+		t.Fatalf("view = %v, want watches after cancelling the pick", m.view)
+	}
 	if m.confirm != nil {
 		t.Fatal("cancelling a pick must not fall through to the quit confirm")
+	}
+}
+
+// Tab during the pick crosses to the containers pane so a different deck or
+// binder's cards can be browsed; the pick stays armed throughout.
+func TestWatchPickTabReachesContainers(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m, _ = runPaletteCommand(t, m, "watch.pick")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	if m.filtering || m.focus != paneContainers {
+		t.Fatalf("filtering=%v focus=%v, want the bar closed and the containers pane", m.filtering, m.focus)
+	}
+	if !m.watchPick {
+		t.Fatal("crossing panes must not abandon the pick")
+	}
+	// Enter on a container moves to its cards; enter on a card is the pick.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.focus != paneCards || !m.watchPick {
+		t.Fatalf("focus=%v watchPick=%v, want the cards pane with the pick armed", m.focus, m.watchPick)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil {
+		t.Fatal("enter on a card must open the threshold prompt")
+	}
+}
+
+// Escaping the threshold prompt after a pick also lands back on watches: the
+// whole flow began there, however far along it was cancelled.
+func TestWatchPickPromptEscReturnsToWatches(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m, _ = runPaletteCommand(t, m, "watch.pick")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // pick the selected card
+	m = next.(Model)
+	if m.prompt == nil {
+		t.Fatal("setup: no threshold prompt after the pick")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.prompt != nil {
+		t.Fatal("esc must close the prompt")
+	}
+	if m.view != viewWatches {
+		t.Fatalf("view = %v, want watches after cancelling the prompt", m.view)
 	}
 }
 
