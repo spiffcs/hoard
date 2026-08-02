@@ -20,3 +20,44 @@ func TestBytes(t *testing.T) {
 		}
 	}
 }
+
+// Identity letters always render in wheel order — "UW" and "WU" are the
+// same identity and must sort and display identically.
+func TestIdentityKey(t *testing.T) {
+	for _, tc := range []struct {
+		colors []string
+		want   string
+	}{
+		{nil, ""},
+		{[]string{}, ""},
+		{[]string{"W"}, "W"},
+		{[]string{"U", "W"}, "WU"},
+		{[]string{"G", "R", "B", "U", "W"}, "WUBRG"},
+		{[]string{"G", "W"}, "WG"},
+		{[]string{"Z", "U"}, "U"}, // junk letters drop
+		{[]string{""}, ""},
+	} {
+		if got := IdentityKey(tc.colors); got != tc.want {
+			t.Errorf("IdentityKey(%v) = %q, want %q", tc.colors, got, tc.want)
+		}
+	}
+}
+
+// Pips distinguishes the three states a reader needs told apart: colored,
+// colorless (a known-empty identity), and unknown (no document stored).
+func TestPips(t *testing.T) {
+	for _, tc := range []struct {
+		colors []string
+		want   string
+	}{
+		{[]string{"U", "W"}, "WU"},
+		{[]string{"B"}, "B"},
+		{[]string{}, "C"},    // colorless: known and empty
+		{nil, "—"},           // unknown: never enriched
+		{[]string{"Z"}, "C"}, // junk-only reduces to colorless, not unknown
+	} {
+		if got := Pips(tc.colors); got != tc.want {
+			t.Errorf("Pips(%v) = %q, want %q", tc.colors, got, tc.want)
+		}
+	}
+}

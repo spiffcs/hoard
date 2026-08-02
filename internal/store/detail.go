@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 )
 
@@ -15,18 +14,16 @@ import (
 // rarity — which is not the same as having an empty one, and must not be
 // displayed as though it were.
 type CardDetail struct {
-	Card
+	Card // carries ColorIdentity and ManaCost for every listing row
 
-	Rarity        *string
-	SetName       *string
-	TypeLine      *string
-	ManaCost      *string
-	OracleText    *string
-	Artist        *string
-	ReleasedAt    *string
-	Layout        *string
-	ColorIdentity []string
-	CMC           *float64
+	Rarity     *string
+	SetName    *string
+	TypeLine   *string
+	OracleText *string
+	Artist     *string
+	ReleasedAt *string
+	Layout     *string
+	CMC        *float64
 
 	// Enriched is false when no Scryfall document is stored for this printing,
 	// so a caller can say "run update-prices" once rather than printing unknown
@@ -38,8 +35,8 @@ type CardDetail struct {
 // ones, with the same fallback prices every other valuation query applies.
 var cardDetailCols = `
 SELECT ` + cardCols(altSourceExpr) + `,
-       c.rarity, c.set_name, c.type_line, c.mana_cost, c.oracle_text,
-       c.artist, c.released_at, c.layout, c.color_identity, c.cmc,
+       c.rarity, c.set_name, c.type_line, c.oracle_text,
+       c.artist, c.released_at, c.layout, c.cmc,
        c.raw_json IS NOT NULL
 FROM cards c ` + altJoinCards
 
@@ -48,36 +45,15 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 	row := s.db.QueryRow(cardDetailCols+` WHERE c.scryfall_id = ?`, scryfallID)
 
 	var d CardDetail
-	var colors sql.NullString
-	if err := row.Scan(append(cardScanDest(&d.Card),
-		&d.Rarity, &d.SetName, &d.TypeLine, &d.ManaCost, &d.OracleText,
-		&d.Artist, &d.ReleasedAt, &d.Layout, &colors, &d.CMC,
+	var aux cardAux
+	if err := row.Scan(append(cardScanDest(&d.Card, &aux),
+		&d.Rarity, &d.SetName, &d.TypeLine, &d.OracleText,
+		&d.Artist, &d.ReleasedAt, &d.Layout, &d.CMC,
 		&d.Enriched)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}
-	d.ColorIdentity = parseColorIdentity(colors)
+	aux.apply(&d.Card)
 	return d, nil
-}
-
-// parseColorIdentity turns the stored JSON array into a slice.
-//
-// Hand-parsed rather than run through encoding/json: the value is a fixed,
-// tiny shape written by SQLite from Scryfall's own array — `["W","U"]` — and
-// pulling in a decoder for five single-letter strings costs more than it
-// explains. An unrecognisable value yields no colours rather than an error,
-// since a colourless card and an unparseable one look the same to a reader and
-// neither is worth failing a detail pane over.
-func parseColorIdentity(v sql.NullString) []string {
-	if !v.Valid || len(v.String) < 2 {
-		return nil
-	}
-	var out []string
-	for _, r := range v.String {
-		if r >= 'A' && r <= 'Z' {
-			out = append(out, string(r))
-		}
-	}
-	return out
 }
 
 // Holding is a quantity of one printing-and-finish sitting in one container.

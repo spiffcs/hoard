@@ -167,7 +167,19 @@ suite at `termenv.ANSI` asserts sane degradation; the width-invariant loop
 from A1. Existing `report_test.go` cases (all `Color:false`) must pass
 unmodified — that is the piped-output regression suite for free.
 
-## ⬜ B. Identity bubbles up from the data
+## ✅ B. Identity bubbles up from the data (implemented 2026-08-01)
+
+*As-landed notes:* `parseColorIdentity` moved to store.go and now keeps
+colorless (`[]`, empty non-nil) distinct from unknown (NULL, nil) — the
+detail pane's old behavior collapsed the two. `cardScanDest` grew a
+`cardAux` NullString shim; `PriceChange` and `UnpricedRow` carry identity
+so B3 was pure rendering. The catalog stores the color columns with
+`jsonArrayKeepEmpty` (NULL = unknown, `[]` = colorless) for the same
+distinction. The hoardjson bump is **1.1.1**, not the planned 1.2.0 — a
+new optional field is an ADDITION under SchemaVer's own rules (the plan
+misstepped); holdings, unpriced and movers cards now carry
+`colorIdentity`, and export.Row threads it from the listing queries.
+The `ID` pip column drops first on narrow terminals everywhere it appears.
 
 **B1. Store projection.** Add `ColorIdentity []string` (+ `ManaCost
 *string`) to `store.Card` (`internal/store/store.go:63`); extend `cardCols`

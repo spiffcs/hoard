@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.1.0"
+const SchemaVersion = "1.1.1"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -64,6 +64,10 @@ type Card struct {
 	SetCode     string `json:"setCode"`
 	Number      string `json:"number"`
 	Finish      string `json:"finish" jsonschema:"enum=nonfoil,enum=foil,enum=etched"`
+	// ColorIdentity is Scryfall's color_identity: WUBRG letters, empty for a
+	// colorless card, absent when the identity is not known to hoard (the
+	// card's document was never fetched, or the emitting query predates it).
+	ColorIdentity []string `json:"colorIdentity,omitempty"`
 }
 
 // Summary is the hoard's totals: the loose collection, each deck, and the

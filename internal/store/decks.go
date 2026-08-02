@@ -210,10 +210,12 @@ ORDER BY
 	var out []EntryView
 	for rows.Next() {
 		var v EntryView
-		if err := rows.Scan(append(cardScanDest(&v.Card),
+		var aux cardAux
+		if err := rows.Scan(append(cardScanDest(&v.Card, &aux),
 			&v.Finish, &v.Board, &v.Quantity)...); err != nil {
 			return nil, err
 		}
+		aux.apply(&v.Card)
 		out = append(out, v)
 	}
 	return out, rows.Err()

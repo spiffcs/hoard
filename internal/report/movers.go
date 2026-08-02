@@ -58,6 +58,9 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 		Header: true,
 		Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
+			// Identity pips beside the name, dropped before anything else on
+			// a narrow terminal — meaning-bearing ornament, not data.
+			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim()},
 			{Title: "WAS", Align: ui.Right, Priority: 3, Style: env.Dim()},
@@ -88,7 +91,9 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			delta := env.Delta(c.TotalDelta())
 			// The indent lives in the name cell, so every column to its right
 			// stays aligned with the section heading above.
-			t.Add(ui.C("  "+c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+			t.Add(ui.Cell{Text: "  " + c.Name, Style: env.Identity(c.ColorIdentity)},
+				ui.C(ui.Pips(c.ColorIdentity)),
+				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C("→"), ui.C(ui.Money(c.New)),
 				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
 				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})

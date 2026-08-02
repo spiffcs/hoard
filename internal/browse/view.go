@@ -266,6 +266,10 @@ func (m Model) cardLines(width int) []string {
 
 		cols := []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			// The identity pips sit beside the name the way the mana symbols
+			// do on the card. Pure meaning-bearing ornament, so it is the
+			// first column a narrow terminal gives up.
+			{Title: "ID", Align: ui.Left, Priority: 8, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Title: "QTY", Align: ui.Right, Priority: 2},
@@ -274,9 +278,9 @@ func (m Model) cardLines(width int) []string {
 		}
 		if inDeck {
 			// Board only means something inside a deck; against loose holdings
-			// it would be a column of blanks. It sits beside NAME: the name is
-			// what the eye reads first, and the board qualifies it.
-			cols = slices.Insert(cols, 1,
+			// it would be a column of blanks. It follows the name block (name
+			// and pips) that the eye reads first, and qualifies it.
+			cols = slices.Insert(cols, 2,
 				ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
 		}
 		t := ui.Table{Cols: cols}
@@ -284,12 +288,14 @@ func (m Model) cardLines(width int) []string {
 		for _, c := range m.cards {
 			finish := ui.Finish(c.Finish)
 			cells := []ui.Cell{
-				ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+				{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
+				ui.C(ui.Pips(c.ColorIdentity)),
+				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
 				ui.C(ui.Money(c.Value)),
 			}
 			if inDeck {
-				cells = slices.Insert(cells, 1, ui.C(c.Board))
+				cells = slices.Insert(cells, 2, ui.C(c.Board))
 			}
 			t.Add(cells...)
 		}

@@ -141,6 +141,9 @@ type UnpricedRow struct {
 	// itself contain a comma, which makes the joined form unsplittable.
 	Containers []string
 	HeldIn     string
+	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
+	// same semantics as Card.ColorIdentity.
+	ColorIdentity []string
 }
 
 // Unpriced lists the same gaps as UnpricedByOwnedFinish, broken out per finish
@@ -161,7 +164,8 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
        c.name, c.set_code, c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
        GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in,
-       GROUP_CONCAT(` + containerLabel + `, char(31)) AS held_in_raw
+       GROUP_CONCAT(` + containerLabel + `, char(31)) AS held_in_raw,
+       c.color_identity
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -177,10 +181,12 @@ ORDER BY c.name, e.finish`)
 	for rows.Next() {
 		var u UnpricedRow
 		var raw string
+		var colors sql.NullString
 		if err := rows.Scan(&u.ScryfallID, &u.MTGJSONUUID, &u.Name, &u.SetCode,
-			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw); err != nil {
+			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw, &colors); err != nil {
 			return nil, err
 		}
+		u.ColorIdentity = parseColorIdentity(colors)
 		u.Containers = dedupeSorted(strings.Split(raw, "\x1f"))
 		out = append(out, u)
 	}

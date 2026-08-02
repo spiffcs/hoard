@@ -98,6 +98,42 @@ func Finish(finish string) string {
 	return finish
 }
 
+// wubrgOrder is the canonical identity ordering: the color wheel as printed
+// on the back of every card, not the alphabet.
+const wubrgOrder = "WUBRG"
+
+// IdentityKey canonicalises a color identity into WUBRG order ("UW" and
+// "WU" are the same identity, and must sort and render the same). Letters
+// outside the wheel are dropped.
+func IdentityKey(colors []string) string {
+	var b strings.Builder
+	for _, want := range wubrgOrder {
+		for _, c := range colors {
+			if c != "" && rune(c[0]) == want {
+				b.WriteRune(want)
+				break
+			}
+		}
+	}
+	return b.String()
+}
+
+// Pips renders a color identity as its pip letters: "WU" for Azorius, "C"
+// for a colorless card, and the em dash for an unknown identity (nil — the
+// card's document was never stored), matching the column convention that a
+// dash is "unknown", never "empty". Styling is applied at render via
+// Env.Pip, never here — piped output gets these exact letters.
+func Pips(colors []string) string {
+	if colors == nil {
+		return unknown
+	}
+	key := IdentityKey(colors)
+	if key == "" {
+		return "C"
+	}
+	return key
+}
+
 // Estimated marks a value the primary source could not supply, so a fallback
 // vendor's figure never passes for the real one.
 func Estimated(s, altSource string) string {

@@ -76,6 +76,13 @@ type Card struct {
 	// Scryfall priced the card. Set only by the queries that read prices for
 	// display, so callers can mark an estimate as such.
 	AltSource string
+	// ColorIdentity is the printing's WUBRG identity: nil until a refresh has
+	// stored the card's document (unknown), empty for a colorless card. The
+	// distinction matters to rendering — unknown stays unstyled, colorless
+	// reads wastes-grey.
+	ColorIdentity []string
+	// ManaCost is the printed cost ("{2}{W}{U}"), nil when unknown.
+	ManaCost *string
 }
 
 // Entry is a quantity of a card (finish + board) to place in a container.
@@ -199,14 +206,49 @@ const (
 func cardCols(altSource string) string {
 	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
        ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
-       ` + altSource
+       ` + altSource + `, c.color_identity, c.mana_cost`
+}
+
+// cardAux holds the scan shims for Card fields SQLite cannot fill directly:
+// the color-identity JSON array lands in a NullString and becomes a slice
+// only after the scan, via apply.
+type cardAux struct {
+	colorIdentity sql.NullString
+}
+
+// apply finishes the scan, decoding the shimmed columns onto the card.
+func (a cardAux) apply(c *Card) {
+	c.ColorIdentity = parseColorIdentity(a.colorIdentity)
 }
 
 // cardScanDest is the scan targets matching cardCols, for the caller to extend
-// with its query's own columns.
-func cardScanDest(c *Card) []any {
+// with its query's own columns. After the scan, aux.apply(c) completes the
+// shimmed fields.
+func cardScanDest(c *Card, aux *cardAux) []any {
 	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
-		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource}
+		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource,
+		&aux.colorIdentity, &c.ManaCost}
+}
+
+// parseColorIdentity turns the stored JSON array into a slice: nil for NULL
+// (no document stored, identity unknown), empty for `[]` (a colorless card).
+//
+// Hand-parsed rather than run through encoding/json: the value is a fixed,
+// tiny shape written by SQLite from Scryfall's own array — `["W","U"]` — and
+// pulling in a decoder for five single-letter strings costs more than it
+// explains. An unrecognisable value yields no colours rather than an error,
+// since neither a reader nor a caller can do anything better with one.
+func parseColorIdentity(v sql.NullString) []string {
+	if !v.Valid || len(v.String) < 2 {
+		return nil
+	}
+	out := []string{}
+	for _, r := range v.String {
+		if r >= 'A' && r <= 'Z' {
+			out = append(out, string(r))
+		}
+	}
+	return out
 }
 
 // Store wraps the database handle.

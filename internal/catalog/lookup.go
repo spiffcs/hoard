@@ -63,6 +63,7 @@ type rowScanner interface{ Scan(...any) error }
 // column order is decided once, beside the code that depends on it.
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
        released_at, finishes, promo_types, frame_effects, border_color,
+       colors, color_identity,
        price_usd, price_usd_foil, price_usd_etched, scryfall_url`
 
 // scanCard reads one catalog row into the shared Card type.
@@ -74,10 +75,12 @@ const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
 	var setName, released, finishes, promos, frames, border *string
+	var colors, identity *string
 	var usd, foil, etched *float64
 
 	if err := r.Scan(&c.ID, &c.Name, &c.Set, &c.CollectorNumber, &setName,
 		&released, &finishes, &promos, &frames, &border,
+		&colors, &identity,
 		&usd, &foil, &etched, &c.ScryfallURL); err != nil {
 		return scryfall.Card{}, fmt.Errorf("catalog: scanning a card: %w", err)
 	}
@@ -88,6 +91,10 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.Finishes = decodeArray(finishes)
 	c.PromoTypes = decodeArray(promos)
 	c.FrameEffects = decodeArray(frames)
+	// decodeArray keeps NULL (nil, unknown) distinct from "[]" (empty,
+	// colorless) — jsonArrayKeepEmpty wrote them apart for exactly this read.
+	c.Colors = decodeArray(colors)
+	c.ColorIdentity = decodeArray(identity)
 	c.PriceUSD = usd
 	// The catalog has a real etched column; folding it matches what the API
 	// client does, so a local answer and a remote one price identically.

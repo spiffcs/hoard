@@ -70,12 +70,13 @@ func FromExportRows(rows []export.Row) Document {
 	for _, r := range export.Sorted(rows) {
 		h.Rows = append(h.Rows, Holding{
 			Card: Card{
-				Name:        r.Name,
-				ScryfallID:  r.ScryfallID,
-				MTGJSONUUID: r.MTGJSONUUID,
-				SetCode:     r.Set,
-				Number:      r.CollectorNumber,
-				Finish:      r.Finish,
+				Name:          r.Name,
+				ScryfallID:    r.ScryfallID,
+				MTGJSONUUID:   r.MTGJSONUUID,
+				SetCode:       r.Set,
+				Number:        r.CollectorNumber,
+				Finish:        r.Finish,
+				ColorIdentity: r.ColorIdentity,
 			},
 			Count:         r.Count,
 			Container:     r.Container,
@@ -95,12 +96,13 @@ func FromUnpriced(rows []store.UnpricedRow) Document {
 	for _, r := range rows {
 		u.Rows = append(u.Rows, UnpricedRow{
 			Card: Card{
-				Name:        r.Name,
-				ScryfallID:  r.ScryfallID,
-				MTGJSONUUID: r.MTGJSONUUID,
-				SetCode:     r.SetCode,
-				Number:      r.CollectorNumber,
-				Finish:      r.Finish,
+				Name:          r.Name,
+				ScryfallID:    r.ScryfallID,
+				MTGJSONUUID:   r.MTGJSONUUID,
+				SetCode:       r.SetCode,
+				Number:        r.CollectorNumber,
+				Finish:        r.Finish,
+				ColorIdentity: r.ColorIdentity,
 			},
 			Copies:     r.Copies,
 			Containers: r.Containers,
@@ -123,11 +125,12 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 	for _, c := range store.MoversByImpact(changes) {
 		m.Changes = append(m.Changes, PriceChange{
 			Card: Card{
-				Name:       c.Name,
-				ScryfallID: c.ScryfallID,
-				SetCode:    c.SetCode,
-				Number:     c.CollectorNumber,
-				Finish:     c.Finish,
+				Name:          c.Name,
+				ScryfallID:    c.ScryfallID,
+				SetCode:       c.SetCode,
+				Number:        c.CollectorNumber,
+				Finish:        c.Finish,
+				ColorIdentity: c.ColorIdentity,
 			},
 			Copies:    c.Copies,
 			OldUsd:    cents(c.Old),

@@ -25,7 +25,10 @@ import (
 // schemaVersion is bumped whenever the tables below change. A mismatch rebuilds
 // the catalog from scratch — the data is a download away, so there is nothing to
 // preserve and no migration to write.
-const schemaVersion = 1
+//
+// v2 added colors and color_identity, so the add-flow picker can show
+// identity pips for cards not yet owned.
+const schemaVersion = 2
 
 // fileName is the catalog's name inside the cache directory.
 const fileName = "catalog.db"
@@ -51,6 +54,8 @@ CREATE TABLE cards (
     promo_types      TEXT,
     frame_effects    TEXT,
     border_color     TEXT,
+    colors           TEXT,
+    color_identity   TEXT,
     price_usd        REAL,
     price_usd_foil   REAL,
     price_usd_etched REAL,

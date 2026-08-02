@@ -153,6 +153,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			Finish:          r.Finish,
 			ScryfallID:      r.ScryfallID,
 			MTGJSONUUID:     r.MTGJSONUUID,
+			ColorIdentity:   r.ColorIdentity,
 			Container:       name,
 			Kind:            "binder",
 			// BinderByFinish sums across boards, and binder entries only
@@ -179,6 +180,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 			Finish:          e.Finish,
 			ScryfallID:      e.Card.ScryfallID,
 			MTGJSONUUID:     e.Card.MTGJSONUUID,
+			ColorIdentity:   e.Card.ColorIdentity,
 			Container:       name,
 			Kind:            "deck",
 			Board:           e.Board,

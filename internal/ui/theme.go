@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // This file is the one definition of every style hoard renders with. Two
 // consumers share it: plain-CLI render paths take Env methods (Style funcs
@@ -116,6 +120,28 @@ func (e Env) Pip(letter byte) Style {
 		return plain
 	}
 	return e.styled(lipgloss.NewStyle().Foreground(c))
+}
+
+// PipsStyle styles a whole pip string (ui.Pips) letter by letter, each
+// identity letter in its own color; anything else — the unknown dash —
+// passes through untouched. This is the ID column's cell style.
+func (e Env) PipsStyle() Style {
+	if !e.Color {
+		return plain
+	}
+	return func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			if r < 128 {
+				if c, ok := identityColors[byte(r)]; ok {
+					b.WriteString(lipgloss.NewStyle().Foreground(c).Render(string(r)))
+					continue
+				}
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
 }
 
 // Identity styles text by a card's whole color identity: one color tints

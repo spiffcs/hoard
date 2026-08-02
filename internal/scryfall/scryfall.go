@@ -43,7 +43,12 @@ type Card struct {
 	Finishes     []string // e.g. ["nonfoil","foil","etched"]
 	PromoTypes   []string
 	FrameEffects []string
-	BorderColor  string
+	BorderColor  string // frame color ("black", "borderless") — not WUBRG
+	// Colors and ColorIdentity are WUBRG letters. ColorIdentity is always at
+	// the object root; Colors is absent on multi-faced cards (it lives per
+	// face there), so identity is the field displays should reach for.
+	Colors        []string
+	ColorIdentity []string
 
 	// Raw is the card object exactly as Scryfall sent it.
 	//
@@ -98,6 +103,8 @@ type apiCard struct {
 	PromoTypes      []string `json:"promo_types"`
 	FrameEffects    []string `json:"frame_effects"`
 	BorderColor     string   `json:"border_color"`
+	Colors          []string `json:"colors"`
+	ColorIdentity   []string `json:"color_identity"`
 	Prices          struct {
 		USD       string `json:"usd"`
 		USDFoil   string `json:"usd_foil"`
@@ -409,6 +416,8 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 		PromoTypes:      ac.PromoTypes,
 		FrameEffects:    ac.FrameEffects,
 		BorderColor:     ac.BorderColor,
+		Colors:          ac.Colors,
+		ColorIdentity:   ac.ColorIdentity,
 		PriceUSD:        parsePrice(ac.Prices.USD),
 		PriceUSDFoil:    foil,
 		Raw:             raw,

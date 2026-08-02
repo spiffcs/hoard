@@ -1,6 +1,7 @@
 package export
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -104,7 +105,7 @@ func TestWritersDoNotReorderTheCallersSlice(t *testing.T) {
 	if err := WriteMoxfield(&b, rows); err != nil {
 		t.Fatalf("WriteMoxfield: %v", err)
 	}
-	if rows[0] != first {
+	if !reflect.DeepEqual(rows[0], first) {
 		t.Errorf("caller's slice was mutated: rows[0] = %+v", rows[0])
 	}
 }

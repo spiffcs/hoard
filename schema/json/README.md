@@ -48,6 +48,12 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.1.1** — ADDITION: `card.colorIdentity` (Scryfall `color_identity`
+  letters; `[]` means colorless, absent means unknown to hoard) on the
+  holdings, unpriced and movers card objects.
+- **1.1.0** — REVISION: the market analysis re-anchored on tcgplayer's
+  sales-derived market price — `marketUsd`/`belowMarket` replace
+  `dearUsd`/`dearFrom`/`spread`; `ignoredListings` dropped.
 - **1.0.2** — ADDITION: the `watch` document kind (one price-watch check:
   how many watches were evaluated, which just crossed their thresholds).
 - **1.0.1** — ADDITION: the `report` document kind (dated valuation — totals,

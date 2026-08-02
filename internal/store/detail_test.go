@@ -76,21 +76,29 @@ func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	}
 }
 
+// Identity has three states, and two of them look alike in a slice: a
+// colorless card is empty-but-known ([]), a never-enriched card is nil
+// (unknown). slices.Equal treats those as equal, so nil-ness is asserted
+// separately.
 func TestParseColorIdentity(t *testing.T) {
 	s := newTestStore(t)
 	for _, tc := range []struct {
-		name string
-		json string
-		want []string
+		name    string
+		json    string // "" stores no document at all
+		want    []string
+		wantNil bool
 	}{
-		{"mono", `["B"]`, []string{"B"}},
-		{"two colours", `["W","U"]`, []string{"W", "U"}},
-		{"colourless", `[]`, nil},
+		{"mono", `["B"]`, []string{"B"}, false},
+		{"two colours", `["W","U"]`, []string{"W", "U"}, false},
+		{"colourless", `[]`, []string{}, false},
+		{"unknown", "", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := ulamog()
 			c.ID = "c-" + tc.name
-			c.Raw = []byte(`{"color_identity":` + tc.json + `}`)
+			if tc.json != "" {
+				c.Raw = []byte(`{"color_identity":` + tc.json + `}`)
+			}
 			if err := s.UpsertPrintings([]scryfall.Card{c}); err != nil {
 				t.Fatalf("upsert: %v", err)
 			}
@@ -101,7 +109,35 @@ func TestParseColorIdentity(t *testing.T) {
 			if !slices.Equal(d.ColorIdentity, tc.want) {
 				t.Errorf("ColorIdentity = %v, want %v", d.ColorIdentity, tc.want)
 			}
+			if got := d.ColorIdentity == nil; got != tc.wantNil {
+				t.Errorf("ColorIdentity nil = %v, want %v — colorless and unknown must stay distinct", got, tc.wantNil)
+			}
 		})
+	}
+}
+
+// The listing queries carry the same identity the detail view resolves, so
+// the browse tables can tint names without a per-row detail read.
+func TestListingsCarryColorIdentity(t *testing.T) {
+	s := newTestStore(t)
+	c := ulamog()
+	c.Raw = []byte(`{"color_identity":["W","U"],"mana_cost":"{1}{W}{U}"}`)
+	if err := s.AddCardFinish(c, "nonfoil", 2); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	rows, err := s.ListCollectionByFinish()
+	if err != nil {
+		t.Fatalf("ListCollectionByFinish: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if got := rows[0].ColorIdentity; !slices.Equal(got, []string{"W", "U"}) {
+		t.Errorf("ColorIdentity = %v, want [W U]", got)
+	}
+	if rows[0].ManaCost == nil || *rows[0].ManaCost != "{1}{W}{U}" {
+		t.Errorf("ManaCost = %v, want {1}{W}{U}", rows[0].ManaCost)
 	}
 }
 

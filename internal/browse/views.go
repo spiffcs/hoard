@@ -142,6 +142,7 @@ func (m Model) moversLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim()},
 			{Title: "WAS", Align: ui.Right, Priority: 4, Style: env.Dim()},
@@ -153,7 +154,9 @@ func (m Model) moversLines(width int) []string {
 		for _, c := range m.movers {
 			finish := ui.Finish(c.Finish)
 			delta := env.Delta(c.TotalDelta())
-			t.Add(ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+			t.Add(ui.Cell{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
+				ui.C(ui.Pips(c.ColorIdentity)),
+				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
 				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
 				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})
@@ -167,6 +170,7 @@ func (m Model) unpricedLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			{Title: "ID", Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 3, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "QTY", Align: ui.Right, Priority: 2},
@@ -174,7 +178,9 @@ func (m Model) unpricedLines(width int) []string {
 		}}
 		for _, r := range m.unpriced {
 			finish := ui.Finish(r.Finish)
-			t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
+			t.Add(ui.Cell{Text: r.Name, Style: env.Identity(r.ColorIdentity)},
+				ui.C(ui.Pips(r.ColorIdentity)),
+				ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Qty(r.Copies)), ui.C(r.HeldIn))
 		}
 		return t

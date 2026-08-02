@@ -32,10 +32,13 @@ type Row struct {
 	// writer carries it (the canonical column set is a compatibility promise
 	// shared with the import sniffer).
 	MTGJSONUUID string
-	Container   string
-	Kind        string
-	Board       string
-	PriceUSD    *float64
+	// ColorIdentity likewise rides along for the JSON emission only — nil
+	// when unknown, empty for colorless (store.Card's semantics).
+	ColorIdentity []string
+	Container     string
+	Kind          string
+	Board         string
+	PriceUSD      *float64
 }
 
 // WriteCanonical writes hoard's own CSV: lossless (Scryfall ID makes re-import

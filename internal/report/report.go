@@ -86,11 +86,13 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 		Header: true,
 		Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 20},
+			// Identity pips beside the name; the first column to drop.
+			{Title: "ID", Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Style: env.Dim()},
 			{Title: "COPIES", Align: ui.Right},
-			// Capped and dropped first: deck names run long, and without a
-			// ceiling this column would squeeze the card name to its minimum.
+			// Capped: deck names run long, and without a ceiling this column
+			// would squeeze the card name to its minimum.
 			{Title: "HELD IN", Align: ui.Left, Flex: true, Min: 10, Max: 34,
 				Priority: 5, Style: env.Dim()},
 		},
@@ -98,7 +100,9 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 	var copies int
 	for _, r := range rows {
 		copies += r.Copies
-		t.Add(ui.C(r.Name), ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
+		t.Add(ui.Cell{Text: r.Name, Style: env.Identity(r.ColorIdentity)},
+			ui.C(ui.Pips(r.ColorIdentity)),
+			ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
 			ui.C(ui.Finish(r.Finish)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}
 	return t.Render() + env.Dim()(fmt.Sprintf(

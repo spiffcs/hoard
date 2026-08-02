@@ -110,10 +110,12 @@ ORDER BY value DESC, c.name`, cid)
 	var out []CollectionRow
 	for rows.Next() {
 		var r CollectionRow
-		if err := rows.Scan(append(cardScanDest(&r.Card),
+		var aux cardAux
+		if err := rows.Scan(append(cardScanDest(&r.Card, &aux),
 			&r.Finish, &r.Quantity, &r.Value)...); err != nil {
 			return nil, err
 		}
+		aux.apply(&r.Card)
 		out = append(out, r)
 	}
 	return out, rows.Err()

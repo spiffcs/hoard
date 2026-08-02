@@ -63,6 +63,9 @@ type card struct {
 	Price           *float64
 	Value           float64
 	AltSource       string
+	// ColorIdentity is the WUBRG identity, nil when unknown — same
+	// semantics as store.Card.ColorIdentity.
+	ColorIdentity []string
 }
 
 // pendingConfirm is a staged action waiting on confirmation. Only an
@@ -352,7 +355,7 @@ func (m *Model) loadCards() error {
 				ScryfallID: r.ScryfallID, Name: r.Name, SetCode: r.SetCode,
 				CollectorNumber: r.CollectorNumber, Finish: r.Finish,
 				Quantity: r.Quantity, Price: r.Price(), Value: r.Value,
-				AltSource: r.AltSource,
+				AltSource: r.AltSource, ColorIdentity: r.ColorIdentity,
 			})
 		}
 	} else {
@@ -365,7 +368,7 @@ func (m *Model) loadCards() error {
 				ScryfallID: e.Card.ScryfallID, Name: e.Card.Name, SetCode: e.Card.SetCode,
 				CollectorNumber: e.Card.CollectorNumber, Finish: e.Finish, Board: e.Board,
 				Quantity: e.Quantity, Price: e.Price(), Value: e.Value(),
-				AltSource: e.Card.AltSource,
+				AltSource: e.Card.AltSource, ColorIdentity: e.Card.ColorIdentity,
 			})
 		}
 	}

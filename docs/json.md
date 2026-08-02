@@ -36,7 +36,9 @@ rejects `--json` rather than silently printing a table at a script.
   the answer.
 - **Absent means unknown**: an unpriced card has no `priceUsd` field at all —
   never `0`, never `null`. A card with no MTGJSON mapping has no
-  `mtgjsonUuid`.
+  `mtgjsonUuid`. A card whose Scryfall document hoard has not stored has no
+  `colorIdentity`; a colorless card has `"colorIdentity": []` — empty and
+  absent mean different things.
 - **Money is whole cents**: every `*Usd` field is rounded to two decimals at
   the boundary, so summed totals don't leak binary-float noise into diffs.
   Ratios (`belowMarket`, `liquidity`) are unrounded fractions.

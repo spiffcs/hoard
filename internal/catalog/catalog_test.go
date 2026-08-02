@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -138,6 +139,45 @@ func TestBuildStoresPaperCardsAndNames(t *testing.T) {
 	c.db.QueryRow(`SELECT COUNT(*) FROM names WHERE name = 'Alchemy Card'`).Scan(&n)
 	if n != 0 {
 		t.Error("a digital-only card reached the name index")
+	}
+}
+
+// The color columns round-trip with nil and empty kept apart: a colorless
+// card ("color_identity": []) is not a card whose colors are unknown (the
+// field absent), and the picker renders them differently — C versus the dash.
+func TestBuildStoresColorIdentity(t *testing.T) {
+	withColors := func(line string, identity []string) string {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("bad fixture: %v", err)
+		}
+		m["colors"] = identity
+		m["color_identity"] = identity
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+	serveBundle(t, "2026-07-30T00:00:00Z", []string{
+		withColors(card("az", "Absorb", "rna", "151", "0.50"), []string{"W", "U"}),
+		withColors(card("sol", "Sol Ring", "c21", "1", "2.00"), []string{}),
+		card("old", "Fixture Without Colors", "tst", "9", "1.00"),
+	})
+	c := openTemp(t)
+	if err := c.Update(context.Background(), nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	cards, err := c.Cards([]string{"az", "sol", "old"})
+	if err != nil {
+		t.Fatalf("Cards: %v", err)
+	}
+	if got := cards["az"].ColorIdentity; !slices.Equal(got, []string{"W", "U"}) {
+		t.Errorf("Absorb identity = %v, want [W U]", got)
+	}
+	if got := cards["sol"].ColorIdentity; got == nil || len(got) != 0 {
+		t.Errorf("Sol Ring identity = %#v, want empty but known (colorless)", got)
+	}
+	if got := cards["old"].ColorIdentity; got != nil {
+		t.Errorf("colorless-field-absent identity = %#v, want nil (unknown)", got)
 	}
 }
 

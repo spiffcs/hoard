@@ -67,6 +67,7 @@ func TestThemeStylesAreSGROnly(t *testing.T) {
 		"Accent":              e.Accent(),
 		"Pip(W)":              e.Pip('W'),
 		"Pip(?)":              e.Pip('?'),
+		"PipsStyle":           e.PipsStyle(),
 		"Identity(mono)":      e.Identity([]string{"G"}),
 		"Identity(multi)":     e.Identity([]string{"W", "U"}),
 		"Identity(colorless)": e.Identity([]string{}),
