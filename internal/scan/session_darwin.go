@@ -183,6 +183,12 @@ func (s *Session) Auto(on bool) error {
 // be the card it already processed.
 func (s *Session) Rearm() error { return s.send("rearm") }
 
+// Chime plays the card-processed sound. Fired by the parent when a scan
+// resolves — auto-added or queued for review — unlike the shutter pop,
+// which marks a capture and deliberately stays quiet on nudge rechecks.
+// Either resolution means "place the next card", and this is its sound.
+func (s *Session) Chime() error { return s.send("chime") }
+
 // Rotate turns the preview a quarter-turn; the new angle arrives as an
 // EventRotation so it can be persisted.
 func (s *Session) Rotate(left bool) error {

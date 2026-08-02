@@ -211,14 +211,19 @@ type model struct {
 	// last sent nudge (a time window, not a consumed flag — a real scan can
 	// race the nudge onto the wire, and the flag was observed being spent on
 	// the racing scan while the true echo slipped through), lastScanNudged
-	// tags scans inside that window, nudgeDrops counts echoes, and
-	// lastAutoName identifies the most recently processed card.
+	// tags scans inside that window, and nudgeDrops counts echoes.
 	autoCapable    bool
 	nudgeGen       int
 	nudgeSentAt    time.Time
 	lastScanNudged bool
 	nudgeDrops     int
-	lastAutoName   string
+	// recentNames is the recently-processed set (see autoscan.go): every
+	// resolved card lands here, and every re-sighting refreshes it, so a
+	// card parked in frame keeps being recognized however long it lingers.
+	recentNames []recentName
+	// captureSeq numbers captures, stamped onto each card's resolution so a
+	// same-frame duplicate can be told from a lingering cross-frame one.
+	captureSeq int
 	// The session destination is asked once, when the camera opens;
 	// destForSession marks the picker as that ask rather than the per-card one.
 	destPicked     bool
@@ -890,6 +895,7 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		m.lastScanNudged = !m.nudgeSentAt.IsZero() &&
 			m.now().Sub(m.nudgeSentAt) < nudgeEchoWindow
 		m.nudgeGen++ // a real capture voids any armed quiet-period timer
+		m.captureSeq++
 		cmds := []tea.Cmd{again}
 		for _, c := range cards {
 			m.nextResolveID++
@@ -951,16 +957,19 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.resolving--
 	}
 	it := msg.item
+	now := m.now()
 
-	// A nudge-fired re-read of the very card just processed is the trigger
+	// A nudge-fired re-read of any recently processed card is the trigger
 	// seeing what we already know — swallow it, and stop nudging: one echo is
 	// confirmation enough that the card is parked, and further nudges would
 	// photograph the same card forever (observed live at a slow start).
-	// Nudging resumes with the next real scan. Only nudge echoes are dropped
-	// this way: a disruption-fired identical read still dup-queues, so a
-	// deliberately stacked playset copy survives.
-	if it.fromNudge && it.canonical != "" && it.canonical == m.lastAutoName {
+	// Nudging resumes with the next real scan. The check is against the whole
+	// recent set, not a single last name: a multi-card recheck echoes every
+	// card of the previous capture, and remembering only the last one let the
+	// rest dup-queue (observed live: a re-shot pair queued both).
+	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
 		m.nudgeDrops++
+		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.status = fmt.Sprintf("still seeing %s — waiting for the next card", it.canonical)
 		m.statusErr = false
 		return m, nil
@@ -977,28 +986,47 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		return m, m.scheduleNudge()
 	}
 
-	if it.canonical != "" {
-		m.lastAutoName = it.canonical
-		m.nudgeDrops = 0
+	auto, finish, note := verdict(it)
+	if auto {
+		if seq, dup := dupCapture(m.recent, it.prints[0].ID, finish, now); dup {
+			switch {
+			case seq == it.captureSeq:
+				// Two copies in one frame — a fanned playset. Queue for the
+				// deliberate confirm; never drop.
+				auto, it.dup = false, true
+				note = "possible duplicate — same card twice in this capture"
+			case it.siblings > 1 || it.fromNudge:
+				// A lingering neighbour: the card added a moment ago is still
+				// in frame beside the new one. An un-swapped pile is not a
+				// playset signal — drop it silently (observed live: one card
+				// queued five re-sightings of itself this way).
+				m.recentNames = recordName(m.recentNames, it.canonical, now)
+				m.status = fmt.Sprintf("still seeing %s beside the new card", it.canonical)
+				m.statusErr = false
+				return m, m.scheduleNudge()
+			default:
+				// A deliberate solo re-scan: sequential playset scanning.
+				auto, it.dup = false, true
+				note = "possible duplicate — same card auto-added just now"
+			}
+		}
 	}
 
-	auto, finish, note := verdict(it)
-	if auto && isRecentDup(m.recent, it.prints[0].ID, finish, m.now()) {
-		auto = false
-		it.dup = true
-		note = "possible duplicate — same card auto-added just now"
-	}
 	if auto {
 		card := it.prints[0]
 		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
 		if err := m.adder(res); err != nil {
+			m.chime()
 			nudge := m.scheduleNudge()
 			it.note = "add failed: " + err.Error()
 			m.review = append(m.review, it)
 			next, cmd := m.reviewChanged()
 			return next, tea.Batch(cmd, nudge)
 		}
-		m.recent = recordCommit(m.recent, card.ID, finish, m.now())
+		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now)
+		m.recentNames = recordName(m.recentNames, it.canonical, now)
+		m.nudgeDrops = 0
+		m.chime()
 		m.addedCount++
 		line := fmt.Sprintf("%s (%s/%s) %s — %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
@@ -1007,11 +1035,47 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		return m, m.scheduleNudge()
 	}
 
+	// Queue-bound. An unresolved or shaky read that looks like a recently
+	// processed name, seen in a nudge or multi-card context, is that card
+	// still in frame wearing an OCR mangle — drop it rather than pile OCR
+	// variants of an already-added card into review. A solo, non-nudge
+	// capture still queues: a deliberately re-scanned worn card must not
+	// vanish. A dup-flagged item skips the probe: it was recognized above as
+	// a deliberate duplicate, and matching its own name here would swallow
+	// the very queue entry the recognition chose to keep.
+	if !it.dup && (it.fromNudge || it.siblings > 1) {
+		probe := it.canonical
+		if probe == "" {
+			probe = it.ocrLine
+		}
+		if name, ok := similarRecent(m.recentNames, probe, now); ok {
+			m.recentNames = recordName(m.recentNames, name, now)
+			m.status = fmt.Sprintf("still seeing %s — waiting for the next card", name)
+			m.statusErr = false
+			return m, m.scheduleNudge()
+		}
+	}
+
+	if it.canonical != "" {
+		m.recentNames = recordName(m.recentNames, it.canonical, now)
+	}
+	m.nudgeDrops = 0
+	m.chime()
 	it.note = note
 	m.review = append(m.review, it)
 	nudge := m.scheduleNudge()
 	next, cmd := m.reviewChanged()
 	return next, tea.Batch(cmd, nudge)
+}
+
+// chime plays the card-processed sound: the audible receipt that this card
+// is handled — auto-added or queued — and the next one can be placed. Drops
+// and swallows stay silent; they are the scanner recognizing a card it
+// already handled, and a sound would ask the user to act on nothing.
+func (m model) chime() {
+	if m.session != nil {
+		_ = m.session.Chime()
+	}
 }
 
 // reviewChanged reacts to the queue growing: the close-time walk consumes the

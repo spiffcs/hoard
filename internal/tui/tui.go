@@ -53,6 +53,12 @@ type ScanSession interface {
 	// Rearm nudges a parked auto trigger back to searching; the caller
 	// discards the re-read if it is the card it already processed.
 	Rearm() error
+	// Chime plays the card-processed sound: the audible receipt fired when
+	// a scan resolves — auto-added or queued for review — so the user knows
+	// to place the next card without reading the screen. Fired at
+	// resolution rather than capture time so a nudge-armed capture is
+	// never silent.
+	Chime() error
 	// Events streams what the camera window reports; closed when the session is.
 	Events() <-chan scan.Event
 	// Close ends the session and shuts the window.

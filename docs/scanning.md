@@ -47,9 +47,14 @@ A placement the trigger's geometry misses entirely is caught by the
 re-arms the trigger once. If the recheck finds a new card, it commits like
 any scan; if it finds the card just processed, the re-read is discarded
 silently ("still seeing … — waiting for the next card") and no further
-rechecks fire until something actually happens. Recheck shots skip the
-shutter sound — a slow moment between cards shouldn't sound like the scanner
-acting up.
+rechecks fire until something actually happens.
+
+Audio is one chime per card, played when the scan *resolves* — auto-added
+or queued for review — because either outcome means the same thing at the
+table: this card is handled, place the next one. Captures themselves are
+silent (the old shutter pop made every card a two-beep event), and a
+discarded recheck stays silent too, so a slow moment between cards never
+sounds like the scanner acting up.
 
 The card's title is read on-device with Apple's Vision OCR, then matched to a
 real card — against the [local catalog](pricing.md#the-local-catalog) when one is
@@ -91,10 +96,15 @@ foil printings (`MSC ★ EN`) and bullet it on nonfoil ones (`MAR • EN`), and 
 starred card whose printing offers both finishes is recorded foil — in the
 review cascade the finish picker opens with the marker's answer pre-selected.
 Frames without the marker (roughly pre-2020) default to nonfoil, with the
-tally as the audit trail. The same card re-fired within a few seconds (a
-nudge, a re-trigger) is queued as a *possible duplicate* rather than silently
-double-counted; confirming it from the queue is the "yes, really" a real
-playset needs.
+tally as the audit trail. A recently added card seen again is judged by
+*how* it came back. Two copies in one capture — a fanned playset — queue the
+second as a *possible duplicate*, and so does deliberately re-scanning a
+card on its own; confirming from the queue is the "yes, really" a real
+playset needs. But the same card re-read by a nudge, or still sitting beside
+the next card you placed, is just an un-swapped pile: those re-sightings are
+dropped silently (a "still seeing…" note in the status line, no chime), even
+when the re-read comes back with an OCR mangle that would otherwise queue as
+uncertain.
 
 Everything that doesn't clear the bar lands in a **review queue** with the
 reason it queued. <kbd>tab</kbd> at the capture step opens the queue
@@ -122,8 +132,8 @@ scan. Cards in a fan hide their bottom borders, so they rarely carry the
 collector info the auto-commit bar demands — a spread mostly lands in the
 review queue by design, walked one cascade at a time (<kbd>ctrl+s</kbd> skips
 a card). Adding cards to a spread one at a time re-captures everything
-visible; the already-added ones come back as *possible duplicates* in the
-queue rather than double-counting. A single card in frame behaves exactly the
+visible; the already-added ones are recognized and dropped rather than
+double-counted or re-queued. A single card in frame behaves exactly the
 same — no mode, nothing to switch.
 
 Detection is two-channel: card outlines found in the frame are

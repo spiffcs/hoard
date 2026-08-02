@@ -50,6 +50,10 @@ type queueItem struct {
 	// finishHint is the printed foil marker of whichever collector block won
 	// verification: "foil", "nonfoil", or "" for frames without one.
 	finishHint string
+	// captureSeq identifies which capture produced this card, so a duplicate
+	// inside one frame (a fanned playset) can be told from a card lingering
+	// across frames (an un-swapped pile).
+	captureSeq int
 	dup        bool   // flagged as a possible duplicate of a recent commit
 	note       string // human-readable reason the card queued
 	errText    string // resolve error, if any
@@ -131,8 +135,10 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	gen := m.resolveGen
 	ctx, s := m.ctx, m.searcher
 	fromNudge := m.lastScanNudged
+	captureSeq := m.captureSeq
 	return func() tea.Msg {
-		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge}
+		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
+			captureSeq: captureSeq}
 		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
 		it.canonical, it.ocrLine, it.lineIdx, it.match = canonical, ocr, idx, match
 		if err != nil {
@@ -285,11 +291,20 @@ func rankByScanStrength(cards []scryfall.Card, set, number string) ([]scryfall.C
 // --- duplicate window ---
 
 // A re-fire on a card that hasn't moved (auto-exposure jitter, an incremental
-// spread re-emitting every visible card) must not double-count. The window is
-// deliberately a queue-not-drop: four physical copies is a legitimate playset,
-// and the review confirm is exactly the "yes, really" that case needs. Time
-// alone bounds it — the helper's own scene-change gating covers slow re-fires,
-// and a genuine second copy scanned later deserves to just land.
+// spread re-emitting every visible card) must not double-count. What happens
+// to the re-read depends on where it came from:
+//
+//   - the same capture: two copies genuinely in one frame — a fanned playset.
+//     Queue for the deliberate confirm; never drop.
+//   - a later capture where the dup shares the frame with a new card, or a
+//     nudge recheck: a card lingering on the pile beside the work. Dropped —
+//     an un-swapped neighbour is not a playset signal (a real session queued
+//     five re-sightings of one card this way).
+//   - a later solo capture: a deliberate re-scan. Queue as a possible
+//     duplicate — sequential playset scanning must never lose the copy.
+//
+// Time alone bounds the window — a genuine second copy scanned later
+// deserves to just land.
 const (
 	dupWindow = 10 * time.Second
 	dupKeep   = 10
@@ -298,27 +313,78 @@ const (
 type recentCommit struct {
 	scryfallID string
 	finish     string
+	captureSeq int
 	at         time.Time
 }
 
-// isRecentDup reports whether the same printing-and-finish was auto-committed
-// within the time window.
-func isRecentDup(recent []recentCommit, id, finish string, now time.Time) bool {
+// dupCapture reports whether the same printing-and-finish was auto-committed
+// within the time window, and by which capture — the discriminator between a
+// fanned playset and a lingering neighbour.
+func dupCapture(recent []recentCommit, id, finish string, now time.Time) (captureSeq int, dup bool) {
 	for _, rc := range recent {
 		if rc.scryfallID == id && rc.finish == finish && now.Sub(rc.at) <= dupWindow {
+			return rc.captureSeq, true
+		}
+	}
+	return 0, false
+}
+
+// recordCommit appends to the window, pruning it to a fixed size.
+func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now time.Time) []recentCommit {
+	recent = append(recent, recentCommit{scryfallID: id, finish: finish,
+		captureSeq: captureSeq, at: now})
+	if len(recent) > dupKeep {
+		recent = recent[len(recent)-dupKeep:]
+	}
+	return recent
+}
+
+// --- recently-processed names ---
+
+// The set of card names processed lately, refreshed on every sighting. It is
+// what lets a recheck of a multi-card scene swallow *every* card of the
+// previous capture (a single last-name memory let the rest dup-queue), and
+// what catches an OCR-mangled re-read of a card still in frame before it
+// queues as "uncertain".
+type recentName struct {
+	name string
+	at   time.Time
+}
+
+// recordName refreshes a name in the window, pruning it to the dup window's
+// size.
+func recordName(recent []recentName, name string, now time.Time) []recentName {
+	recent = append(recent, recentName{name: name, at: now})
+	if len(recent) > dupKeep {
+		recent = recent[len(recent)-dupKeep:]
+	}
+	return recent
+}
+
+// seenRecently reports whether this exact name was processed inside the
+// window.
+func seenRecently(recent []recentName, name string, now time.Time) bool {
+	for _, rn := range recent {
+		if now.Sub(rn.at) <= dupWindow && strings.EqualFold(rn.name, name) {
 			return true
 		}
 	}
 	return false
 }
 
-// recordCommit appends to the window, pruning it to a fixed size.
-func recordCommit(recent []recentCommit, id, finish string, now time.Time) []recentCommit {
-	recent = append(recent, recentCommit{scryfallID: id, finish: finish, at: now})
-	if len(recent) > dupKeep {
-		recent = recent[len(recent)-dupKeep:]
+// similarRecent finds a recently processed name the text plausibly is — the
+// same shape-tolerant match resolution itself uses, so "Doc Gal's Hanchmen"
+// recognizes the "Doc Ock's Henchmen" added seconds ago.
+func similarRecent(recent []recentName, text string, now time.Time) (string, bool) {
+	if strings.TrimSpace(text) == "" {
+		return "", false
 	}
-	return recent
+	for _, rn := range recent {
+		if now.Sub(rn.at) <= dupWindow && cardname.Plausible(text, rn.name) {
+			return rn.name, true
+		}
+	}
+	return "", false
 }
 
 // --- rearm nudge ---

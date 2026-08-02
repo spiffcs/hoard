@@ -87,6 +87,7 @@ func (f *fakeScanner) Open(_ context.Context, deviceID string) (ScanSession, err
 // fakeSession stands in for a live camera window. Tests push events onto it to
 // simulate the helper reporting captures, rotations, and closure.
 type fakeSession struct {
+	chimes   int
 	events   chan scan.Event
 	captures int
 	rotates  int
@@ -98,6 +99,11 @@ type fakeSession struct {
 
 func (s *fakeSession) Rearm() error {
 	s.rearms++
+	return nil
+}
+
+func (s *fakeSession) Chime() error {
+	s.chimes++
 	return nil
 }
 
@@ -1048,7 +1054,7 @@ func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
+	m, sess := openCapture(t, m)
 
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := mm.(model)
@@ -1071,6 +1077,11 @@ func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
 	}
 	if len(got.tally) != 1 || !strings.Contains(got.View(), "Auto-added") {
 		t.Errorf("the tally should show the commit: tally=%v", got.tally)
+	}
+	// The commit chimes, always — the shutter pop is quiet on nudge-armed
+	// captures, so this is the one guaranteed audible receipt.
+	if sess.chimes != 1 {
+		t.Errorf("chimes = %d after an auto-add, want exactly 1", sess.chimes)
 	}
 	if got.summary.Count("auto") != 1 || len(got.review) != 0 || got.resolving != 0 {
 		t.Errorf("summary auto=%d review=%d resolving=%d, want 1/0/0",
@@ -1114,7 +1125,7 @@ func TestUncertainScanQueues(t *testing.T) {
 		CollectorNumber: "263"} // number-only: unique among the printings, no set read
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
+	m, sess := openCapture(t, m)
 
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := resolve(t, mm.(model), ev.CardList()[0])
@@ -1124,6 +1135,11 @@ func TestUncertainScanQueues(t *testing.T) {
 	}
 	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "uncertain name") {
 		t.Fatalf("review = %+v, want an uncertain-name note", got.review)
+	}
+	// Queuing chimes too: either resolution means "place the next card",
+	// and the sound is the prompt.
+	if sess.chimes != 1 {
+		t.Errorf("chimes = %d after a queue outcome, want 1", sess.chimes)
 	}
 }
 
@@ -1715,5 +1731,145 @@ func TestQInPickerNoLongerQuits(t *testing.T) {
 	}
 	if mm2.(model).state != got.state {
 		t.Errorf("q changed state to %v", mm2.(model).state)
+	}
+}
+
+// multiFixture is confidentFixture plus a second auto-committable card, for
+// the multi-card duplicate scenarios.
+func multiFixture() fakeSearcher {
+	return fakeSearcher{
+		fuzzy: map[string]string{"Sol Ring": "Sol Ring", "Ancient Tomb": "Ancient Tomb"},
+		prints: map[string][]scryfall.Card{
+			"Sol Ring": solRingPrints(),
+			"Ancient Tomb": {{ID: "t", Name: "Ancient Tomb", Set: "uma",
+				CollectorNumber: "236", Finishes: []string{"nonfoil"}}},
+		},
+	}
+}
+
+func scanCard(name, set, number string) scan.Card {
+	return scan.Card{Name: name, Candidates: []string{name}, SetCode: set,
+		CollectorNumber: number, Confidence: 0.95}
+}
+
+// sendScan feeds a multi-card scan event through intake and resolves every
+// card synchronously, in order.
+func sendScan(t *testing.T, m model, cards ...scan.Card) model {
+	t.Helper()
+	ev := scan.Event{Kind: scan.EventScan, Cards: cards}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	m = mm.(model)
+	for i, c := range cards {
+		mm, _ := m.Update(m.resolveCardCmd(m.nextResolveID-len(cards)+1+i, c, len(cards))())
+		m = mm.(model)
+	}
+	return m
+}
+
+// A nudge recheck of a whole multi-card scene swallows every card of it —
+// the single-last-name memory used to dup-queue all but one (observed live:
+// a re-shot pair queued both).
+func TestNudgeEchoSwallowsWholeCapture(t *testing.T) {
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Ancient Tomb", "UMA", "236"))
+	if len(ra.got) != 2 || len(m.review) != 0 {
+		t.Fatalf("setup: adds=%d review=%d, want both auto", len(ra.got), len(m.review))
+	}
+
+	// The nudge fires, and the recheck re-reads the unchanged scene.
+	m.nudgeSentAt = m.now()
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Ancient Tomb", "UMA", "236"))
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d after echo, want still 2", len(ra.got))
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v after echo, want empty — both echoes swallowed", m.review)
+	}
+}
+
+// A card lingering in frame beside a new one is dropped, not queued: an
+// un-swapped pile is not a playset signal.
+func TestLingeringNeighborDropped(t *testing.T) {
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: adds=%d", len(ra.got))
+	}
+	// The next capture (not a nudge) sees the new card and the old one still
+	// on the pile.
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Ancient Tomb", "UMA", "236"))
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want the new card added once", len(ra.got))
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want the lingering Sol Ring dropped, not queued", m.review)
+	}
+	if !strings.Contains(m.status, "still seeing Sol Ring") {
+		t.Errorf("status = %q, want the still-seeing note", m.status)
+	}
+}
+
+// Two copies fanned in one frame stay a queue-not-drop: the second copy is a
+// possible playset and the review confirm is its "yes, really".
+func TestFannedPlaysetStillQueues(t *testing.T) {
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Sol Ring", "MH3", "123"))
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want the first copy auto-added", len(ra.got))
+	}
+	if len(m.review) != 1 || !strings.Contains(m.review[0].note, "twice in this capture") {
+		t.Fatalf("review = %+v, want the second copy queued as a same-capture duplicate", m.review)
+	}
+}
+
+// A deliberate solo re-scan still queues as a possible duplicate —
+// sequential playset scanning must never lose the copy.
+func TestSoloRescanStillQueuesDuplicate(t *testing.T) {
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
+	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want only the first auto-added", len(ra.got))
+	}
+	if len(m.review) != 1 || !strings.Contains(m.review[0].note, "auto-added just now") {
+		t.Fatalf("review = %+v, want the re-scan queued as a possible duplicate", m.review)
+	}
+}
+
+// An OCR-mangled re-read of a just-processed card, in a multi-card frame,
+// drops instead of queueing as uncertain.
+func TestOCRVariantOfRecentDropped(t *testing.T) {
+	ra := &recordingAdder{}
+	fs := multiFixture()
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	m = sendScan(t, m, scanCard("Ancient Tomb", "UMA", "236"))
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: adds=%d", len(ra.got))
+	}
+	// The next frame reads the lingering card's title with a mangle that
+	// still fuzzy-resolves, but weakly — plus a genuinely new card.
+	fs.fuzzy["Ancjent Tomb"] = "Ancient Tomb"
+	m.searcher = fs
+	mangled := scan.Card{Name: "Ancjent Tomb", Candidates: []string{"Ancjent Tomb"}, Confidence: 0.6}
+	m = sendScan(t, m, mangled, scanCard("Sol Ring", "MH3", "123"))
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want the new card added", len(ra.got))
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want the mangled re-read dropped", m.review)
 	}
 }

@@ -1587,14 +1587,11 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     }
 
     /// autoFire is the trigger's shutter: identical to a space press except the
-    /// resulting scan event is tagged auto. A nudge-armed fire is a quiet
-    /// recheck of a scene the parent may already know — no shutter pop, so a
-    /// slow moment between cards doesn't sound like the scanner acting up.
+    /// resulting scan event is tagged auto. Silent by design — the parent
+    /// chimes when the scan resolves (added or queued), and that is the one
+    /// sound per card; a shutter pop on top made every card a two-beep event.
     private func autoFire() {
         pendingAuto = true
-        if !autoTrigger.nudged {
-            NSSound(named: "Pop")?.play()
-        }
         capture()
     }
 
@@ -1697,6 +1694,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         case "auto-on": setAuto(true)
         case "auto-off": setAuto(false)
         case "rearm": autoTrigger.forceRearm()
+        case "chime": NSSound(named: "Glass")?.play()
         case "quit": shutdown()
         default: emit(Event(event: "error", message: "unknown command: \(command)"))
         }
