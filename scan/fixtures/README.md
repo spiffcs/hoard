@@ -24,4 +24,7 @@ tuning sessions stay out of the repo (`scan-fixtures/` is gitignored);
 only distilled regressions live here.
 
 Vision OCR can drift across macOS releases; see the header of `sweep.sh`
-for how to tell drift from regression.
+for how to tell drift from regression. CI runs the sweep on a pinned
+`macos-15` runner (`.github/workflows/scan.yml`, path-filtered to
+scan-related changes since private-repo macOS minutes bill at 10x) —
+bumping that pin and refreshing the goldens is one deliberate commit.

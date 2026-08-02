@@ -1,0 +1,42 @@
+# The Swift camera helper: compile it and replay the checked-in capture
+# fixtures (scan/fixtures/) against their golden card lists.
+#
+# Its own workflow rather than a job in ci.yml because macOS runners bill
+# private-repo minutes at 10x and path filtering is workflow-level: the
+# sweep only needs to run when something that can change the helper's
+# behavior changes, which is rare.
+name: Scan helper
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "scan/**"
+      - "build-scan.sh"
+      - "Makefile"
+      - ".github/workflows/scan.yml"
+  pull_request:
+    paths:
+      - "scan/**"
+      - "build-scan.sh"
+      - "Makefile"
+      - ".github/workflows/scan.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # Pinned to macos-15, not -latest: the goldens pin Vision's OCR output,
+  # which drifts across macOS releases — moving to a newer runner image must
+  # be a deliberate golden refresh (sweep.sh --update), not a surprise red
+  # build.
+  scan:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build scan helper
+        run: make scan
+
+      - name: fixture sweep
+        run: make scan-check
