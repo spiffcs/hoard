@@ -12,17 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// The palette mirrors internal/tui and internal/ui: bold and faint only, plus
-// one reverse for the cursor. No colour, so the design survives a monochrome
-// terminal and does not fight the user's own theme.
-var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	helpStyle     = lipgloss.NewStyle().Faint(true)
-	errStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	cursorStyle   = lipgloss.NewStyle().Reverse(true)
-	inactiveStyle = lipgloss.NewStyle().Faint(true)
-)
-
 // Layout constants. The container pane is fixed and the card pane takes the
 // rest: container names are short and repetitive, card rows carry six columns
 // and are what the eye is actually reading.
@@ -51,7 +40,7 @@ func (m Model) View() string {
 		// it is asking about.
 		v := m.addChild.View()
 		if m.confirm != nil {
-			v += "\n" + errStyle.Render(m.confirm.prompt) + helpStyle.Render("  y/n")
+			v += "\n" + m.theme.Err.Render(m.confirm.prompt) + m.theme.Help.Render("  y/n")
 		}
 		return v
 	}
@@ -88,17 +77,17 @@ func (m Model) View() string {
 			b.WriteString(line + "\n")
 		}
 	}
-	writeHelp(&b, m.helpLine(), m.width)
+	m.writeHelp(&b, m.helpLine())
 	return b.String()
 }
 
 // writeHelp renders the wrapped help rows, last line without a newline.
-func writeHelp(b *strings.Builder, help string, width int) {
-	for i, line := range wrapHelp(help, width) {
+func (m Model) writeHelp(b *strings.Builder, help string) {
+	for i, line := range wrapHelp(help, m.width) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(helpStyle.Render(line))
+		b.WriteString(m.theme.Help.Render(line))
 	}
 }
 
@@ -124,7 +113,7 @@ func (m Model) detailView() string {
 		b.WriteString(m.statusLine())
 	default:
 		if n := len(lines) - (m.visibleRows() + 1); n > 0 {
-			b.WriteString(helpStyle.Render(fmt.Sprintf("%d more lines — widen or lengthen the window", n)))
+			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d more lines — widen or lengthen the window", n)))
 		}
 	}
 	b.WriteString("\n")
@@ -133,7 +122,7 @@ func (m Model) detailView() string {
 			b.WriteString(line + "\n")
 		}
 	}
-	writeHelp(&b, m.helpLine(), m.width)
+	m.writeHelp(&b, m.helpLine())
 	return b.String()
 }
 
@@ -218,9 +207,9 @@ func (m Model) header(left, right int) string {
 	totals += m.opBadge()
 	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
 	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
-	return titleStyle.Render(fit("COLLECTION", left)) +
+	return m.theme.Title.Render(fit("COLLECTION", left)) +
 		strings.Repeat(" ", paneGap) +
-		titleStyle.Render(title) + strings.Repeat(" ", gap) + helpStyle.Render(totals)
+		m.theme.Title.Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
 }
 
 // paneLines renders one pane's table. Every pane shares the same Env, the
@@ -231,7 +220,7 @@ func (m Model) paneLines(p pane, width int, build func(env ui.Env) ui.Table) []s
 	if width <= 0 {
 		return nil
 	}
-	env := ui.Env{Width: width, Color: true, Clamp: true}
+	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
 	t := build(env)
 	t.Env = env
 	t.Header = true
@@ -332,11 +321,11 @@ func (m Model) window(lines []string, p pane, width int) []string {
 			// The row's own styling is stripped first: a dim cell's reset would
 			// end the reverse video mid-line, leaving a selection bar that stops
 			// at whichever column happened to be styled.
-			line = cursorStyle.Render(ansi.Strip(line))
+			line = m.theme.Cursor.Render(ansi.Strip(line))
 		case i == m.cursor[p]:
 			// The unfocused pane keeps a mark on its row so switching back is
 			// not a hunt for where the cursor was.
-			line = inactiveStyle.Render(ansi.Strip(line))
+			line = m.theme.Inactive.Render(ansi.Strip(line))
 		}
 		out = append(out, line)
 	}
@@ -353,7 +342,7 @@ func (m Model) window(lines []string, p pane, width int) []string {
 func (m Model) statusLine() string {
 	switch m.mode() {
 	case modeConfirm:
-		return errStyle.Render(m.confirm.prompt) + helpStyle.Render("  y/n")
+		return m.theme.Err.Render(m.confirm.prompt) + m.theme.Help.Render("  y/n")
 	case modePrompt:
 		return m.promptLine()
 	case modePalette:
@@ -361,13 +350,13 @@ func (m Model) statusLine() string {
 	case modeFilter:
 		bar := "/" + m.filterText + "▏"
 		if m.filterErr != "" {
-			return bar + "  " + errStyle.Render(m.filterErr)
+			return bar + "  " + m.theme.Err.Render(m.filterErr)
 		}
-		return bar + helpStyle.Render(fmt.Sprintf("  %d match", len(m.cards)))
+		return bar + m.theme.Help.Render(fmt.Sprintf("  %d match", len(m.cards)))
 	}
 	if m.status != "" {
 		if m.statusErr {
-			return errStyle.Render(m.status)
+			return m.theme.Err.Render(m.status)
 		}
 		return m.status
 	}
@@ -381,7 +370,7 @@ func (m Model) statusLine() string {
 		return m.marketStatus()
 	}
 	if m.emptyNote != "" {
-		return helpStyle.Render(m.emptyNote)
+		return m.theme.Help.Render(m.emptyNote)
 	}
 
 	n := m.rowCount(m.focus)
@@ -390,15 +379,15 @@ func (m Model) statusLine() string {
 		// turned "nothing here" into a dead end during dogfooding.
 		switch m.view {
 		case viewMovers:
-			return helpStyle.Render(
+			return m.theme.Help.Render(
 				"no price movement in this window — F fetches prices and 90 days of history · W widens the window")
 		case viewWatches:
-			return helpStyle.Render(
+			return m.theme.Help.Render(
 				"no watches — press w on a card in holdings, or : then \"Add a watch by name\"")
 		case viewUnpriced:
-			return helpStyle.Render("every card you own has a price")
+			return m.theme.Help.Render("every card you own has a price")
 		}
-		return helpStyle.Render("nothing here")
+		return m.theme.Help.Render("nothing here")
 	}
 	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sortLabel())
 	if !m.filter.empty() {
@@ -407,7 +396,7 @@ func (m Model) statusLine() string {
 	if min := m.maskMin(); min > 0 {
 		pos += fmt.Sprintf(" · hiding <%s (M cycles)", ui.Money(min))
 	}
-	return helpStyle.Render(pos)
+	return m.theme.Help.Render(pos)
 }
 
 func (m Model) helpLine() string {

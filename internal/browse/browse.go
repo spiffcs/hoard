@@ -20,6 +20,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // Editor changes what is held; it is split out of Store because the undo
@@ -78,6 +79,13 @@ type Store interface {
 
 // Option configures the browser.
 type Option func(*Model)
+
+// WithEnv pins the render environment instead of detecting it from stdout —
+// how tests get deterministic color decisions, and how a caller could force
+// color on or off.
+func WithEnv(e ui.Env) Option {
+	return func(m *Model) { m.env = e }
+}
 
 // WithMarket supplies the vendor-comparison fetch. Without it the arbitrage
 // view says it is unavailable rather than pretending to have nothing to show.

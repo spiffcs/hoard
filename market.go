@@ -16,7 +16,7 @@ import (
 )
 
 func cmdMarket(ctx context.Context, st *store.Store, args []string, jsonOut bool) error {
-	fs := flag.NewFlagSet("arbitrage", flag.ContinueOnError)
+	fs := flag.NewFlagSet("market", flag.ContinueOnError)
 	minValue := fs.Float64("min", 1, "ignore cards cheaper than this")
 	limit := fs.Int("limit", 10, "rows per section")
 	if _, err := parsePositionals(fs, args); err != nil {
@@ -45,7 +45,6 @@ func cmdMarket(ctx context.Context, st *store.Store, args []string, jsonOut bool
 		if len(sec.Rows) == 0 {
 			continue
 		}
-		fmt.Println(env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()))
 		fmt.Print(report.Market(env, sec))
 		fmt.Println()
 	}

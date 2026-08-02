@@ -160,7 +160,7 @@ func (m Model) paletteRows() int {
 func (m Model) paletteLines(width int) []string {
 	p := m.palette
 	if len(p.matches) == 0 {
-		return []string{helpStyle.Render("no matching command")}
+		return []string{m.theme.Help.Render("no matching command")}
 	}
 
 	// The window follows the cursor, same as the panes.
@@ -179,16 +179,16 @@ func (m Model) paletteLines(width int) []string {
 		if i == p.cursor {
 			marker = "▸ "
 		}
-		title := boldRunes(c.title, match.positions)
+		title := m.boldRunes(c.title, match.positions)
 		hint := c.key
 
 		// Title left, key hint right-aligned dim; measured on the plain
 		// text so the bolding never shifts the column.
 		plainWidth := 2 + len([]rune(c.title))
 		gap := max(width-plainWidth-len([]rune(hint))-1, 1)
-		line := marker + title + strings.Repeat(" ", gap) + helpStyle.Render(hint)
+		line := marker + title + strings.Repeat(" ", gap) + m.theme.Help.Render(hint)
 		if i == p.cursor {
-			line = cursorStyle.Render(marker+c.title) + strings.Repeat(" ", gap) + helpStyle.Render(hint)
+			line = m.theme.Cursor.Render(marker+c.title) + strings.Repeat(" ", gap) + m.theme.Help.Render(hint)
 		}
 		lines = append(lines, ui.Truncate(line, width))
 	}
@@ -197,7 +197,7 @@ func (m Model) paletteLines(width int) []string {
 
 // boldRunes bolds the matched rune positions of s — the palette's only
 // styling, per the bold/dim-only rule.
-func boldRunes(s string, positions []int) string {
+func (m Model) boldRunes(s string, positions []int) string {
 	if len(positions) == 0 {
 		return s
 	}
@@ -208,7 +208,7 @@ func boldRunes(s string, positions []int) string {
 	var b strings.Builder
 	for i, r := range []rune(s) {
 		if set[i] {
-			b.WriteString(titleStyle.Render(string(r)))
+			b.WriteString(m.theme.Title.Render(string(r)))
 		} else {
 			b.WriteRune(r)
 		}

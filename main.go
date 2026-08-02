@@ -343,15 +343,10 @@ func parsePositionals(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// isTTY reports whether a file is an interactive terminal (a character
-// device).
-func isTTY(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
+// isTTY reports whether a file is an interactive terminal, answered the
+// same way the renderer answers it (ui.Detect) rather than by a second
+// hand-rolled Stat probe.
+func isTTY(f *os.File) bool { return ui.IsTerminal(f) }
 
 // stdinIsTTY reports whether stdin is interactive, which the TUI requires.
 func stdinIsTTY() bool { return isTTY(os.Stdin) }
@@ -525,8 +520,11 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if derr != nil {
 				return nil, derr
 			}
-			// The TUI knows its width; Detect would sniff the wrong fd.
-			text := report.Valuation(ui.Env{Width: width, Color: true, Clamp: true}, d)
+			// The TUI supplies its own width; Detect still decides color, so
+			// NO_COLOR reaches the report overlay too.
+			env := ui.Detect(os.Stdout)
+			env.Width, env.Clamp = width, true
+			text := report.Valuation(env, d)
 			return strings.Split(strings.TrimRight(text, "\n"), "\n"), nil
 		}),
 		browse.WithMarket(func(ctx context.Context, p progress.Fn) (market.Result, error) {

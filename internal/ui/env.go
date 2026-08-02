@@ -78,6 +78,13 @@ func colorOK(f *os.File) bool {
 	return lipgloss.ColorProfile() != termenv.Ascii
 }
 
+// IsTerminal reports whether f is a real terminal. The one TTY test every
+// caller should share, so "is this interactive?" is answered the same way
+// the renderer answers it.
+func IsTerminal(f *os.File) bool {
+	return term.IsTerminal(f.Fd())
+}
+
 // Style renders a fragment of text. Resolving styles to a function (rather than
 // consulting lipgloss inside the renderer) keeps Env.Color authoritative and
 // keeps tests independent of lipgloss's process-wide, once-cached color profile.
@@ -85,12 +92,10 @@ type Style func(string) string
 
 func plain(s string) string { return s }
 
-// The palette mirrors internal/tui/model.go: bold and faint only, no color, so
-// the design survives monochrome terminals and piped output intact.
-var (
-	lgBold  = lipgloss.NewStyle().Bold(true)
-	lgFaint = lipgloss.NewStyle().Faint(true)
-)
+// The full palette lives in theme.go — one definition serving both these
+// Env methods and the bubbletea Theme. Bold and Dim remain the workhorses:
+// structure comes from weight and alignment, color only ever carries
+// meaning (identity, semantic state), never decoration.
 
 // Bold styles primary text: section headers and totals.
 func (e Env) Bold() Style {

@@ -12,10 +12,10 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 type state int
@@ -40,15 +40,6 @@ const (
 	// the camera.
 	stateQueueReview
 	stateClosePrompt
-)
-
-var (
-	titleStyle  = lipgloss.NewStyle().Bold(true)
-	helpStyle   = lipgloss.NewStyle().Faint(true)
-	errStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	scanStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	promptStyle = lipgloss.NewStyle().Bold(true)
 )
 
 // --- messages ---
@@ -151,6 +142,9 @@ type model struct {
 	searcher Searcher
 	adder    Adder
 	scanner  Scanner
+
+	// theme is the shared ui palette — no styles are defined in this package.
+	theme ui.Theme
 
 	state state
 
@@ -290,6 +284,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		searcher:  s,
 		adder:     add,
 		scanner:   sc,
+		theme:     ui.DefaultTheme(),
 		dests:     dests,
 		nameInput: ni,
 		qtyInput:  qi,
@@ -1482,14 +1477,14 @@ func (m model) scanHeader() string {
 		if badge == "" {
 			return ""
 		}
-		return scanStyle.Render("📷 "+badge) + "\n\n"
+		return m.theme.Accent.Render("📷 "+badge) + "\n\n"
 	}
 	if badge != "" {
 		badge += " · "
 	}
-	line := scanStyle.Render("📷 " + badge + "Scanned: " + m.scanned)
+	line := m.theme.Accent.Render("📷 " + badge + "Scanned: " + m.scanned)
 	if m.scannedOCR != "" && !strings.EqualFold(m.scannedOCR, m.scanned) {
-		line += helpStyle.Render(fmt.Sprintf("  (read %q)", m.scannedOCR))
+		line += m.theme.Help.Render(fmt.Sprintf("  (read %q)", m.scannedOCR))
 	}
 	return line + "\n\n"
 }
@@ -1498,11 +1493,11 @@ func (m model) View() string {
 	switch m.state {
 	case stateName:
 		var b strings.Builder
-		b.WriteString(titleStyle.Render("Add cards to your collection") + "\n\n")
+		b.WriteString(m.theme.Title.Render("Add cards to your collection") + "\n\n")
 		if m.status != "" {
-			style := okStyle
+			style := m.theme.OK
 			if m.statusErr {
-				style = errStyle
+				style = m.theme.Err
 			}
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
@@ -1518,21 +1513,21 @@ func (m model) View() string {
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}
-		b.WriteString(helpStyle.Render(help))
+		b.WriteString(m.theme.Help.Render(help))
 		return b.String()
 	case stateCameraBusy:
 		return fmt.Sprintf("%s looking for a connected iPhone…\n\n%s",
-			m.spinner.View(), helpStyle.Render("esc cancel · ctrl+c quit"))
+			m.spinner.View(), m.theme.Help.Render("esc cancel · ctrl+c quit"))
 	case stateCameraPick:
 		return m.list.View() + "\n" +
-			helpStyle.Render("↑/↓ move · enter scan with this camera · esc back · ctrl+c quit")
+			m.theme.Help.Render("↑/↓ move · enter scan with this camera · esc back · ctrl+c quit")
 	case stateCapture:
 		var b strings.Builder
-		b.WriteString(titleStyle.Render("Scanning with "+m.cameraLabel()) + "\n\n")
+		b.WriteString(m.theme.Title.Render("Scanning with "+m.cameraLabel()) + "\n\n")
 		if m.status != "" {
-			style := okStyle
+			style := m.theme.OK
 			if m.statusErr {
-				style = errStyle
+				style = m.theme.Err
 			}
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
@@ -1540,14 +1535,14 @@ func (m model) View() string {
 		// visible the moment it happens.
 		const tallyShown = 4
 		for _, line := range m.tally[max(0, len(m.tally)-tallyShown):] {
-			b.WriteString(okStyle.Render("✓ Auto-added: "+line) + "\n")
+			b.WriteString(m.theme.OK.Render("✓ Auto-added: "+line) + "\n")
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
 			counter := fmt.Sprintf("%d auto-added · %d need review", len(m.tally), len(m.review))
 			if m.resolving > 0 {
 				counter += fmt.Sprintf(" · %d resolving", m.resolving)
 			}
-			b.WriteString(helpStyle.Render(counter) + "\n")
+			b.WriteString(m.theme.Help.Render(counter) + "\n")
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
 			b.WriteString("\n")
@@ -1567,40 +1562,40 @@ func (m model) View() string {
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}
-		b.WriteString(helpStyle.Render(help + "\n(space and ←/→ also work in the camera window)"))
+		b.WriteString(m.theme.Help.Render(help + "\n(space and ←/→ also work in the camera window)"))
 		return b.String()
 	case stateQueueReview:
 		return m.list.View() + "\n" +
-			helpStyle.Render("↑/↓ move · enter fix this card · ctrl+s drop it · tab/esc back to camera · ctrl+c quit")
+			m.theme.Help.Render("↑/↓ move · enter fix this card · ctrl+s drop it · tab/esc back to camera · ctrl+c quit")
 	case stateClosePrompt:
 		var b strings.Builder
-		b.WriteString(titleStyle.Render("Close the camera?") + "\n\n")
+		b.WriteString(m.theme.Title.Render("Close the camera?") + "\n\n")
 		n := len(m.review)
 		line := fmt.Sprintf("%d scanned cards are waiting for review", n)
 		if m.resolving > 0 {
 			line += fmt.Sprintf(" (%d still resolving)", m.resolving)
 		}
 		b.WriteString(line + ".\n\n")
-		b.WriteString(helpStyle.Render("enter review them now · d discard them · esc back to camera"))
+		b.WriteString(m.theme.Help.Render("enter review them now · d discard them · esc back to camera"))
 		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",
-			m.spinner.View(), helpStyle.Render("esc close camera · ctrl+c quit"))
+			m.spinner.View(), m.theme.Help.Render("esc close camera · ctrl+c quit"))
 	case stateLoading:
 		return m.scanHeader() + fmt.Sprintf("%s searching Scryfall…\n\n%s",
-			m.spinner.View(), helpStyle.Render("ctrl+c to quit"))
+			m.spinner.View(), m.theme.Help.Render("ctrl+c to quit"))
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick:
 		return m.scanHeader() + m.list.View() + "\n" +
-			helpStyle.Render(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit"))
+			m.theme.Help.Render(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit"))
 	case stateQty:
-		out := m.scanHeader() + promptStyle.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
+		out := m.scanHeader() + m.theme.Prompt.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
-			out += "\n" + errStyle.Render(m.qtyErr)
+			out += "\n" + m.theme.Err.Render(m.qtyErr)
 		}
-		return out + "\n\n" + helpStyle.Render(m.batchHelp("enter to continue · esc cancel · ctrl+c quit"))
+		return out + "\n\n" + m.theme.Help.Render(m.batchHelp("enter to continue · esc cancel · ctrl+c quit"))
 	case stateConfirm:
-		return m.scanHeader() + titleStyle.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
-			helpStyle.Render(m.batchHelp("enter to add · esc cancel · ctrl+c quit"))
+		return m.scanHeader() + m.theme.Title.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
+			m.theme.Help.Render(m.batchHelp("enter to add · esc cancel · ctrl+c quit"))
 	}
 	return ""
 }

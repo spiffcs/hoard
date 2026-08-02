@@ -152,10 +152,11 @@ func (m Model) moversLines(width int) []string {
 		}}
 		for _, c := range m.movers {
 			finish := ui.Finish(c.Finish)
+			delta := env.Delta(c.TotalDelta())
 			t.Add(ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
-				ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
-				ui.C(ui.SignedMoney(c.TotalDelta())))
+				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
+				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})
 		}
 		return t
 	})

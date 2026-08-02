@@ -84,14 +84,14 @@ func (m *Model) openDetail() {
 
 // detailLines renders the overlay.
 func (m Model) detailLines(d detail, width int) []string {
-	dim := helpStyle.Render
+	dim := m.theme.Help.Render
 	var out []string
 	add := func(format string, args ...any) {
 		out = append(out, ui.Truncate(fmt.Sprintf(format, args...), width))
 	}
 
 	c := d.card
-	out = append(out, titleStyle.Render(ui.Truncate(c.Name, width)))
+	out = append(out, m.theme.Title.Render(ui.Truncate(c.Name, width)))
 
 	// The type line and mana cost sit together the way they do on the card.
 	if line := joinNonEmpty("  ", deref(c.TypeLine), deref(c.ManaCost)); line != "" {
@@ -122,7 +122,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		}
 	}
 
-	out = append(out, "", titleStyle.Render("HELD"))
+	out = append(out, "", m.theme.Title.Render("HELD"))
 	if len(d.holdings) == 0 {
 		out = append(out, dim("  nothing — this printing is catalogued but not held"))
 	}
@@ -140,7 +140,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		add("  %s", strings.Join(append(parts, where), " · "))
 	}
 
-	out = append(out, "", titleStyle.Render("PRICE"))
+	out = append(out, "", m.theme.Title.Render("PRICE"))
 	if len(d.series) == 0 {
 		out = append(out, dim("  no history yet — press : and run Backfill 90 days of price history"))
 	}
@@ -155,7 +155,7 @@ func (m Model) detailLines(d detail, width int) []string {
 		}
 		spark := ui.Spark(ui.Resample(pricePoints(s), sparkCells), sparkCells)
 		now := s[len(s)-1].Price
-		line := fmt.Sprintf("  %-9s %s  %s", label, spark, titleStyle.Render(ui.Money(now)))
+		line := fmt.Sprintf("  %-9s %s  %s", label, spark, m.theme.Title.Render(ui.Money(now)))
 		// The change over the window is the question the sparkline raises;
 		// answer it in the movers view's own +$/-% language. A single check has
 		// no movement to report.

@@ -19,6 +19,7 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // fakeStore drives the model without a database, the way internal/tui's tests
@@ -34,8 +35,8 @@ type fakeStore struct {
 	traits   map[string][]string
 	enriched int
 	watches  []store.WatchStatus
-	binders   map[int64]string // extra binders beside the default
-	nextID    int64
+	binders  map[int64]string // extra binders beside the default
+	nextID   int64
 
 	err error // when set, every read fails
 
@@ -354,7 +355,10 @@ func testStore() *fakeStore {
 // newTestModel returns a model sized as if the terminal had reported itself.
 func newTestModel(t *testing.T, st Store) Model {
 	t.Helper()
-	m, err := New(st)
+	// Color on, as a real terminal would have it. Styles still only emit
+	// escapes when a test pins a color profile — go test's stdout resolves
+	// to Ascii, where every lipgloss render is a no-op.
+	m, err := New(st, WithEnv(ui.Env{Color: true}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

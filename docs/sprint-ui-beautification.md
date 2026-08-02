@@ -115,7 +115,17 @@ A→B→C are ordered (B needs the theme; C's `Progress` line announces B4's
 catalog rebuild). D and E are independent once A+B land. Each phase is one
 commit, committed by the maintainer. Sizes: A=M, B=M, C=M, D=L, E=S.
 
-## ⬜ A. Theme layer
+## ✅ A. Theme layer (implemented 2026-07-31)
+
+*As-landed notes:* one `Env{Color:true}` site had become three
+(`browse/view.go paneLines`, `browse/market.go marketLines`, and main's
+`WithReport` closure) — all now derive color from a detected Env; browse
+carries `env ui.Env`/`theme ui.Theme` fields (`WithEnv` option pins them in
+tests). `Env.Delta(v)` joined the planned methods so the CLI movers table
+and the browse movers pane share one sign-to-color rule. The section-header
+assembly moved into `report.Market` (renamed from Arbitrage before this
+sprint), and the `arbitrage` flagset name became `market`. The old
+`os.Stdout.Stat()` idiom is gone — `isTTY` delegates to `ui.IsTerminal`.
 
 **A1. `internal/ui/theme.go` (new).** One definition of every style, two
 consumers:
@@ -284,6 +294,41 @@ package), rendered via `ui.Table` at `ui.Detect(os.Stderr)` width — the
 first output surface that responds to terminal width. Section headers Bold,
 prose paragraphs Dim. The `"error:"` prefix at `main.go:89` gets Err style
 on a TTY. Per-subcommand `-h` stays stock `flag` output; no cobra.
+
+## ⬜ F. Spike: card images in the detail overlay + MTG-card layout
+
+Added 2026-07-31. Two commits: F1 (layout — real work, ships regardless)
+then F2 (images — timeboxed, go/no-go deliverable). Runs last; needs D2.
+
+**Ground truth (verified):** `cards.raw_json` is the full Scryfall object,
+so `image_uris` (+ per-face for DFCs) is already on disk for every enriched
+card. `x/ansi v0.11.6` (already a direct dep) ships the whole graphics
+toolkit: `kitty.EncodeGraphics` with `VirtualPlacement`/Unicode-placeholder
+support, `ansi/iterm2` OSC 1337 files, `ansi.SixelGraphics`. Browse runs
+altscreen with a cell-diffing renderer, so cursor-anchored graphics get
+clobbered by repaints — kitty's Unicode-placeholder mode is the exception
+(the placement is ordinary text cells, so it flows through View() and
+survives repaints; Ghostty/Kitty/WezTerm support it). Cached image bytes
+stay out of hoard.db (the VACUUM INTO backup rule): files under
+`os.UserCacheDir()/hoard/images/`, mtgjson's temp-write→rename pattern.
+
+**F1 — MTG-card-style detail layout.** Migration v11: VIRTUAL generated
+columns `power`, `toughness`, `loyalty`, `flavor_text` (COALESCE-to-face-0
+idiom) + `image_uri`; extend `store.CardDetail`. Reorder `detailLines` into
+card-frame order (name+mana cost → type·rarity → oracle box → flavor →
+P/T bottom-right → artist·set footer → HELD/PRICE below). Fix `wrap()` to
+measure `ansi.StringWidth`, not bytes. Card block renders first so the
+no-scroll overflow eats hoard data, not the card. Unenriched keeps its
+remedy line; enriched-but-fieldless renders `—`.
+
+**F2 — image tiers (prototype behind `HOARD_CARD_IMAGES=1`).** Async fetch
+on detail open (cache-first, never when piped/`NO_COLOR`/unsupported).
+Tier 1: kitty graphics + Unicode placeholders (Ghostty/Kitty/WezTerm;
+needs cell-pixel geometry via ioctl ws_xpixel / CSI 16t). Tier 2: iTerm2
+OSC 1337 — spike-test against altscreen repaints, cut to tier 3 if it
+tears. Tier 3: halfblock `▀` truecolor cells of the art_crop — universal
+fallback, pure text. Deliverable: findings note here + go/no-go on
+default-on. Cut line: ship halfblocks only.
 
 ## Non-goals (the craftsman list)
 

@@ -83,12 +83,15 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			// A finish column reading "nonfoil" down every row is noise; the
 			// foils are what want pointing out.
 			finish := ui.Finish(c.Finish)
+			// Deltas carry their direction in color as well as sign — the
+			// sign stays, so piped output loses nothing.
+			delta := env.Delta(c.TotalDelta())
 			// The indent lives in the name cell, so every column to its right
 			// stays aligned with the section heading above.
 			t.Add(ui.C("  "+c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C("→"), ui.C(ui.Money(c.New)),
-				ui.C(ui.SignedPercent(c.Pct())), ui.C(ui.Qty(c.Copies)),
-				ui.C(ui.SignedMoney(c.TotalDelta())))
+				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
+				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})
 		}
 	}
 	return t
@@ -123,8 +126,9 @@ func topMovers(all []store.PriceChange, limit int, keep func(store.PriceChange) 
 	return out[:min(len(out), limit)]
 }
 
-// Arbitrage lays out one section of the vendor comparison. The three share a
-// column shape so the tables stack without the eye having to re-find the numbers.
+// Market lays out one section of the vendor comparison: its header line,
+// then its rows. The three sections share a column shape so the tables stack
+// without the eye having to re-find the numbers.
 func Market(env ui.Env, sec market.Section) string {
 	t := ui.Table{
 		Env: env,
@@ -159,7 +163,7 @@ func Market(env ui.Env, sec market.Section) string {
 				ui.C("-"+ui.Percent(o.BelowMarket())))
 		}
 	}
-	return t.Render()
+	return env.Bold()(sec.Kind.Title()) + env.Dim()("  "+sec.Kind.Note()) + "\n" + t.Render()
 }
 
 // Movers renders the risers and sinkers, and what they did to the hoard.

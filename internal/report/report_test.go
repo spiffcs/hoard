@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -250,6 +253,46 @@ func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 	// number of fields, ending in the money that sorted them.
 	if got, want := len(strings.Fields(riser)), len(strings.Fields(sinker)); got != want {
 		t.Errorf("sections rendered different column sets (%d vs %d fields):\n%s", got, want, out)
+	}
+}
+
+// With color on, the delta columns carry direction as color too: gains in
+// the ok green (SGR 92), losses in the error red (SGR 91). Everything else
+// in the row stays bold/dim — money in place is never colored.
+func TestMoversDeltaColors(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	changes := []store.PriceChange{
+		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "nonfoil",
+			Copies: 2, Old: 1.00, New: 5.00},
+		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "nonfoil",
+			Copies: 1, Old: 50.00, New: 10.00},
+	}
+	out := moversTable(ui.Env{Width: 100, Color: true, Clamp: true},
+		moverSections(changes, 10)).Render()
+
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(line, "Riser"):
+			if !strings.Contains(line, "\x1b[92m") {
+				t.Errorf("riser deltas not green:\n%q", line)
+			}
+		case strings.Contains(line, "Sinker"):
+			if !strings.Contains(line, "\x1b[91m") {
+				t.Errorf("sinker deltas not red:\n%q", line)
+			}
+		}
+	}
+	if strings.Contains(strings.SplitN(out, "\n", 2)[0], "\x1b[9") {
+		t.Errorf("the header row must never be colored:\n%q", out)
+	}
+
+	// Piped (Color:false), the same table emits no escapes at all.
+	plainOut := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(changes, 10)).Render()
+	if strings.Contains(plainOut, "\x1b[") {
+		t.Errorf("piped movers output carries escapes:\n%q", plainOut)
 	}
 }
 

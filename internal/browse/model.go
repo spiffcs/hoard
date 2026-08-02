@@ -3,6 +3,7 @@ package browse
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -82,6 +83,14 @@ type pendingConfirm struct {
 // the way internal/tui's tests drive the add cascade.
 type Model struct {
 	store Store
+
+	// env is the terminal the browser renders for — detected from the real
+	// stdout by New, pinned by WithEnv in tests. Its Color field is what
+	// makes browse honor NO_COLOR; width still arrives per-frame from
+	// WindowSizeMsg. theme is the shared ui palette; no styles are defined
+	// in this package.
+	env   ui.Env
+	theme ui.Theme
 
 	width, height int
 	ready         bool
@@ -242,6 +251,7 @@ func New(st Store, opts ...Option) (Model, error) {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
+		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(),
 		commands: commands()}
 	for _, opt := range opts {
 		opt(&m)

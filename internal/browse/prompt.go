@@ -87,7 +87,7 @@ func (m Model) handlePromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) promptLine() string {
 	line := m.prompt.label + ": " + m.prompt.text + "▏"
 	if m.prompt.err != "" {
-		line += "  " + errStyle.Render(m.prompt.err)
+		line += "  " + m.theme.Err.Render(m.prompt.err)
 	}
 	return line
 }

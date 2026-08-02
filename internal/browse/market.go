@@ -143,7 +143,7 @@ func (m Model) marketLines(width int) []string {
 	if width <= 0 || len(m.marketRows) == 0 {
 		return nil
 	}
-	env := ui.Env{Width: width, Color: true, Clamp: true}
+	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
 
 	var all []string
 	rowLine := make([]int, 0, len(m.marketRows))
@@ -154,7 +154,7 @@ func (m Model) marketLines(width int) []string {
 		if len(all) > 0 {
 			all = append(all, "")
 		}
-		all = append(all, titleStyle.Render(kind.Title())+"  "+helpStyle.Render(kind.Note()))
+		all = append(all, m.theme.Title.Render(kind.Title())+"  "+m.theme.Help.Render(kind.Note()))
 		t := marketSectionTable(env, kind, rows)
 		t.Env, t.Header = env, true
 		lines := t.Lines()
@@ -181,9 +181,9 @@ func (m Model) marketLines(width int) []string {
 	// map 1:1, so the generic pane windowing cannot be reused here.
 	cur := min(max(m.cursor[paneCards], 0), len(m.marketRows)-1)
 	cline := rowLine[cur]
-	style := inactiveStyle
+	style := m.theme.Inactive
 	if m.focus == paneCards {
-		style = cursorStyle
+		style = m.theme.Cursor
 	}
 	all[cline] = style.Render(ansi.Strip(fit(all[cline], width)))
 
@@ -253,15 +253,15 @@ func (m Model) marketStatus() string {
 	case m.marketLoading:
 		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
 	case !m.marketLoaded:
-		return helpStyle.Render(
+		return m.theme.Help.Render(
 			"vendor quotes may need a download, so the view waits to be asked — press F")
 	case len(m.marketRows) == 0:
-		return helpStyle.Render("no vendor disagreed about anything you own today")
+		return m.theme.Help.Render("no vendor disagreed about anything you own today")
 	}
 	// The status line explains the selected row's question — the flat list
 	// has no section headers, so without this a liquid row's percentage
 	// reads as a gain when it is the size of the haircut.
-	return helpStyle.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices, not guaranteed sales",
+	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices, not guaranteed sales",
 		m.cursor[paneCards]+1, len(m.marketRows), m.selectedMarketNote()))
 }
 

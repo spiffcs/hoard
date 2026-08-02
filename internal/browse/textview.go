@@ -80,12 +80,12 @@ func (m Model) textViewRender() string {
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
 	if len(t.lines) > rows {
-		b.WriteString(helpStyle.Render(fmt.Sprintf("%s · lines %d–%d of %d",
+		b.WriteString(m.theme.Help.Render(fmt.Sprintf("%s · lines %d–%d of %d",
 			t.title, t.offset+1, min(t.offset+rows, len(t.lines)), len(t.lines))))
 	} else {
-		b.WriteString(helpStyle.Render(t.title))
+		b.WriteString(m.theme.Help.Render(t.title))
 	}
 	b.WriteString("\n")
-	writeHelp(&b, m.helpLine(), m.width)
+	m.writeHelp(&b, m.helpLine())
 	return b.String()
 }
