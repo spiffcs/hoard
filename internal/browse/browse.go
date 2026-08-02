@@ -8,7 +8,9 @@
 //
 // This is a separate package from internal/tui, which is the add cascade: that
 // one is a wizard driven by Scryfall lookups, this one is a reader driven by
-// the local database, and they share no state beyond the store.
+// the local database. The cascade runs inside the browser as an embedded
+// child model (see addchild.go), but its dependencies are still injected
+// from outside — the two packages share types, never construction.
 package browse
 
 import (
@@ -17,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
 )
 
 // Editor changes what is held; it is split out of Store because the undo
@@ -85,27 +88,53 @@ func WithArbitrage(f ArbitrageFunc) Option {
 	return func(m *Model) { m.arbitrage = f }
 }
 
+// ReportFunc produces the valuation report as lines already laid out for
+// the given width. A fast local read — it runs synchronously in a command's
+// run, not through the op layer.
+type ReportFunc func(top, width int) ([]string, error)
+
+// WithReport supplies the valuation report. Without it the palette entry is
+// hidden.
+func WithReport(f ReportFunc) Option {
+	return func(m *Model) { m.reportFn = f }
+}
+
+// ExportFunc writes holdings to a file: refs select one container (by id)
+// or, both empty, everything. A fast local write — it runs synchronously in
+// the prompt commit, not through the op layer.
+type ExportFunc func(binderRef, deckRef, format, path string) (summary string, err error)
+
+// WithExport supplies the holdings export. Without it the palette entries
+// are hidden.
+func WithExport(f ExportFunc) Option {
+	return func(m *Model) { m.exportFn = f }
+}
+
 // Run opens the browser and blocks until the user leaves it.
 //
-// addRequested is true when the user pressed `a` rather than quitting, meaning
-// the caller should run the add cascade and then call Run again. The browser
-// steps aside rather than launching the cascade itself: both are bubbletea
-// programs and only one can own the terminal at a time, so nesting them
-// deadlocks on the input reader. Taking turns is the whole design.
-func Run(ctx context.Context, st Store, opts ...Option) (addRequested bool, err error) {
+// The add cascade runs inside the browser as an embedded child model
+// (WithAddCascade), so one program owns the terminal for the whole
+// session. The returned Summary is the session's accumulated scan receipt
+// across every cascade invocation — the caller prints it to scrollback,
+// where it outlives the alternate screen.
+func Run(ctx context.Context, st Store, opts ...Option) (tui.Summary, error) {
 	m, err := New(st, opts...)
 	if err != nil {
-		return false, err
+		return tui.Summary{}, err
 	}
 	m.ctx = ctx
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	final, err := p.Run()
 	if err != nil {
-		return false, err
+		return tui.Summary{}, err
 	}
 	fm, ok := final.(Model)
 	if !ok {
-		return false, nil
+		return tui.Summary{}, nil
 	}
-	return fm.wantAdd, fm.err
+	// Safety net for exits that bypass handleAddChildKey — a hard ctrl+c on
+	// a confirm, or context cancellation: the camera session must not
+	// outlive the program, and abandoned cards belong in the receipt.
+	fm.teardownAddChild()
+	return fm.addSummary, fm.err
 }

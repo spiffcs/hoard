@@ -12,7 +12,7 @@ Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $13
 Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
 ──────────────────────────────────────────────────────────────────────────────────────────
 1/23 · sorted by value
-tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
+tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · esc quit
 ```
 
 The left pane lists your binders first (the default binder, then any you created
@@ -32,8 +32,9 @@ shows what is inside whichever container you have selected.
 | <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
 | <kbd>d</kbd> | remove the card, or the deck — asks first |
 | <kbd>u</kbd> | undo the last edit |
-| <kbd>a</kbd> | add cards — hands off to the add flow, then returns you here |
-| <kbd>r</kbd> | reload · <kbd>q</kbd> quit |
+| <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
+| <kbd>r</kbd> | reload |
+| <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
 Binder cards are editable in place (<kbd>+</kbd>, <kbd>-</kbd>, <kbd>d</kbd>,
 <kbd>u</kbd>) — every binder, not just the default. Deck cards are deliberately
@@ -41,18 +42,22 @@ read-only: a deck is owned by the list it was imported from, so editing it here
 would drift from that source until the next `deck add` overwrote the change
 without saying so.
 
-Pressing <kbd>a</kbd> hands the terminal to the same interactive add flow
-`hoard add` runs — type a name or <kbd>ctrl+o</kbd> to scan with your iPhone —
-and drops you back in the browser when you leave it, with the new cards already
-in your binder. It is a handoff rather than a window inside the browser because
-two full-screen programs cannot share one terminal.
+Pressing <kbd>a</kbd> opens the same interactive add flow `hoard add` runs —
+type a name or <kbd>ctrl+o</kbd> to scan with your iPhone — inside the
+browser: it takes over the screen while it runs and <kbd>esc</kbd> drops you
+back exactly where you were, cursor, filter and undo intact, with the new
+cards already in your binder and a one-line receipt on the status line. A
+long operation (a price update, a backfill) keeps running behind it. The
+full scan receipt still prints to the terminal scrollback when you quit the
+browser, so the record of unattended writes outlives the alternate screen.
 
 ## Views
 
-<kbd>v</kbd> cycles through four views. Holdings, movers, and unpriced are
-instant database reads. **Arbitrage waits to be asked**: it needs today's vendor
-quotes from MTGJSON, so cycling to it shows `press enter to fetch` rather than
-starting a download because you passed through. While it runs the pane says so,
+<kbd>v</kbd> cycles through five views: holdings, movers, unpriced, watches,
+and arbitrage. All but the last are instant database reads. **Arbitrage waits
+to be asked**: it needs today's vendor quotes from MTGJSON, so cycling to it
+says `press F to fetch` rather than starting a download because you passed
+through. While it runs the pane says so,
 and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
 
 ```

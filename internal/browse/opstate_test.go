@@ -69,7 +69,7 @@ func TestOpLifecycle(t *testing.T) {
 	}
 	m.status = ""
 
-	next, _ = m.Update(opDoneMsg{gen: gen, summary: "prices updated · 2 printings"})
+	next, _ = m.Update(opDoneMsg{gen: gen, outcome: opOutcome{summary: "prices updated · 2 printings"}})
 	m = next.(Model)
 	if m.op != nil {
 		t.Error("op still set after done")
@@ -128,21 +128,27 @@ func TestOpGuardsQuitAndAdd(t *testing.T) {
 	})
 	m, _ = runPaletteCommand(t, m, "op.update-prices")
 
-	m = key(m, "q")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = next.(Model)
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "still running") {
-		t.Fatalf("q mid-op staged %+v, want the quit confirm", m.confirm)
+		t.Fatalf("ctrl+c mid-op staged %+v, want the quit confirm", m.confirm)
 	}
 	m = key(m, "n") // anything but y cancels
 	if m.confirm != nil {
 		t.Error("confirm not cleared")
 	}
 
+	// Embedded, `a` no longer quits — without a constructor it refuses, and
+	// the op keeps running untouched.
 	m, cmd := runPaletteCommand(t, m, "add")
-	if cmd != nil || m.wantAdd {
-		t.Error("add cascade started mid-op")
+	if cmd != nil || m.addChild != nil {
+		t.Error("add must not open or quit without a constructor")
 	}
-	if !strings.Contains(m.status, "wait for") {
-		t.Errorf("status = %q, want the add refusal", m.status)
+	if m.op == nil {
+		t.Error("the running op must be untouched")
+	}
+	if !strings.Contains(m.status, "unavailable") {
+		t.Errorf("status = %q, want the unavailable refusal", m.status)
 	}
 }
 
@@ -155,7 +161,7 @@ func TestOpStaleMessagesDropped(t *testing.T) {
 	m, _ = runPaletteCommand(t, m, "op.update-prices")
 	gen := m.op.gen
 
-	next, _ := m.Update(opDoneMsg{gen: gen - 1, summary: "stale"})
+	next, _ := m.Update(opDoneMsg{gen: gen - 1, outcome: opOutcome{summary: "stale"}})
 	m = next.(Model)
 	if m.op == nil {
 		t.Error("a stale done message ended the live op")
@@ -176,5 +182,33 @@ func TestOpUnavailable(t *testing.T) {
 	cmd = st.startOp("updating prices", nil)
 	if cmd != nil || !strings.Contains(st.status, "unavailable") {
 		t.Errorf("nil op: cmd=%v status=%q", cmd, st.status)
+	}
+}
+
+// The status line's live slot replaces rather than appends: a pipeline of
+// steps and notes reads one at a time after the title.
+func TestOpStatusShowsNewestPieceOnly(t *testing.T) {
+	m := opModel(t, func(ctx context.Context, p progress.Fn) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	m, _ = runPaletteCommand(t, m, "op.update-prices")
+	gen := m.op.gen
+
+	next, _ := m.Update(opProgressMsg{gen: gen, ev: progress.Event{Step: "downloading price history"}})
+	m = next.(Model)
+	if line := m.opStatus(); !strings.Contains(line, "downloading price history") {
+		t.Fatalf("step missing: %q", line)
+	}
+
+	next, _ = m.Update(opProgressMsg{gen: gen, ev: progress.Event{
+		Step: "downloading price history", Note: "fetching 90 days of prices for 14 printings"}})
+	m = next.(Model)
+	line := m.opStatus()
+	if !strings.Contains(line, "fetching 90 days") {
+		t.Fatalf("note missing: %q", line)
+	}
+	if strings.Contains(line, "downloading price history") {
+		t.Fatalf("step must be replaced by the note, not stacked: %q", line)
 	}
 }

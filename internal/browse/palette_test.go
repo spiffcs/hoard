@@ -68,10 +68,14 @@ func TestPaletteEscClosesWithoutRunning(t *testing.T) {
 func TestPaletteDrawerGeometry(t *testing.T) {
 	m := newTestModel(t, testStore())
 	rows := m.visibleRows()
+	closedHelp := m.helpRows()
 	closedFrame := strings.Count(m.View(), "\n")
 	m = key(m, ":")
-	if got := m.visibleRows(); got != rows-m.paletteRows() {
-		t.Errorf("visibleRows = %d with palette open, want %d minus the drawer", got, rows)
+	// The drawer takes its rows from the panes; the help line may cost a
+	// different number of rows in palette mode (its help is shorter), so
+	// the expectation accounts for both.
+	if got, want := m.visibleRows(), rows-m.paletteRows()+closedHelp-m.helpRows(); got != want {
+		t.Errorf("visibleRows = %d with palette open, want %d", got, want)
 	}
 	if !strings.HasPrefix(m.statusLine(), ": ") {
 		t.Errorf("status slot = %q, want the palette input", m.statusLine())
@@ -125,8 +129,9 @@ func TestPaletteAliasAndDetail(t *testing.T) {
 		t.Fatal("setup: detail did not open")
 	}
 	m = key(m, ":")
-	if m.palette == nil || m.detail != nil {
-		t.Errorf("':' from detail: palette=%v detail=%v, want open and closed", m.palette, m.detail)
+	if m.palette == nil || m.detail == nil {
+		t.Errorf("':' from detail: palette=%v detail=%v, want the palette over the still-open overlay",
+			m.palette, m.detail)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/spiffcs/hoard/internal/arbitrage"
 
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -66,10 +67,15 @@ type card struct {
 // pendingConfirm is a staged action waiting on confirmation. Only an
 // explicit y runs onYes; anything else, including enter, cancels — the safe
 // reading of a stray keystroke is "no". Removals were the first users; any
-// destructive or expensive action stages the same way.
+// destructive or expensive action stages the same way. onNo (optional) runs
+// on every non-yes resolution including ctrl+c — it exists for the confirm
+// bridge, where a blocked worker must hear "no" or hang forever. help is
+// the help-line wording; empty gets a generic confirm line.
 type pendingConfirm struct {
 	prompt string
+	help   string
 	onYes  func(*Model) tea.Cmd
+	onNo   func(*Model)
 }
 
 // Model is the browser's state. Exported so tests can drive Update directly,
@@ -125,6 +131,10 @@ type Model struct {
 	// prompt is an inline one-line input when non-nil; see prompt.go.
 	prompt *prompt
 
+	// watchPick marks the pick-a-card-to-watch flow: the next enter on a
+	// card runs the watch prompt instead of opening its detail.
+	watchPick bool
+
 	// commands is the registry, built once; palette is the open drawer over
 	// it, nil when closed. See command.go and palette.go.
 	commands []command
@@ -137,6 +147,9 @@ type Model struct {
 	opCatalogUpdate  OpFunc
 	opBackfill       OpFunc
 	opWatchAdd       WatchAddFunc
+	opDeckAdd        DeckAddFunc
+	opImport         ImportFunc
+	opAddURL         AddURLFunc
 	op               *opState
 	opGen            int
 
@@ -180,9 +193,31 @@ type Model struct {
 	// than re-read per frame, so scrolling the list behind it costs nothing.
 	detail *detail
 
-	// wantAdd is set when the user asked for the add cascade, so Run can tell
-	// its caller to hand the terminal over and come back.
-	wantAdd bool
+	// text is the open scrollable text takeover (report, import outcome),
+	// or nil. See textview.go.
+	text *textView
+
+	// reportFn produces the valuation report as renderable lines; injected
+	// (nil = unavailable) so browse stays free of the action layer.
+	reportFn ReportFunc
+
+	// exportFn writes holdings to disk; injected for the same reason.
+	exportFn ExportFunc
+
+	// The confirm bridge (opconfirm.go): confirmCh is where op goroutines
+	// ask their questions; deferredAsk parks the one request that can
+	// arrive while a user-staged confirm is already up.
+	confirmCh   <-chan ConfirmRequest
+	deferredAsk *ConfirmRequest
+
+	// The embedded add cascade: newAddChild is the injected constructor
+	// (nil = capability absent), addChild the live takeover or nil, and
+	// addSummary the session's accumulated receipt across every cascade
+	// invocation, printed to scrollback when the browser exits so the
+	// record of unattended writes outlives the alt screen.
+	newAddChild func() (tui.Child, error)
+	addChild    *tui.Child
+	addSummary  tui.Summary
 
 	status    string
 	statusErr bool
@@ -379,7 +414,7 @@ func (m *Model) refreshEmptyNote() {
 	}
 	switch {
 	case enriched == 0:
-		m.emptyNote = "no card details stored yet — run hoard update-prices to filter by rarity, type or colour"
+		m.emptyNote = "no card details stored yet — press : and run Update prices to filter by rarity, type or colour"
 	case enriched < total:
 		m.emptyNote = fmt.Sprintf("no matches · %d of %d cards have details; update-prices fills the rest",
 			enriched, total)
@@ -470,9 +505,9 @@ func (m *Model) clampCursor(p pane) {
 	m.cursor[p] = min(max(m.cursor[p], 0), n-1)
 }
 
-// Init satisfies tea.Model. Everything is loaded before the first frame, so
-// there is nothing to kick off.
-func (m Model) Init() tea.Cmd { return nil }
+// Init arms the confirm-bridge pump (nil without WithConfirm). Everything
+// else is loaded before the first frame.
+func (m Model) Init() tea.Cmd { return awaitConfirm(m.ctx, m.confirmCh) }
 
 // Update handles keys and resizes.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -481,6 +516,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.scrollIntoView()
+		if m.addChild != nil {
+			child, _ := m.addChild.Update(msg)
+			m.addChild = &child
+		}
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -489,16 +528,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opProgressMsg:
 		return m.onOpProgress(msg)
 	case opDoneMsg:
+		// Handled by the browser even while the cascade covers the panes —
+		// this is what lets an op finish behind an add.
 		return m.onOpDone(msg)
+	case opConfirmMsg:
+		return m.onOpConfirm(msg)
 	case spinner.TickMsg:
-		// Only animate while something is actually in flight, or the program
-		// wakes up forever after the fetch that needed it has finished.
-		if !m.arbLoading && m.op == nil {
-			return m, nil
+		// Delivered to both models: bubbles tags ticks with the owning
+		// spinner's ID and each Update rejects foreign ones, so the two
+		// re-arm chains stay singular. Browse's side only animates while
+		// something is in flight, or the program wakes forever.
+		var cmds []tea.Cmd
+		if m.arbLoading || m.op != nil {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			cmds = append(cmds, cmd)
 		}
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		if m.addChild != nil {
+			child, cmd := m.addChild.Update(msg)
+			m.addChild = &child
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+	}
+	// Everything unnamed belongs to the cascade while it is up: its message
+	// types are unexported, so this default forward is the only routing
+	// possible — and the right one. After it closes, stragglers die here.
+	if m.addChild != nil {
+		return m.forwardToChild(msg)
 	}
 	return m, nil
 }
@@ -507,6 +564,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode() {
 	case modeConfirm:
 		return m.handleConfirmKey(msg)
+	case modeAddChild:
+		return m.handleAddChildKey(msg)
 	case modePrompt:
 		return m.handlePromptKey(msg)
 	case modePalette:
@@ -515,6 +574,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	case modeDetail:
 		return m.handleDetailKey(msg)
+	case modeText:
+		return m.handleTextKey(msg)
 	}
 	return m.handleBrowseKey(msg)
 }
@@ -522,14 +583,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleDetailKey drives the card overlay: close or quit, nothing else.
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
 	case "esc", "enter", "backspace":
 		m.detail = nil
 	case ":", "ctrl+p":
-		// The palette is reachable from the overlay; it closes the overlay
-		// for now — context commands (P5's subjectCard) will keep it open.
-		m.detail = nil
+		// The palette opens over the overlay: running a command must not
+		// cost the reader their place, and context commands (watch, qty)
+		// take the detailed card as their subject.
 		m.openPalette()
 	}
 	return m, nil
@@ -544,13 +605,17 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg.String() {
-	case "ctrl+c", "q":
+	// One quit chord for the whole experience: ctrl+c. q never quits — it
+	// reads as "quit" in one view and as a typo in another, and the cost of
+	// the mistake is the whole session.
+	case "ctrl+c":
 		if m.op != nil {
 			// Quitting would strand the operation's goroutine writing into
 			// a dead program; ctrl+c on the confirm itself still hard-quits.
 			title := m.op.title
 			m.confirm = &pendingConfirm{
 				prompt: title + " is still running — quit anyway?",
+				help:   "y quit · any other key stays",
 				onYes: func(m *Model) tea.Cmd {
 					m.cancelOp()
 					return tea.Quit
@@ -574,6 +639,10 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		if m.focus == paneCards {
+			if m.watchPick {
+				m.finishWatchPick()
+				return m, nil
+			}
 			m.openDetail()
 		} else {
 			// Enter on a container is "show me this one", which means moving to
@@ -588,6 +657,11 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "esc":
+		if m.watchPick {
+			m.watchPick = false
+			m.status, m.statusErr = "cancelled", false
+			return m, nil
+		}
 		if m.arbLoading {
 			m.cancelArbitrage()
 			m.arbLoading = false
@@ -599,9 +673,20 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "filter cleared"
 			return m, nil
 		}
-		// Last in the chain, so the everyday esc reflexes above can never
-		// eat a minutes-long operation by accident.
-		m.cancelOp()
+		if m.op != nil {
+			// Late in the chain, so the everyday esc reflexes above can
+			// never eat a minutes-long operation by accident.
+			m.cancelOp()
+			return m, nil
+		}
+		// Nothing left to back out of: esc at the top frame asks about
+		// leaving, so backing "up" one frame too many never dumps the
+		// session without warning.
+		m.confirm = &pendingConfirm{
+			prompt: "quit hoard?",
+			help:   "y quit · any other key stays",
+			onYes:  func(*Model) tea.Cmd { return tea.Quit },
+		}
 		return m, nil
 
 	case "tab":
@@ -665,6 +750,7 @@ func (m *Model) askRemoval() {
 			return
 		}
 		m.confirm = &pendingConfirm{
+			help: "y remove · any other key cancels",
 			prompt: fmt.Sprintf("remove deck %q and its %s cards?",
 				sel.Name, ui.Count(sel.Copies)),
 			onYes: func(m *Model) tea.Cmd { m.removeDeck(); return nil },
@@ -693,6 +779,7 @@ func (m *Model) askRemoval() {
 	}
 	m.confirm = &pendingConfirm{
 		prompt: fmt.Sprintf("remove %s from the %s?", c.Name, strings.ToLower(store.LooseName)),
+		help:   "y remove · any other key cancels",
 		onYes:  func(m *Model) tea.Cmd { m.removeCard(); return nil },
 	}
 }
@@ -701,16 +788,34 @@ func (m *Model) askRemoval() {
 // only-y-proceeds contract.
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
+		// Hard exit, but nobody gets left hanging: a bridge worker blocked
+		// on this question hears "no", and a running op is cancelled so it
+		// unwinds before the store closes underneath it.
+		if m.confirm.onNo != nil {
+			m.confirm.onNo(&m)
+		}
+		m.cancelOp()
 		return m, tea.Quit
 	}
 	c := m.confirm
 	m.confirm = nil
 
+	var cmd tea.Cmd
 	if msg.String() != "y" {
+		if c.onNo != nil {
+			c.onNo(&m)
+		}
 		m.status, m.statusErr = "cancelled", false
-		return m, nil
+	} else {
+		cmd = c.onYes(&m)
 	}
-	return m, c.onYes(&m)
+	// A question the bridge parked while this confirm was up comes next.
+	if m.deferredAsk != nil {
+		req := *m.deferredAsk
+		m.deferredAsk = nil
+		m.stageConfirmRequest(req)
+	}
+	return m, cmd
 }
 
 // handleFilterKey edits the query while the bar is open.
@@ -731,6 +836,11 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = false
 		if m.filter.empty() {
 			m.filterText = ""
+		}
+		// Picking a watch target: enter on the narrowed list is the pick
+		// itself, not just closing the bar — filter, enter, done.
+		if m.watchPick && m.focus == paneCards {
+			m.finishWatchPick()
 		}
 		return m, nil
 	case tea.KeyBackspace:

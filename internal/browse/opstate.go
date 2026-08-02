@@ -48,6 +48,52 @@ type WatchAddFunc func(ctx context.Context, p progress.Fn, name, op string, thre
 // WithWatchAddByName supplies name-based watch creation for the palette.
 func WithWatchAddByName(f WatchAddFunc) Option { return func(m *Model) { m.opWatchAdd = f } }
 
+// DeckAddFunc imports a deck from a pasted URL: the network acquisition and
+// the resolve both belong inside the op, not the prompt commit.
+type DeckAddFunc func(ctx context.Context, p progress.Fn, url string) (OpReport, error)
+
+// WithDeckAddByURL supplies URL-based deck import for the palette.
+func WithDeckAddByURL(f DeckAddFunc) Option { return func(m *Model) { m.opDeckAdd = f } }
+
+// ImportFunc imports a collection file: reading the file and resolving its
+// rows both happen inside the op, off the UI thread. again acknowledges the
+// ledger's already-imported refusal.
+type ImportFunc func(ctx context.Context, p progress.Fn, path string, again bool) (OpReport, error)
+
+// WithImportFile supplies file-based collection import for the palette.
+func WithImportFile(f ImportFunc) Option { return func(m *Model) { m.opImport = f } }
+
+// AddURLFunc adds one card by its Scryfall link (qty 1, finish read from
+// the URL's printing, default binder) — the CLI's `add <url>` reachable
+// without leaving the browser.
+type AddURLFunc func(ctx context.Context, p progress.Fn, url string) (summary string, err error)
+
+// WithAddByURL supplies link-based single-card adding for the palette.
+func WithAddByURL(f AddURLFunc) Option { return func(m *Model) { m.opAddURL = f } }
+
+// OpReport is a completed operation's outcome beyond the status line: an
+// optional multi-line report for the text takeover, and import's
+// already-imported refusal. It is the shape main's closures fill in;
+// opOutcome is its browse-internal sibling that can also carry a staged
+// follow-up confirm.
+type OpReport struct {
+	Summary string
+	Report  []string
+	// AlreadyImported carries the ledger refusal ("imported on DATE, N
+	// cards"); the browser stages a confirm that re-runs with again=true.
+	AlreadyImported string
+}
+
+// opOutcome is what a finished operation hands back. The confirm is built
+// browse-side, in the wrapper closure where the op's arguments are still in
+// scope — it rides the done message as data, never the progress channel
+// (progress events are droppable narration; a confirm is load-bearing).
+type opOutcome struct {
+	summary string
+	report  []string        // non-nil: opens the text takeover after the refresh
+	confirm *pendingConfirm // staged last, e.g. import's run-again question
+}
+
 // opState is one operation in flight.
 type opState struct {
 	title   string
@@ -66,7 +112,7 @@ type opProgressMsg struct {
 }
 type opDoneMsg struct {
 	gen     int
-	summary string
+	outcome opOutcome
 	err     error
 }
 
@@ -74,6 +120,19 @@ type opDoneMsg struct {
 // a queue would be hidden state with no UI to inspect it, and every op here
 // is cheap to re-request.
 func (m *Model) startOp(title string, fn OpFunc) tea.Cmd {
+	if fn == nil {
+		m.status, m.statusErr = title+" is unavailable in this build", true
+		return nil
+	}
+	return m.startOpReport(title, func(ctx context.Context, p progress.Fn) (opOutcome, error) {
+		summary, err := fn(ctx, p)
+		return opOutcome{summary: summary}, err
+	})
+}
+
+// startOpReport is startOp for operations whose outcome is richer than a
+// status line — a report for the text takeover, a follow-up confirm.
+func (m *Model) startOpReport(title string, fn func(context.Context, progress.Fn) (opOutcome, error)) tea.Cmd {
 	if fn == nil {
 		m.status, m.statusErr = title+" is unavailable in this build", true
 		return nil
@@ -92,9 +151,9 @@ func (m *Model) startOp(title string, fn OpFunc) tea.Cmd {
 
 	gen := m.opGen
 	run := func() tea.Msg {
-		summary, err := fn(ctx, mail.Fn())
+		outcome, err := fn(ctx, mail.Fn())
 		mail.Close()
-		return opDoneMsg{gen: gen, summary: summary, err: err}
+		return opDoneMsg{gen: gen, outcome: outcome, err: err}
 	}
 	return tea.Batch(m.spinner.Tick, run, awaitOpProgress(gen, mail))
 }
@@ -143,7 +202,7 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	}
 
 	took := m.now().Sub(op.started).Round(time.Second)
-	m.status, m.statusErr = fmt.Sprintf("%s · in %s", msg.summary, took), false
+	m.status, m.statusErr = fmt.Sprintf("%s · in %s", msg.outcome.summary, took), false
 	m.refresh()
 	if err := m.loadValueSeries(); err != nil {
 		m.setError(err)
@@ -151,6 +210,19 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	if err := m.loadView(); err != nil {
 		m.setError(err)
+		return m, nil
+	}
+	// Outcome extras, in order: the refresh above first (closing the
+	// takeover must reveal current panes), then the report, then any
+	// follow-up confirm on top.
+	if msg.outcome.report != nil {
+		m.openText(op.title, msg.outcome.report)
+	}
+	if msg.outcome.confirm != nil && m.confirm == nil {
+		// The slot is virtually always free here; if a user confirm is
+		// somehow up, dropping the follow-up is safe — the summary already
+		// says what happened, and the action can be re-run.
+		m.confirm = msg.outcome.confirm
 	}
 	return m, nil
 }
@@ -179,14 +251,21 @@ func (m *Model) cancelOp() {
 func (m Model) opStatus() string {
 	ev := m.op.last
 	s := m.spinner.View() + " " + m.op.title
-	if ev.Total > 0 {
+	// One live slot after the title, showing the newest thing worth
+	// showing: each event replaces the last rather than appending, so a
+	// multi-step pipeline reads as a sequence instead of a run-on line
+	// that outgrows the terminal.
+	switch {
+	case ev.Total > 0:
 		frac := float64(ev.Done) / float64(ev.Total)
 		s += " " + ui.ProgressBar(frac, opBarCells) + " " + ui.ProgressCounts(ev)
-	} else if ev.Step != "" {
-		s += " · " + ev.Step
-	}
-	if ev.Note != "" {
+		if ev.Note != "" {
+			s += " · " + ev.Note
+		}
+	case ev.Note != "":
 		s += " · " + ev.Note
+	case ev.Step != "":
+		s += " · " + ev.Step
 	}
 	return s
 }

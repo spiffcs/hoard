@@ -154,6 +154,12 @@ type model struct {
 
 	state state
 
+	// done marks the cascade finished. INVARIANT: every tea.Quit this model
+	// returns must set done first — Child.Update swallows the quit and an
+	// embedding parent reads Done() instead, so a quit without done would
+	// tear down the parent program. Standalone (tui.Run) the flag is inert.
+	done bool
+
 	nameInput textinput.Model
 	qtyInput  textinput.Model
 	list      list.Model
@@ -246,6 +252,13 @@ type model struct {
 	status     string // banner shown on the name prompt (last add / error / cancel)
 	statusErr  bool   // style the banner as an error
 	addedCount int
+	// embedded marks a cascade running as a child inside the browser, where
+	// esc at the name prompt returns there rather than ending a program —
+	// the help wording is the only behavioral difference.
+	embedded bool
+	// addedValue is the running market value of those adds (qty-weighted,
+	// unpriced printings contribute nothing) — the money beside the count.
+	addedValue float64
 	err        error // fatal program error (rare)
 }
 
@@ -418,6 +431,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
+			// Close the camera here rather than leaning on Run's post-exit
+			// safety net: embedded there is no Run, and the helper window
+			// must not outlive the cascade.
+			m.done = true
+			m.closeSession()
 			return m, tea.Quit
 		}
 		return m.handleKey(msg)
@@ -474,6 +492,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.reviewing() {
 				return m.cancelToName()
 			}
+			m.done = true
 			return m, tea.Quit
 		case tea.KeyCtrlO, tea.KeyCtrlR:
 			// Ctrl-R re-opens the camera picker even when this session already
@@ -511,7 +530,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case stateCapture:
 		switch msg.Type {
-		case tea.KeySpace, tea.KeyEnter:
+		case tea.KeySpace:
+			// Space is the shutter, and only space: an undocumented enter
+			// alias here would train a habit that misfires on every other
+			// step, where enter means confirm.
 			return m.requestCapture()
 		case tea.KeyTab:
 			if len(m.review) > 0 {
@@ -1028,6 +1050,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.nudgeDrops = 0
 		m.chime()
 		m.addedCount++
+		m.addedValue += priceValue(card, finish)
 		line := fmt.Sprintf("%s (%s/%s) %s — %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.tally = append(m.tally, line)
@@ -1241,6 +1264,7 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 		return m.failToName(err.Error())
 	}
 	m.addedCount++
+	m.addedValue += float64(res.Qty) * priceValue(res.Card, res.Finish)
 	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s — %s",
 		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, priceForFinish(res.Card, res.Finish))
@@ -1420,6 +1444,16 @@ func (m model) listHeight() int {
 
 // --- view ---
 
+// escHelp names what esc does at the name prompt: standalone it ends the
+// program, embedded it returns to the browser — the same key, two honest
+// labels.
+func (m model) escHelp() string {
+	if m.embedded {
+		return "esc back to browser"
+	}
+	return "esc quit"
+}
+
 // batchHelp appends the skip key to a cascade help line while a review item's
 // cascade is running — the key only exists then, so advertising it elsewhere
 // would lie.
@@ -1480,9 +1514,9 @@ func (m model) View() string {
 				scanHint = "ctrl+o back to camera · ctrl+r change camera · "
 			}
 		}
-		help := scanHint + "enter search · esc quit · ctrl+c quit"
+		help := scanHint + "enter search · " + m.escHelp() + " · ctrl+c quit"
 		if m.addedCount > 0 {
-			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
+			help = m.sessionTally() + " · " + help
 		}
 		b.WriteString(helpStyle.Render(help))
 		return b.String()
@@ -1531,7 +1565,7 @@ func (m model) View() string {
 			help = fmt.Sprintf("tab review (%d) · %s", len(m.review), help)
 		}
 		if m.addedCount > 0 {
-			help = fmt.Sprintf("%d added this session · %s", m.addedCount, help)
+			help = m.sessionTally() + " · " + help
 		}
 		b.WriteString(helpStyle.Render(help + "\n(space and ←/→ also work in the camera window)"))
 		return b.String()
@@ -1609,6 +1643,29 @@ func printMarkers(c scryfall.Card) string {
 
 func priceLabel(c scryfall.Card) string {
 	return "$" + priceStr(c.PriceUSD) + " / $" + priceStr(c.PriceUSDFoil) + "f"
+}
+
+// sessionTally is the "N added this session" help fragment, with the
+// running value beside the count once anything priced has landed.
+func (m model) sessionTally() string {
+	t := fmt.Sprintf("%d added this session", m.addedCount)
+	if m.addedValue > 0 {
+		t += fmt.Sprintf(" ($%.2f)", m.addedValue)
+	}
+	return t
+}
+
+// priceValue is priceForFinish's numeric sibling: what one copy is worth,
+// or 0 when the printing has no price for the finish.
+func priceValue(c scryfall.Card, finish string) float64 {
+	p := c.PriceUSD
+	if scryfall.PricedAsFoil(finish) {
+		p = c.PriceUSDFoil
+	}
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func priceForFinish(c scryfall.Card, finish string) string {

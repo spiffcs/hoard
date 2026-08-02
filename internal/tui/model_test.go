@@ -1873,3 +1873,18 @@ func TestOCRVariantOfRecentDropped(t *testing.T) {
 		t.Errorf("review = %+v, want the mangled re-read dropped", m.review)
 	}
 }
+
+// Enter is not a shutter: only space captures, so the confirm reflex from
+// every other step never fires the camera by accident.
+func TestEnterDoesNotCapture(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	got, sess := openCapture(t, m)
+	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if sess.captures != 0 {
+		t.Fatalf("enter fired the shutter: captures = %d", sess.captures)
+	}
+	if got.state != stateCapture {
+		t.Fatalf("state = %v, want stateCapture unchanged", got.state)
+	}
+}

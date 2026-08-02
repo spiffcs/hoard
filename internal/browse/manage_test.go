@@ -304,8 +304,8 @@ func TestPopulateMoversComposes(t *testing.T) {
 	// Run the composed op synchronously through the returned command batch:
 	// execute the op function directly via the done message it will send.
 	msg := findOpDone(t, cmd)
-	if msg.summary != "prices updated · backfilled 12" {
-		t.Errorf("summary = %q", msg.summary)
+	if msg.outcome.summary != "prices updated · backfilled 12" {
+		t.Errorf("summary = %q", msg.outcome.summary)
 	}
 	if strings.Join(order, ",") != "prices,backfill" {
 		t.Errorf("pipeline order = %v", order)
@@ -398,5 +398,133 @@ func TestWatchByNameChainedPrompts(t *testing.T) {
 	m = next.(Model)
 	if !strings.Contains(m.status, "watching Sol Ring") {
 		t.Errorf("status = %q", m.status)
+	}
+}
+
+// The watch picker: from the watches view, "Add a watch" jumps to holdings
+// with the filter open; enter on the narrowed list runs the watch prompt
+// for that card; esc abandons the pick.
+func TestWatchPickFlow(t *testing.T) {
+	m := newTestModel(t, testStore())
+	for range 3 {
+		m = key(m, "v") // holdings → movers → unpriced → watches
+	}
+	m, _ = runPaletteCommand(t, m, "watch.pick")
+	if m.view != viewHoldings || !m.filtering || !m.watchPick {
+		t.Fatalf("pick did not open holdings+filter: view=%v filtering=%v pick=%v",
+			m.view, m.filtering, m.watchPick)
+	}
+	// Enter straight from the filter bar picks the card under the cursor.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.watchPick {
+		t.Fatal("enter must consume the pick")
+	}
+	if m.prompt == nil || !strings.Contains(m.prompt.label, "watch") {
+		t.Fatalf("prompt = %+v, want the watch threshold prompt", m.prompt)
+	}
+
+	// Committing the threshold jumps back to the watches view, where the
+	// new entry is visible.
+	for _, r := range "under 5" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.statusErr {
+		t.Fatalf("watch refused: %q", m.status)
+	}
+	if m.view != viewWatches {
+		t.Fatalf("view = %v after the watch landed, want watches", m.view)
+	}
+}
+
+func TestWatchPickEscCancels(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m, _ = runPaletteCommand(t, m, "watch.pick")
+	// First esc clears the filter bar, second cancels the pick.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.watchPick {
+		t.Fatal("esc must cancel the pick")
+	}
+	if m.confirm != nil {
+		t.Fatal("cancelling a pick must not fall through to the quit confirm")
+	}
+}
+
+func TestWatchPickAbandonedByViewSwitch(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m, _ = runPaletteCommand(t, m, "watch.pick")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // close the bar? no: picks…
+	_ = next
+	m2 := newTestModel(t, testStore())
+	m2, _ = runPaletteCommand(t, m2, "watch.pick")
+	m2.filtering = false // bar closed, pick still armed
+	m2 = key(m2, "v")    // leave holdings
+	if m2.watchPick {
+		t.Fatal("switching views must abandon the pick")
+	}
+}
+
+// Editing an existing watch prefills its threshold, and the prompt's help
+// spells out the under/over syntax.
+func TestWatchEditPrefillsThreshold(t *testing.T) {
+	st := testStore()
+	w := store.WatchStatus{Name: "Ragavan"}
+	w.ID, w.ScryfallID, w.Display = 1, "w1", "Ragavan"
+	w.Finish, w.Op, w.Threshold = "nonfoil", "under", 50
+	st.watches = []store.WatchStatus{w}
+	m := newTestModel(t, st)
+	for range 3 {
+		m = key(m, "v") // to watches
+	}
+	m = key(m, "w")
+	if m.prompt == nil {
+		t.Fatal("w did not open the threshold prompt")
+	}
+	if m.prompt.text != "under 50" {
+		t.Fatalf("prefill = %q, want %q", m.prompt.text, "under 50")
+	}
+	if !strings.Contains(m.helpLine(), "under 40 / over 40") {
+		t.Fatalf("help = %q, want the threshold syntax", m.helpLine())
+	}
+}
+
+// F on unpriced runs the price refresh first, then the finish repair — the
+// user pressing F there wants prices, not just a finish audit.
+func TestPopulateUnpricedComposes(t *testing.T) {
+	st := testStore()
+	var order []string
+	m, err := New(st,
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			order = append(order, "prices")
+			return "prices updated", nil
+		}),
+		WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
+			order = append(order, "repair")
+			return "every finish already correct", nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+	m = key(m, "v")
+	m = key(m, "v") // unpriced
+	cmd := (&m).populateView()
+	if cmd == nil || m.op == nil {
+		t.Fatal("F did not start the unpriced pipeline")
+	}
+	msg := findOpDone(t, cmd)
+	if msg.outcome.summary != "prices updated · every finish already correct" {
+		t.Errorf("summary = %q", msg.outcome.summary)
+	}
+	if strings.Join(order, ",") != "prices,repair" {
+		t.Errorf("pipeline order = %v", order)
 	}
 }

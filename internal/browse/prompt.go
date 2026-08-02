@@ -21,6 +21,9 @@ type prompt struct {
 	// err is the live validation failure, shown after the caret; it clears
 	// on the next keystroke.
 	err string
+	// help, when set, replaces the generic prompt help line — for inputs
+	// with their own syntax worth spelling out (watch thresholds).
+	help string
 	// validate, when set, runs on enter; a non-nil error refuses the commit
 	// and shows instead.
 	validate func(string) error

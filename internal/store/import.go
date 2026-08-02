@@ -29,6 +29,24 @@ type ImportReceipt struct {
 	Cards int
 }
 
+// RecordReceipt writes one ledger row outside an import transaction. The
+// price backfill uses it to remember that today's archive has already been
+// applied against the current holdings, so a same-day re-run can skip a
+// 150 MB download; content-hash identity keeps the reuse honest — adding a
+// card changes the hash and forces a real run.
+func (s *Store) RecordReceipt(r ImportReceipt) error {
+	_, err := s.db.Exec(`
+INSERT INTO import_ledger (hash, file, cards, imported_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(hash) DO UPDATE SET file=excluded.file, cards=excluded.cards,
+    imported_at=excluded.imported_at`,
+		r.Hash, r.File, r.Cards, now())
+	if err != nil {
+		return fmt.Errorf("recording receipt: %w", err)
+	}
+	return nil
+}
+
 // ImportedAt reports when a file with this content hash was imported, if ever.
 func (s *Store) ImportedAt(hash string) (when string, cards int, ok bool, err error) {
 	err = s.db.QueryRow(`SELECT imported_at, cards FROM import_ledger WHERE hash=?`, hash).

@@ -3,9 +3,13 @@ package action
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -28,6 +32,24 @@ type BackfillResult struct {
 	// HadHistorySince is the oldest existing observation (RFC 3339), empty
 	// when history was empty before this run.
 	HadHistorySince string
+	// AlreadyToday, when non-empty, is the timestamp of an earlier run today
+	// against the same holdings: the archive only changes daily, so the run
+	// was skipped before the download instead of after it.
+	AlreadyToday string
+}
+
+// backfillKey is the ledger identity of one backfill: the archive's day and
+// the exact holdings it would cover. A re-run the same day with the same
+// cards is provably a no-op; adding a card changes the key and forces a
+// real run.
+func backfillKey(owned []store.OwnedFinish) string {
+	ids := make([]string, 0, len(owned))
+	for _, o := range owned {
+		ids = append(ids, o.ScryfallID)
+	}
+	sort.Strings(ids)
+	day := time.Now().Format("2006-01-02")
+	return ContentHash([]byte("backfill|" + day + "|" + strings.Join(ids, ",")))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was
@@ -50,6 +72,18 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn) (BackfillResult,
 		return res, err
 	}
 	res.HadHistorySince = oldest
+
+	// The 31-second no-op guard: MTGJSON's archive changes once a day, so a
+	// second run today against the same holdings would download and parse
+	// ~150 MB to insert nothing. The ledger remembers the first run.
+	key := backfillKey(owned)
+	if when, _, done, lerr := d.Store.ImportedAt(key); lerr != nil {
+		return res, lerr
+	} else if done {
+		res.Printings = len(owned)
+		res.AlreadyToday = when
+		return res, nil
+	}
 
 	refs := make([]pricing.Ref, len(owned))
 	printings := map[string]bool{}
@@ -79,5 +113,11 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn) (BackfillResult,
 
 	p.Emit(progress.Event{Step: "recording history"})
 	res.Inserted, res.Cards, err = d.Store.BackfillPrices(byCard, oldest)
+	if err != nil {
+		return res, err
+	}
+	err = d.Store.RecordReceipt(store.ImportReceipt{
+		Hash: key, File: "backfill " + time.Now().Format("2006-01-02"), Cards: res.Cards,
+	})
 	return res, err
 }

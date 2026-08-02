@@ -102,7 +102,7 @@ func (m Model) detailLines(d detail, width int) []string {
 	// An un-refreshed card has none of the above. Say why once rather than
 	// leaving the reader to wonder what happened to the card's details.
 	if !c.Enriched {
-		out = append(out, dim("card details not stored yet — run hoard update-prices"))
+		out = append(out, dim("card details not stored yet — press : and run Update prices"))
 	}
 
 	if c.OracleText != nil && *c.OracleText != "" {
@@ -132,7 +132,7 @@ func (m Model) detailLines(d detail, width int) []string {
 
 	out = append(out, "", titleStyle.Render("PRICE"))
 	if len(d.series) == 0 {
-		out = append(out, dim("  no history yet — run hoard backfill-prices for the last 90 days"))
+		out = append(out, dim("  no history yet — press : and run Backfill 90 days of price history"))
 	}
 	for _, finish := range []string{"nonfoil", "foil"} {
 		s := d.series[finish]

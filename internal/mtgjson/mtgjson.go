@@ -12,6 +12,7 @@
 package mtgjson
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -404,10 +405,13 @@ const (
 // streamPrices walks one of the price archives, handing each wanted record to
 // visit.
 //
-// Even today's document is ~50 MB decoded and covers every card in Magic, so
-// records not asked for are skipped without being built. Scan cost is the same
-// whether one card is wanted or every card is, which is why callers need not
-// keep want small.
+// The archive decodes to over a gigabyte covering every card in Magic, and
+// walking it with encoding/json's tokenizer cost ~30 seconds of a 31-second
+// backfill (profiled: disk 0.02s, gunzip 2s, token scan 30s). The wanted
+// keys are searched for directly in the decompressed bytes instead —
+// bytes.Index runs at memory speed — and only their records are decoded.
+// The scan also stops as soon as the last wanted key is found, so on
+// average half the archive is never even decompressed.
 func streamPrices(ctx context.Context, o Options, file string, want map[string]bool, visit func(string, priceRecord)) error {
 	if len(want) == 0 {
 		return nil
@@ -424,29 +428,262 @@ func streamPrices(ctx context.Context, o Options, file string, want map[string]b
 	}
 	defer zr.Close()
 
-	dec := json.NewDecoder(zr)
-	if err := seekToData(dec); err != nil {
-		return err
-	}
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return fmt.Errorf("reading price key: %w", err)
-		}
-		uuid, _ := keyTok.(string)
-		if !want[uuid] {
-			if err := skipValue(dec); err != nil {
-				return err
-			}
-			continue
+	return scanKeyedObjects(zr, want, func(uuid string, raw []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		var rec priceRecord
-		if err := dec.Decode(&rec); err != nil {
+		if err := json.Unmarshal(raw, &rec); err != nil {
 			return fmt.Errorf("decoding prices for %s: %w", uuid, err)
 		}
 		visit(uuid, rec)
+		return nil
+	})
+}
+
+// scanKeyedObjects streams r looking for `"<key>":{...}` for each wanted
+// key, handing the raw object bytes to visit. Keys are matched as
+// quote-key-quote-colon, which only a JSON key position can produce; the
+// wanted keys are UUIDs, which never occur as keys inside a price record
+// (those are vendors, finishes and dates), so a match is the record wanted.
+// Returns once every key is found or the stream ends — absent keys are
+// simply never visited, matching the tokenizer's behavior.
+func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []byte) error) error {
+	// Per-needle searching costs one pass over the stream per wanted key.
+	// A handful of keys beats everything; a whole collection would re-scan
+	// the gigabyte once per card. MTGJSON keys are fixed-length UUIDs, so
+	// past a small count the colon-anchored single pass wins — flat cost
+	// however large the hoard grows.
+	if len(want) > setScanMin {
+		if kl := uniformKeyLen(want); kl > 0 {
+			return scanKeyedObjectsSet(r, want, kl, visit)
+		}
+	}
+	type needle struct {
+		key string
+		pat []byte
+	}
+	needles := make([]needle, 0, len(want))
+	maxPat := 0
+	for k := range want {
+		n := needle{key: k, pat: []byte(`"` + k + `":`)}
+		needles = append(needles, n)
+		maxPat = max(maxPat, len(n.pat))
+	}
+
+	const chunk = 4 << 20
+	buf := make([]byte, 0, chunk*2)
+	tmp := make([]byte, chunk)
+	scanned := 0  // buf[:scanned] has been searched for needle starts
+	pending := -1 // start of a matched needle whose record is still arriving
+	for len(needles) > 0 {
+		n, rerr := r.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+
+		// Search the fresh region, backed up so a needle split across the
+		// read boundary is still seen whole; a pending match re-scans from
+		// its own start so its record is retried as bytes arrive.
+		from := max(scanned-maxPat+1, 0)
+		if pending >= 0 && pending < from {
+			from = pending
+		}
+		pending = -1
+		for i := 0; i < len(needles); {
+			nd := needles[i]
+			at := bytes.Index(buf[from:], nd.pat)
+			if at < 0 {
+				i++
+				continue
+			}
+			start := from + at
+			objStart := start + len(nd.pat)
+			for objStart < len(buf) && (buf[objStart] == ' ' || buf[objStart] == '\n' || buf[objStart] == '\t') {
+				objStart++
+			}
+			end := scanJSONValue(buf, objStart)
+			if end < 0 {
+				// Still arriving: remember the earliest such start so the
+				// trim below keeps it, and let other needles keep looking.
+				if pending < 0 || start < pending {
+					pending = start
+				}
+				i++
+				continue
+			}
+			if err := visit(nd.key, buf[objStart:end]); err != nil {
+				return err
+			}
+			needles[i] = needles[len(needles)-1]
+			needles = needles[:len(needles)-1]
+		}
+		scanned = len(buf)
+
+		// Trim consumed bytes: keep a needle-sized tail for boundary
+		// splits, and everything from a pending match onward.
+		keep := len(buf) - (maxPat - 1)
+		if pending >= 0 && pending < keep {
+			keep = pending
+		}
+		if keep > 0 {
+			buf = append(buf[:0], buf[keep:]...)
+			scanned -= keep
+			if pending >= 0 {
+				pending -= keep
+			}
+		}
+
+		if rerr != nil {
+			if rerr == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("reading prices: %w", rerr)
+		}
 	}
 	return nil
+}
+
+// setScanMin is the wanted-key count above which the single-pass set scan
+// replaces per-needle searching; a variable so tests can force either path.
+var setScanMin = 24
+
+// uniformKeyLen returns the shared length of every wanted key, or 0 when
+// they differ — the set scan anchors on fixed-width keys.
+func uniformKeyLen(want map[string]bool) int {
+	kl := 0
+	for k := range want {
+		if kl == 0 {
+			kl = len(k)
+		} else if len(k) != kl {
+			return 0
+		}
+	}
+	return kl
+}
+
+// scanKeyedObjectsSet is the one-pass form: every `":` in the stream is a
+// key boundary candidate; the fixed-width key just before it is looked up
+// in the set. One pass whatever the collection size, still with the
+// early exit once everything wanted is found.
+func scanKeyedObjectsSet(r io.Reader, want map[string]bool, keyLen int, visit func(string, []byte) error) error {
+	found := make(map[string]bool, len(want))
+	remaining := len(want)
+	// `"key":` spans keyLen+3 bytes; the tail kept across reads must cover a
+	// pattern split anywhere.
+	pat := keyLen + 3
+
+	const chunk = 4 << 20
+	buf := make([]byte, 0, chunk*2)
+	tmp := make([]byte, chunk)
+	scanned := 0
+	pending := -1
+	for remaining > 0 {
+		n, rerr := r.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+
+		from := max(scanned-pat+1, 0)
+		if pending >= 0 && pending < from {
+			from = pending
+		}
+		pending = -1
+		for i := from; i < len(buf); {
+			rel := bytes.IndexByte(buf[i:], ':')
+			if rel < 0 {
+				break
+			}
+			j := i + rel
+			i = j + 1
+			// A wanted key here reads `"<key>":` ending at j.
+			ks := j - keyLen - 1
+			if ks < 1 || buf[j-1] != '"' || buf[ks-1] != '"' {
+				continue
+			}
+			key := buf[ks : j-1]
+			if !want[string(key)] || found[string(key)] {
+				continue
+			}
+			objStart := j + 1
+			for objStart < len(buf) && (buf[objStart] == ' ' || buf[objStart] == '\n' || buf[objStart] == '\t') {
+				objStart++
+			}
+			end := scanJSONValue(buf, objStart)
+			if end < 0 {
+				if pending < 0 {
+					pending = ks - 1
+				}
+				break
+			}
+			if err := visit(string(key), buf[objStart:end]); err != nil {
+				return err
+			}
+			found[string(key)] = true
+			remaining--
+			if remaining == 0 {
+				return nil
+			}
+		}
+		scanned = len(buf)
+
+		keep := len(buf) - (pat - 1)
+		if pending >= 0 && pending < keep {
+			keep = pending
+		}
+		if keep > 0 {
+			buf = append(buf[:0], buf[keep:]...)
+			scanned -= keep
+			if pending >= 0 {
+				pending -= keep
+			}
+		}
+
+		if rerr != nil {
+			if rerr == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("reading prices: %w", rerr)
+		}
+	}
+	return nil
+}
+
+// scanJSONValue returns the index just past the JSON value starting at
+// buf[i], or -1 when the value runs past the buffer. String-aware, so a
+// brace inside a quoted value cannot end the object early.
+func scanJSONValue(buf []byte, i int) int {
+	if i >= len(buf) {
+		return -1
+	}
+	if buf[i] != '{' && buf[i] != '[' {
+		// A scalar record would be malformed for this file; refuse rather
+		// than guess where it ends.
+		return -1
+	}
+	depth, inStr, esc := 0, false, false
+	for j := i; j < len(buf); j++ {
+		c := buf[j]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return j + 1
+			}
+		}
+	}
+	return -1
 }
 
 // TodayPrices returns USD paper retail prices for the requested UUIDs.
@@ -521,57 +758,6 @@ func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[str
 		return nil, err
 	}
 	return out, nil
-}
-
-// seekToData advances the decoder to the inside of the top-level "data" object,
-// leaving it positioned at the first UUID key.
-func seekToData(dec *json.Decoder) error {
-	if _, err := dec.Token(); err != nil { // opening {
-		return fmt.Errorf("reading prices: %w", err)
-	}
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return fmt.Errorf("reading prices: %w", err)
-		}
-		if key, _ := keyTok.(string); key == "data" {
-			if _, err := dec.Token(); err != nil { // opening { of data
-				return fmt.Errorf("reading prices data: %w", err)
-			}
-			return nil
-		}
-		if err := skipValue(dec); err != nil { // e.g. "meta"
-			return err
-		}
-	}
-	return fmt.Errorf("mtgjson price file has no data object")
-}
-
-// skipValue consumes one JSON value, descending through nested objects and
-// arrays, without allocating it.
-func skipValue(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	if _, ok := tok.(json.Delim); !ok {
-		return nil // a scalar; already consumed
-	}
-	depth := 1
-	for depth > 0 {
-		tok, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		if d, ok := tok.(json.Delim); ok {
-			if d == '{' || d == '[' {
-				depth++
-			} else {
-				depth--
-			}
-		}
-	}
-	return nil
 }
 
 // bestUSD resolves each finish independently, walking providerOrder until a

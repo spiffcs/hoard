@@ -17,8 +17,9 @@ stable and looks the part.
 | 1 | Binders + interop | ✅ complete | [sprint-binders-interop.md](sprint-binders-interop.md) |
 | 2 | Portfolio + scriptability | ✅ complete (A–E; F superseded by parity) | [sprint-portfolio-scriptability.md](sprint-portfolio-scriptability.md) |
 | 3 | Parity — action layer, progress, palette | ✅ complete (2026-07-31) | [sprint-parity.md](sprint-parity.md) |
-| 4 | UI beautification — WUBRG identity | 📋 planned, not started | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
-| 5 | Distribution | 💭 backlog (unplanned) | — |
+| 4 | TUI completion — seamless add + parity ledger | ✅ implemented 2026-07-31 (live smoke of the embedded cascade pending) | [sprint-tui-completion.md](sprint-tui-completion.md) |
+| 5 | UI beautification — WUBRG identity | 📋 planned, not started | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
+| 6 | Distribution | 💭 backlog (unplanned) | — |
 
 ## One-line summaries
 
@@ -36,6 +37,10 @@ stable and looks the part.
   `:` command palette, in-TUI update-prices/repair/catalog with live
   progress, a watches view + fired-watch banner, binder management, and
   movers window cycling.
+- **TUI completion** (in progress): the add cascade embeds into browse as
+  a child model (no more quit-and-return flicker), and the parity ledger
+  closes — deck add by URL, a real confirm modal bridging `Deps.Confirm`,
+  import/export prompts, and the valuation report in a text overlay.
 - **UI beautification** (planned): MTG color identity (WUBRG) as the
   design core; runs after parity so it polishes a complete surface.
 - **Distribution** (backlog): goreleaser + Homebrew tap + version in

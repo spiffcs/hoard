@@ -16,17 +16,20 @@ package browse
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/store"
 )
 
 type command struct {
 	id string
-	// title is what the palette shows and fuzzy-matches; a trailing "…"
-	// marks a command that will ask for more (a prompt or a confirm).
+	// title is what the palette shows and fuzzy-matches. Plain verbs, no
+	// trailing ellipsis: nearly every command here asks a question or opens
+	// a prompt, so the marker distinguished nothing and read as clutter.
 	title string
 	// aliases are extra fuzzy fodder, never displayed.
 	aliases string
@@ -53,24 +56,13 @@ func commands() []command {
 		{
 			id: "add", title: "Add cards", aliases: "scan camera new card",
 			key:  "a",
-			rank: onView(viewHoldings, 1),
-			run: func(m *Model) tea.Cmd {
-				if m.op != nil {
-					// The add cascade hands the terminal to another program;
-					// quitting now would strand the op's goroutine writing
-					// into a dead one.
-					m.status = "wait for " + m.op.title + " to finish (esc cancels it)"
-					m.statusErr = true
-					return nil
-				}
-				// Quit with the flag set; Run's caller runs the cascade and
-				// re-enters.
-				m.wantAdd = true
-				return tea.Quit
-			},
+			rank: onView(viewHoldings, 3),
+			// The cascade runs as an embedded child takeover, so ops keep
+			// running behind it and nothing quits.
+			run: func(m *Model) tea.Cmd { return m.openAddCascade() },
 		},
 		{
-			id: "remove", title: "Remove selected…", aliases: "delete card deck",
+			id: "remove", title: "Remove selected", aliases: "delete card deck",
 			key: "d",
 			run: func(m *Model) tea.Cmd { m.askRemoval(); return nil },
 		},
@@ -170,6 +162,65 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { return m.startOp("updating the catalog", m.opCatalogUpdate) },
 		},
 		{
+			id: "deck.add-url", title: "Add a deck by URL", aliases: "import archidekt moxfield deckstats link",
+			where: func(m *Model) bool { return m.opDeckAdd != nil },
+			rank:  onView(viewHoldings, 2),
+			run:   func(m *Model) tea.Cmd { m.promptDeckURL(); return nil },
+		},
+		{
+			id: "add.url", title: "Add a card by Scryfall URL", aliases: "link paste scryfall single",
+			where: func(m *Model) bool { return m.opAddURL != nil },
+			run:   func(m *Model) tea.Cmd { m.promptCardURL(); return nil },
+		},
+		{
+			id: "export.container", title: "Export this container", aliases: "csv save backup moxfield archidekt",
+			where: func(m *Model) bool {
+				return m.exportFn != nil && m.view == viewHoldings && m.selectedContainer() != nil
+			},
+			rank: onView(viewHoldings, 1),
+			run: func(m *Model) tea.Cmd {
+				sel := m.selectedContainer()
+				if sel == nil {
+					return nil
+				}
+				// Refs by id, not name: a name is a fragment match and can
+				// be ambiguous; the id under the cursor never is.
+				ref := strconv.FormatInt(sel.ID, 10)
+				binderRef, deckRef := "", ""
+				if sel.Kind == store.KindDeck {
+					deckRef = ref
+				} else {
+					binderRef = ref
+				}
+				m.promptExport(binderRef, deckRef, slugify(sel.Name))
+				return nil
+			},
+		},
+		{
+			id: "export.all", title: "Export everything", aliases: "csv save backup all holdings",
+			where: func(m *Model) bool { return m.exportFn != nil },
+			run:   func(m *Model) tea.Cmd { m.promptExport("", "", "hoard-export"); return nil },
+		},
+		{
+			id: "import.file", title: "Import a collection CSV", aliases: "manabox moxfield delver csv file",
+			where: func(m *Model) bool { return m.opImport != nil },
+			rank:  onView(viewHoldings, 2),
+			run:   func(m *Model) tea.Cmd { m.promptImportPath(); return nil },
+		},
+		{
+			id: "report.view", title: "Report: valuation", aliases: "insurance worth top holdings dated",
+			where: func(m *Model) bool { return m.reportFn != nil },
+			run: func(m *Model) tea.Cmd {
+				lines, err := m.reportFn(10, m.width)
+				if err != nil {
+					m.setError(err)
+					return nil
+				}
+				m.openText("valuation report", lines)
+				return nil
+			},
+		},
+		{
 			id: "op.cancel", title: "Cancel the running operation", aliases: "stop abort",
 			where: func(m *Model) bool { return m.op != nil },
 			rank:  func(*Model) int { return 10 },
@@ -183,12 +234,19 @@ func commands() []command {
 		},
 		{
 			id: "view.populate", title: "Fetch this view's data", aliases: "populate refresh load",
-			key:  "F",
-			rank: func(*Model) int { return 4 },
-			run:  func(m *Model) tea.Cmd { return m.populateView() },
+			key: "F",
+			// Leads the analytical views, where F is the verb that makes an
+			// empty pane useful; on holdings the collection verbs matter more.
+			rank: func(m *Model) int {
+				if m.view == viewHoldings {
+					return 1
+				}
+				return 4
+			},
+			run: func(m *Model) tea.Cmd { return m.populateView() },
 		},
 		{
-			id: "watch.add", title: "Watch this card…", aliases: "alert threshold price under over",
+			id: "watch.add", title: "Watch this card", aliases: "alert threshold price under over",
 			key:   "w",
 			where: func(m *Model) bool { return m.subjectCard() != nil },
 			rank: func(m *Model) int {
@@ -200,18 +258,26 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.promptWatch(); return nil },
 		},
 		{
-			id: "watch.add-by-name", title: "Add a watch by name…", aliases: "alert threshold new card",
+			id: "watch.pick", title: "Add a watch", aliases: "alert threshold new pick choose",
+			rank: onView(viewWatches, 5),
+			run:  func(m *Model) tea.Cmd { return m.startWatchPick() },
+		},
+		{
+			// The by-name path stays for cards you don't own yet — the
+			// picker above only offers what is already held.
+			id: "watch.add-by-name", title: "Add a watch by name (any card)", aliases: "alert threshold new unowned",
 			where: func(m *Model) bool { return m.opWatchAdd != nil },
-			rank:  onView(viewWatches, 5),
+			rank:  onView(viewWatches, 2),
 			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
-			id: "binder.new", title: "New binder…", aliases: "create folder",
-			key: "n",
-			run: func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
+			id: "binder.new", title: "New binder", aliases: "create folder",
+			key:  "n",
+			rank: onView(viewHoldings, 2),
+			run:  func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
 		},
 		{
-			id: "binder.rename", title: "Rename binder…", aliases: "name folder",
+			id: "binder.rename", title: "Rename binder", aliases: "name folder",
 			key: "R",
 			run: func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
 		},
@@ -272,7 +338,7 @@ func (m *Model) populateView() tea.Cmd {
 	case viewMovers:
 		return m.populateMovers()
 	case viewUnpriced:
-		return m.startOp("repairing finishes", m.opRepairFinishes)
+		return m.populateUnpriced()
 	case viewWatches:
 		if err := m.loadView(); err != nil {
 			m.setError(err)
@@ -313,6 +379,35 @@ func (m *Model) populateMovers() tea.Cmd {
 	})
 }
 
+// populateUnpriced is the unpriced pipeline: refresh prices first — most
+// $0 rows are price gaps — then repair finishes, the other cause. Composed
+// like the movers pipeline so one F attacks both.
+func (m *Model) populateUnpriced() tea.Cmd {
+	up, rf := m.opUpdatePrices, m.opRepairFinishes
+	if up == nil && rf == nil {
+		m.status, m.statusErr = "price operations are unavailable in this build", true
+		return nil
+	}
+	return m.startOp("populating prices", func(ctx context.Context, p progress.Fn) (string, error) {
+		var parts []string
+		if up != nil {
+			s, err := up(ctx, p)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, s)
+		}
+		if rf != nil {
+			s, err := rf(ctx, p)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, " · "), nil
+	})
+}
+
 // jumpMovers goes straight to the movers view at one lookback.
 func (m *Model) jumpMovers(days int) tea.Cmd {
 	for i, d := range moversWindowDays {
@@ -344,6 +439,10 @@ func (m *Model) runCommand(key string) (tea.Cmd, bool) {
 // always had, callable with a destination so the palette can jump straight
 // there.
 func (m *Model) showView(v viewMode) tea.Cmd {
+	if v != viewHoldings {
+		// Leaving holdings abandons a watch pick in progress.
+		m.watchPick = false
+	}
 	// Leaving arbitrage abandons any fetch still running: the answer is no
 	// longer wanted, and a download that outlives the view is a surprise.
 	m.cancelArbitrage()

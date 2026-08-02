@@ -10,21 +10,26 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/browse"
+	"github.com/spiffcs/hoard/internal/decksource"
+	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -369,94 +374,240 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	// agree about what is too cheap to be worth a shipping label.
 	const arbitrageMin = 1.0
 
-	// The catalog handle outlives each browse pass; the injected operations
-	// share it. Deps.Confirm stays nil inside the TUI — a bare download
-	// question cannot pop over an alt screen yet, and nil declines, which
-	// falls through to the API exactly as a piped run does.
+	// One catalog handle for the whole session; the injected operations and
+	// the embedded add cascade share it.
 	cat := openCatalog()
 	if cat != nil {
 		defer cat.Close()
 	}
+	// Deps.Confirm bridges an op goroutine's blocking question (the catalog
+	// download ask inside update-prices) to the browser's confirm surface.
+	// Cap-1 channels on both legs: the ask never blocks on a pump re-arm
+	// race, and the answer never blocks on a worker that gave up. A dead
+	// context answers "no" — the same reading a piped CLI run gives.
+	confirmCh := make(chan browse.ConfirmRequest, 1)
 	deps := action.Deps{
 		Store: st, Catalog: cat, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver,
+		Confirm: func(q string) bool {
+			reply := make(chan bool, 1)
+			select {
+			case confirmCh <- browse.ConfirmRequest{Question: q, Reply: reply}:
+			case <-ctx.Done():
+				return false
+			}
+			select {
+			case a := <-reply:
+				return a
+			case <-ctx.Done():
+				return false
+			}
+		},
 	}
 
-	for {
-		again, err := browse.Run(ctx, st,
-			browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
-				return action.Arbitrage(ctx, deps, p, arbitrageMin)
-			}),
-			browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
-				res, err := action.UpdatePrices(ctx, deps, p)
-				if err != nil {
-					return "", err
+	sum, err := browse.Run(ctx, st,
+		browse.WithConfirm(confirmCh),
+		browse.WithDeckAddByURL(func(ctx context.Context, p progress.Fn, rawURL string) (browse.OpReport, error) {
+			deck, ferr := decksource.Fetch(ctx, rawURL)
+			if ferr != nil {
+				return browse.OpReport{}, ferr
+			}
+			res, aerr := action.DeckAdd(ctx, deps, p, deck)
+			if aerr != nil && !errors.Is(aerr, errPartial) {
+				return browse.OpReport{}, aerr
+			}
+			r := browse.OpReport{Summary: fmt.Sprintf("imported deck %q (%s) · %d cards resolved",
+				res.Name, res.Source, res.Resolved)}
+			if res.Refinished > 0 {
+				r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
+			}
+			if len(res.Unresolved) > 0 {
+				r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
+				r.Report = append([]string{
+					fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "",
+				}, res.Unresolved...)
+			}
+			return r, nil
+		}),
+		browse.WithImportFile(func(ctx context.Context, p progress.Fn, path string, again bool) (browse.OpReport, error) {
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return browse.OpReport{}, rerr
+			}
+			res, ierr := action.ImportCollection(ctx, deps, p, action.ImportOptions{
+				Data: data, Display: path, Format: "auto", Again: again,
+			})
+			// The ledger refusal is a question, not a failure: the browser
+			// stages "import it again?" where the CLI prints --again advice.
+			var already *action.AlreadyImportedError
+			if errors.As(ierr, &already) {
+				return browse.OpReport{AlreadyImported: fmt.Sprintf(
+					"already imported on %s (%d cards)", already.When, already.Cards)}, nil
+			}
+			// A partial import still did its work; the outcome reports the
+			// skips rather than erroring away a committed result.
+			if ierr != nil && !errors.Is(ierr, errPartial) {
+				return browse.OpReport{}, ierr
+			}
+			r := browse.OpReport{Summary: fmt.Sprintf("imported %d cards (%s format) · %d rows resolved",
+				res.Copies, res.Format, res.Resolved)}
+			var lines []string
+			for _, name := range sortedKeys(res.PerBinder) {
+				note := ""
+				if slices.Contains(res.Created, name) {
+					note = " (new binder)"
 				}
-				if res.Total == 0 {
-					return "no cards yet; nothing to update", nil
+				lines = append(lines, fmt.Sprintf("%d into %s%s", res.PerBinder[name], name, note))
+			}
+			if res.SkippedDeckRows > 0 {
+				lines = append(lines, fmt.Sprintf(
+					"skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards",
+					res.SkippedDeckRows))
+			}
+			if res.Refinished > 0 {
+				lines = append(lines, fmt.Sprintf(
+					"%d recorded as foil: the file said otherwise but the printing has no non-foil",
+					res.Refinished))
+			}
+			for _, field := range sortedKeys(res.Dropped) {
+				lines = append(lines, fmt.Sprintf("dropped %s on %d rows: hoard does not track it",
+					field, res.Dropped[field]))
+			}
+			if len(res.Unresolved) > 0 {
+				r.Summary += fmt.Sprintf(" · %d skipped", len(res.Unresolved))
+				lines = append(lines, fmt.Sprintf("%d cards could not be resolved and were skipped:",
+					len(res.Unresolved)))
+				for _, u := range res.Unresolved {
+					lines = append(lines, "  - "+u)
 				}
-				s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
-				if res.Gaps.Remaining > 0 {
-					s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
-				}
-				return s, nil
-			}),
-			browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
-				res, err := action.RepairFinishes(ctx, deps, p)
-				if err != nil {
-					return "", err
-				}
-				switch {
-				case res.Total == 0:
-					return "no cards yet; nothing to repair", nil
-				case len(res.Fixed) == 0 && len(res.Ambiguous) == 0:
-					return "every finish already correct", nil
-				case len(res.Ambiguous) > 0:
-					return fmt.Sprintf("finishes repaired · %d fixed · %d ambiguous (see hoard repair-finishes)",
-						len(res.Fixed), len(res.Ambiguous)), nil
-				}
-				return fmt.Sprintf("finishes repaired · %d fixed", len(res.Fixed)), nil
-			}),
-			browse.WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
-				res, err := action.CatalogUpdate(ctx, deps, p)
-				if err != nil {
-					return "", err
-				}
-				return fmt.Sprintf("catalog ready · %s cards", ui.Count(res.Cards)), nil
-			}),
-			browse.WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
-				res, err := action.BackfillPrices(ctx, deps, p)
-				if err != nil {
-					return "", err
-				}
-				switch {
-				case res.Printings == 0:
-					return "nothing owned yet", nil
-				case res.Inserted == 0:
-					return "nothing to backfill · history already recorded", nil
-				}
-				return fmt.Sprintf("backfilled %s observations across %s printings",
-					ui.Count(res.Inserted), ui.Count(res.Cards)), nil
-			}),
-			browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
-				name, op string, threshold float64) (string, error) {
-				res, err := action.WatchAdd(ctx, deps, p,
-					action.WatchAddOptions{Name: name, Op: op, Threshold: threshold})
-				if err != nil {
-					return "", err
-				}
-				return fmt.Sprintf("watching %s (%s) %s %s",
-					res.Card.Name, res.Finish, op, ui.Money(threshold)), nil
-			}))
-		if err != nil || !again {
-			return err
-		}
-		// The cascade persists each confirmed card itself, so there is nothing
-		// to hand back; the browser re-reads on the next pass.
-		if err := addByName(ctx, st, ""); err != nil {
-			// A failed add is not a reason to lose the browser.
-			fmt.Fprintln(os.Stderr, "add:", err)
-		}
-	}
+			}
+			r.Report = lines
+			return r, nil
+		}),
+		browse.WithAddByURL(func(ctx context.Context, p progress.Fn, cardURL string) (string, error) {
+			res, aerr := action.AddByURL(ctx, deps, p,
+				action.AddByURLOptions{URL: cardURL, Qty: 1})
+			if aerr != nil {
+				return "", aerr
+			}
+			return fmt.Sprintf("added %s (%s/%s) %s into %s",
+				res.Card.Name, strings.ToUpper(res.Card.Set), res.Card.CollectorNumber,
+				res.Finish, res.Binder), nil
+		}),
+		browse.WithExport(func(binderRef, deckRef, format, path string) (string, error) {
+			write := map[string]func(io.Writer, []export.Row) error{
+				"csv":       export.WriteCanonical,
+				"json":      writeHoldingsJSON,
+				"moxfield":  export.WriteMoxfield,
+				"archidekt": export.WriteArchidekt,
+			}[format]
+			if write == nil {
+				return "", fmt.Errorf("unknown format %q", format)
+			}
+			rows, rerr := action.Deps{Store: st}.ExportRows(binderRef, deckRef)
+			if rerr != nil {
+				return "", rerr
+			}
+			f, ferr := os.Create(path)
+			if ferr != nil {
+				return "", ferr
+			}
+			if werr := write(f, rows); werr != nil {
+				f.Close()
+				return "", werr
+			}
+			if cerr := f.Close(); cerr != nil {
+				return "", cerr
+			}
+			return fmt.Sprintf("exported %s rows to %s", ui.Count(len(rows)), path), nil
+		}),
+		browse.WithReport(func(top, width int) ([]string, error) {
+			d, derr := deps.Valuation(top)
+			if derr != nil {
+				return nil, derr
+			}
+			// The TUI knows its width; Detect would sniff the wrong fd.
+			text := report.Valuation(ui.Env{Width: width, Color: true, Clamp: true}, d)
+			return strings.Split(strings.TrimRight(text, "\n"), "\n"), nil
+		}),
+		browse.WithArbitrage(func(ctx context.Context, p progress.Fn) (arbitrage.Result, error) {
+			return action.Arbitrage(ctx, deps, p, arbitrageMin)
+		}),
+		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			res, err := action.UpdatePrices(ctx, deps, p)
+			if err != nil {
+				return "", err
+			}
+			if res.Total == 0 {
+				return "no cards yet; nothing to update", nil
+			}
+			s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
+			if res.Gaps.Remaining > 0 {
+				s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
+			}
+			return s, nil
+		}),
+		browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
+			res, err := action.RepairFinishes(ctx, deps, p)
+			if err != nil {
+				return "", err
+			}
+			switch {
+			case res.Total == 0:
+				return "no cards yet; nothing to repair", nil
+			case len(res.Fixed) == 0 && len(res.Ambiguous) == 0:
+				return "every finish already correct", nil
+			case len(res.Ambiguous) > 0:
+				return fmt.Sprintf("finishes repaired · %d fixed · %d ambiguous (see hoard repair-finishes)",
+					len(res.Fixed), len(res.Ambiguous)), nil
+			}
+			return fmt.Sprintf("finishes repaired · %d fixed", len(res.Fixed)), nil
+		}),
+		browse.WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
+			res, err := action.CatalogUpdate(ctx, deps, p)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("catalog ready · %s cards", ui.Count(res.Cards)), nil
+		}),
+		browse.WithBackfill(func(ctx context.Context, p progress.Fn) (string, error) {
+			res, err := action.BackfillPrices(ctx, deps, p)
+			if err != nil {
+				return "", err
+			}
+			switch {
+			case res.Printings == 0:
+				return "nothing owned yet", nil
+			case res.AlreadyToday != "":
+				return "already backfilled today · the archive only changes daily", nil
+			case res.Inserted == 0:
+				return "nothing to backfill · history already recorded", nil
+			}
+			return fmt.Sprintf("backfilled %s observations across %s printings",
+				ui.Count(res.Inserted), ui.Count(res.Cards)), nil
+		}),
+		browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
+			name, op string, threshold float64) (string, error) {
+			res, err := action.WatchAdd(ctx, deps, p,
+				action.WatchAddOptions{Name: name, Op: op, Threshold: threshold})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("watching %s (%s) %s %s",
+				res.Card.Name, res.Finish, op, ui.Money(threshold)), nil
+		}),
+		browse.WithAddCascade(func() (tui.Child, error) {
+			// Destinations re-read per invocation, so a binder created in
+			// the browser appears in the cascade's picker.
+			dests, derr := destinations(st)
+			if derr != nil {
+				return tui.Child{}, derr
+			}
+			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), helperScanner{}, "", dests), nil
+		}))
+	// The scan receipt outlives the alternate screen: unattended writes need
+	// a durable record, and the status line dies with the program.
+	printScanSummary(sum)
+	return err
 }
 
 // writeSummary prints the hoard's totals, the output `hoard summary` used to

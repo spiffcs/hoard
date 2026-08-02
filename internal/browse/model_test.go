@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/spiffcs/hoard/internal/arbitrage"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
 )
 
 // fakeStore drives the model without a database, the way internal/tui's tests
@@ -502,7 +504,7 @@ func TestSortCycles(t *testing.T) {
 	// The cycle covers every column the pane shows.
 	for _, step := range []struct{ label, first string }{
 		{"name", "Ancient Tomb"},
-		{"set/num", "Sol Ring"},    // c21/1 before uma/85 and uma/236
+		{"set", "Sol Ring"},        // c21 before uma; value breaks ties within a set
 		{"finish", "Ancient Tomb"}, // etched < foil < normal; the one foil leads
 		{"qty", "Bitterblossom"},   // 4 copies
 		{"price", "Ancient Tomb"},  // $134 foil beats $34 and $10
@@ -871,8 +873,8 @@ func TestEmptyTraitResultExplainsAnUnrefreshedCatalog(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if got := m.statusLine(); !strings.Contains(got, "update-prices") {
-		t.Errorf("status = %q, want it to point at update-prices", got)
+	if got := m.statusLine(); !strings.Contains(got, "Update prices") {
+		t.Errorf("status = %q, want it to point at the Update prices command", got)
 	}
 }
 
@@ -1386,7 +1388,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		t.Fatal("no rows after a successful fetch")
 	}
 	out := m.View()
-	for _, want := range []string{"ARBITRAGE", "Profitable", "arbitrage", "GAIN"} {
+	for _, want := range []string{"ARBITRAGE", "a shop pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
@@ -1465,12 +1467,25 @@ func TestArbitrageRefusesHoldingActions(t *testing.T) {
 // tea.Batch does not run its commands — it returns a BatchMsg for the runtime to
 // expand — so driving the fetch by calling the returned Cmd would never start
 // it. Watching the context is both simpler and closer to what matters.
-type capturingArb struct{ ctx context.Context }
+type capturingArb struct {
+	mu  sync.Mutex
+	ctx context.Context
+}
 
 func (c *capturingArb) fetch(ctx context.Context, _ progress.Fn) (arbitrage.Result, error) {
+	c.mu.Lock()
 	c.ctx = ctx
+	c.mu.Unlock()
 	<-ctx.Done() // stand in for a slow download
 	return arbitrage.Result{}, ctx.Err()
+}
+
+// context returns the captured context; guarded because the fetch goroutine
+// writes it while the test polls.
+func (c *capturingArb) context() context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ctx
 }
 
 // startFetch puts the model into the arbitrage view with a fetch in flight,
@@ -1499,7 +1514,7 @@ func startFetch(t *testing.T) (Model, *capturingArb) {
 		}
 	}()
 	for range 200 {
-		if cap.ctx != nil {
+		if cap.context() != nil {
 			return m, cap
 		}
 		time.Sleep(time.Millisecond)
@@ -1518,7 +1533,7 @@ func TestArbitrageEscapeCancels(t *testing.T) {
 	if m.arbLoading {
 		t.Error("still loading after esc")
 	}
-	if cap.ctx.Err() == nil {
+	if cap.context().Err() == nil {
 		t.Error("esc did not cancel the fetch's context")
 	}
 
@@ -1540,27 +1555,28 @@ func TestArbitrageViewChangeCancels(t *testing.T) {
 	if m.view != viewHoldings {
 		t.Errorf("view = %v, want holdings", m.view)
 	}
-	if cap.ctx.Err() == nil {
+	if cap.context().Err() == nil {
 		t.Error("leaving the view did not cancel the fetch")
 	}
 }
 
 // Adding is a handoff, not a nested program: two bubbletea programs cannot share
 // a terminal, so the browser quits with a flag and its caller runs the cascade
-// before re-entering.
+// `a` opens the embedded cascade when a constructor is injected; the
+// quit-and-return handoff is gone.
 func TestAddKeyRequestsTheCascade(t *testing.T) {
 	m := newTestModel(t, testStore())
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m.newAddChild = func() (tui.Child, error) {
+		return tui.NewChild(context.Background(), childSearcher{}, noopChildAdder, nil, "", nil), nil
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	got := next.(Model)
 
-	if !got.wantAdd {
-		t.Error("a did not request the add cascade")
+	if got.addChild == nil {
+		t.Fatal("a did not open the embedded cascade")
 	}
-	if cmd == nil {
-		t.Fatal("a did not return a command; the program would stay open")
-	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Errorf("a returned %T, want a quit so the terminal is released", cmd())
+	if got.mode() != modeAddChild {
+		t.Errorf("mode = %v, want modeAddChild", got.mode())
 	}
 }
 
@@ -1579,7 +1595,7 @@ func TestAddKeyIsInTheHelp(t *testing.T) {
 func TestAddKeyIsTextWhileFiltering(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = typeFilter(m, "a")
-	if m.wantAdd {
+	if m.addChild != nil || strings.Contains(m.status, "unavailable") {
 		t.Error("typing a into the filter bar requested the add cascade")
 	}
 	if m.filterText != "a" {
@@ -1587,32 +1603,19 @@ func TestAddKeyIsTextWhileFiltering(t *testing.T) {
 	}
 }
 
-// A fallback-priced card gets an asterisk in the VALUE column; the status line
-// must say what the asterisk means, naming the vendor, or the mark reads as
-// line noise.
-func TestStatusLineExplainsEstimatedPrices(t *testing.T) {
+// Fallback-priced values render plainly: the source is tracked in the data
+// (AltSource, shown in the detail view), so the table carries no asterisk
+// and the status line no legend.
+func TestNoEstimateMarkerInHoldings(t *testing.T) {
 	st := testStore()
 	st.collection[1].AltSource = "cardkingdom"
 	m := newTestModel(t, st)
 
-	got := m.statusLine()
-	if !strings.Contains(got, "* estimated") || !strings.Contains(got, "cardkingdom") {
-		t.Errorf("status = %q, want the estimate note with its vendor", got)
+	if out := m.View(); strings.Contains(out, "*") {
+		t.Errorf("holdings view still carries an estimate marker:\n%s", out)
 	}
-
-	// The asterisks live in the holdings table, so an analysis view without
-	// them must not carry the explanation.
-	m = key(m, "v")
-	if strings.Contains(m.statusLine(), "estimated") {
-		t.Errorf("status = %q, want no estimate note outside the holdings view", m.statusLine())
-	}
-}
-
-// When every price came from Scryfall there are no asterisks to explain.
-func TestStatusLineSilentWithoutEstimates(t *testing.T) {
-	m := newTestModel(t, testStore())
 	if got := m.statusLine(); strings.Contains(got, "estimated") {
-		t.Errorf("status = %q, want no estimate note", got)
+		t.Errorf("status = %q, want no estimate legend", got)
 	}
 }
 
@@ -1728,5 +1731,283 @@ func TestHeaderValueSparkMarkerClearsWhenObservationsDominate(t *testing.T) {
 	m := newTestModel(t, st)
 	if spark := m.valueSpark(); strings.Contains(spark, "≈") {
 		t.Errorf("valueSpark = %q, want no marker once observed points dominate", spark)
+	}
+}
+
+// One quit chord: q never quits, esc at the top frame asks first.
+func TestQuitPolicy(t *testing.T) {
+	m := newTestModel(t, testStore())
+
+	// q is inert on the browse surface.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("q must never quit")
+	}
+
+	// esc with nothing to back out of stages the quit confirm.
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if cmd != nil || m.confirm == nil || m.confirm.prompt != "quit hoard?" {
+		t.Fatalf("esc at top: cmd=%v confirm=%+v", cmd, m.confirm)
+	}
+	// Declining stays.
+	m = key(m, "n")
+	if m.confirm != nil {
+		t.Fatal("decline must clear the confirm")
+	}
+	// Accepting quits.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd == nil {
+		t.Fatal("y on the quit confirm must quit")
+	}
+	_ = next
+
+	// ctrl+c still quits directly.
+	m2 := newTestModel(t, testStore())
+	_, cmd = m2.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c must quit")
+	}
+
+	// q is inert on the detail overlay too.
+	m3 := newTestModel(t, testStore())
+	m3.detail = &detail{}
+	next, cmd = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m3 = next.(Model)
+	if cmd != nil || m3.detail == nil {
+		t.Fatal("q must do nothing on the detail overlay")
+	}
+}
+
+// Each analytical view's help leads with its own verbs.
+func TestHelpLineIsViewSpecific(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.view = viewWatches
+	if h := m.helpLine(); !strings.Contains(h, "w edit threshold") || !strings.Contains(h, "add a watch") {
+		t.Errorf("watches help = %q", h)
+	}
+	m.view = viewMovers
+	if h := m.helpLine(); !strings.Contains(h, "W cycle window") {
+		t.Errorf("movers help = %q", h)
+	}
+	m.view = viewUnpriced
+	if h := m.helpLine(); strings.Contains(h, "repair finishes") || !strings.Contains(h, "F refresh prices") {
+		t.Errorf("unpriced help = %q", h)
+	}
+	m.view = viewHoldings
+	if h := m.helpLine(); strings.Contains(h, "q quit") {
+		t.Errorf("holdings help still advertises q: %q", h)
+	}
+}
+
+// A liquid row is a haircut, not a gain: the buy side is labeled retail,
+// the edge says what fraction a shop pays, and the status line spells out
+// the loss for the selected row.
+func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
+	res := arbitrage.Result{
+		Opportunities: []arbitrage.Opportunity{
+			opp("Gilded Lotus", 10.00, 9.00),        // 90%: genuinely liquid
+			opp("Quantum Misalignment", 6.31, 2.80), // 44%: below the floor, not listed
+		},
+		Compared: 2,
+	}
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	m = next.(Model)
+
+	out := m.View()
+	// The liquid section carries its own honest headers: what retail asks,
+	// what the buylist pays, and the fraction — no GAIN column to misread.
+	for _, want := range []string{"EASY TO SELL", "RETAIL", "BUYLIST", "PAYS", "90.0%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("liquid section missing %q:\n%s", want, out)
+		}
+	}
+	// The 44%%-of-retail card appears only in the spread section, never as
+	// liquid.
+	if i := strings.Index(out, "Quantum Misalignment"); i >= 0 {
+		if j := strings.Index(out, "CHEAPEST VS DEAREST"); j < 0 || i < j {
+			t.Errorf("sub-floor row listed outside the spread section:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "pays $9.00 · retail is $10.00") {
+		t.Errorf("status should state both prices plainly:\n%s", out)
+	}
+}
+
+// The collection view's empty palette leads with its own verbs.
+func TestHoldingsPaletteRanksCollectionVerbs(t *testing.T) {
+	m, err := New(testStore(),
+		WithAddCascade(func() (tui.Child, error) { return tui.Child{}, nil }),
+		WithDeckAddByURL(func(context.Context, progress.Fn, string) (OpReport, error) {
+			return OpReport{}, nil
+		}),
+		WithImportFile(func(context.Context, progress.Fn, string, bool) (OpReport, error) {
+			return OpReport{}, nil
+		}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = next.(Model)
+	m.openPalette()
+	if len(m.palette.matches) < 4 {
+		t.Fatal("palette too small")
+	}
+	first := m.commands[m.palette.matches[0].index].id
+	if first != "add" {
+		t.Errorf("first palette entry = %q, want add", first)
+	}
+	top := map[string]bool{}
+	for _, pm := range m.palette.matches[:min(6, len(m.palette.matches))] {
+		top[m.commands[pm.index].id] = true
+	}
+	for _, want := range []string{"deck.add-url", "binder.new", "import.file"} {
+		if !top[want] {
+			t.Errorf("%s missing from the palette's top suggestions", want)
+		}
+	}
+}
+
+// The containers-focus help line surfaces the binder and interop verbs.
+func TestHoldingsHelpMentionsBinderAndInterop(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.focus = paneContainers
+	h := m.helpLine()
+	for _, want := range []string{"n new binder", "R rename", ": import/export"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("containers help missing %q: %q", want, h)
+		}
+	}
+}
+
+// A narrow terminal wraps the help line between its entries instead of
+// truncating keys off the edge, and the extra rows come out of the panes so
+// the frame height never changes.
+func TestHelpLineWrapsInsteadOfTruncating(t *testing.T) {
+	m := newTestModel(t, testStore())
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = next.(Model)
+
+	lines := wrapHelp(m.helpLine(), 60)
+	if len(lines) < 2 {
+		t.Fatalf("holdings help should wrap at width 60, got %d line(s)", len(lines))
+	}
+	for _, l := range lines {
+		if len([]rune(l)) > 60 {
+			t.Errorf("wrapped line overflows: %q", l)
+		}
+	}
+	out := m.View()
+	if !strings.Contains(out, "esc quit") {
+		t.Error("the last help entry must survive the wrap")
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("help must not be truncated:\n%s", out)
+	}
+
+	// Frame height is invariant: a wide frame and a narrow (wrapped) frame
+	// fill the same number of terminal rows.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	wide := strings.Count(next.(Model).View(), "\n")
+	if narrow := strings.Count(out, "\n"); narrow != wide {
+		t.Errorf("frame height changed with wrapping: narrow=%d wide=%d", narrow, wide)
+	}
+}
+
+// Running a palette command from the card overlay keeps the overlay: an op
+// starts behind it, the reader's place survives, and esc still walks
+// palette → detail → panes.
+func TestDetailPaletteKeepsOverlay(t *testing.T) {
+	m := newCascadeModel(t, testStore(),
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			return "prices updated", nil
+		}))
+	m = key(m, "tab") // cards pane
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("setup: no detail open")
+	}
+
+	m = key(m, ":")
+	if m.detail == nil || m.palette == nil {
+		t.Fatal("the palette must open over the overlay, not replace it")
+	}
+	if out := m.View(); !strings.Contains(out, "▸ ") {
+		t.Fatalf("palette drawer not rendered over the detail:\n%s", out)
+	}
+
+	m, cmd := runPaletteCommand(t, m, "op.update-prices")
+	m.palette = nil // enter closes the drawer before running, as the palette does
+	if m.detail == nil {
+		t.Fatal("running an op must not close the overlay")
+	}
+	if m.op == nil || cmd == nil {
+		t.Fatal("the op must start behind the overlay")
+	}
+
+	// esc still backs out one frame at a time.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.detail != nil {
+		t.Fatal("esc must close the overlay")
+	}
+}
+
+// A prompt opened from the overlay's palette renders in the overlay's slot
+// rather than invisibly behind it.
+func TestDetailPromptRendersOverOverlay(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("setup: no detail open")
+	}
+	m, _ = runPaletteCommand(t, m, "binder.new")
+	if m.prompt == nil || m.detail == nil {
+		t.Fatalf("prompt=%v detail=%v", m.prompt, m.detail)
+	}
+	if out := m.View(); !strings.Contains(out, m.prompt.label) {
+		t.Fatalf("prompt invisible behind the overlay:\n%s", out)
+	}
+}
+
+// F on arbitrage is never silent: fetching says so, and a repeat press on a
+// loaded view re-asks rather than doing nothing.
+func TestArbitrageFAlwaysAnswers(t *testing.T) {
+	res := arbitrage.Result{
+		Opportunities: []arbitrage.Opportunity{opp("Profitable", 2, 20)},
+		Compared:      1,
+	}
+	m := arbModel(t, func(context.Context, progress.Fn) (arbitrage.Result, error) { return res, nil })
+	for range 4 {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	if !m.arbLoading {
+		t.Fatal("first F did not start the fetch")
+	}
+	m = key(m, "F")
+	if !strings.Contains(m.status, "already fetching") {
+		t.Fatalf("F while loading = %q, want the already-fetching status", m.status)
+	}
+
+	next, _ := m.Update(arbitrageMsg{gen: m.arbGen, res: res})
+	m = next.(Model)
+	if !m.arbLoaded {
+		t.Fatal("setup: fetch did not land")
+	}
+	m = key(m, "F")
+	if !m.arbLoading {
+		t.Fatal("F on a loaded view must re-fetch, not fall silent")
 	}
 }

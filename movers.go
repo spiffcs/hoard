@@ -99,6 +99,11 @@ func cmdBackfillPrices(ctx context.Context, st *store.Store, args []string) erro
 // printBackfill reports the import, including what it missed.
 func printBackfill(env ui.Env, r action.BackfillResult) {
 	dim := env.Dim()
+	if r.AlreadyToday != "" {
+		fmt.Println(dim(
+			"Already backfilled today for these holdings; the archive only changes daily."))
+		return
+	}
 	if r.Inserted == 0 {
 		if r.HadHistorySince != "" {
 			if t, err := time.Parse(time.RFC3339, r.HadHistorySince); err == nil {

@@ -82,11 +82,58 @@ with why).
    Verified by replaying all 18 captures of the session's fixture directory
    (`HOARD_SCAN_DEBUG_DIR`) through `--image`: capture 9 loses exactly the
    phantom, the other 17 are byte-identical.
-8. **Palette add exits the TUI / should add be seamless?** — 🔶 deferred,
-   design decision. Two bubbletea programs cannot share a terminal, so
-   the add cascade hands off via quit-and-return today. Making it seamless
-   means either embedding the cascade as a child model inside browse (big:
-   the cascade owns scanning, pickers, its own state machine) or a nested
-   program handoff that hides the flicker. Worth its own design pass —
-   candidate opener for the next TUI sprint alongside the remaining parity
-   ledger (import/export/deck-URL prompts, TUI confirm modal).
+8. **Palette add exits the TUI / should add be seamless?** — ✅ done
+   (2026-07-31, TUI-completion sprint). The cascade now runs *inside*
+   browse as an embedded child model (`tui.Child` facade; browse routes
+   messages, sizes it, owns camera-session teardown and the exit
+   receipt). No flicker, no state loss, and ops keep running behind an
+   add. The paired parity-ledger items landed in the same sprint:
+   import/export prompts, deck-add-by-URL, the valuation report overlay,
+   and the `Deps.Confirm` bridge (catalog download questions now appear
+   as a real confirm instead of silently declining). See
+   docs/sprint-tui-completion.md.
+
+## 2026-07-31 — round 2, live session on the TUI-completion build
+
+All landed same-day, in feedback order:
+
+1. **Palette ellipses** — removed; nearly every command asks for more, so
+   the marker distinguished nothing.
+2. **F on movers took 31s with nothing to do** — two fixes. Same-day
+   re-runs skip via a ledger receipt keyed to (date + holdings). And the
+   real cost was profiled: of 31s, 30.2s was encoding/json's tokenizer
+   walking the 1.2 GB decoded archive (disk 0.02s, gunzip 2s). Replaced
+   with a byte-level key scanner (`scanKeyedObjects`) that searches for the
+   wanted UUID keys directly and stops at the last one: 2–3s total.
+   Scaling: per-needle search is linear in owned printings, so past ~24
+   keys the scanner switches to a colon-anchored single pass with a set
+   lookup (UUIDs are fixed-width) — ~2.6s flat however large the hoard.
+3. **Watch add was awkward** — replaced with a picker: "Add a watch" jumps
+   to holdings with the filter open; enter from the filter bar picks the
+   card into the ordinary threshold prompt; the flow returns to the
+   watches view once the watch lands. By-name kept, demoted, for unowned
+   cards. Threshold prompts prefill the current value on edit and their
+   help spells out under/over syntax.
+4. **Arbitrage "liquid" misread** — three rounds of feedback, three fixes:
+   liquid rows label the buy side `retail` and say "pays N%" instead of a
+   GAIN column; the status line states both prices plainly with no
+   editorial; the section gained a 70%-of-retail floor (a shop paying 27%
+   of retail is not liquidity); and per the follow-up, the flat table was
+   the smell itself — the view now renders the CLI's three sections
+   stacked in one scrolling pane, each with its own title row and honest
+   column headers (PROFIT / RETAIL·BUYLIST·PAYS / LOW·HIGH·APART).
+5. **Help lines** — wrap between entries on narrow terminals instead of
+   truncating (extra rows come out of the panes; frame height invariant);
+   view-specific verbs lead each analytical view; unpriced dropped the
+   redundant `f repair finishes`; holdings advertises `n new binder`,
+   `R rename`, and `: import/export`; the empty palette ranks collection
+   verbs first on holdings.
+6. **Key policy** — one quit chord (ctrl+c) everywhere; q is inert; esc
+   backs out one frame and asks y/n at the top; the embedded cascade's
+   help says "esc back to browser"; enter no longer aliases the shutter in
+   the capture step.
+7. **Detail view** — the palette opens over the overlay instead of
+   replacing it (ops run behind it, prompts render in its slot); hints
+   point at `:` commands instead of CLI invocations.
+8. **Add view** — the session tally carries the running dollar value
+   beside the count.

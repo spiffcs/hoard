@@ -24,6 +24,7 @@ import (
 func (m *Model) askWatchRemoval(w store.WatchStatus) {
 	m.confirm = &pendingConfirm{
 		prompt: fmt.Sprintf("remove the %s %s watch on %s?", w.Op, ui.Money(w.Threshold), w.Display),
+		help:   "y remove · any other key cancels",
 		onYes: func(m *Model) tea.Cmd {
 			if err := m.store.RemoveWatch(w.ID); err != nil {
 				m.setError(err)
@@ -52,6 +53,7 @@ func (m *Model) askBinderRemoval(sel *container) {
 	id := sel.ID
 	m.confirm = &pendingConfirm{
 		prompt: fmt.Sprintf("remove binder %q?", name),
+		help:   "y remove · any other key cancels",
 		onYes: func(m *Model) tea.Cmd {
 			if err := m.store.DeleteBinder(id); err != nil {
 				m.status, m.statusErr = err.Error(), true
@@ -204,8 +206,19 @@ func (m *Model) promptWatch() {
 			sub.name, finish, ui.Money(*sub.price))
 	}
 	sid, name, price := sub.scryfallID, sub.name, sub.price
+	// Editing an existing watch starts from its current threshold — AddWatch
+	// is an upsert, and making the user retype what they are adjusting turns
+	// an edit into a memory test.
+	prefill := ""
+	if m.view == viewWatches {
+		if w := m.selectedWatch(); w != nil && w.ScryfallID == sid && w.Finish == finish {
+			prefill = w.Op + " " + strconv.FormatFloat(w.Threshold, 'f', -1, 64)
+		}
+	}
 	m.prompt = &prompt{
 		label:    label,
+		text:     prefill,
+		help:     thresholdHelp,
 		validate: func(text string) error { _, _, err := parseThreshold(text, price); return err },
 		commit: func(m *Model, text string) tea.Cmd {
 			op, threshold, err := parseThreshold(text, price)
@@ -281,7 +294,8 @@ func (m *Model) promptWatchByName() {
 		commit: func(m *Model, name string) tea.Cmd {
 			name = strings.TrimSpace(name)
 			m.prompt = &prompt{
-				label: fmt.Sprintf("watch %s — threshold (under 40 / over 40)", name),
+				label: fmt.Sprintf("watch %s — threshold", name),
+				help:  "under 40 / over 40 (direction required — no current price to infer from) · enter accept · esc cancel",
 				validate: func(text string) error {
 					_, _, err := parseThreshold(text, nil)
 					return err
@@ -300,5 +314,42 @@ func (m *Model) promptWatchByName() {
 			}
 			return nil
 		},
+	}
+}
+
+// thresholdHelp spells out the watch threshold syntax, shown while either
+// threshold prompt is open.
+const thresholdHelp = "under 40 / over 40 set the direction · a bare 40 infers it from the current price · enter accept · esc cancel"
+
+// startWatchPick begins choosing a watch target from the cards already
+// held: jump to holdings with the filter bar open, and the next enter on a
+// card runs the ordinary watch prompt — the same flow as pressing w on it,
+// with the current price known so a bare threshold can infer direction.
+func (m *Model) startWatchPick() tea.Cmd {
+	m.detail = nil // the pick browses the panes; a detail would hide them
+	cmd := m.showView(viewHoldings)
+	m.focus = paneCards
+	m.filtering = true
+	m.watchPick = true
+	return cmd
+}
+
+// finishWatchPick runs the watch prompt for the picked card, and — because
+// the flow started from the watches view — jumps back there once the watch
+// lands, so the new entry is on screen. A refusal stays put: the error
+// belongs where the user still is.
+func (m *Model) finishWatchPick() {
+	m.watchPick = false
+	m.promptWatch()
+	if m.prompt == nil {
+		return
+	}
+	inner := m.prompt.commit
+	m.prompt.commit = func(m *Model, text string) tea.Cmd {
+		cmd := inner(m, text)
+		if m.statusErr {
+			return cmd
+		}
+		return tea.Batch(cmd, m.showView(viewWatches))
 	}
 }

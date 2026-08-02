@@ -183,10 +183,15 @@ func (k Kind) Note() string {
 	case KindProfit:
 		return "a shop pays more than the cheapest retail"
 	case KindLiquid:
-		return "buylist is close to retail"
+		return "a buylist pays at least 70% of retail"
 	}
 	return "where the vendors disagree"
 }
+
+// liquidFloor is the least a buylist may pay, as a fraction of the cheapest
+// retail, to count as liquidity. Typical buylists sit near half of retail;
+// 70% marks the cards genuinely easy to turn back into money.
+const liquidFloor = 0.7
 
 // Kinds is every question, in the order they are worth reading.
 var Kinds = []Kind{KindProfit, KindLiquid, KindSpread}
@@ -231,7 +236,14 @@ func top(all []Opportunity, limit int, k Kind) []Opportunity {
 	order := func(a, b Opportunity) int { return cmp.Compare(b.Profit(), a.Profit()) }
 	switch k {
 	case KindLiquid:
-		keep = func(o Opportunity) bool { return o.HasBuy && o.Profit() <= 0 }
+		// The floor is the section's meaning: "liquid" promises a buylist
+		// close to retail, and without a threshold the section fills with
+		// whatever unprofitable rows a small collection has — a shop paying
+		// 27% of retail is not liquidity, it is every card ever printed
+		// (observed live, and fairly called nonsense).
+		keep = func(o Opportunity) bool {
+			return o.HasBuy && o.Profit() <= 0 && o.Liquidity() >= liquidFloor
+		}
 		order = func(a, b Opportunity) int { return cmp.Compare(b.Liquidity(), a.Liquidity()) }
 	case KindSpread:
 		keep = func(o Opportunity) bool { return o.DearAt > o.BuyAt }

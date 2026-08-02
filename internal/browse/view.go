@@ -2,7 +2,6 @@ package browse
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -45,8 +44,24 @@ func (m Model) View() string {
 		return ""
 	}
 
+	if m.addChild != nil {
+		// The cascade owns the frame. The only browse surface that can
+		// coexist is the quit-mid-op confirm (ctrl+c with an op running),
+		// appended beneath so the question never hides the cascade state
+		// it is asking about.
+		v := m.addChild.View()
+		if m.confirm != nil {
+			v += "\n" + errStyle.Render(m.confirm.prompt) + helpStyle.Render("  y/n")
+		}
+		return v
+	}
+
 	if m.detail != nil {
 		return m.detailView()
+	}
+
+	if m.text != nil {
+		return m.textViewRender()
 	}
 
 	left, right := m.paneWidths()
@@ -73,8 +88,18 @@ func (m Model) View() string {
 			b.WriteString(line + "\n")
 		}
 	}
-	b.WriteString(helpStyle.Render(ui.Truncate(m.helpLine(), m.width)))
+	writeHelp(&b, m.helpLine(), m.width)
 	return b.String()
+}
+
+// writeHelp renders the wrapped help rows, last line without a newline.
+func writeHelp(b *strings.Builder, help string, width int) {
+	for i, line := range wrapHelp(help, width) {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(helpStyle.Render(line))
+	}
 }
 
 // detailView renders the card overlay in place of the two panes.
@@ -91,11 +116,24 @@ func (m Model) detailView() string {
 		b.WriteString("\n")
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
-	if n := len(lines) - (m.visibleRows() + 1); n > 0 {
-		b.WriteString(helpStyle.Render(fmt.Sprintf("%d more lines — widen or lengthen the window", n)))
+	// The slot under the rule: an active surface — a staged confirm, an
+	// open prompt, the palette's input line — outranks the more-lines note,
+	// so commands run from the overlay stay visible over it.
+	switch {
+	case m.confirm != nil || m.prompt != nil || m.palette != nil:
+		b.WriteString(m.statusLine())
+	default:
+		if n := len(lines) - (m.visibleRows() + 1); n > 0 {
+			b.WriteString(helpStyle.Render(fmt.Sprintf("%d more lines — widen or lengthen the window", n)))
+		}
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(ui.Truncate("esc back · q quit", m.width)))
+	if m.palette != nil {
+		for _, line := range m.paletteLines(m.width) {
+			b.WriteString(line + "\n")
+		}
+	}
+	writeHelp(&b, m.helpLine(), m.width)
 	return b.String()
 }
 
@@ -113,10 +151,46 @@ func (m Model) paneWidths() (left, right int) {
 	return left, right
 }
 
-// visibleRows is how many list rows fit between the header and the footer.
-// visibleRows is how many body rows the panes get; the palette drawer, when
-// open, takes its rows from here so the frame keeps its height.
-func (m Model) visibleRows() int { return max(m.height-chromeRows-m.paletteRows(), 1) }
+// wrapHelp breaks a help line between its " · " entries so every key stays
+// visible on a narrow terminal, instead of truncating off the edge of the
+// screen. A single entry longer than the width stands alone and clips.
+func wrapHelp(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
+	}
+	var lines []string
+	cur := ""
+	for _, part := range strings.Split(s, " · ") {
+		joined := part
+		if cur != "" {
+			joined = cur + " · " + part
+		}
+		if cur == "" || lipgloss.Width(joined) <= width {
+			cur = joined
+			continue
+		}
+		lines = append(lines, cur)
+		cur = part
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// helpRows is how many rows the wrapped help line costs right now.
+func (m Model) helpRows() int {
+	if !m.ready {
+		return 1
+	}
+	return len(wrapHelp(m.helpLine(), m.width))
+}
+
+// visibleRows is how many body rows the panes get; the palette drawer and
+// any extra help rows take theirs from here so the frame keeps its height.
+func (m Model) visibleRows() int {
+	return max(m.height-chromeRows-m.paletteRows()-(m.helpRows()-1), 1)
+}
 
 // scrollIntoView moves the focused pane's window so the cursor is inside it.
 //
@@ -265,7 +339,7 @@ func (m Model) cardLines(width int) []string {
 			cells := []ui.Cell{
 				ui.C(c.Name), ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
-				ui.C(ui.Estimated(ui.Money(c.Value), c.AltSource)),
+				ui.C(ui.Money(c.Value)),
 			}
 			if inDeck {
 				cells = slices.Insert(cells, 1, ui.C(c.Board))
@@ -372,55 +446,53 @@ func (m Model) statusLine() string {
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
-	if note := m.estimateNote(); note != "" {
-		pos += " · " + note
-	}
 	return helpStyle.Render(pos)
-}
-
-// estimateNote explains the asterisked values, naming the vendors involved.
-// Empty when every visible price came from Scryfall, so the common case pays
-// no width for it.
-func (m Model) estimateNote() string {
-	if m.view != viewHoldings {
-		return ""
-	}
-	sources := map[string]bool{}
-	for _, c := range m.cards {
-		if c.AltSource != "" {
-			sources[c.AltSource] = true
-		}
-	}
-	if len(sources) == 0 {
-		return ""
-	}
-	return "* estimated from " + strings.Join(slices.Sorted(maps.Keys(sources)), ", ") + " via MTGJSON"
 }
 
 func (m Model) helpLine() string {
 	switch {
-	// Wording stays "remove" while removals are the only confirms; it
-	// generalizes when another action stages one.
 	case m.confirm != nil:
-		return "y remove · any other key cancels"
+		if m.confirm.help != "" {
+			return m.confirm.help
+		}
+		return "y confirm · any other key cancels"
 	case m.prompt != nil:
+		if m.prompt.help != "" {
+			return m.prompt.help
+		}
 		return "type the answer · enter accept · esc cancel · ctrl+u wipe"
 	case m.palette != nil:
 		return "enter run · esc close · ↑/↓ choose · type to narrow"
+	case m.filtering && m.watchPick:
+		return "type to find the card · ↑/↓ move · enter watch it · esc cancel"
 	case m.filtering:
 		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
+	case m.watchPick:
+		return "↑/↓ pick the card · enter watch it · / filter · esc cancel"
+	case m.detail != nil:
+		return "esc back · ctrl+c quit"
+	case m.text != nil:
+		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
 	case m.view == viewArbitrage && !m.arbLoaded && !m.arbLoading:
-		return "F fetch vendor prices · v next view · q quit"
+		return "F fetch vendor prices · v next view · esc quit"
 	case m.view == viewArbitrage && m.arbLoading:
-		return "esc cancel · q quit"
+		return "esc cancel · ctrl+c quit"
+	case m.view == viewWatches:
+		// Each analytical view leads with its own verbs — a generic line
+		// here once hid that watches can be added at all.
+		return "w edit threshold · d remove · : add a watch · enter detail · v next view · ↑/↓ move · esc quit"
+	case m.view == viewMovers:
+		return "W cycle window · F update prices + history · v next view · : commands · ↑/↓ move · s sort · esc quit"
+	case m.view == viewUnpriced:
+		return "F refresh prices · v next view · : commands · ↑/↓ move · s sort · esc quit"
 	case m.view != viewHoldings:
 		// The editing keys do not apply to a hoard-wide analysis, so offering
 		// them here would be an invitation to a refusal.
-		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
+		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · esc quit"
 	case m.focus == paneContainers:
-		return "tab cards · / filter · : commands · s sort · S reverse · v views · a add · d remove deck · u undo · q quit"
+		return "tab cards · a add cards · n new binder · R rename · d remove · : import/export · / filter · v views · u undo · esc quit"
 	}
-	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · / filter · : commands · s sort · S reverse · v views · a add · +/- qty · d remove · u undo · esc quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

@@ -161,8 +161,8 @@ func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 			t.Errorf("liquid section = %v, want no profitable rows", byKind[KindLiquid])
 		}
 	}
-	if got := byKind[KindLiquid]; len(got) != 2 || got[0] != "liquid" {
-		t.Errorf("liquid = %v, want the most liquid first", got)
+	if got := byKind[KindLiquid]; len(got) != 1 || got[0] != "liquid" {
+		t.Errorf("liquid = %v, want only the row above the 70%% floor", got)
 	}
 	// Spread covers everything where vendors disagree, profitable or not.
 	if got := byKind[KindSpread]; len(got) != 5 || got[0] != "spread-big" {

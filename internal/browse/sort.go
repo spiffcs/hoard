@@ -23,7 +23,7 @@ import (
 // the view's reading order, and every column sorts within it (gain, the
 // default, is the ranking the sections already use).
 var sortColumns = [...][]string{
-	viewHoldings:  {"value", "name", "set/num", "finish", "qty", "price"},
+	viewHoldings:  {"value", "name", "set", "finish", "qty", "price"},
 	viewMovers:    {"impact", "name", "set/num", "finish", "was", "now", "change", "qty"},
 	viewUnpriced:  {"name", "set/num", "finish", "qty", "held in"},
 	viewWatches:   {"state", "name", "watch", "price"},
@@ -122,8 +122,14 @@ func cardCompare(key string) func(a, b card) int {
 		switch key {
 		case "name":
 			c = strings.Compare(a.Name, b.Name)
-		case "set/num":
-			c = comparePrinting(a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber)
+		case "set":
+			// Grouped by set alone, most valuable first within it — the
+			// question this order answers is "what is my best card per set",
+			// not "what is the collector-number sequence".
+			c = strings.Compare(a.SetCode, b.SetCode)
+			if c == 0 {
+				c = cmp.Compare(b.Value, a.Value)
+			}
 		case "finish":
 			c = strings.Compare(a.Finish, b.Finish)
 		case "qty":

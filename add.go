@@ -129,6 +129,19 @@ func addList(ctx context.Context, st *store.Store, data []byte, display, binderR
 	return err
 }
 
+// storeAdder persists one cascade result: each confirmed card lands
+// immediately, in the container the cascade asked about — the default
+// binder when it never had to ask. Shared by the standalone `hoard add`
+// cascade and the one embedded in browse.
+func storeAdder(st *store.Store) tui.Adder {
+	return func(res tui.Result) error {
+		if res.ContainerID != 0 {
+			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+		}
+		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
+	}
+}
+
 func addByName(ctx context.Context, st *store.Store, name string) error {
 	if !stdinIsTTY() {
 		return fmt.Errorf("adding by name needs an interactive terminal; " +
@@ -138,15 +151,6 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if err != nil {
 		return err
 	}
-	// Each confirmed card is persisted immediately; the session loops until the
-	// user exits. The cascade hands back the destination it asked about — the
-	// default binder when it never had to ask.
-	add := func(res tui.Result) error {
-		if res.ContainerID != 0 {
-			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
-		}
-		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
-	}
 	// Lookups prefer the local catalog and fall through to Scryfall, so a name
 	// completes instantly and offline where it can, and a card printed since the
 	// last catalog build still resolves.
@@ -154,7 +158,7 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	sum, err := tui.Run(ctx, newSearcher(cat), add, helperScanner{}, name, dests)
+	sum, err := tui.Run(ctx, newSearcher(cat), storeAdder(st), helperScanner{}, name, dests)
 	if err != nil {
 		return err
 	}
