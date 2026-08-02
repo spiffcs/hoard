@@ -277,23 +277,12 @@ func New(st Store, opts ...Option) (Model, error) {
 		return Model{}, err
 	}
 	m.showFiredBanner()
-	// The first-run catalog offer, staged before anything else happens:
-	// the download's whole value is fast lookups in the add flow, so the
-	// question belongs before the first add, not after it.
-	if m.catalogOffer && m.opCatalogUpdate != nil {
-		m.confirm = &pendingConfirm{
-			prompt: "No card catalog yet. Download Scryfall's bundle for instant card lookups?",
-			help:   "y download (large, one-time) · any other key skips · `:` offers it again anytime",
-			onYes: func(m *Model) tea.Cmd {
-				return m.startOp("updating the catalog", m.opCatalogUpdate)
-			},
-			onNo: func(m *Model) {
-				m.status, m.statusErr = "skipped · run \"Update the card catalog\" from : anytime", false
-			},
-		}
-	}
 	return m, nil
 }
+
+// catalogFirstRunMsg fires once from Init when the browser opened with no
+// catalog built, and starts the download as an ordinary operation.
+type catalogFirstRunMsg struct{}
 
 // showFiredBanner previews the watches whose thresholds hold unacknowledged
 // — read-only, never consuming the alert (cron's `hoard watch` stays the
@@ -587,7 +576,16 @@ func (m *Model) clampCursor(p pane) {
 
 // Init arms the confirm-bridge pump (nil without WithConfirm). Everything
 // else is loaded before the first frame.
-func (m Model) Init() tea.Cmd { return awaitConfirm(m.ctx, m.confirmCh) }
+func (m Model) Init() tea.Cmd {
+	init := awaitConfirm(m.ctx, m.confirmCh)
+	// The first-run catalog download starts itself: its whole value is
+	// fast lookups in the add flow, so it belongs before the first add —
+	// visible in the ordinary op slot, cancellable like any operation.
+	if m.catalogOffer && m.opCatalogUpdate != nil {
+		return tea.Batch(init, func() tea.Msg { return catalogFirstRunMsg{} })
+	}
+	return init
+}
 
 // Update handles keys and resizes.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -607,6 +605,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onMarket(msg)
 	case imageMsg:
 		return m.onImage(msg)
+	case catalogFirstRunMsg:
+		return m, m.startOp("updating the catalog", m.opCatalogUpdate)
 	case opProgressMsg:
 		return m.onOpProgress(msg)
 	case opDoneMsg:

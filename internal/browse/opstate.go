@@ -36,11 +36,13 @@ func WithRepairFinishes(f OpFunc) Option { return func(m *Model) { m.opRepairFin
 // WithCatalogUpdate supplies the catalog rebuild.
 func WithCatalogUpdate(f OpFunc) Option { return func(m *Model) { m.opCatalogUpdate = f } }
 
-// WithCatalogOffer(true) stages a first-run question when the browser
-// opens: no local catalog exists yet, and the best moment to offer the
-// download is before the first add session needs it — not after, when the
-// slow lookups it would have prevented already happened. Declining costs
-// nothing; the update-prices path asks again when it matters next.
+// WithCatalogOffer(true) auto-starts the catalog download when the
+// browser opens: no local catalog exists yet, and the best moment to
+// fetch it is before the first add session needs its fast lookups — not
+// after, when the slow lookups it would have prevented already happened.
+// It runs as an ordinary operation — progress in the usual slot,
+// cancellable like anything else — rather than behind a y/n: on a first
+// run the download is the setup step, not a surprise.
 func WithCatalogOffer(empty bool) Option { return func(m *Model) { m.catalogOffer = empty } }
 
 // BackfillFunc imports days of price history from the MTGJSON archive —

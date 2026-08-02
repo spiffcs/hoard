@@ -626,11 +626,10 @@ func TestWatchCommandAvailability(t *testing.T) {
 	}
 }
 
-// A hoard opened with no catalog built offers the download before the
-// first add session needs it: y starts the catalog op, anything else
-// skips with a pointer to the palette, and no offer stages when the
-// catalog already exists.
-func TestFirstRunCatalogOffer(t *testing.T) {
+// A hoard opened with no catalog built starts the download by itself,
+// as an ordinary cancellable operation — the fast lookups it buys matter
+// most before the first add session. An existing catalog starts nothing.
+func TestFirstRunCatalogAutoRuns(t *testing.T) {
 	ran := false
 	m, err := New(testStore(),
 		WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
@@ -643,31 +642,23 @@ func TestFirstRunCatalogOffer(t *testing.T) {
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	m = next.(Model)
-	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "catalog") {
-		t.Fatalf("confirm = %+v, want the catalog offer", m.confirm)
-	}
-
-	// Any other key skips, with the palette pointer.
-	m2 := key(m, "x")
-	if m2.confirm != nil || !strings.Contains(m2.status, "Update the card catalog") {
-		t.Errorf("skip: confirm=%v status=%q", m2.confirm, m2.status)
-	}
-
-	// y runs the catalog op.
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	pump(t, next.(Model), cmd)
+	m = pump(t, m, m.Init())
 	if !ran {
-		t.Error("y on the offer did not start the catalog update")
+		t.Fatal("opening with no catalog must start the catalog update")
 	}
 
-	// With a catalog already built, no offer stages.
+	ran = false
 	quiet, err := New(testStore(),
-		WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }),
+		WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
+			ran = true
+			return "", nil
+		}),
 		WithCatalogOffer(false))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if quiet.confirm != nil {
-		t.Error("an existing catalog must not re-trigger the first-run offer")
+	pump(t, quiet, quiet.Init())
+	if ran {
+		t.Error("an existing catalog must not re-run the first-run download")
 	}
 }

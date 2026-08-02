@@ -27,11 +27,15 @@ with why).
    card pane.
 5. **Manual F after every add session** — ✅ done. Closing a cascade that
    added cards auto-runs the view's fetch (prices, identity). The smarter
-   first run landed as its own piece: opening the browser with **no
-   catalog built stages a y/n offer immediately** — before the first add
-   session, where the catalog's fast lookups actually matter — with y
-   running the catalog op and anything else skipping to a palette
-   pointer (the update-prices path still re-asks later).
+   first run landed as its own piece, revised after a live check: opening
+   the browser with **no catalog built auto-starts the catalog download**
+   as an ordinary operation — progress in the usual slot, cancellable —
+   before the first add session, where the fast lookups actually matter.
+   (First attempt was a y/n gate; the owner wanted the op to just run.)
+   Live-repro footnote: `--db /tmp/fresh.db` is a fresh *database*, not a
+   fresh install — the catalog lives in the cache directory
+   (`~/Library/Caches/hoard/catalog`), so testing the first-run path
+   needs that cleared too (or `XDG_CACHE_HOME` pointed elsewhere).
 6. **Backfill windows** — ✅ done. `action.BackfillPrices` takes days
    (ledger key includes it; observations filtered before insert); the
    collection palette offers "Backfill 30 days", the movers view offers

@@ -516,7 +516,15 @@ func (m Model) helpLine() string {
 		// them here would be an invitation to a refusal.
 		return "v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
+		// The merged all-cards row is read-only, so its help drops the
+		// verbs that would only ever answer with a refusal.
+		if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
+			return "tab cards · n new binder · a add cards · : import/export · / filter · M floor · F refresh prices · v views · q quit"
+		}
 		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
+	}
+	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
+		return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
 	return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }

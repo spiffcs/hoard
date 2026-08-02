@@ -2319,6 +2319,19 @@ func TestAllCardsRowMergesEveryContainer(t *testing.T) {
 	if out := m.View(); !strings.Contains(out, "ALL CARDS") {
 		t.Errorf("header does not name the merged view:\n%s", out)
 	}
+	// The read-only view's help drops the modification verbs entirely —
+	// on both panes — instead of advertising refusals.
+	for _, banned := range []string{"+/- qty", "d remove", "R rename", "u undo"} {
+		m.focus = paneContainers
+		if h := m.helpLine(); strings.Contains(h, banned) {
+			t.Errorf("containers help on the merged view offers %q: %s", banned, h)
+		}
+		m.focus = paneCards
+		if h := m.helpLine(); strings.Contains(h, banned) {
+			t.Errorf("cards help on the merged view offers %q: %s", banned, h)
+		}
+	}
+	m.focus = paneContainers // hand the flow below its expected starting pane
 
 	// The merged list is read-only: a card here lives in some container,
 	// and that is where edits belong.
