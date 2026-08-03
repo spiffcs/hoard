@@ -72,6 +72,17 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 		},
 	}
 
+	// One scale across both sections: RISERS and SINKERS share the table,
+	// and a diverging ramp is symmetric around zero by construction — the
+	// extents come from the visible (already truncated) rows so the
+	// endpoint colors actually appear.
+	var pctMax, impactMax float64
+	for _, sec := range sections {
+		p, i := store.MoverExtents(sec.Rows)
+		pctMax = max(pctMax, p)
+		impactMax = max(impactMax, i)
+	}
+
 	first := true
 	for _, sec := range sections {
 		if len(sec.Rows) == 0 {
@@ -86,17 +97,19 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			// A finish column reading "nonfoil" down every row is noise; the
 			// foils are what want pointing out.
 			finish := ui.Finish(c.Finish)
-			// Deltas carry their direction in color as well as sign — the
-			// sign stays, so piped output loses nothing.
-			delta := env.Delta(c.TotalDelta())
+			// Each delta column fades on the diverging ramp against its own
+			// visible extreme — the sign stays in the text, so piped output
+			// loses nothing.
+			changeStyle := env.Diverge(ui.DivergeFrac(c.Pct(), pctMax))
+			impactStyle := env.Diverge(ui.DivergeFrac(c.TotalDelta(), impactMax))
 			// The indent lives in the name cell, so every column to its right
 			// stays aligned with the section heading above.
 			t.Add(ui.Cell{Text: "  " + c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),
 				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C("→"), ui.C(ui.Money(c.New)),
-				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
-				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})
+				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: changeStyle}, ui.C(ui.Qty(c.Copies)),
+				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: impactStyle})
 		}
 	}
 	return t
@@ -239,7 +252,7 @@ func spreadCell(env ui.Env, c market.Comp) ui.Cell {
 		return ui.Cell{Text: "—", Style: env.Dim()}
 	}
 	s := c.Spread()
-	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Grade(market.SpreadGrade(s))}
+	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Heat(market.MarkupGrade(s))}
 }
 
 // Movers renders the risers and sinkers, and what they did to the hoard.

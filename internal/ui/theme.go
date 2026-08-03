@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -67,10 +68,10 @@ var (
 	lgOK     = lipgloss.NewStyle().Foreground(semOK)
 	lgWarn   = lipgloss.NewStyle().Foreground(semWarn)
 	lgAccent = lipgloss.NewStyle().Bold(true).Foreground(semAccent)
-	// Gain and loss reuse the ok/error hues without the error's bold: a
-	// delta is data, not an alarm. The +/− sign stays the piped-safe channel.
+	// Gain reuses the ok hue without any bold: a delta is data, not an
+	// alarm. The +/− sign stays the piped-safe channel. Its old pair Loss
+	// went with the binary Delta — graded losses ride the Diverge ramp.
 	lgGain = lipgloss.NewStyle().Foreground(semOK)
-	lgLoss = lipgloss.NewStyle().Foreground(semErr)
 )
 
 // styled adapts a lipgloss style to the Env idiom: plain when color is off,
@@ -94,22 +95,6 @@ func (e Env) Warn() Style { return e.styled(lgWarn) }
 // Gain styles a positive delta. The sign stays in the text.
 func (e Env) Gain() Style { return e.styled(lgGain) }
 
-// Loss styles a negative delta. The sign stays in the text.
-func (e Env) Loss() Style { return e.styled(lgLoss) }
-
-// Delta picks Gain or Loss by v's sign; zero returns nil so the cell
-// inherits its column's style. The +/− sign stays in the text — piped
-// output carries the direction without the color.
-func (e Env) Delta(v float64) Style {
-	switch {
-	case v > 0:
-		return e.Gain()
-	case v < 0:
-		return e.Loss()
-	}
-	return nil
-}
-
 // Accent styles the focused element: pane titles, selection markers.
 func (e Env) Accent() Style { return e.styled(lgAccent) }
 
@@ -130,10 +115,15 @@ func (e Env) Grade(frac float64) Style {
 		return plain
 	}
 	frac = min(max(frac, 0), 1)
-	lerp := func(a, b uint8) uint8 { return uint8(float64(a) + (float64(b)-float64(a))*frac) }
-	c := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-		lerp(gradeLo[0], gradeHi[0]), lerp(gradeLo[1], gradeHi[1]), lerp(gradeLo[2], gradeHi[2])))
-	return e.styled(lipgloss.NewStyle().Foreground(c))
+	return e.styled(lipgloss.NewStyle().Foreground(blend(gradeLo, gradeHi, frac)))
+}
+
+// blend linearly interpolates between two RGB anchors at t in 0..1 — the
+// one lerp every ramp shares, so three ramps cannot drift apart in how
+// they mix color.
+func blend(a, b [3]uint8, t float64) lipgloss.Color {
+	l := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*t) }
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", l(a[0], b[0]), l(a[1], b[1]), l(a[2], b[2])))
 }
 
 // heatLo, heatMid and heatHi anchor the Heat ramp: the Grade ramp's green
@@ -159,10 +149,55 @@ func (e Env) Heat(frac float64) Style {
 		a, b = heatMid, heatHi
 		t = (frac - 0.5) * 2
 	}
-	lerp := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*t) }
-	c := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-		lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])))
+	return e.styled(lipgloss.NewStyle().Foreground(blend(a, b, t)))
+}
+
+// divergeLoss, divergeMid and divergeGain anchor the Diverge ramp: its
+// own trio, a step brighter than the Grade/Heat anchors — the movers
+// table is the one surface where the color is the headline, and the
+// muted shared hues read washed-out there (owner feedback). The loss red
+// and gain green sit at comparable luminance on a dark background so the
+// biggest sinker reads as loud as the biggest riser; the mid gray is a
+// measured zero — data, not an alarm — and no collision with Dim, which
+// is the faint attribute rather than a color.
+var (
+	divergeLoss = [3]uint8{0xf2, 0x63, 0x63}
+	divergeMid  = [3]uint8{0x9e, 0x9e, 0x9e}
+	divergeGain = [3]uint8{0x3f, 0xe0, 0x6c}
+)
+
+// Diverge styles a signed -1..1 fraction on a diverging ramp: the loss
+// red at -1 through the neutral gray at zero to the gain green at +1,
+// intensity carrying magnitude. The movers columns' ramp — each column
+// normalizes against its own extreme (see DivergeFrac), so sorting by the
+// column fades monotonically. The +/− sign stays in the text, so piped
+// output keeps the direction without the color.
+func (e Env) Diverge(frac float64) Style {
+	if !e.Color {
+		return plain
+	}
+	frac = min(max(frac, -1), 1)
+	c := blend(divergeMid, divergeGain, frac)
+	if frac < 0 {
+		c = blend(divergeMid, divergeLoss, -frac)
+	}
 	return e.styled(lipgloss.NewStyle().Foreground(c))
+}
+
+// DivergeFrac maps a signed value onto Diverge's -1..1: sign preserved,
+// magnitude square-root-compressed against the column's largest absolute
+// value — movers are heavy-tailed, and under a linear scale one whale
+// grays out every mid-size move worth noticing. A zero extent (an
+// all-zero column) maps everything to the neutral midpoint.
+func DivergeFrac(v, extent float64) float64 {
+	if extent <= 0 || v == 0 {
+		return 0
+	}
+	f := min(math.Sqrt(math.Abs(v)/extent), 1)
+	if v < 0 {
+		return -f
+	}
+	return f
 }
 
 // Pip styles one identity letter with its own color: W parchment, U island,

@@ -297,15 +297,20 @@ func (m Model) moversLines(width int) []string {
 			{Title: "QTY", Align: ui.Right, Priority: 2},
 			{Title: "IMPACT", Align: ui.Right},
 		}}
+		// Each delta column fades on the diverging ramp against its own
+		// visible extreme, so sorting by the column reads as one smooth
+		// green→gray→red sweep.
+		pctMax, impactMax := store.MoverExtents(m.movers)
 		for _, c := range m.movers {
 			finish := ui.Finish(c.Finish)
-			delta := env.Delta(c.TotalDelta())
+			changeStyle := env.Diverge(ui.DivergeFrac(c.Pct(), pctMax))
+			impactStyle := env.Diverge(ui.DivergeFrac(c.TotalDelta(), impactMax))
 			t.Add(ui.Cell{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),
 				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
 				ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
-				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: delta}, ui.C(ui.Qty(c.Copies)),
-				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: delta})
+				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: changeStyle}, ui.C(ui.Qty(c.Copies)),
+				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: impactStyle})
 		}
 		return t
 	})

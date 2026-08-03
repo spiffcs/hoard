@@ -564,7 +564,7 @@ func (m Model) bidLines(retail, b []store.PricePoint) []string {
 			ui.PercentAlways(first), ui.PercentAlways(last), since, word)
 		out = append(out, "  "+dim(fmt.Sprintf("%-9s", "spread"))+" "+
 			ui.Spark(vals, sparkCells)+"  "+
-			m.env.Grade(market.SpreadGrade(last))(ui.PercentAlways(last))+"  "+dim(caption))
+			m.env.Heat(market.MarkupGrade(last))(ui.PercentAlways(last))+"  "+dim(caption))
 	}
 	return out
 }

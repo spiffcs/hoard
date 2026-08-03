@@ -893,3 +893,32 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Errorf("status = %q, want the move receipt", m.status)
 	}
 }
+
+// A wide terminal must not carry the art to the far edge: its left edge
+// caps just past the card frame, framed beside the details it illustrates.
+func TestDetailImageStaysBesideFrame(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	m.detail.image = []string{"ARTBLOCK"}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 220, Height: 30})
+	m = next.(Model)
+	// The text column caps at frameWidth+artSlackCols and besideImage
+	// adds its two-cell gap, so the art's left edge parks there no matter
+	// how wide the terminal gets. Written against the constant, so tuning
+	// artSlackCols never breaks this pin.
+	want := frameWidth + artSlackCols + 2
+	for _, line := range strings.Split(m.View(), "\n") {
+		if i := strings.Index(line, "ARTBLOCK"); i >= 0 {
+			if i != want {
+				t.Fatalf("art starts at col %d, want %d", i, want)
+			}
+			return
+		}
+	}
+	t.Fatal("art not rendered beside the frame")
+}

@@ -113,18 +113,13 @@ func (c Comp) Verdict() (Kind, bool) {
 	return 0, false
 }
 
-// spreadTight and spreadWide anchor the display ramp on those landmarks.
-const (
-	spreadTight = 0.20
-	spreadWide  = 0.85
-)
-
-// SpreadGrade positions a spread on 0..1 for display gradients, high =
-// good: at or under 20% saturates the green end, 85% and past sits at the
-// amber floor. Inverted relative to the other grades because here tight
-// is the virtue; a negative spread (a bid above the low ask — genuine
-// arbitrage) clamps to 1, correctly reading as maximally real.
-func SpreadGrade(s float64) float64 { return 1 - grade(s, spreadTight, spreadWide) }
+// MarkupGrade positions the retail-vs-buylist spread on 0..1 for the heat
+// ramp. The scale is the spread itself: everything at or below zero sits
+// on the green end — a bid at or over the ask is pure value — and the
+// ramp reddens linearly to saturation at a 100% spread, the retailer
+// keeping the whole sale price. Large divergence between what a card
+// sells for and what the buylist pays is the noise this color flags.
+func MarkupGrade(s float64) float64 { return min(max(s, 0), 1) }
 
 // CompsTitle and CompsNote are the section heading, defined here so the
 // two frontends cannot disagree about what the table claims.

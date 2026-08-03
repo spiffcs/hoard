@@ -289,18 +289,18 @@ func TestCompSpreadMath(t *testing.T) {
 
 // The ramp anchors on the hobby's landmarks: 20% saturates green, 85%
 // floors amber, and the negative-arbitrage case clamps to full green.
-func TestSpreadGradeAnchors(t *testing.T) {
-	if g := SpreadGrade(0.20); g != 1 {
-		t.Errorf("20%% = %v, want 1", g)
+func TestMarkupGrade(t *testing.T) {
+	if g := MarkupGrade(0); g != 0 {
+		t.Errorf("MarkupGrade(0) = %v, want the green end", g)
 	}
-	if g := SpreadGrade(0.85); g != 0 {
-		t.Errorf("85%% = %v, want 0", g)
+	if g := MarkupGrade(-0.5); g != 0 {
+		t.Errorf("MarkupGrade(-0.5) = %v, want negative spreads pinned green", g)
 	}
-	if g := SpreadGrade(0.525); g < 0.49 || g > 0.51 {
-		t.Errorf("midpoint = %v, want ~0.5", g)
+	if g := MarkupGrade(0.5); g != 0.5 {
+		t.Errorf("MarkupGrade(0.5) = %v, want the linear midpoint", g)
 	}
-	if g := SpreadGrade(-0.10); g != 1 {
-		t.Errorf("negative spread = %v, want the full green clamp", g)
+	if g := MarkupGrade(1.2); g != 1 {
+		t.Errorf("MarkupGrade(1.2) = %v, want clamped at full red", g)
 	}
 }
 

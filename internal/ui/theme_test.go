@@ -63,7 +63,6 @@ func TestThemeStylesAreSGROnly(t *testing.T) {
 		"Err":                 e.Err(),
 		"Warn":                e.Warn(),
 		"Gain":                e.Gain(),
-		"Loss":                e.Loss(),
 		"Accent":              e.Accent(),
 		"Pip(W)":              e.Pip('W'),
 		"Pip(?)":              e.Pip('?'),
@@ -72,6 +71,9 @@ func TestThemeStylesAreSGROnly(t *testing.T) {
 		"Identity(multi)":     e.Identity([]string{"W", "U"}),
 		"Identity(colorless)": e.Identity([]string{}),
 		"Identity(unknown)":   e.Identity(nil),
+		"Diverge(-1)":         e.Diverge(-1),
+		"Diverge(0)":          e.Diverge(0),
+		"Diverge(1)":          e.Diverge(1),
 	} {
 		check("Env."+name, style)
 	}
@@ -86,10 +88,10 @@ func TestEnvStylesPlainWithoutColor(t *testing.T) {
 		"Err":      e.Err(),
 		"Warn":     e.Warn(),
 		"Gain":     e.Gain(),
-		"Loss":     e.Loss(),
 		"Accent":   e.Accent(),
 		"Pip":      e.Pip('W'),
 		"Identity": e.Identity([]string{"W", "U"}),
+		"Diverge":  e.Diverge(-1),
 	} {
 		if got := style("swamp"); got != "swamp" {
 			t.Errorf("%s with Color:false = %q, want the text untouched", name, got)
@@ -141,6 +143,7 @@ func TestThemeDegradesAtANSI(t *testing.T) {
 		"Pip":      e.Pip('R'),
 		"Err":      e.Err(),
 		"Accent":   e.Accent(),
+		"Diverge":  e.Diverge(-1),
 	} {
 		got := style("x")
 		if strings.Contains(got, "38;2;") {

@@ -84,16 +84,32 @@ func (m Model) View() string {
 // While the palette is open, the highlighted command's description renders
 // beneath — the drawer names the verbs, this line says what they do.
 func (m Model) writeHelp(b *strings.Builder, help string) {
+	written := 0
 	for i, line := range wrapHelp(help, m.width) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(m.theme.Help.Render(line))
+		written++
 	}
 	if desc := m.paletteDesc(); desc != "" {
 		b.WriteString("\n" + m.theme.Help.Render(ui.Truncate(desc, m.width)))
+		written++
+	}
+	// Reserved-but-unused rows render blank, so the frame keeps its height
+	// and the rule above the status holds still when this help is shorter
+	// than the tallest one helpRows reserved for.
+	for written < m.helpRows() {
+		b.WriteString("\n")
+		written++
 	}
 }
+
+// artSlackCols is how many columns past the card frame the art's left
+// edge may drift on a wide terminal (besideImage adds its own two-cell
+// gap after that). The one knob for the frame-to-art distance — raise it
+// to let the art breathe, zero pins it against the frame.
+const artSlackCols = 67
 
 // detailView renders the card overlay in place of the two panes.
 //
@@ -118,8 +134,11 @@ func (m Model) detailView() string {
 		// The image sits beside the card frame only; the hoard's analysis
 		// below gets the full width — the bid and comps rows are wide, and
 		// an image column clipping them cost more than it decorated
-		// (observed live).
-		textW := m.width - imageCols - 2
+		// (observed live). The frame itself never grows past frameWidth,
+		// so the art's left edge caps at artSlackCols past it — on a wide
+		// terminal the leftover width must not carry the art to the far
+		// edge, away from the card it illustrates (observed live).
+		textW := min(m.width-imageCols-2, frameWidth+artSlackCols)
 		lines = besideImage(img, m.cardFrameLines(*m.detail, textW), textW)
 		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
 	case len(img) > 0 && m.width >= imageCols:
@@ -240,6 +259,19 @@ func (m Model) helpRows() int {
 		base := m
 		base.confirm, base.prompt = nil, nil
 		rows = max(rows, len(wrapHelp(base.helpLine(), base.width)))
+	}
+	// The view cycle must not bounce the gutter: a view with shorter help
+	// (unpriced) reserved fewer rows than its neighbors, so v shifted the
+	// rule and status up a line and back (observed live). Reserve the
+	// tallest help any right-pane view would show; writeHelp pads the
+	// difference blank.
+	if m.palette == nil && !m.filtering && !m.watchPick && m.detail == nil && m.text == nil {
+		alt := m
+		alt.confirm, alt.prompt = nil, nil
+		for v := viewHoldings; v <= viewMarket; v++ {
+			alt.view = v
+			rows = max(rows, len(wrapHelp(alt.helpLine(), m.width)))
+		}
 	}
 	if m.paletteDesc() != "" {
 		rows++

@@ -90,14 +90,14 @@ func (m *Model) applyMarketComps(all []market.Comp) {
 	m.sortCompRows()
 }
 
-// The comps sort cycles follow the visible side: each names only columns
-// its table shows, and "spread" means that side's spread — sorting the
-// sell table by the buy side's bid-spread shuffled rows against the
-// column on screen (observed live). Index 0 reproduces the value ranking
-// rows arrive in.
+// The comps sort cycles follow the visible side: every column its table
+// shows and nothing else — "spread" means that side's spread, since
+// sorting the sell table by the buy side's bid-spread shuffled rows
+// against the column on screen (observed live). SPREAD leads as the
+// default: the spread is the comp sheet's whole question.
 var (
-	compsSellSortColumns = []string{"value", "spread", "tcg sold", "name", "set/num"}
-	compsBuySortColumns  = []string{"value", "spread", "buylist", "name", "set/num"}
+	compsSellSortColumns = []string{"spread", "name", "set/num", "fin", "tcg sold", "mp", "ck"}
+	compsBuySortColumns  = []string{"spread", "name", "set/num", "fin", "tcg sold", "mp", "ck", "ck buylist"}
 )
 
 // compsSortColumnsNow is the cycle for the side currently showing.
@@ -120,27 +120,33 @@ func (m *Model) sortCompRows() {
 	})
 }
 
-// compKeyFor compares two comp sheets on one column. Money and value run
-// descending (the repo's convention); spread runs ascending — the tight
-// end is the interesting one — with undefined spreads last.
+// compKeyFor compares two comp sheets on one column. Money columns run
+// descending (the repo's convention, unquoted vendors last for free);
+// spread runs ascending — the tight-or-negative end is the interesting
+// one — with undefined spreads last.
 func compKeyFor(key string, buySide bool, a, b market.Comp) int {
 	switch key {
-	case "spread":
-		if buySide {
-			return cmp.Compare(spreadOrInf(a), spreadOrInf(b))
-		}
-		return cmp.Compare(saleSpreadOrInf(a), saleSpreadOrInf(b))
 	case "tcg sold":
 		return cmp.Compare(b.Market, a.Market)
-	case "buylist":
+	case "mp":
+		return cmp.Compare(b.Manapool, a.Manapool)
+	case "ck":
+		return cmp.Compare(b.CK, a.CK)
+	case "ck buylist":
 		return cmp.Compare(b.Buylist, a.Buylist)
 	case "name":
 		return strings.Compare(a.Card.Name, b.Card.Name)
 	case "set/num":
 		return comparePrinting(a.Card.SetCode, a.Card.CollectorNumber,
 			b.Card.SetCode, b.Card.CollectorNumber)
+	case "fin":
+		return strings.Compare(a.Card.Finish, b.Card.Finish)
 	}
-	return cmp.Compare(b.Card.Value, a.Card.Value)
+	// "spread", and the default: the side's own spread.
+	if buySide {
+		return cmp.Compare(spreadOrInf(a), spreadOrInf(b))
+	}
+	return cmp.Compare(saleSpreadOrInf(a), saleSpreadOrInf(b))
 }
 
 // spreadOrInf sorts the rows with no bid spread after every defined one.
@@ -237,13 +243,13 @@ func compMoney(has bool, v float64) string {
 	return ui.Money(v)
 }
 
-// compSpreadCell grades a defined spread tight-is-green; an undefined one
-// renders the dash, dim. Zero and negative spreads render too — a bid at
-// or over the low ask is the sheet's best news, not a blank.
+// compSpreadCell heats a defined spread on the markup ramp — negative
+// green (the bid at or over the ask is the sheet's best news), reddening
+// toward 100%; an undefined one renders the dash, dim.
 func compSpreadCell(env ui.Env, c market.Comp) ui.Cell {
 	if !c.HasSpread() {
 		return ui.Cell{Text: "—", Style: env.Dim()}
 	}
 	s := c.Spread()
-	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Grade(market.SpreadGrade(s))}
+	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Heat(market.MarkupGrade(s))}
 }

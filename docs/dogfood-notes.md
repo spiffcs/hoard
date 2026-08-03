@@ -328,3 +328,12 @@ All landed same-day, in feedback order:
    Edition decks needed nothing: their mh3 5xx entries are genuine (the
    lists were imported with set/number annotations). Backup at
    hoard.db.bak-repin-20260802 beside the live DB.
+10. **Comps polish (2026-08-02)** — both COMPS sides now sort by exactly
+    their visible columns, SPREAD leading as the default (value sort
+    removed); the buy-side spread color is the spread itself, green at
+    and below zero reddening linearly to 100% (`market.MarkupGrade`,
+    shared by the buy table, the detail's spread trend, and the CLI
+    report). Deferred: filtering damaged-copy noise out of vendor quotes
+    is impossible on the MTGJSON feed (one aggregate price per vendor/
+    finish/day, no condition data) — a direct Manapool API integration
+    with condition-level asks is the path if people ask for it.

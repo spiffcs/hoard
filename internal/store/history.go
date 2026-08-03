@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"database/sql"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
@@ -47,6 +48,18 @@ func (p PriceChange) Pct() float64 {
 		return 0
 	}
 	return p.Delta() / p.Old
+}
+
+// MoverExtents scans the rows for each delta column's largest absolute
+// value — CHANGE keyed on Pct, IMPACT on TotalDelta. The pairing lives
+// here beside the type so the two frontends coloring those columns cannot
+// disagree about which accessor feeds which scale.
+func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
+	for _, c := range rows {
+		pctMax = max(pctMax, math.Abs(c.Pct()))
+		impactMax = max(impactMax, math.Abs(c.TotalDelta()))
+	}
+	return pctMax, impactMax
 }
 
 // effectivePrices is every card's current price per finish, with the MTGJSON

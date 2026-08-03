@@ -294,33 +294,44 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 	}
 }
 
-func TestMoversDeltaColors(t *testing.T) {
+// The delta columns fade on the diverging ramp, each against its own
+// visible extreme — expectations computed through the ramp, never
+// hardcoded SGR (the termenv round-trip lesson).
+func TestMoversGradientColors(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
 	changes := []store.PriceChange{
 		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "nonfoil",
-			Copies: 2, Old: 1.00, New: 5.00},
+			Copies: 2, Old: 1.00, New: 5.00}, // Pct +400% (the extreme), impact +$8 of max $40
 		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "nonfoil",
-			Copies: 1, Old: 50.00, New: 10.00},
+			Copies: 1, Old: 50.00, New: 10.00}, // impact −$40 (the extreme), Pct −80% of max 400%
 	}
+	e := ui.Env{Color: true}
 	out := moversTable(ui.Env{Width: 100, Color: true, Clamp: true},
 		moverSections(changes, 10)).Render()
 
+	pctMax, impactMax := 4.0, 40.0
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.Contains(line, "Riser"):
-			if !strings.Contains(line, "\x1b[92m") {
-				t.Errorf("riser deltas not green:\n%q", line)
+			if want := e.Diverge(1)(ui.SignedPercent(4.0)); !strings.Contains(line, want) {
+				t.Errorf("riser CHANGE not at the gain endpoint:\n%q", line)
+			}
+			if want := e.Diverge(ui.DivergeFrac(8, impactMax))(ui.SignedMoney(8)); !strings.Contains(line, want) {
+				t.Errorf("riser IMPACT not mid-ramp:\n%q", line)
 			}
 		case strings.Contains(line, "Sinker"):
-			if !strings.Contains(line, "\x1b[91m") {
-				t.Errorf("sinker deltas not red:\n%q", line)
+			if want := e.Diverge(-1)(ui.SignedMoney(-40)); !strings.Contains(line, want) {
+				t.Errorf("sinker IMPACT not at the loss endpoint:\n%q", line)
+			}
+			if want := e.Diverge(ui.DivergeFrac(-0.8, pctMax))(ui.SignedPercent(-0.8)); !strings.Contains(line, want) {
+				t.Errorf("sinker CHANGE not mid-ramp:\n%q", line)
 			}
 		}
 	}
-	if strings.Contains(strings.SplitN(out, "\n", 2)[0], "\x1b[9") {
+	if strings.Contains(strings.SplitN(out, "\n", 2)[0], "38;2;") {
 		t.Errorf("the header row must never be colored:\n%q", out)
 	}
 
@@ -526,7 +537,7 @@ func TestCompsSpreadColorsAndDashes(t *testing.T) {
 	}
 	// The 20% spread saturates the ramp's green end — asserted through the
 	// ramp itself, since termenv's hex round-trip can drift a channel.
-	wantGreen := ui.Env{Color: true}.Grade(market.SpreadGrade(0.20))("20.0%")
+	wantGreen := ui.Env{Color: true}.Heat(market.MarkupGrade(0.20))("20.0%")
 	if !strings.Contains(out, wantGreen) {
 		t.Errorf("tight spread not graded green: want %q in:\n%q", wantGreen, out)
 	}

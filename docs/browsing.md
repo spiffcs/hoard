@@ -111,6 +111,13 @@ volume, not information. The status line says so, and the palette's
 from $0 (gate off) to $100 for hoards whose noise starts higher. This gate
 is separate from the <kbd>M</kbd> value floor, which layers on top.
 
+**CHANGE and IMPACT fade on a diverging gradient** — vivid red at the
+biggest visible loss, neutral gray at zero, full green at the biggest
+visible gain — each column scaled to its own extremes, with square-root
+compression so mid-size moves keep readable color next to a whale.
+Sorting by either column reads as one smooth sweep, and the `hoard
+movers` report colors identically.
+
 **The market view waits to be asked**: it needs today's vendor quotes from
 MTGJSON, so cycling to it
 says `press F to fetch` rather than starting a download because you passed
@@ -162,11 +169,14 @@ The **buy side** is the other side of the counter: tcg's last-sold and
 the asks beside Card Kingdom's cash bid, with its own **SPREAD** — retail
 minus buylist over retail, the hobby's confidence signal: 20–30% marks a liquid staple
 dealers can flip, around 50% is typical, and 80–90% means the retail
-price spiked and no dealer believes it yet — graded green as it tightens.
-A dash means no buylist bid today (Card Kingdom runs the only buylist in
-the MTGJSON feed). Each side's status line states its spread formula. The
-comps sort cycles value → spread → market → low → buylist → name; spread
-sorts tightest first.
+price spiked and no dealer believes it yet. The color is the spread
+itself: at or below zero is green (the bid meets or beats the ask — pure
+value), reddening linearly toward 100% — the retailer keeping the whole
+sale price. A dash means no buylist bid today (Card Kingdom runs the only
+buylist in the MTGJSON feed). Each side's status line states its spread
+formula. The comps sort cycles every visible column, **SPREAD** first as
+the default — spread ascending (tightest or most negative first), money
+columns descending, then name, set/num, and finish.
 
 ## Filtering
 

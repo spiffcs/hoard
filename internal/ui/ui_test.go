@@ -405,3 +405,54 @@ func TestHeatRamp(t *testing.T) {
 		t.Errorf("heat's green end must match grade's: %q vs %q", lo, e.Grade(1)("x"))
 	}
 }
+
+// The Diverge ramp: five distinct stations from the loss red through the
+// neutral gray to the gain green (expectations computed through the ramp,
+// never hardcoded — the termenv round-trip lesson), clamped ends, plain
+// when colorless, and the gain end wearing the same green Grade's top does.
+func TestDivergeRamp(t *testing.T) {
+	e := Env{Color: true}
+	samples := []string{
+		e.Diverge(-1)("x"), e.Diverge(-0.5)("x"), e.Diverge(0)("x"),
+		e.Diverge(0.5)("x"), e.Diverge(1)("x"),
+	}
+	for i := range samples {
+		for j := i + 1; j < len(samples); j++ {
+			if samples[i] == samples[j] {
+				t.Errorf("ramp stations %d and %d coincide: %q", i, j, samples[i])
+			}
+		}
+	}
+	if e.Diverge(-2)("x") != samples[0] || e.Diverge(2)("x") != samples[4] {
+		t.Errorf("ramp must clamp at its ends")
+	}
+	if got := (Env{}).Diverge(-1)("x"); got != "x" {
+		t.Errorf("colorless diverge = %q, want plain", got)
+	}
+	// Diverge carries its own brighter anchors: its gain end must NOT
+	// collapse into Grade's muted green, or the movers table loses the
+	// extra step of brightness it asked for.
+	if samples[4] == e.Grade(1)("x") {
+		t.Errorf("diverge's gain end should be brighter than grade's green: %q", samples[4])
+	}
+}
+
+// DivergeFrac: sign preserved, sqrt-compressed magnitude, clamped, with
+// zero values and zero extents both landing on the neutral midpoint.
+func TestDivergeFrac(t *testing.T) {
+	for _, tc := range []struct {
+		v, extent, want float64
+	}{
+		{25, 100, 0.5},   // sqrt shape: quarter of the extent is half the ramp
+		{-25, 100, -0.5}, // sign preserved
+		{100, 100, 1},
+		{-100, 100, -1},
+		{200, 100, 1}, // clamped past the extent
+		{0, 100, 0},
+		{5, 0, 0}, // zero extent: everything neutral
+	} {
+		if got := DivergeFrac(tc.v, tc.extent); got != tc.want {
+			t.Errorf("DivergeFrac(%v, %v) = %v, want %v", tc.v, tc.extent, got, tc.want)
+		}
+	}
+}

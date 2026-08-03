@@ -2691,29 +2691,26 @@ func TestCompsSortIsIndependent(t *testing.T) {
 		}
 		return out
 	}
-	// Arrival order is value-descending.
-	if names()[0] != "Agree" {
-		t.Fatalf("arrival order = %v", names())
-	}
-
-	// Sell side: SPREAD is the sale prices' disagreement — most agreement
-	// first, no-second-figure last.
+	// SPREAD is the default sort. Sell side: the sale prices'
+	// disagreement — most agreement first, no-second-figure last.
 	m.cursor[paneCards] = len(m.marketRows) // first comps row
-	m = key(m, "s")                         // value → spread
 	if got := m.sortLabel(); got != "comps · spread" {
-		t.Fatalf("label = %q", got)
+		t.Fatalf("default label = %q, want spread", got)
 	}
 	if got := names(); got[0] != "Agree" || got[1] != "Differ" || got[2] != "Lone" {
-		t.Errorf("sell spread order = %v, want agreement first, undefined last", got)
+		t.Fatalf("sell spread order = %v, want agreement first, undefined last", got)
+	}
+	m = key(m, "s") // spread → name
+	if got := m.sortLabel(); got != "comps · name" {
+		t.Fatalf("label = %q", got)
 	}
 
-	// Buy side: SPREAD is the bid's haircut — the flip resets to value,
-	// then spread ranks the arbitrage bid (negative spread) tightest.
+	// Buy side: the flip resets to the default spread, now the bid's
+	// haircut — the arbitrage bid (negative spread) leads.
 	m = key(m, "b")
-	if got := m.sortLabel(); got != "comps · value" {
+	if got := m.sortLabel(); got != "comps · spread" {
 		t.Fatalf("side flip should reset the sort, label = %q", got)
 	}
-	m = key(m, "s") // value → spread
 	if got := names(); got[0] != "Lone" || got[1] != "Differ" || got[2] != "Agree" {
 		t.Errorf("buy spread order = %v, want the bid-over-market row tightest", got)
 	}
@@ -2761,5 +2758,45 @@ func TestQuitConfirmKeepsFrameHeight(t *testing.T) {
 	}
 	if after := m.visibleRows(); after != before {
 		t.Errorf("visible rows moved %d → %d under the confirm; the frame must hold still", before, after)
+	}
+}
+
+// The movers columns fade independently on the diverging ramp, each
+// scaled to its own visible extreme: one row can be the CHANGE endpoint
+// while sitting mid-ramp on IMPACT — the old shared style could never
+// say that. Expectations computed through the ramp, never hardcoded.
+func TestMoversGradientStyles(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	st := testStore()
+	st.movers = []store.PriceChange{
+		{ScryfallID: "Riser-id", Name: "Riser", SetCode: "uma", CollectorNumber: "1",
+			Finish: "nonfoil", Copies: 2, Old: 1, New: 5}, // Pct +400% endpoint, impact +$8 of 40
+		{ScryfallID: "Sinker-id", Name: "Sinker", SetCode: "uma", CollectorNumber: "2",
+			Finish: "nonfoil", Copies: 1, Old: 50, New: 10}, // impact −$40 endpoint, Pct −80% of 400%
+	}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v")
+	if len(m.movers) != 2 {
+		t.Fatalf("movers = %d, want the fixture pair", len(m.movers))
+	}
+
+	e := ui.Env{Color: true}
+	out := strings.Join(m.moversLines(120), "\n")
+	// The Sinker row is unselected (the cursor sits on row 0), so its
+	// cells carry the pure ramp styles.
+	if want := e.Diverge(-1)(ui.SignedMoney(-40)); !strings.Contains(out, want) {
+		t.Errorf("sinker IMPACT not at the loss endpoint:\n%q", out)
+	}
+	if want := e.Diverge(ui.DivergeFrac(-0.8, 4))(ui.SignedPercent(-0.8)); !strings.Contains(out, want) {
+		t.Errorf("sinker CHANGE not mid-ramp:\n%q", out)
+	}
+	// Independence: on the same (riser) row the two columns' styles differ.
+	changeStyle := e.Diverge(ui.DivergeFrac(4, 4))("x")
+	impactStyle := e.Diverge(ui.DivergeFrac(8, 40))("x")
+	if changeStyle == impactStyle {
+		t.Error("CHANGE and IMPACT must scale independently")
 	}
 }

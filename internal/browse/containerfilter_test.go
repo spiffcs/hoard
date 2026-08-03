@@ -586,3 +586,29 @@ func TestSetPennyFilter(t *testing.T) {
 		t.Error("committing a new line must re-arm the gate")
 	}
 }
+
+// Cycling views must not bounce the bottom gutter: every view reserves the
+// tallest help any of them needs, so the rule and status lines hold still
+// even when one view's help wraps shorter (unpriced, observed live).
+func TestViewCycleKeepsGutterSteady(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	frame := func() (total, rule int) {
+		lines := strings.Split(m.View(), "\n")
+		for i, l := range lines {
+			if strings.HasPrefix(l, "───") {
+				return len(lines), i
+			}
+		}
+		t.Fatalf("no rule line in frame:\n%s", m.View())
+		return 0, 0
+	}
+	wantTotal, wantRule := frame()
+	for range 5 {
+		m = key(m, "v")
+		total, rule := frame()
+		if total != wantTotal || rule != wantRule {
+			t.Errorf("view %v: frame %d lines with the rule at %d, want %d/%d",
+				m.view, total, rule, wantTotal, wantRule)
+		}
+	}
+}
