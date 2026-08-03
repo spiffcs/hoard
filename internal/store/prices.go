@@ -194,8 +194,8 @@ func (s *Store) Unpriced() ([]UnpricedRow, error) {
 SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
        c.name, c.set_code, c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
-       GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in,
-       GROUP_CONCAT(` + containerLabel + `, char(31)) AS held_in_raw,
+       GROUP_CONCAT(DISTINCT ct.name) AS held_in,
+       GROUP_CONCAT(ct.name, char(31)) AS held_in_raw,
        c.color_identity, c.promo_types
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id

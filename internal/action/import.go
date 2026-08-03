@@ -150,8 +150,20 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		targetID, targetName = b.ID, b.Name
 	}
 	binderIDs := make(map[string]int64, len(binders))
+	binderNames := make(map[int64]string, len(binders))
 	for _, b := range binders {
 		binderIDs[strings.ToLower(b.Name)] = b.ID
+		binderNames[b.ID] = b.Name
+	}
+	// The reserved aliases land in the default binder even after a rename, so
+	// a pre-rename export whose Container column says "Binder" round-trips
+	// into it instead of creating a second binder by that name. A legacy
+	// binder that actually owns one of these names (possible before they were
+	// reserved) keeps its claim via the map entry made above.
+	for _, alias := range store.ReservedBinderNames {
+		if _, taken := binderIDs[strings.ToLower(alias)]; !taken {
+			binderIDs[strings.ToLower(alias)] = binders[0].ID
+		}
 	}
 
 	// Plan every write first, then hand the whole batch to the store as one
@@ -168,7 +180,10 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		if a.binder != "" {
 			key := strings.ToLower(a.binder)
 			if id, ok := binderIDs[key]; ok {
-				dest, name = id, a.binder
+				// The binder's own name, not the CSV's spelling: an aliased
+				// "Binder" cell should be receipted under the default
+				// binder's current name.
+				dest, name = id, binderNames[id]
 			} else {
 				canonical, seen := spelling[key]
 				if !seen {

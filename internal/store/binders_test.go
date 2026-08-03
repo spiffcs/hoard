@@ -117,10 +117,27 @@ func TestRenameBinder(t *testing.T) {
 	if c, err := s.BinderByRef("For Sale"); err != nil || c.ID != id {
 		t.Errorf("renamed binder not found: %v", err)
 	}
-	// The default keeps its fixed name.
+	// The default renames like any other binder…
 	def, _ := s.BinderByRef(LooseName)
-	if err := s.RenameBinder(def.ID, "Main"); err == nil {
-		t.Error("renaming the default binder succeeded")
+	if err := s.RenameBinder(def.ID, "Main"); err != nil {
+		t.Errorf("renaming the default binder: %v", err)
+	}
+	if c, err := s.BinderByRef("Main"); err != nil || !IsDefaultBinder(*c) {
+		t.Errorf("renamed default not found by new name: %v", err)
+	}
+	// …still answers to the reserved aliases afterwards…
+	for _, alias := range ReservedBinderNames {
+		c, err := s.BinderByRef(alias)
+		if err != nil || !IsDefaultBinder(*c) {
+			t.Errorf("BinderByRef(%q) after rename = %v, want the default", alias, err)
+		}
+	}
+	// …and may retake an alias as its own name, which no other binder can.
+	if err := s.RenameBinder(def.ID, LooseName); err != nil {
+		t.Errorf("default retaking %q: %v", LooseName, err)
+	}
+	if err := s.RenameBinder(id, "Collection"); err == nil {
+		t.Error("a user binder took a reserved name")
 	}
 }
 

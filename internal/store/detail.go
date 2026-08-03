@@ -110,7 +110,7 @@ type Holding struct {
 // copies of a card are one loose and three spread across two decks.
 func (s *Store) HoldingsOf(scryfallID string) ([]Holding, error) {
 	rows, err := s.db.Query(`
-SELECT ct.id, `+containerLabel+`, ct.kind, e.finish, e.board, e.quantity
+SELECT ct.id, ct.name, ct.kind, e.finish, e.board, e.quantity
 FROM card_entries e
 JOIN containers ct ON ct.id = e.container_id
 WHERE e.scryfall_id = ?
@@ -143,7 +143,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 // held list groups stably.
 func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
 	rows, err := s.db.Query(`
-SELECT ct.id, `+containerLabel+`, ct.kind, e.finish, e.board, e.quantity,
+SELECT ct.id, ct.name, ct.kind, e.finish, e.board, e.quantity,
        c.scryfall_id, c.set_code, c.collector_number, c.promo_types
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id

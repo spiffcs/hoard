@@ -9,7 +9,6 @@ package report
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -54,7 +53,9 @@ func Summary(env ui.Env, binder store.CollectionTotals, decks []store.DeckSummar
 
 	// The section rows are bold throughout, bars included: the two of them tile
 	// the bar column and so double as the scale legend for the deck rows below.
-	t.AddStyled(env.Bold(), ui.C(strings.ToUpper(store.LooseName)), ui.C(ui.Count(binder.TotalCopies)),
+	// "BINDER" is the loose half as a section — every binder combined, whatever
+	// each is named — so it stays a fixed label, not the default binder's name.
+	t.AddStyled(env.Bold(), ui.C("BINDER"), ui.C(ui.Count(binder.TotalCopies)),
 		ui.C(ui.Money(binder.Value)), ui.C(share(binder.Value)))
 	t.AddStyled(env.Bold(), ui.C(fmt.Sprintf("DECKS · %d", len(sorted))),
 		ui.C(ui.Count(deckCopies)), ui.C(ui.Money(deckValue)), ui.C(share(deckValue)))

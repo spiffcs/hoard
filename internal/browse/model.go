@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -1062,7 +1061,7 @@ func (m *Model) askRemoval() {
 		}
 		if sel.Kind == store.KindCollection {
 			if sel.isDefault {
-				m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
+				m.status, m.statusErr = "the default binder cannot be removed", true
 				return
 			}
 			m.askBinderRemoval(sel)
@@ -1097,7 +1096,7 @@ func (m *Model) askRemoval() {
 		return
 	}
 	m.confirm = &pendingConfirm{
-		prompt: fmt.Sprintf("remove %s from the %s?", c.Name, strings.ToLower(store.LooseName)),
+		prompt: fmt.Sprintf("remove %s from %s?", c.Name, m.selectedContainer().Name),
 		help:   "y remove · any other key cancels",
 		onYes:  func(m *Model) tea.Cmd { m.removeCard(); return nil },
 	}

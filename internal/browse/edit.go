@@ -52,8 +52,7 @@ func (m Model) editable() (bool, string) {
 		return false, "this list is every printing from " + sel.Name + " · edit the card in its binder or deck"
 	}
 	if sel.Kind != store.KindCollection {
-		return false, "deck cards are owned by the imported list; edit the " +
-			strings.ToLower(store.LooseName) + " instead"
+		return false, "deck cards are owned by the imported list; edit the binder instead"
 	}
 	return true, ""
 }
@@ -124,7 +123,7 @@ func (m *Model) removeCard() {
 		desc: name,
 		undo: func(st Editor) error { return st.RestoreHoldings(id, removed) },
 	})
-	m.status = fmt.Sprintf("removed %s from the %s", name, strings.ToLower(store.LooseName))
+	m.status = fmt.Sprintf("removed %s from %s", name, m.selectedContainer().Name)
 	m.statusErr = false
 	m.refresh()
 }
@@ -141,8 +140,7 @@ func (m *Model) heldEditable() (store.Holding, bool) {
 	}
 	h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
 	if h.ContainerKind != store.KindCollection {
-		m.status, m.statusErr = "deck cards are owned by the imported list; edit the "+
-			strings.ToLower(store.LooseName)+" instead", true
+		m.status, m.statusErr = "deck cards are owned by the imported list; edit the binder instead", true
 		return store.Holding{}, false
 	}
 	return h, true
@@ -400,6 +398,16 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) {
 			break
 		}
 	}
+	// The reserved aliases keep meaning the default binder after a rename,
+	// matching what `--binder Binder` and imports resolve to.
+	if target == nil && store.IsReservedBinderName(want) {
+		for i := range binders {
+			if binders[i].IsDefault {
+				target = &binders[i]
+				break
+			}
+		}
+	}
 	if target == nil {
 		m.status, m.statusErr = fmt.Sprintf("no binder named %q", want), true
 		return
@@ -467,7 +475,7 @@ func (m *Model) removeHeld(h store.Holding, name string) {
 func (m *Model) removeDeck() {
 	sel := m.selectedContainer()
 	if sel == nil || sel.Kind == store.KindCollection {
-		m.status, m.statusErr = "the "+strings.ToLower(store.LooseName)+" cannot be removed", true
+		m.status, m.statusErr = "a binder cannot be removed here", true
 		return
 	}
 

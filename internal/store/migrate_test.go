@@ -570,3 +570,33 @@ func TestBackupPruneLeavesAFewAlone(t *testing.T) {
 		}
 	}
 }
+
+// v19 gives the default binder its display name for real: a pre-v19 row named
+// 'Collection' is renamed to 'Binder', so containers.name is authoritative and
+// a rename is an ordinary UPDATE. The old stored name survives as an alias.
+func TestMigrateRenamesDefaultBinder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hoard.db")
+	seedRawDB(t, path, preVersioningDDL+`
+INSERT INTO containers (kind,name,source,source_id,created_at,updated_at)
+  VALUES ('collection','Collection','manual','__collection__','x','x');`)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM containers WHERE source_id=?`,
+		collectionSourceID).Scan(&name); err != nil {
+		t.Fatalf("reading default binder name: %v", err)
+	}
+	if name != LooseName {
+		t.Errorf("default binder name after migrating = %q, want %q", name, LooseName)
+	}
+	// The pre-v19 stored name still resolves, as a reserved alias.
+	c, err := s.BinderByRef("Collection")
+	if err != nil || !IsDefaultBinder(*c) {
+		t.Errorf("BinderByRef(\"Collection\") = %v, %v; want the default", c, err)
+	}
+}

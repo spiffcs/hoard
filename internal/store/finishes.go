@@ -75,7 +75,7 @@ func (s *Store) RepairFinishes(available map[string][]string) (fixed, ambiguous 
 	defer tx.Rollback()
 
 	rows, err := tx.Query(`
-SELECT e.container_id, ` + containerLabel + `, e.scryfall_id, e.finish, e.board, e.quantity,
+SELECT e.container_id, ct.name, e.scryfall_id, e.finish, e.board, e.quantity,
        c.name, c.set_code, c.collector_number
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id

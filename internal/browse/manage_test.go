@@ -137,8 +137,8 @@ func TestParseThreshold(t *testing.T) {
 	}
 }
 
-// Binder management: n creates (undo deletes), R renames non-default
-// binders only, d removes an empty one.
+// Binder management: n creates (undo deletes), R renames any binder — the
+// default included — d removes an empty non-default one.
 func TestBinderManagement(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)
@@ -159,13 +159,15 @@ func TestBinderManagement(t *testing.T) {
 		t.Errorf("status = %q", m.status)
 	}
 
-	// The default binder refuses a rename.
+	// The default binder renames like any other: R opens the prefilled prompt.
 	m.focus = paneContainers
 	m.cursor[paneContainers] = 1 // past the merged all-cards row
 	m = key(m, "R")
-	if m.prompt != nil || !strings.Contains(m.status, "cannot be renamed") {
-		t.Errorf("default rename: prompt=%v status=%q", m.prompt, m.status)
+	if m.prompt == nil || m.prompt.text != store.LooseName {
+		t.Errorf("default rename: prompt=%+v, want prefilled with %q", m.prompt, store.LooseName)
 	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
 
 	// Renaming the created binder works and undo renames back.
 	if i := findContainer(m, "Trade"); i < 0 {

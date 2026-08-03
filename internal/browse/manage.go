@@ -125,9 +125,6 @@ func (m *Model) promptRenameBinder() {
 	case sel.Kind != store.KindCollection:
 		m.status, m.statusErr = "decks are named by their imported list", true
 		return
-	case sel.isDefault:
-		m.status, m.statusErr = "the default "+strings.ToLower(store.LooseName)+" cannot be renamed", true
-		return
 	}
 	id, was := sel.ID, sel.Name
 	m.prompt = &prompt{

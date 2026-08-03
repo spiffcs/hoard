@@ -46,6 +46,7 @@ var migrations = []migration{
 	{16, promoTypesColumn},
 	{17, tcgAltProductColumn},
 	{18, settingsTable},
+	{19, defaultBinderRealName},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -354,6 +355,16 @@ CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );`
+
+// v19: the default binder's stored name becomes its display name. The row
+// was created as 'Collection' and every reader substituted LooseName via a
+// CASE (the old containerLabel), which made containers.name dead weight for
+// this one row — and made the default binder unrenameable. With the name
+// real, renames are ordinary UPDATEs and the CASE is gone. Frozen earlier
+// paths (the legacy transform) still insert 'Collection'; they run before
+// this one, which is the point.
+const defaultBinderRealName = `
+UPDATE containers SET name = 'Binder' WHERE source_id = '__collection__';`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

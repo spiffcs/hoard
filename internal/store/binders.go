@@ -28,7 +28,8 @@ func binderSourceID(name string) string {
 }
 
 // IsDefaultBinder reports whether a container is the built-in binder every
-// database starts with — the one that cannot be renamed or removed.
+// database starts with — the one that cannot be removed, though it can be
+// renamed like any other.
 func IsDefaultBinder(c Container) bool { return c.SourceID == collectionSourceID }
 
 // ListBinders returns every binder with rolled-up counts and value, the
@@ -40,7 +41,7 @@ func (s *Store) ListBinders() ([]DeckSummary, error) {
 		return nil, err
 	}
 	rows, err := s.db.Query(`
-SELECT ct.id, `+containerLabel+`, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
+SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
        ct.source_id = '`+collectionSourceID+`' AS is_default,
        COUNT(e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
@@ -72,8 +73,8 @@ ORDER BY CASE WHEN ct.source_id = '`+collectionSourceID+`' THEN 0 ELSE 1 END, ct
 }
 
 // BinderByRef resolves a binder by numeric id, exact name, or a
-// case-insensitive fragment of its name. The default binder answers to
-// LooseName.
+// case-insensitive fragment of its name. The default binder also answers to
+// the reserved aliases ("Binder", "Collection") whatever its current name.
 func (s *Store) BinderByRef(ref string) (*Container, error) {
 	if _, err := s.collectionID(); err != nil {
 		return nil, err
@@ -110,8 +111,14 @@ func (s *Store) validateNewBinderName(name string) (trimmed, sourceID string, er
 	if sid == "binder:" {
 		return "", "", fmt.Errorf("binder name %q has no usable characters", name)
 	}
+	// The reserved aliases always mean the default binder — even after it has
+	// been renamed — so no other binder may claim them: an old export whose
+	// Container column says "Binder" must keep landing in the default.
+	if IsReservedBinderName(name) {
+		return "", "", fmt.Errorf("%q is reserved for the default binder", name)
+	}
 	// Uniqueness is checked against display names, not just the slugged
-	// source_id, so "Trade" cannot shadow the default "Binder" or collide with
+	// source_id, so "Trade" cannot shadow an existing binder or collide with
 	// a name that slugs identically.
 	if existing, err := s.containerByRef(KindCollection, "binder", name); err == nil {
 		return "", "", fmt.Errorf("a binder named %q already exists", existing.Name)
@@ -119,9 +126,10 @@ func (s *Store) validateNewBinderName(name string) (trimmed, sourceID string, er
 	return name, sid, nil
 }
 
-// RenameBinder gives a binder a new display name. The default binder keeps its
-// fixed name: half the interface says "Binder" structurally, and a database
-// where that word means something else would be lying to its reader.
+// RenameBinder gives a binder a new display name. The default binder renames
+// like any other — its identity is its source_id, not its name — but the
+// reserved aliases stay its alone: only the default may take (or retake) the
+// name "Binder", so old exports keep resolving to it.
 func (s *Store) RenameBinder(id int64, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -131,8 +139,8 @@ func (s *Store) RenameBinder(id int64, name string) error {
 	if err != nil {
 		return err
 	}
-	if IsDefaultBinder(*c) {
-		return fmt.Errorf("the default %s cannot be renamed; create a named binder instead", LooseName)
+	if IsReservedBinderName(name) && !IsDefaultBinder(*c) {
+		return fmt.Errorf("%q is reserved for the default binder", name)
 	}
 	if existing, err := s.containerByRef(KindCollection, "binder", name); err == nil && existing.ID != id {
 		return fmt.Errorf("a binder named %q already exists", existing.Name)
@@ -150,7 +158,7 @@ func (s *Store) DeleteBinder(id int64) error {
 		return err
 	}
 	if IsDefaultBinder(*c) {
-		return fmt.Errorf("the default %s cannot be removed", LooseName)
+		return fmt.Errorf("the default binder %q cannot be removed", c.Name)
 	}
 	var copies int
 	if err := s.db.QueryRow(`SELECT COALESCE(SUM(quantity),0) FROM card_entries WHERE container_id=?`,

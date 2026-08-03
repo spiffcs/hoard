@@ -58,10 +58,10 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 	return id, tx.Commit()
 }
 
-// containerSelect reads one container with its display name resolved, so the
-// default binder answers to "Binder" rather than its stored row name.
+// containerSelect reads one container. Since v19 containers.name is the
+// display name for every row, the default binder included.
 const containerSelect = `
-SELECT ct.id, ct.kind, ` + containerLabel + `, ct.source,
+SELECT ct.id, ct.kind, ct.name, ct.source,
        COALESCE(ct.source_id,''), COALESCE(ct.source_url,''), COALESCE(ct.format,'')
 FROM containers ct WHERE ct.kind=?`
 
@@ -118,8 +118,8 @@ func (s *Store) DeckByRef(ref string) (*Container, error) {
 }
 
 // containerByRef is the id / exact-name / unique-fragment resolution shared by
-// decks and binders. Names are matched on the display label, so the default
-// binder answers to "Binder". noun is what the errors call the thing.
+// decks and binders. For binders the reserved aliases resolve to the default
+// binder whatever its current name. noun is what the errors call the thing.
 func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 	// A bare integer is an id, never a name fragment.
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
@@ -133,7 +133,7 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 	// An exact name wins outright, so a name that is a fragment of another's
 	// stays reachable.
 	c, err := scanContainer(s.db.QueryRow(
-		containerSelect+` AND `+containerLabel+`=? COLLATE NOCASE`, kind, ref))
+		containerSelect+` AND ct.name=? COLLATE NOCASE`, kind, ref))
 	if err == nil {
 		return c, nil
 	}
@@ -141,10 +141,22 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 		return nil, err
 	}
 
+	// A reserved alias names the default binder whatever it is called now:
+	// every export ever written stamps "Binder" in its Container column, and
+	// pre-v19 databases stored "Collection". Checked after the exact match so
+	// a default binder literally named "Binder" resolves the ordinary way.
+	if kind == KindCollection && IsReservedBinderName(ref) {
+		id, err := s.collectionID()
+		if err != nil {
+			return nil, err
+		}
+		return scanContainer(s.db.QueryRow(containerSelect+` AND ct.id=?`, kind, id))
+	}
+
 	// Otherwise accept a fragment, as long as it picks out exactly one.
 	// LIKE is already case-insensitive for ASCII in SQLite.
 	rows, err := s.db.Query(
-		containerSelect+` AND `+containerLabel+` LIKE ? ESCAPE '\' ORDER BY ct.name`,
+		containerSelect+` AND ct.name LIKE ? ESCAPE '\' ORDER BY ct.name`,
 		kind, "%"+escapeLike(ref)+"%")
 	if err != nil {
 		return nil, err

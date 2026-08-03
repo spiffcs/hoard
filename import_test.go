@@ -263,3 +263,37 @@ func TestCmdImportRejectsBadFlagCombos(t *testing.T) {
 		}
 	}
 }
+
+// A pre-rename export whose Container column says "Binder" keeps landing in
+// the default binder after it is renamed: the old name is a reserved alias,
+// not a new binder to create.
+func TestCmdImportAliasesOldDefaultNameAfterRename(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	def, err := st.BinderByRef(store.LooseName)
+	if err != nil {
+		t.Fatalf("BinderByRef: %v", err)
+	}
+	if err := st.RenameBinder(def.ID, "Shoebox"); err != nil {
+		t.Fatalf("RenameBinder: %v", err)
+	}
+
+	csv := filepath.Join(t.TempDir(), "old-export.csv")
+	os.WriteFile(csv, []byte(
+		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD\n"+
+			"2,Sol Ring,c21,125,nonfoil,sol-id-1,Binder,binder,main,2.00\n"), 0o644)
+	if err := cmdImport(context.Background(), st, []string{"--preserve-binders", csv}); err != nil {
+		t.Fatalf("cmdImport: %v", err)
+	}
+
+	binders, err := st.ListBinders()
+	if err != nil {
+		t.Fatalf("ListBinders: %v", err)
+	}
+	if len(binders) != 1 || binders[0].Name != "Shoebox" {
+		t.Fatalf("binders = %+v, want only the renamed default", binders)
+	}
+	if got := binders[0].TotalCopies; got != 2 {
+		t.Errorf("default binder holds %d copies, want 2", got)
+	}
+}

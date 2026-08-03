@@ -39,22 +39,36 @@ const (
 	KindDeck       = "deck"
 )
 
-// LooseName is what the cards outside any deck are called on screen.
+// LooseName is the default binder's initial name — what the cards outside any
+// deck are called until the user renames it.
 //
 // "Collection" is the whole hoard — binder plus decks — so using it for the loose
 // half made the summary contradict itself, listing a COLLECTION of 335 above a
 // TOTAL of 2,214.
 //
-// The stored container is still named "Collection" with kind `collection`; both
-// are internal and not worth a migration. containerLabel substitutes this one.
+// Since v19 the stored container carries its display name outright (older rows
+// said 'Collection' behind a read-time CASE), so containers.name is
+// authoritative and this constant is only the starting value and a reserved
+// alias — never assume it is the current name; ask ListBinders.
 const LooseName = "Binder"
 
-// containerLabel is a container's display name: its own name, or LooseName for
-// the default binder. Keyed on the sentinel source_id rather than the kind,
-// because user-created binders share the kind and keep their own names. It
-// assumes the containers table is aliased `ct`.
-const containerLabel = `CASE WHEN ct.source_id = '` + collectionSourceID +
-	`' THEN '` + LooseName + `' ELSE ct.name END`
+// ReservedBinderNames always resolve to the default binder, whatever it is
+// currently called: LooseName because every export ever written stamps it in
+// the Container column, "Collection" because pre-v19 databases stored it.
+// Keeping them reserved means old CSVs round-trip into the default binder
+// instead of silently growing a second binder named "Binder".
+var ReservedBinderNames = []string{LooseName, "Collection"}
+
+// IsReservedBinderName reports whether a name is one of the reserved aliases,
+// compared like binder names everywhere else: trimmed, case-insensitive.
+func IsReservedBinderName(name string) bool {
+	for _, r := range ReservedBinderNames {
+		if strings.EqualFold(strings.TrimSpace(name), r) {
+			return true
+		}
+	}
+	return false
+}
 
 // collectionSourceID is the fixed source_id of the singleton loose collection,
 // letting it share the UNIQUE(source, source_id) constraint with decks.
@@ -366,8 +380,8 @@ func (s *Store) collectionID() (int64, error) {
 	ts := now()
 	res, err := s.db.Exec(`
 INSERT INTO containers (kind, name, source, source_id, created_at, updated_at)
-VALUES (?, 'Collection', 'manual', ?, ?, ?)`,
-		KindCollection, collectionSourceID, ts, ts)
+VALUES (?, ?, 'manual', ?, ?, ?)`,
+		KindCollection, LooseName, collectionSourceID, ts, ts)
 	if err != nil {
 		return 0, fmt.Errorf("creating collection container: %w", err)
 	}
