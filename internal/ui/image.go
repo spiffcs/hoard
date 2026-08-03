@@ -122,12 +122,19 @@ func sample(img image.Image, w, h int) [][]rgb {
 // into the cols×rows rectangle, so no pixel geometry is needed. Rows
 // follow the image's aspect the same way Halfblocks' do. Retransmitting
 // under the same id replaces the previous image.
-func KittyImage(img image.Image, id, cols int) (transmit string, placeholder []string, err error) {
+func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit string, placeholder []string, err error) {
 	b := img.Bounds()
 	if cols <= 0 || b.Dx() <= 0 || b.Dy() <= 0 {
 		return "", nil, fmt.Errorf("empty image")
 	}
-	rows := max(cols*b.Dy()/(b.Dx()*2), 1)
+	if cellAspect <= 0 {
+		cellAspect = 2
+	}
+	// Rows from the measured cell aspect, floored: the terminal scales
+	// the image to fit the rect, and an over-tall estimate letterboxes a
+	// blank strip under the card (observed live at Ghostty's ~1:2.3) —
+	// half a row of side margin beats a full row of gap.
+	rows := max(int(float64(cols*b.Dy())/(float64(b.Dx())*cellAspect)), 1)
 
 	var buf strings.Builder
 	err = kitty.EncodeGraphics(&buf, img, &kitty.Options{

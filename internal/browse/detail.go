@@ -37,6 +37,10 @@ type detail struct {
 	// heldCursor selects a row of the held list; landing on a different
 	// printing re-points the whole overlay (series, comps, art, links).
 	heldCursor int
+	// scroll is how many lines the overlay is scrolled down — pgup/pgdn
+	// reach the sections a short window pushes past the fold. Clamped at
+	// render time, where the line count is known.
+	scroll int
 	// zone is which strip of the overlay the arrow keys drive: the links
 	// row by default, or the held list after ↑ climbs into it. In the held
 	// zone ←/→ pick a field of the selected row and enter edits it.
@@ -48,7 +52,22 @@ type detail struct {
 	// image's space so HELD and everything under it stay put when the art
 	// lands, instead of jumping down by an image's height (observed live).
 	imagePending bool
-	err          error
+	// imageColsDrawn is the width the current art was rendered at. A
+	// resize that changes what detailImageCols wants triggers a re-render
+	// — art cached at the old size clips off a narrower window's edge
+	// (observed live).
+	imageColsDrawn int
+	// imageTransmit is the kitty upload behind the current art. It rides
+	// inside the next rendered frame (see detailView) rather than being
+	// written raw — a raw write races the renderer and arrives at the
+	// terminal interleaved with frame bytes, a corrupted sequence the
+	// terminal drops, leaving placeholders addressing an image it never
+	// got (a zoomed crop, observed live). transmitSent records that a
+	// frame has carried it; a landing or a settled resize clears the flag
+	// to embed it again. Both idle on the halfblock tier.
+	imageTransmit string
+	transmitSent  bool
+	err           error
 	// image is the rendered card image block (halfblock cells or kitty
 	// placeholders), nil until the async fetch lands — or forever, when
 	// the terminal can't draw one. The overlay never waits for it.

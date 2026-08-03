@@ -520,7 +520,11 @@ func TestDetailReservesImageSpace(t *testing.T) {
 		t.Fatalf("detail open must mark the fetch pending (pending=%v cmd=%v)",
 			m.detail != nil && m.detail.imagePending, cmd != nil)
 	}
-	blank := blankImage(m.detailImageCols())
+	// Tall enough that the vertical layout keeps HELD above the fold with
+	// the full reservation in place.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 45})
+	m = next.(Model)
+	blank := m.blankArt(m.detailImageCols())
 	if len(blank) == 0 {
 		t.Fatal("no space reserved")
 	}
@@ -894,9 +898,9 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 	}
 }
 
-// A wide terminal must not carry the art to the far edge: its left edge
-// caps just past the card frame, framed beside the details it illustrates.
-func TestDetailImageStaysBesideFrame(t *testing.T) {
+// On a wide, tall window the art reaches artColsMax and pins to the right
+// edge — written against the constants, so tuning them never breaks the pin.
+func TestDetailImagePinsToRightEdge(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -904,21 +908,404 @@ func TestDetailImageStaysBesideFrame(t *testing.T) {
 	if m.detail == nil {
 		t.Fatal("no detail")
 	}
-	m.detail.image = []string{"ARTBLOCK"}
-	next, _ = m.Update(tea.WindowSizeMsg{Width: 220, Height: 30})
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 220, Height: 45})
 	m = next.(Model)
-	// The text column caps at frameWidth+artSlackCols and besideImage
-	// adds its two-cell gap, so the art's left edge parks there no matter
-	// how wide the terminal gets. Written against the constant, so tuning
-	// artSlackCols never breaks this pin.
-	want := frameWidth + artSlackCols + 2
+	if got := m.detailImageCols(); got != artColsMax {
+		t.Fatalf("detailImageCols = %d, want the %d cap on a wide tall window", got, artColsMax)
+	}
+	m.detail.image = []string{"ARTBLOCK"}
 	for _, line := range strings.Split(m.View(), "\n") {
 		if i := strings.Index(line, "ARTBLOCK"); i >= 0 {
-			if i != want {
-				t.Fatalf("art starts at col %d, want %d", i, want)
+			if want := 220 - artColsMax; i != want {
+				t.Fatalf("art starts at col %d, want %d (right-edge pinned)", i, want)
 			}
 			return
 		}
 	}
-	t.Fatal("art not rendered beside the frame")
+	t.Fatal("art not rendered")
+}
+
+// In the overflow layout the art runs down beside the analysis: an art row
+// shares the line with the HELD title, and the PRICE rows keep their full
+// captions — the text column's floor guarantees no clipping.
+func TestDetailImageOverflowsBesideHeld(t *testing.T) {
+	st := testStore()
+	st.bidSeries = map[string][]store.PricePoint{
+		"Bitterblossom-id|nonfoil": {pp("2026-05-01T00:00:00Z", 20), pp("2026-07-20T00:00:00Z", 24)},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 140, Height: 45})
+	m = next.(Model)
+	if !m.artOverflows() {
+		t.Fatal("140 cols should engage the overflow layout")
+	}
+	rows := m.artRows(m.detailImageCols())
+	art := make([]string, rows)
+	for i := range art {
+		art[i] = "ARTROW"
+	}
+	m.detail.image = art
+	out := m.detailView()
+	held := -1
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "HELD") {
+			held = strings.Index(line, "ARTROW")
+			break
+		}
+	}
+	if held < 0 {
+		t.Fatalf("the HELD line must carry an art row beside it:\n%s", out)
+	}
+	if !strings.Contains(out, "checks since") {
+		t.Errorf("price captions must survive the narrowed column:\n%s", out)
+	}
+}
+
+// The pending reservation matches the overflow size, so HELD holds its row
+// when the art lands.
+func TestDetailImageReservationMatchesOverflowCols(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 140, Height: 45})
+	m = next.(Model)
+	cols := m.detailImageCols()
+	wantRows := m.artRows(cols)
+	if got := len(m.blankArt(cols)); got != wantRows {
+		t.Fatalf("reservation = %d rows, want %d", got, wantRows)
+	}
+	heldRow := func() int {
+		m.detail.imagePending = len(m.detail.image) == 0
+		for i, line := range strings.Split(m.detailView(), "\n") {
+			if strings.Contains(line, "HELD") {
+				return i
+			}
+		}
+		return -1
+	}
+	m.detail.image = nil
+	before := heldRow()
+	art := make([]string, wantRows)
+	for i := range art {
+		art[i] = "ARTROW"
+	}
+	m.detail.image = art
+	if after := heldRow(); before < 0 || before != after {
+		t.Errorf("HELD moved when the art landed: row %d → %d", before, after)
+	}
+}
+
+// Below the overflow width the layout goes vertical: the art keeps its
+// size and slots between the card details and HELD — relocation over
+// shrinking (owner's call).
+func TestDetailImageStacksBelowOverflowWidth(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 60})
+	m = next.(Model)
+	if m.artOverflows() {
+		t.Fatal("110 cols must not use the overflow layout")
+	}
+	if want := m.detailImageCols(); want != artColsMax {
+		t.Fatalf("detailImageCols = %d, want the full %d in the vertical layout", want, artColsMax)
+	}
+	m.detail.image = []string{"ARTBLOCK"}
+	out := strings.Split(m.detailView(), "\n")
+	artAt, heldAt := -1, -1
+	for i, line := range out {
+		if col := strings.Index(line, "ARTBLOCK"); col >= 0 {
+			if col != 0 {
+				t.Fatalf("vertical art starts at col %d, want the left margin", col)
+			}
+			artAt = i
+		}
+		if strings.Contains(line, "HELD") && heldAt == -1 {
+			heldAt = i
+		}
+	}
+	if artAt == -1 || heldAt == -1 {
+		t.Fatalf("art %d, HELD %d — both must render", artAt, heldAt)
+	}
+	if artAt > heldAt {
+		t.Errorf("art at %d renders after HELD at %d — it belongs between the details and HELD", artAt, heldAt)
+	}
+}
+
+// A resize re-renders the art at the size the new window wants: shrink
+// below what the cached render needs and the art redraws narrower instead
+// of clipping off the edge (observed live).
+func TestDetailImageRerendersOnResize(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.imgTier = ui.ImageHalfblock
+	fetches := 0
+	m.imageFetch = func(context.Context, string, string) (image.Image, error) {
+		fetches++
+		return image.NewRGBA(image.Rect(0, 0, 8, 12)), nil
+	}
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 220, Height: 45})
+	m = next.(Model)
+
+	// Land the art at the wide window's 40 columns.
+	land := func() {
+		t.Helper()
+		cmd := m.fetchDetailImage()
+		if cmd == nil {
+			t.Fatal("no fetch command")
+		}
+		msg, ok := cmd().(imageMsg)
+		if !ok {
+			t.Fatal("fetch did not yield an imageMsg")
+		}
+		next, _ := m.Update(msg)
+		m = next.(Model)
+	}
+	land()
+	if m.detail.imageColsDrawn != artColsMax {
+		t.Fatalf("drawn cols = %d, want %d", m.detail.imageColsDrawn, artColsMax)
+	}
+
+	// Shortening the window asks for a narrower render — at 20 rows the
+	// height budget caps the card well under 40 cols. The resize may batch
+	// the re-render with the settle retransmit tick — dig the imageMsg
+	// out of whichever shape comes back.
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 220, Height: 20})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("shrinking must trigger a re-render")
+	}
+	var msg imageMsg
+	var ok bool
+	switch v := cmd().(type) {
+	case imageMsg:
+		msg, ok = v, true
+	case tea.BatchMsg:
+		for _, c := range v {
+			if im, isImg := c().(imageMsg); isImg {
+				msg, ok = im, true
+			}
+		}
+	}
+	if !ok {
+		t.Fatal("resize command did not yield an imageMsg")
+	}
+	if want := m.detailImageCols(); msg.cols != want {
+		t.Fatalf("re-render at %d cols, want %d", msg.cols, want)
+	}
+	next, _ = m.Update(msg)
+	m = next.(Model)
+	if m.detail.imageColsDrawn != m.detailImageCols() {
+		t.Errorf("drawn cols = %d after resize, want %d", m.detail.imageColsDrawn, m.detailImageCols())
+	}
+
+	// A stale-size landing (resized mid-flight) corrects itself: the
+	// mismatched answer immediately re-fetches.
+	stale := imageMsg{scryfallID: m.detail.card.ScryfallID, lines: []string{"x"}, cols: artColsMax}
+	before := fetches
+	next, cmd = m.Update(stale)
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("a stale-size landing must re-render")
+	}
+	if _, ok := cmd().(imageMsg); !ok || fetches != before+1 {
+		t.Errorf("stale landing: fetches %d → %d, want one corrective fetch", before, fetches)
+	}
+}
+
+// q on the detail stages the same quit confirm as everywhere else: y
+// quits, any other key stays with the overlay intact.
+func TestDetailQuitKeyAsksFirst(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	m = key(m, "q")
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "quit hoard?") {
+		t.Fatalf("confirm = %+v, want the quit question staged", m.confirm)
+	}
+	// Any other key cancels and the overlay is still there.
+	m = key(m, "n")
+	if m.confirm != nil || m.detail == nil {
+		t.Fatalf("after n: confirm=%v detail=%v, want the overlay back", m.confirm, m.detail)
+	}
+	// y quits.
+	m = key(m, "q")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("y must quit")
+	}
+	if msg := cmd(); msg != tea.Quit() {
+		t.Fatalf("confirm ran %v, want tea.Quit", msg)
+	}
+}
+
+// Mid-resize the drawn art and the wanted size disagree; the layout must
+// follow the art actually on screen — sizing the text column for the
+// wished-for art pushed lines past the terminal edge and clipped the card
+// (observed live).
+func TestDetailStaleArtNeverOverflows(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	// Art drawn at 40 on a formerly-wide window; the window has since
+	// shrunk to 30 cols, narrower than the art itself.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 45})
+	m = next.(Model)
+	m.detail.image = []string{strings.Repeat("A", artColsMax)}
+	m.detail.imageColsDrawn = artColsMax
+	if want := m.detailImageCols(); want >= artColsMax {
+		t.Fatalf("fixture broken: wanted cols %d should be under the stale %d", want, artColsMax)
+	}
+	// Stale art wider than the window: the layout must fall to text-only
+	// rather than emit lines past the edge; the re-render restores it.
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "AAA") {
+			t.Fatalf("stale over-wide art rendered on a 30-col window:\n%s", line)
+		}
+	}
+}
+
+// While an upload is dirty every frame carries the kitty transmit — the
+// renderer drops intermediate frames, so only frame-after-frame embedding
+// guarantees the flushed one delivers. The settle tick (newest generation
+// only) declares delivery and ends the embedding.
+func TestDetailRetransmitAfterResize(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	m.detail.image = []string{"ART"}
+	m.detail.imageColsDrawn = m.detailImageCols()
+	m.detail.imageTransmit = "TRANSMIT-BYTES"
+	m.detail.transmitSent = true
+
+	// A resize dirties the upload: frames carry it, repeatedly.
+	next, cmd1 := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+	gen1 := m.resizeGen
+	if cmd1 == nil || m.detail.transmitSent {
+		t.Fatal("a resize must dirty the upload and schedule a settle tick")
+	}
+	m.detail.imageColsDrawn = m.detailImageCols() // pretend the re-render landed
+	for i := range 2 {
+		if out := m.View(); !strings.Contains(out, "TRANSMIT-BYTES") {
+			t.Fatalf("dirty frame %d must embed the transmit", i)
+		}
+	}
+
+	// A second resize supersedes the first tick.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 118, Height: 40})
+	m = next.(Model)
+	if m.resizeGen != gen1+1 {
+		t.Fatalf("resizes must bump the generation: %d then %d", gen1, m.resizeGen)
+	}
+	next, _ = m.Update(retransmitMsg{gen: gen1})
+	m = next.(Model)
+	if m.detail.transmitSent {
+		t.Fatal("a superseded tick declared delivery")
+	}
+
+	// The newest tick ends the embedding.
+	next, _ = m.Update(retransmitMsg{gen: m.resizeGen})
+	m = next.(Model)
+	if !m.detail.transmitSent {
+		t.Fatal("the newest tick must declare delivery")
+	}
+	if out := m.View(); strings.Contains(out, "TRANSMIT-BYTES") {
+		t.Fatal("a settled frame must not re-upload")
+	}
+}
+
+// A short window pushes the overlay's sections past the fold; pgdn/pgup
+// scroll to them, and the indicator names what lies past each edge.
+func TestDetailScrolls(t *testing.T) {
+	st := testStore()
+	st.bidSeries = map[string][]store.PricePoint{
+		"Bitterblossom-id|nonfoil": {pp("2026-05-01T00:00:00Z", 20), pp("2026-07-20T00:00:00Z", 24)},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	// 12 rows: the frame alone nearly fills the window.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	m = next.(Model)
+
+	out := m.View()
+	if !strings.Contains(out, "pgdn scrolls") {
+		t.Fatalf("overflow must advertise scrolling:\n%s", out)
+	}
+	firstLine := strings.SplitN(out, "\n", 2)[0]
+
+	m = key(m, "pgdown")
+	out = m.View()
+	if m.detail.scroll == 0 {
+		t.Fatal("pgdn did not scroll")
+	}
+	if got := strings.SplitN(out, "\n", 2)[0]; got == firstLine {
+		t.Error("scrolled view must start on a different line")
+	}
+	if !strings.Contains(out, "lines above") {
+		t.Errorf("scrolled view must name the lines above:\n%s", out)
+	}
+
+	// pgup returns to the top; the clamp survives over-scrolling.
+	for range 20 {
+		m = key(m, "pgdown")
+	}
+	m.View() // clamp
+	if m.detail.scroll == 0 {
+		t.Fatal("over-scroll clamped to the top")
+	}
+	for range 30 {
+		m = key(m, "pgup")
+	}
+	out = m.View()
+	if m.detail.scroll != 0 || strings.SplitN(out, "\n", 2)[0] != firstLine {
+		t.Errorf("pgup must return to the top (scroll=%d)", m.detail.scroll)
+	}
+
+	// A dirty kitty upload still delivers while scrolled: the transmit
+	// attaches to the first rendered line, wherever the window sits.
+	m.detail.image = []string{"ART"}
+	m.detail.imageTransmit = "TRANSMIT-BYTES"
+	m.detail.transmitSent = false
+	m = key(m, "pgdown")
+	if out := m.View(); !strings.Contains(out, "TRANSMIT-BYTES") {
+		t.Error("a scrolled dirty frame must still embed the transmit")
+	}
 }

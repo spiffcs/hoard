@@ -105,43 +105,49 @@ func (m Model) writeHelp(b *strings.Builder, help string) {
 	}
 }
 
-// artSlackCols is how many columns past the card frame the art's left
-// edge may drift on a wide terminal (besideImage adds its own two-cell
-// gap after that). The one knob for the frame-to-art distance — raise it
-// to let the art breathe, zero pins it against the frame.
-const artSlackCols = 67
-
 // detailView renders the card overlay in place of the two panes.
 //
 // It replaces the panes rather than floating over them: the oracle text and
 // price history need the width, and a box drawn over a table leaves fragments
-// of card names showing around its edges that read as corruption. The card
-// image sits to the right of the card frame alone — the frame is what it
-// illustrates, and the analysis below (prices, bids, comps) takes the full
-// width. A terminal too narrow for the pair stacks instead: the card's
-// details, then the image, then hoard's own facts — and one too narrow
-// even for the image alone goes text-only.
+// of card names showing around its edges that read as corruption. Three
+// layouts by width: wide enough (artOverflows), the art grows toward
+// artColsMax and runs down the right edge beside everything — frame, HELD,
+// PRICE — with the text column keeping artMinTextCols so no analysis row
+// clips; anything narrower goes vertical, the art at full size between the
+// card details and HELD; and a window narrower than the art itself goes
+// text-only.
 func (m Model) detailView() string {
 	img := m.detail.image
+	// artW is the width the art on screen actually occupies — the drawn
+	// size, not the size the current window would ask for. Mid-resize the
+	// two disagree (the re-render is in flight), and laying out against
+	// the wish instead of the fact pushed lines past the terminal's edge
+	// and clipped the card (observed live). The reservation for a pending
+	// first fetch uses the wanted size, which is also what that fetch will
+	// render at.
+	artW := m.detail.imageColsDrawn
 	if len(img) == 0 && m.detail.imagePending {
 		// The art is coming: hold its space so HELD, PRICE and COMPS
 		// render in their final positions from the first frame.
-		img = blankImage(m.detailImageCols())
+		artW = m.detailImageCols()
+		img = m.blankArt(artW)
+	}
+	if artW <= 0 {
+		artW = m.detailImageCols()
 	}
 	var lines []string
 	switch {
-	case len(img) > 0 && m.width >= imageCols+50:
-		// The image sits beside the card frame only; the hoard's analysis
-		// below gets the full width — the bid and comps rows are wide, and
-		// an image column clipping them cost more than it decorated
-		// (observed live). The frame itself never grows past frameWidth,
-		// so the art's left edge caps at artSlackCols past it — on a wide
-		// terminal the leftover width must not carry the art to the far
-		// edge, away from the card it illustrates (observed live).
-		textW := min(m.width-imageCols-2, frameWidth+artSlackCols)
-		lines = besideImage(img, m.cardFrameLines(*m.detail, textW), textW)
-		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
-	case len(img) > 0 && m.width >= imageCols:
+	case len(img) > 0 && m.width-artW-2 >= artMinTextCols:
+		// The art pins to the right edge and overflows beside the
+		// analysis; rows past its bottom keep the text column's width,
+		// which artMinTextCols guarantees is enough for every row.
+		textW := m.width - artW - 2
+		lines = besideImage(img, m.detailLines(*m.detail, textW), textW)
+	case len(img) > 0 && m.width >= artW:
+		// The window can't host the art beside the analysis, so the
+		// layout goes vertical: the card details, then the art at full
+		// size, then HELD and the rest (owner's call — relocation over
+		// shrinking the card).
 		lines = append(m.cardFrameLines(*m.detail, m.width), "")
 		lines = append(lines, img...)
 		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
@@ -149,9 +155,30 @@ func (m Model) detailView() string {
 		lines = m.detailLines(*m.detail, m.width)
 	}
 
+	// The scroll window: pgup/pgdn move it, and the clamp lives here
+	// because only the render knows how many lines the overlay has.
+	maxScroll := max(len(lines)-(m.visibleRows()+1), 0)
+	if m.detail.scroll > maxScroll {
+		m.detail.scroll = maxScroll
+	}
+	top := m.detail.scroll
+	// The kitty transmit rides in the frame that draws its placeholders,
+	// written atomically by the renderer — the one delivery the terminal
+	// cannot tear. Escape sequences are zero-width, so neither the layout
+	// nor the scroll math sees it; it attaches to the first rendered line,
+	// which exists at any scroll position. It rides in EVERY frame while
+	// the upload is dirty: the renderer drops intermediate frames, so a
+	// single-frame delivery is unreliable (a crop of the previous upload,
+	// observed live). The settle tick ends the embedding (onRetransmit).
+	if m.detail.imageTransmit != "" && !m.detail.transmitSent &&
+		len(m.detail.image) > 0 && top < len(lines) {
+		lines = append([]string(nil), lines...)
+		lines[top] = m.detail.imageTransmit + lines[top]
+	}
+
 	var b strings.Builder
 	for i := range m.visibleRows() + 1 {
-		b.WriteString(strings.TrimRight(lineAt(lines, i), " "))
+		b.WriteString(strings.TrimRight(lineAt(lines, top+i), " "))
 		b.WriteString("\n")
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
@@ -168,8 +195,16 @@ func (m Model) detailView() string {
 	case m.op != nil || m.status != "":
 		b.WriteString(m.statusLine())
 	default:
-		if n := len(lines) - (m.visibleRows() + 1); n > 0 {
-			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d more lines · widen or lengthen the window", n)))
+		// The scroll indicator: what lies past each edge of the window,
+		// and the keys that reach it.
+		above, below := top, len(lines)-(top+m.visibleRows()+1)
+		switch {
+		case above > 0 && below > 0:
+			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d lines above · %d below · pgup/pgdn scroll", above, below)))
+		case below > 0:
+			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d more lines · pgdn scrolls", below)))
+		case above > 0:
+			b.WriteString(m.theme.Help.Render(fmt.Sprintf("%d lines above · pgup scrolls", above)))
 		}
 	}
 	b.WriteString("\n")
@@ -585,7 +620,7 @@ func (m Model) helpLine() string {
 		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
 	case m.detail != nil:
 		if m.detail.zone == zoneHeld {
-			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · esc back · ctrl+c quit"
+			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · esc back · q quit"
 		}
 		help := ""
 		if len(m.detail.holdings) > 0 {
@@ -602,7 +637,7 @@ func (m Model) helpLine() string {
 		if m.openURL != nil && len(m.detail.links) > 0 {
 			help += "←/→ links · enter open in browser · "
 		}
-		return help + "esc back · ctrl+c quit"
+		return help + "esc back · q quit"
 	case m.text != nil:
 		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
 	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:

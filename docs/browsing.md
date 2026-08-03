@@ -43,7 +43,7 @@ what is inside whichever row you have selected.
 | <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
 | <kbd>r</kbd> | reload |
 | <kbd>M</kbd> | value floor: hide cards under $5 → $10 → $25 → $50 → $100 → off (unpriced view exempt) |
-| <kbd>q</kbd> | quit — asks y/n first (main views only) |
+| <kbd>q</kbd> | quit — asks y/n first (main views and the card detail) |
 | <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
 Binder cards are editable in place (<kbd>+</kbd>, <kbd>-</kbd>, <kbd>d</kbd>,
@@ -66,22 +66,34 @@ still prints to the terminal scrollback when you quit the browser.
 
 ## Card images
 
-The detail view draws the card itself to the right of the card frame when
-the terminal can — the analysis below (prices, bids, comps) keeps the full
-width: Ghostty, Kitty and WezTerm get the real image (kitty
-graphics protocol); iTerm2 and any other truecolor terminal get a
-halfblock rendering. Each card's scan is fetched once from Scryfall
-(~100 KB) and cached in the per-user cache directory (macOS:
+The detail view draws the card itself when the terminal can: Ghostty,
+Kitty and WezTerm get the real image (kitty graphics protocol); iTerm2
+and any other truecolor terminal get a halfblock rendering. On a wide
+terminal the card grows to as much as 40 cells, pinned at the right edge
+and running down beside the frame *and* the HELD/PRICE analysis — the
+text column keeps at least 96 cells, so no analysis row ever clips
+against the art. When the window can no longer host that beside the
+analysis, the layout goes vertical: the card keeps its size and slots
+between the card details and HELD, everything full-width. A window
+shorter than the card asks for shrinks it (aspect kept), and one
+narrower than the art itself goes text only. Resizes re-render the art
+to whatever the new size calls for, and when the overlay's sections run
+past the fold, <kbd>pgup</kbd>/<kbd>pgdn</kbd> scroll to them — the line
+under the rule counts what lies past each edge. Each card's scan is fetched once from
+Scryfall (~100 KB) and cached in the per-user cache directory (macOS:
 `~/Library/Caches/hoard/images`) — never in hoard.db, so the database
 backup stays lean and losing the cache costs only a refetch. The text
-never waits on the picture, and a terminal too narrow for both shows
-text only.
+never waits on the picture.
 
 `HOARD_CARD_IMAGES=0` turns images off; `=kitty` or `=halfblock` forces
 a tier past the terminal detection (say, a terminal that speaks the
 kitty protocol under a name hoard doesn't know). `NO_COLOR` disables
 them along with everything else, and tmux/screen show no images —
 graphics passthrough through a multiplexer is not supported.
+`HOARD_CELL_ASPECT=2.3` pins the terminal cell's height:width ratio the
+kitty image height is computed from — the knob if a blank strip shows
+under the card (ratio too high) or the card looks pinched narrow (too
+low); unset, hoard uses 2.8.
 
 ## Views
 

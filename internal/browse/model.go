@@ -114,9 +114,16 @@ type Model struct {
 	theme      ui.Theme
 	imgTier    ui.ImageTier
 	imageFetch CardImageFunc
+	// cellAspect is the terminal cell's height:width ratio from the
+	// HOARD_CELL_ASPECT override, 0 unset — kitty image rows are computed
+	// against it, defaulting to kittyCellAspect (see artAspect).
+	cellAspect float64
 
 	width, height int
 	ready         bool
+	// resizeGen numbers WindowSizeMsgs so only the newest post-resize
+	// retransmit tick fires — a drag-resize schedules many, one re-sends.
+	resizeGen int
 
 	focus pane
 
@@ -328,7 +335,8 @@ func New(st Store, opts ...Option) (Model, error) {
 	sp.Spinner = spinner.Dot
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
-		commands: commands(), moversPennyLimit: defaultPennyLimit}
+		cellAspect: ui.CellAspectOverride(),
+		commands:   commands(), moversPennyLimit: defaultPennyLimit}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -704,7 +712,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			child, _ := m.addChild.Update(msg)
 			m.addChild = &child
 		}
-		return m, nil
+		var cmds []tea.Cmd
+		// Art rendered for the old size clips off a narrower window's
+		// edge (and undersells a wider one) — re-render at what the new
+		// size wants. The old art holds the layout until the replacement
+		// lands, which is near-instant off the disk cache.
+		if d := m.detail; d != nil && !d.imagePending && len(d.image) > 0 &&
+			d.imageColsDrawn != m.detailImageCols() {
+			cmds = append(cmds, m.fetchDetailImage())
+		}
+		// Resizing dirties the upload: frames flushed mid-storm can drop,
+		// so every frame carries the transmit until the settle tick
+		// declares one delivered — placeholders must never outlive the
+		// image data they address (a zoomed crop, observed live).
+		if d := m.detail; d != nil && (d.imageTransmit != "" || d.imagePending) {
+			cmds = append(cmds, m.transmitSettle())
+		}
+		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case marketMsg:
@@ -721,6 +745,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onOpDone(msg)
 	case opConfirmMsg:
 		return m.onOpConfirm(msg)
+	case retransmitMsg:
+		return m.onRetransmit(msg)
 	case spinner.TickMsg:
 		// Delivered to both models: bubbles tags ticks with the owning
 		// spinner's ID and each Update rejects foreign ones, so the two
@@ -774,6 +800,10 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
+	case "q":
+		// The same y/n every other surface gives the quit key; the
+		// confirm renders in the overlay's status slot.
+		m.stageQuit()
 	case "esc", "backspace":
 		m.detail = nil
 	case "enter":
@@ -832,6 +862,14 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adjustHeldQuantity(-1)
 	case "d":
 		m.askHeldRemoval()
+	case "pgup":
+		// The overlay scrolls: a short window pushes PRICE and COMPS past
+		// the fold, and widening the terminal shouldn't be the only way
+		// back to them.
+		m.detail.scroll = max(m.detail.scroll-max(m.visibleRows()-1, 1), 0)
+	case "pgdown":
+		// Clamped at render time, where the overlay's line count is known.
+		m.detail.scroll += max(m.visibleRows()-1, 1)
 	case ":", "ctrl+p":
 		// The palette opens over the overlay — narrowed to the price
 		// refreshers (see detailPaletteIDs): running one must not cost

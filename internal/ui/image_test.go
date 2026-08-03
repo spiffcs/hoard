@@ -98,7 +98,7 @@ func TestHalfblocks(t *testing.T) {
 }
 
 func TestKittyImage(t *testing.T) {
-	transmit, placeholder, err := KittyImage(testImage(), 91, 2)
+	transmit, placeholder, err := KittyImage(testImage(), 91, 2, 2)
 	if err != nil {
 		t.Fatalf("KittyImage: %v", err)
 	}
