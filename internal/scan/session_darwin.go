@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -188,6 +189,18 @@ func (s *Session) Rearm() error { return s.send("rearm") }
 // which marks a capture and deliberately stays quiet on nudge rechecks.
 // Either resolution means "place the next card", and this is its sound.
 func (s *Session) Chime() error { return s.send("chime") }
+
+// Result reports a resolved card's price outcome for the camera HUD. Only
+// sent to helpers that advertised "hud" on their ready event; older helpers
+// get Chime instead. The tier sound replaces the chime — one sound per card
+// either way.
+func (s *Session) Result(r HUDResult) error {
+	js, err := json.Marshal(r) // compact — the pipe protocol is line-based
+	if err != nil {
+		return err
+	}
+	return s.send("result " + string(js))
+}
 
 // Rotate turns the preview a quarter-turn; the new angle arrives as an
 // EventRotation so it can be persisted.

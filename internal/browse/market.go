@@ -227,15 +227,26 @@ func (m Model) marketLines(width int) []string {
 			title, note = market.Kind(i).Title(), market.Kind(i).Note()
 		}
 		head := m.theme.Title.Render(title) + "  " + m.theme.Help.Render(note)
+		// The counts read as one phrase — "1–22 of 50 of 93 · page 1/2" —
+		// window, page, whole ranking, then the page position. The ranking's
+		// true size rides with the counts because a bare "of 50" read as the
+		// whole answer when 93 rows stood behind it. (>/< is in the help
+		// line, not repeated here.)
+		frag := ""
+		tot := totals[i]
 		if off := m.marketSecOffset[i]; sec.count > budgets[i] && budgets[i] > 0 {
-			head += m.theme.Help.Render(fmt.Sprintf(" · %d–%d of %d",
-				off+1, off+budgets[i], sec.count))
+			frag = fmt.Sprintf(" · %d–%d of %d", off+1, off+budgets[i], sec.count)
+			if tot > sec.count {
+				frag += fmt.Sprintf(" of %d", tot)
+			}
+		} else if tot > sec.count && sec.count > 0 {
+			frag = fmt.Sprintf(" · %d of %d", sec.count, tot)
 		}
-		// A ranking deeper than one page says so — a bare "of 50" read as
-		// the whole answer when 113 rows stood behind it.
-		if tot := totals[i]; tot > marketPageSize {
-			head += m.theme.Help.Render(fmt.Sprintf(" · page %d/%d of %d (>/< turns)",
-				m.marketPage[i]+1, (tot-1)/marketPageSize+1, tot))
+		if tot > marketPageSize {
+			frag += fmt.Sprintf(" · page %d/%d", m.marketPage[i]+1, (tot-1)/marketPageSize+1)
+		}
+		if frag != "" {
+			head += m.theme.Help.Render(frag)
 		}
 		out = append(out, head)
 		if sec.count == 0 {
@@ -287,14 +298,18 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 	var t ui.Table
 	switch kind {
 	case market.KindProfit:
+		// No TO column, and the buylist names its bidder in the header —
+		// Card Kingdom runs the only buylist in the feed, so a vendor cell
+		// repeated one name down every row (same reasoning as the liquid
+		// section below).
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("TCG SOLD"), money("BUYLIST"), vendor("TO"), money("PROFIT")}}
+			money("TCG SOLD"), money("CK BUYLIST"), money("PROFIT")}}
 		for _, r := range rows {
 			// A profit is the one genuine gain on this screen; the ratios in
 			// the other sections stay uncolored — a below-market discount in
 			// red would read as a loss when it is a reason to buy.
 			t.Add(append(cardCells(r),
-				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), ui.C(r.SellTo),
+				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)),
 				ui.Cell{Text: "+" + ui.Money(r.Profit()), Style: env.Gain()})...)
 		}
 	case market.KindLiquid:
@@ -303,7 +318,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 		// still names the bidder, and the column comes back the day a
 		// second buylist source exists.
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("TCG SOLD"), money("BUYLIST"), money("PAYS")}}
+			money("TCG SOLD"), money("CK BUYLIST"), money("PAYS")}}
 		for _, r := range rows {
 			// The ratio columns grade on a color ramp — how close to the
 			// section's ideal, not a gain/loss direction.

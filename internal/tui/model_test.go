@@ -88,6 +88,7 @@ func (f *fakeScanner) Open(_ context.Context, deviceID string) (ScanSession, err
 // simulate the helper reporting captures, rotations, and closure.
 type fakeSession struct {
 	chimes   int
+	results  []scan.HUDResult
 	events   chan scan.Event
 	captures int
 	rotates  int
@@ -95,6 +96,11 @@ type fakeSession struct {
 	autoOff  int
 	rearms   int
 	closed   bool
+}
+
+func (s *fakeSession) Result(r scan.HUDResult) error {
+	s.results = append(s.results, r)
+	return nil
 }
 
 func (s *fakeSession) Rearm() error {

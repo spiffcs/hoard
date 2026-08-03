@@ -7,8 +7,11 @@
 //                               Live session: open a camera preview window and keep
 //                               it open, emitting one JSON event per line on stdout
 //                               and reading commands (capture / rotate-left /
-//                               rotate-right / quit) as lines on stdin. Space, ←/→
-//                               and Esc do the same things in the window itself.
+//                               rotate-right / result {json} / quit) as lines on
+//                               stdin. Space, ←/→ and Esc do the same things in the
+//                               window itself.
+//   hoard-scan --hud-demo       Live window with no camera, for eyeballing the
+//                               price HUD: pipe `result {...}` lines on stdin.
 //
 // The window persisting across captures is the point: relaunching the helper per
 // card costs a camera warm-up each time, and forces the user back to a keystroke
@@ -82,6 +85,16 @@ struct Event: Encodable {
     var collectorAlts: [CollectorRead]? = nil
     /// The primary block's printed finish marker; see CollectorRead.finish.
     var finishHint: String? = nil
+}
+
+/// HUDCommand is the payload of the `result` stdin verb — the Go side's
+/// scan.HUDResult. A tier means celebrate (flash the amount with the tier's
+/// styling and sound); a total means update the persistent session counter,
+/// always silently. Amount is absent on an unpriced card.
+struct HUDCommand: Decodable {
+    var amount: Double?
+    var tier: String? // bulk | win | jackpot | unpriced
+    var total: Double?
 }
 
 /// Device is one camera the helper can capture from, as listed by --list-devices.
@@ -1379,6 +1392,344 @@ func triggerRects(_ buffer: CVPixelBuffer) -> [CGRect] {
     return Array(kept.prefix(4))
 }
 
+// MARK: - Sound synthesis
+
+/// SoundBank plays the price tiers' casino sounds — a low woody knock for
+/// bulk, a bright service bell for a win, and a harp-run glissando for a
+/// jackpot (the owner's picks from the 2026-08 audition of synthesized
+/// candidates). Everything is synthesized into PCM buffers once at init —
+/// additive sine bursts with exponential decay — so the app bundles no audio
+/// files and owes no one a license. Engine failure — no output device,
+/// aggregate-device weirdness — degrades to the system Glass chime, never to
+/// silence.
+///
+/// Main-thread only, like the rest of the controller's state.
+final class SoundBank {
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private var buffers: [String: AVAudioPCMBuffer] = [:]
+    private var ok = false
+
+    /// One synthesis event: freqs sound together from t for dur seconds,
+    /// decaying exponentially — a struck, ringing thing.
+    private typealias Strike = (t: Double, freqs: [Double], dur: Double, amp: Double)
+
+    init() {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
+        guard let format else { return }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.mainMixerNode.outputVolume = Float(envDouble("HOARD_SCAN_HUD_VOLUME", 1.0))
+        do {
+            try engine.start()
+        } catch {
+            return
+        }
+        // Bulk: a low woody knock, gone in 50ms.
+        buffers["bulk"] = render(format, [(0, [420, 840, 1260], 0.05, 0.55)], length: 0.12)
+        // Win: a single bright service bell (fundamental plus an inharmonic
+        // 2.76× partial, which is what reads as "bell" rather than "tone").
+        buffers["win"] = render(format, [(0, [2093, 5777], 0.4, 0.42)], length: 0.55)
+        // Jackpot: a pentatonic sweep, two octaves in under a second, landing
+        // on a held octave chord — a harp run up to the top of the machine.
+        // Offsets are fixed, never random: the sound being identical every
+        // time is what makes it recognizable.
+        var gliss: [Strike] = []
+        let penta = [523.25, 587.33, 659.25, 783.99, 880.0,
+                     1046.5, 1174.7, 1318.5, 1568.0, 1760.0] // C D E G A ×2
+        for (i, f) in penta.enumerated() {
+            gliss.append((Double(i) * 0.055, [f], 0.12, 0.32))
+        }
+        gliss.append((0.62, [2093.0, 1046.5, 4186.0], 0.9, 0.48))
+        buffers["jackpot"] = render(format, gliss, length: 1.9)
+        ok = true
+    }
+
+    /// render sums the strikes into one stereo buffer, soft-clipped so
+    /// overlapping notes saturate rather than wrap.
+    private func render(_ format: AVAudioFormat, _ strikes: [Strike],
+                        length: Double) -> AVAudioPCMBuffer? {
+        let sr = format.sampleRate
+        let frames = AVAudioFrameCount(length * sr)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let channels = buf.floatChannelData else { return nil }
+        buf.frameLength = frames
+        let left = channels[0], right = channels[1]
+        for s in strikes {
+            let start = Int(s.t * sr)
+            let count = Int(s.dur * sr)
+            let tau = s.dur / 5
+            for i in 0..<count where start + i < Int(frames) {
+                let t = Double(i) / sr
+                var v = 0.0
+                for f in s.freqs { v += sin(2 * .pi * f * t) }
+                v *= s.amp * exp(-t / tau) / Double(s.freqs.count)
+                left[start + i] += Float(v)
+                right[start + i] += Float(v)
+            }
+        }
+        for i in 0..<Int(frames) {
+            left[i] = tanh(left[i])
+            right[i] = tanh(right[i])
+        }
+        return buf
+    }
+
+    /// play cuts whatever tail is still ringing and starts the tier's sound —
+    /// a rapid next card should clip the last fanfare, not queue behind it.
+    /// Unknown tiers and the unpriced shrug keep the familiar Glass chime.
+    func play(tier: String) {
+        guard ok, let buf = buffers[tier] else {
+            NSSound(named: "Glass")?.play()
+            return
+        }
+        player.stop()
+        player.scheduleBuffer(buf)
+        player.play()
+    }
+}
+
+// MARK: - Price HUD
+
+/// PriceHUD renders resolved prices over the camera preview: a transient
+/// tier-styled flash of the amount just scanned, a persistent running session
+/// total in the corner, and a coin shower for jackpots. All Core Animation
+/// layers on top of the preview layer; all animation is *explicit*, so the
+/// disabled-actions transactions the outline drawing uses never interfere.
+///
+/// Layer coordinates are y-up (the preview layer is not flipped): the total
+/// pins near y=0 (the bottom), coins rain toward -y, flashes float toward +y.
+final class PriceHUD {
+    private let container = CALayer()
+    private let totalLayer = CATextLayer()
+    private var scale: CGFloat = 2
+    private weak var preview: AVCaptureVideoPreviewLayer?
+
+    private static let gold = NSColor(calibratedRed: 1, green: 0.84, blue: 0, alpha: 1)
+
+    /// videoRect is where the video actually shows: .resizeAspect letterboxes
+    /// the frame inside the view, and a HUD pinned to the *view* corner lands
+    /// in the black bars beside a portrait feed. Falls back to the whole view
+    /// when there is no video to measure (the demo, or before the session
+    /// starts), where the two are the same thing anyway.
+    private var videoRect: CGRect {
+        let bounds = container.bounds
+        guard let preview else { return bounds }
+        let r = preview.layerRectConverted(fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !r.isNull, !r.isInfinite, r.width > 40, r.height > 40 else { return bounds }
+        return r.intersection(bounds)
+    }
+
+    /// attach hangs the HUD's layers off the preview layer, above the outline.
+    func attach(to host: AVCaptureVideoPreviewLayer, scale: CGFloat) {
+        self.scale = scale
+        self.preview = host
+        container.frame = host.bounds
+        totalLayer.font = NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .semibold)
+        totalLayer.fontSize = 16
+        totalLayer.alignmentMode = .right
+        totalLayer.foregroundColor = NSColor.white.cgColor
+        totalLayer.shadowColor = NSColor.black.cgColor
+        totalLayer.shadowOpacity = 0.9
+        totalLayer.shadowRadius = 2
+        totalLayer.shadowOffset = .zero
+        totalLayer.contentsScale = scale
+        totalLayer.isHidden = true
+        container.addSublayer(totalLayer)
+        host.addSublayer(container)
+        layout(bounds: host.bounds)
+    }
+
+    /// layout re-pins the HUD to the view. Called from PreviewView.layout()
+    /// inside its disabled-actions transaction, so resizes never animate.
+    func layout(bounds: CGRect) {
+        container.frame = bounds
+        repinTotal()
+    }
+
+    /// repinTotal puts the running total just inside the video frame's top
+    /// right (layer coords are y-up: the top is maxY). Re-run on every show
+    /// too, not just view layout — the video rect settles after the session
+    /// starts and moves when the preview is rotated, neither of which lays
+    /// out the view.
+    private func repinTotal() {
+        let rect = videoRect
+        totalLayer.frame = CGRect(x: rect.maxX - 232, y: rect.maxY - 34, width: 220, height: 22)
+    }
+
+    /// setScale re-rasterizes the text for the current display — without this
+    /// a window dragged to a different-density screen renders blurry.
+    func setScale(_ s: CGFloat) {
+        scale = s
+        totalLayer.contentsScale = s
+    }
+
+    /// show renders one result: tier flash (and jackpot shower), then the
+    /// silent total update.
+    func show(_ cmd: HUDCommand) {
+        if let tier = cmd.tier {
+            flash(amount: cmd.amount, tier: tier)
+            if tier == "jackpot" { coinShower() }
+        }
+        if let total = cmd.total { setTotal(total) }
+    }
+
+    private func setTotal(_ total: Double) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        repinTotal()
+        totalLayer.string = String(format: "$%.2f", total)
+        totalLayer.isHidden = false
+        CATransaction.commit()
+        // A brief gold pulse, so silently-landing money (a review confirm) is
+        // still visible in the corner of the eye.
+        let pulse = CABasicAnimation(keyPath: "foregroundColor")
+        pulse.fromValue = Self.gold.cgColor
+        pulse.toValue = NSColor.white.cgColor
+        pulse.duration = 0.6
+        totalLayer.add(pulse, forKey: "pulse")
+    }
+
+    /// flash floats the just-scanned amount up the middle of the frame. Each
+    /// flash is its own layer with a timed removal, so rapid scans overlap
+    /// harmlessly instead of fighting over one layer's animations.
+    private func flash(amount: Double?, tier: String) {
+        let text: String
+        if let amount {
+            text = String(format: "+$%.2f", amount)
+        } else {
+            text = "$—"
+        }
+        let size: CGFloat
+        let color: NSColor
+        let weight: NSFont.Weight
+        switch tier {
+        case "win": (size, color, weight) = (40, Self.gold, .bold)
+        case "jackpot": (size, color, weight) = (56, Self.gold, .heavy)
+        default: (size, color, weight) = (28, .systemGray, .semibold)
+        }
+
+        let layer = CATextLayer()
+        layer.string = text
+        layer.font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+        layer.fontSize = size
+        layer.alignmentMode = .center
+        layer.foregroundColor = color.cgColor
+        layer.contentsScale = scale
+        if tier == "win" || tier == "jackpot" {
+            layer.shadowColor = Self.gold.cgColor
+            layer.shadowOpacity = tier == "jackpot" ? 0.95 : 0.8
+            layer.shadowRadius = tier == "jackpot" ? 12 : 8
+            layer.shadowOffset = .zero
+        } else {
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOpacity = 0.8
+            layer.shadowRadius = 2
+            layer.shadowOffset = .zero
+        }
+        let rect = videoRect
+        layer.frame = CGRect(x: rect.minX, y: rect.midY - size, width: rect.width, height: size * 1.4)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = 0 // model value: invisible outside the animation
+        container.addSublayer(layer)
+        CATransaction.commit()
+
+        let duration = 1.6
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0, 1, 1, 0]
+        fade.keyTimes = [0, 0.08, 0.62, 1]
+        let pop = CAKeyframeAnimation(keyPath: "transform.scale")
+        pop.values = tier == "jackpot" ? [0.4, 1.18, 1.0, 1.0] : [0.6, 1.06, 1.0, 1.0]
+        pop.keyTimes = [0, 0.12, 0.24, 1]
+        let rise = CAKeyframeAnimation(keyPath: "position.y")
+        rise.values = [layer.position.y, layer.position.y, layer.position.y + 44]
+        rise.keyTimes = [0, 0.55, 1]
+        let group = CAAnimationGroup()
+        group.animations = [fade, pop, rise]
+        group.duration = duration
+        layer.add(group, forKey: "flash")
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.1) {
+            layer.removeFromSuperlayer()
+        }
+    }
+
+    /// coinShower rains gold coins from the top edge for a beat. The cell keeps
+    /// emitting until the *layer's* birthRate multiplier hits zero — zeroing
+    /// only the cell's is the classic eternal-shower bug — and the layer is
+    /// removed outright once the last coin has fallen.
+    private func coinShower() {
+        let rect = videoRect
+        let emitter = CAEmitterLayer()
+        emitter.frame = container.bounds
+        emitter.emitterShape = .line
+        emitter.emitterPosition = CGPoint(x: rect.midX, y: rect.maxY + 16)
+        emitter.emitterSize = CGSize(width: rect.width, height: 1)
+
+        let cell = CAEmitterCell()
+        cell.contents = Self.coinImage
+        cell.birthRate = 70
+        cell.lifetime = 2.5
+        cell.velocity = 320
+        cell.velocityRange = 140
+        cell.emissionLongitude = -.pi / 2 // straight down in y-up coords
+        cell.emissionRange = .pi / 8
+        cell.yAcceleration = -600 // gravity pulls toward y=0
+        cell.spin = 2
+        cell.spinRange = 6
+        cell.scale = 0.5
+        cell.scaleRange = 0.25
+        cell.alphaSpeed = -0.35
+        emitter.emitterCells = [cell]
+        container.addSublayer(emitter)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            emitter.birthRate = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            emitter.removeFromSuperlayer()
+        }
+    }
+
+    /// coinImage is the emitter's particle: a rimmed gold disc with a $ glyph,
+    /// drawn once — the app bundles no image assets.
+    private static let coinImage: CGImage? = {
+        let side: CGFloat = 64
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let disc = rect.insetBy(dx: 4, dy: 4)
+            let colors = [
+                NSColor(calibratedRed: 1, green: 0.93, blue: 0.55, alpha: 1).cgColor,
+                NSColor(calibratedRed: 0.85, green: 0.65, blue: 0.05, alpha: 1).cgColor,
+            ]
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors as CFArray, locations: [0, 1]) {
+                ctx.saveGState()
+                ctx.addEllipse(in: disc)
+                ctx.clip()
+                ctx.drawRadialGradient(
+                    gradient,
+                    startCenter: CGPoint(x: rect.midX - 8, y: rect.midY + 8), startRadius: 2,
+                    endCenter: CGPoint(x: rect.midX, y: rect.midY), endRadius: side / 2,
+                    options: .drawsAfterEndLocation)
+                ctx.restoreGState()
+            }
+            ctx.setStrokeColor(NSColor(calibratedRed: 0.6, green: 0.45, blue: 0, alpha: 1).cgColor)
+            ctx.setLineWidth(3)
+            ctx.strokeEllipse(in: disc)
+            let glyph = NSAttributedString(string: "$", attributes: [
+                .font: NSFont.systemFont(ofSize: 34, weight: .heavy),
+                .foregroundColor: NSColor(calibratedRed: 0.55, green: 0.4, blue: 0, alpha: 1),
+            ])
+            glyph.draw(at: CGPoint(x: rect.midX - glyph.size().width / 2,
+                                   y: rect.midY - glyph.size().height / 2))
+            return true
+        }
+        var proposed = CGRect(origin: .zero, size: NSSize(width: side, height: side))
+        return image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+    }()
+}
+
 // MARK: - Live capture (AppKit window + AVFoundation)
 
 final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
@@ -1397,6 +1748,12 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     private var deviceName = "camera"
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
+
+    /// The price HUD and its sounds. The bank is lazy so the audio engine's
+    /// first-time spin-up never delays camera readiness — it starts on the
+    /// first resolved card instead.
+    private let hud = PriceHUD()
+    private lazy var sounds = SoundBank()
 
     // Auto-capture. The video output feeds the trigger only — stills always go
     // through photoOutput, so auto and manual captures are identical on the
@@ -1427,6 +1784,17 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         self.manualRotation = ((rotation / 90) % 4 + 4) % 4 * 90
         self.autoRequested = auto
         super.init()
+    }
+
+    /// startDemo brings the window up with no camera at all — a black preview
+    /// under a live HUD — so the price tiers' looks and sounds can be
+    /// eyeballed by piping `result` lines on stdin. The capture session never
+    /// runs; everything else (stdin, keys, shutdown) works as in live mode.
+    func startDemo() {
+        deviceName = "HUD demo"
+        buildWindow()
+        emit(Event(event: "ready", rotation: manualRotation, device: deviceName,
+                   features: ["hud"]))
     }
 
     func start() {
@@ -1497,7 +1865,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                 spinRunLoop(seconds: 0.75) { false }
                 emit(Event(event: "ready", rotation: self.manualRotation,
                            device: self.deviceName,
-                           features: self.autoAvailable ? ["auto", "rearm"] : nil))
+                           features: (self.autoAvailable ? ["auto", "rearm"] : []) + ["hud"]))
                 if self.autoRequested { self.setAuto(true) }
             }
         }
@@ -1601,6 +1969,8 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         outline.isHidden = true
         preview.addSublayer(outline)
         view.outlineLayer = outline
+        hud.attach(to: preview, scale: win.backingScaleFactor)
+        view.hud = hud
         view.onKey = { [weak self] key in
             switch key {
             case .space: self?.capture()
@@ -1728,7 +2098,10 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// so the user can drive the camera from the terminal without switching
     /// windows — which is the point of keeping the session open.
     func handle(command: String) {
-        switch command {
+        // A command is a verb plus an optional payload after the first space —
+        // only `result` carries one today.
+        let parts = command.split(separator: " ", maxSplits: 1)
+        switch parts.first.map(String.init) ?? "" {
         case "capture": capture()
         case "rotate-left": rotate(clockwise: false)
         case "rotate-right": rotate(clockwise: true)
@@ -1736,9 +2109,23 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         case "auto-off": setAuto(false)
         case "rearm": autoTrigger.forceRearm()
         case "chime": NSSound(named: "Glass")?.play()
+        case "result": showResult(payload: parts.count > 1 ? String(parts[1]) : "")
         case "quit": shutdown()
         default: emit(Event(event: "error", message: "unknown command: \(command)"))
         }
+    }
+
+    /// showResult renders one resolved card's price on the HUD: the tier sound
+    /// and flash, and/or the running-total update. A malformed payload reports
+    /// an error and keeps the session alive, like any bad command.
+    private func showResult(payload: String) {
+        guard let data = payload.data(using: .utf8), !payload.isEmpty,
+              let cmd = try? JSONDecoder().decode(HUDCommand.self, from: data) else {
+            emit(Event(event: "error", message: "bad result payload"))
+            return
+        }
+        if let tier = cmd.tier { sounds.play(tier: tier) }
+        hud.show(cmd)
     }
 
     /// A failed capture reports an error but keeps the window open — one bad
@@ -1820,6 +2207,8 @@ final class PreviewView: NSView {
     /// The auto-trigger's cue: an outline traced around each rectangle the
     /// trigger currently sees, kept sized to the view by layout().
     var outlineLayer: CAShapeLayer?
+    /// The price HUD, kept sized to the view like the outline.
+    var hud: PriceHUD?
     var onKey: ((Key) -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) {
@@ -1838,7 +2227,15 @@ final class PreviewView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         outlineLayer?.frame = bounds
+        hud?.layout(bounds: bounds)
         CATransaction.commit()
+    }
+
+    /// A window dragged to a different-density display re-rasterizes the HUD
+    /// text, or it renders blurry there.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if let scale = window?.backingScaleFactor { hud?.setScale(scale) }
     }
 }
 
@@ -1992,10 +2389,15 @@ Thread.detachNewThread {
     DispatchQueue.main.async { controller.shutdown() }
 }
 
-AVCaptureDevice.requestAccess(for: .video) { granted in
-    DispatchQueue.main.async {
-        if !granted { fail("camera access denied — grant it in System Settings › Privacy › Camera") }
-        controller.start()
+if args.contains("--hud-demo") {
+    // No camera, no permission prompt: the demo exists to see the HUD.
+    DispatchQueue.main.async { controller.startDemo() }
+} else {
+    AVCaptureDevice.requestAccess(for: .video) { granted in
+        DispatchQueue.main.async {
+            if !granted { fail("camera access denied — grant it in System Settings › Privacy › Camera") }
+            controller.start()
+        }
     }
 }
 app.run()

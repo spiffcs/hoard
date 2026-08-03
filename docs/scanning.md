@@ -49,12 +49,28 @@ any scan; if it finds the card just processed, the re-read is discarded
 silently ("still seeing … — waiting for the next card") and no further
 rechecks fire until something actually happens.
 
-Audio is one chime per card, played when the scan *resolves* — auto-added
+Audio is one sound per card, played when the scan *resolves* — auto-added
 or queued for review — because either outcome means the same thing at the
 table: this card is handled, place the next one. Captures themselves are
 silent (the old shutter pop made every card a two-beep event), and a
 discarded recheck stays silent too, so a slow moment between cards never
 sounds like the scanner acting up.
+
+On current helpers that one sound is priced: the camera window flashes the
+amount just scanned and plays the price's tier — a muted grey flash and low
+knock for bulk (under $1), a gold flash and bright bell for a win, and a
+coin shower with a rising glissando for a jackpot ($20 and up). The
+thresholds are tunable per run with `HOARD_SCAN_WIN` and
+`HOARD_SCAN_JACKPOT` (dollars), and the sound volume with
+`HOARD_SCAN_HUD_VOLUME` (0–1). A running
+session total sits at the video frame's top right and counts *committed*
+cards only — a
+queued-for-review card celebrates when it resolves, but its money lands in
+the total when the review confirms it. An unpriced card flashes "$—" with
+the familiar plain chime. Older helpers without the HUD keep the plain
+chime for everything; either way it is never two sounds for one card. The
+looks and sounds can be previewed without a camera via
+`hoard-scan --hud-demo` (pipe `result {...}` lines on stdin).
 
 The card's title is read on-device with Apple's Vision OCR, then matched to a
 real card — against the [local catalog](pricing.md#the-local-catalog) when one is

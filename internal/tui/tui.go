@@ -59,6 +59,12 @@ type ScanSession interface {
 	// resolution rather than capture time so a nudge-armed capture is
 	// never silent.
 	Chime() error
+	// Result reports a resolved card's price outcome for the camera HUD's
+	// price treatment: flash + tier sound when Tier is set, a silent update
+	// of the running session counter when Total is set. Only sent to
+	// helpers that advertised "hud" on their ready event; older helpers get
+	// Chime instead — exactly one sound per card either way.
+	Result(scan.HUDResult) error
 	// Events streams what the camera window reports; closed when the session is.
 	Events() <-chan scan.Event
 	// Close ends the session and shuts the window.

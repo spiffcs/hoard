@@ -223,7 +223,13 @@ type model struct {
 	// race the nudge onto the wire, and the flag was observed being spent on
 	// the racing scan while the true echo slipped through), lastScanNudged
 	// tags scans inside that window, and nudgeDrops counts echoes.
-	autoCapable    bool
+	autoCapable bool
+	// hudCapable marks a helper whose camera window renders price results
+	// (the "hud" feature); hudWin/hudJackpot are the celebration-tier
+	// thresholds, read from the environment once at construction.
+	hudCapable     bool
+	hudWin         float64
+	hudJackpot     float64
 	nudgeGen       int
 	nudgeSentAt    time.Time
 	lastScanNudged bool
@@ -298,19 +304,21 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	l.DisableQuitKeybindings()
 
 	m := model{
-		ctx:       ctx,
-		searcher:  s,
-		adder:     add,
-		scanner:   sc,
-		theme:     th,
-		dests:     dests,
-		nameInput: ni,
-		qtyInput:  qi,
-		spinner:   sp,
-		list:      l,
-		width:     80,
-		height:    22,
-		now:       time.Now,
+		ctx:        ctx,
+		searcher:   s,
+		adder:      add,
+		scanner:    sc,
+		theme:      th,
+		dests:      dests,
+		nameInput:  ni,
+		qtyInput:   qi,
+		spinner:    sp,
+		list:       l,
+		hudWin:     envFloat("HOARD_SCAN_WIN", defaultWinThreshold),
+		hudJackpot: envFloat("HOARD_SCAN_JACKPOT", defaultJackpotThreshold),
+		width:      80,
+		height:     22,
+		now:        time.Now,
 	}
 	if len(dests) > 0 {
 		m.dest = dests[0]
@@ -1003,6 +1011,7 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 			m.autoState = "armed"
 			m.autoCapable = true
 		}
+		m.hudCapable = slices.Contains(msg.ev.Features, "hud")
 		return m, again
 
 	case scan.EventAuto:
@@ -1083,7 +1092,8 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		card := it.prints[0]
 		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
 		if err := m.adder(res); err != nil {
-			m.chime()
+			// Celebrates as queue-bound: the write failed, so no total.
+			m.celebrate(priceValuePtr(card, finish), false)
 			nudge := m.scheduleNudge()
 			it.note = "add failed: " + err.Error()
 			m.review = append(m.review, it)
@@ -1093,9 +1103,10 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now)
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.nudgeDrops = 0
-		m.chime()
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
+		// After the increment, so the HUD total is the post-commit number.
+		m.celebrate(priceValuePtr(card, finish), true)
 		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.tally = append(m.tally, line)
@@ -1128,7 +1139,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 	}
 	m.nudgeDrops = 0
-	m.chime()
+	m.celebrate(guessPrice(it), false)
 	it.note = note
 	m.review = append(m.review, it)
 	nudge := m.scheduleNudge()
@@ -1144,6 +1155,42 @@ func (m model) chime() {
 	if m.session != nil {
 		_ = m.session.Chime()
 	}
+}
+
+// celebrate is chime's price-aware upgrade: the camera HUD flashes the
+// amount with its tier's styling and sound. committed means this resolve
+// itself moved the session total, which then rides along; a queue-bound card
+// celebrates without one — its money lands at confirm time via hudTotal.
+// Helpers without the hud feature get the plain chime, keeping the
+// one-sound-per-card policy in every pairing of helper and CLI.
+func (m model) celebrate(price *float64, committed bool) {
+	if m.session == nil {
+		return
+	}
+	if !m.hudCapable {
+		m.chime()
+		return
+	}
+	r := scan.HUDResult{Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot)}
+	// An unpriced commit moves nothing, so no total rides along — sending one
+	// would only surface the counter to announce an unchanged number.
+	if committed && price != nil {
+		t := m.addedValue
+		r.Total = &t
+	}
+	_ = m.session.Result(r)
+}
+
+// hudTotal silently syncs the camera HUD's session counter after a commit
+// that already celebrated (a queue confirm) or never will (a manual add
+// while the camera is open). Review confirms routinely happen after the
+// camera closed, hence the guards.
+func (m model) hudTotal() {
+	if m.session == nil || !m.hudCapable {
+		return
+	}
+	t := m.addedValue
+	_ = m.session.Result(scan.HUDResult{Total: &t})
 }
 
 // reviewChanged reacts to the queue growing: the close-time walk consumes the
@@ -1311,6 +1358,9 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 	}
 	m.addedCount++
 	m.addedValue += float64(res.Qty) * priceValue(res.Card, res.Finish)
+	// The card already celebrated at resolve time (or never scanned at all);
+	// only the HUD's session counter moves, silently.
+	m.hudTotal()
 	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s · %s",
 		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, priceForFinish(res.Card, res.Finish))

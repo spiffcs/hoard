@@ -72,6 +72,17 @@ type Event struct {
 	FinishHint string `json:"finishHint"`
 }
 
+// HUDResult reports a resolved card's price outcome to the camera window's
+// HUD. Tier set means celebrate: flash the amount with the tier's styling and
+// play its sound. Total set means update the persistent session counter —
+// always silently, so a card is never a two-sound event. Amount nil with a
+// tier means the card is unpriced.
+type HUDResult struct {
+	Amount *float64 `json:"amount,omitempty"`
+	Tier   string   `json:"tier,omitempty"` // bulk | win | jackpot | unpriced
+	Total  *float64 `json:"total,omitempty"`
+}
+
 // CollectorAlt is one alternative collector block read from the band. Finish
 // is the printed marker beside the set code — "foil" (star), "nonfoil"
 // (bullet), or "" on frames that carry no marker.

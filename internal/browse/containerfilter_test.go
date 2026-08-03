@@ -808,8 +808,8 @@ func TestMarketTablesPage(t *testing.T) {
 	if len(m.marketRows) != 50 || len(m.marketComps) != 50 {
 		t.Fatalf("visible rows = %d + %d comps, want 50 each", len(m.marketRows), len(m.marketComps))
 	}
-	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, "page 1/2 of 60 (>/< turns)") ||
-		!strings.Contains(view, "page 1/3 of 120") {
+	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, "of 50 of 60 · page 1/2") ||
+		!strings.Contains(view, "of 50 of 120 · page 1/3") {
 		t.Fatalf("titles must name the leafing:\n%s", view)
 	}
 

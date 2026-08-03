@@ -495,13 +495,14 @@ func (m Model) window(lines []string, p pane, width int) []string {
 			// because the reverse is re-asserted past every embedded reset,
 			// and the row's identity tints show through it.
 			line = ui.Restyle(line, m.theme.Cursor)
-		case i == m.cursor[p] && (p == paneContainers || m.view == viewHoldings):
+		case i == m.cursor[p] && (p == paneContainers || (m.view == viewHoldings && i > 0)):
 			// The unfocused pane keeps a mark on its row so switching back is
 			// not a hunt for where the cursor was. Not on the analytical
-			// views' rows, though: moving the container cursor resets the
-			// card cursor to the top, so the mark always sat on row one —
-			// reading as a dimmed first card, not a remembered place —
-			// and dim already means ineligible in the pane beside it.
+			// views' rows, and not on holdings row zero: moving the container
+			// cursor resets the card cursor to the top, so a mark there is
+			// the default position wearing a highlight — it read as a
+			// selected first card in a pane the user never tabbed into. A
+			// remembered place deeper in the list still shows.
 			line = ui.Restyle(line, m.theme.Inactive)
 		}
 		out = append(out, line)
