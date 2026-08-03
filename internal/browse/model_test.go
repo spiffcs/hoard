@@ -56,6 +56,8 @@ type fakeStore struct {
 
 	// bidSeries backs BidSeries, keyed "scryfallID|finish".
 	bidSeries map[string][]store.PricePoint
+	// holdingsByName backs HoldingsOfName, keyed by card name.
+	holdingsByName map[string][]store.Holding
 
 	// holdings tracks SetHoldingQuantity so an edit and its undo can be
 	// observed without a database.
@@ -163,10 +165,28 @@ func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
 func (f *fakeStore) DeckEntries(id int64) ([]store.EntryView, error) {
 	return f.deckCards[id], f.err
 }
-func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
-	return store.CardDetail{}, f.err
+
+// CardDetail synthesizes the identity fields from the fixture id, the way
+// row() builds them, so a detail opened on any fixture card carries a
+// name and printing.
+func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
+	var d store.CardDetail
+	d.ScryfallID = id
+	d.Name = strings.TrimSuffix(id, "-id")
+	d.SetCode = "uma"
+	d.CollectorNumber = "85"
+	uri := "http://img.test/" + id
+	d.ImageURI = &uri
+	tcg := int64(12345)
+	d.TCGplayerID = &tcg
+	return d, f.err
 }
-func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
+func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error) { return nil, f.err }
+
+// HoldingsOfName serves the holdingsByName fixture, keyed by card name.
+func (f *fakeStore) HoldingsOfName(name string) ([]store.Holding, error) {
+	return f.holdingsByName[name], f.err
+}
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
 
 // BidSeries serves the bidSeries fixture, keyed "scryfallID|finish".

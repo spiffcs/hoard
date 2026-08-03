@@ -298,3 +298,72 @@ func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 		t.Errorf("foil series = %+v, want just its baseline", foil)
 	}
 }
+
+// HoldingsOfName spans printings: ten Forests across two printings and
+// three containers come back one row each, printing named, collection
+// first.
+func TestHoldingsOfNameSpansPrintings(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	alt := ulamog()
+	alt.ID = "ulamog-alt-id"
+	alt.Set = "roe"
+	alt.CollectorNumber = "8"
+	if err := s.AddCardFinish(alt, "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish alt: %v", err)
+	}
+	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]Entry{{ScryfallID: "ulamog-alt-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+
+	got, err := s.HoldingsOfName("Ulamog, the Infinite Gyre")
+	if err != nil {
+		t.Fatalf("HoldingsOfName: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("holdings = %+v, want both printings", got)
+	}
+	ids := map[string]bool{}
+	for _, h := range got {
+		if h.ScryfallID == "" || h.SetCode == "" {
+			t.Errorf("holding %+v lacks its printing identity", h)
+		}
+		ids[h.ScryfallID] = true
+	}
+	if !ids["ulamog-id"] || !ids["ulamog-alt-id"] {
+		t.Errorf("printings seen = %v, want both", ids)
+	}
+}
+
+// v14 surfaces TCGplayer's product id from the stored Scryfall document —
+// nil until enrichment stores one, the id after.
+func TestCardDetailCarriesTCGplayerID(t *testing.T) {
+	s := newTestStore(t)
+	c := ulamog()
+	c.Raw = []byte(`{"tcgplayer_id": 33365, "rarity": "mythic"}`)
+	if err := s.AddCardFinish(c, "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	d, err := s.CardDetail("ulamog-id")
+	if err != nil {
+		t.Fatalf("CardDetail: %v", err)
+	}
+	if d.TCGplayerID == nil || *d.TCGplayerID != 33365 {
+		t.Errorf("TCGplayerID = %v, want 33365", d.TCGplayerID)
+	}
+
+	bare := solRing()
+	if err := s.AddCardFinish(bare, "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	d, err = s.CardDetail("sol-id")
+	if err != nil {
+		t.Fatalf("CardDetail: %v", err)
+	}
+	if d.TCGplayerID != nil {
+		t.Errorf("TCGplayerID = %v for an un-enriched card, want nil", *d.TCGplayerID)
+	}
+}

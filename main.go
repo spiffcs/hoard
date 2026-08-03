@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -224,6 +225,18 @@ func extractDBFlag(args []string) (rest []string, db string, err error) {
 // defaultDBPath resolves where the hoard database lives when --db is not given.
 // Precedence: $HOARD_DB, else a per-user application-data directory so the same
 // hoard is used regardless of the current working directory.
+// openInBrowser hands a URL to the platform's opener — the detail view's
+// vendor links. Start, not Run: the browser owns its own lifetime.
+func openInBrowser(u string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", u).Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", u).Start()
+	}
+	return exec.Command("xdg-open", u).Start()
+}
+
 func defaultDBPath() (string, error) {
 	if p := os.Getenv("HOARD_DB"); p != "" {
 		return p, nil
@@ -468,6 +481,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			comps, ok, err := action.CardComps(deps, id)
 			return comps, ok && err == nil
 		}),
+		browse.WithOpenURL(openInBrowser),
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.UpdatePrices(ctx, deps, p)
 			if err != nil {
@@ -514,7 +528,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			case res.Printings == 0:
 				return "nothing owned yet", nil
 			case res.AlreadyToday != "":
-				return "already backfilled today · the archive only changes daily", nil
+				return "already backfilled today", nil
 			case res.Inserted == 0 && res.BidInserted == 0:
 				return "nothing to backfill · history already recorded", nil
 			}

@@ -60,6 +60,14 @@ func Percent(frac float64) string {
 	return strconv.FormatFloat(frac*100, 'f', 1, 64) + "%"
 }
 
+// PercentAlways formats a fraction as a percentage even at or below zero.
+// Percent's empty-for-nonpositive contract reads as "unknown" in a column
+// where zero and negative are the interesting cases — a spread of -4.2%
+// is a bid beating the low ask, not a missing number (observed live).
+func PercentAlways(frac float64) string {
+	return strconv.FormatFloat(frac*100, 'f', 1, 64) + "%"
+}
+
 // group inserts thousands separators into the integer part of a plain decimal
 // string, leaving any fractional part alone.
 func group(s string) string {
@@ -145,6 +153,11 @@ func Estimated(s, altSource string) string {
 
 // Printing is the set/number label shown beside a card's name.
 func Printing(setCode, collectorNumber string) string {
+	// A merged row spanning printings has no one set to name; the unknown
+	// dash beats a bare "/".
+	if setCode == "" && collectorNumber == "" {
+		return "—"
+	}
 	return setCode + "/" + collectorNumber
 }
 

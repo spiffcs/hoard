@@ -312,8 +312,15 @@ func (m Model) marketStatus() string {
 	// tables' counts happen to sit.
 	secs := m.marketSections()
 	sec, idx := m.marketCursorPos()
-	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · one-day vendor prices",
-		idx+1, secs[sec].count, m.selectedMarketNote()))
+	// On the sell-side comp sheet the standing note teaches the SPREAD
+	// column's formula instead — that column is the sheet's one derived
+	// number, and the freshness disclaimer said nothing about it.
+	suffix := "one-day vendor prices"
+	if m.selectedComp() != nil && !m.compsBuySide {
+		suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
+	}
+	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · %s",
+		idx+1, secs[sec].count, m.selectedMarketNote(), suffix))
 }
 
 // selectedMarketNote is one sentence on why the row under the cursor is

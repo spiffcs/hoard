@@ -102,6 +102,21 @@ with why).
     COMPS section serving the market table's row for this card from the
     day cache, with an ARBITRAGE / EASY TO SELL verdict line for held
     finishes (market.Comp.Verdict shares the sections' constants).
+    Live-pass polish: finish groups separate with a blank line (non-foil's
+    spread read as foil's opener); the image now sits beside the card
+    frame only so the analysis keeps the full width (it was clipping the
+    spread captions); the comps prose became an aligned table (money
+    widths skewed the separators); and the EASY TO SELL verdict was cut —
+    the CK PAYS column already says it, only ARBITRAGE speaks.
+13. **All cards merges printings; HELD is the printing selector** — ✅
+    done. All cards showed ten Forests as separate rows each wearing a
+    set; same-name same-finish rows now collapse (quantities and values
+    sum; the set and per-copy price blank when the merged rows disagree).
+    The detail loads holdings by NAME (`store.HoldingsOfName`, each row
+    carrying its exact printing), and ↑/↓ scrolls a cursor across them:
+    landing on a different printing re-points the overlay — series, bids,
+    comps, links, and the art all reload for that printing. Links moved
+    to ←/→ to free the vertical axis.
 
 
 ## 2026-08-01 — beautification-sprint build

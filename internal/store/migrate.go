@@ -41,6 +41,7 @@ var migrations = []migration{
 	{11, cardFaceDetails},
 	{12, renormalizeHistoryFinish},
 	{13, bidHistory},
+	{14, tcgplayerProductID},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -302,6 +303,13 @@ CREATE TABLE card_bid_history (
     as_of       TEXT NOT NULL,
     PRIMARY KEY (scryfall_id, finish, as_of)
 );`
+
+// v14: TCGplayer's product id, surfaced from the stored Scryfall document
+// like every other v5-style field — it is what turns the detail's
+// tcgplayer link from a name search into the exact product page.
+const tcgplayerProductID = `
+ALTER TABLE cards ADD COLUMN tcgplayer_id INTEGER
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.tcgplayer_id')) VIRTUAL;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

@@ -35,6 +35,11 @@ type CardDetail struct {
 	FlavorText *string
 	ImageURI   *string
 
+	// TCGplayerID is the marketplace's product id (migration v14), nil for
+	// un-enriched cards and the few printings TCGplayer does not list —
+	// what links the exact product page instead of a name search.
+	TCGplayerID *int64
+
 	// Enriched is false when no Scryfall document is stored for this printing,
 	// so a caller can say "run update-prices" once rather than printing unknown
 	// against every field in turn.
@@ -48,6 +53,7 @@ SELECT ` + cardCols(altSourceExpr) + `,
        c.rarity, c.set_name, c.type_line, c.oracle_text,
        c.artist, c.released_at, c.layout, c.cmc,
        c.power, c.toughness, c.loyalty, c.flavor_text, c.image_uri,
+       c.tcgplayer_id,
        c.raw_json IS NOT NULL
 FROM cards c ` + altJoinCards
 
@@ -61,6 +67,7 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 		&d.Rarity, &d.SetName, &d.TypeLine, &d.OracleText,
 		&d.Artist, &d.ReleasedAt, &d.Layout, &d.CMC,
 		&d.Power, &d.Toughness, &d.Loyalty, &d.FlavorText, &d.ImageURI,
+		&d.TCGplayerID,
 		&d.Enriched)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}
@@ -69,6 +76,10 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 }
 
 // Holding is a quantity of one printing-and-finish sitting in one container.
+//
+// The printing identity fields are filled by the by-name query, which
+// spans printings; the by-id query leaves them zero — its caller already
+// knows the printing it asked about.
 type Holding struct {
 	ContainerID   int64
 	ContainerName string
@@ -76,6 +87,10 @@ type Holding struct {
 	Finish        string
 	Board         string
 	Quantity      int
+
+	ScryfallID      string
+	SetCode         string
+	CollectorNumber string
 }
 
 // HoldingsOf reports every container holding a printing, and how many.
@@ -104,6 +119,39 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 		var h Holding
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
 			&h.Finish, &h.Board, &h.Quantity); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// HoldingsOfName reports every container holding any printing of a card
+// name, each row naming its exact printing — the physical reality behind
+// a name-merged row: ten Forests can be four printings, each with its own
+// price and art. Ordered like HoldingsOf, then by printing, so a detail's
+// held list groups stably.
+func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
+	rows, err := s.db.Query(`
+SELECT ct.id, `+containerLabel+`, ct.kind, e.finish, e.board, e.quantity,
+       c.scryfall_id, c.set_code, c.collector_number
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id
+WHERE c.name = ?
+ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
+         ct.name, c.set_code, c.collector_number, e.finish, e.board`, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading holdings of %q: %w", name, err)
+	}
+	defer rows.Close()
+
+	var out []Holding
+	for rows.Next() {
+		var h Holding
+		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
+			&h.Finish, &h.Board, &h.Quantity,
+			&h.ScryfallID, &h.SetCode, &h.CollectorNumber); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

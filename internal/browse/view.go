@@ -100,17 +100,23 @@ func (m Model) writeHelp(b *strings.Builder, help string) {
 // It replaces the panes rather than floating over them: the oracle text and
 // price history need the width, and a box drawn over a table leaves fragments
 // of card names showing around its edges that read as corruption. The card
-// image sits to the right of the text — the text keeps the left margin the
-// eye reads from, the picture illustrates it. A terminal too narrow for the
-// pair stacks instead: the card's details, then the image, then hoard's own
-// facts — and one too narrow even for the image alone goes text-only.
+// image sits to the right of the card frame alone — the frame is what it
+// illustrates, and the analysis below (prices, bids, comps) takes the full
+// width. A terminal too narrow for the pair stacks instead: the card's
+// details, then the image, then hoard's own facts — and one too narrow
+// even for the image alone goes text-only.
 func (m Model) detailView() string {
 	img := m.detail.image
 	var lines []string
 	switch {
 	case len(img) > 0 && m.width >= imageCols+50:
+		// The image sits beside the card frame only; the hoard's analysis
+		// below gets the full width — the bid and comps rows are wide, and
+		// an image column clipping them cost more than it decorated
+		// (observed live).
 		textW := m.width - imageCols - 2
-		lines = besideImage(img, m.detailLines(*m.detail, textW), textW)
+		lines = besideImage(img, m.cardFrameLines(*m.detail, textW), textW)
+		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
 	case len(img) > 0 && m.width >= imageCols:
 		lines = append(m.cardFrameLines(*m.detail, m.width), "")
 		lines = append(lines, img...)
@@ -514,7 +520,14 @@ func (m Model) helpLine() string {
 	case m.watchPick:
 		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
 	case m.detail != nil:
-		return "esc back · ctrl+c quit"
+		help := ""
+		if len(m.detail.holdings) > 1 {
+			help = "↑/↓ held printings · "
+		}
+		if m.openURL != nil && len(m.detail.links) > 0 {
+			help += "←/→ links · enter open in browser · "
+		}
+		return help + "esc back · ctrl+c quit"
 	case m.text != nil:
 		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
 	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:

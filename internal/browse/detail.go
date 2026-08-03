@@ -1,9 +1,11 @@
 package browse
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,7 +30,14 @@ type detail struct {
 	// means no day cache existed to read (the section says how to fetch).
 	comps   map[string]market.Comp
 	compsOK bool
-	err     error
+	// links are the vendor pages for this printing; linkCursor is which
+	// one enter opens. Both inert when no opener was injected.
+	links      []cardLink
+	linkCursor int
+	// heldCursor selects a row of the held list; landing on a different
+	// printing re-points the whole overlay (series, comps, art, links).
+	heldCursor int
+	err        error
 	// image is the rendered card image block (halfblock cells or kitty
 	// placeholders), nil until the async fetch lands — or forever, when
 	// the terminal can't draw one. The overlay never waits for it.
@@ -75,19 +84,50 @@ func (m *Model) openDetail() {
 	if id == "" {
 		return
 	}
-	d := detail{
-		series: map[string][]store.PricePoint{},
-		bids:   map[string][]store.PricePoint{},
+	var d detail
+	if !m.loadPrinting(&d, id) {
+		return
 	}
+	// Holdings by name, not id: the held list is the printing selector —
+	// ten Forests can be four printings with four prices and four arts,
+	// and scrolling the list re-points the whole overlay (openDetail's
+	// per-view cases above only pick where the cursor starts).
+	var err error
+	if d.holdings, err = m.store.HoldingsOfName(d.card.Name); err != nil {
+		m.setError(err)
+		return
+	}
+	if len(d.holdings) == 0 {
+		// A catalogued-but-unheld card (a watch on something you sold)
+		// still shows its container-level answer: nothing.
+		if d.holdings, err = m.store.HoldingsOf(id); err != nil {
+			m.setError(err)
+			return
+		}
+	}
+	for i, h := range d.holdings {
+		if h.ScryfallID == id {
+			d.heldCursor = i
+			break
+		}
+	}
+	m.detail = &d
+}
+
+// loadPrinting fills the printing-scoped half of a detail — the card, its
+// price and bid series, comps, links — leaving the held list alone. The
+// image is also left alone: on a printing switch the old art holds the
+// layout steady until the new art replaces it in place (blanking it made
+// every section jump left and back, observed live); the caller decides
+// when no replacement is coming and the stale art must go.
+func (m *Model) loadPrinting(d *detail, id string) bool {
+	d.series = map[string][]store.PricePoint{}
+	d.bids = map[string][]store.PricePoint{}
 
 	var err error
 	if d.card, err = m.store.CardDetail(id); err != nil {
 		m.setError(err)
-		return
-	}
-	if d.holdings, err = m.store.HoldingsOf(id); err != nil {
-		m.setError(err)
-		return
+		return false
 	}
 	// Both finishes, not just the one held: a card owned in non-foil is often
 	// being looked at precisely because its foil is doing something.
@@ -95,7 +135,7 @@ func (m *Model) openDetail() {
 		s, err := m.store.PriceSeries(id, finish)
 		if err != nil {
 			m.setError(err)
-			return
+			return false
 		}
 		if len(s) > 0 {
 			d.series[finish] = s
@@ -103,7 +143,7 @@ func (m *Model) openDetail() {
 		b, err := m.store.BidSeries(id, finish)
 		if err != nil {
 			m.setError(err)
-			return
+			return false
 		}
 		if len(b) > 0 {
 			d.bids[finish] = b
@@ -112,7 +152,88 @@ func (m *Model) openDetail() {
 	if m.cardComps != nil {
 		d.comps, d.compsOK = m.cardComps(id)
 	}
-	m.detail = &d
+	if m.openURL != nil {
+		d.links = cardLinks(d.card)
+	}
+	return true
+}
+
+// moveHeldCursor walks the held list; landing on a different printing
+// re-points the overlay at it — series, comps, links, and (via the
+// returned command) the art.
+func (m *Model) moveHeldCursor(delta int) tea.Cmd {
+	d := m.detail
+	if d == nil || len(d.holdings) == 0 {
+		return nil
+	}
+	next := min(max(d.heldCursor+delta, 0), len(d.holdings)-1)
+	if next == d.heldCursor {
+		return nil
+	}
+	d.heldCursor = next
+	sel := d.holdings[next]
+	if sel.ScryfallID == "" || sel.ScryfallID == d.card.ScryfallID {
+		return nil
+	}
+	if !m.loadPrinting(d, sel.ScryfallID) {
+		return nil
+	}
+	cmd := m.fetchDetailImage()
+	if cmd == nil {
+		// No replacement is coming (no URL, no capable terminal): keeping
+		// the old printing's art would caption it with the wrong card.
+		d.image = nil
+	}
+	return cmd
+}
+
+// cardLink is one vendor page the detail can open.
+type cardLink struct {
+	name string
+	url  string
+}
+
+// cardLinks builds the vendor pages for a printing. TCGplayer addresses
+// the exact product when the enrichment stored its id (v14), and manapool
+// always does (set, number, name slug); Card Kingdom keys on ids nothing
+// in our feeds carries, so it gets a name search — the closest its URL
+// can point.
+func cardLinks(c store.CardDetail) []cardLink {
+	q := url.QueryEscape(c.Name)
+	tcg := "https://www.tcgplayer.com/search/magic/product?q=" + q
+	if c.TCGplayerID != nil {
+		tcg = fmt.Sprintf("https://www.tcgplayer.com/product/%d", *c.TCGplayerID)
+	}
+	links := []cardLink{
+		{"tcgplayer.com", tcg},
+		{"manapool.com", fmt.Sprintf("https://manapool.com/card/%s/%s/%s",
+			c.SetCode, c.CollectorNumber, nameSlug(c.Name))},
+		{"cardkingdom.com", "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=" + q},
+	}
+	if c.ScryfallURL != "" {
+		links = append(links, cardLink{"scryfall.com", c.ScryfallURL})
+	}
+	return links
+}
+
+// nameSlug lowercases a card name into a URL path segment: runs of
+// anything but letters and digits become single hyphens.
+func nameSlug(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // frameWidth is the widest the card-frame block draws. Oracle text at a
@@ -196,7 +317,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 	if len(d.holdings) == 0 {
 		out = append(out, dim("  nothing: this printing is catalogued but not held"))
 	}
-	for _, h := range d.holdings {
+	for i, h := range d.holdings {
 		where := h.ContainerName
 		if h.ContainerKind != store.KindCollection && h.Board != "main" {
 			where += " (" + h.Board + ")"
@@ -204,52 +325,88 @@ func (m Model) hoardLines(d detail, width int) []string {
 		// The finish is named only when it isn't normal — the table columns'
 		// rule, minus the placeholder dash, which in a list reads as a stray mark.
 		parts := []string{ui.Qty(h.Quantity)}
+		if h.SetCode != "" || h.CollectorNumber != "" {
+			parts = append(parts, ui.Printing(h.SetCode, h.CollectorNumber))
+		}
 		if h.Finish != "nonfoil" {
 			parts = append(parts, h.Finish)
 		}
-		out = append(out, ui.Truncate("  "+strings.Join(append(parts, where), " · "), width))
+		line := ui.Truncate("  "+strings.Join(append(parts, where), " · "), width)
+		// The cursor bar marks the row the overlay is pointed at: ↑/↓
+		// moves it, and a different printing swaps the series, comps and
+		// art in place.
+		if i == d.heldCursor && len(d.holdings) > 1 {
+			line = ui.Restyle(fit(line, min(width, frameWidth)), m.theme.Cursor)
+		}
+		out = append(out, line)
 	}
 
 	out = append(out, "", m.theme.Title.Render("PRICE"))
-	if len(d.series) == 0 {
+	// One group per finish — the price rows, then that finish's bid and
+	// spread rows — with a blank line between groups, so non-foil's spread
+	// does not read as foil's opening act (observed live).
+	var groups [][]string
+	for _, finish := range []string{"nonfoil", "foil"} {
+		var g []string
+		if s := d.series[finish]; len(s) > 0 {
+			label := finish
+			if finish == "nonfoil" {
+				label = "non-foil"
+			}
+			spark := ui.Spark(ui.Resample(pricePoints(s), sparkCells), sparkCells)
+			now := s[len(s)-1].Price
+			line := fmt.Sprintf("  %-9s %s  %s", label, spark, m.theme.Title.Render(ui.Money(now)))
+			// The change over the window is the question the sparkline
+			// raises; answer it in the movers view's own +$/-% language. A
+			// single check has no movement to report.
+			if first := s[0].Price; len(s) > 1 && now != first {
+				change := ui.SignedMoney(now - first)
+				if pct := ui.SignedPercent(safeFrac(now-first, first)); pct != "" {
+					change += " (" + pct + ")"
+				}
+				line += "  " + change
+			}
+			g = append(g, line, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
+		}
+		// A bid series can exist for a finish the retail history missed —
+		// the two tables have independent eras.
+		g = append(g, m.bidLines(d, finish)...)
+		if len(g) > 0 {
+			groups = append(groups, g)
+		}
+	}
+	if len(groups) == 0 {
 		out = append(out, dim("  no history yet · press : and run Backfill 90 days of price history"))
 	}
-	for _, finish := range []string{"nonfoil", "foil"} {
-		s := d.series[finish]
-		if len(s) == 0 {
-			continue
+	for i, g := range groups {
+		if i > 0 {
+			out = append(out, "")
 		}
-		label := finish
-		if finish == "nonfoil" {
-			label = "non-foil"
-		}
-		spark := ui.Spark(ui.Resample(pricePoints(s), sparkCells), sparkCells)
-		now := s[len(s)-1].Price
-		line := fmt.Sprintf("  %-9s %s  %s", label, spark, m.theme.Title.Render(ui.Money(now)))
-		// The change over the window is the question the sparkline raises;
-		// answer it in the movers view's own +$/-% language. A single check has
-		// no movement to report.
-		if first := s[0].Price; len(s) > 1 && now != first {
-			change := ui.SignedMoney(now - first)
-			if pct := ui.SignedPercent(safeFrac(now-first, first)); pct != "" {
-				change += " (" + pct + ")"
-			}
-			line += "  " + change
-		}
-		out = append(out, line)
-		out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
-		out = append(out, m.bidLines(d, finish)...)
-	}
-	// A bid series can exist for a finish the retail history missed —
-	// the two tables have independent eras.
-	for _, finish := range []string{"nonfoil", "foil"} {
-		if len(d.series[finish]) == 0 && len(d.bids[finish]) > 0 {
-			out = append(out, m.bidLines(d, finish)...)
-		}
+		out = append(out, g...)
 	}
 
 	out = append(out, m.compLines(d, width)...)
+	out = append(out, m.linkLines(d, width)...)
 	return out
+}
+
+// linkLines renders the vendor links on one line, the selected one under
+// the cursor bar — ↑/↓ moves it, enter opens the page. Absent without an
+// injected opener.
+func (m Model) linkLines(d detail, width int) []string {
+	if m.openURL == nil || len(d.links) == 0 {
+		return nil
+	}
+	parts := make([]string, len(d.links))
+	for i, l := range d.links {
+		if i == d.linkCursor {
+			parts[i] = ui.Restyle(" "+l.name+" ", m.theme.Cursor)
+			continue
+		}
+		parts[i] = m.theme.Help.Render(" " + l.name + " ")
+	}
+	return []string{"", m.theme.Title.Render("LINKS"),
+		ui.Truncate("  "+strings.Join(parts, " "), width)}
 }
 
 // bidLines renders one finish's buylist rows under its price row: the bid
@@ -281,10 +438,10 @@ func (m Model) bidLines(d detail, finish string) []string {
 			word = "widening"
 		}
 		caption := fmt.Sprintf("%s → %s since %s · %s",
-			ui.Percent(first), ui.Percent(last), since, word)
+			ui.PercentAlways(first), ui.PercentAlways(last), since, word)
 		out = append(out, "  "+dim(fmt.Sprintf("%-9s", "spread"))+" "+
 			ui.Spark(vals, sparkCells)+"  "+
-			m.env.Grade(market.SpreadGrade(last))(ui.Percent(last))+"  "+dim(caption))
+			m.env.Grade(market.SpreadGrade(last))(ui.PercentAlways(last))+"  "+dim(caption))
 	}
 	return out
 }
@@ -315,9 +472,20 @@ func (m Model) compLines(d detail, width int) []string {
 		}
 	}
 
+	// The sheet lays out as a table — prose rows with different money
+	// widths skewed every separator out of line (observed live). Same
+	// column story as the market view's sell side.
+	env := ui.Env{Width: max(width-2, 0), Color: m.env.Color, Clamp: true}
+	t := ui.Table{Env: env, Header: true, Cols: []ui.Col{
+		{Align: ui.Left, Style: env.Dim()},
+		{Title: "TCG SOLD", Align: ui.Right},
+		{Title: "MP", Align: ui.Right, Priority: 2, Style: env.Dim()},
+		{Title: "CK", Align: ui.Right, Priority: 1, Style: env.Dim()},
+		{Title: "CK PAYS", Align: ui.Right},
+		{Title: "SPREAD", Align: ui.Right},
+	}}
 	type verdict struct {
 		finish string
-		kind   market.Kind
 		c      market.Comp
 	}
 	var verdicts []verdict
@@ -330,45 +498,31 @@ func (m Model) compLines(d detail, width int) []string {
 		if finish == "nonfoil" {
 			label = "non-foil"
 		}
-		var parts []string
-		if c.HasMarket {
-			parts = append(parts, "tcg last sold "+ui.Money(c.Market))
-		}
-		if c.HasManapool {
-			parts = append(parts, "mp asks "+ui.Money(c.Manapool))
-		}
-		if c.HasCK {
-			parts = append(parts, "ck asks "+ui.Money(c.CK))
-		}
-		if c.HasBuylist {
-			parts = append(parts, "ck pays "+ui.Money(c.Buylist))
-		} else {
-			parts = append(parts, "no bid today")
-		}
-		line := "  " + dim(fmt.Sprintf("%-9s", label)) + " " + strings.Join(parts, " · ")
-		if c.HasSpread() {
-			line += " · " + m.env.Grade(market.SpreadGrade(c.Spread()))("spread "+ui.Percent(c.Spread()))
-		}
-		out = append(out, ui.Truncate(line, width))
+		t.Add(ui.C(label),
+			ui.C(compMoney(c.HasMarket, c.Market)),
+			ui.C(compMoney(c.HasManapool, c.Manapool)),
+			ui.C(compMoney(c.HasCK, c.CK)),
+			ui.C(compMoney(c.HasBuylist, c.Buylist)),
+			compSpreadCell(env, c))
+		// Only the arbitrage verdict earns a line: a bid over the sales
+		// price is news; a decent bid is just the table's numbers again
+		// (the EASY TO SELL line said nothing the CK PAYS column didn't).
 		if held[finish] {
-			if k, ok := c.Verdict(); ok {
-				verdicts = append(verdicts, verdict{finish, k, c})
+			if k, ok := c.Verdict(); ok && k == market.KindProfit {
+				verdicts = append(verdicts, verdict{finish, c})
 			}
 		}
 	}
+	for _, line := range t.Lines() {
+		out = append(out, "  "+line)
+	}
 	for _, v := range verdicts {
-		line := "  " + m.theme.Title.Render(v.kind.Title())
+		line := "  " + m.theme.Title.Render(market.KindProfit.Title())
 		if len(verdicts) > 1 {
 			line += dim(" (" + v.finish + ")")
 		}
-		switch v.kind {
-		case market.KindProfit:
-			line += fmt.Sprintf(" · ck pays %s, +%s over tcg last-sold",
-				ui.Money(v.c.Buylist), ui.Money(v.c.Buylist-v.c.Market))
-		case market.KindLiquid:
-			line += fmt.Sprintf(" · ck pays %s of tcg last-sold",
-				ui.Percent(v.c.Buylist/v.c.Market))
-		}
+		line += fmt.Sprintf(" · ck pays %s, +%s over tcg last-sold",
+			ui.Money(v.c.Buylist), ui.Money(v.c.Buylist-v.c.Market))
 		out = append(out, ui.Truncate(line, width))
 	}
 	return out

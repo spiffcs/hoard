@@ -18,7 +18,11 @@ tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u
 The left pane leads with **All cards** — every holding in the hoard, all
 binders and decks merged into one list (read-only: edit a card where it
 lives) — then your binders (the default binder, then any you created with
-`hoard binder new`), then every deck ranked by value. The right pane shows
+`hoard binder new`), then every deck ranked by value. On All cards,
+same-name printings collapse into one row: ten Forests across four
+printings are one ×10 line, and the set column shows the dash when the
+copies span printings (a set naming one of four would be a lie). The
+card detail's HELD list is where the exact printings live. The right pane shows
 what is inside whichever row you have selected.
 
 ## Keys
@@ -60,8 +64,9 @@ still prints to the terminal scrollback when you quit the browser.
 
 ## Card images
 
-The detail view draws the card itself to the right of its text when the
-terminal can: Ghostty, Kitty and WezTerm get the real image (kitty
+The detail view draws the card itself to the right of the card frame when
+the terminal can — the analysis below (prices, bids, comps) keeps the full
+width: Ghostty, Kitty and WezTerm get the real image (kitty
 graphics protocol); iTerm2 and any other truecolor terminal get a
 halfblock rendering. Each card's scan is fetched once from Scryfall
 (~100 KB) and cached in the per-user cache directory (macOS:
@@ -192,11 +197,17 @@ PRICE
   bid       ▁▂▂▃▃▃▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇▇▇███  $24.00
             $18.00–$24.00 · 41 checks since 2 May
   spread    ██▇▇▆▆▅▅▄▄▄▃▃▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂  29.7%  47.1% → 29.7% since 2 May · tightening
+
   foil      ▁▂▂▂▂▂▂▂▂▄▄▄▄▅▅▇▇▇▆▆▆▆▆▆▇▇▇▇▇▇▇█  $46.91
             $36.55–$46.91 since 29 Apr · 11 obs
 
 COMPS
-  non-foil  tcg last sold $34.28 · mp asks $35.10 · ck asks $36.99 · ck pays $24.00 · spread 29.7%
+            TCG SOLD      MP      CK  CK PAYS  SPREAD
+  non-foil    $34.28  $35.10  $36.99   $24.00   29.7%
+  foil        $46.91       —  $52.00        —       —
+
+LINKS
+   tcgplayer.com   manapool.com   cardkingdom.com   scryfall.com
 ```
 
 The **bid** row is Card Kingdom's cash offer over time — the only buylist
@@ -207,12 +218,28 @@ bid as a trend: a tightening spread means the dealers increasingly believe
 the retail price, the same confidence signal the MARKET view's comps table
 shows for one day. **COMPS** is that table's row for this card, from
 today's cached quotes — when none were fetched yet, the section says to
-press <kbd>F</kbd> on the MARKET view — and when a held finish qualifies
-for ARBITRAGE or EASY TO SELL, a verdict line says so in the section's own
-numbers.
+press <kbd>F</kbd> on the MARKET view — and when a held finish's bid beats
+the sales price outright, an ARBITRAGE line says so in the section's own
+numbers. (A merely decent bid earns no line: the CK PAYS column already
+says it.)
+
+**LINKS** puts the vendor pages one keypress away: <kbd>←</kbd>/<kbd>→</kbd>
+move the cursor across them and <kbd>enter</kbd> opens the selected page in
+your web browser — tcgplayer links the exact product page (the id comes
+with the card details update-prices stores; a never-refreshed card falls
+back to a name search), manapool links the exact printing by set and
+collector number, cardkingdom searches by name (no feed we read carries
+its product ids), and scryfall is the stored page itself.
+With links present, <kbd>enter</kbd> no longer closes the overlay;
+<kbd>esc</kbd> and <kbd>backspace</kbd> do.
 
 **HELD** answers the question no single view could before: that four copies of a
-card are one in the binder and three spread across two decks.
+card are one in the binder and three spread across two decks — and it spans
+printings, each row naming its exact set and number. The list scrolls:
+<kbd>↑</kbd>/<kbd>↓</kbd> move a cursor across the held rows, and landing on
+a different printing re-points the whole overlay — the art, the price and
+bid sparklines, and the comps all follow, because printings of the same
+play card carry different prices and different art.
 
 The sparklines are scaled to each series' own low and high, not to zero — against
 a zero baseline a card that drifted between $34.00 and $34.50 would look

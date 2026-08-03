@@ -503,7 +503,16 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 		return nil
 	}
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
+	// Naming the sort with the view answers the "why is this order
+	// different" beat before it lands — each view keeps its own sort, and
+	// arriving somewhere sorted by a column you chose last week reads as
+	// wrong data until the label says otherwise. Market is the exception:
+	// its four tables each keep their own sort, and naming the cursor's
+	// would claim more than it says.
 	m.status = "showing " + m.view.String()
+	if v != viewMarket {
+		m.status += " · sorted by " + m.sortLabel()
+	}
 	m.statusErr = false
 	// A selection this view greys out cannot stay selected — the cursor
 	// would rest on a row advertised as unselectable, over a pane whose

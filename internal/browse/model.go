@@ -234,6 +234,7 @@ type Model struct {
 	marketFetch   MarketFunc
 	marketCached  MarketCachedFunc
 	cardComps     CardCompFunc
+	openURL       OpenURLFunc
 	marketResult  market.Result
 	marketRows    []market.Row
 	marketLoading bool
@@ -421,6 +422,14 @@ func (m *Model) loadCards() error {
 				AltSource: r.AltSource, ColorIdentity: r.ColorIdentity,
 			})
 		}
+		if sel.Kind == kindAllCards {
+			// The hoard-level list answers "how many of this card", so
+			// same-name printings collapse into one row — ten Forests
+			// across four printings were ten rows each wearing a set the
+			// pile as a whole doesn't have (observed live). The detail's
+			// held list is where the exact printings live.
+			out = mergeByName(out)
+		}
 	} else {
 		entries, err := m.store.DeckEntries(sel.ID)
 		if err != nil {
@@ -442,6 +451,36 @@ func (m *Model) loadCards() error {
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
 	return nil
+}
+
+// mergeByName collapses same-name same-finish rows into one. Quantities
+// and values sum; the printing columns and the per-copy price survive only
+// when every merged row agrees — a set naming one of three printings, or a
+// price true of some copies, is worse than a dash. The first row's
+// scryfall id stays as the representative, which is all enter-detail
+// needs: the detail loads holdings by name and shows every printing.
+func mergeByName(rows []card) []card {
+	idx := map[string]int{}
+	var out []card
+	for _, c := range rows {
+		key := c.Name + "|" + c.Finish
+		i, seen := idx[key]
+		if !seen {
+			idx[key] = len(out)
+			out = append(out, c)
+			continue
+		}
+		m := &out[i]
+		m.Quantity += c.Quantity
+		m.Value += c.Value
+		if m.SetCode != c.SetCode || m.CollectorNumber != c.CollectorNumber {
+			m.SetCode, m.CollectorNumber = "", ""
+		}
+		if m.Price == nil || c.Price == nil || *m.Price != *c.Price {
+			m.Price = nil
+		}
+	}
+	return out
 }
 
 // applyFilter narrows allCards into cards. It does not touch the database: the
@@ -488,7 +527,7 @@ func (m *Model) cycleFloor() {
 	m.deriveView()
 	m.clampCursor(paneCards)
 	if min := m.floorMin(); min > 0 {
-		m.status, m.statusErr = fmt.Sprintf("floor %s · hiding cards worth less · M cycles, unpriced view exempt", ui.Money(min)), false
+		m.status, m.statusErr = fmt.Sprintf("floor %s · hiding cards worth less", ui.Money(min)), false
 	} else {
 		m.status, m.statusErr = "floor off", false
 	}
@@ -693,13 +732,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleBrowseKey(msg)
 }
 
-// handleDetailKey drives the card overlay: close or quit, nothing else.
+// handleDetailKey drives the card overlay: close, quit, walk the vendor
+// links, open one.
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "enter", "backspace":
+	case "esc", "backspace":
 		m.detail = nil
+	case "enter":
+		// Enter used to close (esc's job too); with links it opens the
+		// selected vendor page instead — the reason to have a cursor.
+		if m.openURL != nil && len(m.detail.links) > 0 {
+			l := m.detail.links[m.detail.linkCursor]
+			if err := m.openURL(l.url); err != nil {
+				m.setError(err)
+			}
+			return m, nil
+		}
+		m.detail = nil
+	case "up", "k":
+		// The vertical axis walks the held list; a different printing
+		// re-points the overlay and refetches its art.
+		return m, m.moveHeldCursor(-1)
+	case "down", "j":
+		return m, m.moveHeldCursor(1)
+	case "left", "h":
+		if n := len(m.detail.links); n > 0 {
+			m.detail.linkCursor = max(m.detail.linkCursor-1, 0)
+		}
+	case "right", "l":
+		if n := len(m.detail.links); n > 0 {
+			m.detail.linkCursor = min(m.detail.linkCursor+1, n-1)
+		}
 	case ":", "ctrl+p":
 		// The palette opens over the overlay: running a command must not
 		// cost the reader their place, and context commands (watch, qty)

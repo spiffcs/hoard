@@ -345,6 +345,16 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
 		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
+	// The sell-side comp sheet teaches the spread formula in place of the
+	// freshness disclaimer; the buy side keeps it.
+	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = 1 − BUYLIST ÷ LOW") {
+		t.Errorf("status = %q, want the spread formula on the sell side", got)
+	}
+	m.compsBuySide = true
+	if got := m.marketStatus(); !strings.Contains(got, "one-day vendor prices") {
+		t.Errorf("status = %q, want the freshness note on the buy side", got)
+	}
+	m.compsBuySide = false
 }
 
 // ]/[ jump between market tables: straight to the next non-empty

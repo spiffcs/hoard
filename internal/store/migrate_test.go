@@ -226,7 +226,11 @@ CREATE TABLE card_price_history (
     as_of       TEXT NOT NULL,
     PRIMARY KEY (scryfall_id, finish, as_of)
 );
-INSERT INTO cards VALUES ('c1','mh3','1','Fblthp',1.0,NULL,'http://x','x');
+-- A real v11 database has v5's raw_json; v14's generated column needs it.
+ALTER TABLE cards ADD COLUMN raw_json TEXT;
+INSERT INTO cards (scryfall_id, set_code, collector_number, name, price_usd,
+                   price_usd_foil, scryfall_url, updated_at)
+VALUES ('c1','mh3','1','Fblthp',1.0,NULL,'http://x','x');
 INSERT INTO card_price_history VALUES ('c1','nonfoil',10.0,'scryfall','2026-07-10T05:00:00Z');
 INSERT INTO card_price_history VALUES ('c1','normal',9.9,'tcgplayer','2026-07-10T05:00:00Z');
 INSERT INTO card_price_history VALUES ('c1','normal',8.0,'tcgplayer','2026-07-01T00:00:00Z');

@@ -232,13 +232,14 @@ func compMoney(has bool, v float64) string {
 }
 
 // spreadCell grades a defined spread on the tight-is-green ramp; an
-// undefined one (no buylist bid) renders the dash, dim.
+// undefined one (no buylist bid) renders the dash, dim. Zero and negative
+// spreads render — a bid at or over the low ask is arbitrage, not a blank.
 func spreadCell(env ui.Env, c market.Comp) ui.Cell {
 	if !c.HasSpread() {
 		return ui.Cell{Text: "—", Style: env.Dim()}
 	}
 	s := c.Spread()
-	return ui.Cell{Text: ui.Percent(s), Style: env.Grade(market.SpreadGrade(s))}
+	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Grade(market.SpreadGrade(s))}
 }
 
 // Movers renders the risers and sinkers, and what they did to the hoard.

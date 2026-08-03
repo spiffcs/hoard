@@ -204,11 +204,12 @@ func compMoney(has bool, v float64) string {
 }
 
 // compSpreadCell grades a defined spread tight-is-green; an undefined one
-// renders the dash, dim.
+// renders the dash, dim. Zero and negative spreads render too — a bid at
+// or over the low ask is the sheet's best news, not a blank.
 func compSpreadCell(env ui.Env, c market.Comp) ui.Cell {
 	if !c.HasSpread() {
 		return ui.Cell{Text: "—", Style: env.Dim()}
 	}
 	s := c.Spread()
-	return ui.Cell{Text: ui.Percent(s), Style: env.Grade(market.SpreadGrade(s))}
+	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Grade(market.SpreadGrade(s))}
 }

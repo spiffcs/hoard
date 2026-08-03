@@ -74,6 +74,7 @@ type Store interface {
 	// read from the bid history table.
 	CardDetail(scryfallID string) (store.CardDetail, error)
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
+	HoldingsOfName(name string) ([]store.Holding, error)
 	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
 	BidSeries(scryfallID, finish string) ([]store.PricePoint, error)
 
@@ -118,6 +119,16 @@ type CardCompFunc func(scryfallID string) (map[string]market.Comp, bool)
 // COMPS section is absent, like every other injected capability.
 func WithCardComps(f CardCompFunc) Option {
 	return func(m *Model) { m.cardComps = f }
+}
+
+// OpenURLFunc opens a URL in the user's web browser. Injected because
+// spawning processes is not a rendering concern; without it the detail's
+// LINKS section is absent.
+type OpenURLFunc func(url string) error
+
+// WithOpenURL supplies the browser opener for the detail's vendor links.
+func WithOpenURL(f OpenURLFunc) Option {
+	return func(m *Model) { m.openURL = f }
 }
 
 // ReportFunc produces the valuation report as lines already laid out for
