@@ -11,6 +11,10 @@ func (*Session) Events() <-chan Event   { return nil }
 func (*Session) Capture() error         { return ErrUnsupported }
 func (*Session) Rotate(bool) error      { return ErrUnsupported }
 func (*Session) Auto(bool) error        { return ErrUnsupported }
+func (*Session) AutoFraming(bool) error { return ErrUnsupported }
+func (*Session) Torch(bool) error       { return ErrUnsupported }
+func (*Session) VideoEffects() error    { return ErrUnsupported }
+func (*Session) Note(string)            {}
 func (*Session) Rearm() error           { return ErrUnsupported }
 func (*Session) Chime() error           { return ErrUnsupported }
 func (*Session) Result(HUDResult) error { return ErrUnsupported }

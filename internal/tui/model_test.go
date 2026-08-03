@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -90,12 +91,17 @@ type fakeSession struct {
 	chimes   int
 	results  []scan.HUDResult
 	events   chan scan.Event
-	captures int
-	rotates  int
-	autoOn   int
-	autoOff  int
-	rearms   int
-	closed   bool
+	captures   int
+	rotates    int
+	autoOn     int
+	autoOff    int
+	framingOn  int
+	framingOff int
+	torchOn    int
+	torchOff   int
+	effects    int
+	rearms     int
+	closed     bool
 }
 
 func (s *fakeSession) Result(r scan.HUDResult) error {
@@ -131,6 +137,31 @@ func (s *fakeSession) Rotate(bool) error {
 	s.rotates++
 	return nil
 }
+
+func (s *fakeSession) AutoFraming(on bool) error {
+	if on {
+		s.framingOn++
+	} else {
+		s.framingOff++
+	}
+	return nil
+}
+
+func (s *fakeSession) Torch(on bool) error {
+	if on {
+		s.torchOn++
+	} else {
+		s.torchOff++
+	}
+	return nil
+}
+
+func (s *fakeSession) VideoEffects() error {
+	s.effects++
+	return nil
+}
+
+func (s *fakeSession) Note(string) {}
 
 func (s *fakeSession) Events() <-chan scan.Event { return s.events }
 
@@ -320,17 +351,23 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 		t.Error("esc mid-cascade should not quit")
 	}
 
-	// esc at the name prompt → the leave gate, and y-then-enter quits.
+	// esc at the name prompt → the leave gate, and a single y quits.
 	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got = mm2.(model)
 	if got.state != stateLeaveConfirm || isQuit(cmd) {
 		t.Fatalf("esc at name: state = %v (cmd quit %v), want the leave gate", got.state, isQuit(cmd))
 	}
-	mm2, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	// Enter is not part of the confirm: it stays, like any other key.
+	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
-	_, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if got.state != stateName || isQuit(cmd) {
+		t.Fatalf("enter on the gate: state = %v (cmd quit %v), want a return to stateName", got.state, isQuit(cmd))
+	}
+	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm2.(model)
+	_, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !isQuit(cmd) {
-		t.Error("y then enter on the gate should quit")
+		t.Error("y on the gate should quit")
 	}
 }
 
@@ -672,11 +709,96 @@ func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
 
 	lines := make([]string, 20)
 	for i := range lines {
-		lines[i] = "line"
+		// Title-like on purpose: lines the junk gate skips don't cost a
+		// lookup, and this test is about the cap on lines that do.
+		lines[i] = fmt.Sprintf("Cardish Name %c", 'A'+rune(i))
 	}
 	resolveName(context.Background(), counting, lines)
 	if tries != maxFuzzyTries {
 		t.Errorf("made %d lookups, want %d", tries, maxFuzzyTries)
+	}
+}
+
+func TestTitleLikelyGate(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+		why  string
+	}{
+		{"Elspeth, Knight-Errant", true, "a clean title"},
+		{"Volkan Baga", true, "artist lines stay eligible — coarse by design"},
+		{"Borrowing 100,000 Arrows", true, "digits in a real name are fine"},
+		{"Sol Rlng", true, "OCR slips must still resolve"},
+
+		{"counters on one or more other Heroes you", false, "rules text leads lowercase"},
+		{"\"I'll hold down the fort.\"", false, "flavor text leads with a quote"},
+		{"—Doctor Doom", false, "attribution leads with a dash"},
+		{"2/5", false, "the P/T box"},
+		{"U 0017", false, "a collector line is mostly digits"},
+		{"1M & : 2026 Wizards of the Coast", false, "copyright line is digit-heavy"},
+		{"I™ & € 2026 Wizards of the Coast", false, "trademark glyphs"},
+		{"MSH", false, "a bare set code is too short"},
+		{"", false, "empty"},
+	}
+	for _, c := range cases {
+		if got := titleLikely(c.line); got != c.want {
+			t.Errorf("titleLikely(%q) = %v, want %v — %s", c.line, got, c.want, c.why)
+		}
+	}
+}
+
+func TestKeywordFallbackLinesNeverResolve(t *testing.T) {
+	// "Haste" as a fallback line fuzzy-resolved to the real card Haste Magic
+	// (observed live, a phantom queue entry). Keyword-only lines are frame
+	// text; the primary line stays eligible for the rare title that IS one.
+	for _, line := range []string{"Haste", "Flying", "Double Strike", "Lifelink."} {
+		if !keywordLine(line) {
+			t.Errorf("keywordLine(%q) = false, want true", line)
+		}
+	}
+	for _, line := range []string{"Haste Magic", "Flash of Insight", "Reach of Branches"} {
+		if keywordLine(line) {
+			t.Errorf("keywordLine(%q) = true, want false — real names must stay eligible", line)
+		}
+	}
+
+	var tries int
+	counting := countingSearcher{onFuzzy: func() { tries++ }}
+	resolveName(context.Background(), counting, []string{"Blurred Junk", "Haste", "Flying"})
+	if tries != 1 {
+		t.Errorf("made %d lookups, want 1 — keyword fallback lines must not reach the searcher", tries)
+	}
+	resolveName(context.Background(), counting, []string{"Flash"})
+	if tries != 2 {
+		t.Errorf("made %d lookups, want 2 — a keyword as the primary line is still tried", tries)
+	}
+}
+
+func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
+	// Every fallback line here is junk (rules text, flavor, collector), so
+	// only line 0 — the helper's actual title guess, never gated — may cost
+	// a lookup. Junk lines were guaranteed catalog misses, and each one paid
+	// a sequential Scryfall round trip and risked fuzzy-resolving into a
+	// real-but-unscanned card (the shadow-card channel).
+	var tries int
+	counting := countingSearcher{onFuzzy: func() { tries++ }}
+	resolveName(context.Background(), counting, []string{
+		"blurred junk title", // line 0: junk, but always eligible
+		"counters on one or more other Heroes you",
+		"\"Y'll hold down the fort while you guys bicker.\"",
+		"2/5",
+		"1M & : 2026 Wizards of the Coast",
+	})
+	if tries != 1 {
+		t.Errorf("made %d lookups, want 1 — only the primary line", tries)
+	}
+
+	// A real title on a fallback line still resolves.
+	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
+	canonical, _, idx, _, _ := resolveName(context.Background(), fs,
+		[]string{"blurred junk", "Elspeth, Knight-Errant"})
+	if canonical != "Elspeth, Knight-Errant" || idx != 1 {
+		t.Errorf("canonical=%q idx=%d, want the fallback title to survive the gate", canonical, idx)
 	}
 }
 
@@ -824,6 +946,158 @@ func TestArrowKeysRotateFromTheTerminal(t *testing.T) {
 	}
 	if s := mm.(model).state; s != stateCapture {
 		t.Errorf("rotating should stay on the capture step, got %v", s)
+	}
+}
+
+func TestZTogglesAutoFramingWhenTheHelperOffersIt(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	got, sess := openCapture(t, m)
+
+	// Before the ready event advertises the feature, z refuses with a banner
+	// rather than sending a command an old helper would error on.
+	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	got = mm.(model)
+	if sess.framingOn+sess.framingOff != 0 {
+		t.Fatal("z before the feature is advertised must not reach the helper")
+	}
+	if !got.statusErr {
+		t.Error("z without the feature should explain itself in the status")
+	}
+
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventReady, Features: []string{"framing", "hud"}}})
+	got = mm.(model)
+	if !got.framingCapable || got.framingOn {
+		t.Fatalf("ready: framingCapable=%v framingOn=%v, want capable and off", got.framingCapable, got.framingOn)
+	}
+
+	// The session starts with framing forced off, so the first z asks for on;
+	// the state only flips when the helper's framing event confirms it.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	got = mm.(model)
+	if sess.framingOn != 1 {
+		t.Fatalf("session frame-on commands = %d, want 1", sess.framingOn)
+	}
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventFraming, State: "auto"}})
+	got = mm.(model)
+	if !got.framingOn {
+		t.Error("the framing event should flip the mirrored state on")
+	}
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	got = mm.(model)
+	if sess.framingOff != 1 {
+		t.Errorf("session frame-off commands = %d, want 1", sess.framingOff)
+	}
+	if got.state != stateCapture {
+		t.Errorf("toggling framing should stay on the capture step, got %v", got.state)
+	}
+}
+
+func TestTTogglesTheTorchWhenTheHelperOffersIt(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	got, sess := openCapture(t, m)
+
+	// Without the feature, t refuses with a banner rather than sending a
+	// command the helper would error on.
+	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	got = mm.(model)
+	if sess.torchOn+sess.torchOff != 0 {
+		t.Fatal("t before the feature is advertised must not reach the helper")
+	}
+	if !got.statusErr {
+		t.Error("t without the feature should explain itself in the status")
+	}
+
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventReady, Features: []string{"torch", "hud"}}})
+	got = mm.(model)
+	if !got.torchCapable || got.torchOn {
+		t.Fatalf("ready: torchCapable=%v torchOn=%v, want capable and dark", got.torchCapable, got.torchOn)
+	}
+
+	// The torch starts dark, so the first t asks for on; the mirror only
+	// flips when the helper's torch event confirms the light actually took.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	got = mm.(model)
+	if sess.torchOn != 1 {
+		t.Fatalf("session torch-on commands = %d, want 1", sess.torchOn)
+	}
+	if got.torchOn {
+		t.Error("the mirror must wait for the torch event, not flip on the keypress")
+	}
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventTorch, State: "on"}})
+	got = mm.(model)
+	if !got.torchOn {
+		t.Error("the torch event should flip the mirrored state on")
+	}
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	got = mm.(model)
+	if sess.torchOff != 1 {
+		t.Errorf("session torch-off commands = %d, want 1", sess.torchOff)
+	}
+	if got.state != stateCapture {
+		t.Errorf("toggling the torch should stay on the capture step, got %v", got.state)
+	}
+}
+
+func TestPaletteMovesTheSoundTierLines(t *testing.T) {
+	// Deterministic thresholds regardless of the developer's environment.
+	t.Setenv("HOARD_SCAN_WIN", "")
+	t.Setenv("HOARD_SCAN_JACKPOT", "")
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	got, _ := openCapture(t, m)
+
+	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got = mm.(model)
+	if got.state != statePalette {
+		t.Fatalf(": should open the command line, got state %v", got.state)
+	}
+
+	// Garbage stays on the line with the error shown, thresholds untouched.
+	got.paletteInput.SetValue("win lots")
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != statePalette || got.paletteErr == "" {
+		t.Fatalf("a bad amount should stay on the line with an error, got state %v err %q", got.state, got.paletteErr)
+	}
+	if got.hudWin != 1 {
+		t.Fatalf("hudWin = %v, want the untouched default 1", got.hudWin)
+	}
+
+	// A win above the jackpot line is refused — the tiers must stay ordered.
+	got.paletteInput.SetValue("win 25")
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != statePalette || got.hudWin != 1 {
+		t.Fatalf("win above jackpot must be refused, got state %v hudWin %v", got.state, got.hudWin)
+	}
+
+	got.paletteInput.SetValue("win $5")
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != stateCapture || got.hudWin != 5 {
+		t.Fatalf("win $5: state %v hudWin %v, want capture and 5", got.state, got.hudWin)
+	}
+
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got = mm.(model)
+	got.paletteInput.SetValue("jackpot 50")
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got = mm.(model)
+	if got.state != stateCapture || got.hudJackpot != 50 {
+		t.Fatalf("jackpot 50: state %v hudJackpot %v, want capture and 50", got.state, got.hudJackpot)
+	}
+
+	// esc abandons the line without touching anything.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got = mm.(model)
+	got.paletteInput.SetValue("jackpot 9999")
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = mm.(model)
+	if got.state != stateCapture || got.hudJackpot != 50 {
+		t.Fatalf("esc: state %v hudJackpot %v, want capture and the unchanged 50", got.state, got.hudJackpot)
 	}
 }
 

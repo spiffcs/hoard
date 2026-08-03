@@ -120,21 +120,19 @@ func TestAddCascadeEscAtNameReturnsToBrowse(t *testing.T) {
 	m := newCascadeModel(t, &fakeStore{}, withTestCascade(ra))
 
 	m = key(m, "a")
-	// esc opens the leave gate; the cascade is still up until y-then-enter.
+	// esc opens the leave gate; the cascade is still up until y confirms.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
 	if m.addChild == nil {
 		t.Fatal("a bare esc must ask before closing the cascade")
 	}
-	if v := m.View(); !strings.Contains(v, "Leave the add session?") {
+	if v := m.View(); !strings.Contains(v, "quit add session?") {
 		t.Fatalf("no leave gate on screen:\n%s", v)
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m = next.(Model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
 	if m.addChild != nil {
-		t.Fatal("y then enter on the gate should close the cascade")
+		t.Fatal("y on the gate should close the cascade")
 	}
 	if m.mode() != modeBrowse {
 		t.Fatalf("mode = %v, want browse", m.mode())

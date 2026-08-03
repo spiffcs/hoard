@@ -28,6 +28,15 @@ The loop that made every failure reproducible offline:
    the accuracy data. The session summary printed at exit is the outcome
    tally.
 
+   The helper also stamps its own per-stage costs, always on, as
+   `! timing:` stderr lines: `settle=…ms` (stabilize start → fire, the
+   machine's share of the settle), `scanFrame frameOCR=… rects=… crops=N
+   cropOCR=… total=…` (the Vision passes), and `capture N shutter+decode=…
+   rotate=… total=…` (everything around them). The Go side adds `~ resolve
+   "name" line=N name=…ms prints=…ms` per card — the catalog/Scryfall
+   lookups, the one place a network round trip can hide. Together a capture's
+   whole latency budget reads straight off the log.
+
 2. **Turn problem captures into fixtures.** `HOARD_SCAN_DEBUG_DIR` saves
    every capture's raw and OCR-processed frames. `--image` replays a frame
    through the *identical* pipeline:
@@ -67,6 +76,17 @@ The loop that made every failure reproducible offline:
 | `HOARD_SCAN_AUTO_GRACE` | 3 | bad samples tolerated mid-stabilization |
 | `HOARD_SCAN_AUTO_IOU` | 0.65 | overlap for "same rectangle, still" |
 | `HOARD_SCAN_AUTO_BG_IOU` | 0.5 | overlap for "that's background furniture" |
+| `HOARD_SCAN_FOCUS` | `lock` | focus policy: `lock` = continuous AF, frozen after the first good read (all cards sit at one distance; two consecutive empty reads thaw it); `continuous` = AF plus the hunt-aware fire gate but no freeze; `off` = no focus code at all, the pre-focus behavior |
+| `HOARD_SCAN_FOCUS_WAIT` | 1.5 | seconds a completed stability streak waits out a focus hunt before firing anyway |
+
+Focus hunts are first-class trigger input: a hunt blurs every edge in frame,
+so the trigger freezes (no streak growth, no grace burn, no reset, no HOLD
+disruption) rather than mistaking blur for motion, and defers a ready fire
+until the lens settles — mid-hunt captures were the out-of-focus scans, and
+hunt-driven rectangle flicker was most of the settle-time tail (71 flicker
+resets in a 15-card session). `focus hunt began/ended` lines appear in the
+`HOARD_SCAN_AUTO=1` trace; the capability line at session start reports what
+the device granted (`focus=af+lock`, `af`, or `fixed`).
 
 ## Field lessons
 

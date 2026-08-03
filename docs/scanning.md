@@ -62,7 +62,10 @@ knock for bulk (under $1), a gold flash and bright bell for a win, and a
 coin shower with a rising glissando for a jackpot ($20 and up). The
 thresholds are tunable per run with `HOARD_SCAN_WIN` and
 `HOARD_SCAN_JACKPOT` (dollars), and the sound volume with
-`HOARD_SCAN_HUD_VOLUME` (0–1). The built-in sounds are synthesized (no
+`HOARD_SCAN_HUD_VOLUME` (0–1). They can also be moved mid-session: press
+**:** on the capture step to open the scanner command line and type
+`win 5` or `jackpot 30` — a live tweak lasts for the session, the env vars
+are what persist. The built-in sounds are synthesized (no
 third-party audio), but each can be replaced with your own file —
 `HOARD_SCAN_SOUND_BULK`, `HOARD_SCAN_SOUND_WIN`, `HOARD_SCAN_SOUND_JACKPOT`,
 and `HOARD_SCAN_SOUND_REVIEW` each take a path to anything macOS can play
@@ -199,6 +202,46 @@ use **←/→** to rotate the preview, and the corrected angle is saved to
 `scan.json` beside the database, so you only need to fix it once. The window
 title always shows the current angle and how much of it came from macOS's
 automatic correction.
+
+## Framing (the startup "too close" zoom)
+
+macOS gives apps no camera zoom control at all — Apple's zoom APIs are
+iOS-only — but the one thing that *does* auto-zoom a Continuity Camera is
+Center Stage, the system's subject-tracking crop, and its state persists
+system-wide: a FaceTime call that left it on is why the scanner sometimes
+wakes up framed too close. The helper therefore takes app control of it and
+forces it off at every session start, so the camera always opens on the full,
+uncropped frame; the physical phone position is the zoom. Press **z** (in the
+add view or the camera window) to toggle the auto-framing back on for the rare
+setup its crop suits — the window title shows `FRAMED` while it's active, and
+the toggle lasts for the session only.
+
+## Lighting
+
+Continuity Camera does not bridge the phone's flashlight to the Mac — the
+device reports no torch to AVFoundation, so the **t** toggle answers "this
+camera has no torch" today. The control stays wired for the day Apple bridges
+it (the helper logs the device's real capabilities to stderr at session
+start, visible via `HOARD_SCAN_LOG`, so this is checkable rather than a
+matter of memory). If a torch is ever advertised, **t** toggles it, the
+window title shows `TORCH` while lit, and the light is session-only.
+
+What macOS does offer is **Studio Light** — software subject lighting — which
+lives in the system's Video Effects panel along with the system's own Center
+Stage and Desk View toggles. Press **v** (in the add view or the camera
+window) to open that panel. Real exposure control, like zoom, is iOS-only.
+The dependable fix remains a desk lamp; mind the glare on foils either way —
+light straight overhead can white out the title line, an angle reads better.
+
+## Desk View
+
+The phone's **Desk View** feed (the ultra-wide dewarped into a top-down view
+of the desk) is deliberately *not* offered in the camera picker. The
+ergonomics are tempting — cards lying flat, no stand — but the feed sits well
+below the sensor's full photo resolution, and the collector number is already
+at the edge of what Vision resolves at full resolution; on Desk View it
+becomes a coin flip and the review queue fills up. The main camera at photo
+resolution is the scanner.
 
 ## Finding the helper
 

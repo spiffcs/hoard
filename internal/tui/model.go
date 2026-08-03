@@ -42,8 +42,11 @@ const (
 	stateClosePrompt
 	// stateLeaveConfirm gates esc out of the session: users read a bare esc
 	// as "did that even save?", so leaving states what is and isn't kept
-	// and asks for a deliberate y-then-enter. ctrl+d is the clean finish.
+	// and asks for a confirming y. ctrl+d is the clean finish.
 	stateLeaveConfirm
+	// statePalette is the capture step's command line (:), for the scanner
+	// knobs that take a value — currently the sound tiers' dollar lines.
+	statePalette
 )
 
 // --- messages ---
@@ -160,8 +163,11 @@ type model struct {
 
 	nameInput textinput.Model
 	qtyInput  textinput.Model
-	list      list.Model
-	spinner   spinner.Model
+	// The capture command line (:): its input and the last parse error.
+	paletteInput textinput.Model
+	paletteErr   string
+	list         list.Model
+	spinner      spinner.Model
 
 	width, height int
 
@@ -214,9 +220,6 @@ type model struct {
 	// autoState mirrors the helper's trigger phase ("armed", "held", …) for
 	// the capture view; empty when the helper has no auto capture.
 	autoState string
-	// leaveTyped marks the y already pressed on the leave gate, so enter
-	// completes the y-then-enter confirmation.
-	leaveTyped bool
 	// The rearm nudge (see autoscan.go): autoCapable marks a helper that
 	// understands it, nudgeGen voids stale timers, nudgeSentAt stamps the
 	// last sent nudge (a time window, not a consumed flag — a real scan can
@@ -224,6 +227,20 @@ type model struct {
 	// the racing scan while the true echo slipped through), lastScanNudged
 	// tags scans inside that window, and nudgeDrops counts echoes.
 	autoCapable bool
+	// framingCapable marks a helper that can toggle the camera's auto-framing
+	// (Center Stage, the "framing" feature); framingOn mirrors the helper's
+	// current state, which every session starts with off — the helper forces
+	// that, because the subject-tracking crop frames cards too close.
+	framingCapable bool
+	framingOn      bool
+	// torchCapable marks a helper whose camera has a torch (the "torch"
+	// feature); torchOn mirrors the light's state, session-scoped like the
+	// torch itself.
+	torchCapable bool
+	torchOn      bool
+	// effectsCapable marks a helper that can open the system Video Effects
+	// panel (the "effects" feature) — Studio Light and friends.
+	effectsCapable bool
 	// hudCapable marks a helper whose camera window renders price results
 	// (the "hud" feature); hudWin/hudJackpot are the celebration-tier
 	// thresholds, read from the environment once at construction.
@@ -285,9 +302,14 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	qi.CharLimit = 6
 	qi.Width = 10
 
+	pi := textinput.New()
+	pi.Placeholder = "win 5"
+	pi.CharLimit = 40
+	pi.Width = 30
+
 	// One theme for the model, its inputs and its list delegate.
 	th := ui.DefaultTheme()
-	for _, in := range []*textinput.Model{&ni, &qi} {
+	for _, in := range []*textinput.Model{&ni, &qi, &pi} {
 		in.PromptStyle = th.Prompt
 		in.Cursor.Style = th.Accent
 	}
@@ -304,21 +326,22 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	l.DisableQuitKeybindings()
 
 	m := model{
-		ctx:        ctx,
-		searcher:   s,
-		adder:      add,
-		scanner:    sc,
-		theme:      th,
-		dests:      dests,
-		nameInput:  ni,
-		qtyInput:   qi,
-		spinner:    sp,
-		list:       l,
-		hudWin:     envFloat("HOARD_SCAN_WIN", defaultWinThreshold),
-		hudJackpot: envFloat("HOARD_SCAN_JACKPOT", defaultJackpotThreshold),
-		width:      80,
-		height:     22,
-		now:        time.Now,
+		ctx:          ctx,
+		searcher:     s,
+		adder:        add,
+		scanner:      sc,
+		theme:        th,
+		dests:        dests,
+		nameInput:    ni,
+		qtyInput:     qi,
+		paletteInput: pi,
+		spinner:      sp,
+		list:         l,
+		hudWin:       envFloat("HOARD_SCAN_WIN", defaultWinThreshold),
+		hudJackpot:   envFloat("HOARD_SCAN_JACKPOT", defaultJackpotThreshold),
+		width:        80,
+		height:       22,
+		now:          time.Now,
 	}
 	if len(dests) > 0 {
 		m.dest = dests[0]
@@ -527,8 +550,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.cancelToName()
 			}
 			// Leaving is gated: the prompt states what is saved and what
-			// leaving drops, and asks for a deliberate y-then-enter.
-			m.leaveTyped = false
+			// leaving drops, then a single y confirms — the same shape as
+			// the browser's quit confirm.
 			m.state = stateLeaveConfirm
 			return m, nil
 		case tea.KeyCtrlO, tea.KeyCtrlR:
@@ -581,6 +604,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.rotatePreview(true)
 		case tea.KeyRight:
 			return m.rotatePreview(false)
+		case tea.KeyRunes:
+			switch {
+			case strings.EqualFold(string(msg.Runes), "z"):
+				return m.toggleFraming()
+			case strings.EqualFold(string(msg.Runes), "t"):
+				return m.toggleTorch()
+			case strings.EqualFold(string(msg.Runes), "v"):
+				return m.openVideoEffects()
+			case string(msg.Runes) == ":":
+				return m.openPalette()
+			}
 		case tea.KeyCtrlR:
 			// Switch phones without leaving the camera step.
 			m.closeSession()
@@ -671,18 +705,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case stateLeaveConfirm:
-		switch {
-		case msg.Type == tea.KeyEnter && m.leaveTyped:
+		if msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y") {
 			m.done = true
 			m.closeSession()
 			return m, tea.Quit
-		case msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y"):
-			m.leaveTyped = true
-			return m, nil
 		}
 		// Anything else stays: the safe reading of a stray keystroke on a
 		// leave gate is "don't".
-		m.leaveTyped = false
 		m.state = stateName
 		return m, textinput.Blink
 	case stateNamePick:
@@ -748,6 +777,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEnter {
 			return m.submitQty()
 		}
+	case statePalette:
+		if msg.Type == tea.KeyEsc {
+			m.state = stateCapture
+			return m, nil
+		}
+		if msg.Type == tea.KeyEnter {
+			return m.runPaletteCommand()
+		}
 	case stateConfirm:
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -767,6 +804,8 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
+	case statePalette:
+		m.paletteInput, cmd = m.paletteInput.Update(msg)
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick, stateQueueReview:
 		m.list, cmd = m.list.Update(msg)
 	case stateLoading, stateCapturing, stateCameraBusy:
@@ -917,6 +956,119 @@ func (m model) rotatePreview(left bool) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// toggleFraming flips the camera's auto-framing (Center Stage) from the
+// terminal — the one framing adjustment macOS offers. Every session starts
+// with it off (the helper forces that), so the first press turns the
+// subject-tracking crop on, for the setups it happens to suit. The state
+// change lands as an EventFraming, which is what updates framingOn.
+func (m model) toggleFraming() (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+	if !m.framingCapable {
+		m.status, m.statusErr = "auto-framing isn't adjustable on this camera", true
+		return m, nil
+	}
+	if err := m.session.AutoFraming(!m.framingOn); err != nil {
+		m.closeSession()
+		return m.failToName(err.Error())
+	}
+	return m, nil
+}
+
+// openVideoEffects pops the system Video Effects panel from the terminal —
+// Studio Light is the one software lighting macOS offers (the phone's torch
+// isn't bridged over Continuity Camera), and it lives there alongside the
+// system's Center Stage and Desk View toggles.
+func (m model) openVideoEffects() (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+	if !m.effectsCapable {
+		m.status, m.statusErr = "this helper can't open the video effects panel", true
+		return m, nil
+	}
+	if err := m.session.VideoEffects(); err != nil {
+		m.closeSession()
+		return m.failToName(err.Error())
+	}
+	m.status, m.statusErr = "video effects panel opened · Studio Light lives there", false
+	return m, nil
+}
+
+// openPalette opens the capture step's command line — the add view's palette
+// for the scanner knobs that take a value. Capture-only, because everywhere
+// else the keyboard already belongs to a text input or a list.
+func (m model) openPalette() (tea.Model, tea.Cmd) {
+	m.paletteInput.SetValue("")
+	m.paletteErr = ""
+	m.paletteInput.Focus()
+	m.state = statePalette
+	return m, textinput.Blink
+}
+
+// runPaletteCommand parses and applies one command line. The commands move
+// the sound tiers' dollar lines for this session; the HOARD_SCAN_WIN /
+// HOARD_SCAN_JACKPOT environment variables stay the persistent knobs, so a
+// bad live tweak never outlives the run. A parse problem stays on the line
+// with the error shown; an empty line just closes it.
+func (m model) runPaletteCommand() (tea.Model, tea.Cmd) {
+	fields := strings.Fields(strings.ToLower(m.paletteInput.Value()))
+	if len(fields) == 0 {
+		m.state = stateCapture
+		return m, nil
+	}
+	if len(fields) != 2 {
+		m.paletteErr = "commands take one dollar amount, like: win 5"
+		return m, nil
+	}
+	amount, err := strconv.ParseFloat(strings.TrimPrefix(fields[1], "$"), 64)
+	if err != nil || amount <= 0 {
+		m.paletteErr = fmt.Sprintf("%q isn't a dollar amount", fields[1])
+		return m, nil
+	}
+	switch fields[0] {
+	case "win":
+		if amount >= m.hudJackpot {
+			m.paletteErr = fmt.Sprintf("the win line must sit below the jackpot line ($%.2f)", m.hudJackpot)
+			return m, nil
+		}
+		m.hudWin = amount
+	case "jackpot":
+		if amount <= m.hudWin {
+			m.paletteErr = fmt.Sprintf("the jackpot line must sit above the win line ($%.2f)", m.hudWin)
+			return m, nil
+		}
+		m.hudJackpot = amount
+	default:
+		m.paletteErr = fmt.Sprintf("unknown command %q · win <dollars> or jackpot <dollars>", fields[0])
+		return m, nil
+	}
+	m.status, m.statusErr = fmt.Sprintf(
+		"sound tiers this session · win at $%.2f · jackpot at $%.2f", m.hudWin, m.hudJackpot), false
+	m.state = stateCapture
+	return m, nil
+}
+
+// toggleTorch flips the phone's flashlight from the terminal, for the desk
+// whose room light isn't enough for a clean read. The state that actually
+// took lands as an EventTorch, which is what updates torchOn — a thermally
+// refused torch never flips the mirror.
+func (m model) toggleTorch() (tea.Model, tea.Cmd) {
+	if m.session == nil {
+		return m, nil
+	}
+	if !m.torchCapable {
+		m.status, m.statusErr = "this camera has no torch", true
+		return m, nil
+	}
+	if err := m.session.Torch(!m.torchOn); err != nil {
+		m.closeSession()
+		return m.failToName(err.Error())
+	}
+	return m, nil
+}
+
 // onSession handles the camera window opening: on success the event pump starts
 // and the user can frame their first card.
 func (m model) onSession(msg sessionMsg) (tea.Model, tea.Cmd) {
@@ -1012,10 +1164,36 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 			m.autoCapable = true
 		}
 		m.hudCapable = slices.Contains(msg.ev.Features, "hud")
+		// The helper forces auto-framing off at startup, and the torch
+		// always starts dark, so both mirrors start false regardless of
+		// the last session.
+		m.framingCapable = slices.Contains(msg.ev.Features, "framing")
+		m.framingOn = false
+		m.torchCapable = slices.Contains(msg.ev.Features, "torch")
+		m.torchOn = false
+		m.effectsCapable = slices.Contains(msg.ev.Features, "effects")
 		return m, again
 
 	case scan.EventAuto:
 		m.autoState = msg.ev.State
+		return m, again
+
+	case scan.EventFraming:
+		m.framingOn = msg.ev.State == "auto"
+		if m.framingOn {
+			m.status, m.statusErr = "auto-framing on · the camera crops to what it tracks", false
+		} else {
+			m.status, m.statusErr = "auto-framing off · full frame", false
+		}
+		return m, again
+
+	case scan.EventTorch:
+		m.torchOn = msg.ev.State == "on"
+		if m.torchOn {
+			m.status, m.statusErr = "torch on · watch for glare on foils", false
+		} else {
+			m.status, m.statusErr = "torch off", false
+		}
 		return m, again
 	}
 	// EventRotation and anything unrecognized: nothing to do but keep listening.
@@ -1034,6 +1212,13 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	it := msg.item
 	now := m.now()
+
+	// The Go half of the per-card latency line, next to the helper's timing
+	// lines in the telemetry log. Best effort: no session, no log, no matter.
+	if m.session != nil {
+		m.session.Note(fmt.Sprintf("resolve %q line=%d name=%dms prints=%dms",
+			it.canonical, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds()))
+	}
 
 	// A nudge-fired re-read of any recently processed card is the trigger
 	// seeing what we already know — swallow it, and stop nudging: one echo is
@@ -1691,14 +1876,25 @@ func (m model) View() string {
 		default:
 			b.WriteString("Frame the next card, then press space.\n\n")
 		}
-		help := "space capture · ←/→ rotate · esc close camera · ctrl+c quit"
+		keys := []string{"space capture", "←/→ rotate"}
+		if m.framingCapable {
+			keys = append(keys, "z framing")
+		}
+		if m.torchCapable {
+			keys = append(keys, "t torch")
+		}
+		if m.effectsCapable {
+			keys = append(keys, "v effects")
+		}
+		keys = append(keys, ": commands")
+		help := strings.Join(keys, " · ") + " · esc close camera · ctrl+c quit"
 		if len(m.review) > 0 {
 			help = fmt.Sprintf("tab review (%d) · %s", len(m.review), help)
 		}
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}
-		b.WriteString(m.theme.Help.Render(help + "\n(space and ←/→ also work in the camera window)"))
+		b.WriteString(m.theme.Help.Render(help))
 		return b.String()
 	case stateQueueReview:
 		return m.list.View() + "\n" +
@@ -1715,15 +1911,22 @@ func (m model) View() string {
 		b.WriteString(m.theme.Help.Render("enter review them now · d discard them · esc back to camera"))
 		return b.String()
 	case stateLeaveConfirm:
+		// The browser's quit confirm, word for word in shape: red prompt,
+		// dim y/n, one line. Same gate, same look.
+		return m.theme.Err.Render("quit add session?") + m.theme.Help.Render("  y/n")
+	case statePalette:
 		var b strings.Builder
-		b.WriteString(m.theme.Title.Render("Leave the add session?") + "\n\n")
-		b.WriteString("Cards you confirmed are already saved. Anything mid-pick or still queued\n")
-		b.WriteString("is not, and leaving now drops it.\n\n")
-		ask := "type y then press enter to leave"
-		if m.leaveTyped {
-			ask = m.theme.OK.Render("y") + " · press enter to leave"
+		b.WriteString(m.theme.Title.Render("Scanner commands") + "\n\n")
+		fmt.Fprintf(&b, "Sound tiers · bulk under $%.2f · win at $%.2f · jackpot at $%.2f\n\n",
+			m.hudWin, m.hudWin, m.hudJackpot)
+		b.WriteString("  win <dollars>      the gold flash and bell start here\n")
+		b.WriteString("  jackpot <dollars>  the coin shower starts here\n\n")
+		b.WriteString(m.paletteInput.View())
+		if m.paletteErr != "" {
+			b.WriteString("\n" + m.theme.Err.Render(m.paletteErr))
 		}
-		b.WriteString(m.theme.Help.Render(ask + " · any other key stays · ctrl+d finishes cleanly"))
+		b.WriteString("\n\n" + m.theme.Help.Render(
+			"enter run · esc back to camera · lasts this session (HOARD_SCAN_WIN/_JACKPOT persist)"))
 		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",

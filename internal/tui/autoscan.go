@@ -11,9 +11,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -65,6 +67,10 @@ type queueItem struct {
 type resolveDoneMsg struct {
 	gen  int
 	item queueItem
+	// nameDur and printsDur time the two lookup halves, for the telemetry
+	// log — the Go side's slice of the per-card latency breakdown.
+	nameDur   time.Duration
+	printsDur time.Duration
 }
 
 // typeLineWords marks card-type vocabulary: a fallback OCR line carrying one
@@ -95,6 +101,69 @@ func fallbackLineSuspect(line string) bool {
 	return false
 }
 
+// collectorish matches the P/T box and collector-number shapes ("2/5",
+// "123/264") that OCR routinely offers as candidate lines.
+var collectorish = regexp.MustCompile(`\d+\s*/\s*\d+`)
+
+// titleLikely is a generous title-likeness gate for fallback OCR lines — the
+// shadow-card channel: a junk line is a guaranteed catalog miss, so each one
+// bought a sequential Scryfall round trip and a chance to fuzzy-resolve into
+// a real-but-unscanned card. A false reject only means the card queues as
+// unidentified, which is the review queue's job, so the rules stay coarse: a
+// title leads with a capital, is mostly letters, and isn't a P/T, collector,
+// or trademark line. Only fallback lines are gated — the helper's own title
+// guess (line 0) always gets its try.
+func titleLikely(line string) bool {
+	s := strings.TrimSpace(line)
+	if s == "" {
+		return false
+	}
+	if r := []rune(s)[0]; !unicode.IsUpper(r) {
+		return false // rules fragments, quotes, and — attributions all lead low
+	}
+	var letters, digits int
+	for _, r := range s {
+		switch {
+		case unicode.IsLetter(r):
+			letters++
+		case unicode.IsDigit(r):
+			digits++
+		}
+	}
+	if letters < 4 || digits > letters {
+		return false
+	}
+	return !strings.ContainsAny(s, "™©®") && !collectorish.MatchString(s)
+}
+
+// abilityWords marks the keyword abilities that print alone on their own line
+// ("Haste", "Flying", "Double Strike"). No real card is named only of these,
+// but Scryfall happily fuzzy-matches one to a real card ("Haste" → Haste
+// Magic, a live phantom), so a fallback line made purely of them is frame
+// text, never a title. Line 0 stays eligible — the card actually named with
+// a keyword-bearing title resolves through its own title line.
+var abilityWords = map[string]bool{
+	"haste": true, "flying": true, "lifelink": true, "trample": true,
+	"vigilance": true, "deathtouch": true, "menace": true, "reach": true,
+	"defender": true, "hexproof": true, "indestructible": true, "flash": true,
+	"rebound": true, "ward": true, "prowess": true, "first": true,
+	"double": true, "strike": true,
+}
+
+// keywordLine reports whether a line is nothing but ability keywords.
+func keywordLine(line string) bool {
+	fields := strings.Fields(strings.ToLower(line))
+	if len(fields) == 0 || len(fields) > 2 {
+		return false
+	}
+	for _, f := range fields {
+		if !abilityWords[strings.Trim(f, ".,;")] {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveName tries each OCR line in order until one fuzzy-matches, returning
 // which line it was — the auto-commit bar treats a fallback-line match as
 // suspect, since only line 0 is the helper's actual title guess.
@@ -107,7 +176,7 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if i > 0 && fallbackLineSuspect(line) {
+		if i > 0 && (fallbackLineSuspect(line) || !titleLikely(line) || keywordLine(line)) {
 			continue
 		}
 		card, m, ferr := s.NamedFuzzy(ctx, line)
@@ -139,13 +208,18 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	return func() tea.Msg {
 		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
 			captureSeq: captureSeq}
+		tName := time.Now()
 		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
+		nameDur := time.Since(tName)
+		var printsDur time.Duration
 		it.canonical, it.ocrLine, it.lineIdx, it.match = canonical, ocr, idx, match
 		if err != nil {
 			it.errText = err.Error()
 		}
 		if canonical != "" {
+			tPrints := time.Now()
 			prints, perr := s.SearchPrints(ctx, canonical)
+			printsDur = time.Since(tPrints)
 			if perr != nil {
 				it.errText = perr.Error()
 			} else {
@@ -172,7 +246,7 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				}
 			}
 		}
-		return resolveDoneMsg{gen: gen, item: it}
+		return resolveDoneMsg{gen: gen, item: it, nameDur: nameDur, printsDur: printsDur}
 	}
 }
 

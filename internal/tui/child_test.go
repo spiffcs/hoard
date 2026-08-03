@@ -25,15 +25,15 @@ func TestChildCtrlDSetsDoneAndSwallowsQuit(t *testing.T) {
 	}
 }
 
-// esc walks the leave gate: the first press asks, y then enter leaves, and
+// esc walks the leave gate: the first press asks, a single y leaves, and
 // any other key stays in the session.
-func TestChildEscGatesLeavingBehindYThenEnter(t *testing.T) {
+func TestChildEscGatesLeavingBehindY(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if c.Done() {
 		t.Fatal("a bare esc must ask, not finish")
 	}
-	if v := c.View(); !strings.Contains(v, "Leave the add session?") {
+	if v := c.View(); !strings.Contains(v, "quit add session?") {
 		t.Fatalf("no leave gate on screen:\n%s", v)
 	}
 	// A stray key cancels back to the session.
@@ -41,12 +41,11 @@ func TestChildEscGatesLeavingBehindYThenEnter(t *testing.T) {
 	if c.Done() {
 		t.Fatal("a stray key on the gate must stay")
 	}
-	// esc, y, enter leaves.
+	// esc then y leaves.
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !c.Done() {
-		t.Fatal("y then enter must leave the session")
+		t.Fatal("y on the gate must leave the session")
 	}
 	if cmd != nil {
 		t.Fatalf("the quit must be swallowed, got cmd %v", cmd)

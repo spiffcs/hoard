@@ -50,6 +50,21 @@ type ScanSession interface {
 	// Auto turns the helper's hands-free trigger on or off. Only sent to
 	// helpers that advertised the feature on their ready event.
 	Auto(on bool) error
+	// AutoFraming turns the camera's auto-framing (Center Stage) on or off —
+	// the only framing adjustment macOS offers. The helper starts every
+	// session with it off, since its subject-tracking crop frames cards too
+	// close. Only sent to helpers that advertised "framing" on their ready
+	// event.
+	AutoFraming(on bool) error
+	// Torch turns the phone's flashlight on or off to light the card. Only
+	// sent to helpers that advertised "torch" on their ready event — which
+	// Continuity Camera currently never does (the flashlight isn't bridged
+	// to the Mac); the control exists for the day it is.
+	Torch(on bool) error
+	// VideoEffects opens the system's Video Effects panel, where Studio
+	// Light — the software lighting that IS available — lives. Only sent to
+	// helpers that advertised "effects" on their ready event.
+	VideoEffects() error
 	// Rearm nudges a parked auto trigger back to searching; the caller
 	// discards the re-read if it is the card it already processed.
 	Rearm() error
@@ -67,6 +82,10 @@ type ScanSession interface {
 	// once, a reviewed card sounds at queue time (the question) and again
 	// at confirm time (the answer, with the amount).
 	Result(scan.HUDResult) error
+	// Note appends one line to the session's telemetry log, when one is
+	// open — the Go side's slice of the per-card latency breakdown. Best
+	// effort and silent: telemetry must never affect the session.
+	Note(line string)
 	// Events streams what the camera window reports; closed when the session is.
 	Events() <-chan scan.Event
 	// Close ends the session and shuts the window.

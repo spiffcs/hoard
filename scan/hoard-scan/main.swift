@@ -7,9 +7,10 @@
 //                               Live session: open a camera preview window and keep
 //                               it open, emitting one JSON event per line on stdout
 //                               and reading commands (capture / rotate-left /
-//                               rotate-right / result {json} / quit) as lines on
-//                               stdin. Space, ←/→ and Esc do the same things in the
-//                               window itself.
+//                               rotate-right / frame-on / frame-off / torch-on /
+//                               torch-off / effects / result {json} / quit) as
+//                               lines on stdin. Space, ←/→, Z, T, V and Esc do the
+//                               same things in the window itself.
 //   hoard-scan --hud-demo       Live window with no camera, for eyeballing the
 //                               price HUD: pipe `result {...}` lines on stdin.
 //
@@ -40,6 +41,8 @@ import Vision
 ///   {"event":"ready","device":"…","rotation":90}   window is up and previewing
 ///   {"event":"scan","name":"…","candidates":[…]}   a capture was read
 ///   {"event":"rotation","rotation":180}            user turned the preview
+///   {"event":"framing","state":"auto"}             auto-framing toggled; see state
+///   {"event":"torch","state":"on"}                 phone torch toggled; see state
 ///   {"event":"error","message":"…"}                capture failed; session lives
 ///   {"event":"closed","rotation":90}               window closed; process exits
 struct Event: Encodable {
@@ -471,6 +474,10 @@ func readCard(_ cg: CGImage) -> CardRead {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
+    // Pinning the language skips Vision's language identification. Card titles
+    // with diacritics (Juzám Djinn, Lim-Dûl) still read under en-US script
+    // handling — verified by fixture replay when this landed.
+    request.recognitionLanguages = ["en-US"]
 
     // A second pass over the card's bottom border only. Language correction is off
     // here and that is not incidental: with it on, Vision "corrects" "123/264" and
@@ -482,6 +489,9 @@ func readCard(_ cg: CGImage) -> CardRead {
     bottom.recognitionLanguages = ["en-US"]
     // Normalized, origin bottom-left. The frame is already upright and
     // rotation-normalized by this point, so the band is stable across orientations.
+    // (A fixed bottom-fraction band for crops — skipping collectorBand's rect
+    // detection — was tried and dropped: Vision's read is sensitive to the exact
+    // band shape, and the ocr-mangle fixture's set code flipped MSH→MSC.)
     let (band, bandAnchored) = collectorBand(cg)
     bottom.regionOfInterest = band
 
@@ -792,9 +802,13 @@ func boilerplate(_ s: String) -> Bool {
 /// on the Go side's Scryfall fuzzy match, which the clutter fixture showed
 /// filters them for free.
 func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
+    let t0 = Date()
     let read = readCard(cg)
+    let frameMs = msSince(t0)
+    let tRects = Date()
     let rects = cardRects(cg)
-    let ciContext = CIContext()
+    let rectsMs = msSince(tRects)
+    let tCrops = Date()
 
     // Entries carry their anchor height so the final list reads top-to-bottom,
     // the order a person reads a fan — and the title line's full box, so a
@@ -820,7 +834,7 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
     }
 
     for (i, r) in rects.enumerated() {
-        guard let crop = perspectiveCrop(cg, r, ciContext) else { continue }
+        guard let crop = perspectiveCrop(cg, r, sharedCIContext) else { continue }
         saveDebugImage(crop, "multi-rect-\(i).png")
         let cropRead = readCard(crop)
         if cropRead.name.isEmpty {
@@ -857,10 +871,21 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
         }
         let frameIdxs = entries.indices.filter { entries[$0].entry.source == "frame" }
         if let idx = entries.firstIndex(where: { sameTitle($0.entry.name, e.name) }) {
-            // The crop read the same title off straightened pixels — usually
-            // the cleaner read — and may carry the printing.
-            entries[idx].entry = e
-            multiDebug("crop \(i) refines \"\(e.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber)")
+            if titleLike(e.name) || !titleLike(entries[idx].entry.name) {
+                // The crop read the same title off straightened pixels —
+                // usually the cleaner read — and may carry the printing.
+                entries[idx].entry = e
+                multiDebug("crop \(i) refines \"\(e.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber)")
+            } else {
+                // sameTitle's containment tolerance also matches the rules
+                // line that QUOTES the title ("If <name> is in your…"), and
+                // replacing wholesale handed that junk downstream as the
+                // card's name — where it broke both the resolver and the
+                // nudge echo-swallow, and a keyword fallback line became a
+                // phantom queue entry (observed live: "Haste" → Haste
+                // Magic). Keep the frame's clean title; take the printing.
+                mergeInto(idx, why: "junk crop title, frame name kept")
+            }
         } else if let idx = entries.indices
             .filter({ i in
                 guard let b = entries[i].box else { return false }
@@ -891,6 +916,9 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
             multiDebug("crop \(i) discarded — junk title \"\(e.name)\" beside \(frameIdxs.count) real titles")
         }
     }
+
+    timing("scanFrame frameOCR=\(frameMs)ms rects=\(rectsMs)ms "
+        + "crops=\(rects.count) cropOCR=\(msSince(tCrops))ms total=\(msSince(t0))ms")
 
     entries.sort { $0.top > $1.top }
     var cards = entries.map { $0.entry }
@@ -946,13 +974,18 @@ func saveDebugImage(_ cg: CGImage, _ filename: String) {
     FileHandle.standardError.write(Data("hoard-scan: wrote \(url.path)\n".utf8))
 }
 
+/// sharedCIContext is the one CIContext for the whole process. Constructing a
+/// CIContext spins up a Metal device, and doing that per capture (twice — here
+/// and in scanFrame) was measurable per-card cost. CIContext is thread-safe.
+let sharedCIContext = CIContext()
+
 /// uprighted bakes an EXIF orientation into the pixels, returning an image that
 /// reads correctly with no orientation tag. Normalizing once here is what keeps
 /// the tag and the manual rotation from both being applied.
 func uprighted(_ cg: CGImage, _ orientation: CGImagePropertyOrientation) -> CGImage {
     if orientation == .up { return cg }
     let ci = CIImage(cgImage: cg).oriented(orientation)
-    return CIContext().createCGImage(ci, from: ci.extent) ?? cg
+    return sharedCIContext.createCGImage(ci, from: ci.extent) ?? cg
 }
 
 /// rotatedImage returns a copy of the image turned clockwise by a multiple of
@@ -1009,6 +1042,10 @@ let continuityWait = ProcessInfo.processInfo.environment["HOARD_SCAN_WAIT"]
 /// yields a capture the OCR can't read — and the failure looks like bad OCR
 /// rather than the wrong camera. Better to say no iPhone is connected.
 func availableCameras() -> [AVCaptureDevice] {
+    // Desk View (.deskViewCamera) is deliberately excluded too: the top-down
+    // dewarped feed reads nicely but sits well below the sensor's full photo
+    // resolution, so the collector number — already at the edge of what
+    // Vision resolves — becomes a coin flip and the review queue fills up.
     AVCaptureDevice.DiscoverySession(
         deviceTypes: [.continuityCamera], mediaType: .video, position: .unspecified
     ).devices
@@ -1059,6 +1096,30 @@ func autoDebug(_ s: @autoclosure () -> String) {
 func envDouble(_ name: String, _ fallback: Double) -> Double {
     ProcessInfo.processInfo.environment[name].flatMap(Double.init) ?? fallback
 }
+
+/// focusControl selects the focus policy: "lock" (continuous AF, frozen after
+/// the first good read — every card sits at the same distance, so the hunt a
+/// landing card provokes is pure cost), "continuous" (AF with the trigger's
+/// hunt-aware fire gate but no lock), or "off" (no focus code at all — the
+/// pre-focus-management behavior, byte for byte).
+let focusControl = ProcessInfo.processInfo.environment["HOARD_SCAN_FOCUS"] ?? "lock"
+
+/// autoFocusWait bounds how long a completed stability streak defers its fire
+/// waiting for a focus hunt to end, in case the hunt observation wedges — the
+/// trigger must never park forever on a KVO that stopped arriving.
+let autoFocusWait = envDouble("HOARD_SCAN_FOCUS_WAIT", 1.5)
+
+/// timing writes an always-on per-capture cost line to stderr. HOARD_SCAN_LOG
+/// timestamps and tees stderr, so every telemetry run carries its own latency
+/// breakdown without a knob — the cost is a couple of lines per card. Nothing
+/// downstream parses these; they exist so a "the scanner feels slow" report
+/// comes with numbers attached.
+func timing(_ s: @autoclosure () -> String) {
+    FileHandle.standardError.write(Data("timing: \(s())\n".utf8))
+}
+
+/// msSince is the whole milliseconds elapsed from a mark, for timing lines.
+func msSince(_ mark: Date) -> Int { Int(Date().timeIntervalSince(mark) * 1000) }
 
 /// How often the auto trigger samples the video stream. Vision's rectangle
 /// detector on a ≤1080p buffer costs a few milliseconds, so 5 Hz is nearly free
@@ -1119,6 +1180,12 @@ final class AutoTrigger {
     private var stableCount = 0
     private var graceCount = 0
     private var disruptCount = 0
+    /// When the current stabilize pass began, so a fire can report how long
+    /// the machine (not the human) took to settle on the card.
+    private var stabilizeBegan: Date?
+    /// When a completed streak first deferred its fire to a focus hunt; the
+    /// autoFocusWait valve fires anyway once this is old enough.
+    private var fireDeferredAt: Date?
     /// Rectangles that are furniture, not cards: whatever was in frame when
     /// auto armed (a desk has notepads and coasters — rectangles all), plus
     /// anything that fired and then photographed as no-card. Only a rectangle
@@ -1135,6 +1202,7 @@ final class AutoTrigger {
             heldSig = []
             background = []
             needBaseline = true
+            fireDeferredAt = nil
             move(to: .searching)
         } else {
             guard phase != .off else { return }
@@ -1143,8 +1211,11 @@ final class AutoTrigger {
     }
 
     /// observe feeds one sampled frame's detected rectangles through the
-    /// machine.
-    func observe(_ boxes: [CGRect]) {
+    /// machine. focusSettled is the camera's word that the lens is not mid-
+    /// hunt: a hunt blurs edges, so whatever the detector reports during one
+    /// is noise — the machine freezes rather than mistaking blur for motion,
+    /// and never fires into it (a capture mid-hunt is the out-of-focus scan).
+    func observe(_ boxes: [CGRect], focusSettled: Bool = true) {
         let sig = boxes.sorted { $0.width * $0.height > $1.width * $1.height }
         if phase == .off {
             onBoxes?([])
@@ -1177,9 +1248,21 @@ final class AutoTrigger {
                 prevSig = novel
                 stableCount = 1
                 graceCount = 0
+                stabilizeBegan = Date()
                 move(to: .stabilizing)
             }
         case .stabilizing:
+            // A focus hunt freezes the machine outright: no streak growth (a
+            // blurred frame is not evidence of stillness), no grace burn or
+            // reset (its jitter is not evidence of motion). A streak that
+            // completed before the hunt fires the moment it ends — or when
+            // the wait valve expires, so a wedged observation can't park us.
+            if !focusSettled {
+                if stableCount >= autoStableSamples {
+                    maybeFire(focusSettled: false)
+                }
+                return
+            }
             // A bad sample — the detector missed the card, or its box jittered
             // past the IoU bar — is tolerated a few times with the streak
             // frozen: Vision flickers on foils and borderless frames. Only a
@@ -1188,6 +1271,7 @@ final class AutoTrigger {
             if novel.isEmpty {
                 graceCount += 1
                 if graceCount > autoGraceSamples {
+                    fireDeferredAt = nil
                     move(to: .searching)
                 }
                 return
@@ -1202,8 +1286,7 @@ final class AutoTrigger {
                 stableCount += 1
                 autoDebug("fragment counted, stable \(stableCount)/\(autoStableSamples)")
                 if stableCount >= autoStableSamples {
-                    move(to: .capturing)
-                    onFire?()
+                    maybeFire(focusSettled: true)
                 }
                 return
             }
@@ -1213,6 +1296,7 @@ final class AutoTrigger {
                     autoDebug("scene moved, streak reset (\(novel.count) candidate(s))")
                     stableCount = 1
                     graceCount = 0
+                    fireDeferredAt = nil
                     prevSig = novel
                 } else {
                     autoDebug("flicker tolerated \(graceCount)/\(autoGraceSamples)")
@@ -1223,12 +1307,15 @@ final class AutoTrigger {
             stableCount += 1
             autoDebug("stable \(stableCount)/\(autoStableSamples), \(novel.count) candidate(s)")
             if stableCount >= autoStableSamples {
-                move(to: .capturing)
-                onFire?()
+                maybeFire(focusSettled: true)
                 return
             }
             prevSig = novel
         case .hold:
+            // A hunt's blur says nothing about the scene: freeze the counter
+            // both ways. Counting it as disruption would re-arm on pure blur
+            // — a refire on the very card just shot.
+            if !focusSettled { return }
             // The held card flickers like any hard card: a blink of empty
             // detection is not a removal, and a jittered-but-overlapping box
             // is not a swap. What re-arms is accumulated DISRUPTION of either
@@ -1259,6 +1346,36 @@ final class AutoTrigger {
                 }
             }
         }
+    }
+
+    /// maybeFire pulls the trigger when the lens agrees, defers when it is
+    /// mid-hunt, and gives up deferring once the wait valve expires.
+    private func maybeFire(focusSettled: Bool) {
+        if focusSettled {
+            fire()
+            return
+        }
+        guard let since = fireDeferredAt else {
+            fireDeferredAt = Date()
+            autoDebug("streak complete, waiting out a focus hunt")
+            return
+        }
+        if Date().timeIntervalSince(since) >= autoFocusWait {
+            autoDebug("focus never settled in \(Int(autoFocusWait * 1000))ms, firing anyway")
+            fire()
+        }
+    }
+
+    /// fire is the one auto-shutter path: reports how long the machine took
+    /// to settle on the card, then moves to capturing and pulls the trigger.
+    private func fire() {
+        if let t = stabilizeBegan {
+            timing("settle=\(msSince(t))ms")
+            stabilizeBegan = nil
+        }
+        fireDeferredAt = nil
+        move(to: .capturing)
+        onFire?()
     }
 
     /// captureBegan holds the machine while any capture — auto or the space
@@ -1777,6 +1894,31 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     private var deviceName = "camera"
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
+    /// The live capture device, kept so the torch can be toggled mid-session.
+    private var device: AVCaptureDevice?
+    /// Whether this device supports Center Stage (the system's auto-framing);
+    /// gates the feature advertisement and the toggle.
+    private var framingAvailable = false
+    /// Whether this device carries a torch — the phone's flashlight, which
+    /// Continuity Camera exposes and which is the only light macOS lets an
+    /// app control (exposure bias is iOS-only).
+    private var torchAvailable = false
+    /// Whether the torch is currently on; session-scoped, never persisted —
+    /// it drains the phone and AVFoundation kills it on session end anyway.
+    private var torchOn = false
+    /// Focus management (HOARD_SCAN_FOCUS): the lens observation, whether it
+    /// is mid-hunt right now, whether we froze it, and how many consecutive
+    /// captures read as nothing while frozen (two thaws it — the rig moved).
+    private var focusObservation: NSKeyValueObservation?
+    private var focusHunting = false
+    private var focusHuntBegan: Date?
+    private var focusLocked = false
+    private var emptyReadsWhileLocked = 0
+    /// Whether auto-framing is currently on. Forced off at startup — Center
+    /// Stage state persists system-wide (a FaceTime call leaves it on), and
+    /// its "zoom to the subject" crop is exactly the sometimes-too-close
+    /// startup framing that makes cards unscannable.
+    private var autoFraming = false
 
     /// The price HUD and its sounds. The bank is lazy so the audio engine's
     /// first-time spin-up never delays camera readiness — it starts on the
@@ -1847,6 +1989,28 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
             fail("could not open \(device.localizedName)")
         }
         deviceName = device.localizedName
+        // macOS exposes no camera zoom API (videoZoomFactor is iOS-only), but
+        // it does expose Center Stage. Take app control and force it off so
+        // every session starts on the full, uncropped frame — auto-framing's
+        // subject-tracking crop is the "too close" startup the user can't
+        // otherwise explain, because its state rides along from whatever app
+        // used the camera last.
+        framingAvailable = device.activeFormat.isCenterStageSupported
+        AVCaptureDevice.centerStageControlMode = .app
+        AVCaptureDevice.isCenterStageEnabled = false
+        self.device = device
+        // Continuity Camera does not bridge the phone's flashlight — hasTorch
+        // is false there as of macOS today — so the torch feature usually
+        // stays dark. The capability line makes that verifiable in a
+        // HOARD_SCAN_LOG instead of a matter of memory.
+        torchAvailable = device.hasTorch
+        setUpFocus(device)
+        let focusCaps = device.isFocusModeSupported(.continuousAutoFocus)
+            ? "af" + (device.isFocusModeSupported(.locked) ? "+lock" : "") : "fixed"
+        let caps = "scan: \(device.localizedName) [\(kindLabel(device))] torch=\(device.hasTorch) "
+            + "centerStage=\(device.activeFormat.isCenterStageSupported) "
+            + "focus=\(focusCaps) (policy \(focusControl))\n"
+        FileHandle.standardError.write(Data(caps.utf8))
         guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
             fail("could not configure capture session")
         }
@@ -1894,7 +2058,10 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                 spinRunLoop(seconds: 0.75) { false }
                 emit(Event(event: "ready", rotation: self.manualRotation,
                            device: self.deviceName,
-                           features: (self.autoAvailable ? ["auto", "rearm"] : []) + ["hud"]))
+                           features: (self.autoAvailable ? ["auto", "rearm"] : [])
+                               + (self.framingAvailable ? ["framing"] : [])
+                               + (self.torchAvailable ? ["torch"] : [])
+                               + ["effects", "hud"]))
                 if self.autoRequested { self.setAuto(true) }
             }
         }
@@ -1966,13 +2133,130 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         emit(Event(event: "rotation", rotation: manualRotation))
     }
 
+    /// setUpFocus points continuous autofocus at where cards land and starts
+    /// watching the lens: a hunt blurs every edge in frame, so the trigger is
+    /// told to treat those samples as noise rather than motion, and the fire
+    /// is deferred until the hunt ends. HOARD_SCAN_FOCUS=off skips all of it.
+    private func setUpFocus(_ device: AVCaptureDevice) {
+        guard focusControl != "off" else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            device.unlockForConfiguration()
+        } catch {
+            autoDebug("focus setup refused: \(error.localizedDescription)")
+        }
+        focusObservation = device.observe(\.isAdjustingFocus, options: [.new]) { [weak self] dev, _ in
+            let hunting = dev.isAdjustingFocus
+            DispatchQueue.main.async {
+                guard let self, self.focusHunting != hunting else { return }
+                self.focusHunting = hunting
+                if hunting {
+                    self.focusHuntBegan = Date()
+                    autoDebug("focus hunt began")
+                } else if let t = self.focusHuntBegan {
+                    autoDebug("focus hunt ended (\(msSince(t))ms)")
+                    self.focusHuntBegan = nil
+                }
+            }
+        }
+    }
+
+    /// updateFocusLock freezes the lens after a capture that actually read a
+    /// card — every card in a session sits at the same distance, so the hunt
+    /// each landing card provokes is pure settle-time cost — and thaws it
+    /// after two consecutive empty reads, the signature of a moved rig. Only
+    /// the "lock" policy does any of this.
+    private func updateFocusLock(afterGoodRead good: Bool) {
+        guard focusControl == "lock", let device else { return }
+        if good {
+            emptyReadsWhileLocked = 0
+            guard !focusLocked, device.isFocusModeSupported(.locked) else { return }
+            do {
+                try device.lockForConfiguration()
+                device.focusMode = .locked
+                device.unlockForConfiguration()
+                focusLocked = true
+                autoDebug("focus locked after a good read")
+            } catch {
+                autoDebug("focus lock refused: \(error.localizedDescription)")
+            }
+        } else if focusLocked {
+            emptyReadsWhileLocked += 1
+            guard emptyReadsWhileLocked >= 2,
+                  device.isFocusModeSupported(.continuousAutoFocus) else { return }
+            do {
+                try device.lockForConfiguration()
+                device.focusMode = .continuousAutoFocus
+                device.unlockForConfiguration()
+                focusLocked = false
+                emptyReadsWhileLocked = 0
+                autoDebug("focus unlocked after consecutive empty reads")
+            } catch {
+                autoDebug("focus unlock refused: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// setAutoFraming toggles Center Stage — the system's subject-tracking
+    /// zoom, and the only framing macOS lets an app adjust (the real zoom
+    /// APIs are iOS-only). Off means the full, uncropped frame, which is what
+    /// card scanning wants; the toggle exists for the desk setups where the
+    /// tracked crop happens to frame the pile better. The parent is told so
+    /// it can reflect the state without watching the window.
+    fileprivate func setAutoFraming(_ on: Bool) {
+        guard framingAvailable else {
+            emit(Event(event: "error", message: "auto-framing is not adjustable on this camera"))
+            return
+        }
+        autoFraming = on
+        AVCaptureDevice.isCenterStageEnabled = on
+        updateTitle()
+        emit(Event(event: "framing", state: on ? "auto" : "off"))
+    }
+
+    /// setTorch turns the phone's flashlight on or off to light the card —
+    /// the one brightness control macOS offers (exposure bias is iOS-only).
+    /// A refused lock or a thermally-limited torch reports an error and
+    /// leaves the session up; the parent is told the state that actually
+    /// took, so its mirror never drifts from the hardware.
+    fileprivate func setTorch(_ on: Bool) {
+        guard torchAvailable, let device else {
+            emit(Event(event: "error", message: "no torch on this camera"))
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            if on {
+                try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+            } else {
+                device.torchMode = .off
+            }
+            torchOn = on
+        } catch {
+            emit(Event(event: "error",
+                       message: "could not switch the torch: \(error.localizedDescription)"))
+        }
+        updateTitle()
+        emit(Event(event: "torch", state: torchOn ? "on" : "off"))
+    }
+
     /// updateTitle surfaces the current rotation — including what the automatic
     /// angle contributed — so a wrong orientation is diagnosable at a glance.
     private func updateTitle() {
         let total = Int(autoPreviewAngle) + manualRotation
         let mode = autoTrigger.phase == .off ? "" : "AUTO · "
+        let framing = autoFraming ? " · FRAMED" : ""
+        let torch = torchOn ? " · TORCH" : ""
         window?.title = "hoard — \(deviceName) · \(mode)\(total % 360)° "
-            + "(auto \(Int(autoPreviewAngle))°) · Space capture · A auto · ←/→ rotate · Esc cancel"
+            + "(auto \(Int(autoPreviewAngle))°)\(framing)\(torch) · Space capture · A auto · "
+            + "←/→ rotate · Z framing · T torch · V effects · Esc cancel"
     }
 
     private func buildWindow() {
@@ -2009,6 +2293,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
             case .escape: self?.shutdown()
             case .rotateLeft: self?.rotate(clockwise: false)
             case .rotateRight: self?.rotate(clockwise: true)
+            case .framingToggle: self?.setAutoFraming(self?.autoFraming == false)
+            case .torchToggle: self?.setTorch(self?.torchOn == false)
+            case .effectsPanel: AVCaptureDevice.showSystemUserInterface(.videoEffects)
             case .autoToggle: self?.setAuto(self?.autoTrigger.phase == .off)
             }
         }
@@ -2019,6 +2306,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         self.window = win
     }
 
+    /// When the last shutter was requested, for the capture timing line.
+    private var captureRequestedAt: Date?
+
     private func capture() {
         // Re-level right before the shutter in case the phone moved since the
         // last KVO notification.
@@ -2026,6 +2316,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         // Any shutter — auto or manual — parks the trigger, so pressing space
         // in auto mode can't be followed by an auto fire on the same card.
         autoTrigger.captureBegan()
+        captureRequestedAt = Date()
         photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
     }
 
@@ -2184,6 +2475,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// shutdown closes the window and ends the process. The rotation rides along
     /// so a correction made just before closing isn't thrown away.
     func shutdown() {
+        // A frozen lens is session state: hand the camera back hunting
+        // normally for whatever app uses it next.
+        if focusLocked, let device, device.isFocusModeSupported(.continuousAutoFocus),
+           (try? device.lockForConfiguration()) != nil {
+            device.focusMode = .continuousAutoFocus
+            device.unlockForConfiguration()
+        }
         emit(Event(event: "closed", rotation: manualRotation))
         session.stopRunning()
         exit(0)
@@ -2200,6 +2498,14 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         case "capture": capture()
         case "rotate-left": rotate(clockwise: false)
         case "rotate-right": rotate(clockwise: true)
+        case "frame-on": setAutoFraming(true)
+        case "frame-off": setAutoFraming(false)
+        case "torch-on": setTorch(true)
+        case "torch-off": setTorch(false)
+        // The system Video Effects panel: Studio Light (the only software
+        // lighting macOS offers, since the torch isn't bridged), plus the
+        // system's own Center Stage and Desk View toggles.
+        case "effects": AVCaptureDevice.showSystemUserInterface(.videoEffects)
         case "auto-on": setAuto(true)
         case "auto-off": setAuto(false)
         case "rearm": autoTrigger.forceRearm()
@@ -2247,9 +2553,20 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         // the user corrected in the preview. Exactly one rotation each.
         captureCount += 1
         saveDebugImage(cg, "capture-\(captureCount)-raw.png")
+        let tRotate = Date()
         let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: effectiveRotation)
+        let rotateMs = msSince(tRotate)
         saveDebugImage(forOCR, "capture-\(captureCount)-ocr.png")
         let (read, cards) = scanFrame(forOCR)
+        // A capture that read something proves the current lens distance is
+        // right — freeze it there; one that read nothing counts toward the
+        // thaw. Decided per capture, whatever fired it.
+        updateFocusLock(afterGoodRead: !read.name.isEmpty || !cards.isEmpty)
+        // shutter+decode is everything before the pixel work: AVFoundation's
+        // shutter latency, the photo decode, and the raw debug write.
+        let preMs = captureRequestedAt.map { Int(tRotate.timeIntervalSince($0) * 1000) } ?? 0
+        timing("capture \(captureCount) shutter+decode=\(preMs)ms rotate=\(rotateMs)ms "
+            + "total=\(captureRequestedAt.map { msSince($0) } ?? 0)ms")
         autoTrigger.captureFinished()
         lastCaptureFinishedAt = Date()
         // Emit and stay live: the window persists so the next card can be framed
@@ -2290,14 +2607,17 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
             guard sampledAt > self.lastCaptureFinishedAt else { return }
             // The trigger decides which of these are candidates (vs desk
             // furniture) and drives the outline through onBoxes.
-            self.autoTrigger.observe(boxes)
+            self.autoTrigger.observe(boxes, focusSettled: !self.focusHunting)
         }
     }
 }
 
 /// PreviewView hosts the camera preview layer and forwards key presses.
 final class PreviewView: NSView {
-    enum Key { case space, escape, rotateLeft, rotateRight, autoToggle }
+    enum Key {
+        case space, escape, rotateLeft, rotateRight, framingToggle, torchToggle,
+             effectsPanel, autoToggle
+    }
     var previewLayer: AVCaptureVideoPreviewLayer?
     /// The auto-trigger's cue: an outline traced around each rectangle the
     /// trigger currently sees, kept sized to the view by layout().
@@ -2312,6 +2632,9 @@ final class PreviewView: NSView {
         case 53: onKey?(.escape)       // esc
         case 123: onKey?(.rotateLeft)  // left arrow
         case 124: onKey?(.rotateRight) // right arrow
+        case 6: onKey?(.framingToggle) // z
+        case 17: onKey?(.torchToggle)  // t
+        case 9: onKey?(.effectsPanel)  // v
         case 0: onKey?(.autoToggle)    // a
         default: super.keyDown(with: event)
         }

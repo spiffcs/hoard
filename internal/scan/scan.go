@@ -16,6 +16,8 @@ const (
 	EventReady    = "ready"    // window is up and previewing
 	EventScan     = "scan"     // a capture was taken and read
 	EventRotation = "rotation" // the user turned the preview
+	EventFraming  = "framing"  // auto-framing toggled; see Event.State
+	EventTorch    = "torch"    // phone torch toggled; see Event.State
 	EventError    = "error"    // capture failed; the session is still alive
 	EventClosed   = "closed"   // the window closed; the session is over
 	EventAuto     = "auto"     // auto-trigger state change; see Event.State
@@ -59,7 +61,8 @@ type Event struct {
 	// Features lists helper capabilities, advertised on EventReady ("auto"
 	// means the helper understands auto-on/auto-off).
 	Features []string `json:"features"`
-	// State is the auto-trigger state carried by EventAuto.
+	// State is the auto-trigger state carried by EventAuto, "auto"/"off"
+	// carried by EventFraming, or "on"/"off" carried by EventTorch.
 	State string `json:"state"`
 	// CollectorAlts are collector blocks beyond the primary flat fields: a
 	// card scanned off a stack shows a sliver of the card beneath it, whose

@@ -202,6 +202,44 @@ func (s *Session) Result(r HUDResult) error {
 	return s.send("result " + string(js))
 }
 
+// AutoFraming turns the camera's auto-framing (Center Stage) on or off. The
+// helper forces it off at session start — its subject-tracking crop is the
+// too-close startup framing — so this is the mid-session escape hatch in both
+// directions. Only sent to helpers that advertised "framing" on their ready
+// event; the resulting state arrives as an EventFraming.
+func (s *Session) AutoFraming(on bool) error {
+	if on {
+		return s.send("frame-on")
+	}
+	return s.send("frame-off")
+}
+
+// Torch turns the phone's flashlight on or off to light the card — the one
+// brightness control macOS offers. Only sent to helpers that advertised
+// "torch" on their ready event; the state that actually took arrives as an
+// EventTorch.
+func (s *Session) Torch(on bool) error {
+	if on {
+		return s.send("torch-on")
+	}
+	return s.send("torch-off")
+}
+
+// Note appends one line to the session's telemetry log (the HOARD_SCAN_LOG
+// tee), prefix "~" — the Go side's half of the per-card latency breakdown,
+// landing beside the helper's own timing lines. A session without a log
+// swallows it.
+func (s *Session) Note(line string) {
+	s.logLine("~", []byte(line))
+}
+
+// VideoEffects opens the system's Video Effects panel — Studio Light (the
+// only software lighting macOS offers, since the phone's torch isn't bridged
+// over Continuity Camera) plus the system's own Center Stage and Desk View
+// toggles. Only sent to helpers that advertised "effects" on their ready
+// event. Fire-and-forget: the panel is system UI and reports nothing back.
+func (s *Session) VideoEffects() error { return s.send("effects") }
+
 // Rotate turns the preview a quarter-turn; the new angle arrives as an
 // EventRotation so it can be persisted.
 func (s *Session) Rotate(left bool) error {

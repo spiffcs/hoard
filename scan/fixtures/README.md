@@ -15,6 +15,7 @@ Each frame is here because it pinned a decision:
 | `two-card-pile` | two title bands from one frame via the text channel |
 | `ocr-mangle` | a misread title ("Manfled Marauder") ships as read — downstream fuzzy matching owns the fix, the helper must not invent |
 | `empty-desk` | a frame with no cards yields an empty list, not junk entries |
+| `rules-quote-title` | a crop whose "title" is the rules line quoting the name ("If Quicksilver, Brash Blur is in your…") keeps the frame's clean title and contributes only its printing — wholesale replacement fed the junk name downstream, broke the nudge echo-swallow, and let a keyword fallback line become a phantom ("Haste" → Haste Magic, observed live) |
 
 Adding one: capture a live session with `HOARD_SCAN_DEBUG_DIR`, copy the
 problem frame's `capture-N-ocr.png` here under a name that says what it
