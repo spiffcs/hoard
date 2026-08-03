@@ -304,11 +304,14 @@ func TestCompsSidesToggle(t *testing.T) {
 	}
 	view := compsPart(strings.Join(m.marketLines(110), "\n"))
 	if !strings.Contains(view, "COMPS · SELL") || !strings.Contains(view, "TCG SOLD") ||
-		!strings.Contains(view, "SPREAD") {
-		t.Fatalf("default side should comp the sale prices with their spread:\n%s", view)
+		!strings.Contains(view, "PRICE DISPERSION") {
+		t.Fatalf("default side should comp the sale prices with their dispersion:\n%s", view)
 	}
-	if strings.Contains(view, "BUYLIST") || strings.Contains(view, "LOW") {
-		t.Errorf("the bid belongs to the buy side:\n%s", view)
+	// SPREAD is the buy side's word — a true bid-ask gap; the sell side's
+	// number is vendor disagreement, not a spread.
+	if strings.Contains(view, "SPREAD") || strings.Contains(view, "BUYLIST") ||
+		strings.Contains(view, "LOW") {
+		t.Errorf("the bid vocabulary belongs to the buy side:\n%s", view)
 	}
 	note := m.selectedMarketNote()
 	if !strings.Contains(note, "last sold") || strings.Contains(note, "pays") {
@@ -358,10 +361,10 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
 		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
-	// Each comp side teaches its own spread formula in place of the
-	// freshness disclaimer.
-	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = high sale minus low sale") {
-		t.Errorf("status = %q, want the sale-spread formula on the sell side", got)
+	// Each comp side teaches its own derived-column formula in place of
+	// the freshness disclaimer.
+	if got := m.marketStatus(); !strings.Contains(got, "PRICE DISPERSION = high sale minus low sale") {
+		t.Errorf("status = %q, want the dispersion formula on the sell side", got)
 	}
 	m.compsBuySide = true
 	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = 1 − BUYLIST ÷ LOW") {
@@ -808,14 +811,17 @@ func TestMarketTablesPage(t *testing.T) {
 	if len(m.marketRows) != 50 || len(m.marketComps) != 50 {
 		t.Fatalf("visible rows = %d + %d comps, want 50 each", len(m.marketRows), len(m.marketComps))
 	}
-	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, "of 50 of 60 · page 1/2") ||
-		!strings.Contains(view, "of 50 of 120 · page 1/3") {
-		t.Fatalf("titles must name the leafing:\n%s", view)
+	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, " · 1–50 of 60") ||
+		!strings.Contains(view, " · 1–50 of 120") {
+		t.Fatalf("titles must name each page's slice of the ranking:\n%s", view)
 	}
 
 	m = key(m, ">") // the cursor starts in the profit table
 	if len(m.marketRows) != 10 || m.marketRows[0].Card.Name != "P050" {
 		t.Fatalf("page 2 rows = %d starting %q, want the ranking's tail", len(m.marketRows), m.marketRows[0].Card.Name)
+	}
+	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, " · 51–60 of 60") {
+		t.Fatalf("page 2 must name its slice:\n%s", view)
 	}
 	if !strings.Contains(m.status, "page 2/2 · rows 51–60 of 60") {
 		t.Errorf("status = %q, want the page named", m.status)

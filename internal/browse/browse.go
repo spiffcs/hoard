@@ -45,9 +45,11 @@ type Editor interface {
 	RemoveContainer(id int64) (int64, error)
 	UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
 
-	// The detail's held-row editor: moving one row to another printing or
-	// binder (merging on collision), and storing the printing it moves to.
+	// The detail's held-row editor: moving one row to another printing,
+	// binder, or finish (merging on collision), and storing the printing
+	// it moves to.
 	MoveEntry(fromContainer int64, scryfallID, finish string, toContainer int64, toScryfallID string) (int, error)
+	MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish string) (int, error)
 	UpsertPrintings(cards []scryfall.Card) error
 }
 

@@ -1741,35 +1741,14 @@ final class PriceHUD {
         }
     }
 
-    /// coinImage is the emitter's particle: a rimmed gold disc with a $ glyph,
-    /// drawn once — the app bundles no image assets.
+    /// coinImage is the emitter's particle: the 🪙 emoji rasterized once — the
+    /// app bundles no image assets. It replaced a hand-drawn gold disc with a
+    /// $ glyph, which at particle size read as a bitcoin token.
     private static let coinImage: CGImage? = {
         let side: CGFloat = 64
         let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let disc = rect.insetBy(dx: 4, dy: 4)
-            let colors = [
-                NSColor(calibratedRed: 1, green: 0.93, blue: 0.55, alpha: 1).cgColor,
-                NSColor(calibratedRed: 0.85, green: 0.65, blue: 0.05, alpha: 1).cgColor,
-            ]
-            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                         colors: colors as CFArray, locations: [0, 1]) {
-                ctx.saveGState()
-                ctx.addEllipse(in: disc)
-                ctx.clip()
-                ctx.drawRadialGradient(
-                    gradient,
-                    startCenter: CGPoint(x: rect.midX - 8, y: rect.midY + 8), startRadius: 2,
-                    endCenter: CGPoint(x: rect.midX, y: rect.midY), endRadius: side / 2,
-                    options: .drawsAfterEndLocation)
-                ctx.restoreGState()
-            }
-            ctx.setStrokeColor(NSColor(calibratedRed: 0.6, green: 0.45, blue: 0, alpha: 1).cgColor)
-            ctx.setLineWidth(3)
-            ctx.strokeEllipse(in: disc)
-            let glyph = NSAttributedString(string: "$", attributes: [
-                .font: NSFont.systemFont(ofSize: 34, weight: .heavy),
-                .foregroundColor: NSColor(calibratedRed: 0.55, green: 0.4, blue: 0, alpha: 1),
+            let glyph = NSAttributedString(string: "🪙", attributes: [
+                .font: NSFont.systemFont(ofSize: 52),
             ])
             glyph.draw(at: CGPoint(x: rect.midX - glyph.size().width / 2,
                                    y: rect.midY - glyph.size().height / 2))

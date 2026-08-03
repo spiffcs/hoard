@@ -167,3 +167,51 @@ func TestActivePrintingIDs(t *testing.T) {
 		t.Errorf("ids = %v, want the held and watched printings only", ids)
 	}
 }
+
+// MoveEntryFinish re-keys a holding's finish in place, merging with copies
+// already held in the target finish, and refuses a missing source row.
+func TestMoveEntryFinish(t *testing.T) {
+	s := newTestStore(t)
+	card := scryfall.Card{ID: "bb-uma", Set: "uma", CollectorNumber: "85",
+		Name: "Bitterblossom", ScryfallURL: "http://x"}
+	if err := s.UpsertPrintings([]scryfall.Card{card}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := s.AddCardFinish(card, "nonfoil", 3); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.AddCardFinish(card, "foil", 2); err != nil {
+		t.Fatalf("AddCardFinish foil: %v", err)
+	}
+	binders, err := s.ListBinders()
+	if err != nil || len(binders) == 0 {
+		t.Fatalf("ListBinders: %v", err)
+	}
+	cid := binders[0].ID
+
+	// Re-key with merge: 3 nonfoil join the 2 foil.
+	prev, err := s.MoveEntryFinish(cid, "bb-uma", "nonfoil", "foil")
+	if err != nil {
+		t.Fatalf("MoveEntryFinish: %v", err)
+	}
+	if prev != 2 {
+		t.Errorf("prev = %d, want the existing 2 foils", prev)
+	}
+	held := heldByFinish(t, s, "bb-uma")
+	if held["foil"] != 5 || held["nonfoil"] != 0 {
+		t.Errorf("held = %v, want 5 foil and no nonfoil", held)
+	}
+
+	// Re-key without a target row: the row simply changes key.
+	if _, err := s.MoveEntryFinish(cid, "bb-uma", "foil", "etched"); err != nil {
+		t.Fatalf("MoveEntryFinish to etched: %v", err)
+	}
+	if held := heldByFinish(t, s, "bb-uma"); held["etched"] != 5 {
+		t.Errorf("held = %v, want 5 etched", held)
+	}
+
+	// A missing source refuses.
+	if _, err := s.MoveEntryFinish(cid, "bb-uma", "nonfoil", "foil"); err == nil {
+		t.Error("moving a missing finish row succeeded")
+	}
+}

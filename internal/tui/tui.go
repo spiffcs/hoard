@@ -63,7 +63,9 @@ type ScanSession interface {
 	// price treatment: flash + tier sound when Tier is set, a silent update
 	// of the running session counter when Total is set. Only sent to
 	// helpers that advertised "hud" on their ready event; older helpers get
-	// Chime instead — exactly one sound per card either way.
+	// Chime instead. One sound per moment: an auto-committed card sounds
+	// once, a reviewed card sounds at queue time (the question) and again
+	// at confirm time (the answer, with the amount).
 	Result(scan.HUDResult) error
 	// Events streams what the camera window reports; closed when the session is.
 	Events() <-chan scan.Event

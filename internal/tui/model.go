@@ -1157,10 +1157,11 @@ func (m model) chime() {
 	}
 }
 
-// celebrate is chime's price-aware upgrade for a committed card: the camera
-// HUD flashes the amount with its tier's styling and sound, and the session
-// total rides along. Helpers without the hud feature get the plain chime,
-// keeping the one-sound-per-card policy in every pairing of helper and CLI.
+// celebrate announces committed money on the camera HUD: the amount just
+// added flashes with its tier's styling and sound, and the session total
+// rides along. Fired at auto-commit and at review confirm (where it answers
+// the queue-time question sound). Helpers without the hud feature get the
+// plain chime instead.
 func (m model) celebrate(price *float64) {
 	if m.session == nil {
 		return
@@ -1372,9 +1373,22 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 	}
 	m.addedCount++
 	m.addedValue += float64(res.Qty) * priceValue(res.Card, res.Finish)
-	// The card already celebrated at resolve time (or never scanned at all);
-	// only the HUD's session counter moves, silently.
-	m.hudTotal()
+	if m.reviewing() {
+		// A confirmed review answers the resolve-time question on the
+		// camera window: the amount that just landed (qty-weighted), with
+		// its tier's flash and sound — question at queue time, answer at
+		// confirm time.
+		var amt *float64
+		if p := priceValuePtr(res.Card, res.Finish); p != nil {
+			v := *p * float64(res.Qty)
+			amt = &v
+		}
+		m.celebrate(amt)
+	} else {
+		// A manual add never asked a question; only the HUD's session
+		// counter moves, silently.
+		m.hudTotal()
+	}
 	m.status = fmt.Sprintf("✓ Added %d× %s (%s/%s) %s · %s",
 		res.Qty, res.Card.Name, res.Card.Set, res.Card.CollectorNumber,
 		res.Finish, priceForFinish(res.Card, res.Finish))

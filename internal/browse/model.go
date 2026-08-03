@@ -309,6 +309,11 @@ type Model struct {
 	// detail is the open card overlay, or nil. Loaded once when opened rather
 	// than re-read per frame, so scrolling the list behind it costs nothing.
 	detail *detail
+	// detailComps memoizes background comp reads by printing for the open
+	// overlay's lifetime, so arrowing back to a printing already answered
+	// costs nothing. Cleared when the overlay closes, and when an op
+	// completes (a quote fetch may have changed the sheets).
+	detailComps map[string]compsResult
 
 	// text is the open scrollable text takeover (report, import outcome),
 	// or nil. See textview.go.
@@ -757,6 +762,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onMarket(msg)
 	case imageMsg:
 		return m.onImage(msg)
+	case detailCompsMsg:
+		return m.onDetailComps(msg)
 	case catalogFirstRunMsg:
 		return m, m.startOp("updating the catalog", m.opCatalogUpdate)
 	case opProgressMsg:
@@ -828,6 +835,7 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stageQuit()
 	case "esc", "backspace":
 		m.detail = nil
+		m.detailComps = nil
 	case "enter":
 		// In the held zone, enter edits the highlighted field of the row
 		// under the cursor.
@@ -845,12 +853,24 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detail = nil
+	case "tab":
+		// Deep in a long held list the only route back to the links was ↓
+		// past every remaining row; tab flips zones directly from anywhere,
+		// scrolling the newly active zone into view.
+		if m.detail.zone == zoneHeld {
+			m.detail.zone = zoneLinks
+			m.detail.scroll = 1 << 20 // the links render last; clamped at render
+		} else if len(m.detail.holdings) > 0 {
+			m.detail.zone = zoneHeld
+			m.detail.scrollHeldIntoView = true
+		}
 	case "up", "k":
 		// The vertical axis climbs into the held list first, then walks
 		// it; a different printing re-points the overlay and refetches
 		// its art.
 		if m.detail.zone == zoneLinks && len(m.detail.holdings) > 0 {
 			m.detail.zone = zoneHeld
+			m.detail.scrollHeldIntoView = true
 			return m, nil
 		}
 		return m, m.moveHeldCursor(-1)
@@ -941,8 +961,8 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.finishWatchPick()
 				return m, nil
 			}
-			m.openDetail()
-			return m, m.fetchDetailImage()
+			comps := m.openDetail()
+			return m, tea.Batch(m.fetchDetailImage(), comps)
 		} else {
 			// Enter on a container is "show me this one", which means moving to
 			// its cards — the same thing tab does, but where the hand already is.

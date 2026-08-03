@@ -136,12 +136,19 @@ func (m Model) detailView() string {
 		artW = m.detailImageCols()
 	}
 	var lines []string
+	// heldBase is where hoardLines' output begins within lines — the held
+	// rows sit at heldBase+2+i (after the "" and "HELD" title lines) — so
+	// a requested scroll-into-view can find the cursor's absolute line.
+	var heldBase int
 	switch {
 	case len(img) > 0 && m.width-artW-2 >= artMinTextCols:
 		// The art pins to the right edge and overflows beside the
 		// analysis; rows past its bottom keep the text column's width,
 		// which artMinTextCols guarantees is enough for every row.
+		// besideImage keeps the text lines' indices, so heldBase is
+		// unaffected by the art.
 		textW := m.width - artW - 2
+		heldBase = len(m.cardFrameLines(*m.detail, textW))
 		lines = besideImage(img, m.detailLines(*m.detail, textW), textW)
 	case len(img) > 0 && m.width >= artW:
 		// The window can't host the art beside the analysis, so the
@@ -150,11 +157,27 @@ func (m Model) detailView() string {
 		// shrinking the card).
 		lines = append(m.cardFrameLines(*m.detail, m.width), "")
 		lines = append(lines, img...)
+		heldBase = len(lines)
 		lines = append(lines, m.hoardLines(*m.detail, m.width)...)
 	default:
+		heldBase = len(m.cardFrameLines(*m.detail, m.width))
 		lines = m.detailLines(*m.detail, m.width)
 	}
 
+	// A pending scroll-into-view request resolves here, where the layout
+	// (and so the held cursor's absolute line) is known.
+	if m.detail.scrollHeldIntoView {
+		m.detail.scrollHeldIntoView = false
+		if len(m.detail.holdings) > 0 {
+			idx := heldBase + 2 + m.detail.heldCursor
+			vis := m.visibleRows() + 1
+			if idx < m.detail.scroll {
+				m.detail.scroll = idx
+			} else if idx >= m.detail.scroll+vis {
+				m.detail.scroll = idx - vis + 1
+			}
+		}
+	}
 	// The scroll window: pgup/pgdn move it, and the clamp lives here
 	// because only the render knows how many lines the overlay has.
 	maxScroll := max(len(lines)-(m.visibleRows()+1), 0)
@@ -659,11 +682,11 @@ func (m Model) helpLine() string {
 		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
 	case m.detail != nil:
 		if m.detail.zone == zoneHeld {
-			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · esc back · q quit"
+			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · tab links · esc back · q quit"
 		}
 		help := ""
 		if len(m.detail.holdings) > 0 {
-			help = "↑ held list · "
+			help = "tab held list · "
 		}
 		// The edit keys show only when the row under the held cursor can
 		// take them — a deck row would answer every one with a refusal.

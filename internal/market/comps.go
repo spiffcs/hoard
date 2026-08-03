@@ -96,23 +96,6 @@ const (
 // saturates the red.
 func SaleSpreadGrade(s float64) float64 { return grade(s, saleSpreadTight, saleSpreadWide) }
 
-// Verdict classifies a comp sheet the way the market view's sections do:
-// a bid over the sales price is arbitrage, a bid at liquidFloor or better
-// is easy to sell, anything else earns no verdict. Shares the sections'
-// constants so the two surfaces cannot drift.
-func (c Comp) Verdict() (Kind, bool) {
-	if !c.HasBuylist || !c.HasMarket || c.Market <= 0 {
-		return 0, false
-	}
-	if c.Buylist > c.Market {
-		return KindProfit, true
-	}
-	if c.Buylist/c.Market >= liquidFloor {
-		return KindLiquid, true
-	}
-	return 0, false
-}
-
 // MarkupGrade positions the retail-vs-buylist spread on 0..1 for the heat
 // ramp. The scale is the spread itself: everything at or below zero sits
 // on the green end — a bid at or over the ask is pure value — and the

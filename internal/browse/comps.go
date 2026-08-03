@@ -91,12 +91,15 @@ func (m *Model) applyMarketComps(all []market.Comp) {
 }
 
 // The comps sort cycles follow the visible side: every column its table
-// shows and nothing else — "spread" means that side's spread, since
-// sorting the sell table by the buy side's bid-spread shuffled rows
-// against the column on screen (observed live). SPREAD leads as the
-// default: the spread is the comp sheet's whole question.
+// shows and nothing else — each side's derived column means that side's
+// number, since sorting the sell table by the buy side's bid-spread
+// shuffled rows against the column on screen (observed live). The derived
+// column leads as the default: it is the comp sheet's whole question. The
+// sell side calls its number PRICE DISPERSION (vendor sale prices
+// disagreeing); SPREAD stays the buy side's word, where it really is
+// bid-ask.
 var (
-	compsSellSortColumns = []string{"spread", "name", "set/num", "fin", "tcg sold", "mp", "ck"}
+	compsSellSortColumns = []string{"price dispersion", "name", "set/num", "fin", "tcg sold", "mp", "ck"}
 	compsBuySortColumns  = []string{"spread", "name", "set/num", "fin", "tcg sold", "mp", "ck", "ck buylist"}
 )
 
@@ -145,7 +148,8 @@ func compKeyFor(key string, buySide bool, a, b market.Comp) int {
 	case "fin":
 		return strings.Compare(a.Card.Finish, b.Card.Finish)
 	}
-	// "spread", and the default: the side's own spread.
+	// "spread" / "price dispersion", and the default: the side's own
+	// derived number.
 	if buySide {
 		return cmp.Compare(spreadOrInf(a), spreadOrInf(b))
 	}
@@ -173,17 +177,18 @@ func saleSpreadOrInf(c market.Comp) float64 {
 // SOLD names its own source. The CLI keeps market.CompsNote for its one
 // full-width table.
 const (
-	compsSellNote = "vendor sale prices; spread is how much they disagree"
+	compsSellNote = "vendor sale prices; dispersion is how much they disagree"
 	compsBuyNote  = "the cash bid against the asks"
 )
 
 // compsSectionTable lays out the comps rows, headers included. The sheet
 // has two halves and the table shows one at a time. The sell side is the
 // sale-price comp: what each vendor sells the card for — tcgplayer's
-// last-sold, the asks — with SPREAD measuring how much they disagree
-// (agreement is what makes a price real). The buy side is the other side
-// of the counter: the asks beside Card Kingdom's cash bid, with SPREAD as
-// the buyer's haircut — buy at the ask, recoup at the bid.
+// last-sold, the asks — with PRICE DISPERSION measuring how much they
+// disagree (agreement is what makes a price real; this is not a bid-ask
+// spread, hence the word). The buy side is the other side of the counter:
+// the asks beside Card Kingdom's cash bid, with SPREAD as the buyer's
+// haircut — a true bid-ask gap, so the word stays.
 func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 8, Style: env.Dim()}
@@ -213,7 +218,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 		{Title: "TCG SOLD", Align: ui.Right},
 		{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
 		{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
-		{Title: "SPREAD", Align: ui.Right},
+		{Title: "PRICE DISPERSION", Align: ui.Right},
 	}}
 	for _, c := range comps {
 		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},

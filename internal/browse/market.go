@@ -227,23 +227,19 @@ func (m Model) marketLines(width int) []string {
 			title, note = market.Kind(i).Title(), market.Kind(i).Note()
 		}
 		head := m.theme.Title.Render(title) + "  " + m.theme.Help.Render(note)
-		// The counts read as one phrase — "1–22 of 50 of 93 · page 1/2" —
-		// window, page, whole ranking, then the page position. The ranking's
-		// true size rides with the counts because a bare "of 50" read as the
-		// whole answer when 93 rows stood behind it. (>/< is in the help
-		// line, not repeated here.)
+		// Two distinct count phrases: "7–26 of 47" scopes the screen (which
+		// of this page's rows are visible), "51–97 of 97" scopes the page
+		// (which slice of the whole ranking it holds, advancing on >/<).
+		// Chaining them into one "of 47 of 97" read as a typo. (>/< is in
+		// the help line, not repeated here.)
 		frag := ""
 		tot := totals[i]
 		if off := m.marketSecOffset[i]; sec.count > budgets[i] && budgets[i] > 0 {
 			frag = fmt.Sprintf(" · %d–%d of %d", off+1, off+budgets[i], sec.count)
-			if tot > sec.count {
-				frag += fmt.Sprintf(" of %d", tot)
-			}
-		} else if tot > sec.count && sec.count > 0 {
-			frag = fmt.Sprintf(" · %d of %d", sec.count, tot)
 		}
 		if tot > marketPageSize {
-			frag += fmt.Sprintf(" · page %d/%d", m.marketPage[i]+1, (tot-1)/marketPageSize+1)
+			lo := m.marketPage[i]*marketPageSize + 1
+			frag += fmt.Sprintf(" · %d–%d of %d", lo, min(lo+marketPageSize-1, tot), tot)
 		}
 		if frag != "" {
 			head += m.theme.Help.Render(frag)
@@ -378,12 +374,12 @@ func (m Model) marketStatus() string {
 	// tables' counts happen to sit.
 	secs := m.marketSections()
 	sec, idx := m.marketCursorPos()
-	// On the comp sheets the standing note teaches that side's SPREAD
-	// formula instead — the column is each sheet's one derived number,
-	// and the two sides derive different things.
+	// On the comp sheets the standing note teaches that side's derived
+	// column instead — each sheet has exactly one, and the two sides
+	// derive different things (dispersion vs a true bid-ask spread).
 	suffix := "one-day vendor prices"
 	if m.selectedComp() != nil {
-		suffix = "SPREAD = high sale minus low sale, over high"
+		suffix = "PRICE DISPERSION = high sale minus low sale, over high"
 		if m.compsBuySide {
 			suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
 		}

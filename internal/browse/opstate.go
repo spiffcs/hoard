@@ -214,8 +214,10 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// A detail open through the whole run shows the refreshed numbers,
-	// not the ones it was opened with.
-	m.reloadDetail()
+	// not the ones it was opened with. The op may have been a quote fetch,
+	// so the comp memo is stale — clear it and let reloadDetail refetch.
+	m.detailComps = nil
+	compsCmd := m.reloadDetail()
 	// Outcome extras, in order: the refresh above first (closing the
 	// takeover must reveal current panes), then the report, then any
 	// follow-up confirm on top.
@@ -228,7 +230,7 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		// says what happened, and the action can be re-run.
 		m.confirm = msg.outcome.confirm
 	}
-	return m, nil
+	return m, compsCmd
 }
 
 // opProgressSoFar says how far a cancelled op had come, when its last event

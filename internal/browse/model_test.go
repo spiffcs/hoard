@@ -469,6 +469,58 @@ func (f *fakeStore) MoveEntry(fromC int64, id, finish string, toC int64, toID st
 	return 0, nil
 }
 
+// MoveEntryFinish mirrors the store's finish re-key against the fake's
+// row model: remove the source row, merge into (or create) the target
+// finish in the same container.
+func (f *fakeStore) MoveEntryFinish(cid int64, id, fromFinish, toFinish string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if fromFinish == toFinish {
+		return 0, nil
+	}
+	rows := f.collection
+	inBinder := false
+	if cid != defaultBinderID {
+		if br, ok := f.binderRows[cid]; ok {
+			rows, inBinder = br, true
+		}
+	}
+	var moved store.CollectionRow
+	found := false
+	kept := rows[:0:0]
+	for _, r := range rows {
+		if !found && r.ScryfallID == id && r.Finish == fromFinish {
+			moved, found = r, true
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if !found {
+		return 0, fmt.Errorf("no such holding to move")
+	}
+	prev := 0
+	merged := false
+	for i, r := range kept {
+		if r.ScryfallID == id && r.Finish == toFinish {
+			prev = r.Quantity
+			kept[i].Quantity += moved.Quantity
+			merged = true
+			break
+		}
+	}
+	if !merged {
+		moved.Finish = toFinish
+		kept = append(kept, moved)
+	}
+	if inBinder {
+		f.binderRows[cid] = kept
+	} else {
+		f.collection = kept
+	}
+	return prev, nil
+}
+
 // UpsertPrintings records what the set editor stored, for assertions.
 func (f *fakeStore) UpsertPrintings(cards []scryfall.Card) error {
 	if f.err != nil {
@@ -2660,7 +2712,7 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 	m.focus = paneCards
 
 	view := strings.Join(m.marketLines(110), "\n")
-	if !strings.Contains(view, "COMPS") || !strings.Contains(view, "SPREAD") {
+	if !strings.Contains(view, "COMPS") || !strings.Contains(view, "PRICE DISPERSION") {
 		t.Fatalf("comps section missing:\n%s", view)
 	}
 	if a, b := strings.Index(view, "ARBITRAGE"), strings.Index(view, "COMPS"); a > b {
@@ -2688,8 +2740,8 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 }
 
 // The comps sort is its own — cycling it re-orders only the comps rows
-// and labels itself — and each side sorts by its own SPREAD: the sale
-// prices' disagreement on sell, the bid's haircut on buy.
+// and labels itself — and each side sorts by its own derived column: the
+// sale prices' dispersion on sell, the bid's haircut (SPREAD) on buy.
 func TestCompsSortIsIndependent(t *testing.T) {
 	agree := comp("Agree", 90, 100, 20)  // bid spread 80%
 	agree.CK, agree.HasCK = 101, true    // sale spread 1%
@@ -2719,11 +2771,11 @@ func TestCompsSortIsIndependent(t *testing.T) {
 		}
 		return out
 	}
-	// SPREAD is the default sort. Sell side: the sale prices'
-	// disagreement — most agreement first, no-second-figure last.
+	// The derived column is the default sort. Sell side: the sale prices'
+	// dispersion — most agreement first, no-second-figure last.
 	m.cursor[paneCards] = len(m.marketRows) // first comps row
-	if got := m.sortLabel(); got != "comps · spread" {
-		t.Fatalf("default label = %q, want spread", got)
+	if got := m.sortLabel(); got != "comps · price dispersion" {
+		t.Fatalf("default label = %q, want price dispersion", got)
 	}
 	if got := names(); got[0] != "Agree" || got[1] != "Differ" || got[2] != "Lone" {
 		t.Fatalf("sell spread order = %v, want agreement first, undefined last", got)

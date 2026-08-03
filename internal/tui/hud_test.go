@@ -129,8 +129,8 @@ func TestQueuedFlashesNeedsReview(t *testing.T) {
 	}
 }
 
-// A confirm (review or manual) while the camera is open syncs the HUD total
-// silently: total only, no tier, no sound.
+// A manual add while the camera is open syncs the HUD total silently: total
+// only, no tier, no sound — it never asked a question on the camera window.
 func TestConfirmAddSyncsHudTotal(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m, sess := hudSession(t, m)
@@ -153,6 +153,34 @@ func TestConfirmAddSyncsHudTotal(t *testing.T) {
 	}
 	if r.Total == nil || *r.Total != 6.00 {
 		t.Errorf("total = %v, want 6.00", priceStr(r.Total))
+	}
+}
+
+// Confirming a queued card answers its resolve-time question: the confirmed
+// amount (qty-weighted) flashes with its tier's sound, total riding along.
+func TestReviewConfirmCelebratesAmount(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	m, sess := hudSession(t, m)
+	card := scryfall.Card{ID: "a", Name: "Sol Ring", Set: "mh3",
+		CollectorNumber: "123", Finishes: []string{"nonfoil"}, PriceUSD: price(12)}
+	m.current = &queueItem{} // the cascade is reviewing a queued card
+	m.chosen, m.finish = &card, "nonfoil"
+	m.qtyInput.SetValue("2")
+	mm, _ := m.confirmAdd()
+	m = mm.(model)
+
+	if m.addedValue != 24.00 {
+		t.Fatalf("setup: addedValue = %v", m.addedValue)
+	}
+	if sess.chimes != 0 || len(sess.results) != 1 {
+		t.Fatalf("chimes=%d results=%+v, want one celebration", sess.chimes, sess.results)
+	}
+	r := sess.results[0]
+	if r.Amount == nil || *r.Amount != 24.00 || r.Tier != tierJackpot {
+		t.Errorf("result = %+v, want the landed $24.00 as a jackpot", r)
+	}
+	if r.Total == nil || *r.Total != 24.00 {
+		t.Errorf("total = %v, want 24.00", priceStr(r.Total))
 	}
 }
 

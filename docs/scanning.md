@@ -72,10 +72,11 @@ error banner and falls back to the built-in. A running
 session total sits at the video frame's top right and counts *committed*
 cards only — a card that queues for review flashes "Needs Review" with a
 soft rising two-note sound, the inflection of a question, instead of a
-price (its printing is still unverified), and its money lands in the total
-when the review confirms it. An unpriced card
-flashes "$—" with the familiar plain chime. Older helpers without the HUD keep the plain
-chime for everything; either way it is never two sounds for one card. The
+price (its printing is still unverified). Confirming it in review answers
+on the camera window: the amount that landed flashes with its tier's
+sound, and the total moves. An unpriced card flashes "$—" with the
+familiar plain chime. Older helpers without the HUD keep the plain chime
+for everything. The
 looks and sounds can be previewed without a camera via
 `hoard-scan --hud-demo` (pipe `result {...}` lines on stdin).
 

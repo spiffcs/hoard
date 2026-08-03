@@ -147,35 +147,14 @@ func TestDetailCompsSection(t *testing.T) {
 		t.Errorf("COMPS rendered before PRICE:\n%s", out)
 	}
 
-	// A bid over the sales price is the one verdict that still speaks.
+	// Even a bid over the sales price earns no prose: the verdict line was
+	// cut entirely — CK PAYS and SPREAD already carry the story.
 	arb := sheet
 	arb.Buylist = 10.50
 	d.comps = map[string]market.Comp{"nonfoil": arb}
 	out = strings.Join(m.hoardLines(d, 140), "\n")
-	if !strings.Contains(out, "ARBITRAGE") || !strings.Contains(out, "+$0.50 over tcg last-sold") {
-		t.Errorf("arbitrage verdict missing:\n%s", out)
-	}
-}
-
-// An unheld finish's sheet renders without a verdict — the verdict is
-// about your copies, the numbers are about the card.
-func TestDetailCompsVerdictNeedsAHolding(t *testing.T) {
-	m := atAllCards(t, newTestModel(t, testStore()))
-	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, true }
-	d := detail{
-		comps: map[string]market.Comp{"foil": {
-			Market: 10, HasMarket: true, Buylist: 11, BuylistTo: "cardkingdom", HasBuylist: true,
-			Low: 10, LowFrom: "tcgplayer",
-		}},
-		compsOK:  true,
-		holdings: []store.Holding{{ContainerName: "Binder", Finish: "nonfoil", Quantity: 1}},
-	}
-	out := strings.Join(m.hoardLines(d, 140), "\n")
-	if !strings.Contains(out, "$11.00") {
-		t.Fatalf("foil sheet missing:\n%s", out)
-	}
-	if strings.Contains(out, "ARBITRAGE") {
-		t.Errorf("verdict granted for an unheld finish:\n%s", out)
+	if strings.Contains(out, "ARBITRAGE") || strings.Contains(out, "ck pays") {
+		t.Errorf("the comps verdict prose must never render:\n%s", out)
 	}
 }
 
@@ -860,8 +839,12 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Error("set change recorded no undo")
 	}
 
-	// Location: →→ highlights the container; an unknown binder refuses, a
-	// real one takes the row.
+	// Location: → passes the finish slot, → again highlights the
+	// container; an unknown binder refuses, a real one takes the row.
+	m = key(m, "right")
+	if m.detail.heldField != fieldFinish {
+		t.Fatalf("field = %d, want finish next", m.detail.heldField)
+	}
 	m = key(m, "right")
 	if m.detail.heldField != fieldWhere {
 		t.Fatalf("field = %d, want location", m.detail.heldField)
@@ -1356,5 +1339,231 @@ func TestFoilTreatmentDisplays(t *testing.T) {
 	c.Treatment = ""
 	if links = cardLinks(c, true); !strings.Contains(links[0].url, "/product/553171") {
 		t.Errorf("an untreated foil keeps the product link, got %q", links[0].url)
+	}
+}
+
+// tab flips which zone the arrows drive — from anywhere in a long held
+// list, not just off its bottom edge — scrolling the activated zone into
+// view.
+func TestDetailTabTogglesZones(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+			{ContainerName: "Trade", Finish: "foil", Quantity: 1,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m.openURL = func(string) error { return nil } // links exist only with an opener
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil || m.detail.zone != zoneLinks {
+		t.Fatalf("setup: detail should open in the links zone")
+	}
+
+	m = key(m, "tab")
+	if m.detail.zone != zoneHeld || !m.detail.scrollHeldIntoView {
+		t.Fatalf("tab should enter the held zone and request a scroll: zone=%d scroll=%v",
+			m.detail.zone, m.detail.scrollHeldIntoView)
+	}
+	// ←/→ now drive the field cursor, not the links.
+	was := m.detail.linkCursor
+	m = key(m, "right")
+	if m.detail.heldField != fieldSet || m.detail.linkCursor != was {
+		t.Errorf("right in the held zone: field=%d link=%d, want the field cursor moved",
+			m.detail.heldField, m.detail.linkCursor)
+	}
+
+	m = key(m, "tab")
+	if m.detail.zone != zoneLinks {
+		t.Fatalf("tab should return to the links zone, got %d", m.detail.zone)
+	}
+	if m.detail.scroll == 0 {
+		t.Errorf("tab to links should scroll toward them (clamped at render)")
+	}
+	m = key(m, "right")
+	if m.detail.linkCursor != was+1 {
+		t.Errorf("right in the links zone moved link %d→%d, want %d",
+			was, m.detail.linkCursor, was+1)
+	}
+}
+
+// The comp sheet loads off the UI goroutine: the section holds a pending
+// note, the answer lands only on the printing still shown, and the memo
+// spares a re-fetch when the cursor comes back.
+func TestDetailCompsLoadAsync(t *testing.T) {
+	st := testStore()
+	m := newTestModel(t, st)
+	calls := 0
+	m.cardComps = func(id string) (map[string]market.Comp, bool) {
+		calls++
+		return map[string]market.Comp{"nonfoil": {}}, true
+	}
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("setup: no detail opened")
+	}
+	id := m.detail.card.ScryfallID
+	if !m.detail.compsPending {
+		t.Fatal("opening must not read comps synchronously")
+	}
+	if out := strings.Join(m.compLines(*m.detail, 120), "\n"); !strings.Contains(out, "reading today's vendor quotes") {
+		t.Errorf("pending comps should hold the section's place:\n%s", out)
+	}
+
+	// The background read runs and lands.
+	cmd := m.fetchDetailComps(id)
+	if cmd == nil {
+		t.Fatal("no fetch command for an unanswered printing")
+	}
+	msg, ok := cmd().(detailCompsMsg)
+	if !ok || msg.scryfallID != id || calls != 1 {
+		t.Fatalf("fetch = %+v (calls %d), want this printing read once", msg, calls)
+	}
+	next, _ = m.Update(msg)
+	m = next.(Model)
+	if m.detail.compsPending || !m.detail.compsOK || len(m.detail.comps) != 1 {
+		t.Fatalf("landed comps = pending %v ok %v %+v", m.detail.compsPending,
+			m.detail.compsOK, m.detail.comps)
+	}
+
+	// Memoized: no second fetch for the same printing.
+	if m.fetchDetailComps(id) != nil {
+		t.Error("an answered printing should not fetch again")
+	}
+
+	// A stale answer (overlay re-pointed or closed) lands in the memo only.
+	next, _ = m.Update(detailCompsMsg{scryfallID: "someone-else", ok: true})
+	m = next.(Model)
+	if m.detail.card.ScryfallID != id || !m.detail.compsOK {
+		t.Errorf("a stale answer must not touch the open overlay")
+	}
+
+	// Closing the overlay drops the memo.
+	m = key(m, "esc")
+	if m.detail != nil || m.detailComps != nil {
+		t.Errorf("esc should close the overlay and clear the comp memo")
+	}
+}
+
+// The held list's finish slot always renders — "-" for a plain nonfoil —
+// so treated and plain rows keep the same columns.
+func TestDetailHeldFinishAlwaysRenders(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	d := detail{holdings: []store.Holding{
+		{ContainerName: "Binder", Finish: "nonfoil", Quantity: 40,
+			ScryfallID: "mtn-a", SetCode: "mh3", CollectorNumber: "300"},
+		{ContainerName: "Binder", Finish: "foil", Treatment: "ripple", Quantity: 1,
+			ScryfallID: "mtn-b", SetCode: "mh3", CollectorNumber: "301"},
+	}}
+	out := strings.Join(m.hoardLines(d, 140), "\n")
+	// The finish slot pads to the list's widest word ("ripple"), so the
+	// dash row keeps the same columns as the treated one.
+	if !strings.Contains(out, "mh3/300 · -      · Binder") {
+		t.Errorf("plain nonfoil should render a padded dash in its finish slot:\n%s", out)
+	}
+	if !strings.Contains(out, "mh3/301 · ripple · Binder") {
+		t.Errorf("treated foil should keep its treatment word:\n%s", out)
+	}
+	// Qty right-aligns: ×1 pads to ×40's width.
+	if !strings.Contains(out, "  ×40 ·") || !strings.Contains(out, "   ×1 ·") {
+		t.Errorf("quantities should right-align:\n%s", out)
+	}
+}
+
+// The comps verdict prose is gone for good — the CK PAYS and SPREAD
+// columns already say it — and a detail entered from the ARBITRAGE
+// section additionally keeps its PRICE spread trend quiet, since that
+// restates the row the user just came from.
+func TestCompsVerdictGoneAndArbitrageEntrySuppressesSpread(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, true }
+	d := detail{
+		holdings: []store.Holding{{ContainerName: "Binder", Finish: "nonfoil", Quantity: 1}},
+		comps: map[string]market.Comp{"nonfoil": {
+			HasMarket: true, Market: 2.29, HasBuylist: true, Buylist: 3.50,
+		}},
+		compsOK: true,
+		series: map[string][]store.PricePoint{
+			"nonfoil": {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 10)},
+		},
+		bids: map[string][]store.PricePoint{
+			"nonfoil": {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 8)},
+		},
+	}
+	out := strings.Join(m.hoardLines(d, 140), "\n")
+	if strings.Contains(out, "ck pays") {
+		t.Fatalf("the comps verdict prose must never render:\n%s", out)
+	}
+	if !strings.Contains(out, "spread") {
+		t.Fatalf("an ordinary entry should keep the PRICE spread trend:\n%s", out)
+	}
+	d.fromArbitrage = true
+	out = strings.Join(m.hoardLines(d, 140), "\n")
+	if strings.Contains(out, "spread") {
+		t.Errorf("an arbitrage-section entry should suppress the spread trend:\n%s", out)
+	}
+	if !strings.Contains(out, "buylist") {
+		t.Errorf("the buylist row itself should survive:\n%s", out)
+	}
+}
+
+// The finish field edits like the others: enter opens a prompt prefilled
+// with the display finish, valid answers re-key the row (merging), and
+// garbage refuses.
+func TestDetailHeldFinishEdit(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4, ScryfallID: "Bitterblossom-id",
+				SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m = key(m, "up") // into the held zone
+	m = key(m, "right")
+	m = key(m, "right") // qty → set → finish
+	if m.detail.heldField != fieldFinish {
+		t.Fatalf("field = %d, want finish", m.detail.heldField)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.text != "-" {
+		t.Fatalf("prompt = %+v, want prefilled with the display dash", m.prompt)
+	}
+	if err := m.prompt.validate("cardboard"); err == nil {
+		t.Error("garbage finish validated")
+	}
+	if err := m.prompt.validate("foil"); err != nil {
+		t.Errorf("foil refused: %v", err)
+	}
+	m.prompt.commit(&m, "foil")
+	m.prompt = nil
+	if !strings.Contains(m.status, "- → foil") {
+		t.Errorf("status = %q, want the re-key named", m.status)
+	}
+	found := false
+	for _, r := range st.collection {
+		if r.ScryfallID == "Bitterblossom-id" && r.Finish == "foil" && r.Quantity == 4 {
+			found = true
+		}
+		if r.ScryfallID == "Bitterblossom-id" && r.Finish == "nonfoil" {
+			t.Errorf("source finish row survived: %+v", r)
+		}
+	}
+	if !found {
+		t.Errorf("no foil row after the re-key: %+v", st.collection)
+	}
+	if m.undoStack == nil {
+		t.Error("finish change recorded no undo")
 	}
 }

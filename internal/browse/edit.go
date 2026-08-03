@@ -164,6 +164,8 @@ func (m *Model) editHeldField() {
 	switch m.detail.heldField {
 	case fieldSet:
 		m.promptHeldSet()
+	case fieldFinish:
+		m.promptHeldFinish()
 	case fieldWhere:
 		m.promptHeldLocation()
 	default:
@@ -232,6 +234,87 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
 	m.statusErr = false
 	m.refresh()
 	m.reloadDetail()
+}
+
+// promptHeldFinish asks for the held row's finish — the fix for copies
+// recorded in the wrong one (an import that missed a foil marker). The
+// vocabulary is the enum the database speaks: - (plain nonfoil), foil,
+// etched.
+func (m *Model) promptHeldFinish() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label:    fmt.Sprintf("%s in %s · finish", name, h.ContainerName),
+		text:     ui.Finish(h.Finish),
+		help:     "- plain · foil · etched · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parseFinish(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			want, err := parseFinish(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			m.moveHeldFinish(h, name, want)
+			return nil
+		},
+	}
+}
+
+// parseFinish reads a finish: the stored enum, with the display dash (or
+// nothing) accepted for plain nonfoil.
+func parseFinish(text string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "-", "", "nonfoil", "non-foil":
+		return "nonfoil", nil
+	case "foil":
+		return "foil", nil
+	case "etched":
+		return "etched", nil
+	}
+	return "", fmt.Errorf("a finish is - (plain), foil, or etched")
+}
+
+// moveHeldFinish re-keys the held row's finish, merging with copies already
+// held in the target finish, undo included. The overlay's cursor follows
+// the row to its new finish, and the links refresh with it — Card
+// Kingdom's page is per finish.
+func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
+	if want == h.Finish {
+		m.status, m.statusErr = "already "+ui.Finish(h.Finish), false
+		return
+	}
+	prevTarget, err := m.store.MoveEntryFinish(h.ContainerID, h.ScryfallID, h.Finish, want)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	cid, id, from, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s %s", name, ui.Finish(from)),
+		undo: func(st Editor) error {
+			if _, err := st.SetHoldingQuantityIn(cid, id, want, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetHoldingQuantityIn(cid, id, from, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("%s (%s → %s) in %s", name, ui.Finish(from), ui.Finish(want), h.ContainerName)
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
+	if d := m.detail; d != nil {
+		for i, held := range d.holdings {
+			if held.ScryfallID == id && held.ContainerID == cid && held.Finish == want {
+				d.heldCursor = i
+				break
+			}
+		}
+		m.refreshLinks(d)
+	}
 }
 
 // promptHeldSet asks which set the held row should be attributed to — the

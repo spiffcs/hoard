@@ -116,6 +116,56 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 	return prevTarget, tx.Commit()
 }
 
+// MoveEntryFinish re-keys a holding's finish in place — the detail's finish
+// editor — merging with any copies already held in the target finish of the
+// same container. Returns the merged-into quantity before the move, so an
+// undo can put both sides back.
+func (s *Store) MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish string) (prevTarget int, err error) {
+	if fromFinish == toFinish {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var qty int
+	err = tx.QueryRow(`
+SELECT quantity FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
+		containerID, scryfallID, fromFinish).Scan(&qty)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("no such holding to move")
+	}
+	if err != nil {
+		return 0, err
+	}
+	err = tx.QueryRow(`
+SELECT quantity FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
+		containerID, scryfallID, toFinish).Scan(&prevTarget)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	if _, err := tx.Exec(`
+INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
+VALUES (?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, board)
+DO UPDATE SET quantity = quantity + excluded.quantity`,
+		containerID, scryfallID, toFinish, qty); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`
+DELETE FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
+		containerID, scryfallID, fromFinish); err != nil {
+		return 0, err
+	}
+	return prevTarget, tx.Commit()
+}
+
 // RemoveFromCollection drops every entry for a printing from the loose
 // collection and returns what it removed.
 //

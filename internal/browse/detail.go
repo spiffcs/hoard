@@ -28,8 +28,12 @@ type detail struct {
 	bids     map[string][]store.PricePoint // by finish, from the bid history
 	// comps is today's per-vendor sheet by price finish; compsOK false
 	// means no day cache existed to read (the section says how to fetch).
-	comps   map[string]market.Comp
-	compsOK bool
+	// compsPending marks the sheet's background read in flight — it scans
+	// the whole hoard plus the day's quote cache, far too slow for the UI
+	// goroutine (opening a Mountain froze the overlay, observed live).
+	comps        map[string]market.Comp
+	compsOK      bool
+	compsPending bool
 	// links are the vendor pages for this printing; linkCursor is which
 	// one enter opens. Both inert when no opener was injected.
 	links      []cardLink
@@ -37,10 +41,19 @@ type detail struct {
 	// heldCursor selects a row of the held list; landing on a different
 	// printing re-points the whole overlay (series, comps, art, links).
 	heldCursor int
+	// fromArbitrage marks an overlay entered from the market view's
+	// ARBITRAGE section; the PRICE spread trend stays quiet there — it
+	// would restate the very row the user just came from.
+	fromArbitrage bool
 	// scroll is how many lines the overlay is scrolled down — pgup/pgdn
 	// reach the sections a short window pushes past the fold. Clamped at
 	// render time, where the line count is known.
 	scroll int
+	// scrollHeldIntoView asks the next render to bring the held cursor's
+	// row inside the window — set when the cursor moves or the held zone
+	// takes the arrows, resolved at render time where the layout (and so
+	// the row's absolute line) is known.
+	scrollHeldIntoView bool
 	// zone is which strip of the overlay the arrow keys drive: the links
 	// row by default, or the held list after ↑ climbs into it. In the held
 	// zone ←/→ pick a field of the selected row and enter edits it.
@@ -83,17 +96,20 @@ const (
 const (
 	fieldQty = iota
 	fieldSet
+	fieldFinish
 	fieldWhere
 	heldFieldCount
 )
 
-// openDetail loads the selected card's detail.
+// openDetail loads the selected card's detail, returning the background
+// comp-sheet fetch for the caller to run (nil when nothing to fetch).
 //
 // Each view indexes its own row slice, so every view needs its own case
 // here — but every view's rows name a single printing, so enter answers
 // "what is this card?" everywhere.
-func (m *Model) openDetail() {
+func (m *Model) openDetail() tea.Cmd {
 	var id string
+	var fromArbitrage bool
 	switch m.view {
 	case viewHoldings:
 		if c := m.selectedCard(); c != nil {
@@ -111,6 +127,7 @@ func (m *Model) openDetail() {
 			id = c.Card.ScryfallID
 		} else if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
 			id = m.marketRows[i].Card.ScryfallID
+			fromArbitrage = m.marketRows[i].Kind == market.KindProfit
 		}
 	case viewUnpriced:
 		// And an unpriced row — the gap is the price, not the card.
@@ -125,11 +142,11 @@ func (m *Model) openDetail() {
 		}
 	}
 	if id == "" {
-		return
+		return nil
 	}
-	var d detail
+	d := detail{fromArbitrage: fromArbitrage}
 	if !m.loadPrinting(&d, id) {
-		return
+		return nil
 	}
 	// Holdings by name, not id: the held list is the printing selector —
 	// ten Forests can be four printings with four prices and four arts,
@@ -138,14 +155,14 @@ func (m *Model) openDetail() {
 	var err error
 	if d.holdings, err = m.store.HoldingsOfName(d.card.Name); err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	if len(d.holdings) == 0 {
 		// A catalogued-but-unheld card (a watch on something you sold)
 		// still shows its container-level answer: nothing.
 		if d.holdings, err = m.store.HoldingsOf(id); err != nil {
 			m.setError(err)
-			return
+			return nil
 		}
 	}
 	for i, h := range d.holdings {
@@ -156,29 +173,34 @@ func (m *Model) openDetail() {
 	}
 	m.refreshLinks(&d)
 	m.detail = &d
+	return m.fetchDetailComps(id)
 }
 
 // reloadDetail re-reads the open overlay's data in place after something
 // changed the world under it — a price refresh finishing, an edit. The
-// held cursor and the art stay; the numbers follow.
-func (m *Model) reloadDetail() {
+// held cursor and the art stay; the numbers follow. The returned command
+// refetches the comp sheet when the memo has no answer (an op completion
+// clears the memo first; callers that only edited quantities hit the memo
+// and may discard the nil).
+func (m *Model) reloadDetail() tea.Cmd {
 	d := m.detail
 	if d == nil {
-		return
+		return nil
 	}
 	if !m.loadPrinting(d, d.card.ScryfallID) {
-		return
+		return nil
 	}
 	holdings, err := m.store.HoldingsOfName(d.card.Name)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	if len(holdings) > 0 {
 		d.holdings = holdings
 	}
 	d.heldCursor = min(max(d.heldCursor, 0), max(len(d.holdings)-1, 0))
 	m.refreshLinks(d)
+	return m.fetchDetailComps(d.card.ScryfallID)
 }
 
 // refreshLinks rebuilds the vendor links for the printing and finish the
@@ -238,10 +260,62 @@ func (m *Model) loadPrinting(d *detail, id string) bool {
 			d.bids[finish] = b
 		}
 	}
+	// Comps come from the memo when a background fetch already answered for
+	// this printing — arrowing back and forth must not flash the section —
+	// and otherwise mark themselves pending for the caller's fetch command.
 	if m.cardComps != nil {
-		d.comps, d.compsOK = m.cardComps(id)
+		if r, ok := m.detailComps[id]; ok {
+			d.comps, d.compsOK, d.compsPending = r.comps, r.ok, false
+		} else {
+			d.comps, d.compsOK, d.compsPending = nil, false, true
+		}
 	}
 	return true
+}
+
+// compsResult is one printing's answered comp sheet, memoized on the model
+// for the lifetime of the open overlay.
+type compsResult struct {
+	comps map[string]market.Comp
+	ok    bool
+}
+
+// detailCompsMsg carries one printing's comp sheet, read off the UI
+// goroutine; scryfallID guards a slow answer against an overlay that has
+// been re-pointed or closed in the meantime.
+type detailCompsMsg struct {
+	scryfallID string
+	comps      map[string]market.Comp
+	ok         bool
+}
+
+// fetchDetailComps starts the background comp-sheet read for a printing.
+// nil when the capability is absent or the memo already has the answer.
+func (m *Model) fetchDetailComps(id string) tea.Cmd {
+	if m.cardComps == nil || id == "" {
+		return nil
+	}
+	if _, ok := m.detailComps[id]; ok {
+		return nil
+	}
+	f := m.cardComps
+	return func() tea.Msg {
+		comps, ok := f(id)
+		return detailCompsMsg{scryfallID: id, comps: comps, ok: ok}
+	}
+}
+
+// onDetailComps lands a background comp read: into the memo always, into
+// the open overlay only when it still shows that printing.
+func (m Model) onDetailComps(msg detailCompsMsg) (tea.Model, tea.Cmd) {
+	if m.detailComps == nil {
+		m.detailComps = map[string]compsResult{}
+	}
+	m.detailComps[msg.scryfallID] = compsResult{comps: msg.comps, ok: msg.ok}
+	if d := m.detail; d != nil && d.card.ScryfallID == msg.scryfallID {
+		d.comps, d.compsOK, d.compsPending = msg.comps, msg.ok, false
+	}
+	return m, nil
 }
 
 // moveHeldCursor walks the held list; landing on a different printing
@@ -258,20 +332,22 @@ func (m *Model) moveHeldCursor(delta int) tea.Cmd {
 		return nil
 	}
 	d.heldCursor = next
-	var cmd tea.Cmd
+	d.scrollHeldIntoView = true
+	var cmds []tea.Cmd
 	if sel := d.holdings[next]; sel.ScryfallID != "" && sel.ScryfallID != d.card.ScryfallID {
 		if !m.loadPrinting(d, sel.ScryfallID) {
 			return nil
 		}
-		cmd = m.fetchDetailImage()
-		if cmd == nil {
+		img := m.fetchDetailImage()
+		if img == nil {
 			// No replacement is coming (no URL, no capable terminal):
 			// keeping the old printing's art would caption the wrong card.
 			d.image = nil
 		}
+		cmds = append(cmds, img, m.fetchDetailComps(sel.ScryfallID))
 	}
 	m.refreshLinks(d)
-	return cmd
+	return tea.Batch(cmds...)
 }
 
 // cardLink is one vendor page the detail can open.
@@ -438,11 +514,32 @@ func (m Model) hoardLines(d detail, width int) []string {
 	if len(d.holdings) == 0 {
 		out = append(out, dim("  nothing: this printing is catalogued but not held"))
 	}
+	// Every slot pads to the list's widest value — qty right-aligned, the
+	// rest left — so the rows line up as a table even though each renders
+	// as joined parts (mixed lengths skewed every column, observed live).
+	// The finish slot always renders, "-" for a plain nonfoil, so a list
+	// mixing ripple foils and plain copies keeps the same columns.
+	var qtyW, setW, finW int
+	for _, h := range d.holdings {
+		qtyW = max(qtyW, ansi.StringWidth(ui.Qty(h.Quantity)))
+		setW = max(setW, ansi.StringWidth(ui.Printing(h.SetCode, h.CollectorNumber)))
+		finW = max(finW, ansi.StringWidth(ui.FinishTreated(h.Finish, h.Treatment)))
+	}
+	pad := func(s string, w int, left bool) string {
+		fill := strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
+		if left {
+			return fill + s
+		}
+		return s + fill
+	}
 	for i, h := range d.holdings {
 		where := h.ContainerName
 		if h.ContainerKind != store.KindCollection && h.Board != "main" {
 			where += " (" + h.Board + ")"
 		}
+		qty := pad(ui.Qty(h.Quantity), qtyW, true)
+		set := pad(ui.Printing(h.SetCode, h.CollectorNumber), setW, false)
+		fin := pad(ui.FinishTreated(h.Finish, h.Treatment), finW, false)
 		// In the held zone the selected row shows its editable fields, the
 		// highlighted one wearing the cursor: ←/→ choose, enter edits.
 		if i == d.heldCursor && d.zone == zoneHeld {
@@ -452,32 +549,19 @@ func (m Model) hoardLines(d detail, width int) []string {
 				}
 				return s
 			}
-			parts := []string{
-				mark(ui.Qty(h.Quantity), fieldQty),
-				mark(ui.Printing(h.SetCode, h.CollectorNumber), fieldSet),
-			}
-			if h.Finish != "nonfoil" {
-				parts = append(parts, ui.FinishTreated(h.Finish, h.Treatment))
-			}
-			parts = append(parts, mark(where, fieldWhere))
+			parts := []string{mark(qty, fieldQty), mark(set, fieldSet),
+				mark(fin, fieldFinish), mark(where, fieldWhere)}
 			out = append(out, ui.Truncate("▸ "+strings.Join(parts, " · "), width))
 			continue
 		}
-		// The finish is named only when it isn't normal — the table columns'
-		// rule, minus the placeholder dash, which in a list reads as a stray mark.
-		parts := []string{ui.Qty(h.Quantity)}
-		if h.SetCode != "" || h.CollectorNumber != "" {
-			parts = append(parts, ui.Printing(h.SetCode, h.CollectorNumber))
-		}
-		if h.Finish != "nonfoil" {
-			parts = append(parts, ui.FinishTreated(h.Finish, h.Treatment))
-		}
-		line := ui.Truncate("  "+strings.Join(append(parts, where), " · "), width)
-		// The cursor bar marks the row the overlay is pointed at: ↑/↓
-		// moves it, and a different printing swaps the series, comps and
-		// art in place.
+		line := ui.Truncate("  "+strings.Join([]string{qty, set, fin, where}, " · "), width)
+		// A quiet mark on the pointed-at row: this path only sees the
+		// cursor row while the links zone has the arrows (the held zone's
+		// cursor row took the field branch above), and a full-strength bar
+		// there read as a selection the user never made. The row stays
+		// marked at all because +/-/d act on it from either zone.
 		if i == d.heldCursor && len(d.holdings) > 1 {
-			line = ui.Restyle(fit(line, min(width, frameWidth)), m.theme.Cursor)
+			line = ui.Restyle(fit(line, min(width, frameWidth)), m.theme.Inactive)
 		}
 		out = append(out, line)
 	}
@@ -514,7 +598,10 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 		// A bid series can exist for a finish the retail history missed —
 		// the two tables have independent eras.
-		g = append(g, m.bidLines(s, b)...)
+		// The spread trend stays quiet for an overlay entered from the
+		// ARBITRAGE section, like the comps verdict — the reader came from
+		// the spread's conclusion.
+		g = append(g, m.bidLines(s, b, !d.fromArbitrage)...)
 		if len(g) > 0 {
 			groups = append(groups, g)
 		}
@@ -544,7 +631,14 @@ func (m Model) linkLines(d detail, width int) []string {
 	parts := make([]string, len(d.links))
 	for i, l := range d.links {
 		if i == d.linkCursor {
-			parts[i] = ui.Restyle(" "+l.name+" ", m.theme.Cursor)
+			// Bright only while the links zone has the arrows — one
+			// full-strength cursor on screen at a time, always the one
+			// ←/→ actually drives.
+			style := m.theme.Cursor
+			if d.zone != zoneLinks {
+				style = m.theme.Inactive
+			}
+			parts[i] = ui.Restyle(" "+l.name+" ", style)
 			continue
 		}
 		parts[i] = m.theme.Help.Render(" " + l.name + " ")
@@ -573,10 +667,10 @@ func sharedWindow(s, b []store.PricePoint) ([]store.PricePoint, []store.PricePoi
 }
 
 // bidLines renders one finish's buylist rows under its price row: the bid
-// sparkline, and — when both series overlap — the spread over time, the
-// confidence signal as a trend rather than a snapshot. retail and b
-// arrive already clipped to their shared window.
-func (m Model) bidLines(retail, b []store.PricePoint) []string {
+// sparkline, and — when both series overlap and withSpread allows — the
+// spread over time, the confidence signal as a trend rather than a
+// snapshot. retail and b arrive already clipped to their shared window.
+func (m Model) bidLines(retail, b []store.PricePoint, withSpread bool) []string {
 	if len(b) == 0 {
 		return nil
 	}
@@ -591,7 +685,7 @@ func (m Model) bidLines(retail, b []store.PricePoint) []string {
 		m.theme.Title.Render(ui.Money(now)))
 	out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(b))))
 
-	if vals, since, ok := spreadSeries(retail, b, sparkCells); ok {
+	if vals, since, ok := spreadSeries(retail, b, sparkCells); ok && withSpread {
 		last, first := vals[len(vals)-1], vals[0]
 		word := "steady"
 		switch {
@@ -619,20 +713,16 @@ func (m Model) compLines(d detail, width int) []string {
 	}
 	dim := m.theme.Help.Render
 	out := []string{"", m.theme.Title.Render("COMPS")}
+	if d.compsPending {
+		// The background read is in flight; the section holds its place so
+		// nothing below jumps when the sheet lands.
+		return append(out, dim("  reading today's vendor quotes…"))
+	}
 	if !d.compsOK {
 		return append(out, dim("  no vendor quotes today · press F on the MARKET view to fetch"))
 	}
 	if len(d.comps) == 0 {
 		return append(out, dim("  no vendor quoted this printing today"))
-	}
-
-	held := map[string]bool{}
-	for _, h := range d.holdings {
-		if scryfall.PricedAsFoil(h.Finish) {
-			held["foil"] = true
-		} else {
-			held["nonfoil"] = true
-		}
 	}
 
 	// The sheet lays out as a table — prose rows with different money
@@ -647,11 +737,10 @@ func (m Model) compLines(d detail, width int) []string {
 		{Title: "CK PAYS", Align: ui.Right},
 		{Title: "SPREAD", Align: ui.Right},
 	}}
-	type verdict struct {
-		finish string
-		c      market.Comp
-	}
-	var verdicts []verdict
+	// No verdict line under the table: the ARBITRAGE prose restated what
+	// the CK PAYS and SPREAD columns already say (an artifact of the sheet
+	// pre-dating those columns), and the market view remains the surface
+	// that ranks opportunities.
 	for _, finish := range []string{"nonfoil", "foil"} {
 		c, ok := d.comps[finish]
 		if !ok {
@@ -663,26 +752,9 @@ func (m Model) compLines(d detail, width int) []string {
 			ui.C(compMoney(c.HasCK, c.CK)),
 			ui.C(compMoney(c.HasBuylist, c.Buylist)),
 			compSpreadCell(env, c))
-		// Only the arbitrage verdict earns a line: a bid over the sales
-		// price is news; a decent bid is just the table's numbers again
-		// (a liquid verdict line said nothing the CK PAYS column didn't).
-		if held[finish] {
-			if k, ok := c.Verdict(); ok && k == market.KindProfit {
-				verdicts = append(verdicts, verdict{finish, c})
-			}
-		}
 	}
 	for _, line := range t.Lines() {
 		out = append(out, "  "+line)
-	}
-	for _, v := range verdicts {
-		line := "  " + m.theme.Title.Render(market.KindProfit.Title())
-		if len(verdicts) > 1 {
-			line += dim(" (" + v.finish + ")")
-		}
-		line += fmt.Sprintf(" · ck pays %s, +%s over tcg last-sold",
-			ui.Money(v.c.Buylist), ui.Money(v.c.Buylist-v.c.Market))
-		out = append(out, ui.Truncate(line, width))
 	}
 	return out
 }
