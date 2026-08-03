@@ -334,7 +334,7 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 	// An un-refreshed card has none of the frame fields. Say why once
 	// rather than leaving the reader to wonder what happened to the card.
 	if !c.Enriched {
-		out = append(out, dim("card details not stored yet · press : and run Update prices"))
+		out = append(out, dim("card details not stored yet · press : and run UpdatePrices"))
 	}
 
 	if c.OracleText != nil && *c.OracleText != "" {
@@ -440,7 +440,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 	}
 	if len(groups) == 0 {
-		out = append(out, dim("  no history yet · press : and run Backfill 90 days of price history"))
+		out = append(out, dim("  no history yet · press : and run BackfillPriceHistory90"))
 	}
 	for i, g := range groups {
 		if i > 0 {

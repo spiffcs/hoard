@@ -316,12 +316,11 @@ func TestCompsSidesToggle(t *testing.T) {
 	}
 	view = compsPart(strings.Join(m.marketLines(110), "\n"))
 	if !strings.Contains(view, "COMPS · BUY") || !strings.Contains(view, "CK BUYLIST") ||
-		!strings.Contains(view, "SPREAD") {
-		t.Fatalf("buy side should show the bid and its haircut:\n%s", view)
+		!strings.Contains(view, "SPREAD") || !strings.Contains(view, "TCG SOLD") {
+		t.Fatalf("buy side should anchor the bid against tcg sold:\n%s", view)
 	}
-	if strings.Contains(view, "TCG SOLD") || strings.Contains(view, "AT ") ||
-		strings.Contains(view, "LOW") {
-		t.Errorf("the sale columns belong to the sell side:\n%s", view)
+	if strings.Contains(view, "AT ") || strings.Contains(view, "LOW") {
+		t.Errorf("the cheapest-ask columns are gone:\n%s", view)
 	}
 	if note := m.selectedMarketNote(); !strings.Contains(note, "pays") {
 		t.Errorf("buy note = %q, want the bid explained", note)
@@ -425,8 +424,8 @@ func TestCycleFloorKeepsPristine(t *testing.T) {
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Fatalf("floored movers = %+v", m.movers)
 	}
-	for range 3 {
-		m = key(m, "M") // $10 → $25 → off
+	for range len(floorLevels) - 1 {
+		m = key(m, "M") // the rest of the cycle, back to off
 	}
 	if len(m.movers) != 2 {
 		t.Errorf("movers = %d after the floor lifted, want the hidden row back", len(m.movers))
@@ -464,8 +463,8 @@ func TestMoversWindowCacheMakesWInstant(t *testing.T) {
 	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v") // movers: 30-day window queried and cached
-	m = key(m, "W") // 7 days
 	m = key(m, "W") // 90 days
+	m = key(m, "W") // 7 days
 
 	// Every window has been seen once; cycling back must not touch the
 	// store at all.
@@ -506,8 +505,11 @@ func TestMoversPennyGate(t *testing.T) {
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Fatalf("default movers = %+v, want the penny row hidden", m.movers)
 	}
-	m.status = "" // the "showing movers" beat yields to the position line
-	if !strings.Contains(m.View(), "sub-$0.20 hidden") {
+	if m.status != "showing movers · sorted by impact · penny filter ≤ $0.20" {
+		t.Errorf("arrival beat = %q, want the sort and the armed filter named", m.status)
+	}
+	m.status = "" // the arrival beat yields to the position line
+	if !strings.Contains(m.View(), "penny filter ≤ $0.20") {
 		t.Error("the default gate must announce itself on the status line")
 	}
 
@@ -523,5 +525,64 @@ func TestMoversPennyGate(t *testing.T) {
 	m.deriveView()
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Errorf("floor over pennies = %+v, want only the $34 card", m.movers)
+	}
+}
+
+// SetPennyFilter moves the gate's line through a validated prompt: garbage
+// and out-of-range amounts refuse to commit, a good amount re-arms the
+// gate at its new height.
+func TestSetPennyFilter(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{
+		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
+		mover("Sol Ring-id", "nonfoil", 1, 0.15, 0.18),
+	}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v")
+
+	m.promptSetPennyLimit()
+	if m.prompt == nil {
+		t.Fatal("SetPennyFilter must open a prompt")
+	}
+	if m.prompt.text != "0.2" {
+		t.Errorf("prompt prefill = %q, want the current limit", m.prompt.text)
+	}
+	for _, bad := range []string{"", "abc", "-1", "101", "NaN"} {
+		if err := m.prompt.validate(bad); err == nil {
+			t.Errorf("validate(%q) accepted, want refused", bad)
+		}
+	}
+	if err := m.prompt.validate("$1.50"); err != nil {
+		t.Errorf("validate($1.50) = %v, want accepted", err)
+	}
+
+	// Raising the line to $40 swallows the $34 card too.
+	m.prompt.commit(&m, "$40")
+	if len(m.movers) != 0 {
+		t.Errorf("limit $40 movers = %+v, want all gated", m.movers)
+	}
+	if !strings.Contains(m.status, "$40") {
+		t.Errorf("status = %q, want the new limit named", m.status)
+	}
+
+	// Lowering it below the penny row shows everything; the status hint
+	// names the moved line.
+	m.promptSetPennyLimit()
+	m.prompt.commit(&m, "0.10")
+	m.prompt = nil
+	if len(m.movers) != 2 {
+		t.Errorf("limit $0.10 movers = %d rows, want both", len(m.movers))
+	}
+	m.status = ""
+	if !strings.Contains(m.View(), "penny filter ≤ $0.10") {
+		t.Errorf("status hint must track the moved line")
+	}
+
+	// Setting a line re-arms the gate even if pennies were showing.
+	m.moversPennies = true
+	m.promptSetPennyLimit()
+	m.prompt.commit(&m, "0.20")
+	if m.moversPennies {
+		t.Error("committing a new line must re-arm the gate")
 	}
 }

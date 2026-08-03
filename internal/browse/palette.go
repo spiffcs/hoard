@@ -14,6 +14,7 @@ package browse
 import (
 	"slices"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
@@ -37,6 +38,27 @@ type palette struct {
 	query   string
 	cursor  int
 	matches []paletteMatch
+}
+
+// spacedTitle lowercases a PascalCase title into the words a search would
+// type — "AddDeckByURL" → "add deck by url" — so spaced queries keep
+// matching without every command restating its own name in aliases.
+func spacedTitle(title string) string {
+	var b strings.Builder
+	runes := []rune(title)
+	for i, r := range runes {
+		if i > 0 {
+			prev := runes[i-1]
+			boundary := (unicode.IsUpper(r) && !unicode.IsUpper(prev)) ||
+				(unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1])) ||
+				(unicode.IsDigit(r) && !unicode.IsDigit(prev))
+			if boundary {
+				b.WriteRune(' ')
+			}
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }
 
 // paletteMatch is one applicable command, with the rune positions the query
@@ -77,8 +99,12 @@ func (m *Model) refreshPalette() {
 	targets := make([]string, 0, len(m.commands))
 	for i := range m.commands {
 		// Hidden commands keep their keys but never list: the palette is
-		// for the verbs, not the navigation reflexes.
+		// for the verbs, not the navigation reflexes. hide is the same,
+		// contextually.
 		if m.commands[i].hidden || !m.commands[i].applies(m) {
+			continue
+		}
+		if h := m.commands[i].hide; h != nil && h(m) {
 			continue
 		}
 		// Over the card detail the palette narrows to the price refreshers
@@ -89,7 +115,8 @@ func (m *Model) refreshPalette() {
 			continue
 		}
 		applicable = append(applicable, i)
-		targets = append(targets, m.commands[i].title+" "+m.commands[i].aliases)
+		targets = append(targets,
+			m.commands[i].title+" "+spacedTitle(m.commands[i].title)+" "+m.commands[i].aliases)
 	}
 
 	if p.query == "" {

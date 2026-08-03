@@ -2,9 +2,11 @@ package browse
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
-	"strings"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -46,12 +48,50 @@ func (v viewMode) String() string {
 func (v viewMode) next() viewMode { return (v + 1) % (viewMarket + 1) }
 
 // moversWindowDays are the lookbacks the movers view cycles through with
-// 'W'; the default matches `hoard movers`, so the two agree.
-var moversWindowDays = []int{30, 7, 90}
+// 'W', ascending with wrap (… → 7 → 30 → 90 → 7 → …); the default leads
+// and matches `hoard movers`, so the two agree.
+var moversWindowDays = []int{30, 90, 7}
 
-// moversPennyCeiling is the movers view's noise gate: cards priced at or
-// under it hide by default (the palette toggles them back).
-const moversPennyCeiling = 0.20
+// defaultPennyLimit is where the movers view's noise gate starts: cards
+// priced at or under it hide by default (TogglePennyFilter shows them,
+// SetPennyFilter moves the line).
+const defaultPennyLimit = 0.20
+
+// promptSetPennyLimit opens the penny filter's threshold prompt, prefilled
+// with the current line. The commit re-arms the gate: asking to move the
+// line while the pennies stayed showing would make the answer invisible.
+func (m *Model) promptSetPennyLimit() {
+	m.prompt = &prompt{
+		label:    "hide movers at or under",
+		text:     strconv.FormatFloat(m.moversPennyLimit, 'f', -1, 64),
+		help:     "a dollar amount, like 0.20 (0 turns the gate off) · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parsePennyLimit(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			n, err := parsePennyLimit(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			m.moversPennyLimit = n
+			m.moversPennies = false
+			m.deriveView()
+			m.status, m.statusErr = "penny filter ≤ "+ui.Money(n)+" on", false
+			return nil
+		},
+	}
+}
+
+// parsePennyLimit reads the penny filter's line: a plain dollar amount,
+// "$" optional. The cap keeps a typo from gating the whole view — a penny
+// filter at $500 is a hidden movers list, not a noise gate.
+func parsePennyLimit(text string) (float64, error) {
+	t := strings.TrimPrefix(strings.TrimSpace(text), "$")
+	n, err := strconv.ParseFloat(t, 64)
+	if err != nil || !(n >= 0 && n <= 100) {
+		return 0, fmt.Errorf("say a dollar amount from 0 to 100, like 0.20")
+	}
+	return n, nil
+}
 
 // moversWindow is the current lookback.
 func (m Model) moversWindow() time.Duration {
@@ -127,7 +167,7 @@ func (m *Model) deriveView() {
 			}
 			// The penny gate, separate from the floor: a $0.15 card
 			// twitching by a cent is a row, not information.
-			if !m.moversPennies && c.New <= moversPennyCeiling {
+			if !m.moversPennies && c.New <= m.moversPennyLimit {
 				continue
 			}
 			if filtered && !m.inContainerPriced(cid, c.ScryfallID, c.Finish) {

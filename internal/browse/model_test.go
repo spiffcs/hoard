@@ -1004,8 +1004,8 @@ func TestEmptyTraitResultExplainsAnUnrefreshedCatalog(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if got := m.statusLine(); !strings.Contains(got, "Update prices") {
-		t.Errorf("status = %q, want it to point at the Update prices command", got)
+	if got := m.statusLine(); !strings.Contains(got, "UpdatePrices") {
+		t.Errorf("status = %q, want it to point at the UpdatePrices command", got)
 	}
 }
 
@@ -2150,8 +2150,8 @@ func TestArbitrageEnterOpensDetail(t *testing.T) {
 }
 
 // The value floor hides cards priced under the level, cycling off → $5 →
-// $10 → $25 → off, across the priced views; the unpriced view is exempt
-// (its whole point is the $0 rows).
+// $10 → $25 → $50 → $100 → off, across the priced views; the unpriced view
+// is exempt (its whole point is the $0 rows).
 func TestValueFloorCyclesAndFilters(t *testing.T) {
 	m := newTestModel(t, testStore())
 	all := len(m.cards)
@@ -2187,7 +2187,9 @@ func TestValueFloorCyclesAndFilters(t *testing.T) {
 		t.Errorf("floor indicator missing:\n%s", m.View())
 	}
 
-	m = key(m, "M") // back to off
+	for range len(floorLevels) - 3 {
+		m = key(m, "M") // $50 → $100 → off
+	}
 	if len(m.cards) != all {
 		t.Fatalf("floor off restored %d of %d cards", len(m.cards), all)
 	}
@@ -2309,7 +2311,7 @@ func TestDetailLinesCardFrameOrder(t *testing.T) {
 
 	// An unenriched card keeps its remedy line, above everything hoard says.
 	bare := detail{card: store.CardDetail{Card: store.Card{Name: "Mystery"}}}
-	if got := strings.Join(m.detailLines(bare, 80), "\n"); !strings.Contains(got, "run Update prices") {
+	if got := strings.Join(m.detailLines(bare, 80), "\n"); !strings.Contains(got, "run UpdatePrices") {
 		t.Errorf("unenriched detail lost its remedy line:\n%s", got)
 	}
 }

@@ -218,19 +218,24 @@ func findContainer(m Model, name string) int {
 	return -1
 }
 
-// W cycles the movers window and re-queries.
+// W cycles the movers window ascending with wrap — 30 → 90 → 7 → 30 — and
+// re-queries.
 func TestMoversWindowCycle(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{{Name: "Riser", Finish: "nonfoil", Copies: 1, Old: 1, New: 2}}
 	m := newTestModel(t, st)
 	m = key(m, "v") // movers
 	m = key(m, "W")
-	if !strings.Contains(m.status, "last 7 days") {
+	if !strings.Contains(m.status, "last 90 days") {
 		t.Errorf("status = %q after W", m.status)
 	}
 	m = key(m, "W")
-	if !strings.Contains(m.status, "last 90 days") {
+	if !strings.Contains(m.status, "last 7 days") {
 		t.Errorf("status = %q after second W", m.status)
+	}
+	m = key(m, "W")
+	if !strings.Contains(m.status, "last 30 days") {
+		t.Errorf("status = %q after third W, want the wrap back to the default", m.status)
 	}
 	// Outside movers, W is not bound.
 	m = key(m, "v") // watches... continue to holdings

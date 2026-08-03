@@ -41,7 +41,7 @@ what is inside whichever row you have selected.
 | <kbd>u</kbd> | undo the last edit |
 | <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
 | <kbd>r</kbd> | reload |
-| <kbd>M</kbd> | value floor: hide cards under $5 → $10 → $25 → off (unpriced view exempt) |
+| <kbd>M</kbd> | value floor: hide cards under $5 → $10 → $25 → $50 → $100 → off (unpriced view exempt) |
 | <kbd>q</kbd> | quit — asks y/n first (main views only) |
 | <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
@@ -96,8 +96,9 @@ selection snaps back to All cards and says so.
 
 **Movers hides sub-$0.20 cards by default** — bulk twitching by cents is
 volume, not information. The status line says so, and the palette's
-"Toggle sub-$0.20 movers" shows them; this gate is separate from the
-<kbd>M</kbd> value floor, which layers on top.
+`TogglePennyFilter` shows them; `SetPennyFilter` moves the line anywhere
+from $0 (gate off) to $100 for hoards whose noise starts higher. This gate
+is separate from the <kbd>M</kbd> value floor, which layers on top.
 
 **The market view waits to be asked**: it needs today's vendor quotes from
 MTGJSON, so cycling to it
@@ -146,9 +147,9 @@ grades on a heat ramp: green when the vendors agree — agreement is what
 makes a price real — darkening through red as they diverge. **TCG SOLD**
 is always tcgplayer's sales-derived price — TCGplayer has no separate ask
 column because that one figure is both its price and its market anchor.
-The **buy side** is the other side of the counter: the asks beside Card
-Kingdom's cash bid, with its own **SPREAD** — retail minus buylist over
-retail, the hobby's confidence signal: 20–30% marks a liquid staple
+The **buy side** is the other side of the counter: tcg's last-sold and
+the asks beside Card Kingdom's cash bid, with its own **SPREAD** — retail
+minus buylist over retail, the hobby's confidence signal: 20–30% marks a liquid staple
 dealers can flip, around 50% is typical, and 80–90% means the retail
 price spiked and no dealer believes it yet — graded green as it tightens.
 A dash means no buylist bid today (Card Kingdom runs the only buylist in

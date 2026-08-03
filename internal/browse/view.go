@@ -501,7 +501,7 @@ func (m Model) statusLine() string {
 					"no watches shown for %s · All cards shows every container", sel.Name))
 			}
 			return m.theme.Help.Render(
-				"no watches · press w on a card in holdings, or : then \"Add a watch\"")
+				"no watches · press w on a card in holdings, or : then AddWatchFromCollection")
 		case viewUnpriced:
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
@@ -522,7 +522,7 @@ func (m Model) statusLine() string {
 	// as missing data, and the palette command that shows them is only
 	// discoverable if something points at it.
 	if m.view == viewMovers && !m.moversPennies {
-		pos += " · sub-$0.20 hidden (: shows them)"
+		pos += fmt.Sprintf(" · penny filter ≤ %s (: toggles)", ui.Money(m.moversPennyLimit))
 	}
 	return m.theme.Help.Render(pos)
 }

@@ -182,6 +182,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 
 	if buySide {
 		t := ui.Table{Cols: []ui.Col{name, setNum, fin,
+			{Title: "TCG SOLD", Align: ui.Right},
 			{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
 			{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
 			{Title: "CK BUYLIST", Align: ui.Right},
@@ -190,6 +191,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 		for _, c := range comps {
 			t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
 				ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+				ui.C(compMoney(c.HasMarket, c.Market)),
 				ui.C(compMoney(c.HasManapool, c.Manapool)),
 				ui.C(compMoney(c.HasCK, c.CK)),
 				ui.C(compMoney(c.HasBuylist, c.Buylist)),

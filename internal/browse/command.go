@@ -23,6 +23,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 type command struct {
@@ -44,6 +45,11 @@ type command struct {
 	// working — for the pure key reflexes (sort, floor, view cycling) the
 	// palette listing was noise beside the verbs that do something.
 	hidden bool
+	// hide is hidden's contextual sibling: true keeps an applicable
+	// command out of the palette right now, key still bound. For commands
+	// that earn their listing on some views and are noise on others —
+	// where would unbind the key along with the listing. Nil means never.
+	hide func(*Model) bool
 	// where reports whether the command applies right now; nil means
 	// always. Hidden commands are absent from the palette and their keys
 	// fall through. Finer contextual refusals belong in run as status
@@ -62,7 +68,7 @@ type command struct {
 func commands() []command {
 	return []command{
 		{
-			id: "add", title: "Add cards", aliases: "scan camera new card",
+			id: "add", title: "AddCards", aliases: "scan camera new card",
 			desc: "Open the add flow: type a card name, or scan with your iPhone.",
 			key:  "a",
 			rank: onView(viewHoldings, 3),
@@ -71,18 +77,22 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.openAddCascade() },
 		},
 		{
-			id: "remove", title: "Remove selected", aliases: "delete card deck",
+			id: "remove", title: "RemoveSelected", aliases: "delete card deck",
 			desc: "Remove the selected card or deck, after a y/n confirm.",
 			key:  "d",
+			// Off the watches and market palettes; on watches the key still
+			// removes the watch under the cursor.
+			hide: func(m *Model) bool { return m.view == viewWatches || m.view == viewMarket },
 			run:  func(m *Model) tea.Cmd { m.askRemoval(); return nil },
 		},
 		{
 			// No where guard: an empty undo stack answers "nothing to undo"
 			// through run — the feedback is the point, and hiding the command
 			// would swallow it.
-			id: "undo", title: "Undo last edit", aliases: "revert restore",
+			id: "undo", title: "UndoLastEdit", aliases: "revert restore",
 			desc: "Put back whatever the last quantity edit or removal changed.",
 			key:  "u",
+			hide: func(m *Model) bool { return m.view == viewWatches || m.view == viewMarket },
 			run:  func(m *Model) tea.Cmd { m.undoRecorded(); return nil },
 		},
 		{
@@ -115,7 +125,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.cycleFloor(); return nil },
 		},
 		{
-			id: "reload", title: "Reload from the database", aliases: "refresh",
+			id: "reload", title: "ReloadFromDatabase", aliases: "refresh",
 			desc: "Re-read everything from disk, keeping your place.",
 			key:  "r",
 			run:  func(m *Model) tea.Cmd { m.reload(); return nil },
@@ -126,7 +136,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.showView(m.view.next()) },
 		},
 		{
-			id: "op.update-prices", title: "Update prices", aliases: "refresh fetch scryfall daily",
+			id: "op.update-prices", title: "UpdatePrices", aliases: "refresh fetch scryfall daily",
 			desc:  "Fetch today's prices from Scryfall for every card you hold.",
 			where: func(m *Model) bool { return m.opUpdatePrices != nil },
 			rank: func(m *Model) int {
@@ -141,7 +151,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
 		},
 		{
-			id: "op.backfill", title: "Backfill 30 days of price history",
+			id: "op.backfill", title: "BackfillPriceHistory30",
 			aliases: "backdate movers history mtgjson import past",
 			// The archive's size lives in the description as prose, not a
 			// number — a hardcoded figure goes stale the day MTGJSON grows.
@@ -161,7 +171,7 @@ func commands() []command {
 		{
 			// The deeper window lives beside the movers view it feeds; the
 			// collection palette keeps the one everyday choice.
-			id: "op.backfill.90", title: "Backfill 90 days of price history",
+			id: "op.backfill.90", title: "BackfillPriceHistory90",
 			aliases: "backdate movers history mtgjson import past quarter",
 			desc:    "Download MTGJSON's daily price archive (a large file) and record the past 90 days.",
 			where:   func(m *Model) bool { return m.opBackfill != nil && m.view == viewMovers },
@@ -169,28 +179,35 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { return m.startBackfill(90) },
 		},
 		{
-			id: "op.repair-finishes", title: "Repair finishes", aliases: "fix foil unpriced zero",
+			id: "op.repair-finishes", title: "RepairFinishes", aliases: "fix foil unpriced zero",
 			desc:  "Move cards stored in a finish their printing lacks onto one it has.",
 			key:   "f",
 			where: func(m *Model) bool { return m.opRepairFinishes != nil },
-			rank:  onView(viewUnpriced, 4),
-			run:   func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
+			// Listed where its symptom shows — the unpriced view and the
+			// collection — not on movers or watches, whose rows are all
+			// priced. The card detail keeps it: its palette is the price
+			// refreshers. The f key works everywhere regardless.
+			hide: func(m *Model) bool {
+				return m.detail == nil && (m.view == viewMovers || m.view == viewWatches)
+			},
+			rank: onView(viewUnpriced, 4),
+			run:  func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
 		},
 		{
-			id: "op.catalog-update", title: "Update the card catalog", aliases: "download bundle scryfall rebuild",
+			id: "op.catalog-update", title: "UpdateCardCatalog", aliases: "download bundle scryfall rebuild",
 			desc:  "Download Scryfall's card bundle so lookups answer instantly and offline.",
 			where: func(m *Model) bool { return m.opCatalogUpdate != nil },
 			run:   func(m *Model) tea.Cmd { return m.startOp("updating the catalog", m.opCatalogUpdate) },
 		},
 		{
-			id: "deck.add-url", title: "Add a deck by URL", aliases: "import archidekt moxfield deckstats link",
+			id: "deck.add-url", title: "AddDeckByURL", aliases: "import archidekt moxfield deckstats link",
 			desc:  "Fetch a deck list from its link and import it as a deck.",
 			where: func(m *Model) bool { return m.opDeckAdd != nil },
 			rank:  onView(viewHoldings, 2),
 			run:   func(m *Model) tea.Cmd { m.promptDeckURL(); return nil },
 		},
 		{
-			id: "export.container", title: "Export this container", aliases: "csv save backup moxfield archidekt",
+			id: "export.container", title: "ExportThisContainer", aliases: "csv save backup moxfield archidekt",
 			desc: "Write the selected binder or deck to a CSV or JSON file.",
 			where: func(m *Model) bool {
 				return m.exportFn != nil && m.view == viewHoldings && m.selectedContainer() != nil
@@ -221,20 +238,20 @@ func commands() []command {
 			},
 		},
 		{
-			id: "export.all", title: "Export everything", aliases: "csv save backup all holdings",
+			id: "export.all", title: "ExportEverything", aliases: "csv save backup all holdings",
 			desc:  "Write every holding to one file.",
 			where: func(m *Model) bool { return m.exportFn != nil },
 			run:   func(m *Model) tea.Cmd { m.promptExport("", "", "hoard-export"); return nil },
 		},
 		{
-			id: "import.file", title: "Import a collection CSV", aliases: "manabox moxfield delver csv file",
+			id: "import.file", title: "ImportCollectionCSV", aliases: "manabox moxfield delver csv file",
 			desc:  "Add a collection export from ManaBox, Moxfield, Delver Lens or hoard.",
 			where: func(m *Model) bool { return m.opImport != nil },
 			rank:  onView(viewHoldings, 2),
 			run:   func(m *Model) tea.Cmd { m.promptImportPath(); return nil },
 		},
 		{
-			id: "report.view", title: "Report: valuation", aliases: "insurance worth top holdings dated",
+			id: "report.view", title: "ValuationReport", aliases: "insurance worth top holdings dated",
 			desc:  "A dated valuation: totals, per-binder breakdown, top holdings, price sources.",
 			where: func(m *Model) bool { return m.reportFn != nil },
 			run: func(m *Model) tea.Cmd {
@@ -248,21 +265,21 @@ func commands() []command {
 			},
 		},
 		{
-			id: "op.cancel", title: "Cancel the running operation", aliases: "stop abort",
+			id: "op.cancel", title: "CancelOperation", aliases: "stop abort",
 			desc:  "Stop the operation currently running, keeping what it finished.",
 			where: func(m *Model) bool { return m.op != nil },
 			rank:  func(*Model) int { return 10 },
 			run:   func(m *Model) tea.Cmd { m.cancelOp(); return nil },
 		},
 		{
-			id: "market.fetch", title: "Fetch vendor prices", aliases: "quotes compare buylist",
+			id: "market.fetch", title: "FetchVendorPrices", aliases: "quotes compare buylist",
 			desc:  "Download today's vendor quotes and rank the disagreements.",
 			where: func(m *Model) bool { return m.view == viewMarket && !m.marketLoaded },
 			rank:  func(*Model) int { return 5 },
 			run:   func(m *Model) tea.Cmd { return m.startMarketFetch() },
 		},
 		{
-			id: "view.populate", title: "Fetch this view's data", aliases: "populate refresh load",
+			id: "view.populate", title: "FetchViewData", aliases: "populate refresh load",
 			desc: "Run whatever fills this view: quotes, prices, history, repairs.",
 			key:  "F",
 			// Leads the analytical views, where F is the verb that makes an
@@ -276,20 +293,25 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.populateView() },
 		},
 		{
-			id: "watch.add", title: "Watch this card", aliases: "alert threshold price under over",
+			id: "watch.add", title: "WatchThisCard", aliases: "alert threshold price under over",
 			desc:  "Set a price threshold on the selected card; `hoard watch` fires the alert.",
 			key:   "w",
 			where: func(m *Model) bool { return m.subjectCard() != nil },
 			rank: func(m *Model) int {
-				if m.view == viewWatches {
+				switch m.view {
+				case viewWatches:
 					return 4
+				case viewMovers:
+					// A mover is the card you'd want an alert on — watching
+					// it outranks the everyday holdings verbs here.
+					return 1
 				}
 				return onView(viewHoldings, 2)(m)
 			},
 			run: func(m *Model) tea.Cmd { m.promptWatch(); return nil },
 		},
 		{
-			id: "watch.pick", title: "Add a watch from your collection", aliases: "alert threshold new pick choose",
+			id: "watch.pick", title: "AddWatchFromCollection", aliases: "alert threshold new pick choose",
 			desc: "Pick a card from your holdings and set its price alert.",
 			// Watches-only: every other view can reach a card and press w
 			// (or run "Watch this card") on it directly; the watches view
@@ -301,23 +323,25 @@ func commands() []command {
 		{
 			// The by-name path stays for cards you don't own yet — the
 			// picker above only offers what is already held.
-			id: "watch.add-by-name", title: "Add a watch for any card", aliases: "alert threshold new unowned by name",
+			id: "watch.add-by-name", title: "AddWatchForAnyCard", aliases: "alert threshold new unowned by name",
 			desc: "Resolve any card by name, owned or not, and set a price alert.",
 			// Watches-only, like the collection picker: everywhere else the
 			// card under the cursor is the watch you'd want.
 			where: func(m *Model) bool { return m.opWatchAdd != nil && m.view == viewWatches },
-			rank:  onView(viewWatches, 2),
-			run:   func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
+			// Same rank as the picker: the registry order breaks the tie, so
+			// the two add-a-watch verbs sit together, picker first.
+			rank: onView(viewWatches, 5),
+			run:  func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
-			id: "binder.new", title: "New binder", aliases: "create folder",
+			id: "binder.new", title: "NewBinder", aliases: "create folder",
 			desc: "Create a named binder and switch to it, ready for cards.",
 			key:  "n",
 			rank: onView(viewHoldings, 2),
 			run:  func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
 		},
 		{
-			id: "binder.rename", title: "Rename binder", aliases: "name folder",
+			id: "binder.rename", title: "RenameBinder", aliases: "name folder",
 			desc: "Rename the selected binder.",
 			key:  "R",
 			run:  func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
@@ -329,21 +353,30 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
 		},
 		{
-			id: "movers.pennies", title: "Toggle sub-$0.20 movers",
+			id: "movers.pennies", title: "TogglePennyFilter",
 			aliases: "pennies cheap bulk noise show hide",
-			desc:    "Show or hide movers priced at or under $0.20 — hidden by default.",
+			desc:    "Show or hide movers priced at or under the penny limit — hidden by default.",
 			where:   func(m *Model) bool { return m.view == viewMovers },
 			rank:    onView(viewMovers, 1),
 			run: func(m *Model) tea.Cmd {
 				m.moversPennies = !m.moversPennies
 				m.deriveView()
+				state := "on"
 				if m.moversPennies {
-					m.status, m.statusErr = "showing movers at or under $0.20", false
-				} else {
-					m.status, m.statusErr = "hiding movers at or under $0.20", false
+					state = "off"
 				}
+				m.status, m.statusErr = fmt.Sprintf("penny filter ≤ %s %s",
+					ui.Money(m.moversPennyLimit), state), false
 				return nil
 			},
+		},
+		{
+			id: "movers.pennies.limit", title: "SetPennyFilter",
+			aliases: "penny limit threshold ceiling default set filter line",
+			desc:    "Move the penny filter's line — movers at or under it hide.",
+			where:   func(m *Model) bool { return m.view == viewMovers },
+			rank:    onView(viewMovers, 1),
+			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
 		},
 		{
 			id: "market.table.next", aliases: "next table section",
@@ -530,10 +563,14 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	// arriving somewhere sorted by a column you chose last week reads as
 	// wrong data until the label says otherwise. Market is the exception:
 	// its four tables each keep their own sort, and naming the cursor's
-	// would claim more than it says.
+	// would claim more than it says. Movers with the penny filter armed
+	// names the filter too — rows silently absent read as missing data.
 	m.status = "showing " + m.view.String()
 	if v != viewMarket {
 		m.status += " · sorted by " + m.sortLabel()
+	}
+	if v == viewMovers && !m.moversPennies {
+		m.status += " · penny filter ≤ " + ui.Money(m.moversPennyLimit)
 	}
 	m.statusErr = false
 	// A selection this view greys out cannot stay selected — the cursor

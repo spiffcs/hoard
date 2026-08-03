@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/store"
 )
 
 func openTestPalette(t *testing.T) Model {
@@ -208,6 +209,131 @@ func TestDetailPaletteOffersOnlyPriceRefreshers(t *testing.T) {
 	for _, match := range m.palette.matches {
 		if id := m.commands[match.index].id; !detailPaletteIDs[id] {
 			t.Errorf("palette offers %q over the detail, want price refreshers only", id)
+		}
+	}
+}
+
+// Spaced queries keep matching PascalCase titles: the palette derives the
+// spaced words from each title, so "update prices" finds UpdatePrices
+// without every command restating its own name in aliases.
+func TestSpacedTitle(t *testing.T) {
+	for title, want := range map[string]string{
+		"AddCards":               "add cards",
+		"AddDeckByURL":           "add deck by url",
+		"ImportCollectionCSV":    "import collection csv",
+		"BackfillPriceHistory30": "backfill price history 30",
+		"SetPennyFilter":         "set penny filter",
+		"":                       "",
+	} {
+		if got := spacedTitle(title); got != want {
+			t.Errorf("spacedTitle(%q) = %q, want %q", title, got, want)
+		}
+	}
+}
+
+// The registry search targets stay spaced-query friendly end to end.
+func TestPaletteMatchesSpacedQuery(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
+	m.openPalette()
+	m.palette.query = "update prices"
+	m.refreshPalette()
+	found := false
+	for _, match := range m.palette.matches {
+		if m.commands[match.index].id == "op.update-prices" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error(`query "update prices" must match UpdatePrices`)
+	}
+}
+
+// The movers palette drops RepairFinishes — every row there is priced, so
+// the repair has nothing to fix — and ranks WatchThisCard above the
+// everyday holdings verbs like AddCards.
+func TestMoversPaletteRanking(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	m := atAllCards(t, newTestModel(t, st))
+	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
+	m = key(m, "v") // movers
+	m.openPalette()
+	watchAt, addAt := -1, -1
+	for i, match := range m.palette.matches {
+		switch m.commands[match.index].id {
+		case "watch.add":
+			watchAt = i
+		case "add":
+			addAt = i
+		case "op.repair-finishes":
+			t.Error("RepairFinishes offered on movers")
+		}
+	}
+	if watchAt == -1 || addAt == -1 || watchAt > addAt {
+		t.Errorf("WatchThisCard at %d, AddCards at %d — want the watch ranked above", watchAt, addAt)
+	}
+}
+
+// The watches palette keeps the two add-a-watch verbs together — the
+// collection picker leads, the by-name fallback sits directly under it —
+// and drops the holdings-editing verbs (their keys stay bound).
+func TestWatchesPaletteRanking(t *testing.T) {
+	st := testStore()
+	w := store.WatchStatus{Name: "Bitterblossom"}
+	w.ScryfallID, w.Finish, w.Op, w.Threshold = "Bitterblossom-id", "nonfoil", "<=", 30
+	st.watches = []store.WatchStatus{w}
+	m := atAllCards(t, newTestModel(t, st))
+	m.opWatchAdd = func(ctx context.Context, p progress.Fn, name, op string, threshold float64) (string, error) {
+		return "", nil
+	}
+	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
+	for range 3 {
+		m = key(m, "v") // movers → unpriced → watches
+	}
+	if m.view != viewWatches {
+		t.Fatalf("view = %v, want watches", m.view)
+	}
+	m.openPalette()
+	pickAt, byNameAt := -1, -1
+	for i, match := range m.palette.matches {
+		switch m.commands[match.index].id {
+		case "watch.pick":
+			pickAt = i
+		case "watch.add-by-name":
+			byNameAt = i
+		case "remove", "undo", "op.repair-finishes":
+			t.Errorf("%s offered on watches", m.commands[match.index].id)
+		}
+	}
+	if pickAt == -1 || byNameAt == -1 || byNameAt != pickAt+1 {
+		t.Errorf("AddWatchFromCollection at %d, AddWatchForAnyCard at %d — want them adjacent, picker first",
+			pickAt, byNameAt)
+	}
+
+	// Hidden from the listing, not unbound: d still stages the removal of
+	// the watch under the cursor.
+	m.palette = nil
+	m = key(m, "d")
+	if m.confirm == nil {
+		t.Error("d on watches must still stage the watch removal")
+	}
+}
+
+// The market palette drops the holdings-editing verbs too: nothing on the
+// vendor sheets is a row you'd remove or an edit you'd undo.
+func TestMarketPaletteDropsEditVerbs(t *testing.T) {
+	m := newTestModel(t, testStore())
+	for range 4 {
+		m = key(m, "v") // movers → unpriced → watches → market
+	}
+	if m.view != viewMarket {
+		t.Fatalf("view = %v, want market", m.view)
+	}
+	m.openPalette()
+	for _, match := range m.palette.matches {
+		if id := m.commands[match.index].id; id == "remove" || id == "undo" {
+			t.Errorf("%s offered on market", id)
 		}
 	}
 }

@@ -205,11 +205,12 @@ type Model struct {
 	moversCacheGen int
 	dataGen        int
 
-	// moversPennies shows the sub-$0.20 movers the view hides by default:
-	// bulk wobbling by cents is volume without information. Separate from
-	// the value floor — this is the movers view's own noise gate, toggled
-	// from the palette.
-	moversPennies bool
+	// The movers view's own noise gate, separate from the value floor:
+	// cards at or under moversPennyLimit hide unless moversPennies shows
+	// them — bulk wobbling by cents is volume without information. The
+	// limit defaults to defaultPennyLimit; SetPennyFilter moves it.
+	moversPennies    bool
+	moversPennyLimit float64
 
 	// entryIndex answers "does this container hold this printing":
 	// containerID → "scryfallID|finish". viewEligible marks the containers
@@ -312,7 +313,7 @@ func New(st Store, opts ...Option) (Model, error) {
 	sp.Spinner = spinner.Dot
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
-		commands: commands()}
+		commands: commands(), moversPennyLimit: defaultPennyLimit}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -518,7 +519,7 @@ func (m *Model) applyFilter() {
 }
 
 // floorLevels are the value-floor presets M cycles through; 0 is off.
-var floorLevels = []float64{0, 5, 10, 25}
+var floorLevels = []float64{0, 5, 10, 25, 50, 100}
 
 // floorMin is the active mask threshold, 0 when off.
 func (m Model) floorMin() float64 { return floorLevels[m.floorIdx] }
@@ -567,7 +568,7 @@ func (m *Model) refreshEmptyNote() {
 	}
 	switch {
 	case enriched == 0:
-		m.emptyNote = "no card details stored yet · press : and run Update prices to filter by rarity, type or colour"
+		m.emptyNote = "no card details stored yet · press : and run UpdatePrices to filter by rarity, type or colour"
 	case enriched < total:
 		m.emptyNote = fmt.Sprintf("no matches · %d of %d cards have details; update-prices fills the rest",
 			enriched, total)
