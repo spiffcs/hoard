@@ -9,7 +9,7 @@ package browse
 
 import "fmt"
 
-// loadSetContainers reads the left pane in sets mode: All cards, then one
+// loadSetContainers reads the left pane in sets mode: All Cards, then one
 // row per set held, in the store's order (newest release first, unknown
 // dates last).
 func (m *Model) loadSetContainers() error {
@@ -38,7 +38,7 @@ func (m *Model) loadSetContainers() error {
 }
 
 // toggleSetsMode flips the left pane between binders/decks and sets. The
-// row set changes entirely, so the selection resets to All cards — the one
+// row set changes entirely, so the selection resets to All Cards — the one
 // row both listings share — and the card pane and views re-derive against
 // it.
 func (m *Model) toggleSetsMode() {

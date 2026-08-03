@@ -38,7 +38,7 @@ const kindAllCards = "all"
 const kindSet = "set"
 
 // allCardsName is the merged row's on-screen name.
-const allCardsName = "All cards"
+const allCardsName = "All Cards"
 
 // container is one row of the left pane: the merged all-cards view, the
 // loose collection, or a deck. Kind is what the card pane branches on when
@@ -1365,7 +1365,7 @@ func (m *Model) move(delta int) {
 }
 
 // moveTo jumps the focused cursor to target — the home/end keys. An
-// ineligible target walks back toward All cards, which is always eligible.
+// ineligible target walks back toward All Cards, which is always eligible.
 func (m *Model) moveTo(target int) {
 	n := m.rowCount(m.focus)
 	if n == 0 {

@@ -16,10 +16,10 @@ tab cards · n new binder · a add cards · R rename · d remove · : import/exp
 F refresh prices · v views · u undo · q quit
 ```
 
-The left pane leads with **All cards** — every holding in the hoard, all
+The left pane leads with **All Cards** — every holding in the hoard, all
 binders and decks merged into one list (read-only: edit a card where it
 lives) — then your binders (the default binder, then any you created with
-`hoard binder new`), then every deck ranked by value. On All cards,
+`hoard binder new`), then every deck ranked by value. On All Cards,
 same-name printings collapse into one row: ten Forests across four
 printings are one ×10 line, and the set column shows the dash when the
 copies span printings (a set naming one of four would be a lie). The
@@ -109,7 +109,7 @@ low); unset, hoard uses 2.8.
 and unpriced — the everyday reads first, then the alerts, then the
 maintenance list. All but market are instant database reads.
 
-**Every view reads through the collection pane.** All cards is the whole
+**Every view reads through the collection pane.** All Cards is the whole
 hoard; selecting a binder or deck narrows the view to what it holds, and
 the header names the selection (`MOVERS · SINCE 2 Jul · RICH DECK`).
 Quantities follow the scope: a card held across several containers shows
@@ -117,7 +117,7 @@ the selected container's own copy count — QTY, IMPACT, and comp values
 describe that deck or binder, not every copy in the collection. On
 unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
-selection snaps back to All cards and says so.
+selection snaps back to All Cards and says so.
 
 **Browsing by set.** <kbd>B</kbd> (or `BrowseBySets` in the palette) flips
 the left pane from binders and decks to SETS: one row per set you own cards

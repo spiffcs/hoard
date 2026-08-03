@@ -647,7 +647,7 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	m.statusErr = false
 	// A selection this view greys out cannot stay selected — the cursor
 	// would rest on a row advertised as unselectable, over a pane whose
-	// emptiness reads as "none exist anywhere". Snap to All cards and say so.
+	// emptiness reads as "none exist anywhere". Snap to All Cards and say so.
 	if !m.containerEligible(m.cursor[paneContainers]) {
 		sel := m.selectedContainer()
 		m.cursor[paneContainers], m.offset[paneContainers] = 0, 0

@@ -686,7 +686,7 @@ func newTestModel(t *testing.T, st Store) Model {
 	return next.(Model)
 }
 
-// atAllCards moves the container cursor to the merged All cards row and
+// atAllCards moves the container cursor to the merged All Cards row and
 // re-derives the panes. Analytical tests seed rows the fixture binder does
 // not hold, and the views now filter to the selection newTestModel pins.
 func atAllCards(t *testing.T, m Model) Model {
@@ -2236,7 +2236,7 @@ func TestHelpLineWrapsInsteadOfTruncating(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	m = next.(Model)
 
-	lines := wrapHelp(m.helpLine(), 60)
+	lines := ui.WrapHelp(m.helpLine(), 60)
 	if len(lines) < 2 {
 		t.Fatalf("holdings help should wrap at width 60, got %d line(s)", len(lines))
 	}
@@ -2829,7 +2829,7 @@ func TestQuitConfirmKeepsFrameHeight(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab") // the card pane's help is the long, wrapping one
 	before := m.visibleRows()
-	if len(wrapHelp(m.helpLine(), m.width)) < 2 {
+	if len(ui.WrapHelp(m.helpLine(), m.width)) < 2 {
 		t.Skip("fixture help no longer wraps at this width; widen the line or narrow the frame")
 	}
 	m = key(m, "q")

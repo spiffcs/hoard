@@ -354,7 +354,7 @@ func (m Model) marketStatus() string {
 	case m.marketTotalRows() == 0:
 		if sel := m.selectedContainer(); sel != nil && sel.Kind != kindAllCards {
 			return m.theme.Help.Render(fmt.Sprintf(
-				"no market rows in %s · All cards shows every container", sel.Name))
+				"no market rows in %s · All Cards shows every container", sel.Name))
 		}
 		return m.theme.Help.Render("no vendor disagreed about anything you own today")
 	}

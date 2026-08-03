@@ -1,7 +1,7 @@
 package browse
 
 // The container pane as a filter. Every view reads its rows through the
-// selected container: All cards means unfiltered, anything else narrows the
+// selected container: All Cards means unfiltered, anything else narrows the
 // view to what that container holds. Membership is answered by an index of
 // (container, printing, finish) facts rather than by names — container
 // labels are not unique — and the same index says which containers are
@@ -41,7 +41,7 @@ func (m *Model) rebuildEntryIndex() error {
 }
 
 // filterContainerID is the container the views must filter to, ok=false
-// when the selection is All cards — no filtering — or a set row, whose
+// when the selection is All Cards — no filtering — or a set row, whose
 // synthetic id backs no entryIndex entry (sets filter by code instead;
 // see filterSetCode).
 func (m Model) filterContainerID() (int64, bool) {
@@ -96,7 +96,7 @@ func (m Model) containerQtyPriced(cid int64, scryfallID, priceFinish string) int
 }
 
 // containerEligible reports whether the container row at index i can be
-// selected on the current view. All cards always can; views that set no
+// selected on the current view. All Cards always can; views that set no
 // eligibility set accept everything.
 func (m Model) containerEligible(i int) bool {
 	if i < 0 || i >= len(m.containers) {

@@ -26,7 +26,7 @@ func mover(scryfallID, finish string, copies int, old, now float64) store.PriceC
 }
 
 // The movers view narrows to the selected container: the binder shows its
-// own movers, a deck its own, All cards everything — and a foil-priced
+// own movers, a deck its own, All Cards everything — and a foil-priced
 // mover matches a container that holds only the etched printing, because
 // price feeds fold etched into foil.
 func TestMoversFilterByContainer(t *testing.T) {
@@ -62,17 +62,17 @@ func TestMoversFilterByContainer(t *testing.T) {
 		t.Fatalf("cheap deck movers = %+v, want the foil-priced mover matching the etched holding", m.movers)
 	}
 
-	m = key(m, "home") // All cards
+	m = key(m, "home") // All Cards
 	if len(m.movers) != 4 {
 		t.Errorf("all-cards movers = %d rows, want all 4", len(m.movers))
 	}
 	if title, _ := m.viewHeader(); strings.Contains(title, "· ALL CARDS") {
-		t.Errorf("header = %q, All cards is the unfiltered whole, not a scope", title)
+		t.Errorf("header = %q, All Cards is the unfiltered whole, not a scope", title)
 	}
 }
 
 // The unpriced view greys out containers with nothing unpriced: switching
-// to it from an ineligible selection snaps to All cards, and the container
+// to it from an ineligible selection snaps to All Cards, and the container
 // cursor steps over the greyed rows in both directions.
 func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 	st := testStore()
@@ -88,7 +88,7 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 	_ = (&m).showView(viewUnpriced)
 
 	if m.cursor[paneContainers] != 0 {
-		t.Fatalf("cursor = %d, want the ineligible selection snapped to All cards", m.cursor[paneContainers])
+		t.Fatalf("cursor = %d, want the ineligible selection snapped to All Cards", m.cursor[paneContainers])
 	}
 	if !strings.Contains(m.status, "has no unpriced") {
 		t.Errorf("status = %q, want the snap explained", m.status)
@@ -101,7 +101,7 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 			m.containerEligible(1), m.containerEligible(2), m.containerEligible(3))
 	}
 
-	m = key(m, "tab")  // into the container pane, at All cards
+	m = key(m, "tab")  // into the container pane, at All Cards
 	m = key(m, "down") // skips the binder, lands on Rich Deck
 	if m.cursor[paneContainers] != 2 {
 		t.Fatalf("cursor = %d, want the greyed binder skipped", m.cursor[paneContainers])
@@ -118,9 +118,9 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 	if m.cursor[paneContainers] != 2 {
 		t.Errorf("end landed on %d, want the last eligible row", m.cursor[paneContainers])
 	}
-	m = key(m, "up") // back over the binder to All cards
+	m = key(m, "up") // back over the binder to All Cards
 	if m.cursor[paneContainers] != 0 {
-		t.Errorf("cursor = %d, want All cards", m.cursor[paneContainers])
+		t.Errorf("cursor = %d, want All Cards", m.cursor[paneContainers])
 	}
 }
 
@@ -206,7 +206,7 @@ func TestMarketRowsFollowContainer(t *testing.T) {
 		t.Fatalf("rich deck comps = %+v", m.marketComps)
 	}
 
-	m.moveTo(0) // All cards: everything
+	m.moveTo(0) // All Cards: everything
 	if len(m.marketRows) != 2 || len(m.marketComps) != 2 {
 		t.Errorf("all-cards market = %d rows, %d comps, want 2 and 2",
 			len(m.marketRows), len(m.marketComps))
@@ -647,7 +647,7 @@ func TestScopedViewsShowContainerQuantity(t *testing.T) {
 	if len(m.movers) != 1 || m.movers[0].Copies != 3 {
 		t.Fatalf("cheap deck movers = %+v, want Solitude at the deck's 3 copies", m.movers)
 	}
-	m = key(m, "home") // All cards
+	m = key(m, "home") // All Cards
 	if len(m.movers) != 1 || m.movers[0].Copies != 4 {
 		t.Fatalf("all-cards movers = %+v, want the hoard-wide 4 copies", m.movers)
 	}
@@ -669,7 +669,7 @@ func TestScopedViewsShowContainerQuantity(t *testing.T) {
 	if v := m.marketComps[0].Card.Value; v != 34 {
 		t.Errorf("scoped comp value = %v, want 34 (one copy's worth)", v)
 	}
-	m.moveTo(0) // All cards
+	m.moveTo(0) // All Cards
 	if len(m.marketComps) != 1 || m.marketComps[0].Card.Copies != 4 || m.marketComps[0].Card.Value != 136 {
 		t.Fatalf("all-cards comps = %+v, want the hoard-wide figures restored", m.marketComps)
 	}
@@ -859,7 +859,7 @@ func TestStatusLineLeadsWithPosition(t *testing.T) {
 	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st)) // focus rests on the container pane
 	m.status = ""
-	if got := m.statusLine(); !strings.Contains(got, "1/4 · All cards") {
+	if got := m.statusLine(); !strings.Contains(got, "1/4 · All Cards") {
 		t.Errorf("container status = %q, want position then the selected container", got)
 	}
 

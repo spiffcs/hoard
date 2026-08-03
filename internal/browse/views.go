@@ -14,7 +14,7 @@ import (
 
 // viewMode is what the right pane is showing.
 //
-// Every mode reads through the container pane: All cards is the whole
+// Every mode reads through the container pane: All Cards is the whole
 // hoard, and any other selection narrows the view to what that container
 // holds — the same contract the holdings view has always had. The header
 // names the selection so a filtered table says so.

@@ -1129,20 +1129,38 @@ func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
 	}
 }
 
-func TestEscAtCaptureClosesCameraButKeepsSession(t *testing.T) {
+func TestEscAtCaptureOpensLeaveGateAndCCloses(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
+	// esc keeps its session-wide meaning: the gated quit, not the close.
 	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got = mm.(model)
+	if got.state != stateLeaveConfirm || isQuit(cmd) {
+		t.Fatalf("esc should open the leave gate without quitting, got %v", got.state)
+	}
+	if sess.closed {
+		t.Error("the leave gate must not close the camera — declining is free")
+	}
+
+	// A stray key declines and lands back on the live camera.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	got = mm.(model)
+	if got.state != stateCapture || sess.closed {
+		t.Fatalf("declining should return to capture with the camera open, got %v", got.state)
+	}
+
+	// c is the close key: back to the prompt, window closed, program alive.
+	mm, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	got = mm.(model)
 	if got.state != stateName {
-		t.Errorf("esc should return to the prompt, got %v", got.state)
+		t.Errorf("c should return to the prompt, got %v", got.state)
 	}
 	if !sess.closed || got.session != nil {
-		t.Error("esc should close the camera window")
+		t.Error("c should close the camera window")
 	}
 	if isQuit(cmd) {
-		t.Error("esc at capture should not quit the add session")
+		t.Error("c at capture should not quit the add session")
 	}
 }
 
@@ -1152,7 +1170,7 @@ func TestStaleSessionEventsAreDropped(t *testing.T) {
 	stale := got.sessionGen
 
 	// Close the camera, then deliver an event from the session that just died.
-	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got = mm.(model)
 
 	mm, _ = got.Update(sessionEventMsg{gen: stale, ok: true,
@@ -1850,8 +1868,8 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	}
 }
 
-func TestEscWithQueuePrompts(t *testing.T) {
-	// esc with queued cards prompts instead of dropping them silently.
+func TestCloseKeyWithQueuePrompts(t *testing.T) {
+	// c with queued cards prompts instead of dropping them silently.
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -1863,13 +1881,13 @@ func TestEscWithQueuePrompts(t *testing.T) {
 		prints: ranked, rank: rank, note: "queued"}
 	m.review = []queueItem{item}
 
-	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got := mm.(model)
 	if got.state != stateClosePrompt {
-		t.Fatalf("esc with a queue should prompt, got %v", got.state)
+		t.Fatalf("c with a queue should prompt, got %v", got.state)
 	}
 	if sess.closed {
-		t.Fatal("the prompt must not have closed the camera yet — esc-again is free")
+		t.Fatal("the prompt must not have closed the camera yet — c-again is free")
 	}
 
 	// esc again: changed my mind, back to the camera.
@@ -1900,14 +1918,50 @@ func TestEscWithQueuePrompts(t *testing.T) {
 	}
 }
 
-func TestEscWithQueueDiscards(t *testing.T) {
+func TestEscWithQueueWarnsBeforeDropping(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := openCapture(t, m)
+	m.review = []queueItem{{id: 1, ocrLine: "x", note: "queued"}}
+	m.resolving = 1 // one lookup still in flight
+
+	// esc goes straight to the leave gate — no close-prompt detour — and
+	// the gate states the cost.
+	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got := mm.(model)
+	if got.state != stateLeaveConfirm || isQuit(cmd) {
+		t.Fatalf("esc with a queue should open the leave gate, got %v", got.state)
+	}
+	if v := got.View(); !strings.Contains(v, "2 unsaved scans will be dropped") {
+		t.Fatalf("the gate should state what quitting drops:\n%s", v)
+	}
+	if sess.closed {
+		t.Fatal("the gate must not have closed the camera — declining is free")
+	}
+
+	// Declining returns to the live camera with the queue intact.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	got = mm.(model)
+	if got.state != stateCapture || len(got.review) != 1 || got.resolving != 1 {
+		t.Fatalf("declining should keep the session whole: state=%v review=%d resolving=%d",
+			got.state, len(got.review), got.resolving)
+	}
+
+	// y quits, closing the camera and dropping the unsaved scans with it.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, cmd = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !isQuit(cmd) || !sess.closed {
+		t.Fatalf("y should quit and close the camera: quit=%v closed=%v", isQuit(cmd), sess.closed)
+	}
+}
+
+func TestCloseKeyWithQueueDiscards(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 	m.review = []queueItem{{id: 1, ocrLine: "x", note: "queued"}}
 	m.resolving = 1 // one lookup still in flight
 	stale := m.resolveGen
 
-	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got := mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	got = mm.(model)
@@ -1961,7 +2015,7 @@ func TestSessionDestPickedOnceAndStampsAutoCommits(t *testing.T) {
 	}
 
 	// Closing and reopening the camera does not re-ask.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	if s := mm.(model).state; s == stateDestPick {

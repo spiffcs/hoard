@@ -272,7 +272,7 @@ func TestNameSlug(t *testing.T) {
 	}
 }
 
-// The All cards list merges same-name same-finish printings into one row:
+// The All Cards list merges same-name same-finish printings into one row:
 // quantities and values sum, and the printing columns survive only when
 // every merged row agrees.
 func TestAllCardsMergesByName(t *testing.T) {

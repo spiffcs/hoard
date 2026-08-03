@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -284,6 +285,9 @@ type model struct {
 	// esc at the name prompt returns there rather than ending a program —
 	// the help wording is the only behavioral difference.
 	embedded bool
+	// leaveFrom is where esc opened the leave gate, so a declined quit
+	// returns exactly there — the name prompt or the live camera.
+	leaveFrom state
 	// addedValue is the running market value of those adds (qty-weighted,
 	// unpriced printings contribute nothing) — the money beside the count.
 	addedValue float64
@@ -471,6 +475,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(msg.Width, m.listHeight())
+		// The name input tracks the window so its placeholder shrinks rather
+		// than spilling; the "> " prompt and cursor account for the margin.
+		m.nameInput.Width = max(min(50, msg.Width-4), 10)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -552,6 +559,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Leaving is gated: the prompt states what is saved and what
 			// leaving drops, then a single y confirms — the same shape as
 			// the browser's quit confirm.
+			m.leaveFrom = stateName
 			m.state = stateLeaveConfirm
 			return m, nil
 		case tea.KeyCtrlO, tea.KeyCtrlR:
@@ -614,6 +622,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openVideoEffects()
 			case string(msg.Runes) == ":":
 				return m.openPalette()
+			case strings.EqualFold(string(msg.Runes), "c"):
+				// Closing the camera with unprocessed cards — queued or still
+				// resolving — deserves a decision, not a silent drop. The
+				// session stays open until it's made, so c-again costs nothing.
+				if len(m.review) > 0 || m.resolving > 0 {
+					m.state = stateClosePrompt
+					return m, nil
+				}
+				m.closeSession()
+				return m.cancelToName()
 			}
 		case tea.KeyCtrlR:
 			// Switch phones without leaving the camera step.
@@ -621,15 +639,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.beginScan(true)
 			return m, cmd
 		case tea.KeyEsc:
-			// Closing the camera with unprocessed cards — queued or still
-			// resolving — deserves a decision, not a silent drop. The session
-			// stays open until it's made, so esc-again costs nothing.
-			if len(m.review) > 0 || m.resolving > 0 {
-				m.state = stateClosePrompt
-				return m, nil
-			}
-			m.closeSession()
-			return m.cancelToName()
+			// Esc keeps its session-wide meaning — the gated quit — rather
+			// than doubling as the close key (that's c). The gate itself
+			// warns when unprocessed cards would be dropped; the camera
+			// stays live under it either way.
+			m.leaveFrom = stateCapture
+			m.state = stateLeaveConfirm
+			return m, nil
 		}
 	case stateCapturing:
 		// The shutter is already pressed; esc abandons the whole camera rather
@@ -711,9 +727,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		// Anything else stays: the safe reading of a stray keystroke on a
-		// leave gate is "don't".
-		m.state = stateName
-		return m, textinput.Blink
+		// leave gate is "don't" — back to wherever esc was pressed.
+		m.state = m.leaveFrom
+		if m.leaveFrom == stateName {
+			return m, textinput.Blink
+		}
+		return m, nil
 	case stateNamePick:
 		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
 			ni, ok := it.(nameItem)
@@ -1755,12 +1774,26 @@ func (m model) listHeight() int {
 
 // escHelp names what esc does at the name prompt: standalone it ends the
 // program, embedded it returns to the browser — the same key, two honest
-// labels.
+// labels, worded like every other esc hint (the confirm gate speaks for
+// itself when it appears).
 func (m model) escHelp() string {
+	return "ctrl+d done adding · " + m.escLabel()
+}
+
+// help renders a help line wrapped between its " · " entries, so a hint that
+// would be cut mid-phrase by the view-wide word wrap moves whole to the next
+// line instead — "esc close camera" never splits after "esc".
+func (m model) help(s string) string {
+	return m.theme.Help.Render(strings.Join(ui.WrapHelp(s, m.width), "\n"))
+}
+
+// escLabel is the esc hint alone, shared by every step where esc opens the
+// leave gate.
+func (m model) escLabel() string {
 	if m.embedded {
-		return "ctrl+d done adding · esc leave (asks first)"
+		return "esc back"
 	}
-	return "ctrl+d done adding · esc quit (asks first)"
+	return "esc quit"
 }
 
 // batchHelp appends the skip key to a cascade help line while a review item's
@@ -1810,7 +1843,19 @@ func (m model) scanHeader() string {
 	return line + "\n\n"
 }
 
+// View word-wraps every state's content to the terminal width: bubbletea's
+// renderer truncates overlong lines outright, so wrapping here — ANSI-aware,
+// preserving styles across breaks — is what keeps help lines and status
+// banners readable in a narrow window. Before the first WindowSizeMsg the
+// width is unknown and content passes through untouched.
 func (m model) View() string {
+	if m.width <= 0 {
+		return m.viewContent()
+	}
+	return ansi.Wrap(m.viewContent(), m.width, "")
+}
+
+func (m model) viewContent() string {
 	switch m.state {
 	case stateName:
 		var b strings.Builder
@@ -1830,18 +1875,18 @@ func (m model) View() string {
 				scanHint = "ctrl+o back to camera · ctrl+r change camera · "
 			}
 		}
-		help := scanHint + "enter search · " + m.escHelp() + " · ctrl+c quit"
+		help := scanHint + "enter search · " + m.escHelp() + " · ctrl+c force quit"
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}
-		b.WriteString(m.theme.Help.Render(help))
+		b.WriteString(m.help(help))
 		return b.String()
 	case stateCameraBusy:
 		return fmt.Sprintf("%s looking for a connected iPhone…\n\n%s",
-			m.spinner.View(), m.theme.Help.Render("esc cancel · ctrl+c quit"))
+			m.spinner.View(), m.help("esc cancel · ctrl+c force quit"))
 	case stateCameraPick:
 		return m.list.View() + "\n" +
-			m.theme.Help.Render("↑/↓ move · enter scan with this camera · esc back · ctrl+c quit")
+			m.help("↑/↓ move · enter scan with this camera · esc back · ctrl+c force quit")
 	case stateCapture:
 		var b strings.Builder
 		b.WriteString(m.theme.Title.Render("Scanning with "+m.cameraLabel()) + "\n\n")
@@ -1863,7 +1908,7 @@ func (m model) View() string {
 			if m.resolving > 0 {
 				counter += fmt.Sprintf(" · %d resolving", m.resolving)
 			}
-			b.WriteString(m.theme.Help.Render(counter) + "\n")
+			b.WriteString(m.help(counter) + "\n")
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
 			b.WriteString("\n")
@@ -1876,7 +1921,7 @@ func (m model) View() string {
 		default:
 			b.WriteString("Frame the next card, then press space.\n\n")
 		}
-		keys := []string{"space capture", "←/→ rotate"}
+		keys := []string{": commands", "space capture", "←/→ rotate"}
 		if m.framingCapable {
 			keys = append(keys, "z framing")
 		}
@@ -1886,19 +1931,18 @@ func (m model) View() string {
 		if m.effectsCapable {
 			keys = append(keys, "v effects")
 		}
-		keys = append(keys, ": commands")
-		help := strings.Join(keys, " · ") + " · esc close camera · ctrl+c quit"
+		help := strings.Join(keys, " · ") + " · c close camera · " + m.escLabel() + " · ctrl+c force quit"
 		if len(m.review) > 0 {
 			help = fmt.Sprintf("tab review (%d) · %s", len(m.review), help)
 		}
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}
-		b.WriteString(m.theme.Help.Render(help))
+		b.WriteString(m.help(help))
 		return b.String()
 	case stateQueueReview:
 		return m.list.View() + "\n" +
-			m.theme.Help.Render("↑/↓ move · enter fix this card · ctrl+s drop it · tab/esc back to camera · ctrl+c quit")
+			m.help("↑/↓ move · enter fix this card · ctrl+s drop it · tab/esc back to camera · ctrl+c force quit")
 	case stateClosePrompt:
 		var b strings.Builder
 		b.WriteString(m.theme.Title.Render("Close the camera?") + "\n\n")
@@ -1908,12 +1952,17 @@ func (m model) View() string {
 			line += fmt.Sprintf(" (%d still resolving)", m.resolving)
 		}
 		b.WriteString(line + ".\n\n")
-		b.WriteString(m.theme.Help.Render("enter review them now · d discard them · esc back to camera"))
+		b.WriteString(m.help("enter review them now · d discard them · esc back to camera"))
 		return b.String()
 	case stateLeaveConfirm:
 		// The browser's quit confirm, word for word in shape: red prompt,
-		// dim y/n, one line. Same gate, same look.
-		return m.theme.Err.Render("quit add session?") + m.theme.Help.Render("  y/n")
+		// dim y/n, one line. Same gate, same look — plus the cost, when
+		// quitting would drop scanned-but-unsaved cards.
+		prompt := "quit add session?"
+		if n := len(m.review) + m.resolving; n > 0 {
+			prompt = fmt.Sprintf("quit add session? %d unsaved scans will be dropped", n)
+		}
+		return m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
 	case statePalette:
 		var b strings.Builder
 		b.WriteString(m.theme.Title.Render("Scanner commands") + "\n\n")
@@ -1925,27 +1974,27 @@ func (m model) View() string {
 		if m.paletteErr != "" {
 			b.WriteString("\n" + m.theme.Err.Render(m.paletteErr))
 		}
-		b.WriteString("\n\n" + m.theme.Help.Render(
+		b.WriteString("\n\n" + m.help(
 			"enter run · esc back to camera · lasts this session (HOARD_SCAN_WIN/_JACKPOT persist)"))
 		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",
-			m.spinner.View(), m.theme.Help.Render("esc close camera · ctrl+c quit"))
+			m.spinner.View(), m.help("esc close camera · ctrl+c force quit"))
 	case stateLoading:
 		return m.scanHeader() + fmt.Sprintf("%s searching Scryfall…\n\n%s",
-			m.spinner.View(), m.theme.Help.Render("ctrl+c to quit"))
+			m.spinner.View(), m.help("ctrl+c to force quit"))
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick:
 		return m.scanHeader() + m.list.View() + "\n" +
-			m.theme.Help.Render(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c quit"))
+			m.help(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c force quit"))
 	case stateQty:
 		out := m.scanHeader() + m.theme.Prompt.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
 			out += "\n" + m.theme.Err.Render(m.qtyErr)
 		}
-		return out + "\n\n" + m.theme.Help.Render(m.batchHelp("enter to continue · esc cancel · ctrl+c quit"))
+		return out + "\n\n" + m.help(m.batchHelp("enter to continue · esc cancel · ctrl+c force quit"))
 	case stateConfirm:
 		return m.scanHeader() + m.theme.Title.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
-			m.theme.Help.Render(m.batchHelp("enter to add · esc cancel · ctrl+c quit"))
+			m.help(m.batchHelp("enter to add · esc cancel · ctrl+c force quit"))
 	}
 	return ""
 }

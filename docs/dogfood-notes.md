@@ -7,12 +7,12 @@ with why).
 ## 2026-08-01 — round 2, post-beautification build
 
 1. **A mega list of every card, with binders/decks as subsets** — ✅ done.
-   The left pane leads with a synthetic **All cards** row (id −1, kind
+   The left pane leads with a synthetic **All Cards** row (id −1, kind
    "all"): `store.AllByFinish()` merges every container one-row-per-
    printing-and-finish (same card in binder + deck sums), the row carries
    the whole hoard's totals, and the card pane shows it read-only —
    edits, rename and removal refuse with pointers to the real container;
-   its export runs the export-everything flow. Named "All cards" rather
+   its export runs the export-everything flow. Named "All Cards" rather
    than reusing "Binder".
 2. **Add-session exits were scary** — ✅ done. `ctrl+d` is the deliberate
    "done adding" from anywhere (blocked while review items are pending —
@@ -46,14 +46,14 @@ with why).
 8. **"Add a watch for any card" everywhere** — ✅ now watches-only, same
    rule as the collection picker.
 9. **The collection pane filters every view** — ✅ done (follow-up to the
-   All cards work). The "this view spans the whole hoard" tab refusal was
+   All Cards work). The "this view spans the whole hoard" tab refusal was
    the smell: the pane now scopes movers, unpriced, watches and market to
-   the selection, All cards restoring the hoard-wide picture, headers
+   the selection, All Cards restoring the hoard-wide picture, headers
    naming the scope. Membership joins on container id via a
    `store.EntryKeys` index (labels are not unique); movers and watches
    join on the price finish (etched folds into foil). Unpriced and
    watches grey out containers with nothing to show and the cursor skips
-   them; arriving there with an empty selection snaps to All cards with a
+   them; arriving there with an empty selection snaps to All Cards with a
    note. The market view filters *before* ranking — a deck gets its own
    top-15 per table — and its four tables now hold fixed regions that
    scroll independently, position on the title line, a filtered-empty
@@ -108,8 +108,8 @@ with why).
     spread captions); the comps prose became an aligned table (money
     widths skewed the separators); and the EASY TO SELL verdict was cut —
     the CK PAYS column already says it, only ARBITRAGE speaks.
-13. **All cards merges printings; HELD is the printing selector** — ✅
-    done. All cards showed ten Forests as separate rows each wearing a
+13. **All Cards merges printings; HELD is the printing selector** — ✅
+    done. All Cards showed ten Forests as separate rows each wearing a
     set; same-name same-finish rows now collapse (quantities and values
     sum; the set and per-copy price blank when the merged rows disagree).
     The detail loads holdings by NAME (`store.HoldingsOfName`, each row

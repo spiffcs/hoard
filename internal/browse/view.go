@@ -86,7 +86,7 @@ func (m Model) View() string {
 // beneath — the drawer names the verbs, this line says what they do.
 func (m Model) writeHelp(b *strings.Builder, help string) {
 	written := 0
-	for i, line := range wrapHelp(help, m.width) {
+	for i, line := range ui.WrapHelp(help, m.width) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
@@ -274,33 +274,6 @@ func (m Model) paneWidths() (left, right int) {
 	return left, right
 }
 
-// wrapHelp breaks a help line between its " · " entries so every key stays
-// visible on a narrow terminal, instead of truncating off the edge of the
-// screen. A single entry longer than the width stands alone and clips.
-func wrapHelp(s string, width int) []string {
-	if width <= 0 {
-		return []string{s}
-	}
-	var lines []string
-	cur := ""
-	for _, part := range strings.Split(s, " · ") {
-		joined := part
-		if cur != "" {
-			joined = cur + " · " + part
-		}
-		if cur == "" || lipgloss.Width(joined) <= width {
-			cur = joined
-			continue
-		}
-		lines = append(lines, cur)
-		cur = part
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
 // helpRows is how many rows the wrapped help line costs right now,
 // including the palette's description line when one is showing.
 //
@@ -313,11 +286,11 @@ func (m Model) helpRows() int {
 	if !m.ready {
 		return 1
 	}
-	rows := len(wrapHelp(m.helpLine(), m.width))
+	rows := len(ui.WrapHelp(m.helpLine(), m.width))
 	if m.confirm != nil || m.prompt != nil {
 		base := m
 		base.confirm, base.prompt = nil, nil
-		rows = max(rows, len(wrapHelp(base.helpLine(), base.width)))
+		rows = max(rows, len(ui.WrapHelp(base.helpLine(), base.width)))
 	}
 	// The view cycle must not bounce the gutter: a view with shorter help
 	// (unpriced) reserved fewer rows than its neighbors, so v shifted the
@@ -329,7 +302,7 @@ func (m Model) helpRows() int {
 		alt.confirm, alt.prompt = nil, nil
 		for v := viewHoldings; v <= viewMarket; v++ {
 			alt.view = v
-			rows = max(rows, len(wrapHelp(alt.helpLine(), m.width)))
+			rows = max(rows, len(ui.WrapHelp(alt.helpLine(), m.width)))
 		}
 	}
 	if m.paletteDesc() != "" {
@@ -614,21 +587,21 @@ func (m Model) statusLine() string {
 		case viewMovers:
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
-					"no price movement in %s this window · All cards shows every container", sel.Name))
+					"no price movement in %s this window · All Cards shows every container", sel.Name))
 			}
 			return m.theme.Help.Render(
 				"no price movement in this window · F fetches prices and 90 days of history · W widens the window")
 		case viewWatches:
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
-					"no watches shown for %s · All cards shows every container", sel.Name))
+					"no watches shown for %s · All Cards shows every container", sel.Name))
 			}
 			return m.theme.Help.Render(
 				"no watches · press w on a card in holdings, or : then AddWatchFromCollection")
 		case viewUnpriced:
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
-					"no unpriced cards in %s · All cards shows every container", sel.Name))
+					"no unpriced cards in %s · All Cards shows every container", sel.Name))
 			}
 			return m.theme.Help.Render("every card you own has a price")
 		}
@@ -731,45 +704,45 @@ func (m Model) helpLine() string {
 		}
 		return help + "esc back · q quit"
 	case m.text != nil:
-		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c quit"
+		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c force quit"
 	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:
 		return "F fetch vendor prices · v next view · q quit"
 	case m.view == viewMarket && m.marketLoading:
-		return "esc cancel · ctrl+c quit"
+		return "esc cancel · ctrl+c force quit"
 	case m.view == viewMarket:
-		return "enter detail · ]/[ next/prev table · >/< turn page · b comps buy/sell · F refetch quotes · M floor · tab collections · v next view · : commands · ↑/↓ move · q quit"
+		return ": commands · enter detail · ]/[ next/prev table · >/< turn page · b comps buy/sell · F refetch quotes · M floor · tab collections · v next view · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.
-		return "w edit threshold · d remove · : add a watch · enter detail · M floor · tab collections · v next view · ↑/↓ move · q quit"
+		return ": add a watch · w edit threshold · d remove · enter detail · M floor · tab collections · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · enter detail · >/< page · M floor · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return ": commands · W lookback 7/30/90 days · F update prices + history · enter detail · >/< page · M floor · tab collections · v next view · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
-		return "F refresh prices · enter detail · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return ": commands · F refresh prices · enter detail · tab collections · v next view · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
 		// The editing keys do not apply to an analytical view, so offering
 		// them here would be an invitation to a refusal.
-		return "tab collections · v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
+		return ": commands · tab collections · v next view · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
 		// The sets pane is a read-only lens: no create/rename/remove verbs,
 		// just the toggle back.
 		if m.setsMode {
-			return "tab cards · B binders/decks · a add cards · : commands · / filter · M floor · F refresh prices · v views · q quit"
+			return ": commands · tab cards · B binders/decks · a add cards · / filter · M floor · F refresh prices · v views · q quit"
 		}
 		// The merged all-cards row is read-only, so its help drops the
 		// verbs that would only ever answer with a refusal.
 		if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-			return "tab cards · B by set · n new binder · a add cards · : import/export · / filter · M floor · F refresh prices · v views · q quit"
+			return ": import/export · tab cards · B by set · n new binder · a add cards · / filter · M floor · F refresh prices · v views · q quit"
 		}
-		return "tab cards · B by set · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
+		return ": import/export · tab cards · B by set · n new binder · a add cards · R rename · d remove · / filter · M floor · F refresh prices · v views · u undo · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
-		return "tab sets · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
+		return ": commands · tab sets · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-		return "tab decks · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
+		return ": commands · tab decks · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
-	return "tab decks · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+	return ": commands · tab decks · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

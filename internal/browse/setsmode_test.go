@@ -35,8 +35,8 @@ func atSet(t *testing.T, m Model, code string) Model {
 	return m
 }
 
-// B flips the pane to sets — All cards first, then the store's rows in its
-// order, cursor snapped to All cards — and back to binders and decks.
+// B flips the pane to sets — All Cards first, then the store's rows in its
+// order, cursor snapped to All Cards — and back to binders and decks.
 func TestSetsToggleRoundTrip(t *testing.T) {
 	m := newTestModel(t, testStore()) // cursor starts on the binder
 	m = key(m, "B")
@@ -44,14 +44,14 @@ func TestSetsToggleRoundTrip(t *testing.T) {
 		t.Fatal("B did not enter sets mode")
 	}
 	if m.cursor[paneContainers] != 0 {
-		t.Errorf("cursor = %d, want the snap to All cards", m.cursor[paneContainers])
+		t.Errorf("cursor = %d, want the snap to All Cards", m.cursor[paneContainers])
 	}
 	if m.containers[0].Kind != kindAllCards {
-		t.Fatalf("first row = %+v, want All cards", m.containers[0])
+		t.Fatalf("first row = %+v, want All Cards", m.containers[0])
 	}
 	// The fake derives one row per held set code, sorted by code.
 	if len(m.containers) != 4 {
-		t.Fatalf("containers = %+v, want All cards + c21/mh3/uma", m.containers)
+		t.Fatalf("containers = %+v, want All Cards + c21/mh3/uma", m.containers)
 	}
 	for i, want := range []string{"c21", "mh3", "uma"} {
 		if c := m.containers[i+1]; c.Kind != kindSet || c.setCode != want {
@@ -61,9 +61,9 @@ func TestSetsToggleRoundTrip(t *testing.T) {
 	if !strings.Contains(m.View(), "SETS") {
 		t.Error("the pane title must say SETS")
 	}
-	// The All cards rollup covers the whole hoard, either lens.
+	// The All Cards rollup covers the whole hoard, either lens.
 	if m.containers[0].Value == 0 {
-		t.Error("All cards row lost its rollup")
+		t.Error("All Cards row lost its rollup")
 	}
 
 	m = key(m, "B")
@@ -95,7 +95,7 @@ func TestSetsPaneKeepsStoreOrder(t *testing.T) {
 		}
 	}
 	if m.containers[0].Copies != 9 || m.containers[0].Value != 396 {
-		t.Errorf("All cards rollup = %+v, want the sets summed", m.containers[0])
+		t.Errorf("All Cards rollup = %+v, want the sets summed", m.containers[0])
 	}
 }
 
@@ -116,7 +116,7 @@ func TestSetSelectionShowsSetHoldings(t *testing.T) {
 }
 
 // A selected set narrows movers, exactly like a container: the mask runs on
-// set code, and All cards still shows everything.
+// set code, and All Cards still shows everything.
 func TestMoversScopedToSet(t *testing.T) {
 	st := testStore()
 	solitude := mover("Solitude-id", "nonfoil", 1, 30, 34)
@@ -166,7 +166,7 @@ func TestUnpricedScopedToSetWithEligibility(t *testing.T) {
 			t.Errorf("eligibility of %s = %v, want only uma eligible", c.setCode, got)
 		}
 	}
-	m = key(m, "tab")  // container pane, at All cards
+	m = key(m, "tab")  // container pane, at All Cards
 	m = key(m, "down") // skips c21 and mh3, lands on uma
 	if m.cursor[paneContainers] != uma {
 		t.Errorf("cursor = %d, want the greyed sets skipped to %d", m.cursor[paneContainers], uma)
@@ -195,7 +195,7 @@ func TestWatchesScopedToSet(t *testing.T) {
 	}
 }
 
-// Arriving on a view where the selected set has nothing snaps to All cards
+// Arriving on a view where the selected set has nothing snaps to All Cards
 // and says so, like an ineligible container.
 func TestShowViewSnapsIneligibleSet(t *testing.T) {
 	st := testStore()
@@ -207,7 +207,7 @@ func TestShowViewSnapsIneligibleSet(t *testing.T) {
 	m = atSet(t, m, "c21") // holds no watch
 	m.showView(viewWatches)
 	if m.cursor[paneContainers] != 0 {
-		t.Errorf("cursor = %d, want the snap to All cards", m.cursor[paneContainers])
+		t.Errorf("cursor = %d, want the snap to All Cards", m.cursor[paneContainers])
 	}
 	if !strings.Contains(m.status, "has no watches") {
 		t.Errorf("status = %q, want the snap explained", m.status)
