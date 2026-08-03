@@ -236,6 +236,13 @@ type Model struct {
 	moversPennies    bool
 	moversPennyLimit float64
 
+	// The market view's floor, same pair of controls: rows whose low ask
+	// sits under marketFloor stay out of the collection unless
+	// marketPennies shows them. Defaults to defaultMarketFloor; moving
+	// either re-collects from the day cache, no refetch.
+	marketPennies bool
+	marketFloor   float64
+
 	// entryIndex answers "how many of this printing does this container
 	// hold": containerID → "scryfallID|finish" → copies (membership is
 	// copies > 0). viewEligible marks the containers selectable on views
@@ -340,7 +347,8 @@ func New(st Store, opts ...Option) (Model, error) {
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		cellAspect: ui.CellAspectOverride(),
-		commands:   commands(), moversPennyLimit: defaultPennyLimit}
+		commands:   commands(), moversPennyLimit: defaultPennyLimit,
+		marketFloor: defaultMarketFloor}
 	for _, opt := range opts {
 		opt(&m)
 	}

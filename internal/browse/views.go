@@ -81,6 +81,33 @@ func (m *Model) promptSetPennyLimit() {
 	}
 }
 
+// promptSetMarketFloor is the market view's twin: same prompt, but the
+// line it moves is the floor market.Collect filters on, so the commit
+// re-collects from the day cache rather than re-deriving rows. Re-arms
+// the gate the same way — moving the line answers with the line active.
+func (m *Model) promptSetMarketFloor() {
+	m.prompt = &prompt{
+		label:    "hide market rows under",
+		text:     strconv.FormatFloat(m.marketFloor, 'f', -1, 64),
+		help:     "a dollar amount, like 1.00 (0 turns the gate off) · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parsePennyLimit(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			n, err := parsePennyLimit(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			m.marketFloor = n
+			m.marketPennies = false
+			m.status, m.statusErr = "penny filter < "+ui.Money(n)+" on", false
+			// After the receipt: a day-cache miss replaces it with the
+			// fresh-fetch ask, which is the truer answer.
+			m.refreshMarketFloor()
+			return nil
+		},
+	}
+}
+
 // parsePennyLimit reads the penny filter's line: a plain dollar amount,
 // "$" optional. The cap keeps a typo from gating the whole view — a penny
 // filter at $500 is a hidden movers list, not a noise gate.

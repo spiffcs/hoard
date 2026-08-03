@@ -691,3 +691,91 @@ func TestCursorMovementRestoresStatusLine(t *testing.T) {
 		t.Errorf("status after moving = %q, want the selected row's market note", got)
 	}
 }
+
+// The market view's penny filter: the $1 floor is live state, not a build
+// constant. Toggling it off re-collects from the day cache with no floor
+// (bulk appears instantly), SetPennyFilter moves the line, and both
+// receipts name the filter. A dead day cache downgrades to "press F"
+// rather than showing rows filtered by a line the user just moved.
+func TestMarketPennyFilterReCollects(t *testing.T) {
+	cheap := comp("Bulk", 0.30, 0.30, 0.10)
+	mid := comp("Mid", 0.50, 0.50, 0.30)
+	dear := comp("Dear", 60, 55, 44)
+	cacheAlive := true
+	m, err := New(testStore(), WithMarketCached(func(min float64) (market.Result, bool) {
+		if !cacheAlive {
+			return market.Result{}, false
+		}
+		var res market.Result
+		for _, c := range []market.Comp{cheap, mid, dear} {
+			if c.Low >= min {
+				res.Comps = append(res.Comps, c)
+			}
+		}
+		res.Compared = len(res.Comps)
+		return res, true
+	}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m = next.(Model)
+	m = atAllCards(t, m)
+	runByID := func(m Model, id string) Model {
+		t.Helper()
+		for _, c := range m.commands {
+			if c.id == id {
+				c.run(&m)
+				return m
+			}
+		}
+		t.Fatalf("no command %q", id)
+		return m
+	}
+	for m.view != viewMarket {
+		m = key(m, "v")
+	}
+	if !m.marketLoaded || len(m.marketComps) != 1 {
+		t.Fatalf("comps at the $1 default = %+v, want Dear alone", m.marketComps)
+	}
+	if !strings.Contains(m.status, "penny filter < $1.00") {
+		t.Errorf("arrival beat = %q, want the armed floor named", m.status)
+	}
+
+	m = runByID(m, "market.pennies")
+	if len(m.marketComps) != 3 {
+		t.Fatalf("comps with the floor off = %+v, want all three", m.marketComps)
+	}
+	if !strings.Contains(m.status, "penny filter < $1.00 off") {
+		t.Errorf("status = %q, want the toggle receipt", m.status)
+	}
+	m = runByID(m, "market.pennies")
+	if len(m.marketComps) != 1 || !strings.Contains(m.status, "penny filter < $1.00 on") {
+		t.Fatalf("re-armed comps = %+v status %q, want the floor back", m.marketComps, m.status)
+	}
+
+	// Moving the line lands between: $0.40 keeps Mid and Dear, and the
+	// prompt shares the movers filter's validation.
+	m.promptSetMarketFloor()
+	if m.prompt == nil || m.prompt.text != "1" {
+		t.Fatalf("prompt = %+v, want prefilled with the current floor", m.prompt)
+	}
+	if err := m.prompt.validate("101"); err == nil {
+		t.Error("validate(101) accepted, want refused")
+	}
+	m.prompt.commit(&m, "0.40")
+	m.prompt = nil
+	if len(m.marketComps) != 2 {
+		t.Fatalf("comps at $0.40 = %+v, want Mid and Dear", m.marketComps)
+	}
+	if m.marketFloor != 0.40 || !strings.Contains(m.status, "penny filter < $0.40 on") {
+		t.Errorf("floor = %v status %q, want the moved line named", m.marketFloor, m.status)
+	}
+
+	// The day cache dying mid-adjustment must not fake an answer.
+	cacheAlive = false
+	m = runByID(m, "market.pennies")
+	if m.marketLoaded || !strings.Contains(m.status, "press F") {
+		t.Errorf("loaded = %v status %q, want a fresh-fetch ask", m.marketLoaded, m.status)
+	}
+}

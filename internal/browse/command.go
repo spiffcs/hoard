@@ -392,6 +392,34 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
 		},
 		{
+			id: "market.pennies", title: "TogglePennyFilter",
+			aliases: "pennies cheap bulk noise floor show hide",
+			desc:    "Show or hide market rows whose low ask sits under the floor — hidden by default.",
+			where:   func(m *Model) bool { return m.view == viewMarket },
+			rank:    onView(viewMarket, 1),
+			run: func(m *Model) tea.Cmd {
+				m.marketPennies = !m.marketPennies
+				state := "on"
+				if m.marketPennies {
+					state = "off"
+				}
+				m.status, m.statusErr = fmt.Sprintf("penny filter < %s %s",
+					ui.Money(m.marketFloor), state), false
+				// After the receipt: a day-cache miss replaces it with the
+				// fresh-fetch ask, which is the truer answer.
+				m.refreshMarketFloor()
+				return nil
+			},
+		},
+		{
+			id: "market.pennies.limit", title: "SetPennyFilter",
+			aliases: "penny limit threshold ceiling floor default set filter line",
+			desc:    "Move the market floor — rows whose low ask sits under it hide.",
+			where:   func(m *Model) bool { return m.view == viewMarket },
+			rank:    onView(viewMarket, 1),
+			run:     func(m *Model) tea.Cmd { m.promptSetMarketFloor(); return nil },
+		},
+		{
 			id: "market.table.next", aliases: "next table section",
 			key: "]", hidden: true,
 			where: func(m *Model) bool { return m.view == viewMarket },
@@ -584,6 +612,9 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	}
 	if v == viewMovers && !m.moversPennies {
 		m.status += " · penny filter ≤ " + ui.Money(m.moversPennyLimit)
+	}
+	if v == viewMarket && !m.marketPennies {
+		m.status += " · penny filter < " + ui.Money(m.marketFloor)
 	}
 	m.statusErr = false
 	// A selection this view greys out cannot stay selected — the cursor

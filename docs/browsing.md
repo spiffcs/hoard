@@ -179,6 +179,16 @@ CLI report — including the BELOW MARKET section the browser dropped for
 comps room — with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
 
+Three gates decide what earns a row at all: the card needs quotes from at
+least **two retail vendors** (a sheet with one vendor compares nothing),
+its low ask must clear the **$1.00 floor** (bulk wobbling by cents is
+noise, not opportunity), and each table shows its **top 50** by value. The
+floor is the same penny-filter pair the movers view carries:
+`TogglePennyFilter` shows everything with two vendors, `SetPennyFilter`
+moves the line ($0 turns the gate off), and the status line names the
+armed floor (`penny filter < $1.00`). Moving the line re-collects from the
+day's cached quotes instantly — no refetch.
+
 **COMPS** is the comp sheet sellers build by hand, and it has two halves —
 <kbd>b</kbd> flips between them. The **sell side** (default) is the
 sale-price comp: what each vendor sells the card for — tcg's last-sold

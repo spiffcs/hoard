@@ -318,10 +318,6 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	if !stdoutIsTTY() {
 		return writeSummary(st, false)
 	}
-	// marketMin matches the CLI command's --min default, so the two views
-	// agree about what is too cheap to be worth a shipping label.
-	const marketMin = 1.0
-
 	// One catalog handle for the whole session; the injected operations and
 	// the embedded add cascade share it.
 	cat := openCatalog()
@@ -472,11 +468,11 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			text := report.Valuation(env, d)
 			return strings.Split(strings.TrimRight(text, "\n"), "\n"), nil
 		}),
-		browse.WithMarket(func(ctx context.Context, p progress.Fn) (market.Result, error) {
-			return action.Market(ctx, deps, p, marketMin)
+		browse.WithMarket(func(ctx context.Context, p progress.Fn, min float64) (market.Result, error) {
+			return action.Market(ctx, deps, p, min)
 		}),
-		browse.WithMarketCached(func() (market.Result, bool) {
-			res, ok, err := action.MarketCached(deps, marketMin)
+		browse.WithMarketCached(func(min float64) (market.Result, bool) {
+			res, ok, err := action.MarketCached(deps, min)
 			return res, ok && err == nil
 		}),
 		browse.WithCardComps(func(id string) (map[string]market.Comp, bool) {

@@ -1673,7 +1673,7 @@ func opp(name string, buy, sell float64) market.Opportunity {
 // because the user cycled past it.
 func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
 	var calls int
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		calls++
 		return market.Result{}, nil
 	})
@@ -1697,7 +1697,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		Opportunities: []market.Opportunity{opp("Profitable", 2, 20), opp("Liquid", 10, 9)},
 		Compared:      2,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -1730,7 +1730,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 
 // A reply to a request the user has already left must not overwrite the pane.
 func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, nil
 	})
 	for range 4 {
@@ -1764,7 +1764,7 @@ func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 
 // A genuine failure is shown, unlike a cancellation.
 func TestArbitrageErrorIsShown(t *testing.T) {
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, errFake{}
 	})
 	for range 4 {
@@ -1782,7 +1782,7 @@ func TestArbitrageErrorIsShown(t *testing.T) {
 // Editing keys have no meaning against vendor quotes, and the cursor indexes a
 // different slice here.
 func TestArbitrageRefusesHoldingActions(t *testing.T) {
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) {
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, nil
 	})
 	for range 4 {
@@ -1805,7 +1805,7 @@ type capturingMarket struct {
 	ctx context.Context
 }
 
-func (c *capturingMarket) fetch(ctx context.Context, _ progress.Fn) (market.Result, error) {
+func (c *capturingMarket) fetch(ctx context.Context, _ progress.Fn, _ float64) (market.Result, error) {
 	c.mu.Lock()
 	c.ctx = ctx
 	c.mu.Unlock()
@@ -2077,7 +2077,7 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 		},
 		Compared: 2,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -2248,7 +2248,7 @@ func TestArbitrageFAlwaysAnswers(t *testing.T) {
 		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
 		Compared:      1,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -2279,7 +2279,7 @@ func TestArbitrageEnterOpensDetail(t *testing.T) {
 		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
 		Compared:      1,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -2360,11 +2360,11 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 	}
 	fetches := 0
 	m, err := New(testStore(),
-		WithMarket(func(context.Context, progress.Fn) (market.Result, error) {
+		WithMarket(func(context.Context, progress.Fn, float64) (market.Result, error) {
 			fetches++
 			return res, nil
 		}),
-		WithMarketCached(func() (market.Result, bool) { return res, true }))
+		WithMarketCached(func(float64) (market.Result, bool) { return res, true }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2394,10 +2394,10 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 // Without a cache hit, arrival stays empty and F remains the fetch.
 func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
 	m, err := New(testStore(),
-		WithMarket(func(context.Context, progress.Fn) (market.Result, error) {
+		WithMarket(func(context.Context, progress.Fn, float64) (market.Result, error) {
 			return market.Result{}, nil
 		}),
-		WithMarketCached(func() (market.Result, bool) { return market.Result{}, false }))
+		WithMarketCached(func(float64) (market.Result, bool) { return market.Result{}, false }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2622,7 +2622,7 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 		Comps:         []market.Comp{comp("Sheeted", 60, 55, 44)},
 		Compared:      2,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -2675,7 +2675,7 @@ func TestCompsSortIsIndependent(t *testing.T) {
 		Comps:         []market.Comp{agree, differ, lone},
 		Compared:      4,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -2725,7 +2725,7 @@ func TestCompsRespectValueFloor(t *testing.T) {
 		Comps:    []market.Comp{comp("Rich", 60, 55, 44), comp("Penny", 2, 1.5, 1)},
 		Compared: 2,
 	}
-	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
 	for range 4 {
 		m = key(m, "v")
 	}

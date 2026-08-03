@@ -25,8 +25,16 @@ import (
 //
 // It must honour ctx: the browser cancels it when the user leaves the view.
 // The progress callback follows the action layer's contract; the browser
-// passes nil today and gains a live consumer with the op layer.
-type MarketFunc func(ctx context.Context, p progress.Fn) (market.Result, error)
+// passes nil today and gains a live consumer with the op layer. min is the
+// market floor: cards whose low ask sits under it are left out of the
+// result (the browser owns the value — see marketFloor).
+type MarketFunc func(ctx context.Context, p progress.Fn, min float64) (market.Result, error)
+
+// defaultMarketFloor is the market view's price floor: rows whose low ask
+// sits under it are noise, not opportunities — a 900% spread between $0.20
+// and $1.99 is arithmetic. Matches the CLI command's --min default.
+// TogglePennyFilter shows the bulk anyway; SetPennyFilter moves the line.
+const defaultMarketFloor = 1.00
 
 // marketRowLimit is how many rows each table contributes. Generous, not
 // unbounded: the fixed regions scroll, so the tail of a ranking (the 70%
@@ -73,8 +81,9 @@ func (m *Model) startMarketFetch() tea.Cmd {
 	m.marketGen++
 	gen, fetch := m.marketGen, m.marketFetch
 
+	min := m.activeMarketFloor()
 	return tea.Batch(m.spinner.Tick, func() tea.Msg {
-		res, err := fetch(ctx, nil)
+		res, err := fetch(ctx, nil, min)
 		return marketMsg{gen: gen, res: res, err: err}
 	})
 }
@@ -117,8 +126,9 @@ func isCanceled(err error) bool {
 }
 
 // MarketCachedFunc serves today's already-fetched quotes without the
-// network, or ok=false when there is nothing cached.
-type MarketCachedFunc func() (market.Result, bool)
+// network, re-collected against the given floor, or ok=false when there
+// is nothing cached.
+type MarketCachedFunc func(min float64) (market.Result, bool)
 
 // loadCachedMarket populates the view from an earlier session's fetch
 // when one exists, so restarting the program does not blank the tables. F
@@ -127,7 +137,7 @@ func (m *Model) loadCachedMarket() {
 	if m.marketCached == nil || m.marketLoaded || m.marketLoading {
 		return
 	}
-	res, ok := m.marketCached()
+	res, ok := m.marketCached(m.activeMarketFloor())
 	if !ok {
 		return
 	}
@@ -135,6 +145,39 @@ func (m *Model) loadCachedMarket() {
 	m.applyMarketRows()
 	m.marketLoaded = true
 	m.status, m.statusErr = "vendor quotes from earlier today · F refetches", false
+	// This status replaces the arrival beat, so the armed floor's mention
+	// must ride along — rows silently absent read as missing data.
+	if !m.marketPennies {
+		m.status += " · penny filter < " + ui.Money(m.marketFloor)
+	}
+}
+
+// activeMarketFloor is the floor the next collection uses: 0 while the
+// penny filter is off — everything with two vendors shows.
+func (m Model) activeMarketFloor() float64 {
+	if m.marketPennies {
+		return 0
+	}
+	return m.marketFloor
+}
+
+// refreshMarketFloor re-collects the loaded result under the current
+// floor. The day-cache answers instantly, so moving the line never costs a
+// download; if the cache is gone (the day rolled over), the view asks for
+// F rather than showing rows filtered by a line the user just moved.
+func (m *Model) refreshMarketFloor() {
+	if !m.marketLoaded || m.marketCached == nil {
+		return
+	}
+	res, ok := m.marketCached(m.activeMarketFloor())
+	if !ok {
+		m.marketLoaded = false
+		m.status, m.statusErr = "quotes expired · press F to fetch today's", false
+		return
+	}
+	m.marketResult = res
+	m.applyMarketRows()
+	m.clampCursor(paneCards)
 }
 
 // marketLines renders the four tables in fixed regions: each section gets
