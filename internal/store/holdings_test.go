@@ -46,3 +46,44 @@ func TestEntryKeysDistinct(t *testing.T) {
 		}
 	}
 }
+
+// The treated-product mapping follows the vendor-link convention: NULL is
+// never-asked, empty is asked-and-none, and only genuine ids come back as
+// ids — the resolve gate must be able to tell all three apart.
+func TestTCGAltProductsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+
+	ids, stamped, err := s.TCGAltProducts()
+	if err != nil {
+		t.Fatalf("TCGAltProducts: %v", err)
+	}
+	if len(ids) != 0 || stamped["ulamog-id"] {
+		t.Fatalf("fresh card = ids %v stamped %v, want never-asked", ids, stamped)
+	}
+
+	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": "553005"}); err != nil {
+		t.Fatalf("SaveTCGAltProducts: %v", err)
+	}
+	ids, stamped, err = s.TCGAltProducts()
+	if err != nil {
+		t.Fatalf("TCGAltProducts: %v", err)
+	}
+	if ids["ulamog-id"] != "553005" || !stamped["ulamog-id"] {
+		t.Errorf("ids = %v stamped %v, want the product recorded", ids, stamped)
+	}
+
+	// Recorded absence: stamped, but no id.
+	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": ""}); err != nil {
+		t.Fatalf("SaveTCGAltProducts(empty): %v", err)
+	}
+	ids, stamped, err = s.TCGAltProducts()
+	if err != nil {
+		t.Fatalf("TCGAltProducts: %v", err)
+	}
+	if len(ids) != 0 || !stamped["ulamog-id"] {
+		t.Errorf("ids = %v stamped %v, want asked-and-none", ids, stamped)
+	}
+}

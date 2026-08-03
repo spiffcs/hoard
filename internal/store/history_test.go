@@ -876,6 +876,7 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		`ALTER TABLE cards DROP COLUMN ck_url`,
 		`ALTER TABLE cards DROP COLUMN ck_foil_url`,
 		`ALTER TABLE cards DROP COLUMN promo_types`,
+		`ALTER TABLE cards DROP COLUMN tcg_alt_product_id`,
 		`ALTER TABLE cards DROP COLUMN power`,
 		`ALTER TABLE cards DROP COLUMN toughness`,
 		`ALTER TABLE cards DROP COLUMN loyalty`,
@@ -916,5 +917,99 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 	// Day ten: the non-foil moved to $12; the foil price carries forward.
 	if second.Binder != 24 || second.Decks != 20 || second.Total != 44 {
 		t.Errorf("second = %+v, want binder 24 / decks 20 / total 44", second)
+	}
+}
+
+// srcObs is obs with an explicit vendor, for the vendor-switch cases.
+func srcObs(date, finish string, price float64, source string) mtgjson.Observation {
+	return mtgjson.Observation{Date: date, Finish: finish, Price: price, Source: source}
+}
+
+// A vendor switch retires the old reconstruction. The per-finish fallback
+// that once chose Manapool for a treated foil chooses TCGplayer once its
+// series exists — and the old midnight rows must yield, or they own the
+// bound forever and the new series never lands (observed live: 152 of
+// many thousand observations imported). Live rows still stand: only
+// reconstructed, midnight-stamped rows die.
+func TestBackfillReplacesVendorSwitchedSeries(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	// The old reconstruction: a Manapool series, plus one genuinely
+	// observed row with a real clock time.
+	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			srcObs("2026-07-01", "foil", 21.00, "manapool"),
+			srcObs("2026-07-05", "foil", 21.78, "manapool"),
+		},
+	}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO card_price_history VALUES
+		('ulamog-id','foil',21.90,'manapool','2026-07-06T09:15:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	inserted, cards, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {
+			srcObs("2026-07-01", "foil", 17.10, "tcgplayer"),
+			srcObs("2026-07-03", "foil", 17.56, "tcgplayer"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	if inserted != 2 || cards != 1 {
+		t.Errorf("inserted %d across %d cards, want the whole new series in", inserted, cards)
+	}
+	if p, src := priceAt(t, s, "ulamog-id", "foil", "2026-07-01T00:00:00Z"); p != 17.10 || src != "tcgplayer" {
+		t.Errorf("replaced series reads %v from %q, want tcgplayer 17.10", p, src)
+	}
+	want := []string{"2026-07-01T00:00:00Z", "2026-07-03T00:00:00Z", "2026-07-06T09:15:00Z"}
+	if got := stamps(t, s); !slices.Equal(got, want) {
+		t.Errorf("stamps = %v, want the old reconstruction gone and the live row standing", got)
+	}
+	if p, src := priceAt(t, s, "ulamog-id", "foil", "2026-07-06T09:15:00Z"); p != 21.90 || src != "manapool" {
+		t.Errorf("live row = %v from %q, want untouched", p, src)
+	}
+
+	// Same vendor again: nothing retires, nothing re-imports — the bound
+	// holds and the run stays a no-op.
+	inserted, _, err = s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {srcObs("2026-07-01", "foil", 17.10, "tcgplayer")},
+	})
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if inserted != 0 {
+		t.Errorf("re-run inserted %d, want 0", inserted)
+	}
+	if got := stamps(t, s); !slices.Equal(got, want) {
+		t.Errorf("stamps after re-run = %v, want unchanged", got)
+	}
+}
+
+// A series with no incoming observations keeps its reconstruction:
+// deletion without a replacement would just erase history. The switch is
+// per finish — a nonfoil import must not retire the foil series.
+func TestBackfillRetiresOnlyTheIncomingFinish(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {srcObs("2026-07-01", "foil", 21.00, "manapool")},
+	}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	// A nonfoil-only import from another vendor: the foil series stays.
+	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
+		"ulamog-id": {srcObs("2026-06-20", "normal", 9.00, "tcgplayer")},
+	}); err != nil {
+		t.Fatalf("BackfillPrices: %v", err)
+	}
+	if p, src := priceAt(t, s, "ulamog-id", "foil", "2026-07-01T00:00:00Z"); p != 21.00 || src != "manapool" {
+		t.Errorf("foil series = %v from %q, want untouched by the nonfoil import", p, src)
 	}
 }

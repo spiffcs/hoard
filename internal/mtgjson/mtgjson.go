@@ -297,6 +297,12 @@ type setFile struct {
 			UUID        string `json:"uuid"`
 			Identifiers struct {
 				ScryfallID string `json:"scryfallId"`
+				// TCGplayer sells treated foils (ripple, textured, …) and
+				// etched cards as separate products; these are their ids.
+				// The feed's own tcgplayer prices cover only the base
+				// product, which is why these matter — see AltProductID.
+				TCGAltFoilID string `json:"tcgplayerAlternativeFoilProductId"`
+				TCGEtchedID  string `json:"tcgplayerEtchedProductId"`
 			} `json:"identifiers"`
 			PurchaseUrls struct {
 				CardKingdom     string `json:"cardKingdom"`
@@ -314,6 +320,11 @@ type SetCard struct {
 	UUID      string
 	CKURL     string
 	CKFoilURL string
+	// AltProductID is the TCGplayer product id of the treated (or etched)
+	// version of this printing, empty when TCGplayer sells no such split
+	// product. The MTGJSON price feed never carries these products'
+	// prices, so this id is the key to fetching them elsewhere.
+	AltProductID string
 }
 
 // ErrNoSuchSet reports a set code MTGJSON does not publish. Scryfall and MTGJSON
@@ -350,10 +361,15 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	out := make(map[string]SetCard, len(sf.Data.Cards))
 	for _, c := range sf.Data.Cards {
 		if c.Identifiers.ScryfallID != "" && c.UUID != "" {
+			alt := c.Identifiers.TCGAltFoilID
+			if alt == "" {
+				alt = c.Identifiers.TCGEtchedID
+			}
 			out[c.Identifiers.ScryfallID] = SetCard{
-				UUID:      c.UUID,
-				CKURL:     c.PurchaseUrls.CardKingdom,
-				CKFoilURL: c.PurchaseUrls.CardKingdomFoil,
+				UUID:         c.UUID,
+				CKURL:        c.PurchaseUrls.CardKingdom,
+				CKFoilURL:    c.PurchaseUrls.CardKingdomFoil,
+				AltProductID: alt,
 			}
 		}
 	}
@@ -396,6 +412,44 @@ const (
 	Buylist = "buylist"
 )
 
+// ExtraSeries is dated TCGplayer foil prices learned outside the MTGJSON
+// feed, keyed by uuid then ISO date. The feed's tcgplayer prices cover
+// only the base product of each printing, and TCGplayer sells treated
+// foils (ripple, textured, etched…) as separate products it never
+// ingests — these series are those products' prices, fetched by the
+// pricing layer from TCGplayer's public catalog. Merged into each record
+// before any vendor selection, so bestUSD, the quote list, and the
+// history fallback all see them as if the feed carried them.
+type ExtraSeries map[string]map[string]float64
+
+// mergeExtra folds one card's extra series into its record's tcgplayer
+// foil retail. The feed wins on dates both know: extra fills the holes —
+// which, for the treated foils this exists for, is the whole series.
+func mergeExtra(rec *priceRecord, series map[string]float64) {
+	if len(series) == 0 {
+		return
+	}
+	if rec.Paper == nil {
+		rec.Paper = map[string]vendor{}
+	}
+	v, ok := rec.Paper["tcgplayer"]
+	if !ok {
+		v = vendor{Currency: "USD"}
+	}
+	if v.Currency != "USD" {
+		return
+	}
+	if v.Retail.Foil == nil {
+		v.Retail.Foil = map[string]float64{}
+	}
+	for date, price := range series {
+		if _, taken := v.Retail.Foil[date]; !taken && price > 0 {
+			v.Retail.Foil[date] = price
+		}
+	}
+	rec.Paper["tcgplayer"] = v
+}
+
 // TodayQuotes returns every USD paper quote for the requested UUIDs, rather than
 // the single best price TodayPrices settles on.
 //
@@ -403,41 +457,49 @@ const (
 // with three retail quotes and a buylist offer yields four Quotes. Cardmarket is
 // still excluded, since a euro price cannot be compared against dollar ones.
 func TodayQuotes(ctx context.Context, o Options, want map[string]bool) (map[string][]Quote, error) {
-	out := map[string][]Quote{}
-	err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
-		var qs []Quote
-		for _, name := range providerOrder {
-			v, ok := rec.Paper[name]
-			if !ok || v.Currency != "USD" {
-				continue
-			}
-			// Fixed slices, not map literals: ranging a map would shuffle the
-			// quote order per run, and arbitrage breaks price ties by position —
-			// two vendors at the same price would give different advice run to run.
-			for _, k := range []struct {
-				kind string
-				side byFinish
-			}{{Retail, v.Retail}, {Buylist, v.Buylist}} {
-				for _, f := range []struct {
-					finish string
-					byDate map[string]float64
-				}{{"normal", k.side.Normal}, {"foil", k.side.Foil}} {
-					if p := latest(f.byDate); p != nil {
-						qs = append(qs, Quote{
-							Provider: name, Kind: k.kind, Finish: f.finish, Price: *p,
-						})
+	return TodayQuotesWith(nil)(ctx, o, want)
+}
+
+// TodayQuotesWith is TodayQuotes with an extra-series overlay.
+func TodayQuotesWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string][]Quote, error) {
+	return func(ctx context.Context, o Options, want map[string]bool) (map[string][]Quote, error) {
+		out := map[string][]Quote{}
+		err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
+			mergeExtra(&rec, extra[uuid])
+			var qs []Quote
+			for _, name := range providerOrder {
+				v, ok := rec.Paper[name]
+				if !ok || v.Currency != "USD" {
+					continue
+				}
+				// Fixed slices, not map literals: ranging a map would shuffle the
+				// quote order per run, and arbitrage breaks price ties by position —
+				// two vendors at the same price would give different advice run to run.
+				for _, k := range []struct {
+					kind string
+					side byFinish
+				}{{Retail, v.Retail}, {Buylist, v.Buylist}} {
+					for _, f := range []struct {
+						finish string
+						byDate map[string]float64
+					}{{"normal", k.side.Normal}, {"foil", k.side.Foil}} {
+						if p := latest(f.byDate); p != nil {
+							qs = append(qs, Quote{
+								Provider: name, Kind: k.kind, Finish: f.finish, Price: *p,
+							})
+						}
 					}
 				}
 			}
+			if len(qs) > 0 {
+				out[uuid] = qs
+			}
+		})
+		if err != nil {
+			return nil, err
 		}
-		if len(qs) > 0 {
-			out[uuid] = qs
-		}
-	})
-	if err != nil {
-		return nil, err
+		return out, nil
 	}
-	return out, nil
 }
 
 // Price archives. Today's file holds one observation per card; the full one
@@ -737,19 +799,29 @@ func scanJSONValue(buf []byte, i int) int {
 // in Magic, so it is streamed and filtered against `want` rather than decoded
 // whole. Only UUIDs asked for are retained.
 func TodayPrices(ctx context.Context, o Options, want map[string]bool) (map[string]Price, error) {
-	out := make(map[string]Price, len(want))
-	err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
-		if p, ok := bestUSD(uuid, rec); ok {
-			out[uuid] = p
+	return TodayPricesWith(nil)(ctx, o, want)
+}
+
+// TodayPricesWith is TodayPrices with an extra-series overlay: the merged
+// record goes through bestUSD, so a treated foil's effective price can
+// anchor on TCGplayer like every plain card's does.
+func TodayPricesWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string]Price, error) {
+	return func(ctx context.Context, o Options, want map[string]bool) (map[string]Price, error) {
+		out := make(map[string]Price, len(want))
+		err := streamPrices(ctx, o, todayFile, want, func(uuid string, rec priceRecord) {
+			mergeExtra(&rec, extra[uuid])
+			if p, ok := bestUSD(uuid, rec); ok {
+				out[uuid] = p
+			}
+		})
+		if err != nil {
+			return nil, err
 		}
-	})
-	if err != nil {
-		return nil, err
+		if len(out) == 0 {
+			return nil, nil
+		}
+		return out, nil
 	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
 }
 
 // Observation is one card's price for one finish on one day.
@@ -785,6 +857,20 @@ type CardHistory struct {
 // — and why both sides come back from the one pass rather than two.
 // Observations come back in no particular order; callers that care sort them.
 func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[string]CardHistory, error) {
+	return PriceHistoryWith(nil)(ctx, o, want)
+}
+
+// PriceHistoryWith is PriceHistory with an extra-series overlay: the
+// merged record goes through the per-finish vendor fallback, so a treated
+// foil's history rides TCGplayer's own series once the overlay supplies
+// one, instead of a marketplace stand-in.
+func PriceHistoryWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string]CardHistory, error) {
+	return func(ctx context.Context, o Options, want map[string]bool) (map[string]CardHistory, error) {
+		return priceHistory(ctx, o, want, extra)
+	}
+}
+
+func priceHistory(ctx context.Context, o Options, want map[string]bool, extra ExtraSeries) (map[string]CardHistory, error) {
 	out := make(map[string]CardHistory, len(want))
 	side := func(v vendor, prices byFinish, source string) []Observation {
 		if v.Currency != "USD" {
@@ -864,6 +950,7 @@ func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[str
 		return obs
 	}
 	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
+		mergeExtra(&rec, extra[uuid])
 		var h CardHistory
 		h.Retail = append(retailFinish(rec, "normal"), retailFinish(rec, "foil")...)
 		if v, ok := rec.Paper[bidProvider]; ok {

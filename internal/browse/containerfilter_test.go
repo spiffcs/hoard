@@ -6,6 +6,7 @@ package browse
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -285,7 +286,8 @@ func TestCompsSidesToggle(t *testing.T) {
 	m.view = viewMarket
 	m.marketLoaded = true
 	m.focus = paneCards
-	m.marketComps = []market.Comp{comp("Sheeted", 60, 55, 44)}
+	m.marketAllComps = []market.Comp{comp("Sheeted", 60, 55, 44)}
+	m.deriveMarketPages()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	m = next.(Model)
 
@@ -777,5 +779,65 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 	m = runByID(m, "market.pennies")
 	if m.marketLoaded || !strings.Contains(m.status, "press F") {
 		t.Errorf("loaded = %v status %q, want a fresh-fetch ask", m.marketLoaded, m.status)
+	}
+}
+
+// The market tables page: each shows marketPageSize rows, >/< turn the
+// cursor's table, the title names the leafing, and a page turn lands the
+// cursor on the new page's first row. Sorting resets its table to page
+// one — the new order's first row lives there.
+func TestMarketTablesPage(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.view = viewMarket
+	m.marketLoaded = true
+	m.focus = paneCards
+	for i := range 60 {
+		m.marketAllRows = append(m.marketAllRows,
+			market.Row{Kind: market.KindProfit, Opportunity: opp(fmt.Sprintf("P%03d", i), 1, 10)})
+	}
+	for i := range 120 {
+		m.marketAllComps = append(m.marketAllComps, comp(fmt.Sprintf("C%03d", i), 60, 55, 44))
+	}
+	m.deriveMarketPages()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+
+	if len(m.marketRows) != 50 || len(m.marketComps) != 50 {
+		t.Fatalf("visible rows = %d + %d comps, want 50 each", len(m.marketRows), len(m.marketComps))
+	}
+	if view := strings.Join(m.marketLines(120), "\n"); !strings.Contains(view, "page 1/2 of 60 (>/< turns)") ||
+		!strings.Contains(view, "page 1/3 of 120") {
+		t.Fatalf("titles must name the leafing:\n%s", view)
+	}
+
+	m = key(m, ">") // the cursor starts in the profit table
+	if len(m.marketRows) != 10 || m.marketRows[0].Card.Name != "P050" {
+		t.Fatalf("page 2 rows = %d starting %q, want the ranking's tail", len(m.marketRows), m.marketRows[0].Card.Name)
+	}
+	if !strings.Contains(m.status, "page 2/2 · rows 51–60 of 60") {
+		t.Errorf("status = %q, want the page named", m.status)
+	}
+	m = key(m, ">")
+	if !strings.Contains(m.status, "last page") {
+		t.Errorf("status = %q, want the far edge named", m.status)
+	}
+	m = key(m, "<")
+	if m.marketRows[0].Card.Name != "P000" || !strings.Contains(m.status, "page 1/2") {
+		t.Fatalf("back to page 1 = %q status %q", m.marketRows[0].Card.Name, m.status)
+	}
+
+	m = key(m, "]") // into the comps (the empty liquid table is skipped)
+	m = key(m, ">")
+	m = key(m, ">")
+	if len(m.marketComps) != 20 || m.marketComps[0].Card.Name != "C100" {
+		t.Fatalf("comps page 3 = %d rows starting %q, want the last twenty", len(m.marketComps), m.marketComps[0].Card.Name)
+	}
+	if m.cursor[paneCards] != len(m.marketRows) {
+		t.Errorf("cursor = %d, want the comps section's first row", m.cursor[paneCards])
+	}
+
+	m = key(m, "s") // sorting speaks for the whole ranking: back to page one
+	if m.marketPage[compsSection] != 0 || len(m.marketComps) != 50 {
+		t.Errorf("after sorting page = %d with %d rows, want page one full", m.marketPage[compsSection], len(m.marketComps))
 	}
 }

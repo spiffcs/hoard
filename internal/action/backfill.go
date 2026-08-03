@@ -51,8 +51,12 @@ type BackfillResult struct {
 // The salt retires receipts written by earlier shapes of this run: v2
 // repaired the hoard-wide import bound, v3 added the buylist half, v4
 // taught the archive reader the per-finish vendor fallback, v5 moved the
-// foil fallback onto Manapool, v6 added the troll-listing guard — a stale
-// "done" would otherwise leave a polluted series standing for a day.
+// foil fallback onto Manapool, v6 added the troll-listing guard, v7 added
+// the treated-foil TCGplayer overlay (tcgcsv), v8 made the overlay's
+// archive reads pure Go, v9 taught the import to retire a reconstructed
+// series when its vendor changes (the v8 run was silently bounded by the
+// old Manapool rows) — a stale "done" would otherwise leave a polluted
+// series standing for a day.
 func backfillKey(owned []store.OwnedFinish, days int) string {
 	ids := make([]string, 0, len(owned))
 	for _, o := range owned {
@@ -60,7 +64,7 @@ func backfillKey(owned []store.OwnedFinish, days int) string {
 	}
 	sort.Strings(ids)
 	day := time.Now().Format("2006-01-02")
-	return ContentHash([]byte(fmt.Sprintf("backfill|v6|%s|%d|%s", day, days, strings.Join(ids, ","))))
+	return ContentHash([]byte(fmt.Sprintf("backfill|v9|%s|%d|%s", day, days, strings.Join(ids, ","))))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was
@@ -159,6 +163,16 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	res.BidInserted, res.BidCards, err = d.Store.BackfillBids(bids)
 	if err != nil {
 		return res, err
+	}
+	if res.Inserted+res.BidInserted > 0 {
+		// An import that wrote also deleted where a vendor switched;
+		// compacting here keeps the file at its real size instead of its
+		// high-water mark (owner's call: these runs clean up after
+		// themselves).
+		p.Emit(progress.Event{Step: "compacting the database"})
+		if err := d.Store.Compact(); err != nil {
+			return res, err
+		}
 	}
 	err = d.Store.RecordReceipt(store.ImportReceipt{
 		Hash: key, File: "backfill " + time.Now().Format("2006-01-02"), Cards: res.Cards,

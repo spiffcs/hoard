@@ -193,6 +193,56 @@ SELECT scryfall_id FROM cards WHERE ck_url IS NOT NULL`)
 	return out, rows.Err()
 }
 
+// TCGAltProducts returns the treated-product mapping: ids holds each
+// printing's split TCGplayer product where one exists, stamped every
+// printing that has been asked about at all — the resolve gate, so a card
+// with no split product is not re-asked forever.
+func (s *Store) TCGAltProducts() (ids map[string]string, stamped map[string]bool, err error) {
+	rows, err := s.db.Query(`
+SELECT scryfall_id, tcg_alt_product_id FROM cards WHERE tcg_alt_product_id IS NOT NULL`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	ids, stamped = map[string]string{}, map[string]bool{}
+	for rows.Next() {
+		var sid, pid string
+		if err := rows.Scan(&sid, &pid); err != nil {
+			return nil, nil, err
+		}
+		stamped[sid] = true
+		if pid != "" {
+			ids[sid] = pid
+		}
+	}
+	return ids, stamped, rows.Err()
+}
+
+// SaveTCGAltProducts records the treated-product ids a set-file read
+// produced, including the empty ones — asked-and-none must be
+// distinguishable from never-asked.
+func (s *Store) SaveTCGAltProducts(ids map[string]string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE cards SET tcg_alt_product_id = ? WHERE scryfall_id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for sid, pid := range ids {
+		if _, err := stmt.Exec(pid, sid); err != nil {
+			return fmt.Errorf("caching tcg product id for %s: %w", sid, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveCardKingdomLinks records the links a set-file read produced,
 // including the empty ones — asked-and-none must be distinguishable from
 // never-asked.

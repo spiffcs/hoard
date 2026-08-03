@@ -432,6 +432,18 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(-1); return nil },
 		},
 		{
+			id: "market.page.next", aliases: "next page turn more rows",
+			key: ">", hidden: true,
+			where: func(m *Model) bool { return m.view == viewMarket },
+			run:   func(m *Model) tea.Cmd { m.turnMarketPage(1); return nil },
+		},
+		{
+			id: "market.page.prev", aliases: "previous page turn back",
+			key: "<", hidden: true,
+			where: func(m *Model) bool { return m.view == viewMarket },
+			run:   func(m *Model) tea.Cmd { m.turnMarketPage(-1); return nil },
+		},
+		{
 			id: "market.comps.side", aliases: "comps buy sell asks bids side",
 			key: "b", hidden: true,
 			where: func(m *Model) bool { return m.view == viewMarket },

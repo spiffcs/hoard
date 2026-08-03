@@ -51,6 +51,9 @@ type Fetcher struct {
 	bytes func(done, total int64)
 	// baseURL overrides the MTGJSON file root; empty means the real one.
 	baseURL string
+	// tcgcsvBase overrides the tcgcsv root the treated-foil overlay reads;
+	// empty means the real one.
+	tcgcsvBase string
 }
 
 // New returns a Fetcher reading through cacheDir.
@@ -78,6 +81,13 @@ func (f *Fetcher) options() mtgjson.Options {
 // WithBaseURL points the fetcher at another MTGJSON file root — tests.
 func (f *Fetcher) WithBaseURL(u string) *Fetcher {
 	f.baseURL = u
+	return f
+}
+
+// WithTCGCSVBaseURL points the treated-foil overlay at another tcgcsv
+// root — tests.
+func (f *Fetcher) WithTCGCSVBaseURL(u string) *Fetcher {
+	f.tcgcsvBase = u
 	return f
 }
 
@@ -112,7 +122,8 @@ func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, what string,
 // Prices returns the best USD price for each printing that has one, keyed by
 // Scryfall id.
 func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Price, error) {
-	out, _, err := remap(f, ctx, refs, "prices", mtgjson.TodayPrices)
+	extra := f.treatedExtra(ctx, refs, 1)
+	out, _, err := remap(f, ctx, refs, "prices", mtgjson.TodayPricesWith(extra))
 	return out, err
 }
 
@@ -134,7 +145,10 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 	if out, ok := f.cachedQuotes(refs); ok {
 		return out, nil
 	}
-	out, _, err := remap(f, ctx, refs, "quotes", mtgjson.TodayQuotes)
+	// The overlay merges before the save, so the day cache holds the full
+	// bundles and CachedQuotes never serves a poorer answer than this did.
+	extra := f.treatedExtra(ctx, refs, 1)
+	out, _, err := remap(f, ctx, refs, "quotes", mtgjson.TodayQuotesWith(extra))
 	if err == nil {
 		f.saveQuotes(refs, out)
 	}
@@ -145,7 +159,8 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 // Scryfall id, plus how many refs had an id to ask with. Reads a ~150 MB
 // archive, so it is only for a deliberate backfill.
 func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string]mtgjson.CardHistory, int, error) {
-	return remap(f, ctx, refs, "price history", mtgjson.PriceHistory)
+	extra := f.treatedExtra(ctx, refs, historyDays)
+	return remap(f, ctx, refs, "price history", mtgjson.PriceHistoryWith(extra))
 }
 
 // want resolves refs to the UUID set MTGJSON is keyed by, plus the way back.
@@ -186,13 +201,18 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	if err != nil {
 		return nil, err
 	}
+	_, altStamped, err := f.st.TCGAltProducts()
+	if err != nil {
+		return nil, err
+	}
 	bySet := map[string][]string{}
 	for _, r := range refs {
 		// A set is fetched when anything it can teach is still unknown:
-		// the uuid, or the vendor links a pre-v15 card never learned. Both
-		// are stamped after one read, so this stays a once-per-set cost.
+		// the uuid, the vendor links a pre-v15 card never learned, or the
+		// treated-product id a pre-v17 card never learned. All are stamped
+		// after one read, so this stays a once-per-set cost.
 		needUUID := r.MTGJSONUUID == "" && known[r.ScryfallID] == ""
-		if needUUID || !linked[r.ScryfallID] {
+		if needUUID || !linked[r.ScryfallID] || !altStamped[r.ScryfallID] {
 			bySet[r.SetCode] = append(bySet[r.SetCode], r.ScryfallID)
 		}
 	}
@@ -209,6 +229,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	quiet.Progress = nil
 	learned := make(map[string]string)
 	links := make(map[string]store.CKLinks)
+	altIDs := make(map[string]string)
 	n := 0
 	for setCode, sids := range bySet {
 		n++
@@ -233,8 +254,10 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 				known[sid] = sc.UUID
 				learned[sid] = sc.UUID
 				// Empty links save too: the file was read, and NULL staying
-				// NULL would fetch it again tomorrow.
+				// NULL would fetch it again tomorrow. Same for the treated
+				// product id.
 				links[sid] = store.CKLinks{URL: sc.CKURL, FoilURL: sc.CKFoilURL}
+				altIDs[sid] = sc.AltProductID
 			}
 		}
 	}
@@ -242,6 +265,9 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 		return nil, err
 	}
 	if err := f.st.SaveCardKingdomLinks(links); err != nil {
+		return nil, err
+	}
+	if err := f.st.SaveTCGAltProducts(altIDs); err != nil {
 		return nil, err
 	}
 	return known, nil

@@ -44,6 +44,7 @@ var migrations = []migration{
 	{14, tcgplayerProductID},
 	{15, cardKingdomLinks},
 	{16, promoTypesColumn},
+	{17, tcgAltProductColumn},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -332,6 +333,16 @@ ALTER TABLE cards ADD COLUMN ck_foil_url TEXT;`
 const promoTypesColumn = `
 ALTER TABLE cards ADD COLUMN promo_types TEXT
     GENERATED ALWAYS AS (json_extract(raw_json,'$.promo_types')) VIRTUAL;`
+
+// v17: the TCGplayer product id of the printing's treated (or etched)
+// version. TCGplayer sells ripple/surge/textured foils and etched cards
+// as separate products, and no price feed we read carries their prices —
+// this id is the key to fetching them from TCGplayer's public catalog.
+// From MTGJSON set files like mtgjson_uuid; NULL means never asked, empty
+// means asked and no split product exists, so absence does not re-fetch
+// the set file forever (the ck_url convention).
+const tcgAltProductColumn = `
+ALTER TABLE cards ADD COLUMN tcg_alt_product_id TEXT;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

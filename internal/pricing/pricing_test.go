@@ -225,3 +225,111 @@ func TestFillGapsRefreshesFallbackPrices(t *testing.T) {
 		t.Fatalf("rows = %+v, want the fallback refreshed to manapool's 38.55", rows)
 	}
 }
+
+// The treated-foil overlay end to end: resolve learns the split TCGplayer
+// product id from the set file, tcgcsv supplies that product's market
+// price, and the effective foil price anchors on tcgplayer — even though
+// the MTGJSON feed publishes no foil series for the card (the ripple-foil
+// shape, observed live on Akroma's Will, product 553005).
+func TestPricesOverlayTreatedFoil(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	gz := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) {
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(body))
+			zw.Close()
+		}
+	}
+	plain := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) { w.Write([]byte(body)) }
+	}
+	routes := map[string]func(w http.ResponseWriter){
+		"/M3C.json.gz": gz(`{"data": {"cards": [
+			{"uuid": "uuid-akroma", "identifiers": {"scryfallId": "ripple-id",
+			 "tcgplayerAlternativeFoilProductId": "553005"}}
+		]}}`),
+		"/AllPricesToday.json.gz": gz(`{"meta": {"date": "2026-08-01"}, "data": {
+			"uuid-akroma": {"paper": {
+			  "tcgplayer":   {"currency": "USD", "retail": {"normal": {"2026-08-01": 14.87}}},
+			  "cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.99}}},
+			  "manapool":    {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.78}}}
+			}}}}`),
+		"/tcgplayer/1/groups": plain(`{"results": [
+			{"groupId": 23445, "name": "Commander: Modern Horizons 3", "abbreviation": "M3C"}]}`),
+		"/tcgplayer/1/23445/prices": plain(`{"results": [
+			{"productId": 552925, "marketPrice": 15.33, "subTypeName": "Normal"},
+			{"productId": 553005, "marketPrice": 17.56, "subTypeName": "Foil"}]}`),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h, ok := routes[r.URL.Path]
+		if !ok {
+			t.Errorf("unexpected fetch: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		h(w)
+	}))
+	defer srv.Close()
+
+	f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
+	got, err := f.Prices(context.Background(), []Ref{{ScryfallID: "ripple-id", SetCode: "m3c"}})
+	if err != nil {
+		t.Fatalf("Prices: %v", err)
+	}
+	p := got["ripple-id"]
+	if p.Foil == nil || *p.Foil != 17.56 || p.FoilSource != "tcgplayer" {
+		t.Fatalf("price = %+v, want the treated product's tcgplayer figure", p)
+	}
+	if p.USD == nil || *p.USD != 14.87 {
+		t.Errorf("normal = %+v, want the feed's own figure untouched", p)
+	}
+
+	// The learned product id is stamped, like uuids and vendor links.
+	ids, stamped, err := s.TCGAltProducts()
+	if err != nil {
+		t.Fatalf("TCGAltProducts: %v", err)
+	}
+	if ids["ripple-id"] != "553005" || !stamped["ripple-id"] {
+		t.Errorf("stored ids = %v stamped %v, want the product learned once", ids, stamped)
+	}
+}
+
+// The overlay fails soft: tcgcsv unreachable means the feed's own answer
+// stands — a dash for the treated finish beats a broken price update.
+func TestPricesOverlaySoftFailure(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/M3C.json.gz":
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(`{"data": {"cards": [
+				{"uuid": "uuid-akroma", "identifiers": {"scryfallId": "ripple-id",
+				 "tcgplayerAlternativeFoilProductId": "553005"}}]}}`))
+			zw.Close()
+		case "/AllPricesToday.json.gz":
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(`{"data": {"uuid-akroma": {"paper": {
+				"manapool": {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.78}}}}}}}`))
+			zw.Close()
+		default:
+			w.WriteHeader(http.StatusInternalServerError) // tcgcsv is down
+		}
+	}))
+	defer srv.Close()
+
+	f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
+	got, err := f.Prices(context.Background(), []Ref{{ScryfallID: "ripple-id", SetCode: "m3c"}})
+	if err != nil {
+		t.Fatalf("Prices must not fail with tcgcsv down: %v", err)
+	}
+	if p := got["ripple-id"]; p.Foil == nil || *p.Foil != 21.78 || p.FoilSource != "manapool" {
+		t.Errorf("price = %+v, want the feed's fallback answer", p)
+	}
+}

@@ -91,6 +91,9 @@ func (m *Model) cycleSort() {
 		if m.selectedComp() != nil {
 			m.compsSortIdx = (m.compsSortIdx + 1) % len(m.compsSortColumnsNow())
 			m.compsSortRev = false
+			// The new order's first row lives on page one, wherever the
+			// cursor was leafing.
+			m.marketPage[compsSection] = 0
 			m.sortCompRows()
 			m.cursor[paneCards] = len(m.marketRows) // the comps section's first row
 			m.scrollIntoView()
@@ -99,6 +102,7 @@ func (m *Model) cycleSort() {
 		k := m.selectedMarketKind()
 		m.marketSortIdx[k] = (m.marketSortIdx[k] + 1) % len(marketSortColumns[k])
 		m.marketSortRev[k] = false
+		m.marketPage[k] = 0
 		m.sortArbRows()
 		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
 		m.scrollIntoView()
@@ -116,6 +120,7 @@ func (m *Model) reverseSort() {
 	if m.view == viewMarket {
 		if m.selectedComp() != nil {
 			m.compsSortRev = !m.compsSortRev
+			m.marketPage[compsSection] = 0
 			m.sortCompRows()
 			m.cursor[paneCards] = len(m.marketRows)
 			m.scrollIntoView()
@@ -123,6 +128,7 @@ func (m *Model) reverseSort() {
 		}
 		k := m.selectedMarketKind()
 		m.marketSortRev[k] = !m.marketSortRev[k]
+		m.marketPage[k] = 0
 		m.sortArbRows()
 		m.cursor[paneCards] = m.firstMarketRowOfKind(k)
 		m.scrollIntoView()
@@ -160,7 +166,7 @@ func (m *Model) sortHoldings() {
 // sortArbRows orders the market rows: the section grouping always wins,
 // and within each section that table's own column and direction apply.
 func (m *Model) sortArbRows() {
-	slices.SortStableFunc(m.marketRows, func(a, b market.Row) int {
+	slices.SortStableFunc(m.marketAllRows, func(a, b market.Row) int {
 		if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
 			return c
 		}
@@ -174,6 +180,7 @@ func (m *Model) sortArbRows() {
 		}
 		return strings.Compare(a.Card.Name, b.Card.Name)
 	})
+	m.deriveMarketPages()
 }
 
 // sortRows stable-sorts in place, reversing the comparison when rev is set.

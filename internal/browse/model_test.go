@@ -1538,12 +1538,13 @@ func TestMarketSortIsPerTable(t *testing.T) {
 		o.Card.Name = name
 		return o
 	}
-	m.marketRows = []market.Row{
+	m.marketAllRows = []market.Row{
 		{Kind: market.KindProfit, Opportunity: opp("Zulu Profit", 1, 3, 0)},
 		{Kind: market.KindProfit, Opportunity: opp("Alpha Profit", 2, 3, 0)},
 		{Kind: market.KindLiquid, Opportunity: opp("Zulu Liquid", 1, 4, 5)},
 		{Kind: market.KindLiquid, Opportunity: opp("Alpha Liquid", 1, 1, 2)},
 	}
+	m.deriveMarketPages()
 	m.marketLoaded = true
 
 	names := func() []string {

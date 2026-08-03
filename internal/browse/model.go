@@ -261,6 +261,14 @@ type Model struct {
 	compsSortIdx  int
 	compsSortRev  bool
 
+	// The full rankings behind the visible tables: marketRows/marketComps
+	// hold only the current page of each (marketPageSize rows), sliced from
+	// these by deriveMarketPages. marketPage is each section's page,
+	// indexed like marketSecOffset; >/< turn the cursor's table.
+	marketAllRows  []market.Row
+	marketAllComps []market.Comp
+	marketPage     [3]int
+
 	// marketSecOffset is each market section's scroll position inside its
 	// fixed region (0=profit, 1=liquid, 2=comps); the tables scroll
 	// independently rather than as one document.

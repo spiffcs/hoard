@@ -36,11 +36,11 @@ type MarketFunc func(ctx context.Context, p progress.Fn, min float64) (market.Re
 // TogglePennyFilter shows the bulk anyway; SetPennyFilter moves the line.
 const defaultMarketFloor = 1.00
 
-// marketRowLimit is how many rows each table contributes. Generous, not
-// unbounded: the fixed regions scroll, so the tail of a ranking (the 70%
-// pays rows, the cheaper comps) is reachable — but a table is still a
-// ranked answer, not a dump of everything compared.
-const marketRowLimit = 50
+// marketPageSize is how many rows each table shows per page. Generous, not
+// unbounded: the fixed regions scroll, so a page's tail (the 70% pays
+// rows, the cheaper comps) is reachable — and >/< turn the page, so the
+// full ranking is too, fifty rows at a time.
+const marketPageSize = 50
 
 // marketMsg carries a finished fetch back into the update loop.
 type marketMsg struct {
@@ -203,6 +203,7 @@ func (m Model) marketLines(width int) []string {
 	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
 	secs := m.marketSections()
 	budgets := m.marketSectionBudgets()
+	totals := m.marketSectionTotals()
 	// The bar only draws while the pane has focus — same reasoning as the
 	// generic windowing: an Inactive mark on an analytical row reads as a
 	// dimmed card, not a remembered place.
@@ -229,6 +230,12 @@ func (m Model) marketLines(width int) []string {
 		if off := m.marketSecOffset[i]; sec.count > budgets[i] && budgets[i] > 0 {
 			head += m.theme.Help.Render(fmt.Sprintf(" · %d–%d of %d",
 				off+1, off+budgets[i], sec.count))
+		}
+		// A ranking deeper than one page says so — a bare "of 50" read as
+		// the whole answer when 113 rows stood behind it.
+		if tot := totals[i]; tot > marketPageSize {
+			head += m.theme.Help.Render(fmt.Sprintf(" · page %d/%d of %d (>/< turns)",
+				m.marketPage[i]+1, (tot-1)/marketPageSize+1, tot))
 		}
 		out = append(out, head)
 		if sec.count == 0 {
@@ -467,7 +474,9 @@ func (m *Model) applyMarketRows() {
 		}
 		res = scoped
 	}
-	rows := market.Rows(res, marketRowLimit)
+	// The whole ranking, not a top-N: paging owns the truncation now, so
+	// every section keeps its full run and shows marketPageSize at a time.
+	rows := market.Rows(res, len(res.Opportunities))
 	kept := rows[:0]
 	for _, r := range rows {
 		// The browser dropped its BELOW MARKET table — the space serves the
@@ -489,12 +498,84 @@ func (m *Model) applyMarketRows() {
 		}
 		kept = append(kept, r)
 	}
-	m.marketRows = kept
+	m.marketAllRows = kept
+	// A new collection means new rankings: every section back to page one.
+	m.marketPage = [3]int{}
 	m.sortArbRows()
 	m.applyMarketComps(res.Comps)
 	// The rows under the old scroll positions are gone; every section
 	// starts back at its top.
 	m.marketSecOffset = [3]int{}
+}
+
+// marketSectionTotals is each section's full row count across every page —
+// the visible marketSections count only the current page.
+func (m Model) marketSectionTotals() [3]int {
+	var t [3]int
+	for _, r := range m.marketAllRows {
+		t[r.Kind]++
+	}
+	t[compsSection] = len(m.marketAllComps)
+	return t
+}
+
+// deriveMarketPages slices the visible page of every section out of the
+// full rankings, clamping each page to what its section actually has.
+// Runs after anything that reorders or replaces the full lists.
+func (m *Model) deriveMarketPages() {
+	totals := m.marketSectionTotals()
+	for i, tot := range totals {
+		maxPage := 0
+		if tot > 0 {
+			maxPage = (tot - 1) / marketPageSize
+		}
+		m.marketPage[i] = min(max(m.marketPage[i], 0), maxPage)
+	}
+	page := func(pg, tot int) (lo, hi int) {
+		lo = min(pg*marketPageSize, tot)
+		return lo, min(lo+marketPageSize, tot)
+	}
+	rows := make([]market.Row, 0, min(len(m.marketAllRows), 2*marketPageSize))
+	start := 0
+	for k := 0; k < compsSection; k++ {
+		run := m.marketAllRows[start : start+totals[k]]
+		lo, hi := page(m.marketPage[k], totals[k])
+		rows = append(rows, run[lo:hi]...)
+		start += totals[k]
+	}
+	m.marketRows = rows
+	lo, hi := page(m.marketPage[compsSection], totals[compsSection])
+	m.marketComps = m.marketAllComps[lo:hi]
+}
+
+// turnMarketPage turns the cursor's table one page forward (+1) or back
+// (-1), landing the cursor on the new page's first row. At either end the
+// status says so rather than staying silent.
+func (m *Model) turnMarketPage(dir int) {
+	sec, _ := m.marketCursorPos()
+	tot := m.marketSectionTotals()[sec]
+	maxPage := 0
+	if tot > 0 {
+		maxPage = (tot - 1) / marketPageSize
+	}
+	next := min(max(m.marketPage[sec]+dir, 0), maxPage)
+	if next == m.marketPage[sec] {
+		if maxPage == 0 {
+			m.status, m.statusErr = "one page here", false
+		} else if dir > 0 {
+			m.status, m.statusErr = "last page", false
+		} else {
+			m.status, m.statusErr = "first page", false
+		}
+		return
+	}
+	m.marketPage[sec] = next
+	m.deriveMarketPages()
+	m.marketSecOffset[sec] = 0
+	m.cursor[paneCards] = m.marketSections()[sec].start
+	m.scrollIntoView()
+	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d",
+		next+1, maxPage+1, next*marketPageSize+1, min((next+1)*marketPageSize, tot), tot), false
 }
 
 // marketSectionBudgets divides the pane's rows among the four sections:

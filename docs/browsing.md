@@ -179,10 +179,13 @@ CLI report — including the BELOW MARKET section the browser dropped for
 comps room — with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
 
-Three gates decide what earns a row at all: the card needs quotes from at
+Two gates decide what earns a row at all: the card needs quotes from at
 least **two retail vendors** (a sheet with one vendor compares nothing),
-its low ask must clear the **$1.00 floor** (bulk wobbling by cents is
-noise, not opportunity), and each table shows its **top 50** by value. The
+and its low ask must clear the **$1.00 floor** (bulk wobbling by cents is
+noise, not opportunity). Each table shows its ranking **50 rows per
+page** — <kbd>&gt;</kbd>/<kbd>&lt;</kbd> turn the cursor's table's page,
+the title says where you are (`page 2/4 of 163 (>/< turns)`), and sorting
+a table snaps it back to page one so the new order's top is on screen. The
 floor is the same penny-filter pair the movers view carries:
 `TogglePennyFilter` shows everything with two vendors, `SetPennyFilter`
 moves the line ($0 turns the gate off), and the status line names the

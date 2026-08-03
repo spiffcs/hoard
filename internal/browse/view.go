@@ -645,7 +645,7 @@ func (m Model) helpLine() string {
 	case m.view == viewMarket && m.marketLoading:
 		return "esc cancel · ctrl+c quit"
 	case m.view == viewMarket:
-		return "enter detail · ]/[ next/prev table · b comps buy/sell · F refetch quotes · M floor · tab collections · v next view · : commands · ↑/↓ move · q quit"
+		return "enter detail · ]/[ next/prev table · >/< turn page · b comps buy/sell · F refetch quotes · M floor · tab collections · v next view · : commands · ↑/↓ move · q quit"
 	case m.view == viewWatches:
 		// Each analytical view leads with its own verbs — a generic line
 		// here once hid that watches can be added at all.

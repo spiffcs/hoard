@@ -330,7 +330,11 @@ func backfillStamp(date string) string { return date + "T00:00:00Z" }
 // no baselines (observed live, the Tricky Terrain bug).
 //
 // Where an import collides with a live row the live one stands — it is what
-// was observed, this is what was reconstructed.
+// was observed, this is what was reconstructed. A previously *backfilled*
+// series is the one exception: when the incoming import speaks for a
+// different vendor, the old reconstruction retires first
+// (retireSwitchedSeries), because two vendors' figures spliced into one
+// series read as price movement that never happened.
 func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	return s.backfillHistory("card_price_history", byCard)
 }
@@ -343,6 +347,26 @@ func (s *Store) backfillHistory(table string, byCard map[string][]mtgjson.Observ
 	if len(byCard) == 0 {
 		return 0, 0, nil
 	}
+	// MTGJSON speaks "normal"; the store has spoken "nonfoil" since
+	// schema v8. Translate before anything reads the finishes so the
+	// vendor-switch pass, the bound lookup, the series grouping and the
+	// stored row all agree — untranslated rows join nothing and Movers
+	// never sees them (schema v12 repaired the ones written before this
+	// line existed).
+	normalized := make(map[string][]mtgjson.Observation, len(byCard))
+	for sid, obs := range byCard {
+		ns := make([]mtgjson.Observation, len(obs))
+		for i, o := range obs {
+			o.Finish = storeFinish(o.Finish)
+			ns[i] = o
+		}
+		normalized[sid] = ns
+	}
+	if err := s.retireSwitchedSeries(table, normalized); err != nil {
+		return 0, 0, err
+	}
+	// After any retirements, so a replaced series' bound reflects only the
+	// rows that actually survived.
 	firstLive, err := s.firstObservationsIn(table)
 	if err != nil {
 		return 0, 0, err
@@ -362,20 +386,10 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	}
 	defer stmt.Close()
 
-	for sid, obs := range byCard {
+	for sid, obs := range normalized {
 		var wrote bool
-		// MTGJSON speaks "normal"; the store has spoken "nonfoil" since
-		// schema v8. Translate before compaction so the bound lookup, the
-		// series grouping and the stored row all agree — untranslated rows
-		// join nothing and Movers never sees them (schema v12 repaired the
-		// ones written before this line existed).
-		normalized := make([]mtgjson.Observation, len(obs))
-		for i, o := range obs {
-			o.Finish = storeFinish(o.Finish)
-			normalized[i] = o
-		}
 		bound := func(finish string) string { return firstLive[sid+"|"+finish] }
-		for _, o := range compactSeries(normalized, bound) {
+		for _, o := range compactSeries(obs, bound) {
 			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
 			if err != nil {
 				return 0, 0, fmt.Errorf("backfilling %s for %s: %w", table, sid, err)
@@ -393,6 +407,70 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 		return 0, 0, err
 	}
 	return inserted, cards, nil
+}
+
+// retireSwitchedSeries deletes a series' previously backfilled rows when
+// the incoming import speaks for a different vendor — the vendor-switch
+// case the per-series bound cannot handle alone. The old reconstruction
+// would otherwise own the bound forever: the Manapool foil series written
+// for the treated foils blocked TCGplayer's own series entirely once the
+// tcgcsv overlay made it the chosen vendor (observed live: 152 of many
+// thousand observations imported).
+//
+// Only reconstructed rows die — backfillStamp marks every import with a
+// midnight timestamp, while live observations carry the clock time they
+// were actually seen, so "live rows stand" survives the switch. A series
+// with no incoming observations keeps its old reconstruction: deletion
+// without a replacement would just erase history.
+func (s *Store) retireSwitchedSeries(table string, byCard map[string][]mtgjson.Observation) error {
+	incoming := map[string]string{} // sid|finish → the import's vendor
+	for sid, obs := range byCard {
+		for _, o := range obs {
+			if o.Source != "" {
+				incoming[sid+"|"+o.Finish] = o.Source
+			}
+		}
+	}
+	if len(incoming) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(`
+SELECT DISTINCT scryfall_id, finish, source FROM ` + table + `
+WHERE as_of LIKE '%T00:00:00Z'`)
+	if err != nil {
+		return fmt.Errorf("reading backfilled sources: %w", err)
+	}
+	defer rows.Close()
+	type series struct{ sid, finish string }
+	var switched []series
+	for rows.Next() {
+		var sid, finish, source string
+		if err := rows.Scan(&sid, &finish, &source); err != nil {
+			return err
+		}
+		// Scryfall rows are live observations by definition — the import
+		// never writes that source — so a midnight stamp on one (a
+		// backdated fixture, a freak clock) still means "observed".
+		if source == "scryfall" {
+			continue
+		}
+		if want := incoming[sid+"|"+finish]; want != "" && want != source {
+			switched = append(switched, series{sid, finish})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, sw := range switched {
+		if _, err := s.db.Exec(`
+DELETE FROM `+table+`
+WHERE scryfall_id = ? AND finish = ? AND as_of LIKE '%T00:00:00Z'
+  AND source != ? AND source != 'scryfall'`,
+			sw.sid, sw.finish, incoming[sw.sid+"|"+sw.finish]); err != nil {
+			return fmt.Errorf("retiring %s series for %s: %w", table, sw.sid, err)
+		}
+	}
+	return nil
 }
 
 // storeFinish translates MTGJSON's finish vocabulary into the schema's.

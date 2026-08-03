@@ -29,9 +29,19 @@ DELETE FROM cards WHERE scryfall_id IN (
 		return 0, err
 	}
 	if n > 0 {
-		if _, err := s.db.Exec(`VACUUM`); err != nil {
-			return int(n), fmt.Errorf("compacting the database: %w", err)
+		if err := s.Compact(); err != nil {
+			return int(n), err
 		}
 	}
 	return int(n), nil
+}
+
+// Compact rewrites the database file to reclaim the pages deletions free —
+// the vendor-switch retirements and orphan purges otherwise leave the
+// file its high-water size forever.
+func (s *Store) Compact() error {
+	if _, err := s.db.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("compacting the database: %w", err)
+	}
+	return nil
 }

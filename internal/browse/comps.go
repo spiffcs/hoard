@@ -68,11 +68,11 @@ func (m Model) marketCursorPos() (sec, idx int) {
 	return 0, 0
 }
 
-// applyMarketComps derives the visible comp sheets from the given (already
-// container-filtered) comps: top-N by value, then the same per-copy value
-// floor the Kind rows get.
+// applyMarketComps derives the full comp ranking from the given (already
+// container-filtered) comps: everything, value-ranked, after the same
+// per-copy value floor the Kind rows get. Paging owns the truncation.
 func (m *Model) applyMarketComps(all []market.Comp) {
-	comps := market.TopComps(all, marketRowLimit)
+	comps := market.TopComps(all, 0)
 	if min := m.floorMin(); min > 0 {
 		kept := comps[:0]
 		for _, c := range comps {
@@ -86,7 +86,7 @@ func (m *Model) applyMarketComps(all []market.Comp) {
 		}
 		comps = kept
 	}
-	m.marketComps = comps
+	m.marketAllComps = comps
 	m.sortCompRows()
 }
 
@@ -108,16 +108,19 @@ func (m Model) compsSortColumnsNow() []string {
 	return compsSellSortColumns
 }
 
-// sortCompRows re-orders the comps by their own column and direction.
+// sortCompRows re-orders the full comp ranking by its own column and
+// direction, then re-derives the visible page — a sort speaks for the
+// whole ranking, so the page shows its slice of the new order.
 func (m *Model) sortCompRows() {
 	key, rev := m.compsSortColumnsNow()[m.compsSortIdx], m.compsSortRev
 	buySide := m.compsBuySide
-	sortRows(m.marketComps, rev, func(a, b market.Comp) int {
+	sortRows(m.marketAllComps, rev, func(a, b market.Comp) int {
 		if c := compKeyFor(key, buySide, a, b); c != 0 {
 			return c
 		}
 		return strings.Compare(a.Card.Name, b.Card.Name)
 	})
+	m.deriveMarketPages()
 }
 
 // compKeyFor compares two comp sheets on one column. Money columns run

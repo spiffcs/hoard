@@ -260,8 +260,28 @@ value rides MTGJSON's foil bucket, which tracks the treated product's
 market. The FINISH columns name the treatment so the number and the
 physical card read as the same thing.
 
+**Where treated-foil TCGplayer prices come from.** TCGplayer sells each
+treatment as a separate product — "Akroma's Will (Ripple Foil)" is its
+own listing beside the regular card — and MTGJSON's price feed ingests
+only the base product, so its tcgplayer bucket has no foil series for
+these cards at all. The split product's id, however, rides the same
+MTGJSON set files hoard already reads (`tcgplayerAlternativeFoilProductId`,
+with the etched id as fallback); hoard stores it per printing and fetches
+the product's market price from TCGplayer's public catalog via
+[tcgcsv.com](https://tcgcsv.com) — free, keyless, day-cached beside the
+MTGJSON cache. The fetched figure merges into the card's record before
+any vendor selection, so the provider order genuinely holds for treated
+foils: TCG SOLD fills in, spreads and verdicts compute, and the effective
+foil price anchors on TCGplayer like every plain card's does. If tcgcsv
+is unreachable the overlay simply doesn't happen — the other vendors'
+answers stand, exactly as before.
+
 The archive backfill resolves each finish through the same vendor order
 the live prices use: TCGplayer's series leads, and a finish TCGplayer
-never lists (the ripple foils again) takes the next vendor's series —
-without it the Collector's Edition decks sat one observation deep and
-never appeared in movers.
+never lists takes the next vendor's series — without that fallback the
+Collector's Edition decks sat one observation deep and never appeared in
+movers. Treated foils get their TCGplayer series from tcgcsv's daily
+archives: up to 90 days, ~4 MB per day, each fetched once and its
+extractions cached, decoded entirely in Go (the archives are
+PPMd-compressed 7z; hoard registers a lenient PPMd decoder because the
+archives carry seven property bytes where the canonical shape is five).

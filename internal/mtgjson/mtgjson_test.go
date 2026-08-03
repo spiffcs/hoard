@@ -233,10 +233,12 @@ func TestTodayPricesRejectsTruncatedGzip(t *testing.T) {
 const m3cFile = `{
  "meta": {"date": "2026-07-28"},
  "data": {"code": "M3C", "cards": [
-   {"uuid": "uuid-ck", "identifiers": {"scryfallId": "scry-1"},
+   {"uuid": "uuid-ck", "identifiers": {"scryfallId": "scry-1",
+    "tcgplayerAlternativeFoilProductId": "553005"},
     "purchaseUrls": {"cardKingdom": "https://mtgjson.com/links/aa",
                      "cardKingdomFoil": "https://mtgjson.com/links/bb"}},
-   {"uuid": "uuid-tcg", "identifiers": {"scryfallId": "scry-2"}},
+   {"uuid": "uuid-tcg", "identifiers": {"scryfallId": "scry-2",
+    "tcgplayerEtchedProductId": "600100"}},
    {"uuid": "uuid-none", "identifiers": {}}
  ]}
 }`
@@ -264,6 +266,14 @@ func TestSetIdentifiers(t *testing.T) {
 	// A card with no Scryfall ID cannot be joined, so it is dropped.
 	if len(got) != 2 {
 		t.Errorf("map has %d entries, want 2", len(got))
+	}
+	// The treated-product ids ride the same read: the alternative-foil id
+	// when TCGplayer splits one off, the etched id as the fallback.
+	if got["scry-1"].AltProductID != "553005" {
+		t.Errorf("alt product = %q, want the ripple product id", got["scry-1"].AltProductID)
+	}
+	if got["scry-2"].AltProductID != "600100" {
+		t.Errorf("alt product = %q, want the etched id fallback", got["scry-2"].AltProductID)
 	}
 }
 
@@ -588,6 +598,83 @@ func TestFoilSkipsTrollListings(t *testing.T) {
 	for _, o := range hist["uuid-troll"].Retail {
 		if o.Source != "cardkingdom" || o.Price > 1000 {
 			t.Errorf("archive obs %+v, want cardkingdom's sane series", o)
+		}
+	}
+}
+
+// The treated-foil overlay: an ExtraSeries merges into the record's
+// tcgplayer foil retail before any selection, so a ripple foil the feed
+// prices only via other vendors anchors on TCGplayer everywhere — the
+// best price, the quote list, and the history's vendor fallback.
+func TestExtraSeriesOverlay(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
+	// A figure inside the outlier guard's tolerance of the other vendors —
+	// the guard treats a merged series exactly like a native one.
+	extra := ExtraSeries{"uuid-ripple": {"2026-07-28": 5.55}}
+
+	got, err := TodayPricesWith(extra)(context.Background(), Options{},
+		map[string]bool{"uuid-ripple": true})
+	if err != nil {
+		t.Fatalf("TodayPricesWith: %v", err)
+	}
+	p := got["uuid-ripple"]
+	if p.Foil == nil || *p.Foil != 5.55 || p.FoilSource != "tcgplayer" {
+		t.Errorf("price = %+v, want the overlay's tcgplayer foil figure", p)
+	}
+	if p.USD == nil || *p.USD != 0.34 {
+		t.Errorf("normal = %+v, want the feed's own figure untouched", p)
+	}
+
+	qs, err := TodayQuotesWith(extra)(context.Background(), Options{},
+		map[string]bool{"uuid-ripple": true})
+	if err != nil {
+		t.Fatalf("TodayQuotesWith: %v", err)
+	}
+	var foilQuote *Quote
+	for i, q := range qs["uuid-ripple"] {
+		if q.Provider == "tcgplayer" && q.Kind == Retail && q.Finish == "foil" {
+			foilQuote = &qs["uuid-ripple"][i]
+		}
+	}
+	if foilQuote == nil || foilQuote.Price != 5.55 {
+		t.Errorf("quotes = %+v, want a tcgplayer foil quote from the overlay", qs["uuid-ripple"])
+	}
+
+	// Without the overlay, nothing changes: the feed's answer stands.
+	bare, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-ripple": true})
+	if err != nil {
+		t.Fatalf("TodayPrices: %v", err)
+	}
+	if b := bare["uuid-ripple"]; b.FoilSource == "tcgplayer" {
+		t.Errorf("bare price = %+v, want the fallback vendor without the overlay", b)
+	}
+}
+
+// The history side of the same overlay: the merged series wins the
+// per-finish vendor fallback, so a treated foil's back catalogue rides
+// TCGplayer's own numbers instead of a marketplace stand-in.
+func TestExtraSeriesOverlayHistory(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+	extra := ExtraSeries{"uuid-no-tcg": {"2026-07-27": 16.90, "2026-07-28": 17.56}}
+
+	got, err := PriceHistoryWith(extra)(context.Background(), Options{},
+		map[string]bool{"uuid-no-tcg": true})
+	if err != nil {
+		t.Fatalf("PriceHistoryWith: %v", err)
+	}
+	h := got["uuid-no-tcg"]
+	var foil []Observation
+	for _, o := range h.Retail {
+		if o.Finish == "foil" {
+			foil = append(foil, o)
+		}
+	}
+	if len(foil) != 2 {
+		t.Fatalf("foil series = %+v, want the overlay's two days", foil)
+	}
+	for _, o := range foil {
+		if o.Source != "tcgplayer" {
+			t.Errorf("observation %+v, want tcgplayer as the source", o)
 		}
 	}
 }
