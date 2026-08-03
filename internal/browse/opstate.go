@@ -213,6 +213,9 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		m.setError(err)
 		return m, nil
 	}
+	// A detail open through the whole run shows the refreshed numbers,
+	// not the ones it was opened with.
+	m.reloadDetail()
 	// Outcome extras, in order: the refresh above first (closing the
 	// takeover must reveal current panes), then the report, then any
 	// follow-up confirm on top.

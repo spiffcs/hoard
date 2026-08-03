@@ -10,9 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/market"
+	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -38,7 +40,7 @@ func TestDetailOpenLoadsBidSeries(t *testing.T) {
 		t.Fatalf("bids = %+v, want the seeded series", m.detail.bids)
 	}
 	out := strings.Join(m.hoardLines(*m.detail, 100), "\n")
-	if !strings.Contains(out, "bid") || !strings.Contains(out, "$24.00") {
+	if !strings.Contains(out, "buylist") || !strings.Contains(out, "$24.00") {
 		t.Errorf("bid row missing:\n%s", out)
 	}
 }
@@ -56,7 +58,7 @@ func TestDetailBidAndSpreadRows(t *testing.T) {
 		},
 	}
 	out := strings.Join(m.hoardLines(d, 120), "\n")
-	if !strings.Contains(out, "bid") || !strings.Contains(out, "$8.00") {
+	if !strings.Contains(out, "buylist") || !strings.Contains(out, "$8.00") {
 		t.Fatalf("bid row missing:\n%s", out)
 	}
 	// Flat $10 retail against a bid rising 5 → 8: the spread halves and
@@ -73,8 +75,8 @@ func TestDetailBidAndSpreadRows(t *testing.T) {
 	if strings.Contains(out, "spread") {
 		t.Errorf("spread row rendered without overlapping windows:\n%s", out)
 	}
-	if !strings.Contains(out, "bid") {
-		t.Errorf("the bid row should survive alone:\n%s", out)
+	if !strings.Contains(out, "buylist") {
+		t.Errorf("the buylist row should survive alone:\n%s", out)
 	}
 }
 
@@ -89,7 +91,7 @@ func TestDetailBidRowWithoutRetail(t *testing.T) {
 		},
 	}
 	out := strings.Join(m.hoardLines(d, 120), "\n")
-	if !strings.Contains(out, "bid") || !strings.Contains(out, "$3.00") {
+	if !strings.Contains(out, "buylist") || !strings.Contains(out, "$3.00") {
 		t.Errorf("orphan bid row missing:\n%s", out)
 	}
 }
@@ -430,5 +432,229 @@ func TestDetailSwitchKeepsImageInPlace(t *testing.T) {
 	m = key(m, "up")
 	if m.detail.image != nil {
 		t.Error("stale art kept with no replacement coming")
+	}
+}
+
+// The Card Kingdom link follows the held finish: foil holdings get the
+// foil page, a missing foil page falls back to the plain product page,
+// and a never-resolved card falls back to the name search.
+func TestCardLinksCKPerFinish(t *testing.T) {
+	var c store.CardDetail
+	c.Name = "Sol Ring"
+	c.SetCode = "c21"
+	c.CollectorNumber = "125"
+
+	if got := cardLinks(c, false)[2].url; !strings.Contains(got, "catalog/search") {
+		t.Errorf("unresolved card = %q, want the name search", got)
+	}
+
+	plain, foil := "https://mtgjson.com/links/aa", "https://mtgjson.com/links/bb"
+	c.CKURL, c.CKFoilURL = &plain, &foil
+	if got := cardLinks(c, false)[2].url; got != plain {
+		t.Errorf("nonfoil link = %q, want the plain page", got)
+	}
+	if got := cardLinks(c, true)[2].url; got != foil {
+		t.Errorf("foil link = %q, want the foil page", got)
+	}
+	c.CKFoilURL = nil
+	if got := cardLinks(c, true)[2].url; got != plain {
+		t.Errorf("foil holding with no foil page = %q, want the plain page", got)
+	}
+}
+
+// Scrolling HELD between finishes of the same printing refreshes the
+// links — Card Kingdom's page is per finish even when nothing else about
+// the overlay changes.
+func TestHeldCursorRefreshesLinksPerFinish(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+			{ContainerName: "Rich Deck", Finish: "foil", Quantity: 1,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m.openURL = func(string) error { return nil }
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil || len(m.detail.links) == 0 {
+		t.Fatal("no links")
+	}
+	ckAt := func() string { return m.detail.links[2].url }
+	if !strings.Contains(ckAt(), "links/plain") {
+		t.Fatalf("nonfoil row should link the plain page, got %q", ckAt())
+	}
+	m = key(m, "down") // same printing, foil finish
+	if m.detail.heldCursor != 1 {
+		t.Fatalf("cursor = %d", m.detail.heldCursor)
+	}
+	if !strings.Contains(ckAt(), "links/foil") {
+		t.Errorf("foil row should link the foil page, got %q", ckAt())
+	}
+}
+
+// While the art fetch runs, the layout reserves its footprint: HELD and
+// everything under it render in their final positions from the first
+// frame, and the art lands without moving them. A failed fetch answers
+// with empty lines, which releases the space.
+func TestDetailReservesImageSpace(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.imgTier = ui.ImageHalfblock
+	m.imageFetch = func(context.Context, string, string) (image.Image, error) {
+		return nil, errors.New("not reached synchronously")
+	}
+	m = key(m, "tab")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil || cmd == nil || !m.detail.imagePending {
+		t.Fatalf("detail open must mark the fetch pending (pending=%v cmd=%v)",
+			m.detail != nil && m.detail.imagePending, cmd != nil)
+	}
+	blank := blankImage(m.detailImageCols())
+	if len(blank) == 0 {
+		t.Fatal("no space reserved")
+	}
+
+	heldAt := func() int {
+		for i, l := range strings.Split(m.detailView(), "\n") {
+			if strings.Contains(l, "HELD") {
+				return i
+			}
+		}
+		return -1
+	}
+	before := heldAt()
+	if before < 0 {
+		t.Fatalf("HELD not visible:\n%s", m.detailView())
+	}
+
+	// The art lands at the reserved height: nothing moves.
+	lines := make([]string, len(blank))
+	for i := range lines {
+		lines[i] = "ART"
+	}
+	next, _ = m.Update(imageMsg{scryfallID: m.detail.card.ScryfallID, lines: lines})
+	m = next.(Model)
+	if after := heldAt(); after != before {
+		t.Errorf("HELD moved %d → %d when the art landed", before, after)
+	}
+
+	// A failure answer releases the reservation.
+	next, _ = m.Update(imageMsg{scryfallID: m.detail.card.ScryfallID})
+	m = next.(Model)
+	if m.detail.imagePending || m.detail.image != nil {
+		t.Errorf("failure must clear the reservation (pending=%v image=%v)",
+			m.detail.imagePending, m.detail.image)
+	}
+}
+
+// A price refresh run from the detail palette reports in the overlay's
+// status slot — progress while it runs, the summary after — and the
+// overlay's numbers reload when it lands. Silence read as the command not
+// firing (observed live).
+func TestDetailShowsOpProgressAndReloads(t *testing.T) {
+	st := testStore()
+	m := newTestModel(t, st)
+	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "done", nil }
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+
+	// Run Update prices through the overlay's palette.
+	m.openPalette()
+	m.palette.query = "update prices"
+	m.refreshPalette()
+	if len(m.palette.matches) == 0 {
+		t.Fatal("no match for update prices over the detail")
+	}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.op == nil {
+		t.Fatal("the command did not start an operation")
+	}
+	if !strings.Contains(m.detailView(), "updating prices") {
+		t.Fatalf("overlay hides the running op:\n%s", m.detailView())
+	}
+
+	// Land the op: the summary shows in the overlay, and the detail's
+	// series reload — prove it by growing the bid history underneath.
+	st.bidSeries = map[string][]store.PricePoint{
+		"Bitterblossom-id|nonfoil": {pp("2026-07-01T00:00:00Z", 9)},
+	}
+	if cmd == nil {
+		t.Fatal("no op command")
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if got := c(); got != nil {
+				if _, isTick := got.(spinner.TickMsg); !isTick {
+					msg = got
+				}
+			}
+		}
+	}
+	next, _ = m.Update(msg)
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("detail closed by the op")
+	}
+	if !strings.Contains(m.detailView(), "done") {
+		t.Errorf("overlay hides the op summary:\n%s", m.detailView())
+	}
+	if len(m.detail.bids["nonfoil"]) != 1 {
+		t.Errorf("detail did not reload after the op: bids = %+v", m.detail.bids)
+	}
+}
+
+// The price and buylist rows share one display window per finish: the two
+// tables backfilled on different dates, and sparks captioned "since 29
+// Apr" over "since 1 May" read as deliberately skewed (observed live).
+func TestPriceAndBuylistShareTheirWindow(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	d := detail{
+		series: map[string][]store.PricePoint{
+			"nonfoil": {pp("2026-04-29T00:00:00Z", 30), pp("2026-07-01T00:00:00Z", 33)},
+		},
+		bids: map[string][]store.PricePoint{
+			"nonfoil": {pp("2026-05-01T00:00:00Z", 18), pp("2026-07-01T00:00:00Z", 20)},
+		},
+	}
+	var sinces []string
+	for _, l := range m.hoardLines(d, 130) {
+		if _, after, ok := strings.Cut(l, "checks since "); ok {
+			sinces = append(sinces, after)
+		}
+	}
+	if len(sinces) != 2 || sinces[0] != sinces[1] {
+		t.Errorf("captions = %v, want the retail and buylist rows sharing one window", sinces)
+	}
+}
+
+// Modal abilities wrap with a hanging indent: the continuation aligns
+// under the mode's text, not under the bullet, where it read as another
+// mode.
+func TestWrapHangsBulletContinuations(t *testing.T) {
+	got := wrapHang("• Exile target nonland permanent, then return it to the battlefield tapped.", 40)
+	if len(got) < 2 {
+		t.Fatalf("expected a wrap, got %v", got)
+	}
+	if !strings.HasPrefix(got[0], "• Exile") {
+		t.Errorf("first line = %q, want the bullet kept", got[0])
+	}
+	for _, l := range got[1:] {
+		if !strings.HasPrefix(l, "  ") || strings.HasPrefix(l, "• ") {
+			t.Errorf("continuation %q must hang under the text", l)
+		}
+	}
+	// Plain paragraphs wrap flat, no phantom indent.
+	if flat := wrapHang("Choose three. You may choose the same mode more than once.", 30); strings.HasPrefix(flat[1], " ") {
+		t.Errorf("plain continuation %q must not indent", flat[1])
 	}
 }

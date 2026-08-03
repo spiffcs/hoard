@@ -53,23 +53,39 @@ func (m *Model) fetchDetailImage() tea.Cmd {
 	}
 	// Fit the card into the rows the overlay actually has: rows ≈
 	// cols·aspect/2, inverted here, and never wider than imageCols.
-	cols := min(imageCols, max(2*(m.visibleRows()-1)*cardAspectDen/cardAspectNum, 8))
+	cols := m.detailImageCols()
 	fetch, tier := m.imageFetch, m.imgTier
 	ctx, id, url := m.ctx, d.card.ScryfallID, *d.card.ImageURI
+	d.imagePending = true
 
 	return func() tea.Msg {
 		img, err := fetch(ctx, id, url)
 		if err != nil {
-			// Silent: the text detail is already complete, and a status
-			// line about a missing thumbnail would outrank real answers.
-			return nil
+			// A nil-lined message rather than silence: the layout reserved
+			// the art's space, and only an answer releases it. The status
+			// line stays quiet either way — a missing thumbnail must not
+			// outrank real answers.
+			return imageMsg{scryfallID: id}
 		}
 		lines, ok := renderImage(img, tier, cols)
 		if !ok {
-			return nil
+			return imageMsg{scryfallID: id}
 		}
 		return imageMsg{scryfallID: id, lines: lines}
 	}
+}
+
+// detailImageCols is the width the detail's art renders at — shared with
+// the placeholder that reserves its space while the fetch runs.
+func (m Model) detailImageCols() int {
+	return min(imageCols, max(2*(m.visibleRows()-1)*cardAspectDen/cardAspectNum, 8))
+}
+
+// blankImage reserves an image's footprint before the pixels arrive: the
+// height a card of the standard aspect renders at, in empty lines.
+func blankImage(cols int) []string {
+	rows := max(cols*cardAspectNum/(cardAspectDen*2), 1)
+	return make([]string, rows)
 }
 
 // renderImage turns the bitmap into the tier's cell block.
@@ -101,9 +117,12 @@ func renderImage(img image.Image, tier ui.ImageTier, cols int) ([]string, bool) 
 const kittyImageID = 91
 
 // onImage attaches a finished image block to the detail that asked for it.
+// A nil-lined answer (fetch failed, nothing renderable) releases the
+// reserved space; the layout falls back to text-only.
 func (m Model) onImage(msg imageMsg) (tea.Model, tea.Cmd) {
 	if m.detail != nil && m.detail.card.ScryfallID == msg.scryfallID {
 		m.detail.image = msg.lines
+		m.detail.imagePending = false
 	}
 	return m, nil
 }

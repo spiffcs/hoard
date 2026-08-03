@@ -232,7 +232,9 @@ func TestTodayPricesRejectsTruncatedGzip(t *testing.T) {
 const m3cFile = `{
  "meta": {"date": "2026-07-28"},
  "data": {"code": "M3C", "cards": [
-   {"uuid": "uuid-ck", "identifiers": {"scryfallId": "scry-1"}},
+   {"uuid": "uuid-ck", "identifiers": {"scryfallId": "scry-1"},
+    "purchaseUrls": {"cardKingdom": "https://mtgjson.com/links/aa",
+                     "cardKingdomFoil": "https://mtgjson.com/links/bb"}},
    {"uuid": "uuid-tcg", "identifiers": {"scryfallId": "scry-2"}},
    {"uuid": "uuid-none", "identifiers": {}}
  ]}
@@ -246,8 +248,17 @@ func TestSetIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetIdentifiers: %v", err)
 	}
-	if got["scry-1"] != "uuid-ck" || got["scry-2"] != "uuid-tcg" {
+	if got["scry-1"].UUID != "uuid-ck" || got["scry-2"].UUID != "uuid-tcg" {
 		t.Errorf("map = %v, want both Scryfall IDs mapped", got)
+	}
+	// The Card Kingdom links ride the same read, per finish; a card the
+	// feed has no links for reads as empty, not absent.
+	if got["scry-1"].CKURL != "https://mtgjson.com/links/aa" ||
+		got["scry-1"].CKFoilURL != "https://mtgjson.com/links/bb" {
+		t.Errorf("links = %+v, want both finishes", got["scry-1"])
+	}
+	if got["scry-2"].CKURL != "" || got["scry-2"].CKFoilURL != "" {
+		t.Errorf("linkless card = %+v, want empty links", got["scry-2"])
 	}
 	// A card with no Scryfall ID cannot be joined, so it is dropped.
 	if len(got) != 2 {

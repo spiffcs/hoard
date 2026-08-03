@@ -42,6 +42,7 @@ var migrations = []migration{
 	{12, renormalizeHistoryFinish},
 	{13, bidHistory},
 	{14, tcgplayerProductID},
+	{15, cardKingdomLinks},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -310,6 +311,15 @@ CREATE TABLE card_bid_history (
 const tcgplayerProductID = `
 ALTER TABLE cards ADD COLUMN tcgplayer_id INTEGER
     GENERATED ALWAYS AS (json_extract(raw_json,'$.tcgplayer_id')) VIRTUAL;`
+
+// v15: Card Kingdom's product links, learned from the MTGJSON set files
+// the uuid resolver already downloads. Stored (not generated) because the
+// data comes from MTGJSON, not the Scryfall document — like mtgjson_uuid.
+// NULL means never asked; empty string means asked and the feed had none,
+// so absence does not re-fetch the set file forever.
+const cardKingdomLinks = `
+ALTER TABLE cards ADD COLUMN ck_url TEXT;
+ALTER TABLE cards ADD COLUMN ck_foil_url TEXT;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

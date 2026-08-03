@@ -873,6 +873,8 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		`DROP TABLE watches`,
 		`DROP TABLE card_bid_history`,
 		`ALTER TABLE cards DROP COLUMN tcgplayer_id`,
+		`ALTER TABLE cards DROP COLUMN ck_url`,
+		`ALTER TABLE cards DROP COLUMN ck_foil_url`,
 		`ALTER TABLE cards DROP COLUMN power`,
 		`ALTER TABLE cards DROP COLUMN toughness`,
 		`ALTER TABLE cards DROP COLUMN loyalty`,

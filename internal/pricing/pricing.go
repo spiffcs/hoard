@@ -49,6 +49,8 @@ type Fetcher struct {
 	// bytes watches downloads land, for callers rendering a determinate bar
 	// over the multi-megabyte bundles. Nil is silent.
 	bytes func(done, total int64)
+	// baseURL overrides the MTGJSON file root; empty means the real one.
+	baseURL string
 }
 
 // New returns a Fetcher reading through cacheDir.
@@ -70,7 +72,13 @@ func (f *Fetcher) WithBytes(fn func(done, total int64)) *Fetcher {
 
 // options is what every mtgjson call reads through.
 func (f *Fetcher) options() mtgjson.Options {
-	return mtgjson.Options{CacheDir: f.cacheDir, Progress: f.bytes}
+	return mtgjson.Options{CacheDir: f.cacheDir, Progress: f.bytes, BaseURL: f.baseURL}
+}
+
+// WithBaseURL points the fetcher at another MTGJSON file root — tests.
+func (f *Fetcher) WithBaseURL(u string) *Fetcher {
+	f.baseURL = u
+	return f
 }
 
 func (f *Fetcher) say(format string, args ...any) {
@@ -162,7 +170,8 @@ func (f *Fetcher) want(ctx context.Context, refs []Ref) (map[string]bool, map[st
 }
 
 // resolve maps Scryfall ids to MTGJSON UUIDs, downloading only the set files it
-// must and remembering everything it learns.
+// must and remembering everything it learns — including Card Kingdom's
+// product links, which ride in the same files.
 //
 // One id costs a whole set-file download and the answer never changes, so
 // results are written back to the catalog. Without that, a collection-wide price
@@ -173,12 +182,17 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	if err != nil {
 		return nil, err
 	}
+	linked, err := f.st.KnownCardKingdomLinks()
+	if err != nil {
+		return nil, err
+	}
 	bySet := map[string][]string{}
 	for _, r := range refs {
-		if r.MTGJSONUUID != "" {
-			continue
-		}
-		if _, ok := known[r.ScryfallID]; !ok {
+		// A set is fetched when anything it can teach is still unknown:
+		// the uuid, or the vendor links a pre-v15 card never learned. Both
+		// are stamped after one read, so this stays a once-per-set cost.
+		needUUID := r.MTGJSONUUID == "" && known[r.ScryfallID] == ""
+		if needUUID || !linked[r.ScryfallID] {
 			bySet[r.SetCode] = append(bySet[r.SetCode], r.ScryfallID)
 		}
 	}
@@ -186,12 +200,20 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 		return known, nil
 	}
 
-	if len(bySet) > 3 {
-		f.say("resolving card ids from %d sets (once only)...", len(bySet))
-	}
+	// Set files are around a megabyte each; a byte bar per file renders as
+	// dozens of bars filling and vanishing, which reads as the same
+	// download failing over and over (observed live). The count note below
+	// is the honest progress; byte bars stay for the big archives, where
+	// one download is the whole wait.
+	quiet := f.options()
+	quiet.Progress = nil
 	learned := make(map[string]string)
+	links := make(map[string]store.CKLinks)
+	n := 0
 	for setCode, sids := range bySet {
-		ids, err := mtgjson.SetIdentifiers(ctx, f.options(), setCode)
+		n++
+		f.say("resolving card ids · set %d/%d (%s) · once only", n, len(bySet), setCode)
+		ids, err := mtgjson.SetIdentifiers(ctx, quiet, setCode)
 		if errors.Is(err, mtgjson.ErrNoSuchSet) {
 			// Scryfall and MTGJSON disagree on some promo sets. Skip the set
 			// rather than abandon every other card.
@@ -207,13 +229,19 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 			return nil, fmt.Errorf("resolving mtgjson ids for set %s: %w", setCode, err)
 		}
 		for _, sid := range sids {
-			if uuid, ok := ids[sid]; ok {
-				known[sid] = uuid
-				learned[sid] = uuid
+			if sc, ok := ids[sid]; ok {
+				known[sid] = sc.UUID
+				learned[sid] = sc.UUID
+				// Empty links save too: the file was read, and NULL staying
+				// NULL would fetch it again tomorrow.
+				links[sid] = store.CKLinks{URL: sc.CKURL, FoilURL: sc.CKFoilURL}
 			}
 		}
 	}
 	if err := f.st.SaveMTGJSONUUIDs(learned); err != nil {
+		return nil, err
+	}
+	if err := f.st.SaveCardKingdomLinks(links); err != nil {
 		return nil, err
 	}
 	return known, nil

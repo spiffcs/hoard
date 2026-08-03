@@ -154,3 +154,58 @@ func (s *Store) SaveMTGJSONUUIDs(ids map[string]string) error {
 	}
 	return tx.Commit()
 }
+
+// CKLinks is Card Kingdom's sanctioned product links for one printing —
+// one per finish. Empty strings are meaningful: they record that the set
+// file was read and had no link, which is what stops absence from
+// re-fetching the file forever.
+type CKLinks struct {
+	URL     string
+	FoilURL string
+}
+
+// KnownCardKingdomLinks reports which printings have been asked about —
+// NULL means never asked, anything else (a link or the recorded absence)
+// means the set file need not be fetched again for this card.
+func (s *Store) KnownCardKingdomLinks() (map[string]bool, error) {
+	rows, err := s.db.Query(`
+SELECT scryfall_id FROM cards WHERE ck_url IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out[sid] = true
+	}
+	return out, rows.Err()
+}
+
+// SaveCardKingdomLinks records the links a set-file read produced,
+// including the empty ones — asked-and-none must be distinguishable from
+// never-asked.
+func (s *Store) SaveCardKingdomLinks(links map[string]CKLinks) error {
+	if len(links) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE cards SET ck_url = ?, ck_foil_url = ? WHERE scryfall_id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for sid, l := range links {
+		if _, err := stmt.Exec(l.URL, l.FoilURL, sid); err != nil {
+			return fmt.Errorf("caching card kingdom links for %s: %w", sid, err)
+		}
+	}
+	return tx.Commit()
+}

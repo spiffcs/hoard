@@ -40,6 +40,12 @@ type CardDetail struct {
 	// what links the exact product page instead of a name search.
 	TCGplayerID *int64
 
+	// CKURL and CKFoilURL are Card Kingdom's product links (migration v15),
+	// learned from the MTGJSON set files; nil until the resolver has passed
+	// this card's set, empty when the feed carries none.
+	CKURL     *string
+	CKFoilURL *string
+
 	// Enriched is false when no Scryfall document is stored for this printing,
 	// so a caller can say "run update-prices" once rather than printing unknown
 	// against every field in turn.
@@ -53,7 +59,7 @@ SELECT ` + cardCols(altSourceExpr) + `,
        c.rarity, c.set_name, c.type_line, c.oracle_text,
        c.artist, c.released_at, c.layout, c.cmc,
        c.power, c.toughness, c.loyalty, c.flavor_text, c.image_uri,
-       c.tcgplayer_id,
+       c.tcgplayer_id, c.ck_url, c.ck_foil_url,
        c.raw_json IS NOT NULL
 FROM cards c ` + altJoinCards
 
@@ -67,7 +73,7 @@ func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 		&d.Rarity, &d.SetName, &d.TypeLine, &d.OracleText,
 		&d.Artist, &d.ReleasedAt, &d.Layout, &d.CMC,
 		&d.Power, &d.Toughness, &d.Loyalty, &d.FlavorText, &d.ImageURI,
-		&d.TCGplayerID,
+		&d.TCGplayerID, &d.CKURL, &d.CKFoilURL,
 		&d.Enriched)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}

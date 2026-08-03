@@ -1,10 +1,13 @@
 package browse
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/spiffcs/hoard/internal/progress"
 )
 
 func openTestPalette(t *testing.T) Model {
@@ -183,6 +186,28 @@ func TestRegistryKeyParity(t *testing.T) {
 	for _, c := range m.commands {
 		if c.id == "view.next" && c.key != "v" {
 			t.Errorf("registry key for view.next = %q — the hint column would lie", c.key)
+		}
+	}
+}
+
+// Over the card detail the palette narrows to the price refreshers: the
+// overlay is a reading surface, and every other verb waits an esc away.
+func TestDetailPaletteOffersOnlyPriceRefreshers(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	m.openPalette()
+	if m.palette == nil || len(m.palette.matches) == 0 {
+		t.Fatal("no palette matches over the detail")
+	}
+	for _, match := range m.palette.matches {
+		if id := m.commands[match.index].id; !detailPaletteIDs[id] {
+			t.Errorf("palette offers %q over the detail, want price refreshers only", id)
 		}
 	}
 }

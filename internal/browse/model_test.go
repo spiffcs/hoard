@@ -179,6 +179,8 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 	d.ImageURI = &uri
 	tcg := int64(12345)
 	d.TCGplayerID = &tcg
+	ck, ckFoil := "https://mtgjson.com/links/plain", "https://mtgjson.com/links/foil"
+	d.CKURL, d.CKFoilURL = &ck, &ckFoil
 	return d, f.err
 }
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error) { return nil, f.err }
@@ -1281,10 +1283,10 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	if m.view != viewMovers {
 		t.Fatalf("view = %v, want movers", m.view)
 	}
-	// Ordered by impact regardless of direction: the sinker moved $40, the
-	// riser $8.
-	if len(m.movers) != 2 || m.movers[0].Name != "Sinker" {
-		t.Errorf("movers = %+v, want the biggest impact first", m.movers)
+	// Impact is a signed spectrum: the riser's +$8 ranks above the
+	// sinker's -$40, however much bigger the loss is in magnitude.
+	if len(m.movers) != 2 || m.movers[0].Name != "Riser" {
+		t.Errorf("movers = %+v, want the biggest gain first", m.movers)
 	}
 	if out := m.View(); !strings.Contains(out, "MOVERS") || !strings.Contains(out, "IMPACT") {
 		t.Errorf("movers view not rendered:\n%s", out)
@@ -1346,7 +1348,7 @@ func TestSortWorksInEveryView(t *testing.T) {
 	}
 	m := atAllCards(t, newTestModel(t, st))
 
-	m = key(m, "v") // movers, impact order: Sinker ($40) first
+	m = key(m, "v") // movers, signed impact order: Riser (+$8) first
 	m = key(m, "s") // → name
 	if m.sortLabel() != "name" || m.movers[0].Name != "Riser" {
 		t.Errorf("movers by %s = %s first, want Riser", m.sortLabel(), m.movers[0].Name)

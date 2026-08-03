@@ -66,12 +66,26 @@ func (m Model) moversWindow() time.Duration {
 func (m *Model) loadView() error {
 	switch m.view {
 	case viewMovers:
+		// Serve the window from the session cache when nothing has
+		// changed since it was filled — W cycles between three windows,
+		// and each miss costs a double pass over the whole price history.
+		if m.moversCacheGen == m.dataGen && m.moversCache != nil {
+			if rows, ok := m.moversCache[m.moversDaysIdx]; ok {
+				m.allMovers = rows
+				break
+			}
+		}
 		since := m.now().Add(-m.moversWindow()).UTC().Format(time.RFC3339)
 		changes, err := m.store.Movers(since)
 		if err != nil {
 			return fmt.Errorf("reading movers: %w", err)
 		}
 		m.allMovers = store.MoversByImpact(changes)
+		if m.moversCacheGen != m.dataGen || m.moversCache == nil {
+			m.moversCache = map[int][]store.PriceChange{}
+			m.moversCacheGen = m.dataGen
+		}
+		m.moversCache[m.moversDaysIdx] = m.allMovers
 	case viewUnpriced:
 		rows, err := m.store.Unpriced()
 		if err != nil {

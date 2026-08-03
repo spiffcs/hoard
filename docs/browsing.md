@@ -194,7 +194,7 @@ HELD
 PRICE
   non-foil  ▇▇█▇▇▇▇▄▃▆▅▄▄▄▄▃▄▄▄▂▁▁▁▁▁▁▁▁▁▁▁▁  $34.28
             $33.34–$41.08 since 29 Apr · 79 obs
-  bid       ▁▂▂▃▃▃▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇▇▇███  $24.00
+  buylist   ▁▂▂▃▃▃▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇▇▇███  $24.00
             $18.00–$24.00 · 41 checks since 2 May
   spread    ██▇▇▆▆▅▅▄▄▄▃▃▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂  29.7%  47.1% → 29.7% since 2 May · tightening
 
@@ -210,8 +210,8 @@ LINKS
    tcgplayer.com   manapool.com   cardkingdom.com   scryfall.com
 ```
 
-The **bid** row is Card Kingdom's cash offer over time — the only buylist
-in the MTGJSON feed — ingested from the same 90-day archive the price
+The **buylist** row is Card Kingdom's cash offer over time — the only
+buylist in the MTGJSON feed — ingested from the same 90-day archive the price
 backfill reads (its own table, its own series), and kept current by every
 market-view fetch. The **spread** row is the gap between the price and the
 bid as a trend: a tightening spread means the dealers increasingly believe
@@ -226,10 +226,13 @@ says it.)
 **LINKS** puts the vendor pages one keypress away: <kbd>←</kbd>/<kbd>→</kbd>
 move the cursor across them and <kbd>enter</kbd> opens the selected page in
 your web browser — tcgplayer links the exact product page (the id comes
-with the card details update-prices stores; a never-refreshed card falls
-back to a name search), manapool links the exact printing by set and
-collector number, cardkingdom searches by name (no feed we read carries
-its product ids), and scryfall is the stored page itself.
+with the card details update-prices stores), manapool links the exact
+printing by set and collector number, cardkingdom links the exact product
+page too — foil holdings get the foil page — via MTGJSON's sanctioned
+redirect links, learned from the same set files the id resolver already
+downloads (one extra pass over your sets on the next price fetch, then
+never again), and scryfall is the stored page itself. A card the resolver
+has not passed yet falls back to a name search.
 With links present, <kbd>enter</kbd> no longer closes the overlay;
 <kbd>esc</kbd> and <kbd>backspace</kbd> do.
 

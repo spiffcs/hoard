@@ -37,7 +37,11 @@ type detail struct {
 	// heldCursor selects a row of the held list; landing on a different
 	// printing re-points the whole overlay (series, comps, art, links).
 	heldCursor int
-	err        error
+	// imagePending marks an art fetch in flight: the layout reserves the
+	// image's space so HELD and everything under it stay put when the art
+	// lands, instead of jumping down by an image's height (observed live).
+	imagePending bool
+	err          error
 	// image is the rendered card image block (halfblock cells or kitty
 	// placeholders), nil until the async fetch lands — or forever, when
 	// the terminal can't draw one. The overlay never waits for it.
@@ -111,7 +115,53 @@ func (m *Model) openDetail() {
 			break
 		}
 	}
+	m.refreshLinks(&d)
 	m.detail = &d
+}
+
+// reloadDetail re-reads the open overlay's data in place after something
+// changed the world under it — a price refresh finishing, an edit. The
+// held cursor and the art stay; the numbers follow.
+func (m *Model) reloadDetail() {
+	d := m.detail
+	if d == nil {
+		return
+	}
+	if !m.loadPrinting(d, d.card.ScryfallID) {
+		return
+	}
+	holdings, err := m.store.HoldingsOfName(d.card.Name)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	if len(holdings) > 0 {
+		d.holdings = holdings
+	}
+	d.heldCursor = min(max(d.heldCursor, 0), max(len(d.holdings)-1, 0))
+	m.refreshLinks(d)
+}
+
+// refreshLinks rebuilds the vendor links for the printing and finish the
+// held cursor is on — the Card Kingdom page differs per finish, so links
+// follow the cursor even when the printing does not change.
+func (m *Model) refreshLinks(d *detail) {
+	if m.openURL == nil {
+		return
+	}
+	cur := d.linkCursor
+	d.links = cardLinks(d.card, heldFoil(d))
+	d.linkCursor = min(max(cur, 0), max(len(d.links)-1, 0))
+}
+
+// heldFoil is the foilness of the holding under the held cursor — what
+// decides which of a vendor's per-finish pages to link.
+func heldFoil(d *detail) bool {
+	if len(d.holdings) == 0 {
+		return false
+	}
+	h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
+	return scryfall.PricedAsFoil(h.Finish)
 }
 
 // loadPrinting fills the printing-scoped half of a detail — the card, its
@@ -152,15 +202,13 @@ func (m *Model) loadPrinting(d *detail, id string) bool {
 	if m.cardComps != nil {
 		d.comps, d.compsOK = m.cardComps(id)
 	}
-	if m.openURL != nil {
-		d.links = cardLinks(d.card)
-	}
 	return true
 }
 
 // moveHeldCursor walks the held list; landing on a different printing
 // re-points the overlay at it — series, comps, links, and (via the
-// returned command) the art.
+// returned command) the art. Landing on the same printing in another
+// finish still refreshes the links: Card Kingdom's page is per finish.
 func (m *Model) moveHeldCursor(delta int) tea.Cmd {
 	d := m.detail
 	if d == nil || len(d.holdings) == 0 {
@@ -171,19 +219,19 @@ func (m *Model) moveHeldCursor(delta int) tea.Cmd {
 		return nil
 	}
 	d.heldCursor = next
-	sel := d.holdings[next]
-	if sel.ScryfallID == "" || sel.ScryfallID == d.card.ScryfallID {
-		return nil
+	var cmd tea.Cmd
+	if sel := d.holdings[next]; sel.ScryfallID != "" && sel.ScryfallID != d.card.ScryfallID {
+		if !m.loadPrinting(d, sel.ScryfallID) {
+			return nil
+		}
+		cmd = m.fetchDetailImage()
+		if cmd == nil {
+			// No replacement is coming (no URL, no capable terminal):
+			// keeping the old printing's art would caption the wrong card.
+			d.image = nil
+		}
 	}
-	if !m.loadPrinting(d, sel.ScryfallID) {
-		return nil
-	}
-	cmd := m.fetchDetailImage()
-	if cmd == nil {
-		// No replacement is coming (no URL, no capable terminal): keeping
-		// the old printing's art would caption it with the wrong card.
-		d.image = nil
-	}
+	m.refreshLinks(d)
 	return cmd
 }
 
@@ -193,22 +241,32 @@ type cardLink struct {
 	url  string
 }
 
-// cardLinks builds the vendor pages for a printing. TCGplayer addresses
-// the exact product when the enrichment stored its id (v14), and manapool
-// always does (set, number, name slug); Card Kingdom keys on ids nothing
-// in our feeds carries, so it gets a name search — the closest its URL
-// can point.
-func cardLinks(c store.CardDetail) []cardLink {
+// cardLinks builds the vendor pages for a printing, in the finish the
+// held cursor is on. TCGplayer addresses the exact product when the
+// enrichment stored its id (v14); manapool always does (set, number, name
+// slug); Card Kingdom does once the resolver has stored its links (v15) —
+// foil holdings get the foil page — and falls back to a name search until
+// then.
+func cardLinks(c store.CardDetail, foil bool) []cardLink {
 	q := url.QueryEscape(c.Name)
 	tcg := "https://www.tcgplayer.com/search/magic/product?q=" + q
 	if c.TCGplayerID != nil {
 		tcg = fmt.Sprintf("https://www.tcgplayer.com/product/%d", *c.TCGplayerID)
 	}
+	// Foil holdings prefer the foil page, then the card's plain product
+	// page — still the exact card — and only then the name search.
+	ck := "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=" + q
+	switch {
+	case foil && deref(c.CKFoilURL) != "":
+		ck = *c.CKFoilURL
+	case deref(c.CKURL) != "":
+		ck = *c.CKURL
+	}
 	links := []cardLink{
 		{"tcgplayer.com", tcg},
 		{"manapool.com", fmt.Sprintf("https://manapool.com/card/%s/%s/%s",
 			c.SetCode, c.CollectorNumber, nameSlug(c.Name))},
-		{"cardkingdom.com", "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=" + q},
+		{"cardkingdom.com", ck},
 	}
 	if c.ScryfallURL != "" {
 		links = append(links, cardLink{"scryfall.com", c.ScryfallURL})
@@ -282,7 +340,7 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 	if c.OracleText != nil && *c.OracleText != "" {
 		out = append(out, "")
 		for _, para := range strings.Split(*c.OracleText, "\n") {
-			out = append(out, wrap(para, cardW)...)
+			out = append(out, wrapHang(para, cardW)...)
 		}
 	}
 	if flavor := deref(c.FlavorText); flavor != "" {
@@ -348,7 +406,13 @@ func (m Model) hoardLines(d detail, width int) []string {
 	var groups [][]string
 	for _, finish := range []string{"nonfoil", "foil"} {
 		var g []string
-		if s := d.series[finish]; len(s) > 0 {
+		// The two tables backfilled at different times, so their raw
+		// series start on different dates — sparks with different "since"
+		// captions read as deliberately skewed (observed live). Trim both
+		// to the shared window: the overlay compares like with like, and
+		// the full depth still serves the views that read one series.
+		s, b := sharedWindow(d.series[finish], d.bids[finish])
+		if len(s) > 0 {
 			label := finish
 			if finish == "nonfoil" {
 				label = "non-foil"
@@ -370,7 +434,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 		// A bid series can exist for a finish the retail history missed —
 		// the two tables have independent eras.
-		g = append(g, m.bidLines(d, finish)...)
+		g = append(g, m.bidLines(s, b)...)
 		if len(g) > 0 {
 			groups = append(groups, g)
 		}
@@ -409,11 +473,30 @@ func (m Model) linkLines(d detail, width int) []string {
 		ui.Truncate("  "+strings.Join(parts, " "), width)}
 }
 
+// sharedWindow clips a finish's retail and bid series to their common
+// span for display, when both exist: aligned left edges (the later first
+// observation) and right edges, via the same edge-pinning clip the spread
+// math uses. Either series alone comes back untouched.
+func sharedWindow(s, b []store.PricePoint) ([]store.PricePoint, []store.PricePoint) {
+	if len(s) == 0 || len(b) == 0 {
+		return s, b
+	}
+	start := max(s[0].AsOf, b[0].AsOf)
+	if min(s[len(s)-1].AsOf, b[len(b)-1].AsOf) <= start {
+		// Disjoint eras: stretching the stale series flat across the live
+		// one would claim months-old numbers still stand. Each keeps its
+		// own honest window.
+		return s, b
+	}
+	end := max(s[len(s)-1].AsOf, b[len(b)-1].AsOf)
+	return clipToWindow(s, start, end), clipToWindow(b, start, end)
+}
+
 // bidLines renders one finish's buylist rows under its price row: the bid
 // sparkline, and — when both series overlap — the spread over time, the
-// confidence signal as a trend rather than a snapshot.
-func (m Model) bidLines(d detail, finish string) []string {
-	b := d.bids[finish]
+// confidence signal as a trend rather than a snapshot. retail and b
+// arrive already clipped to their shared window.
+func (m Model) bidLines(retail, b []store.PricePoint) []string {
 	if len(b) == 0 {
 		return nil
 	}
@@ -424,11 +507,11 @@ func (m Model) bidLines(d detail, finish string) []string {
 	// escape bytes as width.
 	spark := ui.Spark(ui.Resample(pricePoints(b), sparkCells), sparkCells)
 	now := b[len(b)-1].Price
-	out = append(out, "  "+dim(fmt.Sprintf("%-9s", "bid"))+" "+spark+"  "+
+	out = append(out, "  "+dim(fmt.Sprintf("%-9s", "buylist"))+" "+spark+"  "+
 		m.theme.Title.Render(ui.Money(now)))
 	out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(b))))
 
-	if vals, since, ok := spreadSeries(d.series[finish], b, sparkCells); ok {
+	if vals, since, ok := spreadSeries(retail, b, sparkCells); ok {
 		last, first := vals[len(vals)-1], vals[0]
 		word := "steady"
 		switch {
@@ -644,6 +727,28 @@ func statBox(c store.CardDetail) string {
 		return "loyalty " + l
 	}
 	return ""
+}
+
+// wrapHang wraps a paragraph with continuation lines hanging under the
+// text rather than the margin: Scryfall writes modal abilities as "• ..."
+// lines, and a continuation at column zero read as another mode
+// (observed live). Paragraphs without the bullet wrap flat.
+func wrapHang(s string, width int) []string {
+	const marker = "• "
+	if !strings.HasPrefix(s, marker) {
+		return wrap(s, width)
+	}
+	w := ansi.StringWidth(marker)
+	inner := wrap(strings.TrimPrefix(s, marker), max(width-w, 1))
+	out := make([]string, len(inner))
+	for i, l := range inner {
+		if i == 0 {
+			out[i] = marker + l
+			continue
+		}
+		out[i] = strings.Repeat(" ", w) + l
+	}
+	return out
 }
 
 // wrap breaks a paragraph to width, on spaces, measuring display cells —

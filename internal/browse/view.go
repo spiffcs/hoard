@@ -107,6 +107,11 @@ func (m Model) writeHelp(b *strings.Builder, help string) {
 // even for the image alone goes text-only.
 func (m Model) detailView() string {
 	img := m.detail.image
+	if len(img) == 0 && m.detail.imagePending {
+		// The art is coming: hold its space so HELD, PRICE and COMPS
+		// render in their final positions from the first frame.
+		img = blankImage(m.detailImageCols())
+	}
 	var lines []string
 	switch {
 	case len(img) > 0 && m.width >= imageCols+50:
@@ -133,9 +138,15 @@ func (m Model) detailView() string {
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
 	// The slot under the rule: an active surface — a staged confirm, an
 	// open prompt, the palette's input line — outranks the more-lines note,
-	// so commands run from the overlay stay visible over it.
+	// so commands run from the overlay stay visible over it. A running
+	// operation or a transient status claims it next: a refresh started
+	// from the overlay reports here exactly as it would under the panes —
+	// progress while it runs, the summary after (its absence read as the
+	// command not firing, observed live).
 	switch {
 	case m.confirm != nil || m.prompt != nil || m.palette != nil:
+		b.WriteString(m.statusLine())
+	case m.op != nil || m.status != "":
 		b.WriteString(m.statusLine())
 	default:
 		if n := len(lines) - (m.visibleRows() + 1); n > 0 {

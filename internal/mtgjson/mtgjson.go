@@ -84,6 +84,9 @@ type Options struct {
 	// total (0 when the server did not say). Only a genuine download
 	// reports; a cache hit is instant and silent. Nil is silent.
 	Progress func(done, total int64)
+	// BaseURL overrides the MTGJSON file root — how tests outside this
+	// package point a Fetcher at a local server. Empty means the real one.
+	BaseURL string
 }
 
 // progressWriter tees byte counts to Options.Progress as a download lands.
@@ -168,7 +171,11 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/"+name, nil)
+	base := apiBase
+	if o.BaseURL != "" {
+		base = o.BaseURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -272,8 +279,22 @@ type setFile struct {
 			Identifiers struct {
 				ScryfallID string `json:"scryfallId"`
 			} `json:"identifiers"`
+			PurchaseUrls struct {
+				CardKingdom     string `json:"cardKingdom"`
+				CardKingdomFoil string `json:"cardKingdomFoil"`
+			} `json:"purchaseUrls"`
 		} `json:"cards"`
 	} `json:"data"`
+}
+
+// SetCard is what one set-file card resolves to: the MTGJSON uuid the
+// price files key on, and Card Kingdom's sanctioned product links —
+// mtgjson.com redirects, one per finish, maintained by the feed so no
+// vendor URL scheme has to be guessed.
+type SetCard struct {
+	UUID      string
+	CKURL     string
+	CKFoilURL string
 }
 
 // ErrNoSuchSet reports a set code MTGJSON does not publish. Scryfall and MTGJSON
@@ -281,11 +302,12 @@ type setFile struct {
 // callers should skip the set rather than fail.
 var ErrNoSuchSet = errors.New("no such MTGJSON set")
 
-// SetIdentifiers maps Scryfall IDs to MTGJSON UUIDs for one set.
+// SetIdentifiers maps Scryfall IDs to MTGJSON UUIDs and Card Kingdom
+// links for one set.
 //
 // Per-set files are small (under a megabyte gzipped), which is why this is done
 // set by set: the equivalent whole-catalog file, AllIdentifiers, is over 200 MB.
-func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]string, error) {
+func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]SetCard, error) {
 	body, err := fetch(ctx, o, strings.ToUpper(setCode)+".json.gz")
 	if err != nil {
 		if errors.Is(err, ErrNoSuchSet) {
@@ -306,10 +328,14 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 		return nil, fmt.Errorf("decoding %s: %w", setCode, err)
 	}
 
-	out := make(map[string]string, len(sf.Data.Cards))
+	out := make(map[string]SetCard, len(sf.Data.Cards))
 	for _, c := range sf.Data.Cards {
 		if c.Identifiers.ScryfallID != "" && c.UUID != "" {
-			out[c.Identifiers.ScryfallID] = c.UUID
+			out[c.Identifiers.ScryfallID] = SetCard{
+				UUID:      c.UUID,
+				CKURL:     c.PurchaseUrls.CardKingdom,
+				CKFoilURL: c.PurchaseUrls.CardKingdomFoil,
+			}
 		}
 	}
 	return out, nil

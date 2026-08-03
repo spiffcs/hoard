@@ -446,3 +446,39 @@ func TestReloadRederivesView(t *testing.T) {
 		t.Errorf("reload moved the container cursor to %d", m.cursor[paneContainers])
 	}
 }
+
+// W serves an already-seen window from the session cache — the movers
+// query walks the whole price history twice, and paying that per press
+// made the key feel broken. A refresh invalidates the cache.
+func TestMoversWindowCacheMakesWInstant(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v") // movers: 30-day window queried and cached
+	m = key(m, "W") // 7 days
+	m = key(m, "W") // 90 days
+
+	// Every window has been seen once; cycling back must not touch the
+	// store at all.
+	st.err = errors.New("the cache must answer")
+	m = key(m, "W") // back to 30 days
+	if m.statusErr {
+		t.Fatalf("cached window hit the store: %q", m.status)
+	}
+	if len(m.movers) != 1 {
+		t.Fatalf("cached movers = %d rows, want 1", len(m.movers))
+	}
+	st.err = nil
+
+	// New data invalidates: a reload re-queries the current window, and
+	// the other windows miss the stale cache too.
+	st.movers = append(st.movers, mover("Solitude-id", "nonfoil", 1, 30, 34))
+	m = key(m, "r")
+	if len(m.movers) != 2 {
+		t.Fatalf("reloaded movers = %d rows, want the new row visible", len(m.movers))
+	}
+	m = key(m, "W")
+	if len(m.movers) != 2 {
+		t.Errorf("post-reload window = %d rows, want re-queried, not stale cache", len(m.movers))
+	}
+}

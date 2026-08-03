@@ -193,6 +193,9 @@ func (m *Model) undoable(a undoAction) { m.undoStack = &a }
 // collection's value stale on screen while the row under the cursor showed the
 // new number.
 func (m *Model) refresh() {
+	// Whatever prompted the refresh may have moved prices or holdings;
+	// caches keyed on the old world are done.
+	m.dataGen++
 	cards, containers := m.cursor[paneCards], m.cursor[paneContainers]
 	if err := m.loadContainers(); err != nil {
 		m.setError(err)

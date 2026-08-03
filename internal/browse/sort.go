@@ -6,7 +6,6 @@ package browse
 
 import (
 	"cmp"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -280,8 +279,10 @@ func moverCompare(key string) func(a, b store.PriceChange) int {
 			c = cmp.Compare(b.Pct(), a.Pct())
 		case "qty":
 			c = cmp.Compare(b.Copies, a.Copies)
-		default: // impact, the magnitude ranking MoversByImpact established
-			c = cmp.Compare(math.Abs(b.TotalDelta()), math.Abs(a.TotalDelta()))
+		default: // impact, as a signed spectrum: biggest gain first,
+			// through zero, down to the biggest loss — magnitude ranking
+			// interleaved gains and losses (owner's call).
+			c = cmp.Compare(b.TotalDelta(), a.TotalDelta())
 		}
 		if c != 0 {
 			return c

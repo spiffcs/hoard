@@ -197,6 +197,14 @@ type Model struct {
 	allUnpriced []store.UnpricedRow
 	allWatches  []store.WatchStatus
 
+	// moversCache keeps each lookback window's pristine movers for the
+	// session: the query walks the whole price history twice, and paying
+	// that on every W press made the key feel broken (observed live).
+	// dataGen invalidates it — bumped wherever prices or holdings change.
+	moversCache    map[int][]store.PriceChange
+	moversCacheGen int
+	dataGen        int
+
 	// entryIndex answers "does this container hold this printing":
 	// containerID → "scryfallID|finish". viewEligible marks the containers
 	// selectable on views that grey the rest out, nil when all are. Both
@@ -766,9 +774,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail.linkCursor = min(m.detail.linkCursor+1, n-1)
 		}
 	case ":", "ctrl+p":
-		// The palette opens over the overlay: running a command must not
-		// cost the reader their place, and context commands (watch, qty)
-		// take the detailed card as their subject.
+		// The palette opens over the overlay — narrowed to the price
+		// refreshers (see detailPaletteIDs): running one must not cost
+		// the reader their place, and everything else waits an esc away.
 		m.openPalette()
 	}
 	return m, nil
@@ -1165,6 +1173,7 @@ func (m *Model) onCursorMoved() {
 // makes an edit made elsewhere — or an update-prices in another terminal —
 // visible without restarting.
 func (m *Model) reload() {
+	m.dataGen++
 	if err := m.loadContainers(); err != nil {
 		m.setError(err)
 		return

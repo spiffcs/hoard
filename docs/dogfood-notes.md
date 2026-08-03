@@ -117,6 +117,29 @@ with why).
     landing on a different printing re-points the overlay — series, bids,
     comps, links, and the art all reload for that printing. Links moved
     to ←/→ to free the vertical axis.
+14. **Exact vendor links** — ✅ done, in two pieces after live clicking.
+    TCGplayer: the product id was already in the stored Scryfall document;
+    v14 surfaces it as a generated column and the link goes to
+    tcgplayer.com/product/{id} (search fallback for never-refreshed
+    cards). Card Kingdom: v15 stores the per-finish purchaseUrls
+    (mtgjson.com redirects) harvested from the set files the uuid
+    resolver already downloads — the resolver now also fetches a set when
+    links are missing (one backfill pass for pre-v15 hoards; empty links
+    are recorded so absence never refetches). The detail's CK link follows
+    the held row's finish, foil page first, plain product page as the
+    foil-less fallback. Manapool and Scryfall were already exact.
+15. **Responsiveness round** — ✅ done, four fixes. W on movers caches
+    each lookback window for the session (the query walks the whole price
+    history twice; a dataGen counter bumped on refresh/reload invalidates)
+    — repeat presses are instant. The resolver's per-set downloads no
+    longer render byte bars (forty 1.1 MB bars filling and vanishing read
+    as one download failing repeatedly); a "set 12/40" count note carries
+    that phase, byte bars stay for the big archives. The detail reserves
+    the card art's footprint while the fetch runs, so HELD/PRICE/COMPS
+    render in their final positions from the first frame (a failed fetch
+    answers with empty lines and releases the space). And the movers
+    impact sort became a signed spectrum: biggest gain, through zero, to
+    biggest loss — magnitude ranking interleaved gains and losses.
 
 
 ## 2026-08-01 — beautification-sprint build

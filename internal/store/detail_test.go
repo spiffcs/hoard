@@ -367,3 +367,32 @@ func TestCardDetailCarriesTCGplayerID(t *testing.T) {
 		t.Errorf("TCGplayerID = %v for an un-enriched card, want nil", *d.TCGplayerID)
 	}
 }
+
+// v15's null-vs-empty contract: NULL means the set file was never read
+// for this card, an empty string means it was and carried no link — the
+// distinction that stops absence from re-fetching the file forever.
+func TestCardKingdomLinksNullVsEmpty(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+
+	known, err := s.KnownCardKingdomLinks()
+	if err != nil || known["ulamog-id"] {
+		t.Fatalf("known = %v, %v; want never-asked", known, err)
+	}
+	if err := s.SaveCardKingdomLinks(map[string]CKLinks{"ulamog-id": {}}); err != nil {
+		t.Fatalf("SaveCardKingdomLinks: %v", err)
+	}
+	known, err = s.KnownCardKingdomLinks()
+	if err != nil || !known["ulamog-id"] {
+		t.Fatalf("known = %v, %v; want asked-and-none counted as asked", known, err)
+	}
+	d, err := s.CardDetail("ulamog-id")
+	if err != nil {
+		t.Fatalf("CardDetail: %v", err)
+	}
+	if d.CKURL == nil || *d.CKURL != "" || d.CKFoilURL == nil || *d.CKFoilURL != "" {
+		t.Errorf("links = %v/%v, want recorded-empty", d.CKURL, d.CKFoilURL)
+	}
+}

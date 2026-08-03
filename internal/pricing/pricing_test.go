@@ -1,7 +1,10 @@
 package pricing
 
 import (
+	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -74,12 +77,18 @@ func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 	}
 }
 
-// Refs already carrying an id need no set-file download, which is what makes a
-// collection-wide read free after the first run.
+// Refs already carrying an id need no set-file download once the vendor
+// links are stamped too, which is what makes a collection-wide read free
+// after the first run.
 func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	s := newStore(t)
 	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
+	}
+	// The link pass has already happened for this card (an empty record
+	// counts: asked-and-none must not refetch).
+	if err := s.SaveCardKingdomLinks(map[string]store.CKLinks{"ripple-id": {}}); err != nil {
+		t.Fatalf("SaveCardKingdomLinks: %v", err)
 	}
 	// Unreachable cache and no network; only the supplied id can satisfy this.
 	byUUID, _, err := New(s, filepath.Join(t.TempDir(), "nope")).want(context.Background(),
@@ -89,6 +98,64 @@ func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	}
 	if len(byUUID) != 1 {
 		t.Errorf("resolvable = %d, want the supplied id counted", len(byUUID))
+	}
+}
+
+// A card whose uuid is known but whose vendor links were never asked about
+// fetches its set file once — the pre-v15 backfill — stamps the links
+// (present or recorded-absent), and never fetches again.
+func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		zw := gzip.NewWriter(w)
+		zw.Write([]byte(`{"data": {"cards": [
+			{"uuid": "uuid-ripple", "identifiers": {"scryfallId": "ripple-id"},
+			 "purchaseUrls": {"cardKingdom": "https://mtgjson.com/links/aa",
+			                  "cardKingdomFoil": "https://mtgjson.com/links/bb"}}
+		]}}`))
+		zw.Close()
+	}))
+	defer srv.Close()
+
+	// Byte progress stays silent during the per-set pass: dozens of tiny
+	// bars filling and vanishing read as one download failing repeatedly.
+	var byteEvents int
+	f := New(s, t.TempDir()).WithBaseURL(srv.URL).
+		WithBytes(func(done, total int64) { byteEvents++ })
+	if _, _, err := f.want(context.Background(),
+		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "uuid-ripple"}}); err != nil {
+		t.Fatalf("want: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("set file fetched %d times, want once", hits)
+	}
+	if byteEvents != 0 {
+		t.Errorf("set-file download reported %d byte events, want none", byteEvents)
+	}
+	d, err := s.CardDetail("ripple-id")
+	if err != nil {
+		t.Fatalf("CardDetail: %v", err)
+	}
+	if d.CKURL == nil || *d.CKURL != "https://mtgjson.com/links/aa" ||
+		d.CKFoilURL == nil || *d.CKFoilURL != "https://mtgjson.com/links/bb" {
+		t.Fatalf("links = %v/%v, want both stamped", d.CKURL, d.CKFoilURL)
+	}
+
+	// Stamped means done: a second pass fetches nothing (the cache dir is
+	// fresh, so a fetch would hit the server again).
+	f2 := New(s, t.TempDir()).WithBaseURL(srv.URL)
+	if _, _, err := f2.want(context.Background(),
+		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "uuid-ripple"}}); err != nil {
+		t.Fatalf("second want: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("set file fetched %d times after stamping, want still 1", hits)
 	}
 }
 

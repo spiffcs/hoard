@@ -54,6 +54,18 @@ func (m *Model) openPalette() {
 	m.refreshPalette()
 }
 
+// detailPaletteIDs are the commands the palette offers over the card
+// detail: the ones that refresh price data, and the cancel for a refresh
+// already running.
+var detailPaletteIDs = map[string]bool{
+	"op.update-prices":   true,
+	"op.backfill":        true,
+	"op.backfill.90":     true,
+	"op.repair-finishes": true,
+	"market.fetch":       true,
+	"op.cancel":          true,
+}
+
 // refreshPalette recomputes the matches for the current query. Empty query:
 // every applicable command in registry order. Otherwise: fuzzy over
 // title+aliases, ranked by match quality.
@@ -67,6 +79,13 @@ func (m *Model) refreshPalette() {
 		// Hidden commands keep their keys but never list: the palette is
 		// for the verbs, not the navigation reflexes.
 		if m.commands[i].hidden || !m.commands[i].applies(m) {
+			continue
+		}
+		// Over the card detail the palette narrows to the price refreshers
+		// (and cancelling one): the overlay is a reading surface, and the
+		// one thing worth running from it is a refresh of the numbers on
+		// it. Everything else waits an esc away.
+		if m.detail != nil && !detailPaletteIDs[m.commands[i].id] {
 			continue
 		}
 		applicable = append(applicable, i)
