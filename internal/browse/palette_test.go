@@ -337,3 +337,23 @@ func TestMarketPaletteDropsEditVerbs(t *testing.T) {
 		}
 	}
 }
+
+// BrowseBySets lists in the palette with its key hint, and runs.
+func TestPaletteListsBrowseBySets(t *testing.T) {
+	m := openTestPalette(t)
+	found := false
+	for _, match := range m.palette.matches {
+		if c := m.commands[match.index]; c.id == "sets.toggle" {
+			found = c.title == "BrowseBySets" && c.key == "B"
+		}
+	}
+	if !found {
+		t.Fatal("BrowseBySets missing from the palette (or wrong title/key)")
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	m = key(m, "B")
+	if !m.setsMode {
+		t.Error("B did not toggle sets mode")
+	}
+}

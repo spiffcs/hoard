@@ -224,6 +224,12 @@ func commands() []command {
 					m.promptExport("", "", "hoard-export")
 					return nil
 				}
+				// A set is a lens, not a container: its synthetic id would
+				// export as a binder ref that matches nothing.
+				if sel.Kind == kindSet {
+					m.status, m.statusErr = "sets can't be exported directly · ExportEverything writes the whole hoard", true
+					return nil
+				}
 				// Refs by id, not name: a name is a fragment match and can
 				// be ambiguous; the id under the cursor never is.
 				ref := strconv.FormatInt(sel.ID, 10)
@@ -345,6 +351,13 @@ func commands() []command {
 			desc: "Rename the selected binder.",
 			key:  "R",
 			run:  func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
+		},
+		{
+			id: "sets.toggle", title: "BrowseBySets",
+			aliases: "sets set expansion release pane toggle",
+			desc:    "Flip the left pane between binders & decks and the sets you own cards from.",
+			key:     "B",
+			run:     func(m *Model) tea.Cmd { m.toggleSetsMode(); return nil },
 		},
 		{
 			id: "movers.window", aliases: "since days window",

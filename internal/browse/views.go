@@ -158,6 +158,10 @@ func (m *Model) loadView() error {
 func (m *Model) deriveView() {
 	m.viewEligible = nil
 	cid, filtered := m.filterContainerID()
+	// The set scope is the container scope's sibling — mutually exclusive
+	// with it, and an exact code match: both sides come from cards.set_code,
+	// so no finish folding applies.
+	set, bySet := m.filterSetCode()
 	switch m.view {
 	case viewMovers:
 		rows := make([]store.PriceChange, 0, len(m.allMovers))
@@ -173,6 +177,9 @@ func (m *Model) deriveView() {
 			if filtered && !m.inContainerPriced(cid, c.ScryfallID, c.Finish) {
 				continue
 			}
+			if bySet && c.SetCode != set {
+				continue
+			}
 			rows = append(rows, c)
 		}
 		m.movers = rows
@@ -183,17 +190,31 @@ func (m *Model) deriveView() {
 			if filtered && !m.inContainer(cid, r.ScryfallID, r.Finish) {
 				continue
 			}
+			if bySet && r.SetCode != set {
+				continue
+			}
 			rows = append(rows, r)
 		}
 		m.unpriced = rows
-		m.viewEligible = m.eligibleContainers(func(id int64) bool {
-			for _, r := range m.allUnpriced {
-				if m.inContainer(id, r.ScryfallID, r.Finish) {
-					return true
+		if m.setsMode {
+			m.viewEligible = m.eligibleSets(func(code string) bool {
+				for _, r := range m.allUnpriced {
+					if r.SetCode == code {
+						return true
+					}
 				}
-			}
-			return false
-		})
+				return false
+			})
+		} else {
+			m.viewEligible = m.eligibleContainers(func(id int64) bool {
+				for _, r := range m.allUnpriced {
+					if m.inContainer(id, r.ScryfallID, r.Finish) {
+						return true
+					}
+				}
+				return false
+			})
+		}
 		m.applySort()
 	case viewWatches:
 		rows := make([]store.WatchStatus, 0, len(m.allWatches))
@@ -204,17 +225,31 @@ func (m *Model) deriveView() {
 			if filtered && !m.inContainerPriced(cid, w.ScryfallID, w.Finish) {
 				continue
 			}
+			if bySet && w.SetCode != set {
+				continue
+			}
 			rows = append(rows, w)
 		}
 		m.watches = rows
-		m.viewEligible = m.eligibleContainers(func(id int64) bool {
-			for _, w := range m.allWatches {
-				if m.inContainerPriced(id, w.ScryfallID, w.Finish) {
-					return true
+		if m.setsMode {
+			m.viewEligible = m.eligibleSets(func(code string) bool {
+				for _, w := range m.allWatches {
+					if w.SetCode == code {
+						return true
+					}
 				}
-			}
-			return false
-		})
+				return false
+			})
+		} else {
+			m.viewEligible = m.eligibleContainers(func(id int64) bool {
+				for _, w := range m.allWatches {
+					if m.inContainerPriced(id, w.ScryfallID, w.Finish) {
+						return true
+					}
+				}
+				return false
+			})
+		}
 		m.applySort()
 	case viewMarket:
 		m.applyMarketRows()

@@ -32,6 +32,11 @@ const (
 const allCardsID int64 = -1
 const kindAllCards = "all"
 
+// kindSet marks a sets-mode row: one Magic set the hoard holds cards from.
+// Browse-only, like kindAllCards — a set is a lens over the hoard, not a
+// container, so its rows carry synthetic negative ids and refuse edits.
+const kindSet = "set"
+
 // allCardsName is the merged row's on-screen name.
 const allCardsName = "All cards"
 
@@ -47,6 +52,10 @@ type container struct {
 	// isDefault marks the built-in binder, which cannot be renamed or
 	// removed; carried from the store rather than inferred from position.
 	isDefault bool
+
+	// setCode is the join key of a kindSet row; Name is display-only (the
+	// pretty set name, which several sets could theoretically share).
+	setCode string
 
 	// meta is what a deck needs to be recreated after it is removed. Carried on
 	// the row rather than re-read at deletion time because by then the container
@@ -120,6 +129,11 @@ type Model struct {
 	sortRev [len(sortColumns)]bool
 
 	containers []container
+
+	// setsMode flips the left pane from binders and decks to the sets the
+	// hoard holds cards from — a second lens over the same hoard, toggled
+	// with B. Session-only; nothing persists it.
+	setsMode bool
 
 	// cards is what the pane shows; allCards is what the container holds. The
 	// unfiltered set is kept so narrowing and widening a filter as it is typed
@@ -250,6 +264,7 @@ type Model struct {
 	marketCached  MarketCachedFunc
 	cardComps     CardCompFunc
 	openURL       OpenURLFunc
+	printSearch   PrintSearchFunc
 	marketResult  market.Result
 	marketRows    []market.Row
 	marketLoading bool
@@ -368,8 +383,11 @@ func pricePoints(s []store.PricePoint) []ui.TimePoint {
 }
 
 // loadContainers reads the left pane: the binders (default first), then decks
-// by value.
+// by value — or, in sets mode, the sets held.
 func (m *Model) loadContainers() error {
+	if m.setsMode {
+		return m.loadSetContainers()
+	}
 	binders, err := m.store.ListBinders()
 	if err != nil {
 		return fmt.Errorf("reading binders: %w", err)
@@ -418,12 +436,15 @@ func (m *Model) loadCards() error {
 	}
 
 	var out []card
-	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection {
+	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection || sel.Kind == kindSet {
 		var rows []store.CollectionRow
 		var err error
-		if sel.Kind == kindAllCards {
+		switch sel.Kind {
+		case kindAllCards:
 			rows, err = m.store.AllByFinish()
-		} else {
+		case kindSet:
+			rows, err = m.store.SetByFinish(sel.setCode)
+		default:
 			rows, err = m.store.BinderByFinish(sel.ID)
 		}
 		if err != nil {
@@ -756,6 +777,12 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "backspace":
 		m.detail = nil
 	case "enter":
+		// In the held zone, enter edits the highlighted field of the row
+		// under the cursor.
+		if m.detail.zone == zoneHeld {
+			m.editHeldField()
+			return m, nil
+		}
 		// Enter used to close (esc's job too); with links it opens the
 		// selected vendor page instead — the reason to have a cursor.
 		if m.openURL != nil && len(m.detail.links) > 0 {
@@ -767,19 +794,44 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.detail = nil
 	case "up", "k":
-		// The vertical axis walks the held list; a different printing
-		// re-points the overlay and refetches its art.
+		// The vertical axis climbs into the held list first, then walks
+		// it; a different printing re-points the overlay and refetches
+		// its art.
+		if m.detail.zone == zoneLinks && len(m.detail.holdings) > 0 {
+			m.detail.zone = zoneHeld
+			return m, nil
+		}
 		return m, m.moveHeldCursor(-1)
 	case "down", "j":
-		return m, m.moveHeldCursor(1)
+		if m.detail.zone == zoneHeld {
+			if m.detail.heldCursor >= len(m.detail.holdings)-1 {
+				// Off the bottom of the held list is back to the links.
+				m.detail.zone = zoneLinks
+				return m, nil
+			}
+			return m, m.moveHeldCursor(1)
+		}
 	case "left", "h":
-		if n := len(m.detail.links); n > 0 {
+		if m.detail.zone == zoneHeld {
+			m.detail.heldField = max(m.detail.heldField-1, 0)
+		} else if n := len(m.detail.links); n > 0 {
 			m.detail.linkCursor = max(m.detail.linkCursor-1, 0)
 		}
 	case "right", "l":
-		if n := len(m.detail.links); n > 0 {
+		if m.detail.zone == zoneHeld {
+			m.detail.heldField = min(m.detail.heldField+1, heldFieldCount-1)
+		} else if n := len(m.detail.links); n > 0 {
 			m.detail.linkCursor = min(m.detail.linkCursor+1, n-1)
 		}
+	case "+", "=":
+		// The held list is where a wrong count gets noticed, so the count
+		// is editable right here — same keys, same rules as the holdings
+		// pane (deck rows refuse; the imported list owns them).
+		m.adjustHeldQuantity(1)
+	case "-", "_":
+		m.adjustHeldQuantity(-1)
+	case "d":
+		m.askHeldRemoval()
 	case ":", "ctrl+p":
 		// The palette opens over the overlay — narrowed to the price
 		// refreshers (see detailPaletteIDs): running one must not cost
@@ -928,6 +980,12 @@ func (m *Model) askRemoval() {
 		}
 		if sel.Kind == kindAllCards {
 			m.status, m.statusErr = allCardsName+" is every container merged; remove its subsets instead", true
+			return
+		}
+		// Before the deck confirm: a set row would otherwise stage a deck
+		// removal against its synthetic id.
+		if sel.Kind == kindSet {
+			m.status, m.statusErr = "a set is how cards were printed, not where they live · remove cards from their binders", true
 			return
 		}
 		if sel.Kind == store.KindCollection {

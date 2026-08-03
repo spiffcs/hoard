@@ -37,6 +37,13 @@ type detail struct {
 	// heldCursor selects a row of the held list; landing on a different
 	// printing re-points the whole overlay (series, comps, art, links).
 	heldCursor int
+	// zone is which strip of the overlay the arrow keys drive: the links
+	// row by default, or the held list after ↑ climbs into it. In the held
+	// zone ←/→ pick a field of the selected row and enter edits it.
+	zone int
+	// heldField is the held row's highlighted field: quantity, printing,
+	// or location.
+	heldField int
 	// imagePending marks an art fetch in flight: the layout reserves the
 	// image's space so HELD and everything under it stay put when the art
 	// lands, instead of jumping down by an image's height (observed live).
@@ -47,6 +54,19 @@ type detail struct {
 	// the terminal can't draw one. The overlay never waits for it.
 	image []string
 }
+
+// The overlay's arrow-key zones, and the held row's editable fields.
+const (
+	zoneLinks = iota
+	zoneHeld
+)
+
+const (
+	fieldQty = iota
+	fieldSet
+	fieldWhere
+	heldFieldCount
+)
 
 // openDetail loads the selected card's detail.
 //
@@ -379,6 +399,26 @@ func (m Model) hoardLines(d detail, width int) []string {
 		where := h.ContainerName
 		if h.ContainerKind != store.KindCollection && h.Board != "main" {
 			where += " (" + h.Board + ")"
+		}
+		// In the held zone the selected row shows its editable fields, the
+		// highlighted one wearing the cursor: ←/→ choose, enter edits.
+		if i == d.heldCursor && d.zone == zoneHeld {
+			mark := func(s string, f int) string {
+				if d.heldField == f {
+					return ui.Restyle(s, m.theme.Cursor)
+				}
+				return s
+			}
+			parts := []string{
+				mark(ui.Qty(h.Quantity), fieldQty),
+				mark(ui.Printing(h.SetCode, h.CollectorNumber), fieldSet),
+			}
+			if h.Finish != "nonfoil" {
+				parts = append(parts, h.Finish)
+			}
+			parts = append(parts, mark(where, fieldWhere))
+			out = append(out, ui.Truncate("▸ "+strings.Join(parts, " · "), width))
+			continue
 		}
 		// The finish is named only when it isn't normal — the table columns'
 		// rule, minus the placeholder dash, which in a list reads as a stray mark.

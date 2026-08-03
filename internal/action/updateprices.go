@@ -103,7 +103,7 @@ type UpdatePricesResult struct {
 // cannot price from MTGJSON, and records the observation.
 func UpdatePrices(ctx context.Context, d Deps, p progress.Fn) (UpdatePricesResult, error) {
 	var res UpdatePricesResult
-	ids, err := d.Store.AllPrintingIDs()
+	ids, err := d.Store.ActivePrintingIDs()
 	if err != nil {
 		return res, err
 	}

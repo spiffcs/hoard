@@ -41,13 +41,26 @@ func (m *Model) rebuildEntryIndex() error {
 }
 
 // filterContainerID is the container the views must filter to, ok=false
-// when the selection is All cards — no filtering.
+// when the selection is All cards — no filtering — or a set row, whose
+// synthetic id backs no entryIndex entry (sets filter by code instead;
+// see filterSetCode).
 func (m Model) filterContainerID() (int64, bool) {
 	sel := m.selectedContainer()
-	if sel == nil || sel.Kind == kindAllCards {
+	if sel == nil || sel.Kind == kindAllCards || sel.Kind == kindSet {
 		return 0, false
 	}
 	return sel.ID, true
+}
+
+// filterSetCode is the set the views must filter to, ok=false when the
+// selection is not a set row. The container and set scopes are mutually
+// exclusive: a selection is one kind or the other.
+func (m Model) filterSetCode() (string, bool) {
+	sel := m.selectedContainer()
+	if sel == nil || sel.Kind != kindSet {
+		return "", false
+	}
+	return sel.setCode, true
 }
 
 // inContainer reports whether the container holds the printing in exactly
@@ -91,6 +104,22 @@ func (m Model) eligibleContainers(holds func(cid int64) bool) map[int64]bool {
 			continue
 		}
 		if holds(c.ID) {
+			out[c.ID] = true
+		}
+	}
+	return out
+}
+
+// eligibleSets marks every set row for which holds answers yes — the sets
+// pane's version of eligibleContainers, keyed by the rows' synthetic ids
+// so containerEligible reads both the same way.
+func (m Model) eligibleSets(holds func(setCode string) bool) map[int64]bool {
+	out := make(map[int64]bool, len(m.containers))
+	for _, c := range m.containers {
+		if c.Kind != kindSet {
+			continue
+		}
+		if holds(c.setCode) {
 			out[c.ID] = true
 		}
 	}

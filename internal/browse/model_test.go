@@ -2,6 +2,7 @@ package browse
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -43,7 +45,11 @@ type fakeStore struct {
 	// entryKeys, when set, overrides the membership facts EntryKeys derives
 	// from the fixture — for tests that stage eligibility directly.
 	entryKeys []store.EntryKey
-	nextID    int64
+	// sets, when set, backs SetsHeld verbatim (order and names included);
+	// nil derives one coded summary per held set code, sorted by code —
+	// enough for tests that only need the sets pane to exist.
+	sets   []store.SetSummary
+	nextID int64
 
 	err error // when set, every read fails
 
@@ -64,6 +70,8 @@ type fakeStore struct {
 	holdings    map[string]int
 	removedCard map[string][]store.Holding
 	removedDeck int64
+	// upserted records the printings the set editor stored.
+	upserted []scryfall.Card
 }
 
 func (f *fakeStore) MatchingCardIDs(tf store.TraitFilter) (map[string]bool, error) {
@@ -186,8 +194,30 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error) { return nil, f.err }
 
 // HoldingsOfName serves the holdingsByName fixture, keyed by card name.
+// Collection-kind rows track the live fixture the way the real store
+// would: quantities follow edits, and a zeroed row disappears. Rows with
+// no kind stay verbatim for the tests that only stage a printing list.
 func (f *fakeStore) HoldingsOfName(name string) ([]store.Holding, error) {
-	return f.holdingsByName[name], f.err
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []store.Holding
+	for _, h := range f.holdingsByName[name] {
+		if h.ContainerKind == store.KindCollection {
+			qty := 0
+			for _, r := range f.collection {
+				if r.ScryfallID == h.ScryfallID && r.Finish == h.Finish {
+					qty = r.Quantity
+				}
+			}
+			if qty == 0 {
+				continue
+			}
+			h.Quantity = qty
+		}
+		out = append(out, h)
+	}
+	return out, nil
 }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
 
@@ -212,6 +242,55 @@ func (f *fakeStore) AllByFinish() ([]store.CollectionRow, error) {
 	}
 	return out, nil
 }
+
+// SetsHeld serves the sets fixture verbatim; with none staged it derives
+// one coded summary per held set code, sorted by code.
+func (f *fakeStore) SetsHeld() ([]store.SetSummary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.sets != nil {
+		return f.sets, nil
+	}
+	all, err := f.AllByFinish()
+	if err != nil {
+		return nil, err
+	}
+	byCode := map[string]*store.SetSummary{}
+	var codes []string
+	for _, r := range all {
+		s, ok := byCode[r.SetCode]
+		if !ok {
+			s = &store.SetSummary{Code: r.SetCode, Name: strings.ToUpper(r.SetCode)}
+			byCode[r.SetCode] = s
+			codes = append(codes, r.SetCode)
+		}
+		s.Copies += r.Quantity
+		s.Value += r.Value
+	}
+	slices.Sort(codes)
+	out := make([]store.SetSummary, 0, len(codes))
+	for _, c := range codes {
+		out = append(out, *byCode[c])
+	}
+	return out, nil
+}
+
+// SetByFinish is AllByFinish narrowed to one set code, like the store's.
+func (f *fakeStore) SetByFinish(code string) ([]store.CollectionRow, error) {
+	all, err := f.AllByFinish()
+	if err != nil {
+		return nil, err
+	}
+	var out []store.CollectionRow
+	for _, r := range all {
+		if r.SetCode == code {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListWatches() ([]store.WatchStatus, error) { return f.watches, f.err }
 
 func (f *fakeStore) WouldFire() ([]store.WatchStatus, error) {
@@ -306,6 +385,73 @@ func (f *fakeStore) SetHoldingQuantityIn(_ int64, id, finish string, qty int) (i
 			row(strings.TrimSuffix(id, "-id"), "uma", "1", finish, qty, float64(qty)))
 	}
 	return previous, nil
+}
+
+// MoveEntry re-points one row the way the store does: remove from the
+// source slice, merge into the destination, previous target quantity back.
+func (f *fakeStore) MoveEntry(fromC int64, id, finish string, toC int64, toID string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if fromC == toC && id == toID {
+		return 0, nil
+	}
+	take := func(cid int64) []store.CollectionRow {
+		if cid != defaultBinderID {
+			if rows, ok := f.binderRows[cid]; ok {
+				return rows
+			}
+		}
+		return f.collection
+	}
+	put := func(cid int64, rows []store.CollectionRow) {
+		if cid != defaultBinderID {
+			if f.binderRows == nil {
+				f.binderRows = map[int64][]store.CollectionRow{}
+			}
+			f.binderRows[cid] = rows
+			return
+		}
+		f.collection = rows
+	}
+
+	src := take(fromC)
+	var moved store.CollectionRow
+	found := false
+	kept := src[:0:0]
+	for _, r := range src {
+		if !found && r.ScryfallID == id && r.Finish == finish {
+			moved, found = r, true
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if !found {
+		return 0, fmt.Errorf("no such holding to move")
+	}
+	put(fromC, kept)
+
+	dst := take(toC)
+	for i, r := range dst {
+		if r.ScryfallID == toID && r.Finish == finish {
+			prev := r.Quantity
+			dst[i].Quantity += moved.Quantity
+			put(toC, dst)
+			return prev, nil
+		}
+	}
+	moved.ScryfallID = toID
+	put(toC, append(dst, moved))
+	return 0, nil
+}
+
+// UpsertPrintings records what the set editor stored, for assertions.
+func (f *fakeStore) UpsertPrintings(cards []scryfall.Card) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.upserted = append(f.upserted, cards...)
+	return nil
 }
 
 func (f *fakeStore) RemoveFromBinder(_ int64, id string) ([]store.Holding, error) {

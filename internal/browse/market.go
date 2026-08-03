@@ -395,6 +395,22 @@ func (m *Model) applyMarketRows() {
 		}
 		res = scoped
 	}
+	// The set scope, mutually exclusive with the container scope, filters
+	// the same way: before ranking, so a set gets its own top rows.
+	if code, ok := m.filterSetCode(); ok {
+		scoped := market.Result{Compared: res.Compared}
+		for _, o := range res.Opportunities {
+			if o.Card.SetCode == code {
+				scoped.Opportunities = append(scoped.Opportunities, o)
+			}
+		}
+		for _, c := range res.Comps {
+			if c.Card.SetCode == code {
+				scoped.Comps = append(scoped.Comps, c)
+			}
+		}
+		res = scoped
+	}
 	rows := market.Rows(res, marketRowLimit)
 	kept := rows[:0]
 	for _, r := range rows {

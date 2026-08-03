@@ -59,3 +59,20 @@ func cmdRepairFinishes(ctx context.Context, st *store.Store) error {
 	}
 	return nil
 }
+
+// cmdVacuum deletes the orphaned printings corrections leave behind — no
+// holding or watch points at them — along with their junk price history,
+// then compacts the file.
+func cmdVacuum(st *store.Store) error {
+	removed, err := st.VacuumPrintings()
+	if err != nil {
+		return err
+	}
+	r := ui.NewReport()
+	if removed == 0 {
+		r.Success("No orphaned printings; nothing to remove.")
+		return nil
+	}
+	r.Success("Removed %s orphaned printings and their history; database compacted.", ui.Count(removed))
+	return nil
+}

@@ -150,6 +150,8 @@ func run(args []string) error {
 		return cmdBackfillPrices(ctx, st, cmdArgs)
 	case "repair-finishes":
 		return cmdRepairFinishes(ctx, st)
+	case "vacuum":
+		return cmdVacuum(st)
 	case "catalog":
 		return cmdCatalog(ctx, cmdArgs)
 	case "binder":
@@ -482,6 +484,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			return comps, ok && err == nil
 		}),
 		browse.WithOpenURL(openInBrowser),
+		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.UpdatePrices(ctx, deps, p)
 			if err != nil {

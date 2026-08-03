@@ -36,6 +36,7 @@ what is inside whichever row you have selected.
 | <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it · <kbd>ctrl+u</kbd> wipes the bar |
 | <kbd>s</kbd> | sort by value → name → quantity |
 | <kbd>v</kbd> | switch view: holdings → movers → unpriced → watches → market |
+| <kbd>B</kbd> | flip the left pane: binders & decks ↔ the sets you own cards from |
 | <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
 | <kbd>d</kbd> | remove the card, or the deck — asks first |
 | <kbd>u</kbd> | undo the last edit |
@@ -93,6 +94,16 @@ the header names the selection (`MOVERS · SINCE 2 Jul · RICH DECK`). On
 unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
 selection snaps back to All cards and says so.
+
+**Browsing by set.** <kbd>B</kbd> (or `BrowseBySets` in the palette) flips
+the left pane from binders and decks to SETS: one row per set you own cards
+from, newest release first — Alpha and Beta live at the bottom. Sets whose
+printings Scryfall hasn't described yet show their code and sort last until
+`UpdatePrices` runs. Selecting a set works exactly like selecting a binder:
+the right pane shows that set's holdings and every analytical view narrows
+to the set. The rows themselves are read-only — a set is how cards were
+printed, not where they live, so edits point you back at the card's binder
+or deck. The toggle lasts for the session.
 
 **Movers hides sub-$0.20 cards by default** — bulk twitching by cents is
 volume, not information. The status line says so, and the palette's
@@ -252,6 +263,20 @@ printings, each row naming its exact set and number. The list scrolls:
 a different printing re-points the whole overlay — the art, the price and
 bid sparklines, and the comps all follow, because printings of the same
 play card carry different prices and different art.
+
+The held rows edit in place — the detail is exactly where a card you don't
+actually own (or own from a different set) gets noticed, and fixing it
+shouldn't cost the trip back to holdings. <kbd>↑</kbd> climbs from the
+links into the held list; there <kbd>←</kbd>/<kbd>→</kbd> highlight one of
+the row's three fields — quantity, printing, location — and
+<kbd>enter</kbd> edits the highlighted one: a new count (0 removes), a new
+set code (the row re-points to that set's printing of the same card — the
+fix for a name-only import that resolved to the wrong set), or another
+binder's name (the copies move there, merging with any already held).
+<kbd>+</kbd>/<kbd>-</kbd> still nudge the count directly and <kbd>d</kbd>
+removes the row after a y/n. The rules match the holdings pane: binder
+rows edit, deck rows refuse (the imported list owns them), and the
+browser's <kbd>u</kbd> undoes the last change.
 
 The sparklines are scaled to each series' own low and high, not to zero — against
 a zero baseline a card that drifted between $34.00 and $34.50 would look

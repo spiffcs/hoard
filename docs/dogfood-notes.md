@@ -315,3 +315,16 @@ All landed same-day, in feedback order:
    point at `:` commands instead of CLI invocations.
 8. **Add view** — the session tally carries the running dollar value
    beside the count.
+9. **Deck set attribution (2026-08-02)** — dogfooding the new sets pane
+   surfaced that name-only decklist imports resolve to arbitrary printings
+   (typically the newest — Wood Elves landed on The Hobbit), scattering
+   each precon across ~20 sets it was never part of. Added
+   `hoard deck repin <deck> <set>`: re-points every off-set entry at the
+   named set's printing of the same name via the catalog (lowest collector
+   number when a set printed a name twice; names the set never printed are
+   reported and left alone; rows merge when the target printing is already
+   held). Ran it across all 18 precon decks (c17/cma/cm2/dvd/evg/gvl/jvc)
+   — 730 printings re-pointed, zero unresolvable. The MH3 Collector's
+   Edition decks needed nothing: their mh3 5xx entries are genuine (the
+   lists were imported with set/number annotations). Backup at
+   hoard.db.bak-repin-20260802 beside the live DB.

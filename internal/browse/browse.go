@@ -19,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/market"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -43,6 +44,11 @@ type Editor interface {
 	RestoreHoldings(scryfallID string, holdings []store.Holding) error
 	RemoveContainer(id int64) (int64, error)
 	UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
+
+	// The detail's held-row editor: moving one row to another printing or
+	// binder (merging on collision), and storing the printing it moves to.
+	MoveEntry(fromContainer int64, scryfallID, finish string, toContainer int64, toScryfallID string) (int, error)
+	UpsertPrintings(cards []scryfall.Card) error
 }
 
 // Store is everything the browser reads and edits. *store.Store satisfies it.
@@ -80,6 +86,10 @@ type Store interface {
 
 	// The merged all-cards view: every holding across every container.
 	AllByFinish() ([]store.CollectionRow, error)
+
+	// Sets mode: the left pane's per-set rollup and one set's holdings.
+	SetsHeld() ([]store.SetSummary, error)
+	SetByFinish(setCode string) ([]store.CollectionRow, error)
 
 	// Price watches: the view's rows, and the read-only fired preview the
 	// banner shows on open (never consuming the alert — cron's `hoard
@@ -129,6 +139,17 @@ type OpenURLFunc func(url string) error
 // WithOpenURL supplies the browser opener for the detail's vendor links.
 func WithOpenURL(f OpenURLFunc) Option {
 	return func(m *Model) { m.openURL = f }
+}
+
+// PrintSearchFunc lists every printing of an exact card name — what the
+// detail's set editor resolves a new set code against. Catalog-first in
+// practice, with the Scryfall API behind it.
+type PrintSearchFunc func(ctx context.Context, exactName string) ([]scryfall.Card, error)
+
+// WithPrintSearch supplies the printing lookup. Without it the held row's
+// set field refuses to edit, like every other injected capability.
+func WithPrintSearch(f PrintSearchFunc) Option {
+	return func(m *Model) { m.printSearch = f }
 }
 
 // ReportFunc produces the valuation report as lines already laid out for

@@ -287,7 +287,11 @@ func (m Model) header(left, right int) string {
 	totals += m.opBadge()
 	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
 	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
-	return m.paneTitle(paneContainers).Render(fit("COLLECTION", left)) +
+	leftTitle := "COLLECTION"
+	if m.setsMode {
+		leftTitle = "SETS"
+	}
+	return m.paneTitle(paneContainers).Render(fit(leftTitle, left)) +
 		strings.Repeat(" ", paneGap) +
 		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
 }
@@ -548,9 +552,20 @@ func (m Model) helpLine() string {
 	case m.watchPick:
 		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
 	case m.detail != nil:
+		if m.detail.zone == zoneHeld {
+			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · esc back · ctrl+c quit"
+		}
 		help := ""
-		if len(m.detail.holdings) > 1 {
-			help = "↑/↓ held printings · "
+		if len(m.detail.holdings) > 0 {
+			help = "↑ held list · "
+		}
+		// The edit keys show only when the row under the held cursor can
+		// take them — a deck row would answer every one with a refusal.
+		if d := m.detail; len(d.holdings) > 0 {
+			h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
+			if h.ContainerKind == store.KindCollection {
+				help += "+/- qty · d remove · "
+			}
 		}
 		if m.openURL != nil && len(m.detail.links) > 0 {
 			help += "←/→ links · enter open in browser · "
@@ -577,12 +592,20 @@ func (m Model) helpLine() string {
 		// them here would be an invitation to a refusal.
 		return "tab collections · v next view · : commands · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
 	case m.focus == paneContainers:
+		// The sets pane is a read-only lens: no create/rename/remove verbs,
+		// just the toggle back.
+		if m.setsMode {
+			return "tab cards · B binders/decks · a add cards · : commands · / filter · M floor · F refresh prices · v views · q quit"
+		}
 		// The merged all-cards row is read-only, so its help drops the
 		// verbs that would only ever answer with a refusal.
 		if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-			return "tab cards · n new binder · a add cards · : import/export · / filter · M floor · F refresh prices · v views · q quit"
+			return "tab cards · B by set · n new binder · a add cards · : import/export · / filter · M floor · F refresh prices · v views · q quit"
 		}
-		return "tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
+		return "tab cards · B by set · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
+	}
+	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
+		return "tab sets · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
 		return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"

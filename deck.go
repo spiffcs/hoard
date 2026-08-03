@@ -29,8 +29,10 @@ func cmdDeck(ctx context.Context, st *store.Store, args []string) error {
 		return cmdDeckAdd(ctx, st, subArgs)
 	case "remove":
 		return cmdDeckRemove(st, subArgs)
+	case "repin":
+		return cmdDeckRepin(ctx, st, subArgs)
 	default:
-		return fmt.Errorf("unknown deck subcommand %q (want add|remove)", sub)
+		return fmt.Errorf("unknown deck subcommand %q (want add|remove|repin)", sub)
 	}
 }
 
@@ -92,6 +94,43 @@ func importTextDeck(path, name, source string) (*decksource.Deck, error) {
 		name = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 	return decksource.ParseText(name, "", "", source, f)
+}
+
+// cmdDeckRepin re-points a deck's cards at the set it actually came from.
+// Name-only imports resolve to arbitrary printings — typically the newest —
+// which misattributes a precon's cards to sets it was never part of.
+func cmdDeckRepin(ctx context.Context, st *store.Store, args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("deck repin requires a deck (id or name) and a set code, like: deck repin \"guided by nature\" cma")
+	}
+	cat := openCatalog()
+	if cat != nil {
+		defer cat.Close()
+	}
+	res, err := action.RepinDeck(ctx, st, newSearcher(cat), args[0], args[1])
+	if err != nil {
+		return err
+	}
+
+	r := ui.NewReport()
+	if res.Repinned == 0 && len(res.Missing) == 0 {
+		r.Success("Deck #%d %q is already on %s (%d printings).",
+			res.DeckID, res.Deck, strings.ToUpper(res.SetCode), res.Total)
+		return nil
+	}
+	r.Result("Re-pinned deck #%d %q to %s: %d of %d printings moved, %d already there.",
+		res.DeckID, res.Deck, strings.ToUpper(res.SetCode), res.Repinned, res.Total, res.Already)
+	if res.Repinned > 0 {
+		r.Detail("Run `hoard update-prices` to price the corrected printings.")
+	}
+	if len(res.Missing) > 0 {
+		r.Detail("%d cards have no printing in %s and were left untouched:",
+			len(res.Missing), strings.ToUpper(res.SetCode))
+		for _, name := range res.Missing {
+			r.Item(name)
+		}
+	}
+	return nil
 }
 
 func cmdDeckRemove(st *store.Store, args []string) error {

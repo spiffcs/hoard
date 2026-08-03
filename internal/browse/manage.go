@@ -88,6 +88,10 @@ func (m *Model) promptNewBinder() {
 				desc: "binder " + text,
 				undo: func(e Editor) error { return e.DeleteBinder(id) },
 			})
+			// Creating a binder promises "switch to it", which the sets
+			// pane cannot show — leave sets mode so focusContainer finds
+			// the new row.
+			m.setsMode = false
 			m.refresh()
 			m.focusContainer(id)
 			// The card pane follows the selection to the new binder's empty
@@ -114,6 +118,9 @@ func (m *Model) promptRenameBinder() {
 		return
 	case sel.Kind == kindAllCards:
 		m.status, m.statusErr = allCardsName+" is every container merged; it has no name of its own", true
+		return
+	case sel.Kind == kindSet:
+		m.status, m.statusErr = "sets are named by Wizards; only binders can be renamed", true
 		return
 	case sel.Kind != store.KindCollection:
 		m.status, m.statusErr = "decks are named by their imported list", true

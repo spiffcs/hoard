@@ -15,6 +15,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -352,6 +353,10 @@ func TestDetailHeldCursorSwitchesPrinting(t *testing.T) {
 		t.Fatalf("opened at cursor %d on %s", m.detail.heldCursor, m.detail.card.ScryfallID)
 	}
 
+	m = key(m, "up") // climb into the held zone
+	if m.detail.zone != zoneHeld {
+		t.Fatalf("zone = %d, want the held list after up", m.detail.zone)
+	}
 	m = key(m, "down")
 	if m.detail.heldCursor != 1 {
 		t.Fatalf("cursor = %d, want the deck's printing", m.detail.heldCursor)
@@ -420,6 +425,7 @@ func TestDetailSwitchKeepsImageInPlace(t *testing.T) {
 	}
 	m.detail.image = []string{"OLD ART"}
 
+	m = key(m, "up")   // into the held zone
 	m = key(m, "down") // a fetch is possible: the old art holds the layout
 	if m.detail.card.ScryfallID != "Bitterblossom-mor-id" {
 		t.Fatalf("switch did not land: %s", m.detail.card.ScryfallID)
@@ -487,6 +493,7 @@ func TestHeldCursorRefreshesLinksPerFinish(t *testing.T) {
 	if !strings.Contains(ckAt(), "links/plain") {
 		t.Fatalf("nonfoil row should link the plain page, got %q", ckAt())
 	}
+	m = key(m, "up")   // into the held zone
 	m = key(m, "down") // same printing, foil finish
 	if m.detail.heldCursor != 1 {
 		t.Fatalf("cursor = %d", m.detail.heldCursor)
@@ -656,5 +663,233 @@ func TestWrapHangsBulletContinuations(t *testing.T) {
 	// Plain paragraphs wrap flat, no phantom indent.
 	if flat := wrapHang("Choose three. You may choose the same mode more than once.", 30); strings.HasPrefix(flat[1], " ") {
 		t.Errorf("plain continuation %q must not indent", flat[1])
+	}
+}
+
+// The held list edits in place: +/- change the row under the cursor, d
+// stages a y/n removal, and deck rows refuse — the overlay follows the
+// holdings pane's rules, because the detail is where a wrong count gets
+// noticed.
+func TestDetailHeldEditAndRemove(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+			{ContainerID: 202, ContainerName: "Rich Deck", ContainerKind: store.KindDeck,
+				Finish: "nonfoil", Quantity: 1, Board: "main",
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	if !strings.Contains(m.helpLine(), "+/- qty · d remove") {
+		t.Errorf("help = %q, want the edit keys advertised on a binder row", m.helpLine())
+	}
+
+	binderQty := func() int {
+		for _, r := range st.collection {
+			if r.ScryfallID == "Bitterblossom-id" && r.Finish == "nonfoil" {
+				return r.Quantity
+			}
+		}
+		return 0
+	}
+
+	m = key(m, "+")
+	if binderQty() != 5 {
+		t.Errorf("binder quantity = %d after +, want 5", binderQty())
+	}
+	if !strings.Contains(m.status, "×5 in Binder") {
+		t.Errorf("status = %q, want the receipt naming the container", m.status)
+	}
+	m = key(m, "-")
+	if binderQty() != 4 {
+		t.Errorf("binder quantity = %d after -, want 4", binderQty())
+	}
+
+	// d asks first, names the row, and y removes without closing the overlay.
+	m = key(m, "d")
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "from Binder") {
+		t.Fatalf("confirm = %+v, want the removal staged against the binder row", m.confirm)
+	}
+	m = key(m, "y")
+	if binderQty() != 0 {
+		t.Errorf("binder quantity = %d after removal, want gone", binderQty())
+	}
+	if !strings.Contains(m.status, "removed Bitterblossom (nonfoil) from Binder") {
+		t.Errorf("status = %q, want the removal receipt", m.status)
+	}
+	if m.detail == nil {
+		t.Fatal("removal must not close the overlay")
+	}
+
+	// Undo is recorded: the browser's u can put the row back later.
+	if m.undoStack == nil {
+		t.Error("removal recorded no undo")
+	}
+
+	// The deck row refuses both, and the help stops advertising.
+	m = key(m, "down")
+	m.status, m.statusErr = "", false
+	m = key(m, "+")
+	if !m.statusErr || !strings.Contains(m.status, "imported list") {
+		t.Errorf("+ on a deck row: status = %q err=%v, want the refusal", m.status, m.statusErr)
+	}
+	m = key(m, "d")
+	if m.confirm != nil {
+		t.Error("d on a deck row staged a removal")
+	}
+	if strings.Contains(m.helpLine(), "+/- qty") {
+		t.Errorf("help = %q, want no edit keys on a deck row", m.helpLine())
+	}
+}
+
+// The held zone's field editor: ↑ climbs from the links into the held
+// list, ←/→ highlight quantity, set, or location, and enter edits the
+// highlighted field — quantity by number, set by re-pointing the row at
+// another printing of the same card, location by moving it to another
+// binder.
+func TestDetailHeldFieldEdit(t *testing.T) {
+	st := testStore()
+	st.binders = map[int64]string{7: "Trades"}
+	st.binderRows = map[int64][]store.CollectionRow{7: {}}
+	// The binder holds both printings, so the set edit has a row to merge
+	// into.
+	mor := row("Bitterblossom", "mor", "62", "nonfoil", 4, 100)
+	mor.ScryfallID = "Bitterblossom-mor-id"
+	st.collection = append(st.collection, mor)
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-mor-id", SetCode: "mor", CollectorNumber: "62"},
+		},
+	}
+	m := newTestModel(t, st)
+	m.printSearch = func(_ context.Context, name string) ([]scryfall.Card, error) {
+		return []scryfall.Card{
+			{ID: "Bitterblossom-id", Set: "uma", CollectorNumber: "85", Name: name},
+			{ID: "Bitterblossom-mor-id", Set: "mor", CollectorNumber: "62", Name: name},
+		}, nil
+	}
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+
+	// Quantity: the default field. Prompt prefilled, validated, committed.
+	m = key(m, "up")
+	if m.detail.zone != zoneHeld || m.detail.heldField != fieldQty {
+		t.Fatalf("zone/field = %d/%d, want held zone on quantity", m.detail.zone, m.detail.heldField)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.text != "4" {
+		t.Fatalf("prompt = %+v, want the quantity prefilled", m.prompt)
+	}
+	if err := m.prompt.validate("three"); err == nil {
+		t.Error("validate accepted a non-number")
+	}
+	m.prompt.commit(&m, "7")
+	m.prompt = nil
+	qtyOf := func(sid string) int {
+		for _, r := range st.collection {
+			if r.ScryfallID == sid && r.Finish == "nonfoil" {
+				return r.Quantity
+			}
+		}
+		return 0
+	}
+	if qtyOf("Bitterblossom-id") != 7 {
+		t.Errorf("quantity = %d, want 7", qtyOf("Bitterblossom-id"))
+	}
+
+	// Set: → highlights the printing; a wrong code refuses, a right one
+	// re-points the row and the overlay follows.
+	m = key(m, "right")
+	if m.detail.heldField != fieldSet {
+		t.Fatalf("field = %d, want set", m.detail.heldField)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.text != "uma" {
+		t.Fatalf("prompt = %+v, want the set prefilled", m.prompt)
+	}
+	m.prompt.commit(&m, "xyz")
+	if !m.statusErr || !strings.Contains(m.status, "no Bitterblossom printing in XYZ") {
+		t.Errorf("unknown set: status = %q err=%v", m.status, m.statusErr)
+	}
+	m.prompt = nil
+	m.status, m.statusErr = "", false
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m.prompt.commit(&m, "mor")
+	m.prompt = nil
+	if qtyOf("Bitterblossom-id") != 0 {
+		t.Errorf("old printing still holds %d", qtyOf("Bitterblossom-id"))
+	}
+	if qtyOf("Bitterblossom-mor-id") != 11 {
+		t.Errorf("mor printing = %d, want the moved 7 merged with the fixture 4", qtyOf("Bitterblossom-mor-id"))
+	}
+	if !strings.Contains(m.status, "now mor/62") {
+		t.Errorf("status = %q, want the new printing named", m.status)
+	}
+	if len(st.upserted) == 0 || st.upserted[0].ID != "Bitterblossom-mor-id" {
+		t.Errorf("upserted = %+v, want the picked printing stored", st.upserted)
+	}
+	if m.detail.card.ScryfallID != "Bitterblossom-mor-id" {
+		t.Errorf("overlay = %s, want re-pointed at the corrected printing", m.detail.card.ScryfallID)
+	}
+	if m.undoStack == nil {
+		t.Error("set change recorded no undo")
+	}
+
+	// Location: →→ highlights the container; an unknown binder refuses, a
+	// real one takes the row.
+	m = key(m, "right")
+	if m.detail.heldField != fieldWhere {
+		t.Fatalf("field = %d, want location", m.detail.heldField)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.text != "Binder" {
+		t.Fatalf("prompt = %+v, want the location prefilled", m.prompt)
+	}
+	m.prompt.commit(&m, "Nowhere")
+	if !m.statusErr || !strings.Contains(m.status, `no binder named "Nowhere"`) {
+		t.Errorf("unknown binder: status = %q err=%v", m.status, m.statusErr)
+	}
+	m.prompt = nil
+	m.status, m.statusErr = "", false
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	m.prompt.commit(&m, "Trades")
+	m.prompt = nil
+	if qtyOf("Bitterblossom-mor-id") != 0 {
+		t.Errorf("source binder still holds %d", qtyOf("Bitterblossom-mor-id"))
+	}
+	moved := false
+	for _, r := range st.binderRows[7] {
+		if r.ScryfallID == "Bitterblossom-mor-id" && r.Quantity == 11 {
+			moved = true
+		}
+	}
+	if !moved {
+		t.Errorf("Trades rows = %+v, want the moved holding", st.binderRows[7])
+	}
+	if !strings.Contains(m.status, "to Trades") {
+		t.Errorf("status = %q, want the move receipt", m.status)
 	}
 }

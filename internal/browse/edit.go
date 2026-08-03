@@ -2,9 +2,14 @@ package browse
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // undoAction is how to put back what the last edit changed.
@@ -42,6 +47,9 @@ func (m Model) editable() (bool, string) {
 	}
 	if sel.Kind == kindAllCards {
 		return false, "this list merges every container · edit the card in its binder or deck"
+	}
+	if sel.Kind == kindSet {
+		return false, "this list is every printing from " + sel.Name + " · edit the card in its binder or deck"
 	}
 	if sel.Kind != store.KindCollection {
 		return false, "deck cards are owned by the imported list; edit the " +
@@ -119,6 +127,340 @@ func (m *Model) removeCard() {
 	m.status = fmt.Sprintf("removed %s from the %s", name, strings.ToLower(store.LooseName))
 	m.statusErr = false
 	m.refresh()
+}
+
+// heldEditable is the held row under the detail's cursor when the overlay
+// can edit it, explaining the refusal when it cannot — the detail's
+// editable(). Deck rows are owned by their imported lists, exactly as on
+// the holdings pane.
+func (m *Model) heldEditable() (store.Holding, bool) {
+	d := m.detail
+	if d == nil || len(d.holdings) == 0 {
+		m.status, m.statusErr = "you hold no copies of this card", true
+		return store.Holding{}, false
+	}
+	h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
+	if h.ContainerKind != store.KindCollection {
+		m.status, m.statusErr = "deck cards are owned by the imported list; edit the "+
+			strings.ToLower(store.LooseName)+" instead", true
+		return store.Holding{}, false
+	}
+	return h, true
+}
+
+// adjustHeldQuantity changes the held row under the detail cursor by
+// delta — the overlay's +/-. Seeing the real count is exactly when a wrong
+// one gets noticed, so the edit lives where the reader already is.
+func (m *Model) adjustHeldQuantity(delta int) {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	m.setHeldQuantity(h, max(h.Quantity+delta, 0), m.detail.card.Name)
+}
+
+// editHeldField opens the edit prompt for the held row's highlighted
+// field — enter in the overlay's held zone. Each field asks its own
+// question: a new count, a new set code, a new binder.
+func (m *Model) editHeldField() {
+	switch m.detail.heldField {
+	case fieldSet:
+		m.promptHeldSet()
+	case fieldWhere:
+		m.promptHeldLocation()
+	default:
+		m.promptHeldQuantity()
+	}
+}
+
+// promptHeldQuantity asks for the held row's new count, prefilled with
+// the current one.
+func (m *Model) promptHeldQuantity() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label:    fmt.Sprintf("%s in %s · quantity", name, h.ContainerName),
+		text:     strconv.Itoa(h.Quantity),
+		help:     "a whole number · 0 removes · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parseQuantity(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			want, err := parseQuantity(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			m.setHeldQuantity(h, want, name)
+			return nil
+		},
+	}
+}
+
+// parseQuantity reads a held count: a plain whole number, zero removing.
+func parseQuantity(text string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil || n < 0 || n > 9999 {
+		return 0, fmt.Errorf("say a whole number of copies, like 3 (0 removes)")
+	}
+	return n, nil
+}
+
+// setHeldQuantity commits a held row's new count, undo included — the
+// shared tail of the overlay's +/- and its quantity prompt.
+func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
+	if want == h.Quantity {
+		return
+	}
+	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, want)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	cid, id, finish := h.ContainerID, h.ScryfallID, h.Finish
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s ×%d", name, previous),
+		undo: func(st Editor) error {
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, previous)
+			return err
+		},
+	})
+	if want == 0 {
+		m.status = fmt.Sprintf("removed %s (%s) from %s", name, h.Finish, h.ContainerName)
+	} else {
+		m.status = fmt.Sprintf("%s (%s) ×%d in %s", name, h.Finish, want, h.ContainerName)
+	}
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
+}
+
+// promptHeldSet asks which set the held row should be attributed to — the
+// fix for a printing that resolved to the wrong set on import (a name-only
+// decklist line lands on whatever printing Scryfall answers with).
+func (m *Model) promptHeldSet() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	if m.printSearch == nil {
+		m.status, m.statusErr = "set lookup not available", true
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label: fmt.Sprintf("%s · new set code", name),
+		text:  h.SetCode,
+		help:  "a set code, like md1 · enter accept · esc cancel",
+		validate: func(text string) error {
+			if strings.TrimSpace(text) == "" {
+				return fmt.Errorf("say a set code, like md1")
+			}
+			return nil
+		},
+		commit: func(m *Model, text string) tea.Cmd { return m.repointHeldSet(h, name, text) },
+	}
+}
+
+// repointHeldSet moves the held row onto the named set's printing of the
+// same card, re-pointing the overlay at the result.
+func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
+	code := strings.ToLower(strings.TrimSpace(text))
+	if strings.EqualFold(code, h.SetCode) {
+		m.status, m.statusErr = "already the "+strings.ToUpper(code)+" printing", false
+		return nil
+	}
+	prints, err := m.printSearch(m.ctx, name)
+	if err != nil {
+		m.setError(err)
+		return nil
+	}
+	pick, ok := lowestPrintIn(prints, code)
+	if !ok {
+		m.status, m.statusErr = fmt.Sprintf("no %s printing in %s", name, strings.ToUpper(code)), true
+		return nil
+	}
+	if err := m.store.UpsertPrintings([]scryfall.Card{pick}); err != nil {
+		m.setError(err)
+		return nil
+	}
+	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.ContainerID, pick.ID)
+	if err != nil {
+		m.setError(err)
+		return nil
+	}
+	cid, fromID, toID, finish, qty := h.ContainerID, h.ScryfallID, pick.ID, h.Finish, h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s → %s", name, strings.ToUpper(code)),
+		undo: func(st Editor) error {
+			if _, err := st.SetHoldingQuantityIn(cid, toID, finish, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetHoldingQuantityIn(cid, fromID, finish, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("%s is now %s in %s",
+		name, ui.Printing(pick.Set, pick.CollectorNumber), h.ContainerName)
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
+	// The overlay follows the corrected printing, art included.
+	d := m.detail
+	if d == nil {
+		return nil
+	}
+	for i, held := range d.holdings {
+		if held.ScryfallID == toID && held.ContainerID == cid && held.Finish == finish {
+			d.heldCursor = i
+			break
+		}
+	}
+	if m.loadPrinting(d, toID) {
+		m.refreshLinks(d)
+		if cmd := m.fetchDetailImage(); cmd != nil {
+			return cmd
+		}
+		d.image = nil
+	}
+	return nil
+}
+
+// lowestPrintIn picks the set's printing with the lowest collector number
+// — deterministic; ok=false when the set never printed the card.
+func lowestPrintIn(prints []scryfall.Card, setCode string) (scryfall.Card, bool) {
+	var best scryfall.Card
+	found := false
+	for _, p := range prints {
+		if !strings.EqualFold(p.Set, setCode) {
+			continue
+		}
+		if !found || collectorLess(p.CollectorNumber, best.CollectorNumber) {
+			best, found = p, true
+		}
+	}
+	return best, found
+}
+
+// collectorLess orders collector numbers numerically where they are
+// numbers, falling back to the string for suffixed forms ("142a").
+func collectorLess(a, b string) bool {
+	an, aerr := strconv.Atoi(a)
+	bn, berr := strconv.Atoi(b)
+	switch {
+	case aerr == nil && berr == nil:
+		return an < bn
+	case aerr == nil:
+		return true
+	case berr == nil:
+		return false
+	}
+	return a < b
+}
+
+// promptHeldLocation asks which binder the held row should live in.
+func (m *Model) promptHeldLocation() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label: fmt.Sprintf("%s · move to which binder", name),
+		text:  h.ContainerName,
+		help:  "a binder's name · enter accept · esc cancel",
+		validate: func(text string) error {
+			if strings.TrimSpace(text) == "" {
+				return fmt.Errorf("name a binder")
+			}
+			return nil
+		},
+		commit: func(m *Model, text string) tea.Cmd { m.moveHeldTo(h, name, text); return nil },
+	}
+}
+
+// moveHeldTo moves the held row into another binder, merging with copies
+// already there.
+func (m *Model) moveHeldTo(h store.Holding, name, text string) {
+	want := strings.TrimSpace(text)
+	if strings.EqualFold(want, h.ContainerName) {
+		m.status, m.statusErr = "already in "+h.ContainerName, false
+		return
+	}
+	binders, err := m.store.ListBinders()
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	var target *store.DeckSummary
+	for i := range binders {
+		if strings.EqualFold(binders[i].Name, want) {
+			target = &binders[i]
+			break
+		}
+	}
+	if target == nil {
+		m.status, m.statusErr = fmt.Sprintf("no binder named %q", want), true
+		return
+	}
+	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, target.ID, h.ScryfallID)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	fromC, toC, sid, finish, qty := h.ContainerID, target.ID, h.ScryfallID, h.Finish, h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s → %s", name, target.Name),
+		undo: func(st Editor) error {
+			if _, err := st.SetHoldingQuantityIn(toC, sid, finish, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetHoldingQuantityIn(fromC, sid, finish, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("moved %s (%s) ×%d to %s", name, finish, qty, target.Name)
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
+}
+
+// askHeldRemoval stages the removal of the held row under the detail
+// cursor — y/n first, like every other remove.
+func (m *Model) askHeldRemoval() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.confirm = &pendingConfirm{
+		help: "y remove · any other key cancels",
+		prompt: fmt.Sprintf("remove %s (%s) ×%d from %s?",
+			name, h.Finish, h.Quantity, h.ContainerName),
+		onYes: func(m *Model) tea.Cmd { m.removeHeld(h, name); return nil },
+	}
+}
+
+// removeHeld zeroes the confirmed held row and records the undo.
+func (m *Model) removeHeld(h store.Holding, name string) {
+	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, 0)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	cid, id, finish := h.ContainerID, h.ScryfallID, h.Finish
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s ×%d", name, previous),
+		undo: func(st Editor) error {
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, previous)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("removed %s (%s) from %s", name, h.Finish, h.ContainerName)
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
 }
 
 // removeDeck deletes the selected deck.

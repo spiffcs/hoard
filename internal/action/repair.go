@@ -29,7 +29,7 @@ type RepairResult struct {
 // which finishes a printing comes in.
 func RepairFinishes(ctx context.Context, d Deps, p progress.Fn) (RepairResult, error) {
 	var res RepairResult
-	ids, err := d.Store.AllPrintingIDs()
+	ids, err := d.Store.ActivePrintingIDs()
 	if err != nil {
 		return res, err
 	}

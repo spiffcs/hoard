@@ -60,9 +60,17 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 	return nil
 }
 
-// AllPrintingIDs returns every Scryfall ID hoard knows, for a bulk price refresh.
-func (s *Store) AllPrintingIDs() ([]string, error) {
-	rows, err := s.db.Query(`SELECT scryfall_id FROM cards`)
+// ActivePrintingIDs returns every printing that is held or watched — the
+// bulk-refresh set. Not every row in cards: re-pointing entries at
+// corrected printings (deck repin, the detail's set editor) leaves the old
+// rows behind as orphans, and refreshing those spends network on cards
+// nobody owns — observed live as a permanent end-of-bar stall when a few
+// orphans post-dated the catalog bundle and hit the API on every run.
+func (s *Store) ActivePrintingIDs() ([]string, error) {
+	rows, err := s.db.Query(`
+SELECT scryfall_id FROM cards c
+WHERE EXISTS (SELECT 1 FROM card_entries e WHERE e.scryfall_id = c.scryfall_id)
+   OR EXISTS (SELECT 1 FROM watches w WHERE w.scryfall_id = c.scryfall_id)`)
 	if err != nil {
 		return nil, err
 	}
