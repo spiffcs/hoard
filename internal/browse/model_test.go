@@ -2880,3 +2880,24 @@ func TestMoversGradientStyles(t *testing.T) {
 		t.Error("CHANGE and IMPACT must scale independently")
 	}
 }
+
+// The header's table anchor must not follow the cursor bar: the bar pads
+// its row to the pane width inside its escape codes, and measuring that
+// padding yanked the totals to the far corner whenever the cards pane had
+// focus.
+func TestHeaderAnchorIgnoresCursorBar(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newTestModel(t, testStore())
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 20})
+	m = next.(Model)
+	_, right := m.paneWidths()
+	unfocused := maxLineWidth(m.rightLines(right))
+	m = key(m, "tab") // focus the cards pane: the cursor bar appears
+	if focused := maxLineWidth(m.rightLines(right)); focused != unfocused {
+		t.Fatalf("anchor = %d focused vs %d unfocused; the bar's padding leaked into the measure",
+			focused, unfocused)
+	}
+}

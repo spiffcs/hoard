@@ -145,7 +145,10 @@ func (m *Model) applySort() {
 	case viewWatches:
 		sortRows(m.watches, rev, watchCompare(key))
 	case viewMovers:
-		sortRows(m.movers, rev, moverCompare(key))
+		// The whole filtered ranking sorts, then the page re-derives — a
+		// sort speaks for every row, not the fifty on screen.
+		sortRows(m.filteredMovers, rev, moverCompare(key))
+		m.deriveMoversPage()
 	case viewUnpriced:
 		sortRows(m.unpriced, rev, unpricedCompare(key))
 	case viewMarket:

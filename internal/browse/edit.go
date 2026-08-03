@@ -630,6 +630,7 @@ func (m *Model) refresh() {
 	// caches keyed on the old world are done.
 	m.dataGen++
 	cards, containers := m.cursor[paneCards], m.cursor[paneContainers]
+	page := m.cardsPage
 	if err := m.loadContainers(); err != nil {
 		m.setError(err)
 		return
@@ -644,6 +645,12 @@ func (m *Model) refresh() {
 		m.setError(err)
 		return
 	}
+	// The page comes back like the cursor: an edit three pages in must not
+	// drop the reader on page one (loadCards resets both for a *new*
+	// container; this is the same one re-read). deriveCardsPage clamps
+	// against a total the edit may have shrunk.
+	m.cardsPage = page
+	m.deriveCardsPage()
 	m.cursor[paneCards] = cards
 	m.clampCursor(paneCards)
 	// A container verb can run while an analytical view shows, and the

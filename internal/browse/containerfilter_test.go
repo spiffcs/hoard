@@ -788,7 +788,7 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 	}
 }
 
-// The market tables page: each shows marketPageSize rows, >/< turn the
+// The market tables page: each shows pageSize rows, >/< turn the
 // cursor's table, the title names the leafing, and a page turn lands the
 // cursor on the new page's first row. Sorting resets its table to page
 // one — the new order's first row lives there.
@@ -925,5 +925,105 @@ func TestPennyFiltersPersist(t *testing.T) {
 	if m3.marketFloor != 1.00 || m3.moversPennyLimit != defaultPennyLimit {
 		t.Errorf("garbled settings restored as floor %v limit %v, want the defaults",
 			m3.marketFloor, m3.moversPennyLimit)
+	}
+}
+
+// The holdings pane pages like the market tables: fifty rows at a time,
+// >/< leafing with the status naming the slice, the header carrying the
+// page phrase, and sorts, filters and edits interacting with the page the
+// way the market taught.
+func TestHoldingsTablePages(t *testing.T) {
+	st := testStore()
+	for i := range 80 {
+		st.collection = append(st.collection,
+			row(fmt.Sprintf("Filler %02d", i), "set", fmt.Sprint(i), "nonfoil", 1, float64(10000-i)))
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab") // the cards pane
+	total := len(m.filteredCards)
+	if len(m.cards) != singleTablePageSize || total <= singleTablePageSize {
+		t.Fatalf("page 1 = %d rows of %d, want %d of more", len(m.cards), total, singleTablePageSize)
+	}
+	if _, totals := m.viewHeader(); !strings.Contains(totals, fmt.Sprintf(" · 1–%d of %d", singleTablePageSize, total)) {
+		t.Fatalf("header totals = %q, want the page slice named", totals)
+	}
+
+	m = key(m, ">")
+	first := fmt.Sprintf("Filler %02d", singleTablePageSize)
+	if m.cards[0].Name != first || m.cursor[paneCards] != 0 {
+		t.Fatalf("page 2 starts %q at cursor %d, want %s at 0", m.cards[0].Name, m.cursor[paneCards], first)
+	}
+	if want := fmt.Sprintf("page 2/2 · rows %d–%d of %d · sorted by value", singleTablePageSize+1, total, total); !strings.Contains(m.status, want) {
+		t.Errorf("status = %q, want %q", m.status, want)
+	}
+	m = key(m, ">")
+	if !strings.Contains(m.status, "last page") {
+		t.Errorf("status = %q, want the far edge named", m.status)
+	}
+
+	m = key(m, "<")
+	if m.cards[0].Name != "Filler 00" || !strings.Contains(m.status, "page 1/2") {
+		t.Fatalf("back to page 1 = %q status %q", m.cards[0].Name, m.status)
+	}
+
+	// An edit deep in page two stays on page two. (The row itself may move
+	// pages: the value sort reorders around its doubled quantity.)
+	m = key(m, ">")
+	m = key(m, "+")
+	if m.cardsPage != 1 {
+		t.Fatalf("after an edit: page %d, want page 2 kept", m.cardsPage+1)
+	}
+
+	// Sorting resets the leafing: the new order's first rows are page one.
+	m = key(m, "s")
+	if m.cardsPage != 0 {
+		t.Errorf("page after sort = %d, want the first", m.cardsPage)
+	}
+
+	// Typing a filter snaps to page one and counts the whole result.
+	m = key(m, ">")
+	m = key(m, "/")
+	m = key(m, "f") // matches every Filler row
+	if m.cardsPage != 0 {
+		t.Errorf("page after filtering = %d, want the first", m.cardsPage)
+	}
+	if bar := m.statusLine(); !strings.Contains(bar, fmt.Sprintf("%d match", len(m.filteredCards))) ||
+		len(m.filteredCards) <= singleTablePageSize {
+		t.Errorf("filter bar = %q with %d matches; the count must cover every page", bar, len(m.filteredCards))
+	}
+}
+
+// MOVERS pages the same way, with W's window cycle starting over at page
+// one and the gradient normalized against the whole filtered ranking.
+func TestMoversTablePages(t *testing.T) {
+	st := testStore()
+	for i := range 80 {
+		st.movers = append(st.movers,
+			mover(fmt.Sprintf("M%02d-id", i), "nonfoil", 1, 10, 10+float64(80-i)))
+	}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v") // movers
+	if m.view != viewMovers {
+		t.Fatalf("view = %v, want movers", m.view)
+	}
+	if len(m.movers) != singleTablePageSize || len(m.filteredMovers) != 80 {
+		t.Fatalf("page = %d of %d, want %d of 80", len(m.movers), len(m.filteredMovers), singleTablePageSize)
+	}
+	if _, totals := m.viewHeader(); !strings.Contains(totals, "80 moved") ||
+		!strings.Contains(totals, fmt.Sprintf(" · 1–%d of 80", singleTablePageSize)) {
+		t.Fatalf("header totals = %q, want the whole ranking counted and the slice named", totals)
+	}
+
+	m = key(m, ">")
+	firstMover := fmt.Sprintf("M%02d", singleTablePageSize)
+	if m.movers[0].Name != firstMover ||
+		!strings.Contains(m.status, fmt.Sprintf("page 2/2 · rows %d–80 of 80", singleTablePageSize+1)) {
+		t.Fatalf("page 2 starts %q status %q", m.movers[0].Name, m.status)
+	}
+
+	// W cycles the lookback and reads the new window from its first page.
+	m = key(m, "W")
+	if m.moversPage != 0 {
+		t.Errorf("page after W = %d, want the first", m.moversPage)
 	}
 }

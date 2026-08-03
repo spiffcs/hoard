@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -57,7 +58,7 @@ func (m Model) View() string {
 	rightLines := m.rightLines(right)
 
 	var b strings.Builder
-	b.WriteString(m.header(left, right) + "\n")
+	b.WriteString(m.header(left, right, maxLineWidth(rightLines)) + "\n")
 	for i := range m.visibleRows() {
 		b.WriteString(fit(lineAt(leftLines, i), left))
 		b.WriteString(strings.Repeat(" ", paneGap))
@@ -371,12 +372,20 @@ func (m *Model) scrollIntoView() {
 // where the card pane they describe begins. The focused pane's title takes
 // the accent — before this, focus was only discoverable by finding which
 // cursor was solid.
-func (m Model) header(left, right int) string {
+func (m Model) header(left, right, tableW int) string {
 	name, totals := m.viewHeader()
 
 	totals += m.opBadge()
-	title := ui.Truncate(name, max(right-lipgloss.Width(totals)-1, 0))
-	gap := max(right-lipgloss.Width(title)-lipgloss.Width(totals), 0)
+	// The totals hug the table's right edge, not the pane's: on a wide
+	// window the table ends long before the terminal does, and counts
+	// parked at the far corner read as furniture from some other surface
+	// (observed live: the page phrase floating an armspan from its rows).
+	anchor := right
+	if tableW > 0 {
+		anchor = min(tableW, right)
+	}
+	title := ui.Truncate(name, max(anchor-lipgloss.Width(totals)-1, 0))
+	gap := max(anchor-lipgloss.Width(title)-lipgloss.Width(totals), 0)
 	leftTitle := "COLLECTION"
 	if m.setsMode {
 		leftTitle = "SETS"
@@ -384,6 +393,19 @@ func (m Model) header(left, right int) string {
 	return m.paneTitle(paneContainers).Render(fit(leftTitle, left)) +
 		strings.Repeat(" ", paneGap) +
 		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
+}
+
+// maxLineWidth is the widest rendered content line — the right pane's true
+// edge, which the header's totals align against. Styles strip before the
+// trim: the cursor bar pads its row to the pane width *inside* its escape
+// codes, and measuring that padding yanked the header to the far corner
+// whenever the pane had focus (observed live).
+func maxLineWidth(lines []string) int {
+	w := 0
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(strings.TrimRight(ansi.Strip(l), " ")))
+	}
+	return w
 }
 
 // paneTitle is the title style focus decides: accent when the cursor lives
@@ -446,7 +468,9 @@ func (m Model) rightLines(width int) []string {
 	return m.cardLines(width)
 }
 
-// cardLines renders the selected container's holdings.
+// cardLines renders the selected container's holdings. Columns pin to the
+// whole filtered list's measures (Width), so >/< holds the table's shape
+// instead of re-fitting to each page's longest name.
 func (m Model) cardLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
 		inDeck := false
@@ -454,17 +478,19 @@ func (m Model) cardLines(width int) []string {
 			inDeck = sel.Kind == store.KindDeck
 		}
 
+		w := m.cardsColW
 		cols := []ui.Col{
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10,
+				Width: stableNameWidth(w.name, width)},
 			// The identity pips sit beside the name the way the mana symbols
 			// do on the card. Pure meaning-bearing ornament, so it is the
 			// first column a narrow terminal gives up.
 			{Title: "ID", Align: ui.Left, Priority: 8, Style: env.PipsStyle()},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim()},
-			{Title: "QTY", Align: ui.Right, Priority: 2},
-			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim()},
-			{Title: "VALUE", Align: ui.Right},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim(), Width: w.set},
+			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.fin},
+			{Title: "QTY", Align: ui.Right, Priority: 2, Width: w.qty},
+			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim(), Width: w.price},
+			{Title: "VALUE", Align: ui.Right, Width: w.value},
 		}
 		if inDeck {
 			// Board only means something inside a deck; against loose holdings
@@ -553,7 +579,9 @@ func (m Model) statusLine() string {
 		if m.filterErr != "" {
 			return bar + "  " + m.theme.Err.Render(m.filterErr)
 		}
-		return bar + m.theme.Help.Render(fmt.Sprintf("  %d match", len(m.cards)))
+		// The whole filtered result, not the page on screen — "50 match"
+		// on every page of a 300-row result would read as the answer.
+		return bar + m.theme.Help.Render(fmt.Sprintf("  %d match", len(m.filteredCards)))
 	}
 	if m.status != "" {
 		if m.statusErr {
@@ -713,7 +741,7 @@ func (m Model) helpLine() string {
 		// here once hid that watches can be added at all.
 		return "w edit threshold · d remove · : add a watch · enter detail · M floor · tab collections · v next view · ↑/↓ move · q quit"
 	case m.view == viewMovers:
-		return "W lookback 7/30/90 days · F update prices + history · enter detail · M floor · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
+		return "W lookback 7/30/90 days · F update prices + history · enter detail · >/< page · M floor · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view == viewUnpriced:
 		return "F refresh prices · enter detail · tab collections · v next view · : commands · ↑/↓ move · s sort · q quit"
 	case m.view != viewHoldings:
@@ -734,12 +762,12 @@ func (m Model) helpLine() string {
 		return "tab cards · B by set · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor · F refresh prices · v views · u undo · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
-		return "tab sets · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
+		return "tab sets · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-		return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
+		return "tab decks · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · q quit"
 	}
-	return "tab decks · enter detail · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+	return "tab decks · enter detail · >/< page · / filter · M floor · : commands · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

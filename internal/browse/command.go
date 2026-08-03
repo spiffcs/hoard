@@ -99,6 +99,12 @@ func commands() []command {
 			id: "sort", aliases: "order by",
 			key: "s", hidden: true,
 			run: func(m *Model) tea.Cmd {
+				if m.view != viewMarket {
+					// Page first, then sort: the new order's first rows
+					// live on page one (market resets its own inside
+					// cycleSort).
+					m.cardsPage, m.moversPage = 0, 0
+				}
 				m.cycleSort()
 				if m.view != viewMarket {
 					m.cursor[paneCards], m.offset[paneCards] = 0, 0
@@ -111,6 +117,9 @@ func commands() []command {
 			id: "sort.reverse", aliases: "order descending ascending",
 			key: "S", hidden: true,
 			run: func(m *Model) tea.Cmd {
+				if m.view != viewMarket {
+					m.cardsPage, m.moversPage = 0, 0
+				}
 				m.reverseSort()
 				if m.view != viewMarket {
 					m.cursor[paneCards], m.offset[paneCards] = 0, 0
@@ -434,16 +443,20 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(-1); return nil },
 		},
 		{
-			id: "market.page.next", aliases: "next page turn more rows",
+			id: "page.next", aliases: "next page turn more rows",
 			key: ">", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket },
-			run:   func(m *Model) tea.Cmd { m.turnMarketPage(1); return nil },
+			where: func(m *Model) bool {
+				return m.view == viewMarket || m.view == viewMovers || m.view == viewHoldings
+			},
+			run: func(m *Model) tea.Cmd { m.turnTablePage(1); return nil },
 		},
 		{
-			id: "market.page.prev", aliases: "previous page turn back",
+			id: "page.prev", aliases: "previous page turn back",
 			key: "<", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket },
-			run:   func(m *Model) tea.Cmd { m.turnMarketPage(-1); return nil },
+			where: func(m *Model) bool {
+				return m.view == viewMarket || m.view == viewMovers || m.view == viewHoldings
+			},
+			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
 		},
 		{
 			id: "market.comps.side", aliases: "comps buy sell asks bids side",
@@ -471,6 +484,7 @@ func commands() []command {
 // milliseconds-cheap read, exactly what the CLI's --since parameterizes.
 func (m *Model) cycleMoversWindow() tea.Cmd {
 	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(moversWindowDays)
+	m.moversPage = 0 // a new window reads from its first page
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 		return nil

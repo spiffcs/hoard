@@ -25,6 +25,12 @@ type Col struct {
 	Min, Max int   // 0 means unbounded
 	Priority int   // >0 is droppable; the highest priority is dropped first
 	Style    Style // default style for this column's cells
+	// Width pins the column's laid-out width regardless of this table's
+	// cells: a paged table sizes its columns from the whole ranking so a
+	// page turn holds the shape instead of re-fitting to each page's
+	// longest value. Space pressure still shrinks and drops columns via
+	// Min and Priority; wider cells truncate.
+	Width int
 }
 
 // Cell is one rendered value.
@@ -103,6 +109,14 @@ func (t Table) natural() []int {
 		}
 	}
 	for i, c := range t.Cols {
+		if c.Width > 0 {
+			// The pin replaces the cells' measure but never squeezes the
+			// column's own title — which is constant, so still page-stable.
+			w[i] = c.Width
+			if t.Header {
+				w[i] = max(w[i], ansi.StringWidth(c.Title))
+			}
+		}
 		if c.Max > 0 && w[i] > c.Max {
 			w[i] = c.Max
 		}

@@ -36,11 +36,16 @@ type MarketFunc func(ctx context.Context, p progress.Fn, min float64) (market.Re
 // TogglePennyFilter shows the bulk anyway; SetPennyFilter moves the line.
 const defaultMarketFloor = 1.00
 
-// marketPageSize is how many rows each table shows per page. Generous, not
+// singleTablePageSize is the holdings and movers page: a single table owns
+// the whole pane there, so its page runs deeper than the market's
+// three-way split before >/< is needed.
+const singleTablePageSize = 59
+
+// pageSize is how many rows each market table shows per page. Generous, not
 // unbounded: the fixed regions scroll, so a page's tail (the 70% pays
 // rows, the cheaper comps) is reachable — and >/< turn the page, so the
 // full ranking is too, fifty rows at a time.
-const marketPageSize = 50
+const pageSize = 50
 
 // marketMsg carries a finished fetch back into the update loop.
 type marketMsg struct {
@@ -227,21 +232,8 @@ func (m Model) marketLines(width int) []string {
 			title, note = market.Kind(i).Title(), market.Kind(i).Note()
 		}
 		head := m.theme.Title.Render(title) + "  " + m.theme.Help.Render(note)
-		// Two distinct count phrases: "7–26 of 47" scopes the screen (which
-		// of this page's rows are visible), "51–97 of 97" scopes the page
-		// (which slice of the whole ranking it holds, advancing on >/<).
-		// Chaining them into one "of 47 of 97" read as a typo. (>/< is in
-		// the help line, not repeated here.)
-		frag := ""
-		tot := totals[i]
-		if off := m.marketSecOffset[i]; sec.count > budgets[i] && budgets[i] > 0 {
-			frag = fmt.Sprintf(" · %d–%d of %d", off+1, off+budgets[i], sec.count)
-		}
-		if tot > marketPageSize {
-			lo := m.marketPage[i]*marketPageSize + 1
-			frag += fmt.Sprintf(" · %d–%d of %d", lo, min(lo+marketPageSize-1, tot), tot)
-		}
-		if frag != "" {
+		if frag := pagePhrase(m.marketSecOffset[i], budgets[i], sec.count,
+			m.marketPage[i], totals[i], pageSize); frag != "" {
 			head += m.theme.Help.Render(frag)
 		}
 		out = append(out, head)
@@ -492,7 +484,7 @@ func (m *Model) applyMarketRows() {
 		res = scoped
 	}
 	// The whole ranking, not a top-N: paging owns the truncation now, so
-	// every section keeps its full run and shows marketPageSize at a time.
+	// every section keeps its full run and shows pageSize at a time.
 	rows := market.Rows(res, len(res.Opportunities))
 	kept := rows[:0]
 	for _, r := range rows {
@@ -544,15 +536,15 @@ func (m *Model) deriveMarketPages() {
 	for i, tot := range totals {
 		maxPage := 0
 		if tot > 0 {
-			maxPage = (tot - 1) / marketPageSize
+			maxPage = (tot - 1) / pageSize
 		}
 		m.marketPage[i] = min(max(m.marketPage[i], 0), maxPage)
 	}
 	page := func(pg, tot int) (lo, hi int) {
-		lo = min(pg*marketPageSize, tot)
-		return lo, min(lo+marketPageSize, tot)
+		lo = min(pg*pageSize, tot)
+		return lo, min(lo+pageSize, tot)
 	}
-	rows := make([]market.Row, 0, min(len(m.marketAllRows), 2*marketPageSize))
+	rows := make([]market.Row, 0, min(len(m.marketAllRows), 2*pageSize))
 	start := 0
 	for k := 0; k < compsSection; k++ {
 		run := m.marketAllRows[start : start+totals[k]]
@@ -565,6 +557,76 @@ func (m *Model) deriveMarketPages() {
 	m.marketComps = m.marketAllComps[lo:hi]
 }
 
+// pagePhrase is the heading fragment every paged table hangs off its
+// title: two distinct count phrases — "7–26 of 47" scopes the screen
+// (which of this page's rows are visible), "51–97 of 97" scopes the page
+// (which slice of the whole ranking it holds, advancing on >/<) — each
+// present only when it says something. Chaining them into one "of 47 of
+// 97" read as a typo; >/< lives in the help line, not repeated here.
+func pagePhrase(off, visible, count, page, tot, size int) string {
+	frag := ""
+	if count > visible && visible > 0 {
+		frag = fmt.Sprintf(" · %d–%d of %d", off+1, min(off+visible, count), count)
+	}
+	if tot > size {
+		lo := page*size + 1
+		frag += fmt.Sprintf(" · %d–%d of %d", lo, min(lo+size-1, tot), tot)
+	}
+	return frag
+}
+
+// tablePagePhrase is pagePhrase fed from the single-table panes' shared
+// window state — the generic offset and screen budget the holdings and
+// movers panes scroll with.
+func (m Model) tablePagePhrase(count, page, tot int) string {
+	return pagePhrase(m.offset[paneCards], max(m.visibleRows()-1, 0), count, page, tot,
+		singleTablePageSize)
+}
+
+// turnTablePage turns the current view's paged table: the market's own
+// turner for its three tables, the shared single-table turn for the
+// holdings pane and movers.
+func (m *Model) turnTablePage(dir int) {
+	switch m.view {
+	case viewMarket:
+		m.turnMarketPage(dir)
+	case viewMovers:
+		m.turnOnePage(dir, &m.moversPage, len(m.filteredMovers), m.deriveMoversPage)
+	default:
+		m.turnOnePage(dir, &m.cardsPage, len(m.filteredCards), m.deriveCardsPage)
+	}
+}
+
+// turnOnePage is turnMarketPage's single-table sibling: clamp, name the
+// edges, land the cursor on the new page's first row.
+func (m *Model) turnOnePage(dir int, page *int, tot int, derive func()) {
+	maxPage := 0
+	if tot > 0 {
+		maxPage = (tot - 1) / singleTablePageSize
+	}
+	next := min(max(*page+dir, 0), maxPage)
+	if next == *page {
+		if maxPage == 0 {
+			m.status, m.statusErr = "one page here", false
+		} else if dir > 0 {
+			m.status, m.statusErr = "last page", false
+		} else {
+			m.status, m.statusErr = "first page", false
+		}
+		return
+	}
+	*page = next
+	derive()
+	m.cursor[paneCards] = 0
+	m.offset[paneCards] = 0
+	// The sort rides along: which slice rows 60–118 are depends entirely on
+	// the order, and page-deep leafing is exactly when that stops being
+	// remembered.
+	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d · sorted by %s",
+		next+1, maxPage+1, next*singleTablePageSize+1,
+		min((next+1)*singleTablePageSize, tot), tot, m.sortLabel()), false
+}
+
 // turnMarketPage turns the cursor's table one page forward (+1) or back
 // (-1), landing the cursor on the new page's first row. At either end the
 // status says so rather than staying silent.
@@ -573,7 +635,7 @@ func (m *Model) turnMarketPage(dir int) {
 	tot := m.marketSectionTotals()[sec]
 	maxPage := 0
 	if tot > 0 {
-		maxPage = (tot - 1) / marketPageSize
+		maxPage = (tot - 1) / pageSize
 	}
 	next := min(max(m.marketPage[sec]+dir, 0), maxPage)
 	if next == m.marketPage[sec] {
@@ -591,8 +653,9 @@ func (m *Model) turnMarketPage(dir int) {
 	m.marketSecOffset[sec] = 0
 	m.cursor[paneCards] = m.marketSections()[sec].start
 	m.scrollIntoView()
-	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d",
-		next+1, maxPage+1, next*marketPageSize+1, min((next+1)*marketPageSize, tot), tot), false
+	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d · sorted by %s",
+		next+1, maxPage+1, next*pageSize+1, min((next+1)*pageSize, tot), tot,
+		m.sortLabel()), false
 }
 
 // marketSectionBudgets divides the pane's rows among the four sections:

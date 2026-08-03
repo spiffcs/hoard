@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/market"
 
@@ -144,11 +145,23 @@ type Model struct {
 	// with B. Session-only; nothing persists it.
 	setsMode bool
 
-	// cards is what the pane shows; allCards is what the container holds. The
-	// unfiltered set is kept so narrowing and widening a filter as it is typed
-	// costs no database reads.
-	allCards []card
-	cards    []card
+	// The holdings pane's three levels, market-style: allCards is what the
+	// container holds (pristine, sorted — kept so narrowing and widening a
+	// filter as it is typed costs no database reads), filteredCards is the
+	// full filter+floor result, and cards is the current pageSize slice of
+	// it — the slice everything cursor-indexed reads, so a page turn never
+	// re-teaches a call site.
+	allCards      []card
+	filteredCards []card
+	cards         []card
+	cardsPage     int
+	// cardsColW / moversColW hold each variable column's widest cell across
+	// the whole filtered list, measured when the list changes. The page
+	// tables pin their columns to these (ui.Col.Width), so a page turn
+	// keeps the table's shape instead of re-fitting to each page's longest
+	// name (observed live: the name column breathed on every >).
+	cardsColW  cardColWidths
+	moversColW moverColWidths
 
 	// Filter state. filtering is true while the bar is open and taking
 	// keystrokes; the filter stays applied once it closes, so the bar is a mode
@@ -215,10 +228,14 @@ type Model struct {
 
 	// The pristine analytical rows as queried; the floor and the container
 	// filter derive the visible slices above from these (deriveView), so
-	// cycling either never re-reads the database.
-	allMovers   []store.PriceChange
-	allUnpriced []store.UnpricedRow
-	allWatches  []store.WatchStatus
+	// cycling either never re-reads the database. Movers pages like the
+	// holdings pane: filteredMovers is deriveView's full sorted result and
+	// movers above is its current pageSize slice.
+	allMovers      []store.PriceChange
+	filteredMovers []store.PriceChange
+	moversPage     int
+	allUnpriced    []store.UnpricedRow
+	allWatches     []store.WatchStatus
 
 	// moversCache keeps each lookback window's pristine movers for the
 	// session: the query walks the whole price history twice, and paying
@@ -261,7 +278,7 @@ type Model struct {
 	compsSortRev  bool
 
 	// The full rankings behind the visible tables: marketRows/marketComps
-	// hold only the current page of each (marketPageSize rows), sliced from
+	// hold only the current page of each (pageSize rows), sliced from
 	// these by deriveMarketPages. marketPage is each section's page,
 	// indexed like marketSecOffset; >/< turn the cursor's table.
 	marketAllRows  []market.Row
@@ -518,6 +535,7 @@ func (m *Model) loadCards() error {
 
 	m.allCards = out
 	m.sortHoldings()
+	m.cardsPage = 0 // a fresh container starts on page one
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
@@ -554,24 +572,94 @@ func mergeByName(rows []card) []card {
 	return out
 }
 
-// applyFilter narrows allCards into cards. It does not touch the database: the
-// trait half was resolved when the query last changed, and holding terms are
-// answered by the rows themselves.
+// applyFilter narrows allCards into filteredCards and re-derives the page.
+// It does not touch the database: the trait half was resolved when the query
+// last changed, and holding terms are answered by the rows themselves.
 func (m *Model) applyFilter() {
 	if m.filter.empty() && m.floorMin() == 0 {
-		m.cards = m.allCards
-		m.refreshEmptyNote()
-		return
-	}
-	out := make([]card, 0, len(m.allCards))
-	for _, c := range m.allCards {
-		if m.filter.matches(c, m.allowed) && !m.underFloor(c.Price) {
-			out = append(out, c)
+		// Aliasing is safe: the page below is a sub-slice, never mutated.
+		m.filteredCards = m.allCards
+	} else {
+		out := make([]card, 0, len(m.allCards))
+		for _, c := range m.allCards {
+			if m.filter.matches(c, m.allowed) && !m.underFloor(c.Price) {
+				out = append(out, c)
+			}
 		}
+		m.filteredCards = out
 	}
-	m.cards = out
+	m.cardsColW = measureCardCols(m.filteredCards)
+	m.deriveCardsPage()
 	m.clampCursor(paneCards)
 	m.refreshEmptyNote()
+}
+
+// deriveCardsPage and deriveMoversPage slice the current page out of the
+// full filtered lists, clamping the page index against totals that may have
+// shrunk under it — the backstop that makes a missed page reset a wrong
+// page, never an empty pane.
+func (m *Model) deriveCardsPage() {
+	lo, hi := pageBounds(&m.cardsPage, len(m.filteredCards))
+	m.cards = m.filteredCards[lo:hi]
+}
+
+func (m *Model) deriveMoversPage() {
+	lo, hi := pageBounds(&m.moversPage, len(m.filteredMovers))
+	m.movers = m.filteredMovers[lo:hi]
+}
+
+// cardColWidths and moverColWidths carry the paged tables' whole-list
+// column measures; see the fields on Model.
+type cardColWidths struct{ name, set, fin, qty, price, value int }
+
+type moverColWidths struct{ name, set, fin, was, now, change, qty, impact int }
+
+func measureCardCols(rows []card) cardColWidths {
+	var w cardColWidths
+	for _, c := range rows {
+		w.name = max(w.name, ansi.StringWidth(c.Name))
+		w.set = max(w.set, ansi.StringWidth(ui.Printing(c.SetCode, c.CollectorNumber)))
+		w.fin = max(w.fin, ansi.StringWidth(ui.FinishTreated(c.Finish, c.Treatment)))
+		w.qty = max(w.qty, ansi.StringWidth(ui.Qty(c.Quantity)))
+		w.price = max(w.price, ansi.StringWidth(ui.MoneyPtr(c.Price)))
+		w.value = max(w.value, ansi.StringWidth(ui.Money(c.Value)))
+	}
+	return w
+}
+
+func measureMoverCols(rows []store.PriceChange) moverColWidths {
+	var w moverColWidths
+	for _, c := range rows {
+		w.name = max(w.name, ansi.StringWidth(c.Name))
+		w.set = max(w.set, ansi.StringWidth(ui.Printing(c.SetCode, c.CollectorNumber)))
+		w.fin = max(w.fin, ansi.StringWidth(ui.FinishTreated(c.Finish, c.Treatment)))
+		w.was = max(w.was, ansi.StringWidth(ui.Money(c.Old)))
+		w.now = max(w.now, ansi.StringWidth(ui.Money(c.New)))
+		w.change = max(w.change, ansi.StringWidth(ui.SignedPercent(c.Pct())))
+		w.qty = max(w.qty, ansi.StringWidth(ui.Qty(c.Copies)))
+		w.impact = max(w.impact, ansi.StringWidth(ui.SignedMoney(c.TotalDelta())))
+	}
+	return w
+}
+
+// stableNameWidth caps the pinned name column so one novella-length card
+// name cannot starve every other column: at most a third of the pane, at
+// least the flex minimum the builders already use.
+func stableNameWidth(measured, paneWidth int) int {
+	return min(measured, max(16, paneWidth/3))
+}
+
+// pageBounds clamps a page index against a total and returns that page's
+// slice bounds — the page arithmetic the single-table panes share (the
+// market slices its own three tables at its shallower pageSize).
+func pageBounds(page *int, tot int) (lo, hi int) {
+	maxPage := 0
+	if tot > 0 {
+		maxPage = (tot - 1) / singleTablePageSize
+	}
+	*page = min(max(*page, 0), maxPage)
+	lo = min(*page*singleTablePageSize, tot)
+	return lo, min(lo+singleTablePageSize, tot)
 }
 
 // floorLevels are the value-floor presets M cycles through; 0 is off.
@@ -594,6 +682,8 @@ func (m Model) underFloor(p *float64) bool {
 // through it — from the pristine slices, so no database read.
 func (m *Model) cycleFloor() {
 	m.floorIdx = (m.floorIdx + 1) % len(floorLevels)
+	// A moved floor changes what the pages hold; read from the first.
+	m.cardsPage, m.moversPage = 0, 0
 	m.applyFilter()
 	m.deriveView()
 	m.clampCursor(paneCards)
@@ -660,6 +750,7 @@ func (m *Model) setFilter(text string) {
 		}
 		m.allowed = ids
 	}
+	m.cardsPage = 0 // a changed query reads from its first page
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
@@ -672,6 +763,7 @@ func (m *Model) clearFilter() {
 	m.filterErr = ""
 	m.filter = filter{}
 	m.allowed = nil
+	m.cardsPage = 0
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0

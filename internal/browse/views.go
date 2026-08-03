@@ -275,8 +275,9 @@ func (m *Model) deriveView() {
 			}
 			rows = append(rows, c)
 		}
-		m.movers = rows
-		m.applySort()
+		m.filteredMovers = rows
+		m.moversColW = measureMoverCols(rows)
+		m.applySort() // sorts filteredMovers and re-derives the page
 	case viewUnpriced:
 		rows := make([]store.UnpricedRow, 0, len(m.allUnpriced))
 		for _, r := range m.allUnpriced {
@@ -380,24 +381,28 @@ func (m Model) viewRowCount() int {
 	return len(m.cards)
 }
 
-// moversLines renders the risers and sinkers.
+// moversLines renders the risers and sinkers. Columns pin to the whole
+// filtered ranking's measures (Width), so >/< holds the table's shape.
 func (m Model) moversLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
+		w := m.moversColW
 		t := ui.Table{Cols: []ui.Col{
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10,
+				Width: stableNameWidth(w.name, width)},
 			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim()},
-			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim()},
-			{Title: "WAS", Align: ui.Right, Priority: 4, Style: env.Dim()},
-			{Title: "NOW", Align: ui.Right},
-			{Title: "CHANGE", Align: ui.Right, Priority: 3, Style: env.Dim()},
-			{Title: "QTY", Align: ui.Right, Priority: 2},
-			{Title: "IMPACT", Align: ui.Right},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.set},
+			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim(), Width: w.fin},
+			{Title: "WAS", Align: ui.Right, Priority: 4, Style: env.Dim(), Width: w.was},
+			{Title: "NOW", Align: ui.Right, Width: w.now},
+			{Title: "CHANGE", Align: ui.Right, Priority: 3, Style: env.Dim(), Width: w.change},
+			{Title: "QTY", Align: ui.Right, Priority: 2, Width: w.qty},
+			{Title: "IMPACT", Align: ui.Right, Width: w.impact},
 		}}
-		// Each delta column fades on the diverging ramp against its own
-		// visible extreme, so sorting by the column reads as one smooth
-		// green→gray→red sweep.
-		pctMax, impactMax := store.MoverExtents(m.movers)
+		// Each delta column fades on the diverging ramp against the whole
+		// filtered ranking's extreme — not the page's — so a row keeps its
+		// color as >/< leaf, and sorting by the column still reads as one
+		// smooth green→gray→red sweep.
+		pctMax, impactMax := store.MoverExtents(m.filteredMovers)
 		for _, c := range m.movers {
 			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			changeStyle := env.Diverge(ui.DivergeFrac(c.Pct(), pctMax))
@@ -439,13 +444,16 @@ func (m Model) unpricedLines(width int) []string {
 func (m Model) viewHeader() (title, totals string) {
 	switch m.view {
 	case viewMovers:
+		// Count and net speak for the whole filtered ranking, not the page
+		// on screen; the page phrase beside them says where the reader is.
 		var net float64
-		for _, c := range m.movers {
+		for _, c := range m.filteredMovers {
 			net += c.TotalDelta()
 		}
 		since := m.now().Add(-m.moversWindow()).Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since + m.viewScope(),
-			fmt.Sprintf("%s moved · %s", ui.Count(len(m.movers)), ui.SignedMoney(net))
+			fmt.Sprintf("%s moved · %s", ui.Count(len(m.filteredMovers)), ui.SignedMoney(net)) +
+				m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers))
 	case viewMarket:
 		return m.marketHeader()
 	case viewUnpriced:
@@ -467,7 +475,8 @@ func (m Model) viewHeader() (title, totals string) {
 	}
 	if sel := m.selectedContainer(); sel != nil {
 		return "CARDS · " + strings.ToUpper(sel.Name),
-			fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value))
+			fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value)) +
+				m.tablePagePhrase(len(m.cards), m.cardsPage, len(m.filteredCards))
 	}
 	return "CARDS", ""
 }
