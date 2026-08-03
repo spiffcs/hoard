@@ -1309,3 +1309,52 @@ func TestDetailScrolls(t *testing.T) {
 		t.Error("a scrolled dirty frame must still embed the transmit")
 	}
 }
+
+// A treated foil names its treatment in the holdings FINISH cell, the
+// detail's PRICE label and HELD row, and swaps the TCG link to a search —
+// the plain product page prices a card you don't hold (observed live: a
+// ~$75 ripple foil linking a ~$12 page).
+func TestFoilTreatmentDisplays(t *testing.T) {
+	st := testStore()
+	ripple := row("Eldrazi Confluence", "m3c", "32", "foil", 1, 75)
+	ripple.Treatment = "ripple"
+	st.collection = append(st.collection, ripple)
+	st.holdingsByName = map[string][]store.Holding{
+		"Eldrazi Confluence": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "foil", Quantity: 1, Treatment: "ripple",
+				ScryfallID: "Eldrazi Confluence-id", SetCode: "m3c", CollectorNumber: "32"},
+		},
+	}
+	m := newTestModel(t, st)
+	out := strings.Join(m.cardLines(120), "\n")
+	if !strings.Contains(out, "ripple") {
+		t.Errorf("holdings FINISH cell must name the treatment:\n%s", out)
+	}
+
+	// The detail HELD row names it too.
+	d := detail{holdings: st.holdingsByName["Eldrazi Confluence"]}
+	held := strings.Join(m.hoardLines(d, 120), "\n")
+	if !strings.Contains(held, "ripple") {
+		t.Errorf("HELD row must name the treatment:\n%s", held)
+	}
+
+	// Links: treated foil → search page; plain printing keeps the product.
+	tcg := int64(553171)
+	c := store.CardDetail{}
+	c.Name, c.SetCode, c.CollectorNumber = "Eldrazi Confluence", "m3c", "32"
+	c.TCGplayerID = &tcg
+	c.Treatment = "ripple"
+	links := cardLinks(c, true)
+	if !strings.Contains(links[0].url, "search/magic/product?q=") ||
+		!strings.Contains(links[0].url, "ripple") {
+		t.Errorf("treated foil must link the TCG search, got %q", links[0].url)
+	}
+	if links = cardLinks(c, false); !strings.Contains(links[0].url, "/product/553171") {
+		t.Errorf("the nonfoil side keeps the product link, got %q", links[0].url)
+	}
+	c.Treatment = ""
+	if links = cardLinks(c, true); !strings.Contains(links[0].url, "/product/553171") {
+		t.Errorf("an untreated foil keeps the product link, got %q", links[0].url)
+	}
+}

@@ -302,7 +302,7 @@ func (m Model) moversLines(width int) []string {
 		// green→gray→red sweep.
 		pctMax, impactMax := store.MoverExtents(m.movers)
 		for _, c := range m.movers {
-			finish := ui.Finish(c.Finish)
+			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			changeStyle := env.Diverge(ui.DivergeFrac(c.Pct(), pctMax))
 			impactStyle := env.Diverge(ui.DivergeFrac(c.TotalDelta(), impactMax))
 			t.Add(ui.Cell{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
@@ -328,7 +328,7 @@ func (m Model) unpricedLines(width int) []string {
 			{Title: "HELD IN", Align: ui.Left, Priority: 5, Style: env.Dim()},
 		}}
 		for _, r := range m.unpriced {
-			finish := ui.Finish(r.Finish)
+			finish := ui.FinishTreated(r.Finish, r.Treatment)
 			t.Add(ui.Cell{Text: r.Name, Style: env.Identity(r.ColorIdentity)},
 				ui.C(ui.Pips(r.ColorIdentity)),
 				ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),

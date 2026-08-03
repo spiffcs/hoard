@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -107,5 +108,63 @@ func TestSetByFinish(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Quantity != 3 || rows[0].Value != 90 {
 		t.Fatalf("mh2 rows = %+v, want one row with both binders' copies summed", rows)
+	}
+}
+
+// FoilTreatment maps Scryfall's treatment tags to display words, ignoring
+// cosmetics, absent documents, and unknown tags.
+func TestFoilTreatment(t *testing.T) {
+	ns := func(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
+	for in, want := range map[string]string{
+		`["ripplefoil"]`:                "ripple",
+		`["ripplefoil","boosterfun"]`:   "ripple",
+		`["boosterfun","ripplefoil"]`:   "ripple",
+		`["surgefoil"]`:                 "surge",
+		`["boosterfun"]`:                "",
+		`["universesbeyond","romance"]`: "",
+		`[]`:                            "",
+	} {
+		if got := FoilTreatment(ns(in)); got != want {
+			t.Errorf("FoilTreatment(%s) = %q, want %q", in, got, want)
+		}
+	}
+	if got := FoilTreatment(sql.NullString{}); got != "" {
+		t.Errorf("FoilTreatment(NULL) = %q, want empty", got)
+	}
+}
+
+// A ripple-tagged document surfaces Treatment on the query paths the
+// views read — the CE precon case (observed live: 400 ripple copies
+// reading as plain foil).
+func TestTreatmentSurfacesOnRows(t *testing.T) {
+	s := newTestStore(t)
+	ripple := scryfall.Card{
+		ID: "ec-m3c", Set: "m3c", CollectorNumber: "32", Name: "Eldrazi Confluence",
+		ScryfallURL: "http://x", PriceUSD: f(11.86),
+		Raw: []byte(`{"promo_types":["ripplefoil"],"released_at":"2024-06-14"}`),
+	}
+	if err := s.AddCardFinish(ripple, "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	rows, err := s.AllByFinish()
+	if err != nil {
+		t.Fatalf("AllByFinish: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Treatment != "ripple" {
+		t.Fatalf("rows = %+v, want the ripple treatment surfaced", rows)
+	}
+	owned, err := s.OwnedByFinish()
+	if err != nil {
+		t.Fatalf("OwnedByFinish: %v", err)
+	}
+	if len(owned) != 1 || owned[0].Treatment != "ripple" {
+		t.Fatalf("owned = %+v, want the ripple treatment surfaced", owned)
+	}
+	d, err := s.CardDetail("ec-m3c")
+	if err != nil {
+		t.Fatalf("CardDetail: %v", err)
+	}
+	if d.Treatment != "ripple" {
+		t.Errorf("detail treatment = %q, want ripple", d.Treatment)
 	}
 }

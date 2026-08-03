@@ -38,7 +38,7 @@ func (m Model) watchesLines(width int) []string {
 			}
 			row := []ui.Cell{
 				ui.C(w.Name), ui.C(ui.Printing(w.SetCode, w.CollectorNumber)),
-				ui.C(ui.Finish(w.Finish)),
+				ui.C(ui.FinishTreated(w.Finish, w.Treatment)),
 				ui.C(fmt.Sprintf("%s %s", w.Op, ui.Money(w.Threshold))),
 				ui.C(price), ui.C(state),
 			}

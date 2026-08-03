@@ -126,6 +126,34 @@ ORDER BY c.set_code, c.name`)
 	return out, rows.Err()
 }
 
+// AltPricedOwned lists the held printings whose value already rides a
+// fallback price. FillGaps re-asks MTGJSON about these on every pass:
+// a fallback filled once and never refreshed freezes the card's value —
+// it can never move again, and a vendor-preference change never lands
+// (observed live: the ripple foils stayed on Card Kingdom's ask after
+// the foil order moved to Manapool).
+func (s *Store) AltPricedOwned() ([]PriceGap, error) {
+	rows, err := s.db.Query(`
+SELECT DISTINCT c.scryfall_id, c.set_code, c.name, NULL
+FROM card_prices_alt a
+JOIN cards c ON c.scryfall_id = a.scryfall_id
+JOIN card_entries e ON e.scryfall_id = c.scryfall_id
+ORDER BY c.set_code, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("finding fallback-priced cards: %w", err)
+	}
+	defer rows.Close()
+	var out []PriceGap
+	for rows.Next() {
+		var g PriceGap
+		if err := rows.Scan(&g.ScryfallID, &g.SetCode, &g.Name, &g.CheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // UnpricedRow is one card-and-finish that no source can price, with where it is
 // held so the reader can see which totals are understated.
 type UnpricedRow struct {
@@ -141,6 +169,9 @@ type UnpricedRow struct {
 	// itself contain a comma, which makes the joined form unsplittable.
 	Containers []string
 	HeldIn     string
+	// Treatment is the foil treatment's display word, empty for plain —
+	// same semantics as Card.Treatment.
+	Treatment string
 	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
 	// same semantics as Card.ColorIdentity.
 	ColorIdentity []string
@@ -165,7 +196,7 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
        SUM(e.quantity) AS copies,
        GROUP_CONCAT(DISTINCT ` + containerLabel + `) AS held_in,
        GROUP_CONCAT(` + containerLabel + `, char(31)) AS held_in_raw,
-       c.color_identity
+       c.color_identity, c.promo_types
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -181,12 +212,13 @@ ORDER BY c.name, e.finish`)
 	for rows.Next() {
 		var u UnpricedRow
 		var raw string
-		var colors sql.NullString
+		var colors, promos sql.NullString
 		if err := rows.Scan(&u.ScryfallID, &u.MTGJSONUUID, &u.Name, &u.SetCode,
-			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw, &colors); err != nil {
+			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw, &colors, &promos); err != nil {
 			return nil, err
 		}
 		u.ColorIdentity = parseColorIdentity(colors)
+		u.Treatment = FoilTreatment(promos)
 		u.Containers = dedupeSorted(strings.Split(raw, "\x1f"))
 		out = append(out, u)
 	}

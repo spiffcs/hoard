@@ -172,3 +172,56 @@ func TestProgressIsOptional(t *testing.T) {
 		t.Errorf("progress = %v", got)
 	}
 }
+
+// A held card already riding a fallback price refreshes on every pass —
+// a fallback filled once and never re-asked freezes the card's value
+// forever, and a vendor-preference change never lands (observed live:
+// the ripple foils stayed on Card Kingdom's ask after the foil order
+// moved to Manapool).
+func TestFillGapsRefreshesFallbackPrices(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	// Already fallback-priced — not a gap — with the old vendor's figure.
+	if err := s.UpsertAltPrices([]store.AltPrice{{
+		ScryfallID: "ripple-id", MTGJSONUUID: "uuid-ripple",
+		PriceUSDFoil: f64(74.99), SourceUSDFoil: "cardkingdom",
+	}}); err != nil {
+		t.Fatalf("UpsertAltPrices: %v", err)
+	}
+	// Resolution is already stamped, so the pass needs no set file.
+	if err := s.SaveMTGJSONUUIDs(map[string]string{"ripple-id": "uuid-ripple"}); err != nil {
+		t.Fatalf("SaveMTGJSONUUIDs: %v", err)
+	}
+	if err := s.SaveCardKingdomLinks(map[string]store.CKLinks{"ripple-id": {}}); err != nil {
+		t.Fatalf("SaveCardKingdomLinks: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zw := gzip.NewWriter(w)
+		zw.Write([]byte(`{"meta": {"date": "2026-08-02", "version": "5"},
+ "data": {"uuid-ripple": {"paper": {
+   "manapool":    {"currency": "USD", "retail": {"foil": {"2026-08-02": 38.55}}},
+   "cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-08-02": 74.99}}}
+ }}}}`))
+		zw.Close()
+	}))
+	defer srv.Close()
+
+	rep, err := New(s, t.TempDir()).WithBaseURL(srv.URL).FillGaps(context.Background())
+	if err != nil {
+		t.Fatalf("FillGaps: %v", err)
+	}
+	if rep.Skipped || rep.Gaps != 0 {
+		t.Errorf("report = %+v, want an unskipped pass with no true gaps", rep)
+	}
+	rows, err := s.AllByFinish()
+	if err != nil {
+		t.Fatalf("AllByFinish: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Price() == nil || *rows[0].Price() != 38.55 ||
+		rows[0].AltSource != "manapool" {
+		t.Fatalf("rows = %+v, want the fallback refreshed to manapool's 38.55", rows)
+	}
+}

@@ -196,7 +196,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 		}}
 		for _, c := range comps {
 			t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
-				ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+				ui.C(c.Printing()), ui.C(ui.FinishTreated(c.Card.Finish, c.Card.Treatment)),
 				ui.C(compMoney(c.HasMarket, c.Market)),
 				ui.C(compMoney(c.HasManapool, c.Manapool)),
 				ui.C(compMoney(c.HasCK, c.CK)),
@@ -214,7 +214,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 	}}
 	for _, c := range comps {
 		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
-			ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+			ui.C(c.Printing()), ui.C(ui.FinishTreated(c.Card.Finish, c.Card.Treatment)),
 			ui.C(compMoney(c.HasMarket, c.Market)),
 			ui.C(compMoney(c.HasManapool, c.Manapool)),
 			ui.C(compMoney(c.HasCK, c.CK)),

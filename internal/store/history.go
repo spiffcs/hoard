@@ -30,6 +30,9 @@ type PriceChange struct {
 	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
 	// same semantics as Card.ColorIdentity.
 	ColorIdentity []string
+	// Treatment is the foil treatment's display word, empty for plain —
+	// same semantics as Card.Treatment.
+	Treatment string
 }
 
 // Delta is the movement in one copy's price.
@@ -266,7 +269,7 @@ WITH owned AS (`+ownedByPriceFinish+`),
      cur AS (`+fmt.Sprintf(latestPrices, "")+`),
      base AS (`+fmt.Sprintf(latestPrices, "WHERE as_of <= ?")+`)
 SELECT c.scryfall_id, cur.pfinish, c.name, c.set_code, c.collector_number,
-       o.copies, base.price, cur.price, cur.source, c.color_identity
+       o.copies, base.price, cur.price, cur.source, c.color_identity, c.promo_types
 FROM owned o
 JOIN cur ON cur.sid = o.sid AND cur.pfinish = o.pfinish
 JOIN base ON base.sid = o.sid AND base.pfinish = o.pfinish
@@ -280,12 +283,13 @@ WHERE cur.price <> base.price`, since)
 	var out []PriceChange
 	for rows.Next() {
 		var p PriceChange
-		var colors sql.NullString
+		var colors, promos sql.NullString
 		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.Name, &p.SetCode,
-			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors); err != nil {
+			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors, &promos); err != nil {
 			return nil, err
 		}
 		p.ColorIdentity = parseColorIdentity(colors)
+		p.Treatment = FoilTreatment(promos)
 		out = append(out, p)
 	}
 	return out, rows.Err()

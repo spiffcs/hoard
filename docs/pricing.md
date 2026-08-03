@@ -252,3 +252,16 @@ fix, and the pre-migration backups of `hoard.db` stay small.
 
 For why hoard keeps its own price schema rather than adopting MTGJSON's, see
 [mtgjson-storage.md](mtgjson-storage.md).
+
+Treated foils (ripple, surge, …) are priced correctly by construction:
+Scryfall models the treatment as a tag on the printing whose foil finish
+is the treated copy, usually with no Scryfall foil price — so the foil
+value rides MTGJSON's foil bucket, which tracks the treated product's
+market. The FINISH columns name the treatment so the number and the
+physical card read as the same thing.
+
+The archive backfill resolves each finish through the same vendor order
+the live prices use: TCGplayer's series leads, and a finish TCGplayer
+never lists (the ripple foils again) takes the next vendor's series —
+without it the Collector's Edition decks sat one observation deep and
+never appeared in movers.

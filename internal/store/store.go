@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -83,6 +84,12 @@ type Card struct {
 	ColorIdentity []string
 	// ManaCost is the printed cost ("{2}{W}{U}"), nil when unknown.
 	ManaCost *string
+	// Treatment is the foil treatment's display word ("ripple", "surge"),
+	// derived from the printing's promo_types tags — empty for an
+	// ordinary printing or one with no stored document. The treatment
+	// describes what the FOIL finish of the printing is; the nonfoil copy
+	// of a ripple-tagged printing is a plain card.
+	Treatment string
 }
 
 // Entry is a quantity of a card (finish + board) to place in a container.
@@ -206,7 +213,7 @@ const (
 func cardCols(altSource string) string {
 	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
        ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
-       ` + altSource + `, c.color_identity, c.mana_cost`
+       ` + altSource + `, c.color_identity, c.mana_cost, c.promo_types`
 }
 
 // cardAux holds the scan shims for Card fields SQLite cannot fill directly:
@@ -214,11 +221,13 @@ func cardCols(altSource string) string {
 // only after the scan, via apply.
 type cardAux struct {
 	colorIdentity sql.NullString
+	promoTypes    sql.NullString
 }
 
 // apply finishes the scan, decoding the shimmed columns onto the card.
 func (a cardAux) apply(c *Card) {
 	c.ColorIdentity = parseColorIdentity(a.colorIdentity)
+	c.Treatment = FoilTreatment(a.promoTypes)
 }
 
 // cardScanDest is the scan targets matching cardCols, for the caller to extend
@@ -227,7 +236,7 @@ func (a cardAux) apply(c *Card) {
 func cardScanDest(c *Card, aux *cardAux) []any {
 	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
 		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource,
-		&aux.colorIdentity, &c.ManaCost}
+		&aux.colorIdentity, &c.ManaCost, &aux.promoTypes}
 }
 
 // parseColorIdentity turns the stored JSON array into a slice: nil for NULL
@@ -249,6 +258,44 @@ func parseColorIdentity(v sql.NullString) []string {
 		}
 	}
 	return out
+}
+
+// foilTreatments maps Scryfall's foil-treatment promo_types tags to their
+// display words. Only tags that describe the foil finish itself belong
+// here — cosmetics like boosterfun, portrait or universesbeyond say
+// nothing about the foiling and are ignored. A new WotC treatment is one
+// entry here, never a migration: the column stores the raw tag array.
+var foilTreatments = map[string]string{
+	"ripplefoil":      "ripple",
+	"surgefoil":       "surge",
+	"galaxyfoil":      "galaxy",
+	"halofoil":        "halo",
+	"texturedfoil":    "textured",
+	"rainbowfoil":     "rainbow",
+	"oilslick":        "oilslick",
+	"confettifoil":    "confetti",
+	"gilded":          "gilded",
+	"neonink":         "neon",
+	"doublerainbow":   "dbl rainbow",
+	"stepandcompleat": "compleat",
+}
+
+// FoilTreatment reads a promo_types JSON array and returns the display
+// word of the first foil-treatment tag it carries — "" for an ordinary
+// printing, a cosmetics-only tag list, or no stored document. Hand-parsed
+// like parseColorIdentity: the value is Scryfall's own tiny array of
+// lower-case words.
+func FoilTreatment(promoTypes sql.NullString) string {
+	if !promoTypes.Valid || len(promoTypes.String) < 2 {
+		return ""
+	}
+	for _, tag := range strings.Split(strings.Trim(promoTypes.String, "[]"), ",") {
+		tag = strings.Trim(strings.TrimSpace(tag), `"`)
+		if word, ok := foilTreatments[tag]; ok {
+			return word
+		}
+	}
+	return ""
 }
 
 // Store wraps the database handle.

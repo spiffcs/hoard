@@ -39,13 +39,29 @@ type GapReport struct {
 // re-asks about all of them — by then the cost is paid.
 func (f *Fetcher) FillGaps(ctx context.Context) (GapReport, error) {
 	gaps, err := f.st.UnpricedByOwnedFinish()
-	if err != nil || len(gaps) == 0 {
+	if err != nil {
 		return GapReport{}, err
+	}
+	// Held cards already riding a fallback price refresh alongside the
+	// gaps: a fallback filled once and never re-asked freezes the card's
+	// value forever — it can never appear in movers, and a change in
+	// vendor preference never lands (observed live with the ripple
+	// foils). The day cache keeps the repeat scans cheap.
+	altPriced, err := f.st.AltPricedOwned()
+	if err != nil {
+		return GapReport{}, err
+	}
+	if len(gaps) == 0 && len(altPriced) == 0 {
+		return GapReport{}, nil
 	}
 	report := GapReport{Gaps: len(gaps)}
 
+	// The recency skip guards the never-priceable: re-scanning the bundle
+	// weekly to learn "still nothing" is enough. A fallback refresh is the
+	// opposite case — those cards DO have prices worth keeping current —
+	// so any alt-priced holding forces the scan.
 	cutoff := time.Now().UTC().Add(-recheckAfter).Format(time.RFC3339)
-	report.Skipped = true
+	report.Skipped = len(altPriced) == 0
 	for _, g := range gaps {
 		if g.CheckedAt == nil || *g.CheckedAt < cutoff {
 			report.Skipped = false
@@ -56,11 +72,16 @@ func (f *Fetcher) FillGaps(ctx context.Context) (GapReport, error) {
 		return report, nil
 	}
 
-	refs := make([]Ref, len(gaps))
-	asked := make([]string, len(gaps))
-	for i, g := range gaps {
-		refs[i] = Ref{ScryfallID: g.ScryfallID, SetCode: g.SetCode}
-		asked[i] = g.ScryfallID
+	refs := make([]Ref, 0, len(gaps)+len(altPriced))
+	asked := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		refs = append(refs, Ref{ScryfallID: g.ScryfallID, SetCode: g.SetCode})
+		// Only true gaps stamp the asked-recently ledger — the fallback
+		// refreshes must keep running every pass.
+		asked = append(asked, g.ScryfallID)
+	}
+	for _, g := range altPriced {
+		refs = append(refs, Ref{ScryfallID: g.ScryfallID, SetCode: g.SetCode})
 	}
 	prices, err := f.Prices(ctx, refs)
 	if err != nil {
@@ -98,7 +119,7 @@ func (f *Fetcher) FillGaps(ctx context.Context) (GapReport, error) {
 		return report, err
 	}
 	report.Remaining = len(remaining)
-	report.Filled = len(gaps) - len(remaining)
+	report.Filled = max(len(gaps)-len(remaining), 0)
 	report.Sources = slices.Sorted(maps.Keys(sources))
 	return report, nil
 }

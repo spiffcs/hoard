@@ -83,6 +83,9 @@ type card struct {
 	// ColorIdentity is the WUBRG identity, nil when unknown — same
 	// semantics as store.Card.ColorIdentity.
 	ColorIdentity []string
+	// Treatment is the foil treatment's display word — same semantics as
+	// store.Card.Treatment.
+	Treatment string
 }
 
 // pendingConfirm is a staged action waiting on confirmation. Only an
@@ -464,6 +467,7 @@ func (m *Model) loadCards() error {
 				CollectorNumber: r.CollectorNumber, Finish: r.Finish,
 				Quantity: r.Quantity, Price: r.Price(), Value: r.Value,
 				AltSource: r.AltSource, ColorIdentity: r.ColorIdentity,
+				Treatment: r.Treatment,
 			})
 		}
 		if sel.Kind == kindAllCards {
@@ -485,6 +489,7 @@ func (m *Model) loadCards() error {
 				CollectorNumber: e.Card.CollectorNumber, Finish: e.Finish, Board: e.Board,
 				Quantity: e.Quantity, Price: e.Price(), Value: e.Value(),
 				AltSource: e.Card.AltSource, ColorIdentity: e.Card.ColorIdentity,
+				Treatment: e.Card.Treatment,
 			})
 		}
 	}

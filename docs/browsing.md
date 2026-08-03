@@ -46,6 +46,14 @@ what is inside whichever row you have selected.
 | <kbd>q</kbd> | quit — asks y/n first (main views and the card detail) |
 | <kbd>esc</kbd> | back out one frame — at the top it asks before quitting · <kbd>ctrl+c</kbd> quits anywhere |
 
+Foil treatments show by name: a foil copy of a printing WotC tagged with
+a treatment — ripple, surge, galaxy, halo, textured and friends — says so
+in every FINISH cell and in the detail's PRICE and HELD rows, because a
+ripple foil and a plain foil are different products with very different
+prices. The detail's tcgplayer link for a treated foil opens a search for
+the treated product rather than the plain product page, since no feed we
+read carries the treated product's id.
+
 Binder cards are editable in place (<kbd>+</kbd>, <kbd>-</kbd>, <kbd>d</kbd>,
 <kbd>u</kbd>) — every binder, not just the default. Deck cards are deliberately
 read-only: a deck is owned by the list it was imported from, so editing it here

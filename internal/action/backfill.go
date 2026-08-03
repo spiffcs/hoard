@@ -49,8 +49,10 @@ type BackfillResult struct {
 // run.
 //
 // The salt retires receipts written by earlier shapes of this run: v2
-// repaired the hoard-wide import bound, v3 added the buylist half — a
-// pre-bid "done" would otherwise skip the bid ingest for a day.
+// repaired the hoard-wide import bound, v3 added the buylist half, v4
+// taught the archive reader the per-finish vendor fallback, v5 moved the
+// foil fallback onto Manapool, v6 added the troll-listing guard — a stale
+// "done" would otherwise leave a polluted series standing for a day.
 func backfillKey(owned []store.OwnedFinish, days int) string {
 	ids := make([]string, 0, len(owned))
 	for _, o := range owned {
@@ -58,7 +60,7 @@ func backfillKey(owned []store.OwnedFinish, days int) string {
 	}
 	sort.Strings(ids)
 	day := time.Now().Format("2006-01-02")
-	return ContentHash([]byte(fmt.Sprintf("backfill|v3|%s|%d|%s", day, days, strings.Join(ids, ","))))
+	return ContentHash([]byte(fmt.Sprintf("backfill|v6|%s|%d|%s", day, days, strings.Join(ids, ","))))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was

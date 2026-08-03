@@ -229,7 +229,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 	cardCells := func(r market.Row) []ui.Cell {
 		return []ui.Cell{
 			{Text: r.Card.Name, Style: env.Identity(r.Card.ColorIdentity)},
-			ui.C(r.Printing()), ui.C(ui.Finish(r.Card.Finish)),
+			ui.C(r.Printing()), ui.C(ui.FinishTreated(r.Card.Finish, r.Card.Treatment)),
 		}
 	}
 

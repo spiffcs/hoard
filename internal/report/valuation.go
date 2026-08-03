@@ -111,7 +111,7 @@ func Valuation(env ui.Env, d ValuationData) string {
 		}
 		for _, o := range d.Top {
 			t.Add(ui.C(o.Name), ui.C(ui.Printing(o.SetCode, o.CollectorNumber)),
-				ui.C(ui.Finish(o.Finish)), ui.C(ui.Count(o.Copies)),
+				ui.C(ui.FinishTreated(o.Finish, o.Treatment)), ui.C(ui.Count(o.Copies)),
 				ui.C(ui.Money(unitPrice(o))), ui.C(ui.Money(o.Value)))
 		}
 		b.WriteString(t.Render())

@@ -453,7 +453,7 @@ func (m Model) cardLines(width int) []string {
 		t := ui.Table{Cols: cols}
 
 		for _, c := range m.cards {
-			finish := ui.Finish(c.Finish)
+			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			cells := []ui.Cell{
 				{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),

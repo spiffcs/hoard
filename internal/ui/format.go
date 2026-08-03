@@ -106,6 +106,17 @@ func Finish(finish string) string {
 	return finish
 }
 
+// FinishTreated is Finish with the printing's foil treatment in reach: a
+// foil copy of a treated printing names its treatment — "ripple" beats
+// "foil" for a card whose price and physical reality are the ripple foil.
+// Non-foil copies stay plain: the treatment describes the foiling.
+func FinishTreated(finish, treatment string) string {
+	if finish == "foil" && treatment != "" {
+		return treatment
+	}
+	return Finish(finish)
+}
+
 // wubrgOrder is the canonical identity ordering: the color wheel as printed
 // on the back of every card, not the alphabet.
 const wubrgOrder = "WUBRG"

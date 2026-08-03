@@ -112,11 +112,12 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 	if p := got["uuid-tcg"]; p.FoilSource != "tcgplayer" || p.Foil == nil || *p.Foil != 11.16 {
 		t.Errorf("uuid-tcg = %+v, want tcgplayer 11.16", p)
 	}
-	// Falls through to Card Kingdom for both finishes, since TCGplayer quotes
-	// neither and Cardmarket is euros.
+	// TCGplayer quotes neither finish and Cardmarket is euros: the normal
+	// falls to Card Kingdom (next in the normal order), while the foil
+	// falls to Manapool — the foil order runs marketplace-first.
 	p := got["uuid-ck"]
-	if p.FoilSource != "cardkingdom" || p.Foil == nil || *p.Foil != 0.49 {
-		t.Errorf("uuid-ck = %+v, want cardkingdom foil 0.49", p)
+	if p.FoilSource != "manapool" || p.Foil == nil || *p.Foil != 6.91 {
+		t.Errorf("uuid-ck = %+v, want manapool foil 6.91", p)
 	}
 	if p.USD == nil || *p.USD != 0.34 || p.USDSource != "cardkingdom" {
 		t.Errorf("uuid-ck normal = %v from %q, want 0.34 from cardkingdom", p.USD, p.USDSource)
@@ -339,6 +340,10 @@ const archiveFileBody = `{
   }},
   "uuid-bids-only": {"paper": {
     "cardkingdom": {"currency": "USD", "buylist": {"normal": {"2026-07-29": 0.10}}}
+  }},
+  "uuid-ripple": {"paper": {
+    "tcgplayer": {"currency": "USD", "retail": {"normal": {"2026-07-28": 11.86}}},
+    "cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-07-28": 74.99, "2026-07-29": 75.99}}}
   }}
  }
 }`
@@ -407,20 +412,52 @@ func TestPriceHistoryReturnsBidsOnlyCards(t *testing.T) {
 	}
 }
 
-func TestPriceHistorySkipsNonUSDAndAbsentProvider(t *testing.T) {
+func TestPriceHistorySkipsNonUSDAndFallsThroughProviders(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
-	// A EUR tcgplayer series and a card neither tcgplayer nor the buylist
-	// ever quoted are both absent rather than converted or substituted: a
-	// euro price in a USD total is a lie, and another vendor's series would
-	// not join up with Scryfall's.
+	// A EUR tcgplayer series is absent rather than converted — a euro price
+	// in a USD total is a lie, and no other vendor quotes the card. But a
+	// card TCGplayer never carried takes the next vendor's series: that
+	// vendor is also the one pricing it live, so the history joins up.
 	got, err := PriceHistory(context.Background(), Options{},
 		map[string]bool{"uuid-eur-tcg": true, "uuid-no-tcg": true})
 	if err != nil {
 		t.Fatalf("PriceHistory: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("got %+v, want nothing", got)
+	if _, ok := got["uuid-eur-tcg"]; ok {
+		t.Errorf("EUR-only card must stay absent: %+v", got["uuid-eur-tcg"])
+	}
+	h := got["uuid-no-tcg"]
+	if len(h.Retail) != 1 || h.Retail[0].Price != 3.00 || h.Retail[0].Source != "manapool" {
+		t.Errorf("no-tcg card = %+v, want manapool's series", h.Retail)
+	}
+}
+
+// The ripple-foil shape, observed live: TCGplayer publishes no foil series
+// for the MH3 Collector's Edition printings, so the foil history falls to
+// the next vendor per finish — the normal series stays TCGplayer's.
+func TestPriceHistoryFoilFallsToNextVendor(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+
+	got, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-ripple": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	obs := got["uuid-ripple"].Retail
+	if len(obs) != 3 {
+		t.Fatalf("got %d observations, want tcg's 1 normal + ck's 2 foil: %+v", len(obs), obs)
+	}
+	for _, o := range obs {
+		switch o.Finish {
+		case "normal":
+			if o.Source != "tcgplayer" || o.Price != 11.86 {
+				t.Errorf("normal %+v, want tcgplayer's series", o)
+			}
+		case "foil":
+			if o.Source != "cardkingdom" || (o.Price != 74.99 && o.Price != 75.99) {
+				t.Errorf("foil %+v, want cardkingdom's series", o)
+			}
+		}
 	}
 }
 
@@ -461,5 +498,96 @@ func TestUnusableCacheDirStillServes(t *testing.T) {
 	}
 	if len(got) == 0 {
 		t.Error("no prices served through the uncached fallback")
+	}
+}
+
+// When both quote a foil TCGplayer skips, Manapool's marketplace ask beats
+// Card Kingdom's premium retail ask — the foil order differs from normal's.
+func TestFoilPrefersManapoolOverCardKingdom(t *testing.T) {
+	body := `{
+ "meta": {"date": "2026-07-29", "version": "5.3.0"},
+ "data": {
+  "uuid-both": {"paper": {
+    "tcgplayer":   {"currency": "USD", "retail": {"normal": {"2026-07-28": 11.86}}},
+    "cardkingdom": {"currency": "USD", "retail": {"normal": {"2026-07-27": 12.99},
+                                                  "foil": {"2026-07-28": 74.99}}},
+    "manapool":    {"currency": "USD", "retail": {"foil": {"2026-07-28": 38.55}}}
+  }}
+ }
+}`
+	serve(t, map[string][]byte{
+		"/AllPricesToday.json.gz": gzipped(t, body),
+		"/AllPrices.json.gz":      gzipped(t, body),
+	})
+
+	today, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-both": true})
+	if err != nil {
+		t.Fatalf("TodayPrices: %v", err)
+	}
+	p := today["uuid-both"]
+	if p.Foil == nil || *p.Foil != 38.55 || p.FoilSource != "manapool" {
+		t.Errorf("foil = %v from %q, want manapool's 38.55", p.Foil, p.FoilSource)
+	}
+	if p.USD == nil || *p.USD != 11.86 || p.USDSource != "tcgplayer" {
+		t.Errorf("normal = %v from %q, want tcgplayer's 11.86", p.USD, p.USDSource)
+	}
+
+	hist, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-both": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	for _, o := range hist["uuid-both"].Retail {
+		if o.Finish == "foil" && o.Source != "manapool" {
+			t.Errorf("foil history %+v, want manapool's series", o)
+		}
+		if o.Finish == "normal" && o.Source != "tcgplayer" {
+			t.Errorf("normal history %+v, want tcgplayer's series", o)
+		}
+	}
+}
+
+// A marketplace's "lowest ask" can be a troll listing — a seven-figure
+// Legion Loyalty, observed live. A quote over listingOutlierRatio times
+// the cheapest other vendor's is skipped, today and in the archive; a
+// lone vendor is trusted (nothing to compare against).
+func TestFoilSkipsTrollListings(t *testing.T) {
+	body := `{
+ "meta": {"date": "2026-08-02", "version": "5.3.0"},
+ "data": {
+  "uuid-troll": {"paper": {
+    "manapool":    {"currency": "USD", "retail": {"foil": {"2026-08-01": 4741176.74,
+                                                           "2026-08-02": 7362059.74}}},
+    "cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-08-02": 29.99}}}
+  }},
+  "uuid-lone": {"paper": {
+    "manapool": {"currency": "USD", "retail": {"foil": {"2026-08-02": 500.00}}}
+  }}
+ }
+}`
+	serve(t, map[string][]byte{
+		"/AllPricesToday.json.gz": gzipped(t, body),
+		"/AllPrices.json.gz":      gzipped(t, body),
+	})
+
+	today, err := TodayPrices(context.Background(), Options{},
+		map[string]bool{"uuid-troll": true, "uuid-lone": true})
+	if err != nil {
+		t.Fatalf("TodayPrices: %v", err)
+	}
+	if p := today["uuid-troll"]; p.Foil == nil || *p.Foil != 29.99 || p.FoilSource != "cardkingdom" {
+		t.Errorf("troll-listed foil = %+v, want cardkingdom's 29.99", p)
+	}
+	if p := today["uuid-lone"]; p.Foil == nil || *p.Foil != 500.00 {
+		t.Errorf("lone vendor = %+v, want trusted at 500.00", p)
+	}
+
+	hist, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-troll": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	for _, o := range hist["uuid-troll"].Retail {
+		if o.Source != "cardkingdom" || o.Price > 1000 {
+			t.Errorf("archive obs %+v, want cardkingdom's sane series", o)
+		}
 	}
 }

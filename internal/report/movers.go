@@ -96,7 +96,7 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 		for _, c := range sec.Rows {
 			// A finish column reading "nonfoil" down every row is noise; the
 			// foils are what want pointing out.
-			finish := ui.Finish(c.Finish)
+			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			// Each delta column fades on the diverging ramp against its own
 			// visible extreme — the sign stays in the text, so piped output
 			// loses nothing.
@@ -169,7 +169,7 @@ func Market(env ui.Env, sec market.Section) string {
 	cardCells := func(o market.Opportunity) []ui.Cell {
 		return []ui.Cell{
 			{Text: o.Card.Name, Style: env.Identity(o.Card.ColorIdentity)},
-			ui.C(o.Printing()), ui.C(ui.Finish(o.Card.Finish)),
+			ui.C(o.Printing()), ui.C(ui.FinishTreated(o.Card.Finish, o.Card.Treatment)),
 		}
 	}
 	for _, o := range sec.Rows {
@@ -223,7 +223,7 @@ func Comps(env ui.Env, comps []market.Comp) string {
 	}
 	for _, c := range comps {
 		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
-			ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
+			ui.C(c.Printing()), ui.C(ui.FinishTreated(c.Card.Finish, c.Card.Treatment)),
 			ui.C(compMoney(c.HasManapool, c.Manapool)),
 			ui.C(compMoney(c.HasCK, c.CK)),
 			ui.C(c.LowFrom),

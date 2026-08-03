@@ -43,6 +43,7 @@ var migrations = []migration{
 	{13, bidHistory},
 	{14, tcgplayerProductID},
 	{15, cardKingdomLinks},
+	{16, promoTypesColumn},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -320,6 +321,17 @@ ALTER TABLE cards ADD COLUMN tcgplayer_id INTEGER
 const cardKingdomLinks = `
 ALTER TABLE cards ADD COLUMN ck_url TEXT;
 ALTER TABLE cards ADD COLUMN ck_foil_url TEXT;`
+
+// v16: the printing's promo_types tags, surfaced from the stored Scryfall
+// document like every other v5-style field. Foil treatments (ripple foil,
+// surge foil, …) live here — Scryfall models a treatment as a tag on the
+// printing whose foil finish is the treated copy, not as a finish of its
+// own. The column stores the raw JSON array; mapping tags to display
+// words happens in Go (FoilTreatment), so a new WotC treatment needs a
+// map entry, never a migration.
+const promoTypesColumn = `
+ALTER TABLE cards ADD COLUMN promo_types TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.promo_types')) VIRTUAL;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

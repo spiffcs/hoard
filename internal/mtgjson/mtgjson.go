@@ -42,6 +42,25 @@ var apiBase = "https://mtgjson.com/api/v5"
 // second currency inside a USD total would be a lie.
 var providerOrder = []string{"tcgplayer", "cardkingdom", "manapool"}
 
+// foilProviderOrder is the preference order for FOIL prices: Manapool
+// before Card Kingdom once TCGplayer has nothing. TCGplayer publishes no
+// foil data for the treated printings (ripple foils and friends), and for
+// those Manapool's marketplace ask covers more cards (344/345 vs 333 of
+// the hoard's ripples), runs deeper (90 vs 87 days), and sits a median
+// 45% under Card Kingdom's premium retail ask — closer to what the cards
+// actually trade at (owner's call, measured live). Normal keeps the old
+// order: TCGplayer answers nearly everything there and the fallback
+// rarely fires.
+var foilProviderOrder = []string{"tcgplayer", "manapool", "cardkingdom"}
+
+// listingOutlierRatio rejects marketplace troll listings: a vendor's
+// quote more than this many times the cheapest other vendor's quote for
+// the same finish is a joke listing surfacing as a "lowest ask" (a
+// $7,362,059.74 Legion Loyalty, observed live), not a price — the pick
+// moves to the next vendor. Only fires when another vendor quotes the
+// finish: with one voice there is nothing to compare against.
+const listingOutlierRatio = 20
+
 // Price is one card's USD paper prices and the vendor behind each.
 //
 // The two finishes carry separate sources because they are resolved
@@ -745,14 +764,6 @@ type Observation struct {
 	Source string
 }
 
-// historyProvider is the only vendor whose retail back catalogue is read.
-//
-// Scryfall's USD prices come from TCGplayer alone, so this series is the one
-// that is continuous with the prices hoard already holds. Splicing Card Kingdom
-// or Manapool onto the front of a Scryfall series would put a vendor's markup at
-// the join and read as a real price movement on the day the two meet.
-const historyProvider = "tcgplayer"
-
 // bidProvider is the only vendor whose buylist back catalogue is read —
 // Card Kingdom runs the only buylist in the feed, so its series is the bid
 // history, not a choice among several.
@@ -791,11 +802,70 @@ func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[str
 		}
 		return obs
 	}
+	// The retail back catalogue resolves per finish, walking providerOrder
+	// exactly like bestUSD: TCGplayer leads — its series is continuous with
+	// the Scryfall prices hoard already holds — but a finish TCGplayer never
+	// lists falls to the next vendor whose series exists. The MH3 ripple
+	// foils are the live case: TCGplayer publishes no foil series for them,
+	// so reading it alone left every Collector's Edition card one
+	// observation deep and invisible to movers (observed live). Whole
+	// series per finish, never spliced — and the fallback vendor is the
+	// same one pricing that finish today, so the history joins up with the
+	// present instead of putting a vendor's markup at a mid-series seam.
+	retailFinish := func(rec priceRecord, finish string) []Observation {
+		order := providerOrder
+		if finish == "foil" {
+			order = foilProviderOrder
+		}
+		series := func(name string) map[string]float64 {
+			v, ok := rec.Paper[name]
+			if !ok || v.Currency != "USD" {
+				return nil
+			}
+			if finish == "foil" {
+				return v.Retail.Foil
+			}
+			return v.Retail.Normal
+		}
+		// The vendor is chosen by its latest figure under the same troll-
+		// listing guard the day prices use — a polluted marketplace series
+		// (Legion Loyalty's climbed to seven figures, observed live) must
+		// not become ninety days of history.
+		type candidate struct {
+			name   string
+			latest float64
+		}
+		var cands []candidate
+		for _, name := range order {
+			if byDate := series(name); len(byDate) > 0 {
+				cands = append(cands, candidate{name, *latest(byDate)})
+			}
+		}
+		if len(cands) == 0 {
+			return nil
+		}
+		cheapest := cands[0].latest
+		for _, c := range cands {
+			cheapest = min(cheapest, c.latest)
+		}
+		pickName := cands[0].name
+		for _, c := range cands {
+			if len(cands) > 1 && cheapest > 0 && c.latest > cheapest*listingOutlierRatio {
+				continue
+			}
+			pickName = c.name
+			break
+		}
+		byDate := series(pickName)
+		obs := make([]Observation, 0, len(byDate))
+		for date, price := range byDate {
+			obs = append(obs, Observation{Date: date, Finish: finish, Price: price, Source: pickName})
+		}
+		return obs
+	}
 	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
 		var h CardHistory
-		if v, ok := rec.Paper[historyProvider]; ok {
-			h.Retail = side(v, v.Retail, historyProvider)
-		}
+		h.Retail = append(retailFinish(rec, "normal"), retailFinish(rec, "foil")...)
 		if v, ok := rec.Paper[bidProvider]; ok {
 			h.Bids = side(v, v.Buylist, bidProvider)
 		}
@@ -819,20 +889,40 @@ func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[str
 // The cost is that a card's two finishes can come from different shops. They are
 // independent numbers and Source records both.
 func bestUSD(uuid string, rec priceRecord) (Price, bool) {
-	pick := func(retail func(vendor) map[string]float64) (*float64, string) {
-		for _, name := range providerOrder {
+	pick := func(order []string, retail func(vendor) map[string]float64) (*float64, string) {
+		type quote struct {
+			name string
+			p    float64
+		}
+		var quotes []quote
+		for _, name := range order {
 			v, ok := rec.Paper[name]
 			if !ok || v.Currency != "USD" {
 				continue
 			}
 			if p := latest(retail(v)); p != nil {
-				return p, name
+				quotes = append(quotes, quote{name, *p})
 			}
 		}
-		return nil, ""
+		if len(quotes) == 0 {
+			return nil, ""
+		}
+		cheapest := quotes[0].p
+		for _, q := range quotes {
+			cheapest = min(cheapest, q.p)
+		}
+		for _, q := range quotes {
+			if len(quotes) > 1 && cheapest > 0 && q.p > cheapest*listingOutlierRatio {
+				continue // a troll listing, not a price
+			}
+			p := q.p
+			return &p, q.name
+		}
+		p := quotes[0].p
+		return &p, quotes[0].name
 	}
-	normal, normalSrc := pick(func(v vendor) map[string]float64 { return v.Retail.Normal })
-	foil, foilSrc := pick(func(v vendor) map[string]float64 { return v.Retail.Foil })
+	normal, normalSrc := pick(providerOrder, func(v vendor) map[string]float64 { return v.Retail.Normal })
+	foil, foilSrc := pick(foilProviderOrder, func(v vendor) map[string]float64 { return v.Retail.Foil })
 	if normal == nil && foil == nil {
 		return Price{}, false
 	}

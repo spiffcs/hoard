@@ -289,7 +289,17 @@ type cardLink struct {
 func cardLinks(c store.CardDetail, foil bool) []cardLink {
 	q := url.QueryEscape(c.Name)
 	tcg := "https://www.tcgplayer.com/search/magic/product?q=" + q
-	if c.TCGplayerID != nil {
+	switch {
+	case foil && c.Treatment != "":
+		// A treated foil (ripple, surge, …) is its own TCG product, and no
+		// feed we read carries that product's id — Scryfall and MTGJSON
+		// both attach the plain one, which opens a page whose price has
+		// nothing to do with the copy held (observed live: a ~$75 ripple
+		// linking a ~$12 page). The search lands beside the right product
+		// and is honest about not knowing its id.
+		tcg = "https://www.tcgplayer.com/search/magic/product?q=" +
+			url.QueryEscape(c.Name+" "+c.Treatment+" foil")
+	case c.TCGplayerID != nil:
 		tcg = fmt.Sprintf("https://www.tcgplayer.com/product/%d", *c.TCGplayerID)
 	}
 	// Foil holdings prefer the foil page, then the card's plain product
@@ -311,6 +321,20 @@ func cardLinks(c store.CardDetail, foil bool) []cardLink {
 		links = append(links, cardLink{"scryfall.com", c.ScryfallURL})
 	}
 	return links
+}
+
+// finishLabel names a finish for the overlay's row labels: non-foil gets
+// its hyphen, and a treated printing's foil group names the treatment —
+// the physical copy is a ripple foil, and calling it "foil" undersold
+// what the price row is pricing (observed live).
+func finishLabel(finish, treatment string) string {
+	if finish == "foil" && treatment != "" {
+		return treatment
+	}
+	if finish == "nonfoil" {
+		return "non-foil"
+	}
+	return finish
 }
 
 // nameSlug lowercases a card name into a URL path segment: runs of
@@ -433,7 +457,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 				mark(ui.Printing(h.SetCode, h.CollectorNumber), fieldSet),
 			}
 			if h.Finish != "nonfoil" {
-				parts = append(parts, h.Finish)
+				parts = append(parts, ui.FinishTreated(h.Finish, h.Treatment))
 			}
 			parts = append(parts, mark(where, fieldWhere))
 			out = append(out, ui.Truncate("▸ "+strings.Join(parts, " · "), width))
@@ -446,7 +470,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 			parts = append(parts, ui.Printing(h.SetCode, h.CollectorNumber))
 		}
 		if h.Finish != "nonfoil" {
-			parts = append(parts, h.Finish)
+			parts = append(parts, ui.FinishTreated(h.Finish, h.Treatment))
 		}
 		line := ui.Truncate("  "+strings.Join(append(parts, where), " · "), width)
 		// The cursor bar marks the row the overlay is pointed at: ↑/↓
@@ -472,10 +496,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		// the full depth still serves the views that read one series.
 		s, b := sharedWindow(d.series[finish], d.bids[finish])
 		if len(s) > 0 {
-			label := finish
-			if finish == "nonfoil" {
-				label = "non-foil"
-			}
+			label := finishLabel(finish, d.card.Treatment)
 			spark := ui.Spark(ui.Resample(pricePoints(s), sparkCells), sparkCells)
 			now := s[len(s)-1].Price
 			line := fmt.Sprintf("  %-9s %s  %s", label, spark, m.theme.Title.Render(ui.Money(now)))
@@ -636,11 +657,7 @@ func (m Model) compLines(d detail, width int) []string {
 		if !ok {
 			continue
 		}
-		label := finish
-		if finish == "nonfoil" {
-			label = "non-foil"
-		}
-		t.Add(ui.C(label),
+		t.Add(ui.C(finishLabel(finish, d.card.Treatment)),
 			ui.C(compMoney(c.HasMarket, c.Market)),
 			ui.C(compMoney(c.HasManapool, c.Manapool)),
 			ui.C(compMoney(c.HasCK, c.CK)),

@@ -410,3 +410,33 @@ func TestCompSaleSpread(t *testing.T) {
 		t.Errorf("grade(0.50) = %v, want saturated", g)
 	}
 }
+
+// A troll listing on the comp sheet — a marketplace ask orders of
+// magnitude over the other vendors — drops from its column and from LOW,
+// while a lone figure stays trusted.
+func TestAssessCompDropsTrollListings(t *testing.T) {
+	owned := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	qs := []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 2.10},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 2.49},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 7362059.74},
+	}
+	c := AssessComp(owned, qs)
+	if c.HasManapool {
+		t.Errorf("manapool = %v, want the troll listing dropped", c.Manapool)
+	}
+	if !c.HasMarket || !c.HasCK {
+		t.Errorf("sane figures must survive: %+v", c)
+	}
+	if c.Low != 2.10 || c.LowFrom != "tcgplayer" {
+		t.Errorf("low = %v from %q, want 2.10 from tcgplayer", c.Low, c.LowFrom)
+	}
+
+	// One voice: nothing to compare against, so it stands.
+	lone := AssessComp(owned, []mtgjson.Quote{
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 500},
+	})
+	if !lone.HasManapool || lone.Manapool != 500 {
+		t.Errorf("lone figure = %+v, want trusted", lone)
+	}
+}

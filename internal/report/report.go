@@ -103,7 +103,7 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 		t.Add(ui.Cell{Text: r.Name, Style: env.Identity(r.ColorIdentity)},
 			ui.C(ui.Pips(r.ColorIdentity)),
 			ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
-			ui.C(ui.Finish(r.Finish)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
+			ui.C(ui.FinishTreated(r.Finish, r.Treatment)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}
 	return t.Render() + env.Dim()(fmt.Sprintf(
 		"\n%s copies across %s cards count as $0.00.",

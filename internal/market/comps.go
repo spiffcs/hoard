@@ -160,7 +160,52 @@ func AssessComp(o store.OwnedFinish, qs []mtgjson.Quote) Comp {
 			}
 		}
 	}
+	c.dropTrollListings()
 	return c
+}
+
+// listingOutlierRatio matches the pricing layer's troll-listing guard: a
+// marketplace's "lowest ask" can be a joke listing (a $7,362,059.74
+// Legion Loyalty, observed live), and a comp sheet quoting it beside the
+// $2.49 the card actually sells for is noise wearing a money column.
+const listingOutlierRatio = 20
+
+// dropTrollListings clears any sale figure over listingOutlierRatio times
+// the cheapest other one on the sheet, and re-derives Low without it. A
+// lone figure is trusted — with one voice there is nothing to compare.
+func (c *Comp) dropTrollListings() {
+	type figure struct {
+		p   *float64
+		has *bool
+	}
+	figs := []figure{{&c.Market, &c.HasMarket}, {&c.CK, &c.HasCK}, {&c.Manapool, &c.HasManapool}}
+	var present []float64
+	for _, f := range figs {
+		if *f.has {
+			present = append(present, *f.p)
+		}
+	}
+	if len(present) < 2 {
+		return
+	}
+	cheapest := present[0]
+	for _, p := range present {
+		cheapest = min(cheapest, p)
+	}
+	c.Low, c.LowFrom = 0, ""
+	names := []string{MarketProvider, "cardkingdom", "manapool"}
+	for i, f := range figs {
+		if !*f.has {
+			continue
+		}
+		if cheapest > 0 && *f.p > cheapest*listingOutlierRatio {
+			*f.p, *f.has = 0, false
+			continue
+		}
+		if c.LowFrom == "" || *f.p < c.Low {
+			c.Low, c.LowFrom = *f.p, names[i]
+		}
+	}
 }
 
 // TopComps returns the first limit comp sheets. Result.Comps arrives

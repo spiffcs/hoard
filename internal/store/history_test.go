@@ -868,13 +868,14 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		// Rewind to v8 so reopening replays the snapshot migration — which
 		// means undoing everything later than v8: v9's snapshots, v10's
 		// watches, v11's card-frame columns, v13's bid table, v14's
-		// product-id column.
+		// product-id column, v16's promo-types column.
 		`DROP TABLE value_snapshots`,
 		`DROP TABLE watches`,
 		`DROP TABLE card_bid_history`,
 		`ALTER TABLE cards DROP COLUMN tcgplayer_id`,
 		`ALTER TABLE cards DROP COLUMN ck_url`,
 		`ALTER TABLE cards DROP COLUMN ck_foil_url`,
+		`ALTER TABLE cards DROP COLUMN promo_types`,
 		`ALTER TABLE cards DROP COLUMN power`,
 		`ALTER TABLE cards DROP COLUMN toughness`,
 		`ALTER TABLE cards DROP COLUMN loyalty`,

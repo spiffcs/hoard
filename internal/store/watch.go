@@ -6,6 +6,7 @@ package store
 // second answers "did anything I care about cross a line?".
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -38,7 +39,10 @@ type WatchStatus struct {
 	SetCode         string
 	CollectorNumber string
 	MTGJSONUUID     string
-	PriceUSD        *float64
+	// Treatment is the foil treatment's display word, empty for plain —
+	// same semantics as Card.Treatment.
+	Treatment string
+	PriceUSD  *float64
 }
 
 // Met reports whether the watch's condition currently holds.
@@ -83,6 +87,7 @@ const watchStatusQuery = `
 SELECT w.id, w.scryfall_id, w.display, w.finish, w.op, w.threshold,
        w.created_at, w.last_state,
        c.name, c.set_code, c.collector_number, COALESCE(c.mtgjson_uuid, ''),
+       c.promo_types,
        CASE WHEN w.finish = 'foil' THEN ` + effPriceFoil + ` ELSE ` + effPriceUSD + ` END
 FROM watches w
 JOIN cards c ON c.scryfall_id = w.scryfall_id
@@ -99,12 +104,14 @@ func (s *Store) ListWatches() ([]WatchStatus, error) {
 	var out []WatchStatus
 	for rows.Next() {
 		var w WatchStatus
+		var promos sql.NullString
 		if err := rows.Scan(&w.ID, &w.ScryfallID, &w.Display, &w.Finish, &w.Op,
 			&w.Threshold, &w.CreatedAt, &w.LastState,
 			&w.Name, &w.SetCode, &w.CollectorNumber, &w.MTGJSONUUID,
-			&w.PriceUSD); err != nil {
+			&promos, &w.PriceUSD); err != nil {
 			return nil, err
 		}
+		w.Treatment = FoilTreatment(promos)
 		out = append(out, w)
 	}
 	return out, rows.Err()

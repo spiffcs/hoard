@@ -456,3 +456,18 @@ func TestDivergeFrac(t *testing.T) {
 		}
 	}
 }
+
+// FinishTreated names a treated printing's foil after its treatment and
+// leaves everything else to Finish.
+func TestFinishTreated(t *testing.T) {
+	for _, tc := range []struct{ finish, treatment, want string }{
+		{"foil", "ripple", "ripple"},
+		{"foil", "", "foil"},
+		{"nonfoil", "ripple", "-"},
+		{"etched", "ripple", "etched"},
+	} {
+		if got := FinishTreated(tc.finish, tc.treatment); got != tc.want {
+			t.Errorf("FinishTreated(%q, %q) = %q, want %q", tc.finish, tc.treatment, got, tc.want)
+		}
+	}
+}

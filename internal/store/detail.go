@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 )
 
@@ -97,6 +98,9 @@ type Holding struct {
 	ScryfallID      string
 	SetCode         string
 	CollectorNumber string
+	// Treatment is the foil treatment's display word, empty for plain —
+	// same semantics as Card.Treatment. Filled by the by-name query.
+	Treatment string
 }
 
 // HoldingsOf reports every container holding a printing, and how many.
@@ -140,7 +144,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, `+containerLabel+`, ct.kind, e.finish, e.board, e.quantity,
-       c.scryfall_id, c.set_code, c.collector_number
+       c.scryfall_id, c.set_code, c.collector_number, c.promo_types
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -155,11 +159,13 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 	var out []Holding
 	for rows.Next() {
 		var h Holding
+		var promos sql.NullString
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
 			&h.Finish, &h.Board, &h.Quantity,
-			&h.ScryfallID, &h.SetCode, &h.CollectorNumber); err != nil {
+			&h.ScryfallID, &h.SetCode, &h.CollectorNumber, &promos); err != nil {
 			return nil, err
 		}
+		h.Treatment = FoilTreatment(promos)
 		out = append(out, h)
 	}
 	return out, rows.Err()
