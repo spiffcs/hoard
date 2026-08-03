@@ -1,7 +1,7 @@
 # Sprint: Portfolio + Scriptability
 
 Status document for the sprint started 2026-07-30, successor to
-[sprint-binders-interop.md](sprint-binders-interop.md) (complete: binders,
+the binders + interop sprint (complete: binders,
 export/import, destination picker, multi-card scanning, plus a hardening
 interlude). Written so a fresh session — human or AI — can resume with zero
 prior context. Update the status markers as phases land.
