@@ -71,7 +71,7 @@ hoard movers --since 30d --json |
          [.card.name, .oldUsd, .newUsd, .impactUsd] | @tsv'
 ```
 
-Cards a shop pays more for than the cheapest retail (true arbitrage):
+Cards Card Kingdom's buylist pays more for than TCGplayer's last-sold price (true arbitrage):
 
 ```sh
 hoard market --json |

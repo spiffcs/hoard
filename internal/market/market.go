@@ -1,4 +1,4 @@
-// Package arbitrage compares what different vendors will pay and charge for the
+// Package market compares what different vendors will pay and charge for the
 // cards you already own.
 //
 // It is analysis only: callers supply the holdings and the vendor quotes, and
@@ -187,7 +187,7 @@ func (k Kind) Title() string {
 	case KindProfit:
 		return "ARBITRAGE"
 	case KindLiquid:
-		return "EASY TO SELL"
+		return "BUYLIST NEAR MARKET"
 	}
 	return "BELOW MARKET"
 }

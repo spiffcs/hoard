@@ -312,12 +312,15 @@ func (m Model) marketStatus() string {
 	// tables' counts happen to sit.
 	secs := m.marketSections()
 	sec, idx := m.marketCursorPos()
-	// On the sell-side comp sheet the standing note teaches the SPREAD
-	// column's formula instead — that column is the sheet's one derived
-	// number, and the freshness disclaimer said nothing about it.
+	// On the comp sheets the standing note teaches that side's SPREAD
+	// formula instead — the column is each sheet's one derived number,
+	// and the two sides derive different things.
 	suffix := "one-day vendor prices"
-	if m.selectedComp() != nil && !m.compsBuySide {
-		suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
+	if m.selectedComp() != nil {
+		suffix = "SPREAD = high sale minus low sale, over high"
+		if m.compsBuySide {
+			suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
+		}
 	}
 	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · %s",
 		idx+1, secs[sec].count, m.selectedMarketNote(), suffix))
@@ -331,13 +334,17 @@ func (m Model) selectedMarketNote() string {
 	// oranges (observed live).
 	if c := m.selectedComp(); c != nil {
 		if m.compsBuySide {
-			if c.HasMarket {
-				return fmt.Sprintf("low ask %s at %s · tcg last sold for %s",
-					ui.Money(c.Low), c.LowFrom, ui.Money(c.Market))
+			// The buy side is the bid and its haircut.
+			if !c.HasBuylist {
+				return "no buylist bid today"
 			}
-			return fmt.Sprintf("low ask %s at %s · no sales figure today", ui.Money(c.Low), c.LowFrom)
+			note := c.BuylistTo + " pays " + ui.Money(c.Buylist)
+			if c.HasSpread() {
+				note += " · spread " + ui.PercentAlways(c.Spread())
+			}
+			return note
 		}
-		// The sell side reads the comp out venue by venue.
+		// The sell side reads the sale prices out venue by venue.
 		var parts []string
 		if c.HasMarket {
 			parts = append(parts, "last sold "+ui.Money(c.Market))
@@ -347,11 +354,6 @@ func (m Model) selectedMarketNote() string {
 		}
 		if c.HasCK {
 			parts = append(parts, "ck asks "+ui.Money(c.CK))
-		}
-		if c.HasBuylist {
-			parts = append(parts, c.BuylistTo+" pays "+ui.Money(c.Buylist))
-		} else {
-			parts = append(parts, "no buylist bid today")
 		}
 		return strings.Join(parts, " · ")
 	}

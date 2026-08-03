@@ -12,7 +12,8 @@ Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $13
 Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
 ──────────────────────────────────────────────────────────────────────────────────────────
 1/23 · sorted by value
-tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
+tab cards · n new binder · a add cards · R rename · d remove · : import/export · / filter · M floor
+F refresh prices · v views · u undo · q quit
 ```
 
 The left pane leads with **All cards** — every holding in the hoard, all
@@ -93,6 +94,11 @@ unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
 selection snaps back to All cards and says so.
 
+**Movers hides sub-$0.20 cards by default** — bulk twitching by cents is
+volume, not information. The status line says so, and the palette's
+"Toggle sub-$0.20 movers" shows them; this gate is separate from the
+<kbd>M</kbd> value floor, which layers on top.
+
 **The market view waits to be asked**: it needs today's vendor quotes from
 MTGJSON, so cycling to it
 says `press F to fetch` rather than starting a download because you passed
@@ -107,20 +113,20 @@ ARBITRAGE  buylist pays more than last-sold
 NAME           SET/NUM  FIN  TCG SOLD  BUYLIST  TO           PROFIT
 Tarnished Ci…  ody/329  -        $7.81   $10.50  cardkingdom   +$2.69
 
-EASY TO SELL  buylist pays at least 70% of last-sold · 1–8 of 32
+BUYLIST NEAR MARKET  buylist pays at least 70% of last-sold · 1–8 of 32
 NAME           SET/NUM  FIN  TCG SOLD  BUYLIST    PAYS
 Thassa, Deep…  thb/71   -       $25.00   $25.00  100.0%
 
-COMPS · SELL  vendor sale prices
-NAME           SET/NUM  FIN  TCG SOLD     MP      CK  BUYLIST  SPREAD
-Ancient Tomb   uma/236  foil    $60.00     —   $65.00   $42.00   30.0%
+COMPS · SELL  vendor sale prices; spread is how much they disagree
+NAME           SET/NUM  FIN  TCG SOLD     MP      CK  SPREAD
+Ancient Tomb   uma/236  foil    $60.00     —   $65.00    7.7%
 ```
 
 Everything anchors on tcgplayer's sales-derived market price — the one
 number that describes what cards actually trade at. The three tables hold
 fixed regions of the pane, each with its own headers, and each scrolls
 independently when its rows overflow — the title line says where you are
-(`EASY TO SELL … · 1–8 of 32`), which is how the 70–80% pays tail stays
+(`BUYLIST NEAR MARKET … · 1–8 of 32`), which is how the 70–80% pays tail stays
 reachable rather than hidden under the top of the ranking. A table emptied
 by the collection filter keeps its title over a note rather than
 vanishing. <kbd>]</kbd>/<kbd>[</kbd> jump straight to the next or previous
@@ -132,21 +138,23 @@ comps room — with `--min` and `--limit`; see
 [pricing.md](pricing.md#where-vendors-disagree).
 
 **COMPS** is the comp sheet sellers build by hand, and it has two halves —
-<kbd>b</kbd> flips between them. The **sell side** (default) is the comp
-proper: each point of sale's number for the card side by side — tcg's
-last-sold price, manapool's ask, cardkingdom's ask — with the cash bid as
-the floor. **TCG SOLD** is always tcgplayer's sales-derived price, and
-the table's note says so — TCGplayer has no separate ask column because
-that one figure is both its price and its market anchor. The **buy side**
-answers the opposite question, the cheapest copy to acquire: the same
-asks, the lowest of them, and who asks it. **SPREAD** is retail minus
-buylist over retail, the hobby's confidence signal: 20–30% marks a liquid
-staple dealers can flip, around 50% is typical, and 80–90% means the
-retail price spiked and no dealer believes it yet — the column grades
-green as it tightens. A dash means no buylist bid today (Card Kingdom
-runs the only buylist in the MTGJSON feed). The comps sort cycles
-value → spread → market → low → buylist → name; spread sorts tightest
-first.
+<kbd>b</kbd> flips between them. The **sell side** (default) is the
+sale-price comp: what each vendor sells the card for — tcg's last-sold
+price, manapool's ask, cardkingdom's ask — with **SPREAD** measuring how
+much they disagree (highest sale minus lowest, over the highest). It
+grades on a heat ramp: green when the vendors agree — agreement is what
+makes a price real — darkening through red as they diverge. **TCG SOLD**
+is always tcgplayer's sales-derived price — TCGplayer has no separate ask
+column because that one figure is both its price and its market anchor.
+The **buy side** is the other side of the counter: the asks beside Card
+Kingdom's cash bid, with its own **SPREAD** — retail minus buylist over
+retail, the hobby's confidence signal: 20–30% marks a liquid staple
+dealers can flip, around 50% is typical, and 80–90% means the retail
+price spiked and no dealer believes it yet — graded green as it tightens.
+A dash means no buylist bid today (Card Kingdom runs the only buylist in
+the MTGJSON feed). Each side's status line states its spread formula. The
+comps sort cycles value → spread → market → low → buylist → name; spread
+sorts tightest first.
 
 ## Filtering
 

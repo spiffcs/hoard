@@ -262,8 +262,8 @@ with why).
    add. The paired parity-ledger items landed in the same sprint:
    import/export prompts, deck-add-by-URL, the valuation report overlay,
    and the `Deps.Confirm` bridge (catalog download questions now appear
-   as a real confirm instead of silently declining). See
-   docs/sprint-tui-completion.md.
+   as a real confirm instead of silently declining). The sprint plan was
+   pruned once complete; the add flow is documented in browsing.md.
 
 ## 2026-07-31 — round 2, live session on the TUI-completion build
 

@@ -589,7 +589,7 @@ func (m Model) compLines(d detail, width int) []string {
 			compSpreadCell(env, c))
 		// Only the arbitrage verdict earns a line: a bid over the sales
 		// price is news; a decent bid is just the table's numbers again
-		// (the EASY TO SELL line said nothing the CK PAYS column didn't).
+		// (a liquid verdict line said nothing the CK PAYS column didn't).
 		if held[finish] {
 			if k, ok := c.Verdict(); ok && k == market.KindProfit {
 				verdicts = append(verdicts, verdict{finish, c})

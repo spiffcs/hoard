@@ -137,8 +137,8 @@ func TestDetailCompsSection(t *testing.T) {
 		}
 	}
 	// A 70%-pays bid earns no line of its own — the CK PAYS column already
-	// says it, and the EASY TO SELL verdict was cut as noise.
-	if strings.Contains(out, "EASY TO SELL") {
+	// says it, and the liquid verdict was cut as noise.
+	if strings.Contains(out, "BUYLIST NEAR MARKET") {
 		t.Errorf("liquid verdict should not render:\n%s", out)
 	}
 	// PRICE always precedes COMPS.

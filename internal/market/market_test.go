@@ -379,3 +379,34 @@ func TestCompVerdict(t *testing.T) {
 		}
 	}
 }
+
+// SaleSpread measures how much the sheet's sale prices disagree — the gap
+// between the highest and lowest present figure, over the highest. One
+// price agrees with nothing.
+func TestCompSaleSpread(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Comp
+		want float64
+		ok   bool
+	}{
+		{"two prices", Comp{Market: 8, HasMarket: true, CK: 10, HasCK: true}, 0.2, true},
+		{"three prices span", Comp{Market: 10, HasMarket: true, Manapool: 5, HasManapool: true, CK: 9, HasCK: true}, 0.5, true},
+		{"agreement", Comp{Market: 10, HasMarket: true, Manapool: 10, HasManapool: true}, 0, true},
+		{"one price", Comp{Market: 10, HasMarket: true}, 0, false},
+		{"no prices", Comp{}, 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := tc.c.SaleSpread()
+		if ok != tc.ok || (ok && (got < tc.want-1e-9 || got > tc.want+1e-9)) {
+			t.Errorf("%s: SaleSpread = %v,%v; want %v,%v", tc.name, got, ok, tc.want, tc.ok)
+		}
+	}
+	// The grade anchors: agreement pins the green end, half-off saturates.
+	if g := SaleSpreadGrade(0.05); g != 0 {
+		t.Errorf("grade(0.05) = %v, want the green end", g)
+	}
+	if g := SaleSpreadGrade(0.50); g != 1 {
+		t.Errorf("grade(0.50) = %v, want saturated", g)
+	}
+}

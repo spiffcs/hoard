@@ -1,6 +1,17 @@
 # Should hoard store its data as MTGJSON?
 
-**Status:** mostly built · **Date:** 2026-07-28, amended 2026-07-30
+**Status:** historical design record · **Date:** 2026-07-28, amended 2026-07-30
+and 2026-08-02
+
+This document is kept for its decision history (the alternatives weighed in
+§A–E); its "as built" claims describe late July and the code has moved on.
+Corrections as of 2026-08-02: the schema is at **v15** (`card_bid_history` v13,
+`tcgplayer_id` v14, `ck_url`/`ck_foil_url` v15 — three migrations after §D's
+"no migration was needed"); the backfill ingests **Card Kingdom bids** as well
+as TCGplayer retail; the `arbitrage` command is now `market`; the migration
+runner lives in `internal/store/migrate.go` (not store.go) and the export/price
+commands split out of main.go into per-command files. Current behavior is
+documented in [pricing.md](pricing.md) and [browsing.md](browsing.md).
 
 The migration runner (§1), richer card data (§2) and price history (§3) all
 shipped, along with a 90-day MTGJSON backfill that this document originally

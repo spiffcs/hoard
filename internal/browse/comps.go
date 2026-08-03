@@ -90,15 +90,30 @@ func (m *Model) applyMarketComps(all []market.Comp) {
 	m.sortCompRows()
 }
 
-// compsSortColumns is the comps table's cycle; index 0 reproduces the
-// value ranking rows arrive in.
-var compsSortColumns = []string{"value", "spread", "market", "low", "buylist", "name", "set/num"}
+// The comps sort cycles follow the visible side: each names only columns
+// its table shows, and "spread" means that side's spread — sorting the
+// sell table by the buy side's bid-spread shuffled rows against the
+// column on screen (observed live). Index 0 reproduces the value ranking
+// rows arrive in.
+var (
+	compsSellSortColumns = []string{"value", "spread", "tcg sold", "name", "set/num"}
+	compsBuySortColumns  = []string{"value", "spread", "buylist", "name", "set/num"}
+)
+
+// compsSortColumnsNow is the cycle for the side currently showing.
+func (m Model) compsSortColumnsNow() []string {
+	if m.compsBuySide {
+		return compsBuySortColumns
+	}
+	return compsSellSortColumns
+}
 
 // sortCompRows re-orders the comps by their own column and direction.
 func (m *Model) sortCompRows() {
-	key, rev := compsSortColumns[m.compsSortIdx], m.compsSortRev
+	key, rev := m.compsSortColumnsNow()[m.compsSortIdx], m.compsSortRev
+	buySide := m.compsBuySide
 	sortRows(m.marketComps, rev, func(a, b market.Comp) int {
-		if c := compKeyFor(key, a, b); c != 0 {
+		if c := compKeyFor(key, buySide, a, b); c != 0 {
 			return c
 		}
 		return strings.Compare(a.Card.Name, b.Card.Name)
@@ -108,14 +123,15 @@ func (m *Model) sortCompRows() {
 // compKeyFor compares two comp sheets on one column. Money and value run
 // descending (the repo's convention); spread runs ascending — the tight
 // end is the interesting one — with undefined spreads last.
-func compKeyFor(key string, a, b market.Comp) int {
+func compKeyFor(key string, buySide bool, a, b market.Comp) int {
 	switch key {
 	case "spread":
-		return cmp.Compare(spreadOrInf(a), spreadOrInf(b))
-	case "market":
+		if buySide {
+			return cmp.Compare(spreadOrInf(a), spreadOrInf(b))
+		}
+		return cmp.Compare(saleSpreadOrInf(a), saleSpreadOrInf(b))
+	case "tcg sold":
 		return cmp.Compare(b.Market, a.Market)
-	case "low":
-		return cmp.Compare(b.Low, a.Low)
 	case "buylist":
 		return cmp.Compare(b.Buylist, a.Buylist)
 	case "name":
@@ -127,7 +143,7 @@ func compKeyFor(key string, a, b market.Comp) int {
 	return cmp.Compare(b.Card.Value, a.Card.Value)
 }
 
-// spreadOrInf sorts the rows with no spread after every defined one.
+// spreadOrInf sorts the rows with no bid spread after every defined one.
 func spreadOrInf(c market.Comp) float64 {
 	if !c.HasSpread() {
 		return math.Inf(1)
@@ -135,21 +151,30 @@ func spreadOrInf(c market.Comp) float64 {
 	return c.Spread()
 }
 
+// saleSpreadOrInf does the same for the sell side's sale spread.
+func saleSpreadOrInf(c market.Comp) float64 {
+	s, ok := c.SaleSpread()
+	if !ok {
+		return math.Inf(1)
+	}
+	return s
+}
+
 // compsSellNote and compsBuyNote describe each side of the sheet; TCG
 // SOLD names its own source. The CLI keeps market.CompsNote for its one
 // full-width table.
 const (
-	compsSellNote = "vendor sale price, CK Buylist"
-	compsBuyNote  = "vendor ask, tcgplayer's last-sold"
+	compsSellNote = "vendor sale prices; spread is how much they disagree"
+	compsBuyNote  = "the cash bid against the asks"
 )
 
 // compsSectionTable lays out the comps rows, headers included. The sheet
 // has two halves and the table shows one at a time. The sell side is the
-// comp proper: each point of sale's number for the card side by side —
-// tcgplayer's last-sold, the vendors' asks — with the cash bid as the
-// floor and the spread as the confidence signal. The buy side asks the
-// opposite question, which copy is cheapest to acquire, so it leads with
-// LOW and who asks it.
+// sale-price comp: what each vendor sells the card for — tcgplayer's
+// last-sold, the asks — with SPREAD measuring how much they disagree
+// (agreement is what makes a price real). The buy side is the other side
+// of the counter: the asks beside Card Kingdom's cash bid, with SPREAD as
+// the buyer's haircut — buy at the ask, recoup at the bid.
 func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 8, Style: env.Dim()}
@@ -159,18 +184,16 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 		t := ui.Table{Cols: []ui.Col{name, setNum, fin,
 			{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
 			{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
-			{Title: "AT", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "LOW", Align: ui.Right},
-			{Title: "TCG SOLD", Align: ui.Right},
+			{Title: "CK BUYLIST", Align: ui.Right},
+			{Title: "SPREAD", Align: ui.Right},
 		}}
 		for _, c := range comps {
 			t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
 				ui.C(c.Printing()), ui.C(ui.Finish(c.Card.Finish)),
 				ui.C(compMoney(c.HasManapool, c.Manapool)),
 				ui.C(compMoney(c.HasCK, c.CK)),
-				ui.C(c.LowFrom),
-				ui.C(ui.Money(c.Low)),
-				ui.C(compMoney(c.HasMarket, c.Market)))
+				ui.C(compMoney(c.HasBuylist, c.Buylist)),
+				compSpreadCell(env, c))
 		}
 		return t
 	}
@@ -179,8 +202,7 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 		{Title: "TCG SOLD", Align: ui.Right},
 		{Title: "MP", Align: ui.Right, Priority: 6, Style: env.Dim()},
 		{Title: "CK", Align: ui.Right, Priority: 5, Style: env.Dim()},
-		{Title: "BUYLIST", Align: ui.Right},
-		{Title: "SPREAD", Align: ui.Right, Priority: 4},
+		{Title: "SPREAD", Align: ui.Right},
 	}}
 	for _, c := range comps {
 		t.Add(ui.Cell{Text: c.Card.Name, Style: env.Identity(c.Card.ColorIdentity)},
@@ -188,10 +210,20 @@ func compsSectionTable(env ui.Env, comps []market.Comp, buySide bool) ui.Table {
 			ui.C(compMoney(c.HasMarket, c.Market)),
 			ui.C(compMoney(c.HasManapool, c.Manapool)),
 			ui.C(compMoney(c.HasCK, c.CK)),
-			ui.C(compMoney(c.HasBuylist, c.Buylist)),
-			compSpreadCell(env, c))
+			compSaleSpreadCell(env, c))
 	}
 	return t
+}
+
+// compSaleSpreadCell heats the sale prices' disagreement — green when the
+// vendors agree, darkening red as they don't — or the dim dash when the
+// sheet has fewer than two sale figures to compare.
+func compSaleSpreadCell(env ui.Env, c market.Comp) ui.Cell {
+	s, ok := c.SaleSpread()
+	if !ok {
+		return ui.Cell{Text: "—", Style: env.Dim()}
+	}
+	return ui.Cell{Text: ui.PercentAlways(s), Style: env.Heat(market.SaleSpreadGrade(s))}
 }
 
 // compMoney renders a vendor's figure, or the unknown dash when that

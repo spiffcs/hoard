@@ -54,6 +54,48 @@ func (c Comp) HasSpread() bool { return c.HasBuylist && c.Low > 0 }
 // typical, 80-90% means the retail price is not real yet.
 func (c Comp) Spread() float64 { return 1 - c.Buylist/c.Low }
 
+// SaleSpread is how much the sale prices on the sheet disagree: the gap
+// between the highest and lowest of the present figures (TCG last-sold,
+// MP ask, CK ask), as a fraction of the highest. ok is false with fewer
+// than two figures — one price agrees with nothing.
+func (c Comp) SaleSpread() (float64, bool) {
+	var prices []float64
+	if c.HasMarket {
+		prices = append(prices, c.Market)
+	}
+	if c.HasManapool {
+		prices = append(prices, c.Manapool)
+	}
+	if c.HasCK {
+		prices = append(prices, c.CK)
+	}
+	if len(prices) < 2 {
+		return 0, false
+	}
+	lo, hi := prices[0], prices[0]
+	for _, p := range prices[1:] {
+		lo = min(lo, p)
+		hi = max(hi, p)
+	}
+	if hi <= 0 {
+		return 0, false
+	}
+	return 1 - lo/hi, true
+}
+
+// saleSpreadTight and saleSpreadWide anchor the display heat: within 5%
+// the vendors effectively agree, past 50% they are naming different
+// cards.
+const (
+	saleSpreadTight = 0.05
+	saleSpreadWide  = 0.50
+)
+
+// SaleSpreadGrade positions a sale spread on 0..1 for the heat ramp,
+// high = disagreement: at or under 5% sits at the green end, 50% and past
+// saturates the red.
+func SaleSpreadGrade(s float64) float64 { return grade(s, saleSpreadTight, saleSpreadWide) }
+
 // Verdict classifies a comp sheet the way the market view's sections do:
 // a bid over the sales price is arbitrage, a bid at liquidFloor or better
 // is easy to sell, anything else earns no verdict. Shares the sections'

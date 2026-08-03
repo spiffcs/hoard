@@ -78,7 +78,10 @@ import stops at the day your own history begins.
 Backfilled prices come from **TCGplayer**, which is the source Scryfall's USD
 figures come from, so the imported series joins up with your own instead of
 stepping at the seam. Where a real observation and an imported one land on the
-same day, the real one stands.
+same day, the real one stands. The same pass also imports **Card Kingdom's
+buylist bids** into their own table — the bid history behind the card detail's
+buylist sparkline and spread trend — bounded the same way against the bid
+series' own first observation.
 
 Two things it cannot reach: printings MTGJSON has no id for, and printings
 TCGplayer never priced — the same gap `unpriced` reports. Those simply have no
@@ -121,6 +124,12 @@ Planar Nexus   m3c/80   foil    ×1   $37.99  $37.99*
 Cardmarket is deliberately not used: it quotes euros, and a second currency
 inside a dollar total would be misleading.
 
+The per-set id resolution that powers this also harvests **Card Kingdom's
+product links** from the same set files — the sanctioned mtgjson.com redirects,
+one per finish — which is what lets the card detail's cardkingdom link open the
+exact product page instead of a name search. One extra pass over your sets the
+first time, then stamped and never fetched again.
+
 ## Cards that cannot be priced
 
 `hoard unpriced` shows every card counting as $0.00 and which deck each one is
@@ -160,38 +169,42 @@ is safe to re-run: a second pass finds nothing.
 
 A valuation reports one price per card as though it were the truth. It isn't: the
 same card is quoted by three US vendors at once, on both sides of the counter,
-and they disagree more than a single figure suggests. `hoard market` shows
-where, in three sections:
+and they disagree more than a single figure suggests. Everything anchors on
+**TCGplayer's sales-derived market price** — the one number that describes what
+cards actually trade at. `hoard market` shows where the vendors depart from it,
+in four blocks:
 
 ```
-ARBITRAGE  a shop pays more than the cheapest retail
-Graveborn Muse     lgn/73   -   $11.17 manapool   $13.50 cardkingdom  +$2.33
-Ugin's Labyrinth   mh3/359  -   $14.43 manapool   $16.50 cardkingdom  +$2.07
+ARBITRAGE  CK buylist pays more than TCG last-sold
+Tarnished Citadel  ody/329  -    $7.81 last sold  $10.50 cardkingdom  +$2.69
 
-EASY TO SELL  buylist is close to retail
-Arcane Denial      msc/147  -    $1.37 retail      $1.35 cardkingdom   98.5%
-Living Death       tdc/185  -    $2.83 retail      $2.75 cardkingdom   97.2%
+BUYLIST NEAR MARKET  CK buylist pays at least 70% of TCG last-sold
+Thassa, Deep-Dw…   thb/71   -   $25.00 last sold  $25.00 cardkingdom  100.0%
 
-CHEAPEST VS DEAREST  where the vendors disagree
-Siege-Gang Lieut.  m3c/61  foil  $4.49 cardkingdom $41.68 manapool   +828.3%
-Copy Land          m3c/47  foil  $2.49 cardkingdom $11.95 manapool   +379.9%
+BELOW MARKET  a marketplace is asking far under tcg's last-sold price
+Glimmerpost        som/223  foil  $1.10 manapool     $3.99 last sold  -72.4%
+
+COMPS  a list comparing vendor prices
+Ancient Tomb   uma/236  foil   —   $65.00 tcgplayer  $60.00  $60.00  $42.00  30.0%
 ```
 
-The first section is the only unambiguous one: a shop offering more than the
-cheapest asking price is free money, though in practice a couple of dollars a
-card. The second tells you what you could turn into cash near sticker price,
-against a median card that fetches about half. The third is where to buy, and
-where a copy you own is being sold for more than you would guess.
+The first section is the only unambiguous one: a dealer's cash bid above what
+the card actually sells for is free money, though in practice a couple of
+dollars a card. The second is where the buylist pays as much as — or nearly as
+much as — the current sale price: cards you could turn into cash near full
+value, against a median card whose bid fetches about half. The third is
+where to buy: real asks at least 25% under the last-sold price. The other
+direction — a lone listing far above the sales price — is scalper noise and is
+deliberately not a section. **COMPS** is the per-card sheet: each vendor's ask,
+the lowest of them, the buylist bid, and the **spread** (retail minus buylist
+over retail) — the hobby's confidence signal, tight meaning the price is real.
 
 `--min` sets the floor on what you would pay (default `$1`), because a 900%
 spread between $0.20 and $1.99 is arithmetic rather than an opportunity.
-`--limit` sets rows per section.
-
-One listing in every few hundred is simply wrong. Manapool quotes one card at
-over $138,000 against Card Kingdom's $2.49, so a price no other vendor comes
-within 20x of is discarded and counted in the footer rather than shown as the
-find of the century. Everything here is a vendor's asking or offering price on
-one day, not a guaranteed sale.
+`--limit` sets rows per section. Everything here is one day's vendor prices.
+The browser's MARKET view shows the same analysis (minus BELOW MARKET, whose
+space serves a two-sided comps table there), filtered to whichever collection
+is selected; see [browsing.md](browsing.md#views).
 
 ## The local catalog
 
@@ -207,9 +220,12 @@ hoard catalog update   # rebuild now
 ```
 
 About 107,000 paper printings: a ~77 MB download that builds to ~57 MB on disk in
-under ten seconds. hoard asks before downloading it rather than spending your
+under ten seconds. The CLI asks before downloading it rather than spending your
 bandwidth uninvited, and declining is fine — a stale catalog still answers, and
-an absent one just means the API path hoard always used.
+an absent one just means the API path hoard always used. The browser is the one
+exception: opening it with no catalog built auto-starts the download as an
+ordinary cancellable operation, because its whole value is fast lookups in the
+add flow.
 
 On a real collection the difference is stark. `update-prices` used to make 21
 batched requests and could be rate-limited part-way, losing everything already

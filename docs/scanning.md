@@ -162,11 +162,9 @@ single-card fields remain populated from the frame-wide read, so the
 single-card path works across any pairing.
 
 The trigger's thresholds are tunable without recompiling, mainly for
-experimenting: `HOARD_SCAN_AUTO_INTERVAL` (sample seconds, 0.25),
-`HOARD_SCAN_AUTO_STABLE` (still samples before firing, 4),
-`HOARD_SCAN_AUTO_REARM` (changed samples before re-arming, 3), and
-`HOARD_SCAN_AUTO_IOU` (how exactly rectangles must overlap to count as
-unmoved, 0.75). `HOARD_SCAN_AUTO=1` traces the trigger's decisions to stderr.
+experimenting — the knobs and their current defaults live in
+[scanner-tuning.md](scanner-tuning.md), which is the one source that tracks
+them. `HOARD_SCAN_AUTO=1` traces the trigger's decisions to stderr.
 
 ## Rotation
 

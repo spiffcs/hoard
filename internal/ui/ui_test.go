@@ -384,3 +384,24 @@ func TestSparkIgnoresNonFiniteValues(t *testing.T) {
 		t.Errorf("Spark with NaN/Inf = %q, want the two finite points", got)
 	}
 }
+
+// Heat runs green to red: the endpoints match the ramp's own anchors
+// (computed through it, never hardcoded — the termenv round-trip lesson),
+// the midpoint differs from both, and a colorless env stays plain.
+func TestHeatRamp(t *testing.T) {
+	e := Env{Color: true}
+	lo, mid, hi := e.Heat(0)("x"), e.Heat(0.5)("x"), e.Heat(1)("x")
+	if lo == mid || mid == hi || lo == hi {
+		t.Errorf("ramp does not move: %q %q %q", lo, mid, hi)
+	}
+	if e.Heat(-1)("x") != lo || e.Heat(2)("x") != hi {
+		t.Errorf("ramp must clamp at its ends")
+	}
+	if got := (Env{}).Heat(1)("x"); got != "x" {
+		t.Errorf("colorless heat = %q, want plain", got)
+	}
+	// Agreement wears the same green Grade's top end does.
+	if lo != e.Grade(1)("x") {
+		t.Errorf("heat's green end must match grade's: %q vs %q", lo, e.Grade(1)("x"))
+	}
+}

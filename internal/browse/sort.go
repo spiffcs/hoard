@@ -63,7 +63,7 @@ func (m Model) sortLabel() string {
 		// Checked before selectedMarketKind, which defaults to the profit
 		// table for any cursor outside the Kind sections.
 		if m.selectedComp() != nil {
-			label := "comps · " + compsSortColumns[m.compsSortIdx]
+			label := "comps · " + m.compsSortColumnsNow()[m.compsSortIdx]
 			if m.compsSortRev {
 				label += " (reversed)"
 			}
@@ -89,7 +89,7 @@ func (m Model) sortLabel() string {
 func (m *Model) cycleSort() {
 	if m.view == viewMarket {
 		if m.selectedComp() != nil {
-			m.compsSortIdx = (m.compsSortIdx + 1) % len(compsSortColumns)
+			m.compsSortIdx = (m.compsSortIdx + 1) % len(m.compsSortColumnsNow())
 			m.compsSortRev = false
 			m.sortCompRows()
 			m.cursor[paneCards] = len(m.marketRows) // the comps section's first row

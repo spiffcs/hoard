@@ -1447,7 +1447,7 @@ func TestMarketSortIsPerTable(t *testing.T) {
 // rows rather than the selected container's.
 func TestViewRowCountFollowsTheMode(t *testing.T) {
 	st := testStore()
-	st.movers = []store.PriceChange{{Name: "One"}, {Name: "Two"}}
+	st.movers = []store.PriceChange{{Name: "One", New: 5}, {Name: "Two", New: 8}}
 	m := newTestModel(t, st)
 	if got := m.rowCount(paneCards); got != 3 {
 		t.Errorf("holdings rowCount = %d, want 3", got)
@@ -1575,7 +1575,7 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		t.Fatal("no rows after a successful fetch")
 	}
 	out := m.View()
-	for _, want := range []string{"ARBITRAGE", "buylist pays more", "Profitable", "EASY TO SELL", "+$18.00"} {
+	for _, want := range []string{"ARBITRAGE", "buylist pays more", "Profitable", "BUYLIST NEAR MARKET", "+$18.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
@@ -1942,7 +1942,7 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	out := m.View()
 	// The liquid section carries its own honest headers: what the card
 	// sells for, what the buylist pays, and the fraction.
-	for _, want := range []string{"EASY TO SELL", "TCG SOLD", "BUYLIST", "PAYS", "90.0%"} {
+	for _, want := range []string{"BUYLIST NEAR MARKET", "TCG SOLD", "BUYLIST", "PAYS", "90.0%"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("liquid section missing %q:\n%s", want, out)
 		}
@@ -2511,17 +2511,21 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 	}
 }
 
-// The comps sort is its own: cycling it re-orders only the comps rows and
-// labels itself, leaving the Kind tables' state untouched.
+// The comps sort is its own — cycling it re-orders only the comps rows
+// and labels itself — and each side sorts by its own SPREAD: the sale
+// prices' disagreement on sell, the bid's haircut on buy.
 func TestCompsSortIsIndependent(t *testing.T) {
+	agree := comp("Agree", 90, 100, 20)  // bid spread 80%
+	agree.CK, agree.HasCK = 101, true    // sale spread 1%
+	differ := comp("Differ", 50, 50, 40) // bid spread 20%
+	differ.CK, differ.HasCK = 100, true  // sale spread 50%
+	lone := comp("Lone", 70, 30, 35)     // bid spread ~-17% (arbitrage)
+	// Lone has only its Market figure: no sale spread to sort by.
+
 	res := market.Result{
 		Opportunities: []market.Opportunity{opp("Profitable", 2, 20)},
-		Comps: []market.Comp{
-			comp("Wide", 90, 100, 20), // 80% spread
-			comp("Tight", 50, 50, 40), // 20% spread
-			comp("NoBid", 70, 30, 0),  // undefined spread sorts last
-		},
-		Compared: 4,
+		Comps:         []market.Comp{agree, differ, lone},
+		Compared:      4,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn) (market.Result, error) { return res, nil })
 	for range 4 {
@@ -2532,18 +2536,38 @@ func TestCompsSortIsIndependent(t *testing.T) {
 	m = next.(Model)
 	m.focus = paneCards
 
-	// Arrival order is value-descending: Wide, NoBid, Tight.
-	if m.marketComps[0].Card.Name != "Wide" {
-		t.Fatalf("arrival order = %v", m.marketComps[0].Card.Name)
+	names := func() []string {
+		out := make([]string, len(m.marketComps))
+		for i, c := range m.marketComps {
+			out[i] = c.Card.Name
+		}
+		return out
 	}
+	// Arrival order is value-descending.
+	if names()[0] != "Agree" {
+		t.Fatalf("arrival order = %v", names())
+	}
+
+	// Sell side: SPREAD is the sale prices' disagreement — most agreement
+	// first, no-second-figure last.
 	m.cursor[paneCards] = len(m.marketRows) // first comps row
 	m = key(m, "s")                         // value → spread
 	if got := m.sortLabel(); got != "comps · spread" {
 		t.Fatalf("label = %q", got)
 	}
-	names := []string{m.marketComps[0].Card.Name, m.marketComps[1].Card.Name, m.marketComps[2].Card.Name}
-	if names[0] != "Tight" || names[2] != "NoBid" {
-		t.Errorf("spread order = %v, want tightest first and no-bid last", names)
+	if got := names(); got[0] != "Agree" || got[1] != "Differ" || got[2] != "Lone" {
+		t.Errorf("sell spread order = %v, want agreement first, undefined last", got)
+	}
+
+	// Buy side: SPREAD is the bid's haircut — the flip resets to value,
+	// then spread ranks the arbitrage bid (negative spread) tightest.
+	m = key(m, "b")
+	if got := m.sortLabel(); got != "comps · value" {
+		t.Fatalf("side flip should reset the sort, label = %q", got)
+	}
+	m = key(m, "s") // value → spread
+	if got := names(); got[0] != "Lone" || got[1] != "Differ" || got[2] != "Agree" {
+		t.Errorf("buy spread order = %v, want the bid-over-market row tightest", got)
 	}
 	if m.marketSortIdx != [3]int{} {
 		t.Errorf("kind tables' sort state moved: %v", m.marketSortIdx)
@@ -2570,5 +2594,24 @@ func TestCompsRespectValueFloor(t *testing.T) {
 	m = key(m, "M") // floor $5
 	if len(m.marketComps) != 1 || m.marketComps[0].Card.Name != "Rich" {
 		t.Errorf("floored comps = %+v, want only the rich row", m.marketComps)
+	}
+}
+
+// Staging a confirm must not move the frame: the quit prompt's one-line
+// help borrows the gutter, but the view's own two-line help keeps its
+// height reserved so the panes hold still through a y/n question.
+func TestQuitConfirmKeepsFrameHeight(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab") // the card pane's help is the long, wrapping one
+	before := m.visibleRows()
+	if len(wrapHelp(m.helpLine(), m.width)) < 2 {
+		t.Skip("fixture help no longer wraps at this width; widen the line or narrow the frame")
+	}
+	m = key(m, "q")
+	if m.confirm == nil {
+		t.Fatal("q did not stage the quit confirm")
+	}
+	if after := m.visibleRows(); after != before {
+		t.Errorf("visible rows moved %d → %d under the confirm; the frame must hold still", before, after)
 	}
 }

@@ -49,6 +49,10 @@ func (v viewMode) next() viewMode { return (v + 1) % (viewMarket + 1) }
 // 'W'; the default matches `hoard movers`, so the two agree.
 var moversWindowDays = []int{30, 7, 90}
 
+// moversPennyCeiling is the movers view's noise gate: cards priced at or
+// under it hide by default (the palette toggles them back).
+const moversPennyCeiling = 0.20
+
 // moversWindow is the current lookback.
 func (m Model) moversWindow() time.Duration {
 	days := moversWindowDays[0]
@@ -119,6 +123,11 @@ func (m *Model) deriveView() {
 		rows := make([]store.PriceChange, 0, len(m.allMovers))
 		for _, c := range m.allMovers {
 			if m.underFloor(&c.New) {
+				continue
+			}
+			// The penny gate, separate from the floor: a $0.15 card
+			// twitching by a cent is a row, not information.
+			if !m.moversPennies && c.New <= moversPennyCeiling {
 				continue
 			}
 			if filtered && !m.inContainerPriced(cid, c.ScryfallID, c.Finish) {

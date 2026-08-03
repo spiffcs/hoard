@@ -289,33 +289,42 @@ func TestCompsSidesToggle(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	m = next.(Model)
 
-	view := strings.Join(m.marketLines(110), "\n")
-	if !strings.Contains(view, "COMPS · SELL") || !strings.Contains(view, "BUYLIST") ||
-		!strings.Contains(view, "SPREAD") {
-		t.Fatalf("default side should comp the points of sale with the bid:\n%s", view)
+	// The assertions scope to the comps section: the liquid table's title
+	// above it says BUYLIST too.
+	compsPart := func(view string) string {
+		if i := strings.Index(view, "COMPS"); i >= 0 {
+			return view[i:]
+		}
+		return view
 	}
-	if strings.Contains(view, "LOW") {
-		t.Errorf("the cheapest-copy columns belong to the buy side:\n%s", view)
+	view := compsPart(strings.Join(m.marketLines(110), "\n"))
+	if !strings.Contains(view, "COMPS · SELL") || !strings.Contains(view, "TCG SOLD") ||
+		!strings.Contains(view, "SPREAD") {
+		t.Fatalf("default side should comp the sale prices with their spread:\n%s", view)
+	}
+	if strings.Contains(view, "BUYLIST") || strings.Contains(view, "LOW") {
+		t.Errorf("the bid belongs to the buy side:\n%s", view)
 	}
 	note := m.selectedMarketNote()
-	if !strings.Contains(note, "last sold") || !strings.Contains(note, "pays") ||
-		strings.Contains(note, "low ask") {
-		t.Errorf("sell note = %q, want the venues read out with the bid", note)
+	if !strings.Contains(note, "last sold") || strings.Contains(note, "pays") {
+		t.Errorf("sell note = %q, want the sale prices without the bid", note)
 	}
 
 	m = key(m, "b")
 	if !m.compsBuySide {
 		t.Fatal("b did not flip to the buy side")
 	}
-	view = strings.Join(m.marketLines(110), "\n")
-	if !strings.Contains(view, "COMPS · BUY") || !strings.Contains(view, "LOW") {
-		t.Fatalf("buy side should lead with the cheapest ask:\n%s", view)
+	view = compsPart(strings.Join(m.marketLines(110), "\n"))
+	if !strings.Contains(view, "COMPS · BUY") || !strings.Contains(view, "CK BUYLIST") ||
+		!strings.Contains(view, "SPREAD") {
+		t.Fatalf("buy side should show the bid and its haircut:\n%s", view)
 	}
-	if strings.Contains(view, "BUYLIST") {
-		t.Errorf("the buy side must not mix the bid in:\n%s", view)
+	if strings.Contains(view, "TCG SOLD") || strings.Contains(view, "AT ") ||
+		strings.Contains(view, "LOW") {
+		t.Errorf("the sale columns belong to the sell side:\n%s", view)
 	}
-	if note := m.selectedMarketNote(); !strings.Contains(note, "low ask") {
-		t.Errorf("buy note = %q, want the ask side explained", note)
+	if note := m.selectedMarketNote(); !strings.Contains(note, "pays") {
+		t.Errorf("buy note = %q, want the bid explained", note)
 	}
 	m = key(m, "b")
 	if m.compsBuySide {
@@ -345,14 +354,14 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
 		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
-	// The sell-side comp sheet teaches the spread formula in place of the
-	// freshness disclaimer; the buy side keeps it.
-	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = 1 − BUYLIST ÷ LOW") {
-		t.Errorf("status = %q, want the spread formula on the sell side", got)
+	// Each comp side teaches its own spread formula in place of the
+	// freshness disclaimer.
+	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = high sale minus low sale") {
+		t.Errorf("status = %q, want the sale-spread formula on the sell side", got)
 	}
 	m.compsBuySide = true
-	if got := m.marketStatus(); !strings.Contains(got, "one-day vendor prices") {
-		t.Errorf("status = %q, want the freshness note on the buy side", got)
+	if got := m.marketStatus(); !strings.Contains(got, "SPREAD = 1 − BUYLIST ÷ LOW") {
+		t.Errorf("status = %q, want the bid-spread formula on the buy side", got)
 	}
 	m.compsBuySide = false
 }
@@ -480,5 +489,39 @@ func TestMoversWindowCacheMakesWInstant(t *testing.T) {
 	m = key(m, "W")
 	if len(m.movers) != 2 {
 		t.Errorf("post-reload window = %d rows, want re-queried, not stale cache", len(m.movers))
+	}
+}
+
+// Movers hides sub-$0.20 cards by default — bulk twitching by cents is
+// noise — and the palette command shows them; the gate is independent of
+// the value floor.
+func TestMoversPennyGate(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{
+		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
+		mover("Sol Ring-id", "nonfoil", 1, 0.15, 0.18), // at the gate
+	}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v")
+	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
+		t.Fatalf("default movers = %+v, want the penny row hidden", m.movers)
+	}
+	m.status = "" // the "showing movers" beat yields to the position line
+	if !strings.Contains(m.View(), "sub-$0.20 hidden") {
+		t.Error("the default gate must announce itself on the status line")
+	}
+
+	// The palette toggle brings them back without touching the store.
+	m.moversPennies = true
+	m.deriveView()
+	if len(m.movers) != 2 {
+		t.Fatalf("with pennies shown movers = %d rows, want both", len(m.movers))
+	}
+
+	// The value floor is a separate gate layered on top.
+	m.floorIdx = 1 // $5
+	m.deriveView()
+	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
+		t.Errorf("floor over pennies = %+v, want only the $34 card", m.movers)
 	}
 }

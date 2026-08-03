@@ -225,11 +225,22 @@ func wrapHelp(s string, width int) []string {
 
 // helpRows is how many rows the wrapped help line costs right now,
 // including the palette's description line when one is showing.
+//
+// While a transient surface (a confirm, a prompt) borrows the help line,
+// the underlying view's help still reserves its height: the quit
+// confirm's one-line help shrinking a two-line gutter grew the panes by a
+// row and shifted the whole frame for the length of a y/n question
+// (observed live). The unused row renders blank — space held, not moved.
 func (m Model) helpRows() int {
 	if !m.ready {
 		return 1
 	}
 	rows := len(wrapHelp(m.helpLine(), m.width))
+	if m.confirm != nil || m.prompt != nil {
+		base := m
+		base.confirm, base.prompt = nil, nil
+		rows = max(rows, len(wrapHelp(base.helpLine(), base.width)))
+	}
 	if m.paletteDesc() != "" {
 		rows++
 	}
@@ -506,6 +517,12 @@ func (m Model) statusLine() string {
 	}
 	if min := m.floorMin(); min > 0 {
 		pos += fmt.Sprintf(" · floor %s (M cycles)", ui.Money(min))
+	}
+	// The default noise gate announces itself: rows silently absent read
+	// as missing data, and the palette command that shows them is only
+	// discoverable if something points at it.
+	if m.view == viewMovers && !m.moversPennies {
+		pos += " · sub-$0.20 hidden (: shows them)"
 	}
 	return m.theme.Help.Render(pos)
 }

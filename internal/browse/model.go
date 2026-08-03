@@ -205,6 +205,12 @@ type Model struct {
 	moversCacheGen int
 	dataGen        int
 
+	// moversPennies shows the sub-$0.20 movers the view hides by default:
+	// bulk wobbling by cents is volume without information. Separate from
+	// the value floor — this is the movers view's own noise gate, toggled
+	// from the palette.
+	moversPennies bool
+
 	// entryIndex answers "does this container hold this printing":
 	// containerID → "scryfallID|finish". viewEligible marks the containers
 	// selectable on views that grey the rest out, nil when all are. Both

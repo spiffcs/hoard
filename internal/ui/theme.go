@@ -136,6 +136,35 @@ func (e Env) Grade(frac float64) Style {
 	return e.styled(lipgloss.NewStyle().Foreground(c))
 }
 
+// heatLo, heatMid and heatHi anchor the Heat ramp: the Grade ramp's green
+// for full agreement, through a light red, saturating at a dark red for
+// full disagreement.
+var (
+	heatLo  = gradeHi // agreement wears the same green everywhere
+	heatMid = [3]uint8{0xd9, 0x7b, 0x73}
+	heatHi  = [3]uint8{0x9c, 0x2a, 0x24}
+)
+
+// Heat styles a normalized 0..1 ratio on a green-to-red ramp — agreement
+// green, disagreement red, light to dark as it grows. Grade's opposite
+// temperament: there high is the virtue; here high is the warning.
+func (e Env) Heat(frac float64) Style {
+	if !e.Color {
+		return plain
+	}
+	frac = min(max(frac, 0), 1)
+	a, b := heatLo, heatMid
+	t := frac * 2
+	if frac > 0.5 {
+		a, b = heatMid, heatHi
+		t = (frac - 0.5) * 2
+	}
+	lerp := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*t) }
+	c := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+		lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])))
+	return e.styled(lipgloss.NewStyle().Foreground(c))
+}
+
 // Pip styles one identity letter with its own color: W parchment, U island,
 // and so on. Unknown letters render plain.
 func (e Env) Pip(letter byte) Style {

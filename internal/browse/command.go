@@ -329,6 +329,23 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
 		},
 		{
+			id: "movers.pennies", title: "Toggle sub-$0.20 movers",
+			aliases: "pennies cheap bulk noise show hide",
+			desc:    "Show or hide movers priced at or under $0.20 — hidden by default.",
+			where:   func(m *Model) bool { return m.view == viewMovers },
+			rank:    onView(viewMovers, 1),
+			run: func(m *Model) tea.Cmd {
+				m.moversPennies = !m.moversPennies
+				m.deriveView()
+				if m.moversPennies {
+					m.status, m.statusErr = "showing movers at or under $0.20", false
+				} else {
+					m.status, m.statusErr = "hiding movers at or under $0.20", false
+				}
+				return nil
+			},
+		},
+		{
 			id: "market.table.next", aliases: "next table section",
 			key: "]", hidden: true,
 			where: func(m *Model) bool { return m.view == viewMarket },
@@ -346,10 +363,15 @@ func commands() []command {
 			where: func(m *Model) bool { return m.view == viewMarket },
 			run: func(m *Model) tea.Cmd {
 				m.compsBuySide = !m.compsBuySide
+				// The sides sort by their own columns; an order chosen for
+				// one is meaningless on the other, so the flip lands on the
+				// value ranking.
+				m.compsSortIdx, m.compsSortRev = 0, false
+				m.sortCompRows()
 				if m.compsBuySide {
-					m.status, m.statusErr = "comps · buy side: every vendor's ask", false
+					m.status, m.statusErr = "comps · buy side: the cash bid against the asks", false
 				} else {
-					m.status, m.statusErr = "comps · sell side: what a sale brings", false
+					m.status, m.statusErr = "comps · sell side: vendor sale prices", false
 				}
 				return nil
 			},
