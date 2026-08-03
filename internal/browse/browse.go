@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -69,10 +70,12 @@ type Store interface {
 	// filter the analytical views; see containerfilter.go.
 	EntryKeys() ([]store.EntryKey, error)
 
-	// One printing in depth.
+	// One printing in depth. BidSeries is the buylist twin of PriceSeries,
+	// read from the bid history table.
 	CardDetail(scryfallID string) (store.CardDetail, error)
 	HoldingsOf(scryfallID string) ([]store.Holding, error)
 	PriceSeries(scryfallID, finish string) ([]store.PricePoint, error)
+	BidSeries(scryfallID, finish string) ([]store.PricePoint, error)
 
 	// The merged all-cards view: every holding across every container.
 	AllByFinish() ([]store.CollectionRow, error)
@@ -104,6 +107,17 @@ func WithMarket(f MarketFunc) Option {
 // so the view survives a restart without re-asking anyone.
 func WithMarketCached(f MarketCachedFunc) Option {
 	return func(m *Model) { m.marketCached = f }
+}
+
+// CardCompFunc reads today's cached vendor quotes for one printing, as
+// comp sheets keyed by price finish ("nonfoil"|"foil"). ok is false when
+// no fresh cache covers the holdings — the detail says how to fetch one.
+type CardCompFunc func(scryfallID string) (map[string]market.Comp, bool)
+
+// WithCardComps supplies the detail overlay's comp sheets. Without it the
+// COMPS section is absent, like every other injected capability.
+func WithCardComps(f CardCompFunc) Option {
+	return func(m *Model) { m.cardComps = f }
 }
 
 // ReportFunc produces the valuation report as lines already laid out for

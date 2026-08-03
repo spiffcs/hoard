@@ -189,9 +189,27 @@ HELD
 PRICE
   non-foil  ▇▇█▇▇▇▇▄▃▆▅▄▄▄▄▃▄▄▄▂▁▁▁▁▁▁▁▁▁▁▁▁  $34.28
             $33.34–$41.08 since 29 Apr · 79 obs
+  bid       ▁▂▂▃▃▃▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇▇▇███  $24.00
+            $18.00–$24.00 · 41 checks since 2 May
+  spread    ██▇▇▆▆▅▅▄▄▄▃▃▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂  29.7%  47.1% → 29.7% since 2 May · tightening
   foil      ▁▂▂▂▂▂▂▂▂▄▄▄▄▅▅▇▇▇▆▆▆▆▆▆▇▇▇▇▇▇▇█  $46.91
             $36.55–$46.91 since 29 Apr · 11 obs
+
+COMPS
+  non-foil  tcg last sold $34.28 · mp asks $35.10 · ck asks $36.99 · ck pays $24.00 · spread 29.7%
 ```
+
+The **bid** row is Card Kingdom's cash offer over time — the only buylist
+in the MTGJSON feed — ingested from the same 90-day archive the price
+backfill reads (its own table, its own series), and kept current by every
+market-view fetch. The **spread** row is the gap between the price and the
+bid as a trend: a tightening spread means the dealers increasingly believe
+the retail price, the same confidence signal the MARKET view's comps table
+shows for one day. **COMPS** is that table's row for this card, from
+today's cached quotes — when none were fetched yet, the section says to
+press <kbd>F</kbd> on the MARKET view — and when a held finish qualifies
+for ARBITRAGE or EASY TO SELL, a verdict line says so in the section's own
+numbers.
 
 **HELD** answers the question no single view could before: that four copies of a
 card are one in the binder and three spread across two decks.

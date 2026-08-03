@@ -136,7 +136,7 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 // History returns up to ninety days of observations for each printing, keyed by
 // Scryfall id, plus how many refs had an id to ask with. Reads a ~150 MB
 // archive, so it is only for a deliberate backfill.
-func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string][]mtgjson.Observation, int, error) {
+func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string]mtgjson.CardHistory, int, error) {
 	return remap(f, ctx, refs, "price history", mtgjson.PriceHistory)
 }
 

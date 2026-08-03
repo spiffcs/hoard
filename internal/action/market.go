@@ -4,8 +4,11 @@ import (
 	"context"
 
 	"github.com/spiffcs/hoard/internal/market"
+	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/store"
 )
 
 // Arbitrage gathers today's vendor quotes for everything held and ranks
@@ -34,7 +37,83 @@ func Market(ctx context.Context, d Deps, p progress.Fn, minValue float64) (marke
 	if err != nil {
 		return market.Result{}, err
 	}
+	if err := recordBidQuotes(d.Store, quotes); err != nil {
+		return market.Result{}, err
+	}
 	return market.Collect(owned, quotes, minValue), nil
+}
+
+// recordBidQuotes keeps the bid series live: every quotes read — fresh or
+// served from the day cache — writes today's Card Kingdom bids into the
+// bid history. RecordBids drops repeats, so re-reads are free, and a day
+// whose earlier record failed self-heals on the next one.
+func recordBidQuotes(st *store.Store, quotes map[string][]mtgjson.Quote) error {
+	var bids []store.BidObservation
+	for sid, qs := range quotes {
+		for _, q := range qs {
+			if q.Kind != mtgjson.Buylist || q.Provider != "cardkingdom" || q.Price <= 0 {
+				continue
+			}
+			bids = append(bids, store.BidObservation{
+				ScryfallID: sid, Finish: q.Finish, Source: q.Provider, Price: q.Price,
+			})
+		}
+	}
+	_, err := st.RecordBids(bids)
+	return err
+}
+
+// CardComps serves one printing's per-finish comp sheets from the quotes
+// day-cache — the card detail's slice of the market view's data. ok is
+// false when no fresh cache covers the holdings; no network either way.
+// Keyed by price finish (nonfoil|foil).
+func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) {
+	owned, err := d.Store.OwnedByFinish()
+	if err != nil || len(owned) == 0 {
+		return nil, false, err
+	}
+	// The whole hoard's refs, not one card's: the day cache answers
+	// all-or-nothing against the population it was written for.
+	refs := make([]pricing.Ref, len(owned))
+	for i, o := range owned {
+		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
+	}
+	quotes, ok := pricing.New(d.Store, d.CacheDir).CachedQuotes(refs)
+	if !ok {
+		return nil, false, nil
+	}
+	qs := quotes[scryfallID]
+	if len(qs) == 0 {
+		return nil, true, nil
+	}
+
+	// One sheet per price finish the feed quotes, assessed from the owned
+	// row when the finish is held (real copies and value) or a bare one
+	// when it is not — the numbers are the card's either way.
+	out := map[string]market.Comp{}
+	for _, finish := range []string{"nonfoil", "foil"} {
+		o := store.OwnedFinish{ScryfallID: scryfallID, Finish: finish}
+		for _, held := range owned {
+			if held.ScryfallID == scryfallID && priceFinish(held.Finish) == finish {
+				o = held
+				break
+			}
+		}
+		c := market.AssessComp(o, qs)
+		if c.HasMarket || c.HasCK || c.HasManapool || c.HasBuylist || c.LowFrom != "" {
+			out[finish] = c
+		}
+	}
+	return out, true, nil
+}
+
+// priceFinish folds the store's finish vocabulary onto the two the price
+// feeds quote.
+func priceFinish(finish string) string {
+	if scryfall.PricedAsFoil(finish) {
+		return "foil"
+	}
+	return "nonfoil"
 }
 
 // MarketCached is Arbitrage from today's quote cache alone: no network,

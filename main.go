@@ -464,6 +464,10 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			res, ok, err := action.MarketCached(deps, marketMin)
 			return res, ok && err == nil
 		}),
+		browse.WithCardComps(func(id string) (map[string]market.Comp, bool) {
+			comps, ok, err := action.CardComps(deps, id)
+			return comps, ok && err == nil
+		}),
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.UpdatePrices(ctx, deps, p)
 			if err != nil {
@@ -511,11 +515,15 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				return "nothing owned yet", nil
 			case res.AlreadyToday != "":
 				return "already backfilled today · the archive only changes daily", nil
-			case res.Inserted == 0:
+			case res.Inserted == 0 && res.BidInserted == 0:
 				return "nothing to backfill · history already recorded", nil
 			}
-			return fmt.Sprintf("backfilled %s observations across %s printings",
-				ui.Count(res.Inserted), ui.Count(res.Cards)), nil
+			summary := fmt.Sprintf("backfilled %s observations across %s printings",
+				ui.Count(res.Inserted), ui.Count(res.Cards))
+			if res.BidInserted > 0 {
+				summary += fmt.Sprintf(" · %s buylist bids", ui.Count(res.BidInserted))
+			}
+			return summary, nil
 		}),
 		browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
 			name, op string, threshold float64) (string, error) {

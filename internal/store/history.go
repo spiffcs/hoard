@@ -315,10 +315,18 @@ func backfillStamp(date string) string { return date + "T00:00:00Z" }
 // Where an import collides with a live row the live one stands — it is what
 // was observed, this is what was reconstructed.
 func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
+	return s.backfillHistory("card_price_history", byCard)
+}
+
+// backfillHistory is the shared import path for both history tables —
+// retail prices and buylist bids follow the same doctrine, each bounded
+// against its own table's live era. table is always one of the two
+// package-internal table names, never caller input.
+func (s *Store) backfillHistory(table string, byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	if len(byCard) == 0 {
 		return 0, 0, nil
 	}
-	firstLive, err := s.firstObservations()
+	firstLive, err := s.firstObservationsIn(table)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -329,7 +337,7 @@ func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation) (inserte
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
+INSERT INTO ` + table + ` (scryfall_id, finish, price_usd, source, as_of)
 VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	if err != nil {
@@ -346,16 +354,14 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 		// ones written before this line existed).
 		normalized := make([]mtgjson.Observation, len(obs))
 		for i, o := range obs {
-			if o.Finish == "normal" {
-				o.Finish = "nonfoil"
-			}
+			o.Finish = storeFinish(o.Finish)
 			normalized[i] = o
 		}
 		bound := func(finish string) string { return firstLive[sid+"|"+finish] }
 		for _, o := range compactSeries(normalized, bound) {
 			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
 			if err != nil {
-				return 0, 0, fmt.Errorf("backfilling prices for %s: %w", sid, err)
+				return 0, 0, fmt.Errorf("backfilling %s for %s: %w", table, sid, err)
 			}
 			if n, _ := res.RowsAffected(); n > 0 {
 				inserted += int(n)
@@ -372,12 +378,20 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	return inserted, cards, nil
 }
 
-// firstObservations maps every (card, finish) with history to the moment
-// its live history began — the per-series bound BackfillPrices imports up
-// to.
-func (s *Store) firstObservations() (map[string]string, error) {
+// storeFinish translates MTGJSON's finish vocabulary into the schema's.
+func storeFinish(finish string) string {
+	if finish == "normal" {
+		return "nonfoil"
+	}
+	return finish
+}
+
+// firstObservationsIn maps every (card, finish) with history in the given
+// table to the moment its live history began — the per-series bound the
+// backfill imports up to.
+func (s *Store) firstObservationsIn(table string) (map[string]string, error) {
 	rows, err := s.db.Query(`
-SELECT scryfall_id, finish, MIN(as_of) FROM card_price_history
+SELECT scryfall_id, finish, MIN(as_of) FROM ` + table + `
 GROUP BY scryfall_id, finish`)
 	if err != nil {
 		return nil, fmt.Errorf("reading history bounds: %w", err)

@@ -91,6 +91,18 @@ with why).
     cash bid as the floor (a first cut graded the bid against last sold;
     the owner correctly called that a ratio, not a comp) — and the buy
     side leads with the cheapest ask and who asks it.
+12. **Card detail: bid history + per-card comps** — ✅ done (planned
+    session). The MTGJSON completeness audit found CK's buylist series in
+    the 90-day archive being thrown away; it now lands in its own
+    `card_bid_history` table (v13 — separate table because the retail
+    readers group by (card, finish) ignoring source), backfilled in the
+    same archive pass (backfillKey salt v3) and kept live by every market
+    quotes read. The detail overlay gained a bid sparkline per finish, a
+    spread-over-time row ("47% → 30% since 2 May · tightening"), and a
+    COMPS section serving the market table's row for this card from the
+    day cache, with an ARBITRAGE / EASY TO SELL verdict line for held
+    finishes (market.Comp.Verdict shares the sections' constants).
+
 
 ## 2026-08-01 — beautification-sprint build
 

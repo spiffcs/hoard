@@ -54,6 +54,9 @@ type fakeStore struct {
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
 
+	// bidSeries backs BidSeries, keyed "scryfallID|finish".
+	bidSeries map[string][]store.PricePoint
+
 	// holdings tracks SetHoldingQuantity so an edit and its undo can be
 	// observed without a database.
 	holdings    map[string]int
@@ -165,6 +168,11 @@ func (f *fakeStore) CardDetail(string) (store.CardDetail, error) {
 }
 func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error)             { return nil, f.err }
 func (f *fakeStore) PriceSeries(string, string) ([]store.PricePoint, error) { return nil, f.err }
+
+// BidSeries serves the bidSeries fixture, keyed "scryfallID|finish".
+func (f *fakeStore) BidSeries(id, finish string) ([]store.PricePoint, error) {
+	return f.bidSeries[id+"|"+finish], f.err
+}
 
 // AllByFinish merges the loose collection with every deck's entries — the
 // fake's version of the store's cross-container union.

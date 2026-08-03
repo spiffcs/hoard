@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
@@ -36,6 +37,9 @@ type BackfillResult struct {
 	// against the same holdings: the archive only changes daily, so the run
 	// was skipped before the download instead of after it.
 	AlreadyToday string
+	// BidInserted and BidCards are the buylist half of the same pass: Card
+	// Kingdom's bid series, recorded into its own table.
+	BidInserted, BidCards int
 }
 
 // backfillKey is the ledger identity of one backfill: the archive's day,
@@ -44,10 +48,9 @@ type BackfillResult struct {
 // card — or asking for a deeper window — changes the key and forces a real
 // run.
 //
-// The v2 salt retires the receipts written while the store's import bound
-// was hoard-wide: those runs recorded "done" after discarding everything
-// for cards added since the hoard's first observation, and honoring them
-// would hide the fix for a day.
+// The salt retires receipts written by earlier shapes of this run: v2
+// repaired the hoard-wide import bound, v3 added the buylist half — a
+// pre-bid "done" would otherwise skip the bid ingest for a day.
 func backfillKey(owned []store.OwnedFinish, days int) string {
 	ids := make([]string, 0, len(owned))
 	for _, o := range owned {
@@ -55,7 +58,7 @@ func backfillKey(owned []store.OwnedFinish, days int) string {
 	}
 	sort.Strings(ids)
 	day := time.Now().Format("2006-01-02")
-	return ContentHash([]byte(fmt.Sprintf("backfill|v2|%s|%d|%s", day, days, strings.Join(ids, ","))))
+	return ContentHash([]byte(fmt.Sprintf("backfill|v3|%s|%d|%s", day, days, strings.Join(ids, ","))))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was
@@ -123,30 +126,35 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	res.Unmapped = res.Printings - resolvable
 	res.Unquoted = resolvable - len(byCard)
 
+	// One archive pass carries both sides of the counter; split them for
+	// their two tables.
+	retail := make(map[string][]mtgjson.Observation, len(byCard))
+	bids := make(map[string][]mtgjson.Observation, len(byCard))
+	for id, h := range byCard {
+		if len(h.Retail) > 0 {
+			retail[id] = h.Retail
+		}
+		if len(h.Bids) > 0 {
+			bids[id] = h.Bids
+		}
+	}
 	// Narrow the archive to the asked-for window before recording. ISO
 	// dates compare as strings.
 	if days < 90 {
 		cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
-		for id, obs := range byCard {
-			kept := obs[:0]
-			for _, o := range obs {
-				if o.Date >= cutoff {
-					kept = append(kept, o)
-				}
-			}
-			if len(kept) == 0 {
-				delete(byCard, id)
-				continue
-			}
-			byCard[id] = kept
-		}
+		clipWindow(retail, cutoff)
+		clipWindow(bids, cutoff)
 	}
 
 	p.Emit(progress.Event{Step: "recording history"})
 	// The store bounds each series to the era before that card's own live
 	// history — a card added yesterday gets its archive depth even when the
 	// hoard has watched other cards for months.
-	res.Inserted, res.Cards, err = d.Store.BackfillPrices(byCard)
+	res.Inserted, res.Cards, err = d.Store.BackfillPrices(retail)
+	if err != nil {
+		return res, err
+	}
+	res.BidInserted, res.BidCards, err = d.Store.BackfillBids(bids)
 	if err != nil {
 		return res, err
 	}
@@ -154,4 +162,22 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 		Hash: key, File: "backfill " + time.Now().Format("2006-01-02"), Cards: res.Cards,
 	})
 	return res, err
+}
+
+// clipWindow drops observations older than cutoff, and cards left with
+// nothing.
+func clipWindow(byCard map[string][]mtgjson.Observation, cutoff string) {
+	for id, obs := range byCard {
+		kept := obs[:0]
+		for _, o := range obs {
+			if o.Date >= cutoff {
+				kept = append(kept, o)
+			}
+		}
+		if len(kept) == 0 {
+			delete(byCard, id)
+			continue
+		}
+		byCard[id] = kept
+	}
 }

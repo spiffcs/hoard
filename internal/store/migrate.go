@@ -40,6 +40,7 @@ var migrations = []migration{
 	{10, watchesTable},
 	{11, cardFaceDetails},
 	{12, renormalizeHistoryFinish},
+	{13, bidHistory},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -285,6 +286,22 @@ UPDATE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';`
 const renormalizeHistoryFinish = `
 UPDATE OR IGNORE card_price_history SET finish = 'nonfoil' WHERE finish = 'normal';
 DELETE FROM card_price_history WHERE finish = 'normal';`
+
+// v13: Card Kingdom's buylist bid history, in its own table rather than
+// card_price_history: the retail table's readers (latestPrices,
+// RecordPrices, Movers, the backfill bounds) group by (scryfall_id,
+// finish) without source, the shared PK would collide with a retail row
+// at the same as_of, and PriceSeries would interleave the two sides of
+// the counter into one zig-zag series. Same shape and CASCADE as v4.
+const bidHistory = `
+CREATE TABLE card_bid_history (
+    scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    finish      TEXT NOT NULL,
+    price_usd   REAL NOT NULL,
+    source      TEXT NOT NULL,
+    as_of       TEXT NOT NULL,
+    PRIMARY KEY (scryfall_id, finish, as_of)
+);`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

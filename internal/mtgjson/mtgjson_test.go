@@ -315,13 +315,19 @@ const archiveFileBody = `{
         "foil":   {"2026-07-28": 4.00, "2026-07-29": 4.50}},
       "buylist": {"normal": {"2026-07-28": 0.40}}},
     "cardkingdom": {"currency": "USD", "retail": {
-        "normal": {"2026-07-28": 9.99}}}
+        "normal": {"2026-07-28": 9.99}},
+      "buylist": {
+        "normal": {"2026-07-28": 0.75, "2026-07-29": 0.80},
+        "foil":   {"2026-07-29": 2.00}}}
   }},
   "uuid-eur-tcg": {"paper": {
     "tcgplayer": {"currency": "EUR", "retail": {"normal": {"2026-07-28": 2.00}}}
   }},
   "uuid-no-tcg": {"paper": {
     "manapool": {"currency": "USD", "retail": {"normal": {"2026-07-28": 3.00}}}
+  }},
+  "uuid-bids-only": {"paper": {
+    "cardkingdom": {"currency": "USD", "buylist": {"normal": {"2026-07-29": 0.10}}}
   }}
  }
 }`
@@ -333,7 +339,7 @@ func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PriceHistory: %v", err)
 	}
-	obs := got["uuid-hist"]
+	obs := got["uuid-hist"].Retail
 	// Three normal dates and two foil: the whole series, not just the newest.
 	if len(obs) != 5 {
 		t.Fatalf("got %d observations, want 5: %+v", len(obs), obs)
@@ -342,21 +348,61 @@ func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
 		if o.Source != "tcgplayer" {
 			t.Errorf("observation %+v: source = %q, want tcgplayer", o, o.Source)
 		}
-		// Card Kingdom's 9.99 and the 0.40 buylist are the two figures that must
-		// not appear: one is another shop's retail, the other is the wrong side
-		// of the counter, and both would read as a price move.
-		if o.Price == 9.99 || o.Price == 0.40 {
+		// Card Kingdom's 9.99 retail and every buylist figure must not appear
+		// here: one is another shop's retail, the others are the wrong side of
+		// the counter, and all would read as a price move.
+		if o.Price == 9.99 || o.Price == 0.40 || o.Price == 0.75 || o.Price == 0.80 || o.Price == 2.00 {
 			t.Errorf("observation %+v leaked from another vendor or the buylist", o)
 		}
+	}
+}
+
+// The same pass reads the other side of the counter: Card Kingdom's bid
+// series, and only Card Kingdom's — tcgplayer's buylist key is dead data
+// from before that program closed, and reading it would resurrect it.
+func TestPriceHistoryReadsCardKingdomBids(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+
+	got, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-hist": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	bids := got["uuid-hist"].Bids
+	if len(bids) != 3 {
+		t.Fatalf("got %d bids, want the two normal days and one foil: %+v", len(bids), bids)
+	}
+	for _, o := range bids {
+		if o.Source != "cardkingdom" {
+			t.Errorf("bid %+v: source = %q, want cardkingdom", o, o.Source)
+		}
+		if o.Price == 0.40 || o.Price == 9.99 {
+			t.Errorf("bid %+v leaked from tcgplayer's buylist or CK's retail", o)
+		}
+	}
+}
+
+// A card tcgplayer never quoted can still carry a bid series — the two
+// sides are independent reads, not a join.
+func TestPriceHistoryReturnsBidsOnlyCards(t *testing.T) {
+	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
+
+	got, err := PriceHistory(context.Background(), Options{}, map[string]bool{"uuid-bids-only": true})
+	if err != nil {
+		t.Fatalf("PriceHistory: %v", err)
+	}
+	h := got["uuid-bids-only"]
+	if len(h.Retail) != 0 || len(h.Bids) != 1 || h.Bids[0].Price != 0.10 {
+		t.Errorf("got %+v, want no retail and the one bid", h)
 	}
 }
 
 func TestPriceHistorySkipsNonUSDAndAbsentProvider(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
-	// A EUR tcgplayer series and a card tcgplayer never quoted are both absent
-	// rather than converted or substituted: a euro price in a USD total is a
-	// lie, and another vendor's series would not join up with Scryfall's.
+	// A EUR tcgplayer series and a card neither tcgplayer nor the buylist
+	// ever quoted are both absent rather than converted or substituted: a
+	// euro price in a USD total is a lie, and another vendor's series would
+	// not join up with Scryfall's.
 	got, err := PriceHistory(context.Background(), Options{},
 		map[string]bool{"uuid-eur-tcg": true, "uuid-no-tcg": true})
 	if err != nil {

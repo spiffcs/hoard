@@ -352,3 +352,30 @@ func TestTopCompsTruncates(t *testing.T) {
 		t.Error("TopComps must copy, not alias")
 	}
 }
+
+// Verdict classifies a comp sheet with the sections' own thresholds: a
+// bid over the sales price is arbitrage, at 70% or better easy to sell,
+// under that nothing.
+func TestCompVerdict(t *testing.T) {
+	sheet := func(market, bid float64) Comp {
+		return Comp{Market: market, HasMarket: market > 0, Buylist: bid, HasBuylist: bid > 0}
+	}
+	cases := []struct {
+		name string
+		c    Comp
+		kind Kind
+		ok   bool
+	}{
+		{"bid over market", sheet(10, 11), KindProfit, true},
+		{"bid at the liquid floor", sheet(10, 7), KindLiquid, true},
+		{"bid under the floor", sheet(10, 6.99), 0, false},
+		{"no bid", sheet(10, 0), 0, false},
+		{"no market", sheet(0, 5), 0, false},
+	}
+	for _, tc := range cases {
+		k, ok := tc.c.Verdict()
+		if ok != tc.ok || (ok && k != tc.kind) {
+			t.Errorf("%s: verdict = %v,%v; want %v,%v", tc.name, k, ok, tc.kind, tc.ok)
+		}
+	}
+}

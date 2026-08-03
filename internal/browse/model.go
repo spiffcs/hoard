@@ -229,8 +229,11 @@ type Model struct {
 
 	// Arbitrage is the one view that needs the network, so unlike the others it
 	// is fetched on request, asynchronously, and can be abandoned part-way.
+	// cardComps serves the detail overlay's comp sheets from the same
+	// day cache, nil when the capability is absent.
 	marketFetch   MarketFunc
 	marketCached  MarketCachedFunc
+	cardComps     CardCompFunc
 	marketResult  market.Result
 	marketRows    []market.Row
 	marketLoading bool

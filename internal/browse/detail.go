@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/market"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -21,7 +23,12 @@ type detail struct {
 	card     store.CardDetail
 	holdings []store.Holding
 	series   map[string][]store.PricePoint // by finish
-	err      error
+	bids     map[string][]store.PricePoint // by finish, from the bid history
+	// comps is today's per-vendor sheet by price finish; compsOK false
+	// means no day cache existed to read (the section says how to fetch).
+	comps   map[string]market.Comp
+	compsOK bool
+	err     error
 	// image is the rendered card image block (halfblock cells or kitty
 	// placeholders), nil until the async fetch lands — or forever, when
 	// the terminal can't draw one. The overlay never waits for it.
@@ -68,7 +75,10 @@ func (m *Model) openDetail() {
 	if id == "" {
 		return
 	}
-	d := detail{series: map[string][]store.PricePoint{}}
+	d := detail{
+		series: map[string][]store.PricePoint{},
+		bids:   map[string][]store.PricePoint{},
+	}
 
 	var err error
 	if d.card, err = m.store.CardDetail(id); err != nil {
@@ -90,6 +100,17 @@ func (m *Model) openDetail() {
 		if len(s) > 0 {
 			d.series[finish] = s
 		}
+		b, err := m.store.BidSeries(id, finish)
+		if err != nil {
+			m.setError(err)
+			return
+		}
+		if len(b) > 0 {
+			d.bids[finish] = b
+		}
+	}
+	if m.cardComps != nil {
+		d.comps, d.compsOK = m.cardComps(id)
 	}
 	m.detail = &d
 }
@@ -217,6 +238,216 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 		out = append(out, line)
 		out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
+		out = append(out, m.bidLines(d, finish)...)
+	}
+	// A bid series can exist for a finish the retail history missed —
+	// the two tables have independent eras.
+	for _, finish := range []string{"nonfoil", "foil"} {
+		if len(d.series[finish]) == 0 && len(d.bids[finish]) > 0 {
+			out = append(out, m.bidLines(d, finish)...)
+		}
+	}
+
+	out = append(out, m.compLines(d, width)...)
+	return out
+}
+
+// bidLines renders one finish's buylist rows under its price row: the bid
+// sparkline, and — when both series overlap — the spread over time, the
+// confidence signal as a trend rather than a snapshot.
+func (m Model) bidLines(d detail, finish string) []string {
+	b := d.bids[finish]
+	if len(b) == 0 {
+		return nil
+	}
+	dim := m.theme.Help.Render
+	var out []string
+
+	// The label pads before it dims: %-9s over a styled string counts the
+	// escape bytes as width.
+	spark := ui.Spark(ui.Resample(pricePoints(b), sparkCells), sparkCells)
+	now := b[len(b)-1].Price
+	out = append(out, "  "+dim(fmt.Sprintf("%-9s", "bid"))+" "+spark+"  "+
+		m.theme.Title.Render(ui.Money(now)))
+	out = append(out, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(b))))
+
+	if vals, since, ok := spreadSeries(d.series[finish], b, sparkCells); ok {
+		last, first := vals[len(vals)-1], vals[0]
+		word := "steady"
+		switch {
+		case last < first-0.005:
+			word = "tightening"
+		case last > first+0.005:
+			word = "widening"
+		}
+		caption := fmt.Sprintf("%s → %s since %s · %s",
+			ui.Percent(first), ui.Percent(last), since, word)
+		out = append(out, "  "+dim(fmt.Sprintf("%-9s", "spread"))+" "+
+			ui.Spark(vals, sparkCells)+"  "+
+			m.env.Grade(market.SpreadGrade(last))(ui.Percent(last))+"  "+dim(caption))
+	}
+	return out
+}
+
+// compLines renders the COMPS section: today's per-vendor sheet for this
+// printing, in the market view's own vocabulary, with a verdict line when
+// a held finish qualifies for one of its sections. Absent entirely when
+// the capability was not injected.
+func (m Model) compLines(d detail, width int) []string {
+	if m.cardComps == nil {
+		return nil
+	}
+	dim := m.theme.Help.Render
+	out := []string{"", m.theme.Title.Render("COMPS")}
+	if !d.compsOK {
+		return append(out, dim("  no vendor quotes today · press F on the MARKET view to fetch"))
+	}
+	if len(d.comps) == 0 {
+		return append(out, dim("  no vendor quoted this printing today"))
+	}
+
+	held := map[string]bool{}
+	for _, h := range d.holdings {
+		if scryfall.PricedAsFoil(h.Finish) {
+			held["foil"] = true
+		} else {
+			held["nonfoil"] = true
+		}
+	}
+
+	type verdict struct {
+		finish string
+		kind   market.Kind
+		c      market.Comp
+	}
+	var verdicts []verdict
+	for _, finish := range []string{"nonfoil", "foil"} {
+		c, ok := d.comps[finish]
+		if !ok {
+			continue
+		}
+		label := finish
+		if finish == "nonfoil" {
+			label = "non-foil"
+		}
+		var parts []string
+		if c.HasMarket {
+			parts = append(parts, "tcg last sold "+ui.Money(c.Market))
+		}
+		if c.HasManapool {
+			parts = append(parts, "mp asks "+ui.Money(c.Manapool))
+		}
+		if c.HasCK {
+			parts = append(parts, "ck asks "+ui.Money(c.CK))
+		}
+		if c.HasBuylist {
+			parts = append(parts, "ck pays "+ui.Money(c.Buylist))
+		} else {
+			parts = append(parts, "no bid today")
+		}
+		line := "  " + dim(fmt.Sprintf("%-9s", label)) + " " + strings.Join(parts, " · ")
+		if c.HasSpread() {
+			line += " · " + m.env.Grade(market.SpreadGrade(c.Spread()))("spread "+ui.Percent(c.Spread()))
+		}
+		out = append(out, ui.Truncate(line, width))
+		if held[finish] {
+			if k, ok := c.Verdict(); ok {
+				verdicts = append(verdicts, verdict{finish, k, c})
+			}
+		}
+	}
+	for _, v := range verdicts {
+		line := "  " + m.theme.Title.Render(v.kind.Title())
+		if len(verdicts) > 1 {
+			line += dim(" (" + v.finish + ")")
+		}
+		switch v.kind {
+		case market.KindProfit:
+			line += fmt.Sprintf(" · ck pays %s, +%s over tcg last-sold",
+				ui.Money(v.c.Buylist), ui.Money(v.c.Buylist-v.c.Market))
+		case market.KindLiquid:
+			line += fmt.Sprintf(" · ck pays %s of tcg last-sold",
+				ui.Percent(v.c.Buylist/v.c.Market))
+		}
+		out = append(out, ui.Truncate(line, width))
+	}
+	return out
+}
+
+// spreadSeries derives the spread-over-time values from the retail and
+// bid step functions: both clipped to their shared window so the two
+// resamples share a time base — ui.Resample bases each series on its own
+// first and last point, and unaligned bases would divide Tuesday's price
+// by January's bid. ok is false without a real overlap.
+func spreadSeries(retail, bids []store.PricePoint, buckets int) (vals []float64, since string, ok bool) {
+	if len(retail) == 0 || len(bids) == 0 {
+		return nil, "", false
+	}
+	start := max(retail[0].AsOf, bids[0].AsOf)
+	end := min(retail[len(retail)-1].AsOf, bids[len(bids)-1].AsOf)
+	if end <= start {
+		return nil, "", false
+	}
+	r := ui.Resample(pricePoints(clipToWindow(retail, start, end)), buckets)
+	b := ui.Resample(pricePoints(clipToWindow(bids, start, end)), buckets)
+	if len(r) != len(b) || len(r) == 0 {
+		return nil, "", false
+	}
+	vals = make([]float64, len(r))
+	defined := false
+	prev := 0.0
+	for i := range r {
+		if r[i] > 0 {
+			prev = 1 - b[i]/r[i]
+			defined = true
+		}
+		vals[i] = prev
+	}
+	if !defined {
+		return nil, "", false
+	}
+	since = start
+	if t, err := time.Parse(time.RFC3339, start); err == nil {
+		since = t.Local().Format("2 Jan")
+	}
+	return vals, since, true
+}
+
+// clipToWindow restricts a series to [start, end], pinning both edges:
+// a synthetic point at start carries the last value at-or-before it, and
+// one at end carries the last value inside the window — the step
+// function's value at each edge. Resample bases a series on its own first
+// and last point, so without both pins the two series' time bases would
+// drift apart at whichever edge their observations stop short of.
+func clipToWindow(s []store.PricePoint, start, end string) []store.PricePoint {
+	var out []store.PricePoint
+	var carry *store.PricePoint
+	for _, p := range s {
+		switch {
+		case p.AsOf < start:
+			q := p
+			carry = &q
+		case p.AsOf <= end:
+			if carry != nil {
+				c := *carry
+				c.AsOf = start
+				out = append(out, c)
+				carry = nil
+			}
+			out = append(out, p)
+		}
+	}
+	if carry != nil {
+		// Everything predates the window start: the step function still
+		// holds its last value across it.
+		c := *carry
+		c.AsOf = start
+		out = append(out, c)
+	}
+	if n := len(out); n > 0 && out[n-1].AsOf < end {
+		c := out[n-1]
+		c.AsOf = end
+		out = append(out, c)
 	}
 	return out
 }

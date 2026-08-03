@@ -719,7 +719,7 @@ type Observation struct {
 	Source string
 }
 
-// historyProvider is the only vendor whose back catalogue is read.
+// historyProvider is the only vendor whose retail back catalogue is read.
 //
 // Scryfall's USD prices come from TCGplayer alone, so this series is the one
 // that is continuous with the prices hoard already holds. Splicing Card Kingdom
@@ -727,31 +727,54 @@ type Observation struct {
 // the join and read as a real price movement on the day the two meet.
 const historyProvider = "tcgplayer"
 
-// PriceHistory returns every dated USD retail observation MTGJSON holds for the
-// requested UUIDs — about 90 days' worth, both finishes.
+// bidProvider is the only vendor whose buylist back catalogue is read —
+// Card Kingdom runs the only buylist in the feed, so its series is the bid
+// history, not a choice among several.
+const bidProvider = "cardkingdom"
+
+// CardHistory is one card's dated archive series, both sides of the
+// counter: what TCGplayer's market said it traded at, and what Card
+// Kingdom offered for it.
+type CardHistory struct {
+	Retail []Observation
+	Bids   []Observation
+}
+
+// PriceHistory returns every dated USD observation MTGJSON holds for the
+// requested UUIDs — about 90 days' worth, both finishes, retail and bid.
 //
 // This reads AllPrices rather than AllPricesToday: ~150 MB on the wire against
-// 5 MB, and thirty times the rows, which is why nothing calls it on a schedule.
+// 5 MB, and thirty times the rows, which is why nothing calls it on a schedule
+// — and why both sides come back from the one pass rather than two.
 // Observations come back in no particular order; callers that care sort them.
-func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[string][]Observation, error) {
-	out := make(map[string][]Observation, len(want))
-	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
-		v, ok := rec.Paper[historyProvider]
-		if !ok || v.Currency != "USD" {
-			return
+func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[string]CardHistory, error) {
+	out := make(map[string]CardHistory, len(want))
+	side := func(v vendor, prices byFinish, source string) []Observation {
+		if v.Currency != "USD" {
+			return nil
 		}
 		var obs []Observation
 		for finish, byDate := range map[string]map[string]float64{
-			"normal": v.Retail.Normal, "foil": v.Retail.Foil,
+			"normal": prices.Normal, "foil": prices.Foil,
 		} {
 			for date, price := range byDate {
 				obs = append(obs, Observation{
-					Date: date, Finish: finish, Price: price, Source: historyProvider,
+					Date: date, Finish: finish, Price: price, Source: source,
 				})
 			}
 		}
-		if len(obs) > 0 {
-			out[uuid] = obs
+		return obs
+	}
+	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
+		var h CardHistory
+		if v, ok := rec.Paper[historyProvider]; ok {
+			h.Retail = side(v, v.Retail, historyProvider)
+		}
+		if v, ok := rec.Paper[bidProvider]; ok {
+			h.Bids = side(v, v.Buylist, bidProvider)
+		}
+		if len(h.Retail) > 0 || len(h.Bids) > 0 {
+			out[uuid] = h
 		}
 	})
 	if err != nil {

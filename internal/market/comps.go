@@ -54,6 +54,23 @@ func (c Comp) HasSpread() bool { return c.HasBuylist && c.Low > 0 }
 // typical, 80-90% means the retail price is not real yet.
 func (c Comp) Spread() float64 { return 1 - c.Buylist/c.Low }
 
+// Verdict classifies a comp sheet the way the market view's sections do:
+// a bid over the sales price is arbitrage, a bid at liquidFloor or better
+// is easy to sell, anything else earns no verdict. Shares the sections'
+// constants so the two surfaces cannot drift.
+func (c Comp) Verdict() (Kind, bool) {
+	if !c.HasBuylist || !c.HasMarket || c.Market <= 0 {
+		return 0, false
+	}
+	if c.Buylist > c.Market {
+		return KindProfit, true
+	}
+	if c.Buylist/c.Market >= liquidFloor {
+		return KindLiquid, true
+	}
+	return 0, false
+}
+
 // spreadTight and spreadWide anchor the display ramp on those landmarks.
 const (
 	spreadTight = 0.20
