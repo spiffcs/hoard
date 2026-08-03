@@ -62,12 +62,19 @@ knock for bulk (under $1), a gold flash and bright bell for a win, and a
 coin shower with a rising glissando for a jackpot ($20 and up). The
 thresholds are tunable per run with `HOARD_SCAN_WIN` and
 `HOARD_SCAN_JACKPOT` (dollars), and the sound volume with
-`HOARD_SCAN_HUD_VOLUME` (0–1). A running
+`HOARD_SCAN_HUD_VOLUME` (0–1). The built-in sounds are synthesized (no
+third-party audio), but each can be replaced with your own file —
+`HOARD_SCAN_SOUND_BULK`, `HOARD_SCAN_SOUND_WIN`, `HOARD_SCAN_SOUND_JACKPOT`,
+and `HOARD_SCAN_SOUND_REVIEW` each take a path to anything macOS can play
+(wav, aiff, mp3, m4a) — for sessions that get filmed or published with
+audio you hold a license to distribute. An unreadable path reports an
+error banner and falls back to the built-in. A running
 session total sits at the video frame's top right and counts *committed*
-cards only — a
-queued-for-review card celebrates when it resolves, but its money lands in
-the total when the review confirms it. An unpriced card flashes "$—" with
-the familiar plain chime. Older helpers without the HUD keep the plain
+cards only — a card that queues for review flashes "Needs Review" with a
+soft rising two-note sound, the inflection of a question, instead of a
+price (its printing is still unverified), and its money lands in the total
+when the review confirms it. An unpriced card
+flashes "$—" with the familiar plain chime. Older helpers without the HUD keep the plain
 chime for everything; either way it is never two sounds for one card. The
 looks and sounds can be previewed without a camera via
 `hoard-scan --hud-demo` (pipe `result {...}` lines on stdin).

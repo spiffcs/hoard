@@ -1092,8 +1092,8 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		card := it.prints[0]
 		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
 		if err := m.adder(res); err != nil {
-			// Celebrates as queue-bound: the write failed, so no total.
-			m.celebrate(priceValuePtr(card, finish), false)
+			// The write failed, so the card is review-bound, not celebrated.
+			m.reviewFlash()
 			nudge := m.scheduleNudge()
 			it.note = "add failed: " + err.Error()
 			m.review = append(m.review, it)
@@ -1106,7 +1106,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
 		// After the increment, so the HUD total is the post-commit number.
-		m.celebrate(priceValuePtr(card, finish), true)
+		m.celebrate(priceValuePtr(card, finish))
 		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.tally = append(m.tally, line)
@@ -1139,7 +1139,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 	}
 	m.nudgeDrops = 0
-	m.celebrate(guessPrice(it), false)
+	m.reviewFlash()
 	it.note = note
 	m.review = append(m.review, it)
 	nudge := m.scheduleNudge()
@@ -1157,13 +1157,11 @@ func (m model) chime() {
 	}
 }
 
-// celebrate is chime's price-aware upgrade: the camera HUD flashes the
-// amount with its tier's styling and sound. committed means this resolve
-// itself moved the session total, which then rides along; a queue-bound card
-// celebrates without one — its money lands at confirm time via hudTotal.
-// Helpers without the hud feature get the plain chime, keeping the
-// one-sound-per-card policy in every pairing of helper and CLI.
-func (m model) celebrate(price *float64, committed bool) {
+// celebrate is chime's price-aware upgrade for a committed card: the camera
+// HUD flashes the amount with its tier's styling and sound, and the session
+// total rides along. Helpers without the hud feature get the plain chime,
+// keeping the one-sound-per-card policy in every pairing of helper and CLI.
+func (m model) celebrate(price *float64) {
 	if m.session == nil {
 		return
 	}
@@ -1174,11 +1172,27 @@ func (m model) celebrate(price *float64, committed bool) {
 	r := scan.HUDResult{Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot)}
 	// An unpriced commit moves nothing, so no total rides along — sending one
 	// would only surface the counter to announce an unchanged number.
-	if committed && price != nil {
+	if price != nil {
 		t := m.addedValue
 		r.Total = &t
 	}
 	_ = m.session.Result(r)
+}
+
+// reviewFlash marks a card that queued for review: a questioning two-note
+// sound and a "Needs Review" flash instead of a price. Review means look at
+// the terminal — a price celebration there would promise money the confirm
+// may not deliver (the queued printing is unverified). The money lands via
+// hudTotal when the review confirms it.
+func (m model) reviewFlash() {
+	if m.session == nil {
+		return
+	}
+	if !m.hudCapable {
+		m.chime()
+		return
+	}
+	_ = m.session.Result(scan.HUDResult{Tier: tierReview})
 }
 
 // hudTotal silently syncs the camera HUD's session counter after a commit
@@ -1657,7 +1671,7 @@ func (m model) View() string {
 		}
 		switch m.autoState {
 		case "armed":
-			b.WriteString("Set a card down; it captures by itself (space still works).\n\n")
+			b.WriteString("Set a card down and the app will run auto capture. A manual trigger with spacebar also works.\n\n")
 		case "held":
 			b.WriteString("Captured. Swap in the next card.\n\n")
 		default:

@@ -50,19 +50,6 @@ func TestHudThresholdsFromEnv(t *testing.T) {
 	}
 }
 
-func TestGuessPrice(t *testing.T) {
-	priced := scryfall.Card{PriceUSD: price(2), PriceUSDFoil: price(9)}
-	if p := guessPrice(queueItem{}); p != nil {
-		t.Errorf("no printings should guess nil, got %v", *p)
-	}
-	if p := guessPrice(queueItem{prints: []scryfall.Card{priced}}); p == nil || *p != 2 {
-		t.Errorf("markerless frame should price nonfoil, got %v", priceStr(p))
-	}
-	if p := guessPrice(queueItem{prints: []scryfall.Card{priced}, finishHint: "foil"}); p == nil || *p != 9 {
-		t.Errorf("foil marker should price foil, got %v", priceStr(p))
-	}
-}
-
 // hudSession is openCapture plus a ready event advertising the hud feature.
 func hudSession(t *testing.T, m model) (model, *fakeSession) {
 	t.Helper()
@@ -110,9 +97,10 @@ func TestAutoCommitCelebratesWithTotal(t *testing.T) {
 	}
 }
 
-// A queue-bound resolve celebrates its estimated price without a total — the
-// money lands only when the review confirms the card.
-func TestQueuedCelebratesWithoutTotal(t *testing.T) {
+// A queue-bound resolve is not a celebration: the HUD shows "Needs Review"
+// with the muted bulk knock and no price or total — the queued printing is
+// unverified, and the money lands only when the review confirms the card.
+func TestQueuedFlashesNeedsReview(t *testing.T) {
 	ev := confidentEvent()
 	ev.SetCode, ev.CollectorNumber = "", "" // unpinned printing: queue-bound
 	fs := fakeSearcher{
@@ -133,14 +121,11 @@ func TestQueuedCelebratesWithoutTotal(t *testing.T) {
 		t.Fatalf("setup: want a queued card, got review=%d added=%d", len(m.review), m.addedCount)
 	}
 	if sess.chimes != 0 || len(sess.results) != 1 {
-		t.Fatalf("chimes=%d results=%+v, want one silent-chime result", sess.chimes, sess.results)
+		t.Fatalf("chimes=%d results=%+v, want one result", sess.chimes, sess.results)
 	}
 	r := sess.results[0]
-	if r.Amount == nil || *r.Amount != 25 || r.Tier != tierJackpot {
-		t.Errorf("result = %+v, want a $25 jackpot", r)
-	}
-	if r.Total != nil {
-		t.Errorf("queued card carried a total (%v); it must wait for the confirm", *r.Total)
+	if r.Tier != tierReview || r.Amount != nil || r.Total != nil {
+		t.Errorf("result = %+v, want a bare needs-review flash", r)
 	}
 }
 

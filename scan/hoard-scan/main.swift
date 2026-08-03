@@ -88,12 +88,13 @@ struct Event: Encodable {
 }
 
 /// HUDCommand is the payload of the `result` stdin verb — the Go side's
-/// scan.HUDResult. A tier means celebrate (flash the amount with the tier's
-/// styling and sound); a total means update the persistent session counter,
-/// always silently. Amount is absent on an unpriced card.
+/// scan.HUDResult. A tier means flash it with the tier's styling and sound;
+/// a total means update the persistent session counter, always silently.
+/// Amount is absent on an unpriced card, and always absent on the review
+/// tier, which renders as "Needs Review" rather than a price.
 struct HUDCommand: Decodable {
     var amount: Double?
-    var tier: String? // bulk | win | jackpot | unpriced
+    var tier: String? // bulk | win | jackpot | unpriced | review
     var total: Double?
 }
 
@@ -1403,11 +1404,28 @@ func triggerRects(_ buffer: CVPixelBuffer) -> [CGRect] {
 /// aggregate-device weirdness — degrades to the system Glass chime, never to
 /// silence.
 ///
+/// A queued card gets its own voice — a soft two-note rise, the sound of a
+/// question being asked — because review is a request ("is this right?"),
+/// not a price outcome.
+///
+/// A tier's sound can also be replaced outright: HOARD_SCAN_SOUND_BULK /
+/// _WIN / _JACKPOT / _REVIEW each take a path to an audio file (anything
+/// NSSound reads — wav, aiff, mp3, m4a), for users who film or publish
+/// their scanning sessions and need audio they hold a license to
+/// distribute. An unreadable path reports one error event and falls back to
+/// the synth.
+///
 /// Main-thread only, like the rest of the controller's state.
 final class SoundBank {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var buffers: [String: AVAudioPCMBuffer] = [:]
+    /// User-supplied replacements by tier, loaded from the env; these win
+    /// over the synth buffers and play even when the engine failed.
+    private var custom: [String: NSSound] = [:]
+    /// The custom sound last started, stopped before the next play so rapid
+    /// scans cut tails exactly like the engine path's player.stop().
+    private var playing: NSSound?
     private var ok = false
 
     /// One synthesis event: freqs sound together from t for dur seconds,
@@ -1415,6 +1433,20 @@ final class SoundBank {
     private typealias Strike = (t: Double, freqs: [Double], dur: Double, amp: Double)
 
     init() {
+        let env = ProcessInfo.processInfo.environment
+        let volume = Float(max(0, min(1, envDouble("HOARD_SCAN_HUD_VOLUME", 1.0))))
+        for tier in ["bulk", "win", "jackpot", "review"] {
+            guard let path = env["HOARD_SCAN_SOUND_\(tier.uppercased())"], !path.isEmpty else {
+                continue
+            }
+            if let snd = NSSound(contentsOf: URL(fileURLWithPath: path), byReference: true) {
+                snd.volume = volume
+                custom[tier] = snd
+            } else {
+                emit(Event(event: "error",
+                           message: "could not load \(tier) sound \(path); using the built-in"))
+            }
+        }
         let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
         guard let format else { return }
         engine.attach(player)
@@ -1442,6 +1474,13 @@ final class SoundBank {
         }
         gliss.append((0.62, [2093.0, 1046.5, 4186.0], 0.9, 0.48))
         buffers["jackpot"] = render(format, gliss, length: 1.9)
+        // Review: two soft notes rising a fourth — "hm-hmm?" — the upward
+        // inflection of a question. Warm low partials (f + 2f) keep it
+        // marimba-ish and unhurried, nothing like the win bell's brightness.
+        buffers["review"] = render(format, [
+            (0.00, [440, 880], 0.12, 0.34),   // A4
+            (0.16, [587.33, 1174.7], 0.28, 0.38), // D5, held — the "?"
+        ], length: 0.6)
         ok = true
     }
 
@@ -1479,11 +1518,18 @@ final class SoundBank {
     /// a rapid next card should clip the last fanfare, not queue behind it.
     /// Unknown tiers and the unpriced shrug keep the familiar Glass chime.
     func play(tier: String) {
+        // Both paths stop first, whichever played last: tails never stack.
+        playing?.stop()
+        player.stop()
+        if let snd = custom[tier] {
+            playing = snd
+            snd.play()
+            return
+        }
         guard ok, let buf = buffers[tier] else {
             NSSound(named: "Glass")?.play()
             return
         }
-        player.stop()
         player.scheduleBuffer(buf)
         player.play()
     }
@@ -1525,8 +1571,8 @@ final class PriceHUD {
         self.scale = scale
         self.preview = host
         container.frame = host.bounds
-        totalLayer.font = NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .semibold)
-        totalLayer.fontSize = 16
+        totalLayer.font = NSFont.monospacedDigitSystemFont(ofSize: 26, weight: .bold)
+        totalLayer.fontSize = 26
         totalLayer.alignmentMode = .right
         totalLayer.foregroundColor = NSColor.white.cgColor
         totalLayer.shadowColor = NSColor.black.cgColor
@@ -1554,7 +1600,7 @@ final class PriceHUD {
     /// out the view.
     private func repinTotal() {
         let rect = videoRect
-        totalLayer.frame = CGRect(x: rect.maxX - 232, y: rect.maxY - 34, width: 220, height: 22)
+        totalLayer.frame = CGRect(x: rect.maxX - 252, y: rect.maxY - 48, width: 240, height: 34)
     }
 
     /// setScale re-rasterizes the text for the current display — without this
@@ -1595,7 +1641,11 @@ final class PriceHUD {
     /// harmlessly instead of fighting over one layer's animations.
     private func flash(amount: Double?, tier: String) {
         let text: String
-        if let amount {
+        if tier == "review" {
+            // A queued card isn't a win yet: the terminal has the review, and
+            // the printing (so the price) is still unverified.
+            text = "Needs Review"
+        } else if let amount {
             text = String(format: "+$%.2f", amount)
         } else {
             text = "$—"
@@ -1965,6 +2015,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         outline.frame = view.bounds
         outline.fillColor = nil
         outline.lineWidth = 3
+        // Rounded caps soften the corner brackets — see addCornerBrackets.
+        outline.lineCap = .round
+        outline.lineJoin = .round
         outline.strokeColor = NSColor.systemYellow.cgColor
         outline.isHidden = true
         preview.addSublayer(outline)
@@ -2039,19 +2092,23 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// the outline without waiting for the next sample.
     private var lastBoxes: [CGRect] = []
 
-    /// updateOutlines traces the trigger's cue around the cards themselves —
-    /// yellow while one settles, green once it's shot — rather than bordering
-    /// the whole window. Drawing what the detector actually sees also makes a
-    /// reluctant trigger diagnosable at a glance: no outline means no
-    /// rectangle, a jumping outline means the scene never reads as still.
+    /// updateOutlines traces the trigger's cue at the corners of the one
+    /// dominant rectangle — yellow while it settles, green once it's shot —
+    /// rather than boxing everything the detector sees. Four viewfinder
+    /// brackets read as deliberate framing where the full rectangles,
+    /// re-fit on every Vision sample, slid and flickered like the display
+    /// was struggling; and one frame beats several, because the extra boxes
+    /// were desk clutter and deck boxes the trigger weighs but the user
+    /// shouldn't have to look at. The cue still makes a reluctant trigger
+    /// diagnosable at a glance: no brackets means no rectangle, jumping
+    /// brackets mean the scene never reads as still.
     ///
-    /// Vision reports boxes normalized with a bottom-left origin in buffer
-    /// space; flipping y gives metadata-output space, and the preview layer's
-    /// own converter carries that into layer coordinates, aspect fit and
-    /// preview rotation included.
+    /// Vision reports boxes normalized with a bottom-left origin in the
+    /// *unrotated* analysis buffer; bracketRect turns each into preview-layer
+    /// coordinates, rotation and letterboxing included.
     private func updateOutlines(_ boxes: [CGRect]) {
         lastBoxes = boxes
-        guard let preview = previewLayer,
+        guard previewLayer != nil,
               let outline = (window?.contentView as? PreviewView)?.outlineLayer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -2062,14 +2119,73 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
             return
         }
         let path = CGMutablePath()
-        for b in boxes {
-            let metadataRect = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
-            path.addRect(preview.layerRectConverted(fromMetadataOutputRect: metadataRect))
+        // The largest box is the card being framed; the trigger keeps
+        // weighing all of them, only the drawing narrows.
+        if let main = boxes.max(by: { $0.width * $0.height < $1.width * $1.height }),
+           let r = bracketRect(for: main) {
+            addCornerBrackets(to: path, around: r)
         }
         outline.path = path
         outline.strokeColor = outlineColor(phase)
         outline.lineWidth = phase == .capturing ? 5 : 3
         outline.isHidden = false
+    }
+
+    /// bracketRect maps a Vision box from the unrotated analysis buffer into
+    /// preview-layer coordinates by hand. The obvious route —
+    /// layerRectConverted(fromMetadataOutputRect:) — turns the box by the
+    /// wrong sense when the preview is rotated: at 270° the cue landed
+    /// mirrored through the frame's center, its bottom edge framing the
+    /// card's middle (observed live). The capture path already owns the
+    /// correct convention — the preview connection and rotatedImage both
+    /// turn the buffer *clockwise* by effectiveRotation, and OCR reading
+    /// those captures upright proves it — so the box takes the same
+    /// clockwise turn, and only the full-frame extent (rotation-symmetric,
+    /// so immune to the converter's sense) is asked of the layer.
+    private func bracketRect(for b: CGRect) -> CGRect? {
+        guard let preview = previewLayer else { return nil }
+        let video = preview.layerRectConverted(
+            fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !video.isNull, video.width > 1, video.height > 1 else { return nil }
+        // Buffer space, normalized, top-left origin.
+        var r = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+        // The same clockwise turn the preview shows.
+        switch ((effectiveRotation % 360) + 360) % 360 {
+        case 90:
+            r = CGRect(x: 1 - r.maxY, y: r.minX, width: r.height, height: r.width)
+        case 180:
+            r = CGRect(x: 1 - r.maxX, y: 1 - r.maxY, width: r.width, height: r.height)
+        case 270:
+            r = CGRect(x: r.minY, y: 1 - r.maxX, width: r.height, height: r.width)
+        default:
+            break
+        }
+        // Scale into the displayed video area; layer coordinates are y-up,
+        // so the display-space top edge is the layer-space maxY.
+        return CGRect(x: video.minX + r.minX * video.width,
+                      y: video.minY + (1 - r.maxY) * video.height,
+                      width: r.width * video.width,
+                      height: r.height * video.height)
+    }
+
+    /// addCornerBrackets appends four L-shaped marks squaring a rect's
+    /// corners, arms proportional to the card but capped so a close-up card
+    /// doesn't wear giant angles.
+    private func addCornerBrackets(to path: CGMutablePath, around r: CGRect) {
+        let arm = min(min(r.width, r.height) * 0.22, 34)
+        // Bottom-left, bottom-right, top-right, top-left (layer coords, y-up).
+        path.move(to: CGPoint(x: r.minX, y: r.minY + arm))
+        path.addLine(to: CGPoint(x: r.minX, y: r.minY))
+        path.addLine(to: CGPoint(x: r.minX + arm, y: r.minY))
+        path.move(to: CGPoint(x: r.maxX - arm, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX, y: r.minY + arm))
+        path.move(to: CGPoint(x: r.maxX, y: r.maxY - arm))
+        path.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.maxX - arm, y: r.maxY))
+        path.move(to: CGPoint(x: r.minX + arm, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.minX, y: r.maxY - arm))
     }
 
     private func outlineColor(_ phase: AutoTrigger.Phase) -> CGColor {

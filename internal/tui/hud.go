@@ -13,12 +13,16 @@ import (
 // here, Go-side, where prices already are and where a table test can pin the
 // boundaries; the Swift helper just renders what it is told.
 
-// Tier names on the wire; the helper switches on these strings.
+// Tier names on the wire; the helper switches on these strings. tierReview
+// is not a price tier: it marks a card that queued for review, which the
+// helper renders as a muted "Needs Review" with a rising two-note question
+// sound.
 const (
 	tierBulk     = "bulk"
 	tierWin      = "win"
 	tierJackpot  = "jackpot"
 	tierUnpriced = "unpriced"
+	tierReview   = "review"
 )
 
 // Default tier thresholds in dollars, overridable per run via the
@@ -65,20 +69,4 @@ func priceValuePtr(c scryfall.Card, finish string) *float64 {
 		p = c.PriceUSDFoil
 	}
 	return p
-}
-
-// guessPrice estimates a queue-bound item's value for celebration purposes
-// only: the top-ranked printing priced by the finish hint when it names a
-// real finish, nonfoil otherwise. The printing is unverified — the flash may
-// overstate a card whose confirmed printing is bulk — which is acceptable
-// because the running total never moves on a guess, only on commit.
-func guessPrice(it queueItem) *float64 {
-	if len(it.prints) == 0 {
-		return nil
-	}
-	finish := "nonfoil"
-	if it.finishHint != "" {
-		finish = it.finishHint
-	}
-	return priceValuePtr(it.prints[0], finish)
 }

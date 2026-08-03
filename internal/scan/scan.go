@@ -73,13 +73,14 @@ type Event struct {
 }
 
 // HUDResult reports a resolved card's price outcome to the camera window's
-// HUD. Tier set means celebrate: flash the amount with the tier's styling and
-// play its sound. Total set means update the persistent session counter —
-// always silently, so a card is never a two-sound event. Amount nil with a
-// tier means the card is unpriced.
+// HUD. Tier set means flash it with the tier's styling and sound. Total set
+// means update the persistent session counter — always silently, so a card
+// is never a two-sound event. Amount nil with a price tier means the card is
+// unpriced; the review tier carries no amount at all (it flashes "Needs
+// Review" — the queued printing is unverified, so a price would be a guess).
 type HUDResult struct {
 	Amount *float64 `json:"amount,omitempty"`
-	Tier   string   `json:"tier,omitempty"` // bulk | win | jackpot | unpriced
+	Tier   string   `json:"tier,omitempty"` // bulk | win | jackpot | unpriced | review
 	Total  *float64 `json:"total,omitempty"`
 }
 
