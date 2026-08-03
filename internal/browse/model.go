@@ -236,11 +236,12 @@ type Model struct {
 	moversPennies    bool
 	moversPennyLimit float64
 
-	// entryIndex answers "does this container hold this printing":
-	// containerID → "scryfallID|finish". viewEligible marks the containers
-	// selectable on views that grey the rest out, nil when all are. Both
-	// live in containerfilter.go.
-	entryIndex   map[int64]map[string]bool
+	// entryIndex answers "how many of this printing does this container
+	// hold": containerID → "scryfallID|finish" → copies (membership is
+	// copies > 0). viewEligible marks the containers selectable on views
+	// that grey the rest out, nil when all are. Both live in
+	// containerfilter.go.
+	entryIndex   map[int64]map[string]int
 	viewEligible map[int64]bool
 
 	// The market view sorts per table: each of the three sections keeps
@@ -990,23 +991,34 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 
+	// Navigation clears any transient status, like the pane switches above:
+	// moving the cursor is asking about a new row, and the answer is the
+	// per-row status line (the market note, the position elsewhere) — not a
+	// receipt from an action that already happened (observed live: "sorted
+	// by arbitrage · profit" outliving every selection change).
 	case "up", "k":
 		m.move(-1)
+		m.status = ""
 		return m, nil
 	case "down", "j":
 		m.move(1)
+		m.status = ""
 		return m, nil
 	case "pgup":
 		m.move(-m.visibleRows())
+		m.status = ""
 		return m, nil
 	case "pgdown":
 		m.move(m.visibleRows())
+		m.status = ""
 		return m, nil
 	case "home", "g":
 		m.moveTo(0)
+		m.status = ""
 		return m, nil
 	case "end", "G":
 		m.moveTo(m.rowCount(m.focus) - 1)
+		m.status = ""
 		return m, nil
 
 	}

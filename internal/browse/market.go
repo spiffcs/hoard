@@ -10,6 +10,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -381,15 +382,27 @@ func (m Model) selectedMarketNote() string {
 // re-sorted the way the user left it.
 func (m *Model) applyMarketRows() {
 	res := m.marketResult
+	// scopeOwned rescales a row's card to the copies the selected container
+	// holds — VALUE follows QTY so per-copy figures (unit price, floor)
+	// stay intact while the totals describe the container, not the hoard.
+	scopeOwned := func(card store.OwnedFinish, qty int) store.OwnedFinish {
+		if card.Copies > 0 && qty != card.Copies {
+			card.Value = card.Value / float64(card.Copies) * float64(qty)
+		}
+		card.Copies = qty
+		return card
+	}
 	if cid, filtered := m.filterContainerID(); filtered {
 		scoped := market.Result{Compared: res.Compared}
 		for _, o := range res.Opportunities {
-			if m.inContainer(cid, o.Card.ScryfallID, o.Card.Finish) {
+			if qty := m.containerQty(cid, o.Card.ScryfallID, o.Card.Finish); qty > 0 {
+				o.Card = scopeOwned(o.Card, qty)
 				scoped.Opportunities = append(scoped.Opportunities, o)
 			}
 		}
 		for _, c := range res.Comps {
-			if m.inContainer(cid, c.Card.ScryfallID, c.Card.Finish) {
+			if qty := m.containerQty(cid, c.Card.ScryfallID, c.Card.Finish); qty > 0 {
+				c.Card = scopeOwned(c.Card, qty)
 				scoped.Comps = append(scoped.Comps, c)
 			}
 		}

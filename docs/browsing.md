@@ -110,7 +110,10 @@ and market. All but the last are instant database reads.
 
 **Every view reads through the collection pane.** All cards is the whole
 hoard; selecting a binder or deck narrows the view to what it holds, and
-the header names the selection (`MOVERS · SINCE 2 Jul · RICH DECK`). On
+the header names the selection (`MOVERS · SINCE 2 Jul · RICH DECK`).
+Quantities follow the scope: a card held across several containers shows
+the selected container's own copy count — QTY, IMPACT, and comp values
+describe that deck or binder, not every copy in the collection. On
 unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
 selection snaps back to All cards and says so.
@@ -194,7 +197,9 @@ itself: at or below zero is green (the bid meets or beats the ask — pure
 value), reddening linearly toward 100% — the retailer keeping the whole
 sale price. A dash means no buylist bid today (Card Kingdom runs the only
 buylist in the MTGJSON feed). Each side's status line states its spread
-formula. The comps sort cycles every visible column, **SPREAD** first as
+formula. Transient receipts ("sorted by …") hold the status line only
+until the cursor moves; navigating always brings back the selected row's
+own summary. The comps sort cycles every visible column, **SPREAD** first as
 the default — spread ascending (tightest or most negative first), money
 columns descending, then name, set/num, and finish.
 

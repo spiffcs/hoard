@@ -6,8 +6,9 @@ import (
 )
 
 // EntryKeys is one row per (container, printing, finish): the same card
-// main and side in one deck collapses to one membership fact, while the
-// binder's copy and each finish stay distinct.
+// main and side in one deck collapses to one membership fact with the
+// boards' quantities summed, while the binder's copy and each finish stay
+// distinct.
 func TestEntryKeysDistinct(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
@@ -32,9 +33,9 @@ func TestEntryKeysDistinct(t *testing.T) {
 		t.Fatalf("EntryKeys: %v", err)
 	}
 	want := []EntryKey{
-		{ContainerID: cid, ScryfallID: "ulamog-id", Finish: "nonfoil"},
-		{ContainerID: deckID, ScryfallID: "ulamog-id", Finish: "nonfoil"},
-		{ContainerID: deckID, ScryfallID: "ulamog-id", Finish: "foil"},
+		{ContainerID: cid, ScryfallID: "ulamog-id", Finish: "nonfoil", Quantity: 2},
+		{ContainerID: deckID, ScryfallID: "ulamog-id", Finish: "nonfoil", Quantity: 3},
+		{ContainerID: deckID, ScryfallID: "ulamog-id", Finish: "foil", Quantity: 1},
 	}
 	if len(keys) != len(want) {
 		t.Fatalf("EntryKeys = %+v, want %d distinct facts", keys, len(want))

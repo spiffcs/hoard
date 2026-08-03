@@ -209,13 +209,16 @@ type EntryKey struct {
 	ContainerID int64
 	ScryfallID  string
 	Finish      string
+	Quantity    int
 }
 
-// EntryKeys returns every distinct membership fact in the hoard. Boards
-// collapse: a card main and side in the same deck is one fact.
+// EntryKeys returns every distinct membership fact in the hoard, with the
+// copies that container holds. Boards collapse: a card main and side in
+// the same deck is one fact, quantities summed.
 func (s *Store) EntryKeys() ([]EntryKey, error) {
 	rows, err := s.db.Query(`
-SELECT DISTINCT container_id, scryfall_id, finish FROM card_entries`)
+SELECT container_id, scryfall_id, finish, SUM(quantity)
+FROM card_entries GROUP BY container_id, scryfall_id, finish`)
 	if err != nil {
 		return nil, fmt.Errorf("listing entry keys: %w", err)
 	}
@@ -223,7 +226,7 @@ SELECT DISTINCT container_id, scryfall_id, finish FROM card_entries`)
 	var out []EntryKey
 	for rows.Next() {
 		var k EntryKey
-		if err := rows.Scan(&k.ContainerID, &k.ScryfallID, &k.Finish); err != nil {
+		if err := rows.Scan(&k.ContainerID, &k.ScryfallID, &k.Finish, &k.Quantity); err != nil {
 			return nil, err
 		}
 		out = append(out, k)

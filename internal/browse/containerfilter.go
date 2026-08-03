@@ -27,14 +27,14 @@ func (m *Model) rebuildEntryIndex() error {
 		m.entryIndex = nil
 		return err
 	}
-	idx := make(map[int64]map[string]bool)
+	idx := make(map[int64]map[string]int)
 	for _, k := range keys {
 		set := idx[k.ContainerID]
 		if set == nil {
-			set = make(map[string]bool)
+			set = make(map[string]int)
 			idx[k.ContainerID] = set
 		}
-		set[entryKey(k.ScryfallID, k.Finish)] = true
+		set[entryKey(k.ScryfallID, k.Finish)] += k.Quantity
 	}
 	m.entryIndex = idx
 	return nil
@@ -67,6 +67,14 @@ func (m Model) filterSetCode() (string, bool) {
 // this finish — the join for rows that carry entry finishes (unpriced,
 // market, comps).
 func (m Model) inContainer(cid int64, scryfallID, finish string) bool {
+	return m.containerQty(cid, scryfallID, finish) > 0
+}
+
+// containerQty is how many copies of the printing, in exactly this finish,
+// the container holds. The scoped views quote it in place of the row's
+// hoard-wide count: a deck holding one copy must not wear every copy the
+// other containers hold.
+func (m Model) containerQty(cid int64, scryfallID, finish string) int {
 	return m.entryIndex[cid][entryKey(scryfallID, finish)]
 }
 
@@ -74,11 +82,17 @@ func (m Model) inContainer(cid int64, scryfallID, finish string) bool {
 // watches): price feeds fold etched into foil, so a foil-priced row matches
 // a container holding the foil or the etched printing.
 func (m Model) inContainerPriced(cid int64, scryfallID, priceFinish string) bool {
+	return m.containerQtyPriced(cid, scryfallID, priceFinish) > 0
+}
+
+// containerQtyPriced is containerQty under the price-finish fold: a
+// foil-priced row counts the container's foil and etched copies together.
+func (m Model) containerQtyPriced(cid int64, scryfallID, priceFinish string) int {
 	if scryfall.PricedAsFoil(priceFinish) {
-		return m.inContainer(cid, scryfallID, "foil") ||
-			m.inContainer(cid, scryfallID, "etched")
+		return m.containerQty(cid, scryfallID, "foil") +
+			m.containerQty(cid, scryfallID, "etched")
 	}
-	return m.inContainer(cid, scryfallID, "nonfoil")
+	return m.containerQty(cid, scryfallID, "nonfoil")
 }
 
 // containerEligible reports whether the container row at index i can be

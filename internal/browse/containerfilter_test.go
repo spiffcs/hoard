@@ -612,3 +612,82 @@ func TestViewCycleKeepsGutterSteady(t *testing.T) {
 		}
 	}
 }
+
+// A scoped view quotes the selected container's own copy count, not the
+// hoard-wide total: a card held across several decks shows each deck's
+// quantity when that deck is selected (observed live on MOVERS: a
+// one-copy deck wearing every copy in the collection, inflating QTY and
+// IMPACT). The market comps rescale VALUE alongside, keeping the per-copy
+// figure intact.
+func TestScopedViewsShowContainerQuantity(t *testing.T) {
+	st := testStore()
+	// Solitude: 1 copy in Rich Deck (fixture) plus 3 more in Cheap Deck.
+	st.deckCards[201] = append(st.deckCards[201], entry("Solitude", "main", "nonfoil", 3, 34))
+	st.movers = []store.PriceChange{mover("Solitude-id", "nonfoil", 4, 30, 34)}
+
+	m := newTestModel(t, st) // the default binder is selected
+	m = key(m, "v")
+	if len(m.movers) != 0 {
+		t.Fatalf("binder movers = %+v, want none (Solitude lives in decks)", m.movers)
+	}
+	m = key(m, "tab")
+	m = key(m, "down") // Rich Deck
+	if len(m.movers) != 1 || m.movers[0].Copies != 1 {
+		t.Fatalf("rich deck movers = %+v, want Solitude at the deck's 1 copy", m.movers)
+	}
+	m = key(m, "down") // Cheap Deck
+	if len(m.movers) != 1 || m.movers[0].Copies != 3 {
+		t.Fatalf("cheap deck movers = %+v, want Solitude at the deck's 3 copies", m.movers)
+	}
+	m = key(m, "home") // All cards
+	if len(m.movers) != 1 || m.movers[0].Copies != 4 {
+		t.Fatalf("all-cards movers = %+v, want the hoard-wide 4 copies", m.movers)
+	}
+
+	// The comp sheet follows: hoard-wide 4 copies at $136 become the deck's
+	// 1 copy at $34.
+	sc := comp("SolC", 136, 34, 30)
+	sc.Card.ScryfallID = "Solitude-id"
+	sc.Card.Copies = 4
+	m.view = viewMarket
+	m.marketResult = market.Result{Comps: []market.Comp{sc}, Compared: 1}
+	m.marketLoaded = true
+	m.focus = paneContainers
+	m.moveTo(0)
+	m.move(2) // Rich Deck
+	if len(m.marketComps) != 1 || m.marketComps[0].Card.Copies != 1 {
+		t.Fatalf("rich deck comps = %+v, want the deck's single copy", m.marketComps)
+	}
+	if v := m.marketComps[0].Card.Value; v != 34 {
+		t.Errorf("scoped comp value = %v, want 34 (one copy's worth)", v)
+	}
+	m.moveTo(0) // All cards
+	if len(m.marketComps) != 1 || m.marketComps[0].Card.Copies != 4 || m.marketComps[0].Card.Value != 136 {
+		t.Fatalf("all-cards comps = %+v, want the hoard-wide figures restored", m.marketComps)
+	}
+}
+
+// Moving the cursor clears a transient status: a sort receipt must not
+// outlive the selection it described — the next row's own status line
+// (the market note here, the position line elsewhere) takes the slot back
+// (observed live: "sorted by arbitrage · profit" persisting forever).
+func TestCursorMovementRestoresStatusLine(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.view = viewMarket
+	m.marketLoaded = true
+	m.focus = paneCards
+	for _, n := range []string{"P1", "P2"} {
+		m.marketRows = append(m.marketRows, market.Row{Kind: market.KindProfit, Opportunity: opp(n, 1, 10)})
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m = next.(Model)
+
+	m.status = "sorted by arbitrage · profit"
+	if got := m.statusLine(); !strings.Contains(got, "sorted by arbitrage") {
+		t.Fatalf("status = %q, want the receipt while it is fresh", got)
+	}
+	m = key(m, "down")
+	if got := m.statusLine(); !strings.Contains(got, "2/2") || !strings.Contains(got, "pays") {
+		t.Errorf("status after moving = %q, want the selected row's market note", got)
+	}
+}

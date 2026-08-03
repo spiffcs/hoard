@@ -152,7 +152,7 @@ func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
 	var out []store.EntryKey
 	addRows := func(cid int64, rows []store.CollectionRow) {
 		for _, r := range rows {
-			out = append(out, store.EntryKey{ContainerID: cid, ScryfallID: r.ScryfallID, Finish: r.Finish})
+			out = append(out, store.EntryKey{ContainerID: cid, ScryfallID: r.ScryfallID, Finish: r.Finish, Quantity: r.Quantity})
 		}
 	}
 	addRows(defaultBinderID, f.collection)
@@ -165,7 +165,7 @@ func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
 	}
 	for id, entries := range f.deckCards {
 		for _, e := range entries {
-			out = append(out, store.EntryKey{ContainerID: id, ScryfallID: e.Card.ScryfallID, Finish: e.Finish})
+			out = append(out, store.EntryKey{ContainerID: id, ScryfallID: e.Card.ScryfallID, Finish: e.Finish, Quantity: e.Quantity})
 		}
 	}
 	return out, nil

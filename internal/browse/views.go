@@ -174,8 +174,15 @@ func (m *Model) deriveView() {
 			if !m.moversPennies && c.New <= m.moversPennyLimit {
 				continue
 			}
-			if filtered && !m.inContainerPriced(cid, c.ScryfallID, c.Finish) {
-				continue
+			if filtered {
+				// Scope the count too: the row's Copies is hoard-wide, and a
+				// deck-scoped QTY/IMPACT must describe the deck's copies, not
+				// every copy across the collection (observed live).
+				qty := m.containerQtyPriced(cid, c.ScryfallID, c.Finish)
+				if qty == 0 {
+					continue
+				}
+				c.Copies = qty
 			}
 			if bySet && c.SetCode != set {
 				continue
@@ -187,8 +194,12 @@ func (m *Model) deriveView() {
 	case viewUnpriced:
 		rows := make([]store.UnpricedRow, 0, len(m.allUnpriced))
 		for _, r := range m.allUnpriced {
-			if filtered && !m.inContainer(cid, r.ScryfallID, r.Finish) {
-				continue
+			if filtered {
+				qty := m.containerQty(cid, r.ScryfallID, r.Finish)
+				if qty == 0 {
+					continue
+				}
+				r.Copies = qty
 			}
 			if bySet && r.SetCode != set {
 				continue
