@@ -117,7 +117,7 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	p.Emit(progress.Event{Step: "downloading price history",
 		Note: fmt.Sprintf("fetching %d days of prices for %s printings from MTGJSON (a large download)",
 			days, ui.Count(len(printings)))})
-	f := pricing.New(d.Store, d.CacheDir).
+	f := d.pricer().
 		WithProgress(func(msg string) {
 			p.Emit(progress.Event{Step: "downloading price history", Note: msg})
 		}).

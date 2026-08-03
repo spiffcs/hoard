@@ -583,6 +583,11 @@ func (m Model) statusLine() string {
 		return m.theme.Help.Render("nothing here")
 	}
 	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sortLabel())
+	// The selection leads: a position number answers "where am I", but the
+	// first question a status line gets asked is "what is this row".
+	if name := m.selectedItemName(); name != "" {
+		pos = name + " · " + pos
+	}
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
@@ -596,6 +601,39 @@ func (m Model) statusLine() string {
 		pos += fmt.Sprintf(" · penny filter ≤ %s (: toggles)", ui.Money(m.moversPennyLimit))
 	}
 	return m.theme.Help.Render(pos)
+}
+
+// selectedItemName names the row under the cursor in the focused pane —
+// the card on the right, the binder, deck, or set on the left — empty
+// when nothing is selectable.
+func (m Model) selectedItemName() string {
+	if m.focus == paneContainers {
+		if sel := m.selectedContainer(); sel != nil {
+			return sel.Name
+		}
+		return ""
+	}
+	i := m.cursor[paneCards]
+	name := func(n int, get func(int) string) string {
+		if i < 0 || i >= n {
+			return ""
+		}
+		return get(i)
+	}
+	switch m.view {
+	case viewMovers:
+		return name(len(m.movers), func(i int) string { return m.movers[i].Name })
+	case viewUnpriced:
+		return name(len(m.unpriced), func(i int) string { return m.unpriced[i].Name })
+	case viewWatches:
+		return name(len(m.watches), func(i int) string { return m.watches[i].Name })
+	case viewMarket:
+		if c := m.selectedComp(); c != nil {
+			return c.Card.Name
+		}
+		return name(len(m.marketRows), func(i int) string { return m.marketRows[i].Card.Name })
+	}
+	return name(len(m.cards), func(i int) string { return m.cards[i].Name })
 }
 
 func (m Model) helpLine() string {

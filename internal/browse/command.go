@@ -380,6 +380,7 @@ func commands() []command {
 				}
 				m.status, m.statusErr = fmt.Sprintf("penny filter ≤ %s %s",
 					ui.Money(m.moversPennyLimit), state), false
+				m.persistPennyFilters()
 				return nil
 			},
 		},
@@ -408,6 +409,7 @@ func commands() []command {
 				// After the receipt: a day-cache miss replaces it with the
 				// fresh-fetch ask, which is the truer answer.
 				m.refreshMarketFloor()
+				m.persistPennyFilters()
 				return nil
 			},
 		},
@@ -645,9 +647,14 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 		}
 	}
 	if v == viewMarket {
-		// An earlier session's quotes beat an empty pane; fetching stays
-		// deliberate (F), arriving stays free.
+		// An earlier session's quotes beat an empty pane; with nothing
+		// cached at all the fetch starts itself — an empty table inviting a
+		// keypress is a chore, not a choice (owner's call). Refreshing
+		// data that already exists stays deliberate: that is what F is for.
 		m.loadCachedMarket()
+		if !m.marketLoaded && !m.marketLoading && m.marketFetch != nil {
+			return m.startMarketFetch()
+		}
 	}
 	return nil
 }

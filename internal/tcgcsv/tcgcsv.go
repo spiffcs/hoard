@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bodgit/sevenzip"
@@ -58,6 +59,29 @@ func (o Options) base() string {
 
 var httpClient = &http.Client{Timeout: 2 * time.Minute}
 
+// The request pacer: tcgcsv is a volunteer mirror, and the archive sweep
+// with concurrent workers is exactly the burst shape volunteer
+// infrastructure hates. No two request *starts* come closer than
+// requestGap; cache hits never touch the pacer, so a fully cached day
+// costs zero waits along with its zero requests. Vars so tests pin them.
+var (
+	requestGap = 250 * time.Millisecond
+	paceMu     sync.Mutex
+	lastStart  time.Time
+	paceSleep  = time.Sleep
+)
+
+// pace blocks until this request start is requestGap after the previous one.
+func pace() {
+	paceMu.Lock()
+	wait := requestGap - time.Since(lastStart)
+	if wait > 0 {
+		paceSleep(wait)
+	}
+	lastStart = time.Now()
+	paceMu.Unlock()
+}
+
 // get fetches one URL's body, through the day cache when cacheName is
 // non-empty. Day-cached entries from earlier dates are removed as a side
 // effect, mirroring the MTGJSON cache's convention.
@@ -74,6 +98,7 @@ func get(ctx context.Context, o Options, url, cacheName string) ([]byte, error) 
 		return nil, err
 	}
 	req.Header.Set("User-Agent", buildinfo.UserAgent)
+	pace()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err

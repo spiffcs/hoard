@@ -285,3 +285,26 @@ archives: up to 90 days, ~4 MB per day, each fetched once and its
 extractions cached, decoded entirely in Go (the archives are
 PPMd-compressed 7z; hoard registers a lenient PPMd decoder because the
 archives carry seven property bytes where the canonical shape is five).
+
+## What hoard downloads, and when
+
+The price sources are volunteer- and community-run, so the network
+contract is deliberately small, and the caches enforce it rather than
+politeness alone:
+
+- **Scryfall**: card documents in paced chunks (150 ms between requests,
+  rate-limit responses waited out), only when refreshing or resolving.
+- **MTGJSON**: one ~5 MB `AllPricesToday` per day (every quotes or price
+  read after that re-parses the cached file — pressing <kbd>F</kbd>
+  repeatedly costs zero requests); the ~150 MB `AllPrices` archive only
+  during a backfill, at most once a day behind the receipt ledger; per-set
+  identifier files once per set ever.
+- **tcgcsv**: the group list and each needed group's prices once per day;
+  one ~4 MB daily archive per backfill day, extracted once and cached
+  permanently — the first backfill sweeps ~90 of them, after which steady
+  state is one per day.
+
+Every request carries hoard's User-Agent, and all three clients pace
+their download starts (no two closer than 250 ms), so even the one-time
+archive sweep never reads as scraper traffic. Nothing retries in a loop:
+a failed download surfaces as an error and waits for you.

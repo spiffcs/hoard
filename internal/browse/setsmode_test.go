@@ -151,8 +151,9 @@ func TestUnpricedScopedToSetWithEligibility(t *testing.T) {
 	}
 	m := newTestModel(t, st)
 	m = key(m, "B")
-	m = key(m, "v") // movers
-	m = key(m, "v") // unpriced
+	for m.view != viewUnpriced {
+		m = key(m, "v")
+	}
 	if len(m.unpriced) != 1 {
 		t.Fatalf("all-cards unpriced = %d, want 1", len(m.unpriced))
 	}

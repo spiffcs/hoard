@@ -35,7 +35,7 @@ what is inside whichever row you have selected.
 | <kbd>enter</kbd> | card detail — printings, where it's held, price history (from every view) |
 | <kbd>/</kbd> | filter (see below) · <kbd>esc</kbd> clears it · <kbd>ctrl+u</kbd> wipes the bar |
 | <kbd>s</kbd> | sort by value → name → quantity |
-| <kbd>v</kbd> | switch view: holdings → movers → unpriced → watches → market |
+| <kbd>v</kbd> | switch view: holdings → movers → market → watches → unpriced |
 | <kbd>B</kbd> | flip the left pane: binders & decks ↔ the sets you own cards from |
 | <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
 | <kbd>d</kbd> | remove the card, or the deck — asks first |
@@ -105,8 +105,9 @@ low); unset, hoard uses 2.8.
 
 ## Views
 
-<kbd>v</kbd> cycles through five views: holdings, movers, unpriced, watches,
-and market. All but the last are instant database reads.
+<kbd>v</kbd> cycles through five views: holdings, movers, market, watches,
+and unpriced — the everyday reads first, then the alerts, then the
+maintenance list. All but market are instant database reads.
 
 **Every view reads through the collection pane.** All cards is the whole
 hoard; selecting a binder or deck narrows the view to what it holds, and
@@ -132,7 +133,8 @@ or deck. The toggle lasts for the session.
 volume, not information. The status line says so, and the palette's
 `TogglePennyFilter` shows them; `SetPennyFilter` moves the line anywhere
 from $0 (gate off) to $100 for hoards whose noise starts higher. This gate
-is separate from the <kbd>M</kbd> value floor, which layers on top.
+is separate from the <kbd>M</kbd> value floor, which layers on top. The
+gate's state and line persist across sessions.
 
 **CHANGE and IMPACT fade on a diverging gradient** — vivid red at the
 biggest visible loss, neutral gray at zero, full green at the biggest
@@ -141,13 +143,14 @@ compression so mid-size moves keep readable color next to a whale.
 Sorting by either column reads as one smooth sweep, and the `hoard
 movers` report colors identically.
 
-**The market view waits to be asked**: it needs today's vendor quotes from
-MTGJSON, so cycling to it
-says `press F to fetch` rather than starting a download because you passed
-through. Quotes already fetched earlier the same day come back for free —
-the view repopulates from the day cache on arrival, even across a restart,
-with `F` still re-asking for fresh numbers. While it runs the pane says so,
-and <kbd>esc</kbd> — or leaving with <kbd>v</kbd> — cancels it.
+**The market view fetches only when it has nothing**: quotes already
+fetched earlier the same day come back for free — the view repopulates
+from the day cache on arrival, even across a restart. Arriving with no
+data at all (the first visit of the day) starts the fetch itself, since an
+empty table inviting a keypress is a chore, not a choice; refreshing data
+that already exists stays deliberate — that is what <kbd>F</kbd> is for.
+While a fetch runs the pane says so, and <kbd>esc</kbd> — or leaving with
+<kbd>v</kbd> — cancels it.
 
 ```
 MARKET                                           45 rows · 1,260 printings compared
@@ -190,7 +193,8 @@ floor is the same penny-filter pair the movers view carries:
 `TogglePennyFilter` shows everything with two vendors, `SetPennyFilter`
 moves the line ($0 turns the gate off), and the status line names the
 armed floor (`penny filter < $1.00`). Moving the line re-collects from the
-day's cached quotes instantly — no refetch.
+day's cached quotes instantly — no refetch — and, like the movers gate,
+the floor persists across sessions.
 
 **COMPS** is the comp sheet sellers build by hand, and it has two halves —
 <kbd>b</kbd> flips between them. The **sell side** (default) is the
@@ -212,7 +216,10 @@ sale price. A dash means no buylist bid today (Card Kingdom runs the only
 buylist in the MTGJSON feed). Each side's status line states its spread
 formula. Transient receipts ("sorted by …") hold the status line only
 until the cursor moves; navigating always brings back the selected row's
-own summary. The comps sort cycles every visible column, **SPREAD** first as
+own summary, which leads with the selection itself — the card's name on
+the right pane, the binder, deck, or set's on the left
+(`Akroma's Will · 10/1346 · …`) — on every view. The comps sort cycles
+every visible column, **SPREAD** first as
 the default — spread ascending (tightest or most negative first), money
 columns descending, then name, set/num, and finish.
 

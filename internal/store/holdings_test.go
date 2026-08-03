@@ -87,3 +87,25 @@ func TestTCGAltProductsRoundTrip(t *testing.T) {
 		t.Errorf("ids = %v stamped %v, want asked-and-none", ids, stamped)
 	}
 }
+
+// Settings round-trip: upserts stick, unknown keys read as absent, and
+// re-saving overwrites without touching neighbors.
+func TestSettingsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveSettings(map[string]string{"movers.pennies": "true", "market.floor": "0.25"}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	if err := s.SaveSettings(map[string]string{"market.floor": "2"}); err != nil {
+		t.Fatalf("re-save: %v", err)
+	}
+	got, err := s.Settings()
+	if err != nil {
+		t.Fatalf("Settings: %v", err)
+	}
+	if got["movers.pennies"] != "true" || got["market.floor"] != "2" {
+		t.Errorf("settings = %v, want the upsert to stick and the neighbor to survive", got)
+	}
+	if _, ok := got["never.set"]; ok {
+		t.Error("an unset key must read as absent")
+	}
+}

@@ -12,6 +12,7 @@ package action
 
 import (
 	"github.com/spiffcs/hoard/internal/catalog"
+	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -37,6 +38,16 @@ type Deps struct {
 	// Resolver is the shared card-resolution pipeline; its Fetch field
 	// remains the test seam it has always been.
 	Resolver *resolve.Resolver
+
+	// PriceBaseURL overrides the MTGJSON file root the pricing reads go
+	// through — the action tests' seam, empty in the real program.
+	PriceBaseURL string
+}
+
+// pricer builds the pricing fetcher every price-touching action reads
+// through, honoring the test seam.
+func (d Deps) pricer() *pricing.Fetcher {
+	return pricing.New(d.Store, d.CacheDir).WithBaseURL(d.PriceBaseURL)
 }
 
 // confirm resolves the Confirm dependency with its nil-declines default.

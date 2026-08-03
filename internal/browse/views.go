@@ -45,7 +45,19 @@ func (v viewMode) String() string {
 	return "holdings"
 }
 
-func (v viewMode) next() viewMode { return (v + 1) % (viewMarket + 1) }
+// viewCycle is the v-key order (owner's call): the everyday reads first —
+// cards, movers, market — then the alerts, then the maintenance list. The
+// enum's declaration order stays untouched; state arrays index by it.
+var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewWatches, viewUnpriced}
+
+func (v viewMode) next() viewMode {
+	for i, cur := range viewCycle {
+		if cur == v {
+			return viewCycle[(i+1)%len(viewCycle)]
+		}
+	}
+	return viewHoldings
+}
 
 // moversWindowDays are the lookbacks the movers view cycles through with
 // 'W', ascending with wrap (… → 7 → 30 → 90 → 7 → …); the default leads
@@ -56,6 +68,51 @@ var moversWindowDays = []int{30, 90, 7}
 // priced at or under it hide by default (TogglePennyFilter shows them,
 // SetPennyFilter moves the line).
 const defaultPennyLimit = 0.20
+
+// The penny filters' preference keys. Both views' gates persist: a floor
+// moved during a session should still be the floor tomorrow.
+const (
+	setMoversPennies   = "movers.pennies"
+	setMoversPennyLine = "movers.pennyLimit"
+	setMarketPennies   = "market.pennies"
+	setMarketFloor     = "market.floor"
+)
+
+// loadPennyFilters restores both views' gates. Absent or garbled values
+// leave the defaults standing — a preference is never worth failing a
+// launch over.
+func (m *Model) loadPennyFilters() {
+	s, err := m.store.Settings()
+	if err != nil {
+		return
+	}
+	if v, err := strconv.ParseBool(s[setMoversPennies]); err == nil {
+		m.moversPennies = v
+	}
+	if n, err := strconv.ParseFloat(s[setMoversPennyLine], 64); err == nil && n >= 0 && n <= 100 {
+		m.moversPennyLimit = n
+	}
+	if v, err := strconv.ParseBool(s[setMarketPennies]); err == nil {
+		m.marketPennies = v
+	}
+	if n, err := strconv.ParseFloat(s[setMarketFloor], 64); err == nil && n >= 0 && n <= 100 {
+		m.marketFloor = n
+	}
+}
+
+// persistPennyFilters writes both views' gates. Called wherever either
+// changes; a failed write surfaces but never undoes the change on screen.
+func (m *Model) persistPennyFilters() {
+	err := m.store.SaveSettings(map[string]string{
+		setMoversPennies:   strconv.FormatBool(m.moversPennies),
+		setMoversPennyLine: strconv.FormatFloat(m.moversPennyLimit, 'f', -1, 64),
+		setMarketPennies:   strconv.FormatBool(m.marketPennies),
+		setMarketFloor:     strconv.FormatFloat(m.marketFloor, 'f', -1, 64),
+	})
+	if err != nil {
+		m.status, m.statusErr = "saving filter setting: "+err.Error(), true
+	}
+}
 
 // promptSetPennyLimit opens the penny filter's threshold prompt, prefilled
 // with the current line. The commit re-arms the gate: asking to move the
@@ -76,6 +133,7 @@ func (m *Model) promptSetPennyLimit() {
 			m.moversPennies = false
 			m.deriveView()
 			m.status, m.statusErr = "penny filter ≤ "+ui.Money(n)+" on", false
+			m.persistPennyFilters()
 			return nil
 		},
 	}
@@ -103,6 +161,7 @@ func (m *Model) promptSetMarketFloor() {
 			// After the receipt: a day-cache miss replaces it with the
 			// fresh-fetch ask, which is the truer answer.
 			m.refreshMarketFloor()
+			m.persistPennyFilters()
 			return nil
 		},
 	}

@@ -45,6 +45,7 @@ var migrations = []migration{
 	{15, cardKingdomLinks},
 	{16, promoTypesColumn},
 	{17, tcgAltProductColumn},
+	{18, settingsTable},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -343,6 +344,16 @@ ALTER TABLE cards ADD COLUMN promo_types TEXT
 // the set file forever (the ck_url convention).
 const tcgAltProductColumn = `
 ALTER TABLE cards ADD COLUMN tcg_alt_product_id TEXT;`
+
+// v18: key-value preferences that survive a restart — the penny filters'
+// state first (owner's call: a floor moved during a session should still
+// be the floor tomorrow). Values are strings; typing lives in Go, so a
+// new preference needs a key, never a migration.
+const settingsTable = `
+CREATE TABLE settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

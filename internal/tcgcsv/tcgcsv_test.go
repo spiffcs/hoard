@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func serve(t *testing.T, routes map[string]string) Options {
@@ -181,5 +182,55 @@ func TestLenientPPMdProperties(t *testing.T) {
 	if _, err := lenientPPMd([]byte{8, 0, 0, 0, 1, 0, 0}, 10, nil); err == nil ||
 		!strings.Contains(err.Error(), "one reader") {
 		t.Errorf("err = %v, want the reader-count refusal", err)
+	}
+}
+
+// TestMain zeroes the request pacer: politeness delays are for the real
+// mirror, not for httptest.
+func TestMain(m *testing.M) {
+	requestGap = 0
+	os.Exit(m.Run())
+}
+
+// The pacer spaces request starts and never touches a cache hit.
+func TestRequestPacing(t *testing.T) {
+	oldGap, oldSleep := requestGap, paceSleep
+	defer func() {
+		requestGap, paceSleep = oldGap, oldSleep
+		lastStart = time.Time{}
+	}()
+	requestGap = time.Minute
+	var slept []time.Duration
+	paceSleep = func(d time.Duration) { slept = append(slept, d) }
+	lastStart = time.Time{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"results": []}`))
+	}))
+	defer srv.Close()
+
+	// Uncached back-to-back requests: the first rides free, the second
+	// waits out the gap.
+	bare := Options{BaseURL: srv.URL}
+	for range 2 {
+		if _, err := Groups(context.Background(), bare); err != nil {
+			t.Fatalf("Groups: %v", err)
+		}
+	}
+	if len(slept) != 1 || slept[0] < 50*time.Second {
+		t.Fatalf("slept %v, want one near-full gap between two fresh requests", slept)
+	}
+
+	// A cache hit answers from disk: no request, no wait.
+	cached := Options{BaseURL: srv.URL, CacheDir: t.TempDir()}
+	if _, err := Groups(context.Background(), cached); err != nil {
+		t.Fatalf("Groups (fill cache): %v", err)
+	}
+	n := len(slept)
+	if _, err := Groups(context.Background(), cached); err != nil {
+		t.Fatalf("Groups (cache hit): %v", err)
+	}
+	if len(slept) != n {
+		t.Errorf("a cache hit slept — the pacer must only guard real requests")
 	}
 }

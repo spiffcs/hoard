@@ -373,8 +373,14 @@ func (m Model) marketStatus() string {
 			suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
 		}
 	}
-	return m.theme.Help.Render(fmt.Sprintf("%d/%d · %s · %s",
-		idx+1, secs[sec].count, m.selectedMarketNote(), suffix))
+	line := fmt.Sprintf("%d/%d · %s · %s",
+		idx+1, secs[sec].count, m.selectedMarketNote(), suffix)
+	// The selection leads here too — the container on the left, the row's
+	// card on the right — matching the generic position line.
+	if name := m.selectedItemName(); name != "" {
+		line = name + " · " + line
+	}
+	return m.theme.Help.Render(line)
 }
 
 // selectedMarketNote is one sentence on why the row under the cursor is

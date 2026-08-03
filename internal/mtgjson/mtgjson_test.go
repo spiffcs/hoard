@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // gzipped compresses a JSON fixture the way MTGJSON serves its files.
@@ -676,5 +677,48 @@ func TestExtraSeriesOverlayHistory(t *testing.T) {
 		if o.Source != "tcgplayer" {
 			t.Errorf("observation %+v, want tcgplayer as the source", o)
 		}
+	}
+}
+
+// TestMain zeroes the request pacer: politeness delays are for the real
+// feed, not for httptest.
+func TestMain(m *testing.M) {
+	requestGap = 0
+	os.Exit(m.Run())
+}
+
+// The pacer spaces download starts; the day cache never reaches it.
+func TestRequestPacing(t *testing.T) {
+	oldGap, oldSleep := requestGap, paceSleep
+	defer func() {
+		requestGap, paceSleep = oldGap, oldSleep
+		lastStart = time.Time{}
+	}()
+	requestGap = time.Minute
+	var slept []time.Duration
+	paceSleep = func(d time.Duration) { slept = append(slept, d) }
+	lastStart = time.Time{}
+
+	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
+	want := map[string]bool{"uuid-tcg": true}
+	for range 2 { // uncached: two real downloads, one waited-out gap
+		if _, err := TodayPrices(context.Background(), Options{}, want); err != nil {
+			t.Fatalf("TodayPrices: %v", err)
+		}
+	}
+	if len(slept) != 1 || slept[0] < 50*time.Second {
+		t.Fatalf("slept %v, want one near-full gap between two fresh downloads", slept)
+	}
+
+	cached := Options{CacheDir: t.TempDir()}
+	if _, err := TodayPrices(context.Background(), cached, want); err != nil {
+		t.Fatalf("TodayPrices (fill cache): %v", err)
+	}
+	n := len(slept)
+	if _, err := TodayPrices(context.Background(), cached, want); err != nil {
+		t.Fatalf("TodayPrices (cache hit): %v", err)
+	}
+	if len(slept) != n {
+		t.Errorf("a cache hit slept — the pacer must only guard real downloads")
 	}
 }

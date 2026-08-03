@@ -167,5 +167,6 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 }
 
 // archiveWorkers bounds the concurrent archive reads: enough to overlap
-// downloads with PPMd decodes, few enough that memory stays boring.
-const archiveWorkers = 4
+// paced downloads with PPMd decodes, few enough that memory stays boring
+// and the sweep never reads as scraper traffic to the volunteer mirror.
+const archiveWorkers = 3

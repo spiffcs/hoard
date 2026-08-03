@@ -19,7 +19,7 @@ type GapReport = pricing.GapReport
 // returned report carries the same facts for rendering after the fact —
 // notes are droppable, results are not.
 func FillGaps(ctx context.Context, d Deps, p progress.Fn) (GapReport, error) {
-	f := pricing.New(d.Store, d.CacheDir).WithProgress(func(msg string) {
+	f := d.pricer().WithProgress(func(msg string) {
 		p.Emit(progress.Event{Step: "filling price gaps", Note: msg})
 	})
 	rep, err := f.FillGaps(ctx)

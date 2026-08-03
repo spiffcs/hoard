@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -331,5 +332,79 @@ func TestPricesOverlaySoftFailure(t *testing.T) {
 	}
 	if p := got["ripple-id"]; p.Foil == nil || *p.Foil != 21.78 || p.FoilSource != "manapool" {
 		t.Errorf("price = %+v, want the feed's fallback answer", p)
+	}
+}
+
+// F must mean fresh: RefreshQuotes skips the day-cache read, re-parses
+// with the treated-foil overlay, and rewrites the cache — a stale bundle
+// written before the overlay existed otherwise answers for the whole day
+// (observed live: a comps sheet of dashes beside freshly updated prices).
+func TestRefreshQuotesBypassesTheDayCache(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	gz := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) {
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(body))
+			zw.Close()
+		}
+	}
+	plain := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) { w.Write([]byte(body)) }
+	}
+	routes := map[string]func(w http.ResponseWriter){
+		"/M3C.json.gz": gz(`{"data": {"cards": [
+			{"uuid": "uuid-akroma", "identifiers": {"scryfallId": "ripple-id",
+			 "tcgplayerAlternativeFoilProductId": "553005"}}]}}`),
+		"/AllPricesToday.json.gz": gz(`{"data": {"uuid-akroma": {"paper": {
+			"manapool": {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.78}}},
+			"cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.99}}}}}}}`),
+		"/tcgplayer/1/groups": plain(`{"results": [{"groupId": 23445, "abbreviation": "M3C"}]}`),
+		"/tcgplayer/1/23445/prices": plain(`{"results": [
+			{"productId": 553005, "marketPrice": 17.56, "subTypeName": "Foil"}]}`),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := routes[r.URL.Path]; ok {
+			h(w)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
+	refs := []Ref{{ScryfallID: "ripple-id", SetCode: "m3c"}}
+	hasTCGFoil := func(qs map[string][]mtgjson.Quote) bool {
+		for _, q := range qs["ripple-id"] {
+			if q.Provider == "tcgplayer" && q.Finish == "foil" && q.Price == 17.56 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// A bundle written before the overlay existed.
+	f.saveQuotes(refs, map[string][]mtgjson.Quote{"ripple-id": {
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 21.78}}})
+	qs, err := f.Quotes(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("Quotes: %v", err)
+	}
+	if hasTCGFoil(qs) {
+		t.Fatal("the day-cache path must serve the stale bundle — that is what makes it a cache")
+	}
+
+	qs, err = f.RefreshQuotes(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("RefreshQuotes: %v", err)
+	}
+	if !hasTCGFoil(qs) {
+		t.Fatalf("refreshed quotes = %+v, want the overlay's tcgplayer foil quote", qs["ripple-id"])
+	}
+	cached, ok := f.CachedQuotes(refs)
+	if !ok || !hasTCGFoil(cached) {
+		t.Errorf("cached after refresh = ok %v %+v, want the fresh bundle saved back", ok, cached["ripple-id"])
 	}
 }

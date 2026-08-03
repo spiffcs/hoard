@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -81,6 +82,29 @@ type Price struct {
 // bound the header wait, so a server that accepts the connection and then goes
 // silent fails in seconds instead of hanging a command that has printed nothing.
 var httpClient = &http.Client{Transport: headerBoundedTransport()}
+
+// The request pacer, matching tcgcsv's: no two download starts closer
+// than requestGap. MTGJSON traffic is already a handful of day-cached
+// files, so this changes nothing today — it is insurance that no future
+// call site can turn the per-set loop into a burst. Cache hits never
+// reach here. Vars so tests pin them.
+var (
+	requestGap = 250 * time.Millisecond
+	paceMu     sync.Mutex
+	lastStart  time.Time
+	paceSleep  = time.Sleep
+)
+
+// pace blocks until this request start is requestGap after the previous one.
+func pace() {
+	paceMu.Lock()
+	wait := requestGap - time.Since(lastStart)
+	if wait > 0 {
+		paceSleep(wait)
+	}
+	lastStart = time.Now()
+	paceMu.Unlock()
+}
 
 // headerBoundedTransport is the default transport with a response-header
 // deadline — the one timeout that is safe for arbitrarily large bodies.
@@ -200,6 +224,7 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	}
 	req.Header.Set("User-Agent", buildinfo.UserAgent)
 	req.Header.Set("Accept", "application/json")
+	pace()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err

@@ -25,7 +25,7 @@ func Market(ctx context.Context, d Deps, p progress.Fn, minValue float64) (marke
 	for i, o := range owned {
 		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
 	}
-	f := pricing.New(d.Store, d.CacheDir).
+	f := d.pricer().
 		WithProgress(func(msg string) {
 			p.Emit(progress.Event{Step: "reading vendor prices", Note: msg})
 		}).
@@ -33,7 +33,10 @@ func Market(ctx context.Context, d Deps, p progress.Fn, minValue float64) (marke
 			p.Emit(progress.Event{Step: "reading vendor prices",
 				Done: done, Total: total, Unit: progress.UnitBytes})
 		})
-	quotes, err := f.Quotes(ctx, refs)
+	// A fresh parse, not the day cache: this runs on the market view's F,
+	// and an explicit refetch that silently serves the morning's bundles
+	// is a broken promise.
+	quotes, err := f.RefreshQuotes(ctx, refs)
 	if err != nil {
 		return market.Result{}, err
 	}
@@ -78,7 +81,7 @@ func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) 
 	for i, o := range owned {
 		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
 	}
-	quotes, ok := pricing.New(d.Store, d.CacheDir).CachedQuotes(refs)
+	quotes, ok := d.pricer().CachedQuotes(refs)
 	if !ok {
 		return nil, false, nil
 	}
@@ -131,7 +134,7 @@ func MarketCached(d Deps, minValue float64) (market.Result, bool, error) {
 	for i, o := range owned {
 		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
 	}
-	quotes, ok := pricing.New(d.Store, d.CacheDir).CachedQuotes(refs)
+	quotes, ok := d.pricer().CachedQuotes(refs)
 	if !ok {
 		return market.Result{}, false, nil
 	}

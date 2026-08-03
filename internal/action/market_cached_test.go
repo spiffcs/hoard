@@ -1,8 +1,11 @@
 package action
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,8 +62,11 @@ func TestArbitrageCachedReadsDayCache(t *testing.T) {
 	}
 }
 
-// Every quotes read — this one served from the day cache — records today's
-// CK bids into the bid history, and a repeat read records nothing new.
+// Every quotes read records today's CK bids into the bid history, and a
+// repeat read records nothing new. Market always re-parses (F must mean
+// fresh — the day cache once made it a silent no-op, which left the
+// treated-foil overlay invisible for a day), so the feed itself is served
+// here, not a pre-seeded cache file.
 func TestMarketRecordsBidQuotes(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -73,22 +79,33 @@ func TestMarketRecordsBidQuotes(t *testing.T) {
 	}, "nonfoil", 1); err != nil {
 		t.Fatal(err)
 	}
-
-	cacheDir := t.TempDir()
-	doc := map[string]any{
-		"asked": []string{"sol"},
-		"quotes": map[string][]mtgjson.Quote{"sol": {
-			{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "normal", Price: 2.00},
-			{Provider: "cardkingdom", Kind: mtgjson.Buylist, Finish: "normal", Price: 1.25},
-			{Provider: "tcgplayer", Kind: mtgjson.Buylist, Finish: "normal", Price: 9.99}, // dead program, never recorded
-		}},
-	}
-	data, _ := json.Marshal(doc)
-	path := filepath.Join(cacheDir, time.Now().Format("2006-01-02")+"-owned-quotes.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// Stamp everything resolve would otherwise fetch a set file to learn.
+	if err := st.SaveMTGJSONUUIDs(map[string]string{"sol": "uuid-sol"}); err != nil {
 		t.Fatal(err)
 	}
-	d := Deps{Store: st, CacheDir: cacheDir}
+	if err := st.SaveCardKingdomLinks(map[string]store.CKLinks{"sol": {}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTCGAltProducts(map[string]string{"sol": ""}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/AllPricesToday.json.gz" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		zw := gzip.NewWriter(w)
+		zw.Write([]byte(`{"data": {"uuid-sol": {"paper": {
+			"tcgplayer": {"currency": "USD",
+				"retail": {"normal": {"2026-08-01": 2.00}},
+				"buylist": {"normal": {"2026-08-01": 9.99}}},
+			"cardkingdom": {"currency": "USD",
+				"buylist": {"normal": {"2026-08-01": 1.25}}}
+		}}}}`))
+		zw.Close()
+	}))
+	defer srv.Close()
+	d := Deps{Store: st, CacheDir: t.TempDir(), PriceBaseURL: srv.URL}
 
 	if _, err := Market(context.Background(), d, nil, 0); err != nil {
 		t.Fatalf("Market: %v", err)

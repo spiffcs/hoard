@@ -324,11 +324,8 @@ func TestWatchesPaletteRanking(t *testing.T) {
 // vendor sheets is a row you'd remove or an edit you'd undo.
 func TestMarketPaletteDropsEditVerbs(t *testing.T) {
 	m := newTestModel(t, testStore())
-	for range 4 {
-		m = key(m, "v") // movers → unpriced → watches → market
-	}
-	if m.view != viewMarket {
-		t.Fatalf("view = %v, want market", m.view)
+	for m.view != viewMarket {
+		m = key(m, "v")
 	}
 	m.openPalette()
 	for _, match := range m.palette.matches {

@@ -145,6 +145,16 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 	if out, ok := f.cachedQuotes(refs); ok {
 		return out, nil
 	}
+	return f.RefreshQuotes(ctx, refs)
+}
+
+// RefreshQuotes is Quotes without the day-cache read: a fresh parse and
+// overlay, saved back so cached readers serve the new answer. This is
+// what an explicit refetch (F on the market view) must mean — reading the
+// cache there made the key a silent no-op for the rest of the day, which
+// left the treated-foil overlay invisible until midnight (observed live:
+// a comps sheet of dashes beside freshly updated prices).
+func (f *Fetcher) RefreshQuotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.Quote, error) {
 	// The overlay merges before the save, so the day cache holds the full
 	// bundles and CachedQuotes never serves a poorer answer than this did.
 	extra := f.treatedExtra(ctx, refs, 1)

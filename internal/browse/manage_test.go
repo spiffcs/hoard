@@ -413,7 +413,7 @@ func TestWatchByNameChainedPrompts(t *testing.T) {
 func TestWatchPickFlow(t *testing.T) {
 	m := newTestModel(t, testStore())
 	for range 3 {
-		m = key(m, "v") // holdings → movers → unpriced → watches
+		m = key(m, "v") // holdings → movers → market → watches
 	}
 	m, _ = runPaletteCommand(t, m, "watch.pick")
 	if m.view != viewHoldings || !m.filtering || !m.watchPick {
@@ -568,8 +568,9 @@ func TestPopulateUnpricedComposes(t *testing.T) {
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = next.(Model)
-	m = key(m, "v")
-	m = key(m, "v") // unpriced
+	for m.view != viewUnpriced {
+		m = key(m, "v")
+	}
 	cmd := (&m).populateView()
 	if cmd == nil || m.op == nil {
 		t.Fatal("F did not start the unpriced pipeline")
@@ -609,9 +610,8 @@ func TestWatchCommandAvailability(t *testing.T) {
 		t.Error("watch.pick missing from the watches view")
 	}
 
-	m = key(m, "v") // watches → market
-	if m.view != viewMarket {
-		t.Fatalf("view = %v, want market", m.view)
+	for m.view != viewMarket {
+		m = key(m, "v") // wraps past unpriced and holdings to market
 	}
 	if pick("watch.pick").applies(&m) {
 		t.Error("watch.pick offered on the market view")

@@ -360,6 +360,7 @@ func New(st Store, opts ...Option) (Model, error) {
 	for _, opt := range opts {
 		opt(&m)
 	}
+	m.loadPennyFilters()
 	if err := m.loadContainers(); err != nil {
 		return Model{}, err
 	}

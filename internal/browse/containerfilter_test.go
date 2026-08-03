@@ -81,8 +81,11 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 			Finish: "nonfoil", Copies: 1, HeldIn: "Rich Deck"},
 	}
 	m := newTestModel(t, st) // binder selected — no unpriced card lives there
-	m = key(m, "v")          // movers
-	m = key(m, "v")          // unpriced
+	// Straight to unpriced: the v-cycle now passes watches, whose own
+	// eligibility snap would move the selection before the arrival under
+	// test here ever runs.
+	m = key(m, "v") // movers
+	_ = (&m).showView(viewUnpriced)
 
 	if m.cursor[paneContainers] != 0 {
 		t.Fatalf("cursor = %d, want the ineligible selection snapped to All cards", m.cursor[paneContainers])
@@ -839,5 +842,82 @@ func TestMarketTablesPage(t *testing.T) {
 	m = key(m, "s") // sorting speaks for the whole ranking: back to page one
 	if m.marketPage[compsSection] != 0 || len(m.marketComps) != 50 {
 		t.Errorf("after sorting page = %d with %d rows, want page one full", m.marketPage[compsSection], len(m.marketComps))
+	}
+}
+
+// The status line's position segment leads with the selection itself: the
+// card's name on the right pane, the binder or deck's on the left — "what
+// is this row" comes before "where am I".
+func TestStatusLineLeadsWithSelection(t *testing.T) {
+	st := testStore()
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	m := atAllCards(t, newTestModel(t, st)) // focus rests on the container pane
+	m.status = ""
+	if got := m.statusLine(); !strings.Contains(got, "All cards · 1/") {
+		t.Errorf("container status = %q, want the selected container leading", got)
+	}
+
+	m = key(m, "tab") // the cards pane: the card leads instead
+	if got := m.statusLine(); !strings.Contains(got, "Force of Will · 1/6") {
+		t.Errorf("holdings status = %q, want the selected card leading", got)
+	}
+	m = key(m, "down")
+	if got := m.statusLine(); !strings.Contains(got, "Bitterblossom · 2/6") {
+		t.Errorf("moved status = %q, want the new selection leading", got)
+	}
+
+	m = key(m, "v") // movers
+	m.status = ""
+	if got := m.statusLine(); !strings.Contains(got, "Bitterblossom · 1/1") {
+		t.Errorf("movers status = %q, want the mover's name leading", got)
+	}
+
+	// The market view's own status line leads the same way.
+	m.view = viewMarket
+	m.marketLoaded = true
+	m.focus = paneCards
+	m.marketAllComps = []market.Comp{comp("SolC", 50, 45, 40)}
+	m.deriveMarketPages()
+	m.cursor[paneCards] = 0
+	if got := m.marketStatus(); !strings.Contains(got, "SolC · 1/1") {
+		t.Errorf("market status = %q, want the comp's card leading", got)
+	}
+}
+
+// The penny filters survive a restart: changing either view's gate writes
+// the preference, and a new session starts from what was stored — garbage
+// values leave the defaults standing.
+func TestPennyFiltersPersist(t *testing.T) {
+	st := testStore()
+	m := atAllCards(t, newTestModel(t, st))
+
+	// Move the movers line and toggle the market floor off.
+	m.promptSetPennyLimit()
+	m.prompt.commit(&m, "0.55")
+	m.prompt = nil
+	m.marketPennies = true
+	m.persistPennyFilters()
+
+	if st.settings[setMoversPennyLine] != "0.55" || st.settings[setMarketPennies] != "true" {
+		t.Fatalf("stored = %v, want both changes written", st.settings)
+	}
+
+	// A fresh session restores them.
+	m2 := newTestModel(t, st)
+	if m2.moversPennyLimit != 0.55 || !m2.marketPennies {
+		t.Errorf("restored limit %v pennies %v, want the stored session back",
+			m2.moversPennyLimit, m2.marketPennies)
+	}
+	if m2.marketFloor != 1.00 {
+		t.Errorf("market floor = %v, want the default where nothing was stored differently", m2.marketFloor)
+	}
+
+	// Garbage never beats a default.
+	st.settings[setMarketFloor] = "over 9000"
+	st.settings[setMoversPennyLine] = "-3"
+	m3 := newTestModel(t, st)
+	if m3.marketFloor != 1.00 || m3.moversPennyLimit != defaultPennyLimit {
+		t.Errorf("garbled settings restored as floor %v limit %v, want the defaults",
+			m3.marketFloor, m3.moversPennyLimit)
 	}
 }

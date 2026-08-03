@@ -96,6 +96,11 @@ type Store interface {
 	// watch` stays the consumer of record).
 	ListWatches() ([]store.WatchStatus, error)
 	WouldFire() ([]store.WatchStatus, error)
+
+	// Preferences that survive a restart — the penny filters' state; see
+	// loadPennyFilters.
+	Settings() (map[string]string, error)
+	SaveSettings(map[string]string) error
 }
 
 // Option configures the browser.

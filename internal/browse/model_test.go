@@ -45,6 +45,8 @@ type fakeStore struct {
 	// entryKeys, when set, overrides the membership facts EntryKeys derives
 	// from the fixture — for tests that stage eligibility directly.
 	entryKeys []store.EntryKey
+	// settings backs the persisted preferences (penny filters).
+	settings map[string]string
 	// sets, when set, backs SetsHeld verbatim (order and names included);
 	// nil derives one coded summary per held set code, sorted by code —
 	// enough for tests that only need the sets pane to exist.
@@ -172,6 +174,28 @@ func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
 }
 func (f *fakeStore) DeckEntries(id int64) ([]store.EntryView, error) {
 	return f.deckCards[id], f.err
+}
+
+// Settings and SaveSettings back the persisted preferences with a map, so
+// a test can seed a prior session's filters or read back what a toggle
+// stored.
+func (f *fakeStore) Settings() (map[string]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.settings, nil
+}
+func (f *fakeStore) SaveSettings(kv map[string]string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.settings == nil {
+		f.settings = map[string]string{}
+	}
+	for k, v := range kv {
+		f.settings[k] = v
+	}
+	return nil
 }
 
 // CardDetail synthesizes the identity fields from the fixture id, the way
@@ -1439,20 +1463,19 @@ func TestViewCyclesAndLoads(t *testing.T) {
 	}
 
 	m = key(m, "v")
-	if m.view != viewUnpriced || len(m.unpriced) != 1 {
-		t.Fatalf("view = %v with %d rows", m.view, len(m.unpriced))
+	if m.view != viewMarket {
+		t.Errorf("view = %v, want market after movers", m.view)
 	}
-	if out := m.View(); !strings.Contains(out, "UNPRICED") || !strings.Contains(out, "HELD IN") {
-		t.Errorf("unpriced view not rendered:\n%s", out)
-	}
-
 	m = key(m, "v")
 	if m.view != viewWatches {
 		t.Errorf("view = %v, want watches", m.view)
 	}
 	m = key(m, "v")
-	if m.view != viewMarket {
-		t.Errorf("view = %v, want arbitrage", m.view)
+	if m.view != viewUnpriced || len(m.unpriced) != 1 {
+		t.Fatalf("view = %v with %d rows", m.view, len(m.unpriced))
+	}
+	if out := m.View(); !strings.Contains(out, "UNPRICED") || !strings.Contains(out, "HELD IN") {
+		t.Errorf("unpriced view not rendered:\n%s", out)
 	}
 	m = key(m, "v")
 	if m.view != viewHoldings {
@@ -1468,10 +1491,8 @@ func TestUnpricedEnterOpensDetail(t *testing.T) {
 		{ScryfallID: "sf1", Name: "No Price", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
 	}
 	m := newTestModel(t, st)
-	m = key(m, "v") // movers
-	m = key(m, "v") // unpriced
-	if m.view != viewUnpriced {
-		t.Fatalf("view = %v, want unpriced", m.view)
+	for m.view != viewUnpriced {
+		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
@@ -1504,6 +1525,8 @@ func TestSortWorksInEveryView(t *testing.T) {
 		t.Errorf("movers by %s = %s first, want Sinker", m.sortLabel(), m.movers[0].Name)
 	}
 
+	m = key(m, "v") // market (empty here)
+	m = key(m, "v") // watches
 	m = key(m, "v") // unpriced, name order: Aardvark first
 	if m.unpriced[0].Name != "Aardvark" {
 		t.Fatalf("unpriced default = %s first, want name order", m.unpriced[0].Name)
@@ -1516,8 +1539,6 @@ func TestSortWorksInEveryView(t *testing.T) {
 	}
 
 	// The movers view kept its own reversed-name sort while we were away.
-	m = key(m, "v") // watches
-	m = key(m, "v") // arbitrage
 	m = key(m, "v") // holdings
 	m = key(m, "v") // movers again
 	if m.sortLabel() != "name (reversed)" || m.movers[0].Name != "Sinker" {
@@ -1670,27 +1691,33 @@ func opp(name string, buy, sell float64) market.Opportunity {
 	}
 }
 
-// Arbitrage is the only view that needs the network, so it must not fetch just
-// because the user cycled past it.
-func TestArbitrageDoesNotFetchOnArrival(t *testing.T) {
+// Arriving at the market with no data at all starts the fetch itself —
+// an empty table inviting a keypress is a chore, not a choice. Arriving
+// with data already loaded fetches nothing: refreshing stays F's job.
+func TestMarketArrivalFetchesOnlyWithoutData(t *testing.T) {
 	var calls int
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		calls++
-		return market.Result{}, nil
+		return market.Result{Compared: 1}, nil
 	})
-	m = key(m, "v")
-	m = key(m, "v")
-	m = key(m, "v")
-	m = key(m, "v") // → arbitrage
-	if m.view != viewMarket {
-		t.Fatalf("view = %v", m.view)
+	for m.view != viewMarket {
+		m = key(m, "v")
 	}
-	if calls != 0 {
-		t.Errorf("fetched %d times on arrival, want 0", calls)
+	if !m.marketLoading {
+		t.Fatal("an empty arrival must start the fetch itself")
 	}
-	if out := m.View(); !strings.Contains(out, "press F") {
-		t.Errorf("view does not invite the fetch:\n%s", out)
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: market.Result{Compared: 1}})
+	m = next.(Model)
+	if !m.marketLoaded || m.marketLoading {
+		t.Fatalf("loaded=%v loading=%v after the reply", m.marketLoaded, m.marketLoading)
 	}
+	for range 5 {
+		m = key(m, "v") // a full lap back to market
+	}
+	if m.view != viewMarket || m.marketLoading {
+		t.Errorf("view %v loading %v, want loaded data left alone on return", m.view, m.marketLoading)
+	}
+	_ = calls
 }
 
 func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
@@ -1699,13 +1726,11 @@ func TestArbitrageFetchesOnFAndRenders(t *testing.T) {
 		Compared:      2,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
-		m = key(m, "v")
+	for m.view != viewMarket {
+		m = key(m, "v") // the empty arrival starts the fetch itself
 	}
-
-	m = key(m, "F")
 	if !m.marketLoading {
-		t.Fatal("F did not start a fetch")
+		t.Fatal("arrival did not start a fetch")
 	}
 	if out := m.View(); !strings.Contains(out, "reading today's vendor prices") {
 		t.Errorf("no progress shown:\n%s", out)
@@ -1734,7 +1759,7 @@ func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, nil
 	})
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1754,7 +1779,7 @@ func TestStaleArbitrageReplyIsDiscarded(t *testing.T) {
 // Without an injected fetch the view says so rather than looking broken.
 func TestArbitrageUnavailableWithoutAFetcher(t *testing.T) {
 	m := newTestModel(t, testStore()) // no WithMarket
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -1768,7 +1793,7 @@ func TestArbitrageErrorIsShown(t *testing.T) {
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, errFake{}
 	})
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1786,7 +1811,7 @@ func TestArbitrageRefusesHoldingActions(t *testing.T) {
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) {
 		return market.Result{}, nil
 	})
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "+")
@@ -1828,13 +1853,15 @@ func startFetch(t *testing.T) (Model, *capturingMarket) {
 	t.Helper()
 	cap := &capturingMarket{}
 	m := marketModel(t, cap.fetch)
-	for range 4 {
+	// Walk to the market's doorstep, then take the arrival's own command —
+	// an empty market fetches on arrival now.
+	for m.view.next() != viewMarket {
 		m = key(m, "v")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
 	m = next.(Model)
 	if cmd == nil || !m.marketLoading {
-		t.Fatal("F did not start a fetch")
+		t.Fatal("the empty arrival did not start a fetch")
 	}
 	// Run the fetch's own goroutine the way the runtime would, so the context is
 	// captured; it blocks until cancelled.
@@ -1882,12 +1909,12 @@ func TestArbitrageEscapeCancels(t *testing.T) {
 func TestArbitrageViewChangeCancels(t *testing.T) {
 	m, cap := startFetch(t)
 
-	m = key(m, "v") // → back to holdings
+	m = key(m, "v") // → watches: any view change leaves the market
 	if m.marketLoading {
 		t.Error("still loading after leaving the view")
 	}
-	if m.view != viewHoldings {
-		t.Errorf("view = %v, want holdings", m.view)
+	if m.view != viewWatches {
+		t.Errorf("view = %v, want watches", m.view)
 	}
 	if cap.context().Err() == nil {
 		t.Error("leaving the view did not cancel the fetch")
@@ -2079,7 +2106,7 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 		Compared: 2,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -2250,7 +2277,7 @@ func TestArbitrageFAlwaysAnswers(t *testing.T) {
 		Compared:      1,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -2281,7 +2308,7 @@ func TestArbitrageEnterOpensDetail(t *testing.T) {
 		Compared:      1,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -2373,7 +2400,7 @@ func TestArbitrageLoadsFromCacheOnArrival(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = next.(Model)
 
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	if !m.marketLoaded || len(m.marketRows) == 0 {
@@ -2405,7 +2432,7 @@ func TestArbitrageArrivalWithoutCacheStaysEmpty(t *testing.T) {
 	m.ctx = context.Background()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = next.(Model)
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	if m.marketLoaded {
@@ -2624,7 +2651,7 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 		Compared:      2,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -2677,7 +2704,7 @@ func TestCompsSortIsIndependent(t *testing.T) {
 		Compared:      4,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
@@ -2727,7 +2754,7 @@ func TestCompsRespectValueFloor(t *testing.T) {
 		Compared: 2,
 	}
 	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
-	for range 4 {
+	for m.view != viewMarket {
 		m = key(m, "v")
 	}
 	m = key(m, "F")
