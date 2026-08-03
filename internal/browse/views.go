@@ -67,7 +67,7 @@ var moversWindowDays = []int{30, 90, 7}
 // defaultPennyLimit is where the movers view's noise gate starts: cards
 // priced at or under it hide by default (TogglePennyFilter shows them,
 // SetPennyFilter moves the line).
-const defaultPennyLimit = 0.20
+const defaultPennyLimit = 0.50
 
 // The penny filters' preference keys. Both views' gates persist: a floor
 // moved during a session should still be the floor tomorrow.

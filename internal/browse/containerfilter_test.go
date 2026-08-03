@@ -513,11 +513,11 @@ func TestMoversPennyGate(t *testing.T) {
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Fatalf("default movers = %+v, want the penny row hidden", m.movers)
 	}
-	if m.status != "showing movers · sorted by impact · penny filter ≤ $0.20" {
+	if m.status != "showing movers · sorted by impact · penny filter ≤ $0.50" {
 		t.Errorf("arrival beat = %q, want the sort and the armed filter named", m.status)
 	}
 	m.status = "" // the arrival beat yields to the position line
-	if !strings.Contains(m.View(), "penny filter ≤ $0.20") {
+	if !strings.Contains(m.View(), "penny filter ≤ $0.50") {
 		t.Error("the default gate must announce itself on the status line")
 	}
 
@@ -552,7 +552,7 @@ func TestSetPennyFilter(t *testing.T) {
 	if m.prompt == nil {
 		t.Fatal("SetPennyFilter must open a prompt")
 	}
-	if m.prompt.text != "0.2" {
+	if m.prompt.text != "0.5" {
 		t.Errorf("prompt prefill = %q, want the current limit", m.prompt.text)
 	}
 	for _, bad := range []string{"", "abc", "-1", "101", "NaN"} {
@@ -851,31 +851,31 @@ func TestMarketTablesPage(t *testing.T) {
 	}
 }
 
-// The status line's position segment leads with the selection itself: the
-// card's name on the right pane, the binder or deck's on the left — "what
-// is this row" comes before "where am I".
-func TestStatusLineLeadsWithSelection(t *testing.T) {
+// The status line's position segment leads with x/y, then the selection:
+// the card's name on the right pane, the binder or deck's on the left —
+// the position sits in a fixed spot while the name varies in length.
+func TestStatusLineLeadsWithPosition(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st)) // focus rests on the container pane
 	m.status = ""
-	if got := m.statusLine(); !strings.Contains(got, "All cards · 1/") {
-		t.Errorf("container status = %q, want the selected container leading", got)
+	if got := m.statusLine(); !strings.Contains(got, "1/4 · All cards") {
+		t.Errorf("container status = %q, want position then the selected container", got)
 	}
 
-	m = key(m, "tab") // the cards pane: the card leads instead
-	if got := m.statusLine(); !strings.Contains(got, "Force of Will · 1/6") {
-		t.Errorf("holdings status = %q, want the selected card leading", got)
+	m = key(m, "tab") // the cards pane: the card follows the position instead
+	if got := m.statusLine(); !strings.Contains(got, "1/6 · Force of Will") {
+		t.Errorf("holdings status = %q, want position then the selected card", got)
 	}
 	m = key(m, "down")
-	if got := m.statusLine(); !strings.Contains(got, "Bitterblossom · 2/6") {
-		t.Errorf("moved status = %q, want the new selection leading", got)
+	if got := m.statusLine(); !strings.Contains(got, "2/6 · Bitterblossom") {
+		t.Errorf("moved status = %q, want position then the new selection", got)
 	}
 
 	m = key(m, "v") // movers
 	m.status = ""
-	if got := m.statusLine(); !strings.Contains(got, "Bitterblossom · 1/1") {
-		t.Errorf("movers status = %q, want the mover's name leading", got)
+	if got := m.statusLine(); !strings.Contains(got, "1/1 · Bitterblossom") {
+		t.Errorf("movers status = %q, want position then the mover's name", got)
 	}
 
 	// The market view's own status line leads the same way.

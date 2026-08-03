@@ -177,7 +177,7 @@ func saleSpreadOrInf(c market.Comp) float64 {
 // SOLD names its own source. The CLI keeps market.CompsNote for its one
 // full-width table.
 const (
-	compsSellNote = "vendor sale prices; dispersion is how much they disagree"
+	compsSellNote = "vendor sale prices"
 	compsBuyNote  = "the cash bid against the asks"
 )
 

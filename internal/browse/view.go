@@ -634,12 +634,14 @@ func (m Model) statusLine() string {
 		}
 		return m.theme.Help.Render("nothing here")
 	}
-	pos := fmt.Sprintf("%d/%d · sorted by %s", m.cursor[m.focus]+1, n, m.sortLabel())
-	// The selection leads: a position number answers "where am I", but the
-	// first question a status line gets asked is "what is this row".
+	// Position leads, then the selection: x/y sits in a fixed spot at the
+	// line's left edge, so it can be read at a glance mid-scroll while the
+	// name beside it varies in length.
+	pos := fmt.Sprintf("%d/%d", m.cursor[m.focus]+1, n)
 	if name := m.selectedItemName(); name != "" {
-		pos = name + " · " + pos
+		pos += " · " + name
 	}
+	pos += " · sorted by " + m.sortLabel()
 	if !m.filter.empty() {
 		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
 	}
