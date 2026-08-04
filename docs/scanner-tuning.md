@@ -103,6 +103,45 @@ resets in a 15-card session). `focus hunt began/ended` lines appear in the
 `HOARD_SCAN_AUTO=1` trace; the capability line at session start reports what
 the device granted (`focus=af+lock`, `af`, or `fixed`).
 
+## The tuning ledger
+
+Every trigger configuration actually measured on live sessions, in order. Kept
+because most of these look like obvious wins in isolation and are not — the
+sequence is the argument.
+
+| interval | stable | grace | settle med | wasted captures | captures/commit | note |
+|---|---|---|---|---|---|---|
+| 0.2s | 3 | 3 | 1,732ms | 10% | 1.9 | the original |
+| 0.1s | 3 | 3 | 667ms | 28% | 2.5 | halving the period halved the evidence too |
+| 0.1s | 6 | 3 | 1,198ms | 19% | 2.2 | evidence restored |
+| 0.1s | 6 | 3 | 1,666ms | 7% | 1.2 | + blink rule, guarded |
+| 0.1s | 4 | 3 | 1,536ms | 12% | — | shortening the streak bought almost nothing |
+| **0.1s** | **6** | **6** | 1,700ms | **7%** | **1.1** | + wider grace; **cadence 9.6s → 5.1s** |
+
+Read the last column, not the settle column. Settle medians mislead once grace
+is wide: a pass that used to fail fast and retry now lingers and succeeds, so
+the median rises while the user waits less. **Card-to-card cadence and captures
+per commit are the honest numbers**; both improved roughly twofold across this
+sequence while waste fell.
+
+### Knobs that do not do what they look like they do
+
+- **`AUTO_STABLE` is not the latency knob.** Cutting it 6 → 4 moved settle 8%
+  and cost 5 points of accuracy. Settle is not bound by how long the streak is;
+  it is bound by how often the streak is abandoned or reset.
+- **`AUTO_GRACE` governs abandonment, not evidence.** Grace freezes the streak
+  rather than feeding it, so widening it never lowers the bar a shutter must
+  clear. It was still only half the story — see the sliver lesson below, since
+  passes were dying on mismatches that grace does not govern at all.
+- **Per-sample evidence and wasted shutters trade close to linearly.** 0.3s of
+  stillness bought 28% waste; 0.6s bought 7%. Any knob that only slides along
+  that curve is not an improvement, it is a preference. The changes that
+  actually moved both at once were the ones that stopped *discarding* evidence:
+  wider grace, and the symmetric fragment rule.
+- **Do not assume a change is free because one number improved.** The
+  unguarded blink rule cut settle to 667ms and fired at bare desk 90% of the
+  time. Always read waste and commits beside any speed number.
+
 ## Field lessons
 
 Each was observed live, diagnosed from telemetry, and is enforced by a test
@@ -282,6 +321,25 @@ Six samples at 0.1s is the same 0.6s of proven stillness the original demanded,
 but recovers from detector flicker twice as fast — which is where the win
 actually comes from, since settle was running at 3× its floor on resets rather
 than on the floor itself.
+
+**The detector alternates between a card and slivers of it, and the fragment
+rule only forgave that one way round.** `fragmentsOf` asked whether the new
+boxes sit inside the remembered one, so a streak that had latched onto a sliver
+treated the card reappearing *whole* as motion and reset — at the exact moment
+the detector finally got it right. Live: a motionless Flare of Cultivation
+alternated between 0.37x0.88 and slivers as small as 0.08x0.13, and took
+3,867ms to settle while reading perfectly (`rank=set+number`, exact name).
+
+A box that contains what we were watching is the detector finding *more* of the
+same still card — better evidence, not worse. Count it, and grow the remembered
+box so the streak continues from the fuller read. Gated on the frame being
+unchanged, because a hand sweeping in also produces a box that contains the old
+one and that is motion; geometry says "same card, seen more of it", pixels
+confirm "and nothing moved".
+
+This is also why widening grace did not cut the abandon rate as predicted:
+those passes were dying on sliver-versus-card mismatches, which grace does not
+govern.
 
 **Stillness proves the picture is not moving, not that a card is there.** The
 first cut of the rule below counted any still-but-empty sample toward the

@@ -1772,6 +1772,32 @@ final class AutoTrigger {
                 }
                 return
             }
+            // The same relation the other way round. fragmentsOf only asked
+            // whether the new boxes sit inside the remembered ones, so once
+            // the streak had latched onto a sliver, the card reappearing whole
+            // was not "inside" it and read as motion — the streak reset at the
+            // exact moment the detector finally got it right. Live: a
+            // motionless Flare of Cultivation alternated between 0.37x0.88 and
+            // slivers as small as 0.08x0.13, and took 3,867ms to settle.
+            //
+            // A box that contains what we were watching is the detector
+            // finding *more* of the same still card, which is better evidence,
+            // not worse. Count it, and grow the remembered box so the streak
+            // continues from the fuller read rather than the sliver.
+            // Gated on the picture as well as the geometry: a hand sweeping in
+            // also produces a box that contains what we were watching, and
+            // that is motion, not a better look at a still card. Requiring the
+            // frame to be unchanged separates the two for free.
+            if sceneStill, fragmentsOf(novel, prevSig) {
+                graceCount = 0
+                stableCount += 1
+                prevSig = novel
+                autoDebug("card seen whole again, stable \(stableCount)/\(autoStableSamples)")
+                if stableCount >= autoStableSamples {
+                    maybeFire(focusSettled: true)
+                }
+                return
+            }
             if !matches(prevSig, novel) {
                 graceCount += 1
                 if graceCount > autoGraceSamples {
