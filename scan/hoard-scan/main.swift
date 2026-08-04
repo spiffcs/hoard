@@ -137,9 +137,25 @@ struct Line {
     let text: String
     let box: CGRect
     let confidence: Float
+    /// The line's four corners. Vision hands these over already —
+    /// VNRecognizedTextObservation is a VNRectangleObservation — and the axis-
+    /// aligned box above throws away the one thing they add: how far the text
+    /// is turned. The border reader needs that, because a tilted card's border
+    /// ring is not a horizontal strip. nil only for lines built by hand.
+    var quad: Quad? = nil
 
     var top: CGFloat { box.maxY }
     var width: CGFloat { box.width }
+}
+
+/// Quad is a Vision rectangle's corners in normalized frame coordinates
+/// (origin bottom-left), kept apart from CGRect because the whole point is
+/// that it need not be axis-aligned.
+struct Quad {
+    let topLeft: CGPoint
+    let topRight: CGPoint
+    let bottomLeft: CGPoint
+    let bottomRight: CGPoint
 }
 
 /// CardRead is everything one capture yielded: the title guess and its alternates,
@@ -153,6 +169,12 @@ struct CardRead {
     var setCode: String = ""
     var bottomLines: [String] = []
     var lines: [Line] = []
+    /// The bottom-band pass's lines with their geometry, mapped back into
+    /// whole-frame coordinates. The band aims at exactly where the footer is,
+    /// so it reads the copyright and credit rows on frames where the
+    /// whole-frame title pass misses them entirely — which is most of what the
+    /// border reader was failing to anchor on.
+    var bandLines: [Line] = []
     /// Vision's confidence in the line chosen as name.
     var nameConfidence: Float = 0
     /// Whether the collector band was anchored to a detected card rectangle.
@@ -212,6 +234,20 @@ struct CardEntry: Encodable {
     /// End year of the copyright range, when one was read; see
     /// CardRead.copyrightYear.
     var copyrightYear: Int? = nil
+    /// The printed border, "white" or "black", when it could be read off the
+    /// card's own edge. Absent means the reader declined — never "" and never
+    /// "unknown", because absence is the honest shape for "no evidence" and an
+    /// empty string invites a downstream `!= ""` that treats it as one.
+    ///
+    /// Optional so a capture that reads no border keeps the old wire shape
+    /// byte-for-byte. Deliberately not mirrored onto the flat Event fields,
+    /// for the reason numberSource exists: a parent that predates provenance
+    /// treats anything flat as trusted.
+    var borderColor: String? = nil
+    /// How the border was established: "footer+ring" when the opposite edge
+    /// agreed, "footer" when only one edge was in shot. The Go side may hold
+    /// the weaker one to a lower bar.
+    var borderSource: String? = nil
 }
 
 /// collectorBandFraction is how far up the *card* the collector band reaches, as a
@@ -680,6 +716,24 @@ func readCard(_ cg: CGImage) -> CardRead {
         .sorted { $0.0 < $1.0 }
         .map { $0.1 }
     read.bottomLines = bottomLines
+    // Vision reports a region-of-interest request's boxes normalized to the
+    // ROI, not to the image, so they have to be mapped back before they can be
+    // compared with anything from the whole-frame pass. The band always spans
+    // the full width from y=0, so the mapping is a scale of y alone.
+    // Verified by measurement: the copyright row lands at 0.9375 of card
+    // height mapped, and at 0.61 unmapped, on frames where both passes read it.
+    read.bandLines = (bottom.results ?? []).compactMap { obs -> Line? in
+        guard let cand = obs.topCandidates(1).first else { return nil }
+        let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return nil }
+        let b = obs.boundingBox
+        let mapped = CGRect(x: b.minX, y: b.minY * band.height,
+                            width: b.width, height: b.height * band.height)
+        func up(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x, y: p.y * band.height) }
+        return Line(text: t, box: mapped, confidence: cand.confidence,
+                    quad: Quad(topLeft: up(obs.topLeft), topRight: up(obs.topRight),
+                               bottomLeft: up(obs.bottomLeft), bottomRight: up(obs.bottomRight)))
+    }
     let collectorReads = parseCollectorInfo(bottomLines)
     read.collectorNumber = collectorReads.first?.number ?? ""
     read.setCode = collectorReads.first?.set ?? ""
@@ -692,7 +746,9 @@ func readCard(_ cg: CGImage) -> CardRead {
         guard let cand = obs.topCandidates(1).first else { continue }
         let t = cand.string.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { continue }
-        lines.append(Line(text: t, box: obs.boundingBox, confidence: cand.confidence))
+        lines.append(Line(text: t, box: obs.boundingBox, confidence: cand.confidence,
+                          quad: Quad(topLeft: obs.topLeft, topRight: obs.topRight,
+                                     bottomLeft: obs.bottomLeft, bottomRight: obs.bottomRight)))
     }
     if lines.isEmpty {
         applyCopyrightCollector(&read, bottomLines)
@@ -719,7 +775,28 @@ func readCard(_ cg: CGImage) -> CardRead {
     // own border has no title, and "" queues the card as unidentified, which
     // is honest. The middle fallback is what keeps single-word titles
     // (Ponder) working — titleLike rejects those by design.
-    let primary = names.first(where: { titleLike($0) })
+    // A title-shaped line at the card's *foot* is furniture, and preferring
+    // title-shaped lines is what let it through. The 8th Edition frame draws a
+    // paintbrush where every earlier frame writes "Illus.", so its credit
+    // arrives as a bare "Pete Venters" — two Title Case words, which no string
+    // rule can tell from a card name — while the real title, "Tremor", is a
+    // single word and titleLike rejects those by design. The credit therefore
+    // won outright, and a live 8th Edition pile resolved as its own artists.
+    //
+    // Geometry settles what the string cannot, exactly as the flavour-credit
+    // rule already does: a title sits at the top of whatever text was read, so
+    // a candidate in the bottom of that span loses its title-shaped privilege
+    // and the topmost readable line is preferred instead. Only the *privilege*
+    // is withdrawn — such a line can still be the name when it is all there is,
+    // which is what keeps a lone credit-shaped title working.
+    let tops = plausible.map { $0.top }
+    let lowest = tops.min() ?? 0, highest = tops.max() ?? 1
+    let footLine = lowest + (highest - lowest) * 0.35
+    let upper = plausible.filter { $0.top >= footLine || plausible.count < 3 }
+    let upperNames = upper.map { $0.text }
+    let primary = upperNames.first(where: { titleLike($0) })
+        ?? upperNames.first(where: { !boilerplate($0) })
+        ?? names.first(where: { titleLike($0) })
         ?? names.first(where: { !boilerplate($0) })
         ?? ""
     // Report several lines, best-guess first. The caller tries each against
@@ -1298,6 +1375,22 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
     if !cards.isEmpty, cards[0].copyrightYear == nil, read.copyrightYear > 0 {
         cards[0].copyrightYear = read.copyrightYear
     }
+    // Border colour, and only when the frame holds exactly one card. The
+    // reading is anchored on a single footer line, so in a fan there is no way
+    // to say which card it describes — and unlike a stray collector number,
+    // which cannot verify against the wrong card's printings and so queues
+    // harmlessly, a border attached to the wrong card would agree with
+    // *something* and pick a printing. That asymmetry is why this one refuses
+    // to guess rather than leaning on downstream verification.
+    if cards.count == 1 {
+        let border = readBorder(cg, read)
+        borderDebug(border.color.map { "\($0) via \(border.source ?? "?")" }
+            ?? "abstained: \(border.abstain)")
+        if let color = border.color {
+            cards[0].borderColor = color
+            cards[0].borderSource = border.source
+        }
+    }
     return (read, cards)
 }
 
@@ -1381,6 +1474,868 @@ func cgImage(fromFile path: String) -> (CGImage, CGImagePropertyOrientation)? {
     let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
     let raw = props?[kCGImagePropertyOrientation] as? UInt32 ?? 1
     return (cg, CGImagePropertyOrientation(rawValue: raw) ?? .up)
+}
+
+// MARK: - Border colour
+
+// Before 1998 a card printed no collector number, so the copyright year is the
+// only printing evidence it carries, and the year alone pins 24% of the
+// pre-1998 printings that have a sibling. Border colour is the era's other
+// discriminator and the catalog already stores it: year plus border pins 47%,
+// and 4th Edition goes from 0% to 95%, since 4ED (white, 1995) and 4BB (black,
+// 1995) differ in nothing else a camera can see.
+//
+// A pixel classifier over the perspective crop was built and removed once
+// already — see docs/scanner-tuning.md. It failed because the crop does not
+// reliably contain the border: Vision locks onto whichever edge has contrast,
+// sometimes the card's outer cut and sometimes the printed frame just inside
+// it, so an 8th Edition Gaea's Herald came back black off its gold-brown inner
+// frame. Saturation could not separate the cases (0.40 for a real white border
+// under tungsten against 0.43 for that frame). The missing signal was never in
+// the pixels; it was knowing whether what we were looking at is the card.
+//
+// So nothing here reads the crop. Two changes make it work:
+//
+//  1. The geometry is anchored on text whose identity is already proven by its
+//     *content* — the copyright line and the artist credit, which
+//     copyrightFurniture and artistCredit recognize by what they say. Those sit
+//     at a fixed fraction of card height, so two of them recover the card's own
+//     scale, and the ring is sampled on the full-resolution frame from there.
+//     No amount of edge contrast can fake "this line says Wizards of the Coast".
+//
+//  2. The ring is judged against the card's own two tones, never an absolute
+//     threshold. On an old frame the footer is printed *on the border* — black
+//     ink on a white one, white ink on a black one — so an Otsu split of that
+//     single line yields the paper point and the ink point under whatever light
+//     the desk happened to have. That is the direct answer to the tungsten
+//     problem, and it is self-checking: if the reconstruction has drifted onto
+//     an inner frame, the ring lands between the two tones instead of on one of
+//     them, and we abstain rather than guess.
+
+/// Magic cards are 63×88 mm.
+let cardAspect: CGFloat = 63.0 / 88.0
+
+/// borderDebug traces the border decision to stderr when asked, the way
+/// multiDebug does for the multi-card pass. Purely diagnostic; nothing
+/// downstream parses these.
+func borderDebug(_ s: String) {
+    guard ProcessInfo.processInfo.environment["HOARD_SCAN_BORDER"] != nil else { return }
+    FileHandle.standardError.write(Data("border: \(s)\n".utf8))
+}
+
+/// Where the card's furniture sits in card space, with v running 0…1 down from
+/// the card's top edge. Fitted on scan/corpus, where the card *is* the image so
+/// the card rect is known exactly — see scan/corpus/border.sh.
+enum CardLayout {
+    /// Centre of the copyright row, the lowest text on the card.
+    static let footerV: CGFloat = 0.9375
+    /// Centre of the illustrator credit, one row above it — or of the two rows
+    /// together, since Vision often returns them as a single observation.
+    /// Anchoring on the wrong one of these costs ~1.5% of scale, which is most
+    /// of the border's own thickness, so they are kept apart.
+    static let creditV: CGFloat = 0.9212
+    /// Centre of the title row.
+    static let titleV: CGFloat = 0.0625
+    /// Printed border thickness top and bottom, as a fraction of card height.
+    static let borderV: CGFloat = 0.039
+    /// How deep into that border to sample, as a fraction of its thickness —
+    /// clear of both the card's cut edge and the printed frame inside it.
+    static let ringDepth: CGFloat = 0.45
+    /// A footer line's glyph-box height as a fraction of card height. The local
+    /// scale estimate, which exists only to disagree with the long one.
+    static let footerGlyphV: CGFloat = 0.0174
+    /// Where to sample the card's own frame, just inside the border. The
+    /// footer text is printed here — on old frames it sits on the coloured
+    /// frame, not on the border, which is worth knowing because it means the
+    /// footer's own two tones are *not* the card's paper and ink.
+    static let innerV: CGFloat = 0.950
+    /// Left edge of each footer row, as a fraction of card *width*. Measured
+    /// across 120 pre-1998 corpus cards: the copyright row starts at 0.086
+    /// (p10 0.083, p90 0.102) and the credit row at 0.097 (p10 0.089, p90
+    /// 0.099) — the © glyph's box reaches a little further left than a letter.
+    ///
+    /// This is the card's horizontal landmark, and it has to be the *left*
+    /// edge because the right one is wherever the sentence happened to end:
+    /// across the same cards it ranges 0.42 to 0.62. Worth recording that
+    /// docs/scanner-coverage.md called this footer "two centred rows" — it is
+    /// left-aligned, and the measurement is what says so.
+    ///
+    /// **These hold for pre-1998 only, and the symbol reader cannot ship until
+    /// that is fixed.** Measured per era, the copyright row's left edge sits at
+    /// 0.086 before 1998, 0.260 from 1998–2002, and 0.594 on the M15 frame —
+    /// the line moves across the card as the frame is redesigned. Using the
+    /// pre-1998 value on a 7th Edition card threw the predicted symbol
+    /// position clean off the image. The era is recoverable from the same line
+    /// that anchors on it (parseCopyrightCollector already reads its year, and
+    /// a lone year means pre-1998 while a range means later), so the fix is a
+    /// lookup keyed on that rather than a single constant.
+    static let copyrightLeftU: CGFloat = 0.086
+    static let creditLeftU: CGFloat = 0.097
+
+    /// leftU is the horizontal landmark: where the anchor line's left end sits
+    /// as a fraction of card width. It is keyed on the *frame era* and on what
+    /// the line actually starts with, because both move it — and it returns nil
+    /// wherever that combination has never been measured.
+    ///
+    /// The prefix matters as much as the era, which is not obvious until you
+    /// measure it. A line read as "™ & © 1993-2003 Wizards…" starts where the
+    /// row starts; the same row read as "© 1993-2003 Wizards…" or "1993-2003
+    /// Wizards…" has lost its opening and starts further right. Keyed only on
+    /// era, the 2003-2014 stratum looked hopelessly bimodal — median 0.080 with
+    /// a p90 of 0.214. Split by prefix, the trademark reads are 0.080 with a
+    /// p10 of 0.075 and a p90 of 0.083, and the noise was entirely the lines
+    /// that began late.
+    ///
+    /// nil is the important part. Guessing does not degrade gracefully: the
+    /// landmark is at u≈0.08 and the expansion symbol at u≈0.87, so the lever
+    /// is most of the card's width and a wrong offset throws the predicted
+    /// symbol clean off the image — which is exactly what a 7th Edition card
+    /// did while this was a single constant. Nothing but the symbol reader
+    /// consumes it, and it would rather have no answer than a wrong one.
+    static func leftU(kind: AnchorKind, prefix: LinePrefix, year: Int) -> CGFloat? {
+        // A lone year, or none at all, is the pre-collector-number era: those
+        // frames print no range, so there is nothing else it could be.
+        if year == 0 || year < 1998 {
+            switch prefix {
+            case .copyrightGlyph, .trademark: return 0.086   // n=79, p10 .083 p90 .102
+            case .illus: return 0.097                        // n=23, p10 .091 p90 .099
+            case .year: return 0.102                         // n=8
+            }
+        }
+        if year <= 2002 {
+            switch prefix {
+            case .trademark: return 0.231                    // n=5, p10 .228 p90 .236
+            case .year: return 0.271                         // n=7, p10 .263 p90 .325
+            // "© 1993-2001…" spread 0.099 to 0.274 in this era — unusable.
+            case .copyrightGlyph, .illus: return nil
+            }
+        }
+        // The 8th Edition frame. Only the trademark read is tight enough to be
+        // a landmark, and it is measured on clean scans; note that this is
+        // precisely the line a 1080p desk photograph of this frame fails to
+        // read at all, so live captures mostly anchor on the credit row
+        // instead — whose left edge here is still too loose to use (n=15,
+        // IQR 0.067) and is deliberately left nil until it is measured.
+        switch prefix {
+        case .trademark: return kind == .copyright ? 0.080 : nil   // n=21, p10 .075 p90 .083
+        case .copyrightGlyph, .year, .illus: return nil
+        }
+    }
+    /// The expansion symbol, at the right end of the type line. The old frame
+    /// (Ice Age's snowflake, 7th Edition's "7") puts it at 0.877/0.578; the
+    /// redesigned 8th Edition frame at 0.867/0.590. One patch covers both.
+    /// Core sets before 6th Edition print nothing here — 4th Edition's right
+    /// margin is empty — and that absence is the signal.
+    static let symbolU: CGFloat = 0.872
+    static let symbolV: CGFloat = 0.584
+}
+
+/// PixelReader is one RGBA8 copy of a frame. Made only once an anchor has been
+/// found, so a frame with no readable footer costs nothing.
+final class PixelReader {
+    let width: Int
+    let height: Int
+    private let data: UnsafeMutablePointer<UInt8>
+    private let bytesPerRow: Int
+
+    init?(_ cg: CGImage) {
+        let w = cg.width, h = cg.height
+        guard w > 0, h > 0 else { return nil }
+        let stride = w * 4
+        let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: stride * h)
+        guard let ctx = CGContext(
+            data: buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: stride,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            buf.deallocate()
+            return nil
+        }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        width = w; height = h; bytesPerRow = stride; data = buf
+    }
+
+    deinit { data.deallocate() }
+
+    /// Sample at a pixel position, with y measured downward from the top — the
+    /// bitmap's own order, and the convention the geometry below works in,
+    /// since Vision's bottom-up y only makes the tilt maths harder to read.
+    func rgb(_ x: CGFloat, _ y: CGFloat) -> (r: CGFloat, g: CGFloat, b: CGFloat)? {
+        let px = Int(x.rounded(.down)), py = Int(y.rounded(.down))
+        guard px >= 0, px < width, py >= 0, py < height else { return nil }
+        let o = py * bytesPerRow + px * 4
+        return (CGFloat(data[o]) / 255, CGFloat(data[o + 1]) / 255, CGFloat(data[o + 2]) / 255)
+    }
+
+    func luma(_ x: CGFloat, _ y: CGFloat) -> CGFloat? {
+        guard let c = rgb(x, y) else { return nil }
+        return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+    }
+
+    /// Chroma as the channel spread. Enough to tell a neutral border from a
+    /// gold or silver one without dragging in a colour space, and those are the
+    /// only cases it has to reject.
+    func chroma(_ x: CGFloat, _ y: CGFloat) -> CGFloat? {
+        guard let c = rgb(x, y) else { return nil }
+        return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
+    }
+}
+
+func medianOf(_ xs: [CGFloat]) -> CGFloat {
+    guard !xs.isEmpty else { return 0 }
+    let s = xs.sorted()
+    return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
+}
+
+/// medianAbsoluteDeviation is the spread measure the ring wants: a ring that
+/// has slipped half off the card straddles two very different surfaces, and
+/// says so here, where a mean would just land somewhere in between.
+func medianAbsoluteDeviation(_ xs: [CGFloat]) -> CGFloat {
+    let m = medianOf(xs)
+    return medianOf(xs.map { abs($0 - m) })
+}
+
+/// otsu splits samples in two at the threshold minimizing within-class
+/// variance. On a footer line the two class means are the border's paper tone
+/// and the credit's ink — the card's own black and white points, measured in
+/// the light it was actually photographed under.
+func otsu(_ samples: [CGFloat]) -> (dark: CGFloat, bright: CGFloat, darkFraction: CGFloat)? {
+    guard samples.count >= 64 else { return nil }
+    var hist = [Int](repeating: 0, count: 256)
+    for s in samples { hist[max(0, min(255, Int(s * 255)))] += 1 }
+    let total = samples.count
+    var sum: CGFloat = 0
+    for i in 0..<256 { sum += CGFloat(i) * CGFloat(hist[i]) }
+    var sumB: CGFloat = 0, weightB = 0, best: CGFloat = -1, threshold = 0
+    for i in 0..<256 {
+        weightB += hist[i]
+        if weightB == 0 { continue }
+        let weightF = total - weightB
+        if weightF == 0 { break }
+        sumB += CGFloat(i) * CGFloat(hist[i])
+        let meanB = sumB / CGFloat(weightB)
+        let meanF = (sum - sumB) / CGFloat(weightF)
+        let between = CGFloat(weightB) * CGFloat(weightF) * (meanB - meanF) * (meanB - meanF)
+        if between > best { best = between; threshold = i }
+    }
+    guard best > 0 else { return nil }
+    var dark: [CGFloat] = [], bright: [CGFloat] = []
+    for s in samples {
+        if Int(s * 255) <= threshold { dark.append(s) } else { bright.append(s) }
+    }
+    guard !dark.isEmpty, !bright.isEmpty else { return nil }
+    return (dark.reduce(0, +) / CGFloat(dark.count),
+            bright.reduce(0, +) / CGFloat(bright.count),
+            CGFloat(dark.count) / CGFloat(total))
+}
+
+/// illusToken matches a line that opens with the illustrator abbreviation,
+/// however mangled — "Illus.", "Illus:", "Tins.". Deliberately looser than
+/// artistCredit, which demands the whole "Illus. First Last" shape because a
+/// false positive *there* eats a card's name. Here a false positive only
+/// yields geometry that then fails its own agreement and ring checks, so the
+/// trade runs the other way: the strict form missed "Illus: © Jeff A: Menges"
+/// (four words) and a bare "Illus." on its own line, and those are footers.
+func illusToken(_ s: String) -> Bool {
+    guard let first = s.split(whereSeparator: { $0.isWhitespace }).first else { return false }
+    guard let last = first.last, last == "." || last == ":" || last == "," else { return false }
+    let head = first.lowercased().filter { $0.isLetter }
+    guard head.count >= 3, head.count <= 6 else { return false }
+    return editDistance(head, "illus") <= 2
+}
+
+/// Which row of the footer an anchor landed on. They sit at different heights,
+/// so the reconstruction has to know which one it is looking at.
+enum AnchorKind: String {
+    case copyright
+    case credit
+}
+
+/// personalNameLine matches a bare "First Last" or "First M. Last" with nothing
+/// else on the line. On its own this says almost nothing — it is exactly the
+/// shape of a card name, which is why it may never identify a *title* — but at
+/// the foot of a card it is the illustrator, and that is a position no title
+/// occupies.
+func personalNameLine(_ s: String) -> Bool {
+    let words = s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    guard words.count == 2 || words.count == 3 else { return false }
+    return words.allSatisfy { w in
+        guard let f = w.first, f.isUppercase else { return false }
+        // Allow a middle initial ("Monte M. Moore") but nothing else odd.
+        return w.dropFirst().allSatisfy { $0.isLetter || $0 == "." || $0 == "'" || $0 == "-" }
+    }
+}
+
+/// footerAnchor picks the line to reconstruct the card from: the lowest one
+/// that says what it is. Recognition is by *content* — this line claims to be
+/// the copyright or the illustrator credit — which is exactly the provenance
+/// the deleted classifier lacked when it tried to read a border off whichever
+/// edge happened to have contrast.
+///
+/// The 8th Edition frame forces one exception, and it is worth stating plainly
+/// because it is the only anchor here not proven by what the line says. That
+/// frame draws a paintbrush where every earlier one writes "Illus.", so its
+/// credit arrives as a bare name and no content rule can ever match it — a
+/// whole 8th Edition pile produced zero anchors for exactly this reason. What
+/// identifies it instead is *where it is*: the bottom-most line on a card that
+/// has several, which is a position a title never occupies. It is taken only
+/// when no content-proven anchor exists, and everything downstream still has
+/// to agree — the two scale estimates, the card fitting its frame, the ring
+/// being one uniform surface, the tone landing outside the card's own range.
+func footerAnchor(_ lines: [Line]) -> (line: Line, kind: AnchorKind)? {
+    let proven = lines.compactMap { line -> (Line, AnchorKind)? in
+        if copyrightFurniture(line.text) { return (line, .copyright) }
+        if artistCredit(line.text) || illusToken(line.text) { return (line, .credit) }
+        return nil
+    }
+    // Lowest on the card. Vision's y grows upward, so that is the minimum.
+    if let best = proven.min(by: { $0.0.box.midY < $1.0.box.midY }) { return best }
+
+    // Positional fallback: a bare personal name, lowest of at least three
+    // lines, with real text above it. Fewer lines than that and "lowest" means
+    // nothing — a lone credit-shaped line could as easily be the card's name.
+    return positionalCredit(lines).map { ($0, .credit) }
+}
+
+/// positionalCredit finds the illustrator credit by where it sits rather than
+/// what it says: the bottom-most bare personal name on a card that read several
+/// lines. Split out from footerAnchor so the measurement can be reported even
+/// when a content-proven anchor won.
+func positionalCredit(_ lines: [Line]) -> Line? {
+    guard lines.count >= 3 else { return nil }
+    let ys = lines.map { $0.box.midY }
+    guard let low = ys.min(), let high = ys.max(), high - low > 0.05 else { return nil }
+    // "At the foot" is the bottom quarter of whatever was read, not literally
+    // the lowest line: the power/toughness box and stray flavour fragments sit
+    // down there too and are usually read *below* the credit.
+    let foot = low + (high - low) * 0.25
+    let candidates = lines.filter { $0.box.midY <= foot && personalNameLine($0.text) }
+    guard let credit = candidates.min(by: { $0.box.midY < $1.box.midY }) else { return nil }
+    let above = lines.filter { $0.box.midY > credit.box.midY + 0.02 }
+    guard above.count >= 2 else { return nil }
+    return credit
+}
+
+/// CardGeometry is the card's own scale and orientation, recovered from where
+/// two known lines sit rather than from any detected edge.
+struct CardGeometry {
+    /// Card height in pixels.
+    let heightPx: CGFloat
+    /// Footer centre in pixels, y measured downward.
+    let origin: CGPoint
+    /// Text tilt, radians, in the same y-down frame.
+    let theta: CGFloat
+    /// Half the footer line's length in pixels — the span along the card that
+    /// is provably printed on it, and therefore safe to sample across.
+    let halfSpanPx: CGFloat
+    /// Where in card space the anchor row sits — every offset is measured from
+    /// here, so it depends on which of the two footer rows we latched onto.
+    let anchorV: CGFloat
+    /// The anchor line's left end in pixels, and where that sits in card space.
+    /// nil when the line did not demonstrably start at its beginning, since a
+    /// truncated read's left edge is wherever OCR gave up rather than a
+    /// landmark. Only the symbol reader needs this; the border ring is sampled
+    /// along the anchor's own span and never needs to know the card's width.
+    let anchorLeft: CGPoint?
+    let anchorLeftU: CGFloat
+    /// The two independent estimates, kept so the caller can make them agree.
+    let scaleFromBaseline: CGFloat
+    let scaleFromGlyph: CGFloat
+}
+
+/// cardGeometry reconstructs the card from a footer line and, when there is
+/// one, a title line above it.
+///
+/// Two estimates of the card's height, deliberately: the title-to-footer
+/// baseline spans 86% of the card, so it is precise but assumes both anchors
+/// are the lines we think they are; the footer's own glyph height assumes
+/// nothing but is coarse. Neither is trusted alone. They have to agree, and
+/// when they do not the frame is not what it looks like and we stop.
+func cardGeometry(footer: Line, kind: AnchorKind, title: Line?, year: Int,
+                  frameW: CGFloat, frameH: CGFloat) -> CardGeometry? {
+    let anchorV = kind == .copyright ? CardLayout.footerV : CardLayout.creditV
+    guard let quad = footer.quad else { return nil }
+    // Into pixels, y downward.
+    func px(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * frameW, y: (1 - p.y) * frameH) }
+    let tl = px(quad.topLeft), tr = px(quad.topRight)
+    let bl = px(quad.bottomLeft)
+    let theta = atan2(tr.y - tl.y, tr.x - tl.x)
+    let lengthPx = hypot(tr.x - tl.x, tr.y - tl.y)
+    let glyphPx = hypot(bl.x - tl.x, bl.y - tl.y)
+    guard lengthPx > 1, glyphPx > 0.5 else { return nil }
+
+    let origin = CGPoint(x: (tl.x + tr.x + bl.x + px(quad.bottomRight).x) / 4,
+                         y: (tl.y + tr.y + bl.y + px(quad.bottomRight).y) / 4)
+
+    // The line's left end is a card landmark only when the line demonstrably
+    // begins at its own beginning. A read that lost its opening — "the Coast,
+    // inc. All rights reserved.", observed on a real photograph — starts
+    // wherever OCR gave up, which is not a landmark at all. Requiring the
+    // opener is the same provenance-by-content rule the vertical anchor uses.
+    let leftU = lineOpener(footer.text, kind: kind)
+        .flatMap { CardLayout.leftU(kind: kind, prefix: $0, year: year) }
+    let anchorLeft = leftU != nil
+        ? CGPoint(x: (tl.x + bl.x) / 2, y: (tl.y + bl.y) / 2) : nil
+    let anchorLeftU = leftU ?? 0
+
+    let fromGlyph = glyphPx / CardLayout.footerGlyphV
+    var fromBaseline = fromGlyph
+    if let title = title {
+        // Distance between the two rows along the card's own downward axis,
+        // so a tilted card measures the same as a square one.
+        let titleMid = CGPoint(x: title.box.midX * frameW, y: (1 - title.box.midY) * frameH)
+        let down = CGPoint(x: -sin(theta), y: cos(theta))
+        let gap = (origin.x - titleMid.x) * down.x + (origin.y - titleMid.y) * down.y
+        let span = anchorV - CardLayout.titleV
+        if gap > 0, span > 0 { fromBaseline = gap / span }
+    }
+    return CardGeometry(heightPx: fromBaseline, origin: origin, theta: theta,
+                        halfSpanPx: lengthPx / 2, anchorV: anchorV,
+                        anchorLeft: anchorLeft, anchorLeftU: anchorLeftU,
+                        scaleFromBaseline: fromBaseline, scaleFromGlyph: fromGlyph)
+}
+
+/// lineOpener reports whether a footer line starts where the printed row does.
+/// The copyright row opens with © or ™ or its year; the credit row opens with
+/// the illustrator abbreviation, which illusToken has already matched at the
+/// front. Anything else is a line OCR joined partway through.
+/// What the anchor line begins with. The landmark's position depends on this
+/// as much as on the frame era, because a line that lost its opening starts
+/// somewhere else entirely — see CardLayout.leftU.
+enum LinePrefix {
+    case trademark       // "™ &" — the row's true start from 1998 on
+    case copyrightGlyph  // "©" or "™" alone
+    case year            // the range or year, opening lost
+    case illus           // the illustrator abbreviation
+}
+
+func lineOpener(_ s: String, kind: AnchorKind) -> LinePrefix? {
+    let t = s.trimmingCharacters(in: .whitespaces)
+    guard let token = t.split(whereSeparator: { $0.isWhitespace }).first else { return nil }
+    switch kind {
+    case .credit:
+        return (illusToken(t) || artistCredit(t)) ? .illus : nil
+    case .copyright:
+        if token.contains("©") || token.contains("™") || token.hasPrefix("(") {
+            return .copyrightGlyph
+        }
+        // "©1995" often loses its symbol and arrives as "01995" or "1995".
+        if token.prefix(5).filter({ $0.isNumber }).count >= 4 { return .year }
+        // From 1998 the line opens "™ & © 1993-2001", and the trademark mark
+        // is what this glyph size mangles most: "TM", "TH", "IM", "Iм" have
+        // all been observed. Two letters at the head of a line already known
+        // to be a copyright line is the preamble, not prose — every way this
+        // line can start *late* begins with a real word ("the Coast, inc.").
+        let letters = token.filter { $0.isLetter }
+        if letters.count <= 2 && letters.count == token.count { return .trademark }
+        return nil
+    }
+}
+
+extension CardGeometry {
+    /// point maps a position in card space — u across the width, v down the
+    /// height, both 0…1 from the card's top-left — into frame pixels. nil when
+    /// no horizontal landmark was established, which is most of what makes
+    /// this safe: without it there is no honest way to say where the card's
+    /// right-hand side is, and the symbol lives there.
+    func point(u: CGFloat, v: CGFloat) -> CGPoint? {
+        guard let left = anchorLeft else { return nil }
+        let widthPx = heightPx * cardAspect
+        let along = CGPoint(x: cos(theta), y: sin(theta))
+        let down = CGPoint(x: -sin(theta), y: cos(theta))
+        let du = (u - anchorLeftU) * widthPx
+        let dv = (v - anchorV) * heightPx
+        return CGPoint(x: left.x + along.x * du + down.x * dv,
+                       y: left.y + along.y * du + down.y * dv)
+    }
+}
+
+/// RingStats is one sampled border ring.
+struct RingStats {
+    let median: CGFloat
+    let mad: CGFloat
+    let chroma: CGFloat
+    let count: Int
+}
+
+/// borderRing samples one edge's border ring, walking along the card's own
+/// axis rather than the frame's so a tilted card is sampled inside its border
+/// rather than diagonally out of it. `edgeV` is the ring centre in card space.
+func borderRing(_ px: PixelReader, _ g: CardGeometry, edgeV: CGFloat, samples: Int = 256) -> RingStats? {
+    let along = CGPoint(x: cos(g.theta), y: sin(g.theta))
+    let down = CGPoint(x: -sin(g.theta), y: cos(g.theta))
+    // Signed distance from the footer row to the ring, down the card.
+    let offset = (edgeV - g.anchorV) * g.heightPx
+    var lumas: [CGFloat] = [], chromas: [CGFloat] = []
+    lumas.reserveCapacity(samples)
+    for i in 0..<samples {
+        let t = (CGFloat(i) / CGFloat(samples - 1) - 0.5) * 2 * (g.halfSpanPx * 0.9)
+        let x = g.origin.x + along.x * t + down.x * offset
+        let y = g.origin.y + along.y * t + down.y * offset
+        guard let l = px.luma(x, y), let c = px.chroma(x, y) else { continue }
+        lumas.append(l); chromas.append(c)
+    }
+    guard lumas.count >= samples / 2 else { return nil }
+    return RingStats(median: medianOf(lumas), mad: medianAbsoluteDeviation(lumas),
+                     chroma: medianOf(chromas), count: lumas.count)
+}
+
+/// symbolInk measures how much of the type line's right margin is covered by
+/// something other than the frame behind it — the expansion symbol, when the
+/// set prints one.
+///
+/// Presence is the whole question here, and it is a far easier one than shape:
+/// before Exodus the symbol is monochrome black with no rarity colour, so this
+/// is "is there a glyph in that box" rather than "which glyph". It already
+/// separates cases neither the year nor the border can — 4BB against Ice Age,
+/// both black and both 1995, where 4th Edition's right margin is bare and Ice
+/// Age's carries a snowflake.
+///
+/// The background is estimated from the same band just left of the symbol,
+/// which is frame and nothing else, so this is a local contrast measure and
+/// carries over from a scan to a desk lamp the way the border ratio does.
+func symbolInk(_ px: PixelReader, _ g: CardGeometry) -> (coverage: CGFloat, contrast: CGFloat)? {
+    let boxU: CGFloat = 0.055, boxV: CGFloat = 0.026
+    func sample(_ centreU: CGFloat) -> [CGFloat] {
+        var out: [CGFloat] = []
+        for i in 0..<24 {
+            for j in 0..<16 {
+                let u = centreU + (CGFloat(i) / 23 - 0.5) * boxU
+                let v = CardLayout.symbolV + (CGFloat(j) / 15 - 0.5) * boxV
+                guard let p = g.point(u: u, v: v), let l = px.luma(p.x, p.y) else { continue }
+                out.append(l)
+            }
+        }
+        return out
+    }
+    let patch = sample(CardLayout.symbolU)
+    // The reference sits a symbol's width to the left: still the type-line
+    // band, never the type text itself, which ends well before it.
+    let reference = sample(CardLayout.symbolU - boxU * 1.6)
+    guard patch.count >= 200, reference.count >= 200 else { return nil }
+    let base = medianOf(reference)
+    let spread = medianAbsoluteDeviation(reference)
+    // "Different from the frame" has to mean different by more than the frame
+    // varies on its own, or every mottled old-frame background reads as ink.
+    let threshold = max(0.10, spread * 4)
+    let differing = patch.filter { abs($0 - base) > threshold }
+    return (CGFloat(differing.count) / CGFloat(patch.count),
+            abs(medianOf(patch) - base))
+}
+
+/// footerPatch samples the footer line's own box, giving Otsu both the ink and
+/// the surface it is printed on.
+func footerPatch(_ px: PixelReader, _ g: CardGeometry) -> (dark: CGFloat, bright: CGFloat,
+                                                           darkFraction: CGFloat, chroma: CGFloat,
+                                                           clipHigh: CGFloat, clipLow: CGFloat)? {
+    let along = CGPoint(x: cos(g.theta), y: sin(g.theta))
+    let down = CGPoint(x: -sin(g.theta), y: cos(g.theta))
+    let glyphPx = CardLayout.footerGlyphV * g.heightPx
+    var lumas: [CGFloat] = [], chromas: [CGFloat] = []
+    for i in 0..<192 {
+        let t = (CGFloat(i) / 191 - 0.5) * 2 * (g.halfSpanPx * 0.98)
+        for j in -3...3 {
+            let d = CGFloat(j) / 3 * glyphPx * 0.75
+            let x = g.origin.x + along.x * t + down.x * d
+            let y = g.origin.y + along.y * t + down.y * d
+            guard let l = px.luma(x, y), let c = px.chroma(x, y) else { continue }
+            lumas.append(l); chromas.append(c)
+        }
+    }
+    guard let split = otsu(lumas) else { return nil }
+    let hi = CGFloat(lumas.filter { $0 > 0.99 }.count) / CGFloat(lumas.count)
+    let lo = CGFloat(lumas.filter { $0 < 0.01 }.count) / CGFloat(lumas.count)
+    return (split.dark, split.bright, split.darkFraction, medianOf(chromas), hi, lo)
+}
+
+/// BorderReading is everything the reader saw, including when it refuses to
+/// answer. The numbers ride along regardless of the verdict because that is
+/// what --border-probe fits the constants from; only `color` is a claim.
+struct BorderReading: Encodable {
+    var color: String? = nil        // "white" | "black", absent when abstaining
+    var source: String? = nil       // "footer" | "footer+ring"
+    var abstain: String = ""        // why, when color is absent
+    var anchorKind: String = ""     // which footer row the geometry came from
+    /// Where the border sits in the card's own footer tone range: >1 is
+    /// brighter than its paper, <0 darker than its ink. The decision.
+    var t: Double = 0
+    /// Ring minus the frame just inside it — the corroborating check that the
+    /// ring is a different surface at all.
+    var standoff: Double = 0
+    var ringBottom: Double = 0
+    var ringTop: Double = 0
+    var ringMAD: Double = 0
+    var ringChroma: Double = 0
+    /// The card's own frame just inside the bottom border — the candidate
+    /// reference for normalizing illumination, since it is the same surface
+    /// under the same light and is always present.
+    var innerBottom: Double = 0
+    var innerMAD: Double = 0
+    var patchDark: Double = 0
+    var patchBright: Double = 0
+    var patchSeparation: Double = 0
+    var patchDarkFraction: Double = 0
+    var patchChroma: Double = 0
+    var clipHigh: Double = 0
+    var clipLow: Double = 0
+    var cardHeightPx: Double = 0
+    var scaleAgreement: Double = 0
+    var thetaDegrees: Double = 0
+    var footerText: String = ""
+    var titleText: String = ""
+    /// Where the anchors actually sat, as a fraction of the frame's height
+    /// measured down from the top. On a clean scan the card *is* the frame, so
+    /// these are CardLayout.footerV and titleV measured directly — which is
+    /// how those constants get fitted.
+    var footerVMeasured: Double = 0
+    var titleVMeasured: Double = 0
+    var footerGlyphVMeasured: Double = 0
+    /// Horizontal extents of the anchors, as fractions of the frame's width.
+    /// On a clean scan the card *is* the frame, so these read directly as card
+    /// space — which is how the symbol reader's horizontal anchor gets chosen
+    /// between them rather than assumed.
+    var footerLeftU: Double = 0
+    var footerRightU: Double = 0
+    var titleLeftU: Double = 0
+    /// Whether a horizontal landmark was established at all, and what the type
+    /// line's right margin holds if so. Reported, never acted on yet — this is
+    /// the measurement the symbol reader will be built from.
+    /// Left edge of the positional credit candidate, whether or not it won the
+    /// anchor. On a clean scan the copyright row reads and wins, so this is the
+    /// only way to measure the credit row's landmark for a frame whose live
+    /// photographs anchor on it instead.
+    var creditCandidateLeftU: Double = 0
+    var horizontalAnchor: Bool = false
+    var symbolCoverage: Double = 0
+    var symbolContrast: Double = 0
+}
+
+/// Thresholds the reading has to clear. Every one of them exists because the
+/// alternative is a silent wrong set, which is the most expensive mistake this
+/// scanner can make: a wrong border always matches *some* printing, so unlike a
+/// misread year or number it cannot fail closed on its own.
+enum BorderGate {
+    /// Where the border sits in the range of tones the card prints its own
+    /// footer with: 0 is that line's ink, 1 is the surface it is printed on.
+    ///
+    /// The rule is physical rather than fitted. A white border is *brighter
+    /// than the card's own paper* and a black border is *darker than its own
+    /// ink*, so both verdicts live outside [0, 1] and the ambiguous middle is
+    /// everything the card also prints with. Both endpoints move with the
+    /// lamp, so their ratio does not — which is the whole reason to measure it
+    /// this way.
+    ///
+    /// Absolute luminance was the first rule and it is what a lamp destroys.
+    /// It looked perfect on clean scans — white 0.92…0.93, black 0.04…0.18 —
+    /// and then a real session of white-bordered cards read **0.44…0.64**,
+    /// overlapping where gold sits, and the reader went silent on all six.
+    /// The same six score 1.36…2.44 here.
+    static let whiteTone: CGFloat = 1.30
+    static let blackTone: CGFloat = -0.01
+    /// The footer's two tones must be far enough apart to divide by. Below
+    /// this the line is not carrying legible ink and the ratio is noise.
+    static let minToneRange: CGFloat = 0.06
+    /// How far the ring must stand off the card's own frame just inside it.
+    /// This is the check that does not care about illumination at all, and the
+    /// one that catches the failure that killed the first attempt: a ring that
+    /// has slipped onto the inner frame reads the *same surface* as the
+    /// reference, so the gap collapses to nothing and we abstain instead of
+    /// classifying a border we never actually looked at. Measured: white
+    /// +0.168…+0.698, black −0.068…−0.616, no wrong signs in 52 cards.
+    static let minInnerDelta: CGFloat = 0.05
+    /// A ring straddling the card's cut edge is not one surface.
+    static let maxRingMAD: CGFloat = 0.10
+    /// Below this the border band is a couple of pixels and the ring aliases.
+    static let minCardHeightPx: CGFloat = 500
+    static let maxThetaDegrees: CGFloat = 25
+    /// How far the two scale estimates may disagree before the frame is not
+    /// what it looks like.
+    static let maxScaleDisagreement: CGFloat = 0.35
+}
+
+/// readBorder runs the whole chain and returns what it saw. It answers only
+/// when every gate passes; `abstain` always says which one did not.
+func readBorder(_ cg: CGImage, _ read: CardRead) -> BorderReading {
+    var out = BorderReading()
+    // Both passes are offered. The whole-frame pass usually has the title too,
+    // which is what makes the scale checkable; the band pass is aimed at the
+    // footer and often the only one that read it at all.
+    guard let anchor = footerAnchor(read.lines + read.bandLines) else {
+        out.abstain = "no footer anchor"
+        return out
+    }
+    let footer = anchor.line
+    out.footerText = footer.text
+    out.anchorKind = anchor.kind.rawValue
+    out.footerVMeasured = Double(1 - footer.box.midY)
+    out.footerLeftU = Double(footer.box.minX)
+    out.footerRightU = Double(footer.box.maxX)
+    if let c = positionalCredit(read.lines + read.bandLines) {
+        out.creditCandidateLeftU = Double(c.box.minX)
+    }
+
+    let frameW = CGFloat(cg.width), frameH = CGFloat(cg.height)
+    // The title is whichever plausible line sits highest above the footer.
+    let title = read.lines.filter { $0.box.midY > footer.box.midY + 0.2 }
+        .max { $0.box.midY < $1.box.midY }
+    if let t = title {
+        out.titleText = t.text
+        out.titleVMeasured = Double(1 - t.box.midY)
+        out.titleLeftU = Double(t.box.minX)
+    }
+    guard let g = cardGeometry(footer: footer, kind: anchor.kind, title: title,
+                               year: read.copyrightYear,
+                               frameW: frameW, frameH: frameH) else {
+        out.abstain = "no geometry"
+        return out
+    }
+    // Without a title there is only one scale estimate, and nothing to check
+    // it against — which is how one card reconstructed 50% too tall while
+    // reporting perfect agreement with itself. An unchecked estimate is not
+    // evidence, so this abstains rather than trusting it.
+    if title == nil {
+        out.abstain = "no title anchor"
+        return out
+    }
+    out.cardHeightPx = Double(g.heightPx)
+    out.thetaDegrees = Double(g.theta * 180 / .pi)
+    out.footerGlyphVMeasured = Double(footer.box.height * frameH / max(g.heightPx, 1))
+    // The glyph estimate is allowed to be either one text row or two, because
+    // Vision frequently returns the credit and copyright rows as a single
+    // observation — "Illus: © Jeff A: Menges" is both of them at once — and
+    // that box is twice as tall. Measured over the corpus, a merged anchor
+    // read 0.032 of card height against a single row's 0.0176. Every card lost
+    // to this check was a merged row whose baseline estimate was fine (median
+    // error −1.6%), so scoring it as one row was rejecting good geometry for
+    // having been read in a shape we had not accounted for.
+    let ratio = g.scaleFromGlyph / max(g.scaleFromBaseline, 1)
+    let disagreement = min(abs(ratio - 1), abs(ratio / 2 - 1))
+    out.scaleAgreement = Double(1 - disagreement)
+
+    guard let px = PixelReader(cg) else {
+        out.abstain = "no pixels"
+        return out
+    }
+    // The footer's two tones are the card's own printed black and white point,
+    // measured under whatever light the desk had. Note what they are *not*:
+    // the border. The first design assumed this line was printed on the border
+    // itself, and on an old frame it is printed on the coloured frame inside
+    // it — a white-bordered card's footer background reads 0.72 where its
+    // border reads 0.93. That is exactly why the ratio works as a classifier
+    // rather than as a normalization: the border is the thing that sits
+    // *outside* the range the card prints its own footer with.
+    guard let patch = footerPatch(px, g) else {
+        out.abstain = "footer not bimodal"
+        return out
+    }
+    out.patchDark = Double(patch.dark)
+    out.patchBright = Double(patch.bright)
+    out.patchSeparation = Double(patch.bright - patch.dark)
+    out.patchDarkFraction = Double(patch.darkFraction)
+    out.patchChroma = Double(patch.chroma)
+    out.clipHigh = Double(patch.clipHigh)
+    out.clipLow = Double(patch.clipLow)
+
+    let bottomV = 1 - CardLayout.borderV * CardLayout.ringDepth
+    let topV = CardLayout.borderV * CardLayout.ringDepth
+    guard let bottom = borderRing(px, g, edgeV: bottomV) else {
+        out.abstain = "no bottom ring"
+        return out
+    }
+    out.ringBottom = Double(bottom.median)
+    out.ringMAD = Double(bottom.mad)
+    out.ringChroma = Double(bottom.chroma)
+    let top = borderRing(px, g, edgeV: topV)
+    if let top = top { out.ringTop = Double(top.median) }
+    out.horizontalAnchor = g.anchorLeft != nil
+    if let sym = symbolInk(px, g) {
+        out.symbolCoverage = Double(sym.coverage)
+        out.symbolContrast = Double(sym.contrast)
+    }
+    let innerStats = borderRing(px, g, edgeV: CardLayout.innerV)
+    if let inner = innerStats {
+        out.innerBottom = Double(inner.median)
+        out.innerMAD = Double(inner.mad)
+    }
+
+    guard let inner = innerStats else {
+        out.abstain = "no inner reference"
+        return out
+    }
+    let delta = bottom.median - inner.median
+    let toneRange = patch.bright - patch.dark
+    guard toneRange >= BorderGate.minToneRange else {
+        out.abstain = "footer tones too close"
+        return out
+    }
+    let tone = (bottom.median - patch.dark) / toneRange
+    out.t = Double(tone)
+    out.standoff = Double(delta)
+
+    // Everything above is measurement and is reported whatever happens. From
+    // here down it is a claim, so every gate has to pass.
+    if g.heightPx < BorderGate.minCardHeightPx { out.abstain = "card too small"; return out }
+    // A card cannot be taller than the picture of it. Cheap, always available,
+    // and it is what catches a reconstruction that has gone badly wrong rather
+    // than slightly wrong — one corpus card came back 50% too tall while its
+    // two scale estimates agreed with each other perfectly, because with no
+    // title there was only ever one of them.
+    if g.heightPx > frameH * 1.05 { out.abstain = "card larger than frame"; return out }
+    if abs(out.thetaDegrees) > Double(BorderGate.maxThetaDegrees) { out.abstain = "too tilted"; return out }
+    if disagreement > BorderGate.maxScaleDisagreement { out.abstain = "scales disagree"; return out }
+    if bottom.mad > BorderGate.maxRingMAD { out.abstain = "ring not uniform"; return out }
+
+    // Two signals, and both have to say the same thing. The tone position asks
+    // whether the border falls outside the range the card prints itself with;
+    // the standoff asks whether the ring is even a different surface from the
+    // frame beside it. Requiring both is what makes the drift failure — a ring
+    // that slid onto the inner frame — abstain rather than answer confidently
+    // about a surface it never sampled.
+    let verdict: String
+    if tone >= BorderGate.whiteTone { verdict = "white" }
+    else if tone <= BorderGate.blackTone { verdict = "black" }
+    else { out.abstain = "between tones"; return out }
+
+    if abs(delta) < BorderGate.minInnerDelta {
+        out.abstain = "ring matches inner frame"
+        return out
+    }
+    if (delta > 0) != (verdict == "white") {
+        out.abstain = "tone and frame standoff disagree"
+        return out
+    }
+
+    // A second edge is not required — a card resting low in frame can have its
+    // top out of shot — but when it is there it has to agree, because a ring
+    // that disagrees with the opposite ring is measuring something that is not
+    // the border.
+    // The opposite edge corroborates when it can, and vetoes only when it
+    // actively says the other thing. It is not held to clearing the same bar
+    // independently, because a card lying on a desk is not lit evenly: the
+    // far edge is systematically dimmer, and the reference tones come from the
+    // footer at the near edge. Measured on a live session of white-bordered
+    // cards, the top ring ran 0.10–0.15 darker than the bottom, which was
+    // enough to fail a strict check on three of six cards that were plainly
+    // white. An indeterminate second opinion is not a contradiction — it just
+    // does not earn the stronger source label.
+    if let top = top {
+        let topTone = (top.median - patch.dark) / toneRange
+        let opposite = verdict == "white"
+            ? topTone <= BorderGate.blackTone
+            : topTone >= BorderGate.whiteTone
+        if opposite {
+            out.abstain = "edges disagree"
+            return out
+        }
+        let agrees = verdict == "white"
+            ? topTone >= BorderGate.whiteTone
+            : topTone <= BorderGate.blackTone
+        out.source = agrees ? "footer+ring" : "footer"
+    } else {
+        out.source = "footer"
+    }
+    out.color = verdict
+    return out
 }
 
 // MARK: - Camera discovery
@@ -2750,7 +3705,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                            features: (self.autoAvailable ? ["auto", "rearm"] : [])
                                + (self.framingAvailable ? ["framing"] : [])
                                + (self.torchAvailable ? ["torch"] : [])
-                               + ["effects", "hud"]))
+                               + ["effects", "hud", "border"]))
                 if self.autoRequested { self.setAuto(true) }
             }
         }
@@ -3496,6 +4451,25 @@ if args.contains("--list-devices") {
 var requestedRotation = 90
 if let i = args.firstIndex(of: "--rotate"), i + 1 < args.count {
     requestedRotation = Int(args[i + 1]) ?? 90
+}
+
+// --border-probe reads one image and reports everything the border reader saw,
+// verdict or not. It exists to fit the constants in CardLayout and BorderGate
+// against scan/corpus, where the card fills the frame and the card rect is
+// therefore known exactly — which is the one thing that corpus can say about
+// the border, and the reason it cannot say anything about the *crop*.
+if let i = args.firstIndex(of: "--border-probe") {
+    guard i + 1 < args.count else { fail("--border-probe requires a file path") }
+    let path = args[i + 1]
+    guard let (cg, orientation) = cgImage(fromFile: path) else {
+        fail("could not read image: \(path)")
+    }
+    let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: requestedRotation)
+    let read = readCard(forOCR)
+    var reading = readBorder(forOCR, read)
+    reading.footerText = reading.footerText.isEmpty ? "" : reading.footerText
+    emit(reading)
+    exit(reading.color == nil ? 3 : 0)
 }
 
 if let i = args.firstIndex(of: "--image") {

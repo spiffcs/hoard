@@ -3,13 +3,13 @@
     "border": "white",
     "borderSource": "footer",
     "candidates": [
-      "Remove Soul",
-      "Instant",
-      "Counter target creature spell."
+      "Sacred Ground",
+      "Enchantment",
+      "opponent controls causes a land to"
     ],
     "finish": "",
-    "name": "Remove Soul",
-    "number": "95",
+    "name": "Sacred Ground",
+    "number": "39",
     "set": "",
     "source": "crop",
     "year": 2003

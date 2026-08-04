@@ -3,15 +3,15 @@
     "border": "black",
     "borderSource": "footer+ring",
     "candidates": [
-      "Echo Tracer",
-      "Creature",
-      "Wizard"
+      "Builder's Bane",
+      "Sorcery",
+      "Destroy X target artifacts. For each"
     ],
     "finish": "",
-    "name": "Echo Tracer",
+    "name": "Builder's Bane",
     "number": "",
     "set": "",
     "source": "crop",
-    "year": 2003
+    "year": 0
   }
 ]

@@ -1,5 +1,7 @@
 [
   {
+    "border": "white",
+    "borderSource": "footer+ring",
     "candidates": [
       "Control Magic",
       "Magic"

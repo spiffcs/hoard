@@ -25,8 +25,23 @@ This one answers "which *kinds* of card can we read at all".
 One consequence of the clean-scan format worth knowing: the card fills the
 frame, so Vision's rectangle detector locks onto the boundary between the
 border and the inner frame rather than the card's outer edge. The perspective
-crop therefore excludes the printed border. Anything that wants to look at the
-border must not be tuned here.
+crop therefore excludes the printed border. **Nothing that reads the crop can
+be tuned here.**
+
+The border *reader* is a deliberate exception, and the distinction is worth
+stating because it is load-bearing. It never touches the crop: it reconstructs
+the card from the position of text it has identified by content, then samples
+the full-resolution frame. Here the card *is* the image, so the true card rect
+is known exactly — which makes this the one place the layout constants in
+`CardLayout` can be fitted against ground truth rather than guessed. See
+`./border.sh`.
+
+What it still cannot tell you is how any of it behaves under a desk lamp, and
+that is not a small caveat. A gate on the ring's colour saturation looked
+perfect here — gold measured 0.36 against ≤0.20 for white and black — and was
+wrong the first time it met a photograph, where a *white* border under warm
+light reads 0.40 and is indistinguishable from gold. Fit here; confirm on
+`scan/fixtures/`, which are real.
 
 ## Sampling
 
@@ -105,3 +120,35 @@ except that reading none is correct for `pre1998`, where the card has none.
 
 Re-run the sweep after any parser change and update this table when it moves;
 a per-stratum drop is the earliest warning that a frame era has regressed.
+
+## Border baseline, 2026-08-04 (231 images, 40 per pre-1998 stratum)
+
+`./border.sh` scores the border reader. Coverage and precision are reported
+separately and never averaged: the property that matters is *when it speaks it
+is right*, not *it is usually right*, because a wrong border silently picks the
+wrong printing.
+
+| era | border | n | spoke | correct | wrong |
+| --- | --- | --- | --- | --- | --- |
+| pre1998 | black | 40 | 92% | 100% | 0 |
+| pre1998 | white | 40 | 75% | 100% | 0 |
+| 1998-2002 | black | 8 | 88% | 100% | 0 |
+| 1998-2002 | white | 8 | 100% | 100% | 0 |
+| **white + black, all eras** | | **127** | **~60%** | **100%** | **0** |
+| gold + silver | | 104 | 8% | 0% | **8** |
+
+Only the pre-1998 rows are a target — everything later prints a collector
+number, which beats a border as evidence, so silence there costs nothing.
+**The number that must stay zero is the white/black one.**
+
+The eight wrong reads are all gold or silver called white, and they are a real
+limit rather than a tuning miss: a silver border is light grey, and the chroma
+that separates gold on a clean scan is the same number a warm lamp fabricates
+on white. The Go side handles it structurally instead — a printing whose border
+the reader cannot recognise is never *ruled out* — so those reads cost ordering
+on World Championship and Un-set cards, groups 2 and 3, and nothing else.
+
+What it declines on pre-1998 is mostly basic lands and cards whose title never
+read (two rows are what make the reconstructed scale checkable), plus a handful
+where the ring and the frame reference land on the same surface — which is the
+case it is *supposed* to refuse, since that is what a drifted ring looks like.

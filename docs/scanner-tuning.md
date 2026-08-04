@@ -268,6 +268,30 @@ correction queues loudly instead of passing silently: that is the one path
 where staying quiet would leave a wrong price in the collection.
 (`finishConflict` in autoscan.go.)
 
+**The 8th Edition frame draws its illustrator credit instead of writing it.**
+A pile of nothing but 8th Edition produced 8 frames, 0 footer anchors, 0
+borders and 0 collector numbers — every card went to review. The cause is not
+tuning. Where every earlier frame prints "Illus. Una Fricker", the 8th Edition
+frame prints a **paintbrush glyph** and then the name, so `artistCredit` and
+`illusToken` cannot match it by content and the credit row can never anchor
+anything. Worse, the bare name then wins the title slot: live captures resolved
+as *Pete Venters* and *Steve White* rather than Tremor and Reflexes.
+
+The copyright row is the other half. It sits lower on this frame (v≈0.948
+against 0.9375 before it) and is set thinner, and on a 1080p desk photo it did
+not OCR at all across those 8 frames — the band returned power/toughness,
+flavour text and name fragments and nothing else. It reads perfectly on a clean
+scan, collector number and all ("Inc. 262/350"), which is exactly the trap: the
+corpus says this frame is fine.
+
+That one line failing costs *both* signals at once, and the measurement says so
+across a mixed session: of 14 frames whose footer read, 9 also yielded a
+collector number, and the 5 that did not were 4th Edition, which prints none. Of
+the 31 whose footer did not read, **one** yielded a number. Bottom-band
+legibility is therefore worth more than any further border or symbol work — it
+is upstream of both, and of the commit itself. (Note also that
+`CardLayout.innerV` at 0.950 lands on this frame's copyright text.)
+
 **The collector block identifies a card the title cannot.** A name is not the
 only key a card carries. When every line of text fails — an old serif title,
 glare across the name, a title that reads as its own rules text — the bottom
@@ -456,19 +480,118 @@ case 861) to a median of 3. The residual is real: Alpha and Beta are both 1993
 and both black-bordered, Revised and Summer Magic both 1994 and both white. The
 card face cannot separate those, which is why collector numbers exist.
 
-**Border colour would have doubled that, and could not be read reliably.**
-Border is the era's other discriminator and the catalog already stores it;
-year plus border pins 47% rather than 24%. A pixel classifier over the
-perspective crop was built and then removed, because the crop does not
-reliably contain the border: Vision locks onto whichever edge has contrast, so
-sometimes the crop starts at the card's outer edge and sometimes at the frame
-just inside it. An 8th Edition Gaea's Herald — white-bordered — was classified
-black off its gold-brown inner frame. Saturation was tried as the fix and does
-not separate the cases (0.40 for a genuine white border under tungsten light,
-0.43 for the gold frame); luminance position separates cleanly (0.95 vs 0.18)
-but is measuring the wrong ring. The missing signal is not in the pixels, it is
-knowing whether the crop is the card. Left undone rather than left guessing —
-a wrong border silently picks the wrong printing.
+**Border colour doubles that, and the signal was never in the pixels.** Border
+is the era's other discriminator and the catalog already stores it; year plus
+border pins 47% rather than 24%, and 4th Edition goes from **0% to 95%**,
+because 4ED (white, 1995) and 4BB (black, 1995) share their year, art and
+artist and differ in nothing else a camera can see.
+
+The first attempt was a pixel classifier over the perspective crop, and it was
+removed rather than shipped. The crop does not reliably contain the border:
+Vision locks onto whichever edge has contrast, so sometimes the crop starts at
+the card's outer edge and sometimes at the frame just inside it. An 8th Edition
+Gaea's Herald — white-bordered — was classified black off its gold-brown inner
+frame. Saturation did not separate the cases (0.40 for a genuine white border
+under tungsten, 0.43 for the gold frame); luminance separated cleanly (0.95 vs
+0.18) but was measuring the wrong ring. **The missing signal was not in the
+pixels, it was knowing whether what you are looking at is the card.**
+
+So the second attempt reads no crop at all. It anchors on text the helper has
+already identified *by content* — `copyrightFurniture` and `artistCredit` know
+the copyright line and the illustrator credit by what they say — recovers the
+card's own height from the distance between that row and the title, and samples
+the border on the full-resolution frame. No edge contrast can fake a line that
+says "Wizards of the Coast". Measured against the corpus, where the card fills
+the image so the true card rect is known exactly, the reconstruction lands
+within **1.5%** of the real card height.
+
+**What the border is measured against is the whole trick.** The ring is scored
+as a position in the range of tones the card prints its *own footer* with —
+0 is that line's ink, 1 is the surface under it:
+
+    tone = (ring − footerInk) / (footerPaper − footerInk)
+
+A white border is brighter than the card's own paper and a black border darker
+than its own ink, so both verdicts live **outside [0, 1]** and the ambiguous
+middle is everything the card also prints with. Both endpoints move with the
+lamp, so their ratio does not. White reads ≥1.05 and black ≤−0.03 across clean
+scans, desk photographs and a live session alike; the gates are 1.30 and −0.01.
+
+Absolute ring luminance was the first rule, and it is the one a lamp destroys.
+It looked flawless on clean scans — white 0.92–0.93, black 0.04–0.18, gold
+parked at 0.57 in the dead zone between them. Then a live session of
+white-bordered bulk cards read **0.44–0.64**, straddling exactly where gold
+sits, and the reader went silent on all six. The same six score 1.36–2.44 on
+the ratio and all six read white. **A gate fitted on studio scans is a gate
+that has never met a desk lamp.**
+
+Four lessons came out of building it, and all four were the pixels
+contradicting a story that sounded right:
+
+- **The footer is not printed on the border.** The plan was to normalize
+  illumination using the copyright line's own two tones — black ink on a white
+  border, white ink on a black one — which would have made the whole decision
+  relative. On an old frame that line sits on the *coloured frame* inside the
+  border. Its bright mode reads 0.72 on a card whose border reads 0.93. The
+  reference is now the frame just inside the border instead, used for standoff
+  rather than as a white point.
+- **A colour gate fitted on scans died on its first photograph.** Gold measured
+  0.36 chroma against ≤0.20 for white and black, which looked like a clean way
+  to reject it. Then a real white border under a warm desk lamp read **0.40** —
+  channel spread measures the lamp as much as the ink. The gate was also
+  redundant, since gold already sits in the luminance dead zone, so it went.
+  Fit constants on `scan/corpus`; confirm every one of them on `scan/fixtures`.
+- **Vision merges the two footer rows about a third of the time**, returning
+  one observation twice as tall ("Illus: © Jeff A: Menges"). A scale check that
+  assumed one row rejected 30 of 80 cards whose geometry was in fact fine.
+- **A card on a desk is not lit evenly.** Requiring the far edge of the card to
+  independently clear the same bar as the near edge is requiring uniform
+  illumination: measured live, the top ring ran 0.10–0.15 darker than the
+  bottom and failed three of six plainly-white cards. The opposite edge now
+  vetoes only when it actively says the *other* colour; an indeterminate second
+  opinion is not a contradiction, it just does not earn the `footer+ring` label.
+
+Two things the reader genuinely cannot do, both left as limits rather than
+papered over. It cannot separate **gold or silver from white** — a silver
+border is light grey, and the chroma that separates them on a scan is the same
+number a warm lamp fabricates. Eight such cards across the corpus read white.
+So the Go side never *rules out* a printing whose border it cannot recognise;
+those rows keep their place while the genuinely-excluded ones sink. (Suppressing
+the border outright for such cards was the first fix and far too blunt: 22% of
+pre-1998 multi-printing cards have a gold or silver sibling, and Control Magic
+— one of the cards the feature exists for — lost its border to two Pro Tour
+Collector Set rows.) And it needs a **title** as well as a footer, because two
+rows are what make the scale checkable; with one anchor a card once
+reconstructed 50% too tall while agreeing perfectly with itself.
+
+What ships is ordering only. `applyBorderEvidence` promotes the printings whose
+border matches, and never removes one, never raises a rank, never blocks a
+commit. That restraint is the point, and it is not timidity: **every other
+signal here fails closed and a border cannot.** A misread year matches no
+printing and evaporates; a misread number matches nothing and the empty
+sentinel re-derives the floor. A border is one bit, and a wrong bit always
+matches *something*, because there is always a black-bordered candidate. So it
+sorts the review queue and waits, and every read lands on the resolve line as
+`border=white(footer+ring)→4ED` — the set it put on top. Those top rows are the
+measurement: each one the user overrides is a recorded miss on a real card
+under real light, which is the evidence needed before the pairing earns a rank
+of its own.
+
+Measured so far: **zero wrong on white or black** across 231 corpus images, 21
+desk fixtures and two live sessions. A white-bordered pile read 7 of the 9
+frames holding a legible card; the misses were a footer neither OCR pass found
+and an artist credit read as the card's title. A black-bordered pile read 3 of
+4, including Builder's Bane — Mirage, 1996, the first genuinely pre-1998 black
+border photographed rather than scanned — at tone −0.57.
+
+Two numbers from those sessions are worth keeping. The white pile's Energy Tap
+came back `border=white→4ED`, which is the whole argument in one line: `leg`,
+`4bb` and `ren` are black, `4ed` is white, and nothing else on the card says
+so. And the black pile's one abstention was a glared re-shot of a card the
+previous capture had read cleanly — tone 0.18 against its sibling's −0.90 —
+which is exactly the reading that must not round toward white, because that is
+the shape of every wrong-set commit this reader could ever cause.
+(`readBorder` in main.swift; `applyBorderEvidence` in autoscan.go.)
 
 **The background baseline could swallow a card, and never gave it back.** The
 furniture baseline is taken from the first sample after auto arms and is never

@@ -47,6 +47,15 @@ stable and looks the part.
   buildinfo — the "other people can use this" release. Unplanned; plan it
   when parity + beautification land.
 
+## Scanner: expansion symbols (planned, not started)
+
+[scanner-symbol-plan.md](scanner-symbol-plan.md) — reading the set symbol is
+what pins a printing when no collector number is printed (pre-1998) or none is
+legible (8th Edition on a desk photo). Symbol identity equals set identity,
+which pins 83% of ambiguous pre-1998 printings, hands-free. Blocked on
+anchoring the patch to the type line rather than the footer; the plan opens
+with the cheapest test that would kill it.
+
 ## Backlog beyond the queued sprints
 
 Tracked at the end of

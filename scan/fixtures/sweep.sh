@@ -61,6 +61,8 @@ for ln in sys.stdin:
             "number": c.get("collectorNumber", ""),
             "finish": c.get("finishHint", ""),
             "year": c.get("copyrightYear", 0),
+            "border": c.get("borderColor", ""),
+            "borderSource": c.get("borderSource", ""),
             "candidates": (c.get("candidates") or [])[:3],
         })
 print(json.dumps(out, indent=2, sort_keys=True))

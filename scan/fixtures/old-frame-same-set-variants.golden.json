@@ -1,5 +1,7 @@
 [
   {
+    "border": "black",
+    "borderSource": "footer+ring",
     "candidates": [
       "Cephalid Looter",
       "Creature - Cephalid",

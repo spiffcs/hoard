@@ -22,6 +22,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,10 +126,25 @@ func TestSessionReplay(t *testing.T) {
 				continue
 			}
 			auto, finish, note := verdict(it)
+			// The border the helper read, and — for a pre-1998 pile, where the
+			// pile itself is the ground truth — the set now sitting on top of
+			// the queue because of it. That top row is what the user accepts
+			// with one keystroke, so it is the thing whose accuracy has to be
+			// scored before border is ever allowed to commit on its own.
+			border := ""
+			if it.raw.BorderColor != "" {
+				border = fmt.Sprintf("  border=%s", it.raw.BorderColor)
+				if !it.borderFiltered {
+					border += "(unused)"
+				} else if len(it.prints) > 0 {
+					border += fmt.Sprintf("→%s", strings.ToUpper(it.prints[0].Set))
+				}
+			}
 			if auto {
 				committed++
-				t.Logf("%-12s COMMIT   %s (%s/%s) %s  [rank=%s]", label, it.prints[0].Name,
-					strings.ToUpper(it.prints[0].Set), it.prints[0].CollectorNumber, finish, it.rank)
+				t.Logf("%-12s COMMIT   %s (%s/%s) %s  [rank=%s]%s", label, it.prints[0].Name,
+					strings.ToUpper(it.prints[0].Set), it.prints[0].CollectorNumber, finish,
+					it.rank, border)
 				continue
 			}
 			queued++
@@ -136,7 +152,7 @@ func TestSessionReplay(t *testing.T) {
 			if name == "" {
 				name = strconv.Quote(it.ocrLine)
 			}
-			t.Logf("%-12s QUEUE    %-30s %s  [rank=%s]", label, name, note, it.rank)
+			t.Logf("%-12s QUEUE    %-30s %s  [rank=%s]%s", label, name, note, it.rank, border)
 		}
 	}
 	t.Logf("--- %d committed, %d queued, %d killed ---", committed, queued, killed)

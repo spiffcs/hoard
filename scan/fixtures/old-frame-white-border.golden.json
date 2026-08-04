@@ -1,17 +1,17 @@
 [
   {
-    "border": "black",
+    "border": "white",
     "borderSource": "footer+ring",
     "candidates": [
-      "Echo Tracer",
-      "Creature",
-      "Wizard"
+      "Energy Tap",
+      "Sorcery",
+      "Tap target creature you"
     ],
     "finish": "",
-    "name": "Echo Tracer",
+    "name": "Energy Tap",
     "number": "",
     "set": "",
     "source": "crop",
-    "year": 2003
+    "year": 0
   }
 ]

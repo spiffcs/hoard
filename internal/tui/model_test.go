@@ -1755,6 +1755,117 @@ func TestRankByScanStrength(t *testing.T) {
 	}
 }
 
+// Control Magic is the case border exists for: 4ED (white, 1995) and 4BB
+// (black, 1995) share their year, their art and their artist, so the copyright
+// year — the only other evidence a pre-1998 card carries — settles nothing.
+func controlMagicPrints() []scryfall.Card {
+	return []scryfall.Card{
+		{ID: "a", Name: "Control Magic", Set: "4bb", CollectorNumber: "48",
+			ReleasedAt: "1995-04-01", BorderColor: "black"},
+		{ID: "b", Name: "Control Magic", Set: "4ed", CollectorNumber: "48",
+			ReleasedAt: "1995-04-01", BorderColor: "white"},
+		{ID: "c", Name: "Control Magic", Set: "3ed", CollectorNumber: "48",
+			ReleasedAt: "1994-04-11", BorderColor: "white"},
+	}
+}
+
+func TestApplyBorderEvidence(t *testing.T) {
+	prints := controlMagicPrints()
+
+	// Border alone cannot pick 4ED: 3ED is white too, and newer-first puts it
+	// first. Only the pairing with 1995 names one printing.
+	got, changed := applyBorderEvidence(prints, "white", 0)
+	if !changed {
+		t.Fatal("a white read over a mixed list should reorder")
+	}
+	if got[0].Set != "4ed" || got[1].Set != "3ed" || got[2].Set != "4bb" {
+		t.Errorf("order = %s/%s/%s, want 4ed/3ed/4bb — matching borders first, "+
+			"each group otherwise undisturbed", got[0].Set, got[1].Set, got[2].Set)
+	}
+
+	// With the year the pairing leads, which is the row a rank trusting both
+	// fields would commit — and 4BB, sharing the year but not the border, must
+	// not be it.
+	got, changed = applyBorderEvidence(prints, "white", 1995)
+	if !changed {
+		t.Fatal("border plus year should reorder")
+	}
+	if got[0].Set != "4ed" {
+		t.Errorf("top = %s, want 4ed: 1995 is shared by 4ED and 4BB and white "+
+			"by 4ED and 3ED, so only the pairing names one", got[0].Set)
+	}
+	if len(got) != len(prints) {
+		t.Errorf("kept %d printings, want %d — border orders, it never removes, "+
+			"or the picker could not reach the row it demoted", len(got), len(prints))
+	}
+
+	// A border matching nothing is ignored outright rather than treated as a
+	// contradiction. This is what keeps a wrong read on a card the reader
+	// should have abstained on — gold, silver, foreign-language — free.
+	if _, changed := applyBorderEvidence(prints, "gold", 0); changed {
+		t.Error("a border no printing has must change nothing")
+	}
+	// And a border every printing shares separates nothing, so it is not a
+	// reorder either — the distinction the resolve line reports as "unused".
+	allWhite := []scryfall.Card{
+		{ID: "a", Set: "3ed", BorderColor: "white"},
+		{ID: "b", Set: "4ed", BorderColor: "white"},
+	}
+	if _, changed := applyBorderEvidence(allWhite, "white", 0); changed {
+		t.Error("a border every printing shares must change nothing")
+	}
+	if _, changed := applyBorderEvidence(prints, "", 0); changed {
+		t.Error("no border read must change nothing")
+	}
+	// Gold and silver read as white often enough to matter, so such a printing
+	// is never ruled out — but it is not promoted over a genuine match either,
+	// and it must still outrank the printings this read really does exclude.
+	withGold := append(controlMagicPrints(), scryfall.Card{
+		ID: "d", Name: "Control Magic", Set: "ptc", CollectorNumber: "jn12",
+		ReleasedAt: "1996-05-01", BorderColor: "gold"})
+	got, changed = applyBorderEvidence(withGold, "white", 1995)
+	if !changed {
+		t.Fatal("a gold sibling must not suppress the border wholesale: 22% of " +
+			"pre-1998 multi-printing cards have one, Control Magic included")
+	}
+	if got[0].Set != "4ed" {
+		t.Errorf("top = %s, want 4ed", got[0].Set)
+	}
+	posOf := func(set string) int {
+		for i, c := range got {
+			if c.Set == set {
+				return i
+			}
+		}
+		return -1
+	}
+	if posOf("ptc") > posOf("4bb") {
+		t.Errorf("gold ptc at %d sits below black 4bb at %d — a white read "+
+			"cannot rule out a colour the reader never recognises, so it must "+
+			"not sink below one it genuinely excludes", posOf("ptc"), posOf("4bb"))
+	}
+	if _, changed := applyBorderEvidence(prints[:1], "white", 0); changed {
+		t.Error("a lone printing has no ordering to change")
+	}
+}
+
+// The rank is border-blind, and has to stay that way: one bit that always
+// matches *something* cannot be sole evidence for an unattended write.
+func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
+	prints := controlMagicPrints()
+	_, before := rankByScanStrength(prints, "", "", 1995)
+	reordered, _ := applyBorderEvidence(prints, "white", 1995)
+	_, after := rankByScanStrength(reordered, "", "", 1995)
+	if before != after {
+		t.Errorf("rank moved from %v to %v after a border reorder", before, after)
+	}
+	// 1995 alone cannot separate 4ED from 4BB, and must not pretend to.
+	if before != scanMatchNone {
+		t.Errorf("year-only rank = %v, want scanMatchNone: 1995 is shared by "+
+			"two printings, so the year settles nothing", before)
+	}
+}
+
 func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 	// A card whose only "reprint" is its own theme-deck alternate — one set,
 	// one base number, rows differing only by the variation marker — is a
@@ -2931,5 +3042,47 @@ func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
 func TestDisagreeingYearDoesNotEarnTheRank(t *testing.T) {
 	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999); rank != scanMatchNumberOnly {
 		t.Errorf("rank = %v, want scanMatchNumberOnly when the year matches nothing", rank)
+	}
+}
+
+// Esc during the close-time review walk used to drop every remaining card on
+// the spot. That walk is where a session's unsaved scans live, and nothing
+// else in the app destroys that much on one keystroke without asking.
+func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": solRingPrints()},
+	}
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m.walking = true
+	m.review = []queueItem{
+		{id: 2, canonical: "Sol Ring", prints: solRingPrints()},
+		{id: 3, canonical: "Sol Ring", prints: solRingPrints()},
+	}
+	cur := queueItem{id: 1, canonical: "Sol Ring", prints: solRingPrints()}
+	m.current = &cur
+
+	got, _ := m.cancelReview()
+	after := got.(model)
+	if after.state != stateAbandonConfirm {
+		t.Fatalf("state = %v, want the abandon gate", after.state)
+	}
+	if len(after.review) != 2 || after.current == nil {
+		t.Fatalf("esc dropped work before the gate was answered: review=%d current=%v",
+			len(after.review), after.current)
+	}
+
+	// Anything but y resumes the walk with everything intact.
+	mm, _ := after.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	kept := mm.(model)
+	if len(kept.review) != 2 || !kept.walking {
+		t.Errorf("declining the gate lost work: review=%d walking=%v", len(kept.review), kept.walking)
+	}
+
+	// y is the deliberate answer, and only then is the queue dropped.
+	mm, _ = after.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	gone := mm.(model)
+	if len(gone.review) != 0 || gone.walking {
+		t.Errorf("confirming did not abandon: review=%d walking=%v", len(gone.review), gone.walking)
 	}
 }

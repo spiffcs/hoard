@@ -112,6 +112,29 @@ func numberSourceSuffix(src string) string {
 	return "(" + src + ")"
 }
 
+// borderSuffix records what the border reader said, and whether it mattered.
+// It is on the resolve line rather than hidden behind a debug flag because a
+// session's worth of these is the only real-world precision data this decision
+// will ever have: every card where the user then picks a different printing is
+// a recorded miss, and that is what has to be read before border is ever
+// allowed to do more than sort a list.
+func borderSuffix(it queueItem) string {
+	if it.raw.BorderColor == "" {
+		return ""
+	}
+	s := " border=" + it.raw.BorderColor
+	if it.raw.BorderSource != "" {
+		s += "(" + it.raw.BorderSource + ")"
+	}
+	if !it.borderFiltered {
+		// Read but idle: every printing agreed, or none did. Worth telling
+		// apart from a read that reordered, since only the latter can be wrong
+		// in a way the user would ever see.
+		s += " unused"
+	}
+	return s
+}
+
 // siblingSuffix records the context a card was seen in, plus the one flag
 // worth auditing after the fact. The first two are inputs to the phantom,
 // duplicate, and echo rules; number-overridden marks a card that committed
@@ -162,6 +185,11 @@ type queueItem struct {
 	// viaBlock records that the card was identified from its collector block
 	// because no line of text resolved — the title never read at all.
 	viaBlock bool
+	// borderFiltered records that the border read off the card reordered the
+	// printings. It changes no verdict — border is ordering only, see
+	// applyBorderEvidence — but every read belongs on the resolve line, since
+	// a session's worth of them is the evidence for ever trusting it further.
+	borderFiltered bool
 }
 
 // resolveDoneMsg carries one finished background resolution. gen ties it to
@@ -522,6 +550,11 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 						return cd.Number != ""
 					})
 			}
+			// Border last, and only over the ordering the ranking settled on.
+			// It never revisits the rank: an old frame that verified nothing
+			// still queues, it just queues with the right printing on top.
+			it.prints, it.borderFiltered = applyBorderEvidence(
+				it.prints, c.BorderColor, c.CopyrightYear)
 		}
 		return resolveDoneMsg{gen: gen, item: it, nameDur: nameDur, printsDur: printsDur}
 	}
@@ -666,6 +699,84 @@ func soleIndexInYear(cards []scryfall.Card, idxs []int, year int) int {
 		found = i
 	}
 	return found
+}
+
+// applyBorderEvidence promotes the printings whose border matches the one read
+// off the card, reporting whether it changed anything. It is ordering only: no
+// printing is ever removed, no rank is ever raised, no commit is ever blocked.
+//
+// That restraint is the whole design. Before 1998 nothing but the copyright
+// year is printed, and the year alone pins under a quarter of those cards;
+// border colour is the era's other discriminator and takes it to nearly half,
+// with Fourth Edition going from nothing to almost everything, because 4ED
+// (white) and 4BB (black) share their year, art and artist. So it is worth
+// real evidence — but it cannot be weighed like the rest of them.
+//
+// Every other signal here fails closed. A misread year matches no printing and
+// evaporates; a misread collector number matches nothing and the empty
+// sentinel re-derives the no-number outcome as the floor. A border is one bit,
+// and a wrong bit always matches *something*, because there is always a
+// black-bordered candidate. It cannot fail closed on its own, so it does not
+// get to decide anything on its own — here it sorts the review queue, and
+// nothing more.
+//
+// A border matching no printing at all is ignored rather than treated as a
+// contradiction. That is what makes a wrong read on a gold, silver or
+// foreign-language card cost nothing: the reader already abstains on those,
+// and if it ever stops abstaining the mistake still buys nothing.
+//
+// The year comes in because border alone lands on the wrong row. Control
+// Magic has twenty printings and plenty are white, so "white" first promotes
+// whichever white one is newest — Battle Royale, observed on the fixture.
+// Neither field pins it alone: 1995 is shared by 4ED and 4BB, white is shared
+// by 4ED and half the reprints. Together they name exactly one. So the order
+// is the pairing first, then the border, then everything else, which makes the
+// top row here the same row a rank that trusted the pairing would commit —
+// and that is deliberate, because it means a session's top rows measure the
+// next step's accuracy before the next step is allowed to write anything.
+func applyBorderEvidence(prints []scryfall.Card, border string, year int) ([]scryfall.Card, bool) {
+	if border == "" || len(prints) < 2 {
+		return prints, false
+	}
+	// The reader tells white from black and nothing else. Gold and silver read
+	// as white often enough to matter — eight of them across the corpus — and
+	// no photometry fixes it, because a silver border simply is light grey.
+	//
+	// So a printing in a colour the reader cannot recognise is never *ruled
+	// out*, whatever it said. It is not promoted either: it sits where the
+	// newest-first order left it, ahead of the printings this read genuinely
+	// excludes. Suppressing the border entirely for such cards was the first
+	// attempt and it was far too blunt — 22% of pre-1998 multi-printing cards
+	// have a gold or silver sibling somewhere, and Control Magic, one of the
+	// cards this whole feature exists for, lost its border to two Pro Tour
+	// Collector Set rows it was never going to be confused with.
+	ruledOut := func(c scryfall.Card) bool {
+		known := strings.EqualFold(c.BorderColor, "white") ||
+			strings.EqualFold(c.BorderColor, "black")
+		return known && !strings.EqualFold(c.BorderColor, border)
+	}
+	yearPrefix := fmt.Sprintf("%d", year)
+	var both, borderOnly, rest []scryfall.Card
+	for _, c := range prints {
+		switch {
+		case ruledOut(c):
+			rest = append(rest, c)
+		case year > 0 && strings.HasPrefix(c.ReleasedAt, yearPrefix) &&
+			strings.EqualFold(c.BorderColor, border):
+			both = append(both, c)
+		default:
+			borderOnly = append(borderOnly, c)
+		}
+	}
+	// Nothing matched the border, or everything did and the year adds no
+	// split: either way the order this would impose is the order already held.
+	if len(rest) == len(prints) || (len(rest) == 0 && len(both) == 0) {
+		return prints, false
+	}
+	ranked := make([]scryfall.Card, 0, len(prints))
+	ranked = append(ranked, both...)
+	ranked = append(ranked, borderOnly...)
+	return append(ranked, rest...), true
 }
 
 // allIndexes is every position in a slice of n, for a search over all cards.

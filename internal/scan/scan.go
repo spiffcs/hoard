@@ -137,6 +137,24 @@ type Card struct {
 	// break a collector-number tie between two printings of the same card.
 	// Zero means no year was read.
 	CopyrightYear int `json:"copyrightYear"`
+	// BorderColor is the printed border read off the card's own edge: "white",
+	// "black", or "" when the helper declined to say. Before 1998 no collector
+	// number was printed at all, so the copyright year is the only printing
+	// evidence those cards carry and it pins under a quarter of them; the
+	// border is the era's other discriminator, and year plus border pins
+	// nearly half. Fourth Edition is the pure case — 4ED (white, 1995) and
+	// 4BB (black, 1995) share their year, art and artist, so nothing else
+	// separates them.
+	//
+	// Weigh it differently from every other field here. A misread year or
+	// number fails closed on its own, because it matches no printing and
+	// evaporates. A border is one bit and always matches *something*, so it
+	// cannot fail closed unaided and must never be sole evidence for a commit.
+	BorderColor string `json:"borderColor"`
+	// BorderSource is how the border was established: "footer+ring" when the
+	// card's opposite edge agreed, "footer" when only one edge was in shot.
+	// Empty when no border was read.
+	BorderSource string `json:"borderSource"`
 }
 
 // Lines returns the card's OCR'd text, best guess first, falling back to Name

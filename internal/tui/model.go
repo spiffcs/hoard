@@ -45,6 +45,12 @@ const (
 	// as "did that even save?", so leaving states what is and isn't kept
 	// and asks for a confirming y. ctrl+d is the clean finish.
 	stateLeaveConfirm
+	// stateAbandonConfirm gates esc out of the close-time review walk. Esc
+	// there used to drop every remaining card on the spot: the walk is where
+	// a session's unsaved scans live, and nothing else in the app destroys
+	// that much on a single keystroke without asking (discarding from the
+	// close prompt is its own deliberate `d`).
+	stateAbandonConfirm
 	// statePalette is the capture step's command line (:), for the scanner
 	// knobs that take a value — currently the sound tiers' dollar lines.
 	statePalette
@@ -725,6 +731,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateCapture
 			return m, nil
 		}
+	case stateAbandonConfirm:
+		if msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y") {
+			return m.abandonReviewWalk()
+		}
+		// Anything else resumes the walk on the card still in hand.
+		return m.startReview(*m.current)
 	case stateLeaveConfirm:
 		if msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y") {
 			m.done = true
@@ -1264,10 +1276,11 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	if resolved == "" {
 		resolved = "miss:" + it.ocrLine
 	}
-	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s",
+	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s%s",
 		resolved, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds(),
 		it.rank, matchDesc(it.match), orDash(it.raw.SetCode), orDash(it.raw.CollectorNumber),
-		numberSourceSuffix(it.raw.NumberSource), len(it.prints), siblingSuffix(it))
+		numberSourceSuffix(it.raw.NumberSource), len(it.prints), borderSuffix(it),
+		siblingSuffix(it))
 
 	// A nudge-fired re-read of any recently processed card is the trigger
 	// seeing what we already know — swallow it, and stop nudging: one echo is
@@ -1720,22 +1733,33 @@ func (m model) cancelToName() (tea.Model, tea.Cmd) {
 // esc always meant for a batch — get me out, dropping what's left; from a tab
 // visit it just puts the card back and returns to the list.
 func (m model) cancelReview() (tea.Model, tea.Cmd) {
+	if m.walking {
+		// Ask first. The card in hand stays in hand — nothing is dropped
+		// until the gate is answered, so a stray esc costs a keystroke
+		// rather than the rest of the queue.
+		m.state = stateAbandonConfirm
+		return m, nil
+	}
 	it := *m.current
 	m.current = nil
-	if m.walking {
-		m.walking = false
-		m.resolveGen++
-		dropped := len(m.review) + m.resolving + 1
-		m.resolving = 0
-		m.review = nil
-		m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
-		m.status = fmt.Sprintf("review abandoned · %d cards not added", dropped)
-		m.statusErr = false
-		return m.resetForNext()
-	}
 	m.review = append([]queueItem{it}, m.review...)
 	m.status, m.statusErr = "", false
 	return m.showReviewList()
+}
+
+// abandonReviewWalk is the confirmed answer to the gate: drop what is left of
+// the queue, exactly as esc used to do on its own.
+func (m model) abandonReviewWalk() (tea.Model, tea.Cmd) {
+	m.current = nil
+	m.walking = false
+	m.resolveGen++
+	dropped := len(m.review) + m.resolving + 1
+	m.resolving = 0
+	m.review = nil
+	m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
+	m.status = fmt.Sprintf("review abandoned · %d cards not added", dropped)
+	m.statusErr = false
+	return m.resetForNext()
 }
 
 // failToName shows an error banner and returns to the name prompt, keeping the
@@ -2057,6 +2081,11 @@ func (m model) viewContent() string {
 			prompt = fmt.Sprintf("quit add session? %d unsaved scans will be dropped", n)
 		}
 		return m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
+	case stateAbandonConfirm:
+		n := len(m.review) + m.resolving + 1
+		return m.theme.Err.Render(fmt.Sprintf(
+			"abandon review? %d scanned cards will be dropped unsaved", n)) +
+			m.theme.Help.Render("  y/n")
 	case statePalette:
 		var b strings.Builder
 		b.WriteString(m.theme.Title.Render("Scanner commands") + "\n\n")
