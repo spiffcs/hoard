@@ -1,0 +1,5 @@
+[
+  {"name": "Sol Ring", "direction": "under", "thresholdUsd": 1.5, "setCode": "c21", "number": "263"},
+  {"name": "Sheoldred, the Apocalypse", "direction": "under", "thresholdUsd": 40, "finish": "foil"},
+  {"name": "Orcish Bowmasters", "direction": "over", "thresholdUsd": 25, "generator": "ignored"}
+]

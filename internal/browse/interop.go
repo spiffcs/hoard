@@ -90,6 +90,46 @@ func (m *Model) promptImportPath() {
 	}
 }
 
+// promptWatchImportPath asks for a watch-list file and runs the import as an
+// operation. The prompt validates existence; format sniffing lives in the
+// injected closure. No ledger, no again: watch import upserts, so re-running
+// a file is how thresholds move.
+func (m *Model) promptWatchImportPath() {
+	m.prompt = &prompt{
+		label: "import watches from (CSV or JSON)",
+		validate: func(text string) error {
+			p := expandPath(strings.TrimSpace(text))
+			if p == "" {
+				return fmt.Errorf("name a file")
+			}
+			fi, err := os.Stat(p)
+			if err != nil {
+				return fmt.Errorf("no such file")
+			}
+			if fi.IsDir() {
+				return fmt.Errorf("that is a directory")
+			}
+			return nil
+		},
+		commit: func(m *Model, text string) tea.Cmd {
+			return m.startWatchImport(expandPath(strings.TrimSpace(text)))
+		},
+	}
+}
+
+// startWatchImport runs the injected watch import: reading and resolving
+// both happen inside the op, off the UI thread.
+func (m *Model) startWatchImport(path string) tea.Cmd {
+	fn := m.opWatchImport
+	return m.startOpReport("importing watches", func(ctx context.Context, p progress.Fn) (opOutcome, error) {
+		r, err := fn(ctx, p, path)
+		if err != nil {
+			return opOutcome{}, err
+		}
+		return opOutcome{summary: r.Summary, report: r.Report}, nil
+	})
+}
+
 // exportFormats is what the format prompt accepts.
 var exportFormats = map[string]bool{"csv": true, "json": true, "moxfield": true, "archidekt": true}
 

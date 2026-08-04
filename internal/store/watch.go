@@ -56,29 +56,83 @@ func (w WatchStatus) Met() bool {
 	return *w.PriceUSD > w.Threshold
 }
 
-// AddWatch records a threshold, replacing any existing watch on the same
-// card, finish and direction — re-adding is how a threshold is adjusted, and
-// two alerts for one question would fire twice. Replacement resets
-// LastState: the new threshold has not been checked yet.
-func (s *Store) AddWatch(scryfallID, display, finish, op string, threshold float64) error {
+// watchUpsertSQL replaces any existing watch on the same card, finish and
+// direction, resetting LastState: the new threshold has not been checked yet.
+const watchUpsertSQL = `
+INSERT INTO watches (scryfall_id, display, finish, op, threshold, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(scryfall_id, finish, op) DO UPDATE SET
+    threshold  = excluded.threshold,
+    display    = excluded.display,
+    last_state = ''`
+
+func validateWatch(op, finish string) error {
 	if op != "under" && op != "over" {
 		return fmt.Errorf("watch op must be under or over, not %q", op)
 	}
 	if finish != "nonfoil" && finish != "foil" {
 		return fmt.Errorf("watch finish must be nonfoil or foil, not %q", finish)
 	}
-	_, err := s.db.Exec(`
-INSERT INTO watches (scryfall_id, display, finish, op, threshold, created_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(scryfall_id, finish, op) DO UPDATE SET
-    threshold  = excluded.threshold,
-    display    = excluded.display,
-    last_state = ''`,
-		scryfallID, display, finish, op, threshold, now())
+	return nil
+}
+
+// AddWatch records a threshold, replacing any existing watch on the same
+// card, finish and direction — re-adding is how a threshold is adjusted, and
+// two alerts for one question would fire twice.
+func (s *Store) AddWatch(scryfallID, display, finish, op string, threshold float64) error {
+	if err := validateWatch(op, finish); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(watchUpsertSQL, scryfallID, display, finish, op, threshold, now())
 	if err != nil {
 		return fmt.Errorf("recording watch: %w", err)
 	}
 	return nil
+}
+
+// WatchInput is one watch a bulk import stands.
+type WatchInput struct {
+	ScryfallID string
+	Display    string
+	Finish     string // nonfoil|foil
+	Op         string // under|over
+	Threshold  float64
+}
+
+// AddWatches stands every watch in one transaction — an interrupted import
+// is nothing rather than half — and reports how many were new versus
+// adjustments to a watch already standing. Duplicate inputs on one card,
+// finish and direction upsert in order: the last row wins.
+func (s *Store) AddWatches(ws []WatchInput) (created, updated int, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	for _, w := range ws {
+		if err := validateWatch(w.Op, w.Finish); err != nil {
+			return 0, 0, err
+		}
+		var exists bool
+		if err := tx.QueryRow(
+			`SELECT EXISTS(SELECT 1 FROM watches WHERE scryfall_id = ? AND finish = ? AND op = ?)`,
+			w.ScryfallID, w.Finish, w.Op).Scan(&exists); err != nil {
+			return 0, 0, err
+		}
+		if _, err := tx.Exec(watchUpsertSQL,
+			w.ScryfallID, w.Display, w.Finish, w.Op, w.Threshold, now()); err != nil {
+			return 0, 0, fmt.Errorf("recording watch: %w", err)
+		}
+		if exists {
+			updated++
+		} else {
+			created++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return created, updated, nil
 }
 
 // watchStatusQuery reads every watch with its card and current effective

@@ -396,3 +396,105 @@ func TestExportContainerHiddenOffHoldings(t *testing.T) {
 		}
 	}
 }
+
+func watchImportModel(t *testing.T, fn WatchImportFunc) Model {
+	t.Helper()
+	m, err := New(testStore(), WithWatchImportFile(fn))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ctx = context.Background()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(Model)
+	_ = (&m).showView(viewWatches)
+	return m
+}
+
+// The command exists exactly where the watches live: on the watches view,
+// with the import closure injected.
+func TestWatchImportCommandScope(t *testing.T) {
+	m := watchImportModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
+		return OpReport{}, nil
+	})
+	var cmd *command
+	for i := range m.commands {
+		if m.commands[i].id == "watch.import" {
+			cmd = &m.commands[i]
+		}
+	}
+	if cmd == nil {
+		t.Fatal("watch.import is not registered")
+	}
+	if !cmd.applies(&m) {
+		t.Error("watch.import should apply on the watches view")
+	}
+	_ = (&m).showView(viewHoldings)
+	if cmd.applies(&m) {
+		t.Error("watch.import must not apply off the watches view")
+	}
+
+	bare, err := New(testStore())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_ = (&bare).showView(viewWatches)
+	for i := range bare.commands {
+		if bare.commands[i].id == "watch.import" && bare.commands[i].applies(&bare) {
+			t.Error("watch.import must not apply without the injected closure")
+		}
+	}
+}
+
+func TestWatchImportPromptValidatesPath(t *testing.T) {
+	m := watchImportModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
+		return OpReport{}, nil
+	})
+	m, _ = runPaletteCommand(t, m, "watch.import")
+	if m.prompt == nil || !strings.Contains(m.prompt.label, "CSV or JSON") {
+		t.Fatalf("command did not open the path prompt: %+v", m.prompt)
+	}
+
+	mm, cmd := typePrompt(t, m, "/no/such/watches.csv")
+	if cmd != nil || mm.prompt == nil || mm.prompt.err != "no such file" {
+		t.Fatalf("missing file: err=%q", mm.prompt.err)
+	}
+	next, _ := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	mm = next.(Model)
+	mm, cmd = typePrompt(t, mm, t.TempDir())
+	if cmd != nil || mm.prompt == nil || mm.prompt.err != "that is a directory" {
+		t.Fatalf("directory: err=%q", mm.prompt.err)
+	}
+}
+
+func TestWatchImportHappyPathReportsAndRefreshes(t *testing.T) {
+	var gotPath string
+	m := watchImportModel(t, func(_ context.Context, _ progress.Fn, path string) (OpReport, error) {
+		gotPath = path
+		return OpReport{
+			Summary: "imported 3 watches · 2 new · 1 adjusted · 1 skipped",
+			Report:  []string{"1 cards could not be resolved and were skipped:", "  - Blrgh"},
+		}, nil
+	})
+	f := t.TempDir() + "/watches.csv"
+	if err := os.WriteFile(f, []byte("Name,Direction,Threshold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = runPaletteCommand(t, m, "watch.import")
+	m, cmd := typePrompt(t, m, f)
+	if m.prompt != nil {
+		t.Fatal("prompt should close on commit")
+	}
+	done := findOpDone(t, cmd)
+	next, _ := m.Update(done)
+	m = next.(Model)
+
+	if gotPath != f {
+		t.Fatalf("closure got path=%q, want %q", gotPath, f)
+	}
+	if !strings.Contains(m.status, "imported 3 watches") {
+		t.Fatalf("status = %q", m.status)
+	}
+	if m.text == nil || !strings.Contains(m.View(), "Blrgh") {
+		t.Fatal("the skip report must open the text takeover")
+	}
+}

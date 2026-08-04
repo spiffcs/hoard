@@ -548,6 +548,37 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			return fmt.Sprintf("watching %s (%s) %s %s",
 				res.Card.Name, res.Finish, op, ui.Money(threshold)), nil
 		}),
+		browse.WithWatchImportFile(func(ctx context.Context, p progress.Fn, path string) (browse.OpReport, error) {
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return browse.OpReport{}, rerr
+			}
+			res, werr := action.WatchImport(ctx, deps, p,
+				action.WatchImportOptions{Data: data, Display: path})
+			// A partial import still stood its watches; the outcome reports
+			// the skips rather than erroring away a committed result.
+			if werr != nil && !errors.Is(werr, errPartial) {
+				return browse.OpReport{}, werr
+			}
+			r := browse.OpReport{Summary: fmt.Sprintf("imported %d watches · %d new · %d adjusted",
+				res.Created+res.Updated, res.Created, res.Updated)}
+			var lines []string
+			if res.Refinished > 0 {
+				lines = append(lines, fmt.Sprintf(
+					"%d watch the foil price: the file said otherwise but the printing has no non-foil",
+					res.Refinished))
+			}
+			if len(res.Unresolved) > 0 {
+				r.Summary += fmt.Sprintf(" · %d skipped", len(res.Unresolved))
+				lines = append(lines, fmt.Sprintf("%d cards could not be resolved and were skipped:",
+					len(res.Unresolved)))
+				for _, u := range res.Unresolved {
+					lines = append(lines, "  - "+u)
+				}
+			}
+			r.Report = lines
+			return r, nil
+		}),
 		browse.WithAddCascade(func() (tui.Child, error) {
 			// Destinations re-read per invocation, so a binder created in
 			// the browser appears in the cascade's picker.

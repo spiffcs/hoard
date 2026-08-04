@@ -211,6 +211,7 @@ type Model struct {
 	catalogOffer     bool
 	opBackfill       BackfillFunc
 	opWatchAdd       WatchAddFunc
+	opWatchImport    WatchImportFunc
 	opDeckAdd        DeckAddFunc
 	opImport         ImportFunc
 	op               *opState

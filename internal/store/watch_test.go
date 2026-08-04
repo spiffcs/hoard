@@ -173,3 +173,64 @@ func TestWatchByRefAndRemove(t *testing.T) {
 		t.Error("removing a removed watch succeeded")
 	}
 }
+
+// A bulk add is one transaction with a new-versus-adjusted tally: the
+// import's receipt distinguishes standing a watch from moving its line.
+func TestAddWatchesTalliesAndReArms(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog(), solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := s.AddWatch("ulamog-id", "Ulamog, the Infinite Gyre", "nonfoil", "under", 12); err != nil {
+		t.Fatalf("AddWatch: %v", err)
+	}
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Fatal("setup: the standing watch should have fired once")
+	}
+
+	created, updated, err := s.AddWatches([]WatchInput{
+		{ScryfallID: "ulamog-id", Display: "Ulamog, the Infinite Gyre", Finish: "nonfoil", Op: "under", Threshold: 11},
+		{ScryfallID: "sol-id", Display: "Sol Ring", Finish: "foil", Op: "over", Threshold: 6},
+	})
+	if err != nil {
+		t.Fatalf("AddWatches: %v", err)
+	}
+	if created != 1 || updated != 1 {
+		t.Fatalf("created=%d updated=%d, want 1 and 1", created, updated)
+	}
+	watches, err := s.ListWatches()
+	if err != nil {
+		t.Fatalf("ListWatches: %v", err)
+	}
+	if len(watches) != 2 {
+		t.Fatalf("watches = %d, want 2", len(watches))
+	}
+	// The adjusted watch carries the new threshold and counts as never
+	// checked — its own first check fires again.
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Error("the adjusted watch did not re-arm")
+	}
+}
+
+// One invalid row rolls back the whole batch: an interrupted import is
+// nothing rather than half.
+func TestAddWatchesRollsBackOnInvalidRow(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.UpsertPrintings([]scryfall.Card{ulamog()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	_, _, err := s.AddWatches([]WatchInput{
+		{ScryfallID: "ulamog-id", Display: "Ulamog", Finish: "nonfoil", Op: "under", Threshold: 12},
+		{ScryfallID: "ulamog-id", Display: "Ulamog", Finish: "nonfoil", Op: "below", Threshold: 9},
+	})
+	if err == nil || !strings.Contains(err.Error(), `watch op must be under or over, not "below"`) {
+		t.Fatalf("err = %v, want the op validation", err)
+	}
+	watches, err := s.ListWatches()
+	if err != nil {
+		t.Fatalf("ListWatches: %v", err)
+	}
+	if len(watches) != 0 {
+		t.Fatalf("watches = %+v, want the valid row rolled back too", watches)
+	}
+}

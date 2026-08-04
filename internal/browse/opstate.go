@@ -76,6 +76,14 @@ type ImportFunc func(ctx context.Context, p progress.Fn, path string, again bool
 // WithImportFile supplies file-based collection import for the palette.
 func WithImportFile(f ImportFunc) Option { return func(m *Model) { m.opImport = f } }
 
+// WatchImportFunc imports a watch-list file: reading and resolving happen
+// inside the op. There is no again parameter — watch import upserts, so the
+// ledger's already-imported question does not exist here.
+type WatchImportFunc func(ctx context.Context, p progress.Fn, path string) (OpReport, error)
+
+// WithWatchImportFile supplies file-based watch import for the palette.
+func WithWatchImportFile(f WatchImportFunc) Option { return func(m *Model) { m.opWatchImport = f } }
+
 // OpReport is a completed operation's outcome beyond the status line: an
 // optional multi-line report for the text takeover, and import's
 // already-imported refusal. It is the shape main's closures fill in;

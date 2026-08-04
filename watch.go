@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -32,12 +33,14 @@ func cmdWatch(ctx context.Context, st *store.Store, args []string, jsonOut bool)
 		switch sub {
 		case "add":
 			return watchAdd(ctx, st, rest)
+		case "import":
+			return watchImport(ctx, st, rest)
 		case "list":
 			return watchList(st)
 		case "rm":
 			return watchRemove(st, rest)
 		default:
-			return fmt.Errorf("unknown watch subcommand %q (want add, list, or rm)", sub)
+			return fmt.Errorf("unknown watch subcommand %q (want add, import, list, or rm)", sub)
 		}
 	}
 	return watchCheck(st, jsonOut)
@@ -76,6 +79,45 @@ func watchAdd(ctx context.Context, st *store.Store, args []string) error {
 		res.Finish, op, ui.Money(threshold))
 	fmt.Println(env.Dim()("Checks read stored prices: hoard update-prices && hoard watch"))
 	return nil
+}
+
+func watchImport(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("watch import", flag.ContinueOnError)
+	pos, err := parsePositionals(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("watch import needs exactly one file (CSV or JSON)")
+	}
+	data, err := os.ReadFile(pos[0])
+	if err != nil {
+		return err
+	}
+	pr := stderrPrinter()
+	res, err := action.WatchImport(ctx, addDeps(st), pr.Fn(),
+		action.WatchImportOptions{Data: data, Display: pos[0]})
+	pr.Close()
+	// A partial import still stood its watches; the report renders before
+	// the exit code says "done, mostly". Any other error did not finish.
+	if err != nil && !errors.Is(err, action.ErrPartial) {
+		return err
+	}
+
+	r := ui.NewReport()
+	r.Result("Imported %d watches: %d new, %d adjusted.", res.Created+res.Updated, res.Created, res.Updated)
+	if res.Refinished > 0 {
+		r.Detail("%d watch the foil price: the file said otherwise but the printing has no non-foil.",
+			res.Refinished)
+	}
+	if len(res.Unresolved) > 0 {
+		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
+		for _, u := range res.Unresolved {
+			r.Item(u)
+		}
+	}
+	r.Hint("Checks read stored prices: hoard update-prices && hoard watch")
+	return err
 }
 
 func watchList(st *store.Store) error {

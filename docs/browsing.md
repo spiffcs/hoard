@@ -119,6 +119,13 @@ unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
 selection snaps back to All Cards and says so.
 
+**The watches view grows watches three ways**: `AddWatchFromCollection`
+picks a card from your holdings, `AddWatchForAnyCard` resolves a name you
+don't own yet, and `ImportWatchList` stands many at once from a CSV or
+JSON file — the file contract, written so another tool can generate one
+from a list of card names, lives in `docs/watch-import.md`. <kbd>w</kbd>
+edits the selected watch's threshold and <kbd>d</kbd> removes it.
+
 **Browsing by set.** <kbd>B</kbd> (or `BrowseBySets` in the palette) flips
 the left pane from binders and decks to SETS: one row per set you own cards
 from, newest release first — Alpha and Beta live at the bottom. Sets whose

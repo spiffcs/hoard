@@ -16,6 +16,10 @@ hoard export --json          # holdings, same data as the canonical CSV
 `export --format json` is the same as `export --json`. Every other command
 rejects `--json` rather than silently printing a table at a script.
 
+This page is the *output* contract. The one file format hoard reads that
+scripts are meant to generate — the bulk watch list — is documented in
+`docs/watch-import.md`.
+
 ## The contract
 
 - **One document on stdout, nothing else.** Progress and narration go to

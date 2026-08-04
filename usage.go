@@ -37,6 +37,7 @@ var usageSections = []struct {
 		{"report [--top N] [--csv] [-o FILE]", "Dated valuation: totals, binders, top holdings"},
 		{"watch", "Check price watches (no network; exit 3 = fired)"},
 		{"watch add <name> --under N|--over N [--foil]", "Alert when a price crosses a threshold"},
+		{"watch import <file>", "Import price watches in bulk (CSV or JSON)"},
 		{"watch list | watch rm <id|name>", "Your watches, and removing one"},
 		{"catalog [status|update]", "The local copy of Scryfall's card data"},
 	}},

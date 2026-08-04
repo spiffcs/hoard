@@ -24,6 +24,7 @@ names the yes/no questions an operation may ask through `Deps.Confirm`.
 | market (vendor comparison) | `action.Market` | `market` | `v` view (bespoke async, day-cached across restarts) | reading vendor prices (i) | — | `market.Result` | 0/1 | migrated |
 | watch check | `Deps.WatchCheck` | `watch` | fired banner on open (read-only) | — | — | fired/checked | 0/1/3 | migrated |
 | watch add/list/rm | `action.WatchAdd`, `Deps.WatchList/WatchRemove` | `watch add/list/rm` | `w`, watches view (`v`), `d` | — | — | — | 0/1 | migrated |
+| watch import | `action.WatchImport` | `watch import <file>` | palette (ImportWatchList, watches view) | resolving cards (d, cards) | — | `WatchImportResult` | 0/1/2 | migrated |
 | report | `Deps.Valuation` | `report` | palette (Report: valuation, text overlay) | — | — | `report.ValuationData` | 0/1 | migrated |
 | export | `Deps.ExportRows` | `export` | palette (Export this container… / everything…; overwrite confirm) | — | — | rows | 0/1 | migrated |
 | summary | `Deps.Summary` | `hoard` (piped) / `--json` | left pane + header | — | — | totals | 0/1 | migrated |

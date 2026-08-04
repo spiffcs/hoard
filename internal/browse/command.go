@@ -349,6 +349,15 @@ func commands() []command {
 			run:  func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
+			id: "watch.import", title: "ImportWatchList", aliases: "bulk file csv json alert thresholds",
+			desc: "Import price watches in bulk from a CSV or JSON file.",
+			// Watches-only, beside the other two add-a-watch verbs; the
+			// registry order keeps the single-card paths first.
+			where: func(m *Model) bool { return m.opWatchImport != nil && m.view == viewWatches },
+			rank:  onView(viewWatches, 5),
+			run:   func(m *Model) tea.Cmd { m.promptWatchImportPath(); return nil },
+		},
+		{
 			id: "binder.new", title: "NewBinder", aliases: "create folder",
 			desc: "Create a named binder and switch to it, ready for cards.",
 			key:  "n",
