@@ -193,6 +193,11 @@ type model struct {
 	// collector info read off the card, used to rank and pre-select the printing.
 	scannedSet    string
 	scannedNumber string
+	// scannedPromoted marks that the background resolve already moved a
+	// printing to the front on evidence rankByScan cannot see — the copyright
+	// year, for cards printed before collector numbers existed. Without it the
+	// winner sits silently at index 0 with nothing saying why.
+	scannedPromoted bool
 
 	// The hands-free scan flow (see autoscan.go). Every capture resolves in
 	// the background under a generation number — bumping resolveGen lands any
@@ -852,6 +857,13 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	// before it is committed. Heavily reprinted cards make this worth doing —
 	// Sol Ring has well over a hundred printings.
 	cards, matched := rankByScan(msg.cards, m.scannedSet, m.scannedNumber)
+	// rankByScan only knows collector numbers. A card from before they were
+	// printed has none, so it returns "no match" even when the background
+	// resolve had already promoted a printing on the copyright year — leaving
+	// the row it chose unmarked and the reason invisible.
+	if !matched && m.scannedPromoted {
+		matched = true
+	}
 	m.prints = cards
 
 	showPicker(&m, "Select a printing", cards, statePrintPick, func(i int, c scryfall.Card) list.Item {
@@ -1245,8 +1257,15 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// Without the evidence a log can say what the helper saw but never why Go
 	// decided what it did, and re-deriving it offline means refetching every
 	// printing.
+	// On a miss the canonical is empty, which used to make the expensive
+	// lookups the least attributable lines in the log — the text that cost the
+	// round trip was exactly what went unrecorded.
+	resolved := it.canonical
+	if resolved == "" {
+		resolved = "miss:" + it.ocrLine
+	}
 	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s",
-		it.canonical, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds(),
+		resolved, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds(),
 		it.rank, matchDesc(it.match), orDash(it.raw.SetCode), orDash(it.raw.CollectorNumber),
 		numberSourceSuffix(it.raw.NumberSource), len(it.prints), siblingSuffix(it))
 
@@ -1537,6 +1556,7 @@ func (m model) startReview(it queueItem) (tea.Model, tea.Cmd) {
 	m.scannedOCR = it.ocrLine
 	m.scannedSet = it.raw.SetCode
 	m.scannedNumber = it.raw.CollectorNumber
+	m.scannedPromoted = it.rank == scanMatchYearOnly
 	m.status, m.statusErr = "", false
 	if it.note != "" {
 		m.status, m.statusErr = it.note, true
@@ -1741,6 +1761,7 @@ func (m model) resetForNext() (tea.Model, tea.Cmd) {
 	m.scannedOCR = ""
 	m.scannedSet = ""
 	m.scannedNumber = ""
+	m.scannedPromoted = false
 	m.nameInput.SetValue("")
 	// With the camera still open, go back to framing the next card rather than to
 	// the prompt — that's the whole point of holding the window open.
@@ -2100,8 +2121,20 @@ func finishOptions(c scryfall.Card) []string {
 // printMarkers summarizes distinguishing traits of a printing for display.
 func printMarkers(c scryfall.Card) string {
 	var parts []string
-	if c.BorderColor == "borderless" {
+	// Border colour used to show only when it was "borderless", which left the
+	// pre-collector-number era unreadable: those cards carry no number to
+	// verify, so the queue often offers a white-bordered and a black-bordered
+	// printing of the same card, in the same year, by the same artist. The
+	// border is the only thing telling them apart, and the rows rendered
+	// identically. White is the one worth naming — black is the default across
+	// most of Magic, and labelling every row "black" is noise.
+	switch c.BorderColor {
+	case "borderless":
 		parts = append(parts, "borderless")
+	case "white":
+		parts = append(parts, "white border")
+	case "silver", "gold":
+		parts = append(parts, c.BorderColor+" border")
 	}
 	parts = append(parts, c.FrameEffects...)
 	parts = append(parts, c.PromoTypes...)

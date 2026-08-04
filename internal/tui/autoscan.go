@@ -38,6 +38,7 @@ const (
 	scanMatchYearOnly                  // no number, but the copyright year names one printing
 	scanMatchNumberOnly                // number matched exactly one printing
 	scanMatchSinglePrint               // no number read, but only one printing exists
+	scanMatchNumberAndYear             // number named a printing and its release year agrees
 	scanMatchSetAndNumber              // set and number both matched
 )
 
@@ -47,7 +48,20 @@ const (
 // The no-number ranks are excluded — single-print and year-only never had a
 // number to check.
 func numberVerified(r scanMatch) bool {
-	return r == scanMatchSetAndNumber || r == scanMatchNumberOnly
+	return r == scanMatchSetAndNumber || r == scanMatchNumberAndYear ||
+		r == scanMatchNumberOnly
+}
+
+// corroboratedPrinting reports whether *two* independent pieces of printing
+// evidence agree, which is the bar for waiving the name gate entirely. A
+// mangled title cannot fake that: the name chose which card's printings to
+// search, and two of that card's own fields then had to agree with the band.
+//
+// A lone number is not enough. Collector number 12 is common enough that a
+// fuzzy match onto the wrong card could collide with it by luck — pairing it
+// with the set code or the release year is what removes the luck.
+func corroboratedPrinting(r scanMatch) bool {
+	return r == scanMatchSetAndNumber || r == scanMatchNumberAndYear
 }
 
 // String names the match for the telemetry log.
@@ -59,6 +73,8 @@ func (m scanMatch) String() string {
 		return "year-only"
 	case scanMatchNumberOnly:
 		return "number-only"
+	case scanMatchNumberAndYear:
+		return "number+year"
 	case scanMatchSinglePrint:
 		return "single-print"
 	case scanMatchSetAndNumber:
@@ -304,6 +320,40 @@ type localOnlySearcher interface {
 	NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error)
 }
 
+// remoteNameTimeout bounds a Scryfall lookup. The catalog has already answered
+// by this point; the network call only catches a card printed since the last
+// catalog build, which is a bonus and must never be a stall. Past this the card
+// queues, which is a far better outcome than a session that freezes.
+const remoteNameTimeout = 500 * time.Millisecond
+
+// searchLine resolves one OCR line, choosing how far off-machine it may go.
+// Fallback lines stay catalog-only (verdict refuses to auto-commit them
+// anyway); line 0 escalates only when it reads like a title.
+func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
+	hasLocal bool, line string, i int) (*scryfall.Card, cardname.Match, error) {
+	if !hasLocal {
+		return s.NamedFuzzy(ctx, line)
+	}
+	card, m, err := local.NamedFuzzyLocal(ctx, line)
+	if err == nil && card != nil {
+		return card, m, nil
+	}
+	if i > 0 || !titleLikely(line) {
+		return card, m, err
+	}
+	rctx, cancel := context.WithTimeout(ctx, remoteNameTimeout)
+	defer cancel()
+	rc, rm, rerr := s.NamedFuzzy(rctx, line)
+	// A timeout is this policy working, not a failure to report. Surfacing it
+	// put `lookup failed: … context deadline exceeded` and a raw Scryfall URL
+	// in the review queue; the honest outcome is the one we already had — the
+	// catalog did not know this card.
+	if rerr != nil && rctx.Err() != nil {
+		return card, m, nil
+	}
+	return rc, rm, rerr
+}
+
 // resolveName tries each OCR line in order until one fuzzy-matches, returning
 // which line it was — the auto-commit bar treats a fallback-line match as
 // suspect, since only line 0 is the helper's actual title guess.
@@ -327,11 +377,15 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 		if i > 0 && (fallbackLineSuspect(line) || !titleLikely(line) || keywordLine(line)) {
 			continue
 		}
-		search := s.NamedFuzzy
-		if i > 0 && hasLocal {
-			search = local.NamedFuzzyLocal
-		}
-		card, m, ferr := search(ctx, line)
+		// Line 0 always gets its catalog try, unfiltered — that is what keeps
+		// a card genuinely named with a keyword or a type word scannable, and
+		// the catalog is free. What is not free is escalating to Scryfall, and
+		// on an unreadable frame that escalation asks the network about a
+		// string that was never a name: six such lookups in one session
+		// returned nothing after ~600ms each, the worst loop costing 3.9s.
+		// So the two layers are split here, and only a line that looks like a
+		// title is allowed off the machine.
+		card, m, ferr := searchLine(ctx, s, local, hasLocal, line, i)
 		if ferr != nil {
 			if firstErr == nil {
 				firstErr = ferr
@@ -502,7 +556,8 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 		return false, "", "no printings found"
 	}
 	switch it.rank {
-	case scanMatchSetAndNumber, scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly:
+	case scanMatchSetAndNumber, scanMatchNumberAndYear, scanMatchNumberOnly,
+		scanMatchSinglePrint, scanMatchYearOnly:
 	default:
 		return false, "", fmt.Sprintf("printing unverified: %d printings", len(it.prints))
 	}
@@ -516,12 +571,13 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 	if it.lineIdx != 0 && !numberVerified(it.rank) {
 		return false, "", "matched a fallback OCR line; check it's the right card"
 	}
-	// The name gates weigh in only when the printing evidence is short of a
-	// verified number. That verification is self-consistent by construction — a
-	// name fuzzy-resolved to the wrong card could not have its number match
-	// that card's printings — so glare that truncates a name (similarity 0.79,
-	// observed live) must not queue a card the collector block already pinned.
-	if it.rank != scanMatchSetAndNumber {
+	// The name gate weighs in only when the printing evidence is short of two
+	// agreeing signals. That pairing is self-consistent by construction — a
+	// name fuzzy-resolved to the wrong card could not have both the number and
+	// the set (or the release year) of that card agree — so glare that
+	// truncates a name (0.79, live) or garbles two letters of it ("Stemal
+	// Dragon", 0.76, live) must not queue a card the band already pinned.
+	if !corroboratedPrinting(it.rank) {
 		if !it.match.Exact && it.match.Similarity < cardname.AutoCommitSimilarity {
 			return false, "", fmt.Sprintf("uncertain name match (%d%%)", int(it.match.Similarity*100))
 		}
@@ -691,10 +747,20 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 			best, yearPinned = inYear, true
 		}
 	}
+	// The year is checked against the winner even when it had no tie to break.
+	// A number that named one printing is one piece of evidence; the same
+	// printing's release year agreeing with the copyright line is a second,
+	// and two independent agreements are what let a mangled title through.
+	// Live: "Stemal Dragon" resolved to Eternal Dragon at 76% similarity and
+	// queued, while the band read a clean 12/143 and the copyright said 2003 —
+	// Scourge 12, released 2003, agreeing twice over.
+	yearAgrees := year > 0 && strings.HasPrefix(cards[best].ReleasedAt, fmt.Sprintf("%d", year))
 	ranked := moveToFront(cards, best)
 	switch {
 	case exactSet:
 		return ranked, scanMatchSetAndNumber
+	case (len(matchIdxs) == 1 || yearPinned) && yearAgrees:
+		return ranked, scanMatchNumberAndYear
 	case len(matchIdxs) == 1 || yearPinned:
 		return ranked, scanMatchNumberOnly
 	default:

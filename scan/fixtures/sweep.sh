@@ -11,7 +11,12 @@
 # what collector read) rather than the full event: OCR candidate lists are
 # long and jitter-prone, the card list is what the Go side acts on.
 #
-# The exception is the head of the candidate list. The Go side only tries the
+# The copyright year is in for the same reason as the card list: it is a
+# decision, not a reading. On a card printed before collector numbers existed
+# it is the only printing evidence there is, and it was silently absent for
+# that whole era until the parser learned to accept a lone year.
+#
+# The other exception is the head of the candidate list. The Go side only tries the
 # first few lines before giving up, so which readings sit at the front is a
 # decision too — it is what makes a name recovered from rules text reachable
 # at all. Three is enough to pin the ordering without dragging the jittery
@@ -55,6 +60,7 @@ for ln in sys.stdin:
             "set": c.get("setCode", ""),
             "number": c.get("collectorNumber", ""),
             "finish": c.get("finishHint", ""),
+            "year": c.get("copyrightYear", 0),
             "candidates": (c.get("candidates") or [])[:3],
         })
 print(json.dumps(out, indent=2, sort_keys=True))

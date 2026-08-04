@@ -522,6 +522,16 @@ func parseCopyrightCollector(_ texts: [String]) -> (number: String, year: Int)? 
            n >= 1993, n <= 2035 {
             year = n
         }
+        // Before collector numbers existed the copyright line was a lone year:
+        // "© 1995 Wizards of the Coast, Inc. All rights reserved." The range
+        // regex above needs two years and finds nothing there, so the whole
+        // era shipped with no year at all — even off a pristine scan that read
+        // the line perfectly. The year is the only printing evidence those
+        // cards carry, so take it when there is no range to prefer.
+        if year == 0, let y = group(copyrightLoneYearRE, line), let n = Int(y),
+           n >= 1993, n <= 2035 {
+            year = n
+        }
         if number.isEmpty,
            let n = group(copyrightTailPairRE, line),
            let total = group(copyrightTailPairRE, line, 2), (Int(total) ?? 0) >= 20 {
@@ -1470,11 +1480,20 @@ func msSince(_ mark: Date) -> Int { Int(Date().timeIntervalSince(mark) * 1000) }
 /// How often the auto trigger samples the video stream. Vision's rectangle
 /// detector on a ≤1080p buffer costs a few milliseconds, so 5 Hz is nearly free
 /// and still reacts within a beat of a card being set down.
-let autoInterval = envDouble("HOARD_SCAN_AUTO_INTERVAL", 0.2)
+// Halved from 0.2: every trigger cost is denominated in samples, so this cuts
+// settle, the HOLD re-arm and the searching dwell mechanically. triggerRects is
+// ~9ms, so 10Hz is about 9% of one core, and captureOutput already throttles by
+// elapsed time and drops late frames.
+let autoInterval = envDouble("HOARD_SCAN_AUTO_INTERVAL", 0.1)
 /// Consecutive still samples before firing (~0.6 s at the default interval). A
 /// hand still moving jitters the detected bounds and never accumulates this
 /// streak — which is also what keeps motion blur out of the captures.
-let autoStableSamples = Int(envDouble("HOARD_SCAN_AUTO_STABLE", 3))
+// Six at the 0.1s period is 0.6s of proven stillness. Dropping it to four to
+// chase latency was measured and reversed: it moved settle only 8% (1,666ms →
+// 1,536ms) while waste rose 7% → 12%, because settle is not bound by how long
+// the streak is. It is bound by how often the streak is abandoned — see
+// autoGraceSamples.
+let autoStableSamples = Int(envDouble("HOARD_SCAN_AUTO_STABLE", 6))
 /// Consecutive changed samples before re-arming after a capture, so
 /// auto-exposure flicker on a card that hasn't moved doesn't refire.
 let autoRearmSamples = Int(envDouble("HOARD_SCAN_AUTO_REARM", 3))
@@ -1489,10 +1508,53 @@ let autoIoU = envDouble("HOARD_SCAN_AUTO_IOU", 0.65)
 /// card blinked out on a third of all samples) — and without tolerance a
 /// single missed sample restarts the whole stillness streak. Real hand motion
 /// fails sample after sample and still resets.
-let autoGraceSamples = Int(envDouble("HOARD_SCAN_AUTO_GRACE", 3))
+// Six, because this is the knob settle actually turns on. 73% of stabilization
+// passes were being abandoned, and the reason is that Vision drops the card in
+// *runs*: measured over one session, 18 of 80 dropout runs during stabilizing
+// lasted longer than three samples, with several running 8-10. Every one of
+// those killed a pass that was already progressing and sent it back to
+// searching to start over.
+//
+// Grace freezes the streak rather than feeding it, so widening it does not
+// weaken the evidence a shutter needs — the streak still requires its full
+// count of genuinely still samples. It only stops giving up on a card that is
+// sitting perfectly still while the detector blinks at it. The cost is that a
+// card actually taken away takes 0.6s rather than 0.3s to let go of.
+let autoGraceSamples = Int(envDouble("HOARD_SCAN_AUTO_GRACE", 6))
 /// A rectangle overlapping a background rectangle at least this much is that
 /// background rectangle, not a newly placed card.
 let autoBackgroundIoU = envDouble("HOARD_SCAN_AUTO_BG_IOU", 0.5)
+/// How many stabilization passes may be abandoned back-to-back before the
+/// background baseline is treated as wrong. Measured against a live session:
+/// 58 of 59 captures fired after fewer than 8 abandoned passes and the worst
+/// healthy stretch was 6, while the stall that prompted this sat at 13. Eight
+/// separates them with room on both sides.
+let autoBackgroundResetPasses = Int(envDouble("HOARD_SCAN_AUTO_BG_RESET", 8))
+/// Abandoned stabilization passes before the stillness path is allowed to fire
+/// at all. It exists for cards the rectangle detector cannot hold, and those
+/// abandon passes by definition; without this gate it ran in parallel with a
+/// working detector and wasted 64% of its fires against the rectangle path's
+/// 7%.
+let autoStillAfterPasses = Int(envDouble("HOARD_SCAN_AUTO_STILL_AFTER", 3))
+/// How long the on-screen bracket survives a detector blink, and how long it
+/// takes to glide between positions. Presentation only — neither touches what
+/// the trigger decides.
+let outlineHoldSeconds = envDouble("HOARD_SCAN_OUTLINE_HOLD", 0.5)
+let outlineEaseSeconds = envDouble("HOARD_SCAN_OUTLINE_EASE", 0.12)
+/// Samples of frame-to-frame stillness before the scene alone may fire the
+/// shutter. Six at the 0.1s period is 0.6s of a motionless picture — the same
+/// evidence the rectangle path used to demand, gathered without needing a
+/// rectangle. Set HOARD_SCAN_AUTO_STILL=0 to disable the path entirely.
+let autoStillSamples = Int(envDouble("HOARD_SCAN_AUTO_STILL", 6))
+/// Mean per-cell luma change below which two frames count as the same picture.
+/// Above sensor noise, below a hand moving.
+let autoStillDelta = envDouble("HOARD_SCAN_AUTO_STILL_DELTA", 2.5)
+/// How much the picture must differ from the one we last captured before the
+/// stillness path may fire again — what stops a parked scene re-firing.
+let autoSceneChanged = envDouble("HOARD_SCAN_AUTO_SCENE_CHANGED", 6.0)
+/// Spread of the middle of the frame below which there is nothing worth
+/// photographing. Bare desk is smooth; a card is not.
+let autoSceneDetail = envDouble("HOARD_SCAN_AUTO_SCENE_DETAIL", 12.0)
 
 /// AutoTrigger decides when a framed card has settled enough to shutter without
 /// a keypress. It is deliberately camera-free — rectangle boxes in, fire/phase
@@ -1538,6 +1600,19 @@ final class AutoTrigger {
     /// not in this set can arm the trigger.
     private var background: [CGRect] = []
     private var needBaseline = true
+    /// The frame signature from the previous sample, and the one taken when we
+    /// last fired. Together they answer "has the picture stopped moving" and
+    /// "is it a different picture from the one we already photographed".
+    private var prevScene: [UInt8] = []
+    private var capturedScene: [UInt8] = []
+    private var stillCount = 0
+    /// How much of the current streak came from detector blinks rather than
+    /// real detections. Caps how far stillness alone may carry a pass.
+    private var blinkCount = 0
+    /// Stabilization passes abandoned since the last capture. A pass that
+    /// starts and dies means something looked like a candidate and could not
+    /// sustain it, which is what an absorbed card does to the trigger.
+    private var abandonedPasses = 0
 
     func setEnabled(_ on: Bool) {
         if on {
@@ -1548,6 +1623,10 @@ final class AutoTrigger {
             heldSig = []
             background = []
             needBaseline = true
+            abandonedPasses = 0
+            prevScene = []
+            capturedScene = []
+            stillCount = 0
             fireDeferredAt = nil
             move(to: .searching)
         } else {
@@ -1561,7 +1640,7 @@ final class AutoTrigger {
     /// hunt: a hunt blurs edges, so whatever the detector reports during one
     /// is noise — the machine freezes rather than mistaking blur for motion,
     /// and never fires into it (a capture mid-hunt is the out-of-focus scan).
-    func observe(_ boxes: [CGRect], focusSettled: Bool = true) {
+    func observe(_ boxes: [CGRect], scene: [UInt8] = [], focusSettled: Bool = true) {
         let sig = boxes.sorted { $0.width * $0.height > $1.width * $1.height }
         if phase == .off {
             onBoxes?([])
@@ -1586,6 +1665,18 @@ final class AutoTrigger {
         }
         lastNovel = novel
         onBoxes?(novel)
+        // Whether the picture itself moved, decided before anything updates
+        // the remembered frame. Both the fallback path and the dropout rule
+        // below read it, so it is computed once, here.
+        let sceneStill = !scene.isEmpty && !prevScene.isEmpty
+            && sceneDelta(prevScene, scene) <= autoStillDelta
+        // The stillness path, run before the rectangle machine so a card the
+        // detector cannot hold still gets photographed. It is a floor, not a
+        // replacement: whenever rectangles work they fire first and this never
+        // reaches its count.
+        let firedOnStillness = trackStillness(scene, still: sceneStill, focusSettled: focusSettled)
+        if !scene.isEmpty { prevScene = scene }
+        if firedOnStillness { return }
         switch phase {
         case .off, .capturing:
             return
@@ -1594,6 +1685,7 @@ final class AutoTrigger {
                 prevSig = novel
                 stableCount = 1
                 graceCount = 0
+                blinkCount = 0
                 stabilizeBegan = Date()
                 move(to: .stabilizing)
             }
@@ -1615,9 +1707,53 @@ final class AutoTrigger {
             // sustained miss (card gone) or sustained mismatch (hand still
             // moving) restarts anything.
             if novel.isEmpty {
+                // An empty sample is not evidence the card moved — it is
+                // evidence the detector blinked, and it blinks constantly:
+                // 220 of 522 stabilizing samples in one live session returned
+                // no rectangle at all while a card sat motionless in frame.
+                // Treating each of those as a bad sample burned grace and
+                // restarted the streak, which is why settle ran at more than
+                // twice its floor.
+                //
+                // The pixels settle it. If the picture has not changed since
+                // the last sample, nothing moved, so the miss was the detector
+                // and the card is still exactly where it was — count it toward
+                // the streak. This is the same argument the fragment rule
+                // already makes, with better evidence: frame-to-frame
+                // stillness is a stronger proof that a card is holding still
+                // than a box happening to land twice in the same place.
+                //
+                // Guarded hard, because the first cut of this was a disaster:
+                // 82% of captures read nothing. A spurious box puts the
+                // trigger in stabilizing, every later sample is empty, the
+                // desk is perfectly still — and it counted its way to a
+                // shutter on nothing, over and over. Stillness alone says the
+                // picture is not moving; it does not say a card is there.
+                //
+                // So the blink only counts when the rest of the evidence
+                // already agrees: the detector really saw the card at least
+                // twice, the middle of the frame has something in it, the
+                // scene differs from the one we last photographed, and at most
+                // half the streak may be made of blinks. Anything less and it
+                // is the old grace path, which is the safe direction.
+                let realDetections = stableCount - blinkCount
+                if sceneStill, realDetections >= 2, blinkCount < autoStableSamples / 2,
+                    sceneDetail(scene) >= autoSceneDetail,
+                    sceneDelta(capturedScene, scene) >= autoSceneChanged {
+                    graceCount = 0
+                    stableCount += 1
+                    blinkCount += 1
+                    autoDebug("detector blinked on a still scene, stable "
+                        + "\(stableCount)/\(autoStableSamples)")
+                    if stableCount >= autoStableSamples {
+                        maybeFire(focusSettled: true)
+                    }
+                    return
+                }
                 graceCount += 1
                 if graceCount > autoGraceSamples {
                     fireDeferredAt = nil
+                    abandonPass()
                     move(to: .searching)
                 }
                 return
@@ -1642,6 +1778,7 @@ final class AutoTrigger {
                     autoDebug("scene moved, streak reset (\(novel.count) candidate(s))")
                     stableCount = 1
                     graceCount = 0
+                    blinkCount = 0
                     fireDeferredAt = nil
                     prevSig = novel
                 } else {
@@ -1696,6 +1833,49 @@ final class AutoTrigger {
 
     /// maybeFire pulls the trigger when the lens agrees, defers when it is
     /// mid-hunt, and gives up deferring once the wait valve expires.
+    /// trackStillness advances the pixel-stillness path and reports whether it
+    /// fired.
+    ///
+    /// Three things must hold together, and each one is load-bearing:
+    ///
+    ///   still — consecutive frames are the same picture, so nothing is moving
+    ///   changed — the picture differs from the one we last captured, so a
+    ///     scene nobody has touched cannot photograph itself forever
+    ///   detail — the middle of the frame has structure, so lifting a card away
+    ///     leaves something changed and still that is nevertheless bare desk
+    ///
+    /// Without the third the shutter would fire every time a card was removed.
+    private func trackStillness(_ scene: [UInt8], still: Bool, focusSettled: Bool) -> Bool {
+        guard autoStillSamples > 0, !scene.isEmpty else { return false }
+        guard phase == .searching || phase == .stabilizing else {
+            stillCount = 0
+            return false
+        }
+        // Only once rectangles have actually been failing. A detector that is
+        // holding the card will fire first and better; pre-empting it is how
+        // this path spent two thirds of its shutters on nothing.
+        guard abandonedPasses >= autoStillAfterPasses else {
+            stillCount = 0
+            return false
+        }
+        // Blur reads as stillness — every edge softens and stops moving — so a
+        // focus hunt must not accumulate evidence here either.
+        guard focusSettled else { return false }
+        guard still else {
+            stillCount = 0
+            return false
+        }
+        stillCount += 1
+        guard stillCount >= autoStillSamples else { return false }
+        guard sceneDetail(scene) >= autoSceneDetail else { return false }
+        guard sceneDelta(capturedScene, scene) >= autoSceneChanged else { return false }
+        autoDebug("still for \(stillCount) samples, firing without a rectangle "
+            + "(\(lastNovel.count) candidate(s))")
+        stillCount = 0
+        fire()
+        return true
+    }
+
     private func maybeFire(focusSettled: Bool) {
         if focusSettled {
             fire()
@@ -1720,8 +1900,44 @@ final class AutoTrigger {
             stabilizeBegan = nil
         }
         fireDeferredAt = nil
+        abandonedPasses = 0
+        // The picture we are about to photograph. Until the scene differs from
+        // it, the stillness path has nothing new to shoot.
+        capturedScene = prevScene
+        stillCount = 0
         move(to: .capturing)
         onFire?()
+    }
+
+    /// abandonPass records a stabilization pass that started and died, and
+    /// condemns the background baseline once that has happened enough times in
+    /// a row.
+    ///
+    /// The baseline is learned once, from whatever sat in frame the instant
+    /// auto armed, and is never re-learned — so a card already on the desk at
+    /// that moment becomes furniture for the rest of the session, invisible at
+    /// exactly the spot every card lands. Live: `baseline: 1 background
+    /// rect(s)`, then 46 seconds of the detector finding the card and the
+    /// filter deleting it, ending only when the user physically lifted the
+    /// card and put it back far enough off the learned box to read as novel.
+    ///
+    /// Repeated abandoned passes are the tell, and a better one than "every
+    /// rectangle was swallowed": an idle desk whose real furniture is
+    /// correctly absorbed never enters stabilizing at all, so it cannot
+    /// trigger this. Only a scene that keeps *almost* producing a candidate
+    /// can, which is precisely what a half-absorbed card does.
+    ///
+    /// It only ever forgets. Nothing is added to the baseline at runtime —
+    /// that is the memory that once killed auto capture at the exact spot
+    /// every card lands, and clearing is the safe direction: the worst case is
+    /// one wasted capture on real furniture, after which HOLD parks on it.
+    private func abandonPass() {
+        abandonedPasses += 1
+        guard abandonedPasses >= autoBackgroundResetPasses, !background.isEmpty else { return }
+        autoDebug("\(abandonedPasses) passes abandoned with nothing captured, "
+            + "clearing the \(background.count)-rect background baseline")
+        background = []
+        abandonedPasses = 0
     }
 
     /// captureBegan holds the machine while any capture — auto or the space
@@ -1825,6 +2041,89 @@ final class AutoTrigger {
 /// No orientation is passed on purpose: Vision's aspect-ratio bounds are
 /// shorter-dimension over longer-dimension, so a sideways card passes the same
 /// filter and the trigger doesn't care which way up the sensor is.
+/// sceneGridW/H is the resolution of the frame signature — coarse on purpose.
+/// It has to answer "did anything move" and "is there detail here", not "what
+/// is this", and a coarse grid is both cheap and immune to sensor noise.
+let sceneGridW = 16
+let sceneGridH = 24
+
+/// sceneSignature reduces a video frame to a small luma grid.
+///
+/// It exists because the fire decision cannot keep depending on Vision finding
+/// a rectangle. A borderless card has no border: the art runs to the edge, so
+/// the only edge is card-against-desk, and the detector loses it constantly —
+/// measured at 93 stabilization passes started against 21 fired in one live
+/// session. The user's experience of that is a scanner that will not fire, and
+/// the user's response is to nudge the card, which restarts the cycle.
+///
+/// Pixels do not have that problem. Whether the scene is *moving* is answerable
+/// without knowing what is in it.
+///
+/// Deliberately cheap: this runs on every sample beside triggerRects, on the
+/// analysis queue, at twice the old rate.
+func sceneSignature(_ buffer: CVPixelBuffer) -> [UInt8] {
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer)
+    guard w >= sceneGridW, h >= sceneGridH else { return [] }
+
+    // 420f/420v carry luma in plane 0; a packed BGRA buffer has no planes and
+    // its bytes are interleaved. Both are handled, and anything else declines.
+    let planar = CVPixelBufferGetPlaneCount(buffer) > 0
+    guard let base = planar
+        ? CVPixelBufferGetBaseAddressOfPlane(buffer, 0)
+        : CVPixelBufferGetBaseAddress(buffer) else { return [] }
+    let stride = planar
+        ? CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        : CVPixelBufferGetBytesPerRow(buffer)
+    let step = planar ? 1 : 4
+    let px = base.assumingMemoryBound(to: UInt8.self)
+
+    var grid = [UInt8](repeating: 0, count: sceneGridW * sceneGridH)
+    for gy in 0..<sceneGridH {
+        let y = min(h - 1, (gy * h) / sceneGridH + h / (sceneGridH * 2))
+        for gx in 0..<sceneGridW {
+            let x = min(w - 1, (gx * w) / sceneGridW + w / (sceneGridW * 2))
+            if planar {
+                grid[gy * sceneGridW + gx] = px[y * stride + x]
+            } else {
+                // BGRA: a green-weighted approximation is close enough to luma
+                // for a motion test and avoids three multiplies per cell.
+                let o = y * stride + x * step
+                grid[gy * sceneGridW + gx] =
+                    UInt8((Int(px[o]) + 2 * Int(px[o + 1]) + Int(px[o + 2])) / 4)
+            }
+        }
+    }
+    return grid
+}
+
+/// sceneDelta is the mean absolute difference between two signatures, or a
+/// large number when they cannot be compared.
+func sceneDelta(_ a: [UInt8], _ b: [UInt8]) -> Double {
+    guard !a.isEmpty, a.count == b.count else { return 255 }
+    var sum = 0
+    for i in 0..<a.count { sum += abs(Int(a[i]) - Int(b[i])) }
+    return Double(sum) / Double(a.count)
+}
+
+/// sceneDetail is the spread of the middle of the frame — high where a card
+/// with art and text sits, low on bare desk. It is what stops the stillness
+/// path firing at an empty surface, which is otherwise both changed and still
+/// the moment a card is lifted away.
+func sceneDetail(_ g: [UInt8]) -> Double {
+    guard !g.isEmpty else { return 0 }
+    var v: [Double] = []
+    for gy in (sceneGridH / 4)..<(3 * sceneGridH / 4) {
+        for gx in (sceneGridW / 4)..<(3 * sceneGridW / 4) {
+            v.append(Double(g[gy * sceneGridW + gx]))
+        }
+    }
+    guard v.count > 1 else { return 0 }
+    let m = v.reduce(0, +) / Double(v.count)
+    return (v.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Double(v.count)).squareRoot()
+}
+
 func triggerRects(_ buffer: CVPixelBuffer) -> [CGRect] {
     let req = VNDetectRectanglesRequest()
     req.minimumAspectRatio = 0.3
@@ -2245,11 +2544,6 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// Whether this device supports Center Stage (the system's auto-framing);
     /// gates the feature advertisement and the toggle.
     private var framingAvailable = false
-    /// The largest still the active format will produce, opted into once at
-    /// setup and repeated on every shot — the settings object resets to the
-    /// output's default otherwise. nil when the format reports nothing, which
-    /// leaves the old default-sized behavior.
-    private var maxPhotoDimensions: CMVideoDimensions?
     /// Whether this device carries a torch — the phone's flashlight, which
     /// Continuity Camera exposes and which is the only light macOS lets an
     /// app control (exposure bias is iOS-only).
@@ -2358,12 +2652,9 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         setUpFocus(device)
         let focusCaps = device.isFocusModeSupported(.continuousAutoFocus)
             ? "af" + (device.isFocusModeSupported(.locked) ? "+lock" : "") : "fixed"
-        let stills = device.activeFormat.supportedMaxPhotoDimensions
-            .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
-        let stillLabel = stills.map { "\($0.width)x\($0.height)" } ?? "default"
         let caps = "scan: \(device.localizedName) [\(kindLabel(device))] torch=\(device.hasTorch) "
             + "centerStage=\(device.activeFormat.isCenterStageSupported) "
-            + "focus=\(focusCaps) (policy \(focusControl)) still=\(stillLabel)\n"
+            + "focus=\(focusCaps) (policy \(focusControl))\n"
         FileHandle.standardError.write(Data(caps.utf8))
         guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
             fail("could not configure capture session")
@@ -2377,18 +2668,15 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         }
         session.addInput(input)
         session.addOutput(photoOutput)
-        // …and .photo alone is not enough. The output still hands back its
-        // default dimensions unless asked otherwise, which is how a phone that
-        // shoots 12MP was returning 1080p stills — the card filling barely 680
-        // pixels of frame, the collector band a few pixels tall, and the
-        // old-frame foil star too small to analyse at all. Opting in to the
-        // format's largest supported still is the difference between reading
-        // the fine print and guessing at it.
-        maxPhotoDimensions = device.activeFormat.supportedMaxPhotoDimensions
-            .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
-        if let dims = maxPhotoDimensions {
-            photoOutput.maxPhotoDimensions = dims
-        }
+        // Deliberately NOT setting photoOutput.maxPhotoDimensions. Asking the
+        // format for its largest still looks like the way to beat the preset's
+        // cap, and it backfires: read before the session runs, activeFormat is
+        // still the device's low-res default, so pinning the output to *its*
+        // maximum capped captures at 640x480 — a third of the linear resolution
+        // the preset alone was already giving. Measured on Continuity Camera,
+        // which reports 1920x1080 either way; the opt-in bought nothing and
+        // cost two thirds of the frame. The still size is reported after
+        // startRunning instead, where it is true.
 
         // The video tap is best-effort: a session that refuses it just means no
         // auto mode, which the ready event's feature list reports honestly.
@@ -2422,6 +2710,15 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                     self.photoOutput.connection(with: .video)?.isActive == true
                 }
                 spinRunLoop(seconds: 0.75) { false }
+                // Now that the session is live the active format is the one
+                // that will actually be used, so this number means something.
+                // It is the first thing to check when reads go soft.
+                if let d = self.device {
+                    let dims = d.activeFormat.supportedMaxPhotoDimensions
+                        .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
+                    let label = dims.map { "\($0.width)x\($0.height)" } ?? "unreported"
+                    FileHandle.standardError.write(Data("scan: still=\(label)\n".utf8))
+                }
                 emit(Event(event: "ready", rotation: self.manualRotation,
                            device: self.deviceName,
                            features: (self.autoAvailable ? ["auto", "rearm"] : [])
@@ -2683,13 +2980,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         // in auto mode can't be followed by an auto fire on the same card.
         autoTrigger.captureBegan()
         captureRequestedAt = Date()
-        // The output's ceiling is not the shot's size: each settings object
-        // starts back at the default, so the request has to ask again.
-        let settings = AVCapturePhotoSettings()
-        if let dims = maxPhotoDimensions {
-            settings.maxPhotoDimensions = dims
-        }
-        photoOutput.capturePhoto(with: settings, delegate: self)
+        photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
     }
 
     /// autoFire is the trigger's shutter: identical to a space press except the
@@ -2733,6 +3024,11 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// The rectangles the trigger last saw, kept so a phase change can recolor
     /// the outline without waiting for the next sample.
     private var lastBoxes: [CGRect] = []
+    /// The box the cue is currently drawn around, and when it was last
+    /// confirmed by a real detection — together they let the bracket ride out
+    /// a detector blink instead of flickering off.
+    private var outlineBox: CGRect?
+    private var outlineHeldSince: Date?
 
     /// updateOutlines traces the trigger's cue at the corners of the one
     /// dominant rectangle — yellow while it settles, green once it's shot —
@@ -2748,29 +3044,74 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// Vision reports boxes normalized with a bottom-left origin in the
     /// *unrotated* analysis buffer; bracketRect turns each into preview-layer
     /// coordinates, rotation and letterboxing included.
+    /// updateOutlines draws the one cue the user sees. It is presentation, not
+    /// machinery — the trigger has already made its decision by the time this
+    /// runs — and it should look like the app is calmly locked onto a card.
+    ///
+    /// Drawing the raw per-sample truth does the opposite. Vision drops the
+    /// card on roughly two samples in five, so hiding on an empty sample
+    /// blinked the brackets five times a second; the largest box changes
+    /// between samples, so the cue teleported between candidates; and
+    /// disabling implicit animation made every one of those a hard jump. The
+    /// result read as chaos and looked broken even while the scan succeeded.
+    ///
+    /// So: hold the last cue briefly through a blink, ease between positions
+    /// instead of snapping, and keep tracking the same box rather than
+    /// whichever is largest this instant.
     private func updateOutlines(_ boxes: [CGRect]) {
         lastBoxes = boxes
         guard previewLayer != nil,
               let outline = (window?.contentView as? PreviewView)?.outlineLayer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
         let phase = autoTrigger.phase
-        if phase == .off || boxes.isEmpty {
+        if phase == .off {
+            outlineHeldSince = nil
+            outlineBox = nil
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             outline.isHidden = true
+            CATransaction.commit()
+            return
+        }
+        // Prefer the box nearest the one already being drawn, so a steady hand
+        // keeps a steady bracket even when the detector reorders its results.
+        var main: CGRect?
+        if let held = outlineBox, !boxes.isEmpty {
+            main = boxes.min {
+                hypot($0.midX - held.midX, $0.midY - held.midY)
+                    < hypot($1.midX - held.midX, $1.midY - held.midY)
+            }
+        } else {
+            main = boxes.max { $0.width * $0.height < $1.width * $1.height }
+        }
+        if let m = main {
+            outlineBox = m
+            outlineHeldSince = Date()
+        } else if let since = outlineHeldSince,
+                  Date().timeIntervalSince(since) < outlineHoldSeconds {
+            main = outlineBox      // a blink, not a departure: keep the cue up
+        } else {
+            outlineHeldSince = nil
+            outlineBox = nil
+        }
+        guard let box = main, let r = bracketRect(for: box) else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            outline.isHidden = true
+            CATransaction.commit()
             return
         }
         let path = CGMutablePath()
-        // The largest box is the card being framed; the trigger keeps
-        // weighing all of them, only the drawing narrows.
-        if let main = boxes.max(by: { $0.width * $0.height < $1.width * $1.height }),
-           let r = bracketRect(for: main) {
-            addCornerBrackets(to: path, around: r)
-        }
+        addCornerBrackets(to: path, around: r)
+        CATransaction.begin()
+        // A short ease is what turns jitter into a cue that feels alive rather
+        // than nervous. The shutter itself stays instant — nothing should lag
+        // behind the moment of capture.
+        CATransaction.setAnimationDuration(phase == .capturing ? 0 : outlineEaseSeconds)
         outline.path = path
         outline.strokeColor = outlineColor(phase)
         outline.lineWidth = phase == .capturing ? 5 : 3
         outline.isHidden = false
+        CATransaction.commit()
     }
 
     /// bracketRect maps a Vision box from the unrotated analysis buffer into
@@ -2970,6 +3311,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
         lastAnalysis = now
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let boxes = triggerRects(buffer)
+        let scene = sceneSignature(buffer)
         let sampledAt = Date()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -2979,7 +3321,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
             guard sampledAt > self.lastCaptureFinishedAt else { return }
             // The trigger decides which of these are candidates (vs desk
             // furniture) and drives the outline through onBoxes.
-            self.autoTrigger.observe(boxes, focusSettled: !self.focusHunting)
+            self.autoTrigger.observe(boxes, scene: scene, focusSettled: !self.focusHunting)
         }
     }
 }

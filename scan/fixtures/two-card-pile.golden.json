@@ -7,7 +7,8 @@
     "name": "Black Panther, Wakandan King OC",
     "number": "87",
     "set": "MAR",
-    "source": "frame"
+    "source": "frame",
+    "year": 2026
   },
   {
     "candidates": [
@@ -17,6 +18,7 @@
     "name": "Survey the Realm",
     "number": "",
     "set": "",
-    "source": "frame"
+    "source": "frame",
+    "year": 0
   }
 ]

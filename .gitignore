@@ -55,3 +55,7 @@ leader-debug/
 # The labels beside it are tracked, the pixels are not — see
 # scan/foil-dataset/README.md.
 scan/foil-dataset/images/
+
+# The parser corpus: third-party card images, fetched not authored.
+# Labels beside them are tracked — see scan/corpus/README.md.
+scan/corpus/images/

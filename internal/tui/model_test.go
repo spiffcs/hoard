@@ -1799,9 +1799,11 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 		{ID: "7ed", Name: "Remove Soul", Set: "7ed", CollectorNumber: "95", ReleasedAt: "2001-04-11"},
 		{ID: "8ed", Name: "Remove Soul", Set: "8ed", CollectorNumber: "95", ReleasedAt: "2003-07-28"},
 	}
+	// The year did not merely break the tie, it agreed with the winner — two
+	// signals, so the name gate is waived downstream.
 	ranked, s := rankByScanStrength(prints, "", "95", 2003)
-	if s != scanMatchNumberOnly {
-		t.Errorf("year-pinned strength = %v, want scanMatchNumberOnly", s)
+	if s != scanMatchNumberAndYear {
+		t.Errorf("year-pinned strength = %v, want scanMatchNumberAndYear", s)
 	}
 	if ranked[0].ID != "8ed" {
 		t.Errorf("ranked[0] = %s, want the printing released that year", ranked[0].ID)
@@ -2514,8 +2516,37 @@ func TestResolveNameKeepsFallbackLinesLocal(t *testing.T) {
 	if want := []string{"Tins. Liz Danforth"}; !slices.Equal(s.remote, want) {
 		t.Errorf("lines allowed off-machine = %v, want only the title guess %v", s.remote, want)
 	}
-	if want := []string{"Dwarven Ruins"}; !slices.Equal(s.local, want) {
-		t.Errorf("catalog-only lines = %v, want %v", s.local, want)
+	// Every line is offered to the catalog first, including line 0 — that is
+	// free, and it is what keeps a card genuinely named with a keyword or a
+	// type word scannable.
+	if want := []string{"Tins. Liz Danforth", "Dwarven Ruins"}; !slices.Equal(s.local, want) {
+		t.Errorf("catalog lines = %v, want %v", s.local, want)
+	}
+}
+
+// A title guess that is not title-shaped stays on the machine too. On an
+// unreadable frame the catalog rightly refuses it and the escalation then asks
+// Scryfall about a string that was never a name — six such lookups in one live
+// session returned nothing after ~600ms each, the worst loop costing 3.9s.
+func TestImplausibleTitleGuessNeverLeavesTheMachine(t *testing.T) {
+	s := &layeredFakeSearcher{fakeSearcher: fakeSearcher{
+		fuzzy: map[string]string{"Dwarven Ruins": "Dwarven Ruins"},
+	}}
+	// Leads lowercase, so it cannot be a title.
+	lines := []string{"count on it. Then for each nor", "Dwarven Ruins"}
+
+	name, _, idx, _, err := resolveName(context.Background(), s, lines)
+	if err != nil {
+		t.Fatalf("resolveName: %v", err)
+	}
+	if name != "Dwarven Ruins" || idx != 1 {
+		t.Fatalf("resolved %q at line %d, want the real name at line 1", name, idx)
+	}
+	if len(s.remote) != 0 {
+		t.Errorf("lines sent off-machine = %v, want none", s.remote)
+	}
+	if want := []string{"count on it. Then for each nor", "Dwarven Ruins"}; !slices.Equal(s.local, want) {
+		t.Errorf("catalog lines = %v, want both tried locally %v", s.local, want)
 	}
 }
 
@@ -2837,5 +2868,68 @@ func TestNudgePhantomKillSparesAnEntryWithACollectorBlock(t *testing.T) {
 	got2 := resolve(t, mm2.(model), junk.CardList()[0])
 	if len(got2.review) != 0 {
 		t.Errorf("review = %+v, want the blockless nudge phantom killed", got2.review)
+	}
+}
+
+// eternalDragonPrints is the live case: seven printings, exactly one numbered
+// 12, released the year the copyright line names.
+func eternalDragonPrints() []scryfall.Card {
+	return []scryfall.Card{
+		{ID: "scg", Name: "Eternal Dragon", Set: "scg", CollectorNumber: "12",
+			ReleasedAt: "2003-05-26", Finishes: []string{"nonfoil"}},
+		{ID: "c13", Name: "Eternal Dragon", Set: "c13", CollectorNumber: "10",
+			ReleasedAt: "2013-11-01", Finishes: []string{"nonfoil"}},
+		{ID: "c20", Name: "Eternal Dragon", Set: "c20", CollectorNumber: "88",
+			ReleasedAt: "2020-04-17", Finishes: []string{"nonfoil"}},
+	}
+}
+
+// A number naming one printing is one signal; that printing's release year
+// agreeing with the copyright line is a second. Two independent agreements
+// outrank a mangled title — live, "Stemal Dragon" resolved to Eternal Dragon
+// at 76% and queued while the band read a clean 12/143 and "1993-2003".
+func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
+	prints := eternalDragonPrints()
+	ranked, rank := rankByScanStrength(prints, "", "12", 2003)
+	if rank != scanMatchNumberAndYear {
+		t.Fatalf("rank = %v, want scanMatchNumberAndYear", rank)
+	}
+	if ranked[0].ID != "scg" {
+		t.Errorf("ranked[0] = %q, want the 2003 printing", ranked[0].ID)
+	}
+	if rank.String() != "number+year" {
+		t.Errorf("String() = %q, want %q", rank.String(), "number+year")
+	}
+
+	auto, _, note := verdict(queueItem{canonical: "Eternal Dragon", prints: ranked,
+		rank: rank, match: cardname.Match{Similarity: 0.76},
+		raw: scan.Card{Confidence: 0.5}})
+	if !auto {
+		t.Errorf("verdict queued a doubly-corroborated card: %q", note)
+	}
+}
+
+// Without the year it stays number-only, and a title that mangled still queues:
+// collector number 12 is common enough that a fuzzy match onto the wrong card
+// could collide with it, which is the luck the second signal removes.
+func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
+	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0)
+	if rank != scanMatchNumberOnly {
+		t.Fatalf("rank = %v, want scanMatchNumberOnly without a year", rank)
+	}
+	auto, _, note := verdict(queueItem{canonical: "Eternal Dragon", prints: ranked,
+		rank: rank, match: cardname.Match{Similarity: 0.76}})
+	if auto {
+		t.Errorf("verdict committed on one signal and a 76%% name, want queued")
+	}
+	if !strings.Contains(note, "uncertain name") {
+		t.Errorf("note = %q, want the name gate to be the reason", note)
+	}
+}
+
+// A year that agrees with no printing is a misread and must add nothing.
+func TestDisagreeingYearDoesNotEarnTheRank(t *testing.T) {
+	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999); rank != scanMatchNumberOnly {
+		t.Errorf("rank = %v, want scanMatchNumberOnly when the year matches nothing", rank)
 	}
 }

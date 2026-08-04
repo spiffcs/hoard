@@ -79,12 +79,18 @@ The loop that made every failure reproducible offline:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HOARD_SCAN_AUTO_INTERVAL` | 0.2 | sample period, seconds |
-| `HOARD_SCAN_AUTO_STABLE` | 3 | still samples before firing |
+| `HOARD_SCAN_AUTO_INTERVAL` | 0.1 | sample period, seconds |
+| `HOARD_SCAN_AUTO_STABLE` | 6 | still samples before firing (0.6s at the 0.1s period) |
 | `HOARD_SCAN_AUTO_REARM` | 3 | pooled disruption samples before re-arming |
-| `HOARD_SCAN_AUTO_GRACE` | 3 | bad samples tolerated mid-stabilization |
+| `HOARD_SCAN_AUTO_GRACE` | 6 | bad samples tolerated mid-stabilization; the knob settle actually turns on |
 | `HOARD_SCAN_AUTO_IOU` | 0.65 | overlap for "same rectangle, still" |
 | `HOARD_SCAN_AUTO_BG_IOU` | 0.5 | overlap for "that's background furniture" |
+| `HOARD_SCAN_AUTO_BG_RESET` | 8 | stabilization passes abandoned back-to-back before the background baseline is discarded as wrong |
+| `HOARD_SCAN_AUTO_STILL_AFTER` | 3 | abandoned passes before the stillness path may fire at all |
+| `HOARD_SCAN_AUTO_STILL` | 6 | samples of frame-to-frame stillness that fire the shutter without a rectangle; **0 disables the path** |
+| `HOARD_SCAN_AUTO_STILL_DELTA` | 2.5 | mean per-cell luma change below which two frames are the same picture |
+| `HOARD_SCAN_AUTO_SCENE_CHANGED` | 6.0 | how far the scene must differ from the last capture before stillness may fire again |
+| `HOARD_SCAN_AUTO_SCENE_DETAIL` | 12.0 | spread in the middle of the frame below which there is nothing worth photographing |
 | `HOARD_SCAN_FOCUS` | `lock` | focus policy: `lock` = continuous AF, frozen after the first good read (all cards sit at one distance; two consecutive empty reads thaw it); `continuous` = AF plus the hunt-aware fire gate but no freeze; `off` = no focus code at all, the pre-focus behavior |
 | `HOARD_SCAN_FOCUS_WAIT` | 1.5 | seconds a completed stability streak waits out a focus hunt before firing anyway |
 
@@ -262,6 +268,199 @@ a scene already handled, so there is no new card to lose. The guard that makes
 it safe: never kill an entry still carrying a collector block, because that
 block is evidence a real card is in frame and the rule above can name it.
 
+**Speed is a rate-versus-evidence trade, and it was measured three ways.**
+Sampling twice as fast cuts every sample-denominated cost, but firing still
+wanted three stable samples, so the evidence bar halved as a side effect:
+
+| interval / stable | settle (median) | captures reading nothing |
+| --- | --- | --- |
+| 0.2s / 3 | 1,732ms | 10% |
+| 0.1s / 3 | 667ms | 28% |
+| **0.1s / 6** | **1,198ms** | **19%** |
+
+Six samples at 0.1s is the same 0.6s of proven stillness the original demanded,
+but recovers from detector flicker twice as fast — which is where the win
+actually comes from, since settle was running at 3× its floor on resets rather
+than on the floor itself.
+
+**Stillness proves the picture is not moving, not that a card is there.** The
+first cut of the rule below counted any still-but-empty sample toward the
+streak, and it was a disaster: **90% of captures read nothing** in one session,
+153 shutters for 12 cards, the same unchanged desk photographed over and over.
+A spurious box puts the trigger in stabilizing, every later sample is empty,
+the desk is perfectly still — and it counts its way to a shutter on nothing.
+
+Guarded, the same rule is sound: the detector must really have seen the card
+(at least two genuine detections), the middle of the frame must have something
+in it, the scene must differ from the one last photographed, and **at most half
+the streak may be blinks**. That last cap is the load-bearing one — stillness
+may accelerate a pass that is already going well, and can never carry one on
+its own. Waste fell to **7%**, the lowest measured.
+
+Note what that cost: with the guards in place the rule fires rarely, and settle
+went back up. The knobs are a dial between the two, and the honest reading of
+the sequence is that per-sample evidence and wasted shutters trade off almost
+linearly — 0.6s of stillness bought 7% waste at 1,666ms settle, 0.3s bought 28%
+at 667ms. Pick a point deliberately and measure it; do not assume a change is
+free because one number improved.
+
+**An empty sample means the detector blinked, not that the card moved.** The
+per-sample firehose finally settled where settle time goes: **220 of 522
+stabilizing samples returned no rectangle at all** while a card sat motionless
+in frame. `novel` equalled `rects` in every bucket, so nothing was being
+filtered — Vision simply drops the card on two samples in five. Each of those
+burned grace and eventually restarted the streak, which is why settle ran at
+more than twice its 0.6s floor.
+
+The pixels settle it. If the picture is unchanged since the last sample then
+nothing moved, so the miss was the detector and the card is exactly where it
+was — count it toward the streak. It is the same argument the fragment rule
+already makes, on better evidence: frame-to-frame stillness is a stronger proof
+that a card is holding still than a box happening to land twice in the same
+place. A card being *removed* still exits the pass, because removing it changes
+the picture, which is not stillness, and grace runs out as it always did.
+
+This is also what the pixel signature was really for. Added as a rival path
+that fired on its own and wasted two thirds of its shutters, it works far
+better vouching for the detector than racing it.
+
+**A parallel fallback is not a fallback.** Splitting those captures by which
+path fired them showed the rectangle path wasting 7% of its shutters and the
+new pixel-stillness path wasting **64%** of its own. It was firing whenever the
+scene was still, including when the detector was working perfectly. Gated
+behind a run of abandoned passes it only engages where it was needed — on cards
+the detector cannot hold — and the cards it genuinely rescued (4 of 11 fires)
+are exactly the ones that had been abandoning passes anyway.
+
+**"Network lag in the add pipeline" was neither.** The commit path never
+touches the network, and printings came back in 0ms on all 52 resolves — the
+catalog answered everything. Every stall was one thing: the helper's title
+guess missing in the catalog and escalating to Scryfall. Eight resolves took
+≥300ms for 7.9s total, and **six returned nothing at all** after ~600ms each,
+because an unreadable frame yields a junk line 0 and we then ask the network
+about a string that was never a name. The catalog try stays unfiltered — that
+is what keeps a card genuinely named with a keyword scannable, and it is free —
+but the escalation now requires the line to look like a title, and is bounded
+by a timeout so a slow link queues the card instead of freezing the session.
+
+**A borderless card defeats the detector, and that is what "slow" means.** The
+complaint was speed; the cause was the trigger abandoning **75% of its
+attempts** — 93 stabilization passes started, 21 fired, in one borderless
+session. A borderless card's art runs to the edge, so the only edge is
+card-against-desk, and Vision loses it sample after sample. What the user sees
+is a scanner that will not fire, and what the user does is nudge the card,
+which restarts the cycle. The measured 9.6s cadence was not someone handling
+cards at their own pace; roughly 6s of it was compensating.
+
+The machine's own 3.6s split settle 1.7s (p90 3.3s), shutter+OCR 0.7s, re-arm
+0.6s, searching 0.6s. Settle's floor is three samples, so it was running near
+3× its minimum purely on resets: 21 successful passes contained 24 streak
+resets, 74 tolerated flickers and 46 counted fragments. OCR was never the
+problem — the whole of `scanFrame` is 487ms.
+
+Two changes. The sample period halved to 0.1s, which cuts every sample-denominated
+cost mechanically. And the fire decision stopped depending on rectangles: a
+coarse luma grid per sample answers "has the picture stopped moving" without
+knowing what is in it, and a run of identical frames fires the shutter on its
+own. Three conditions together, each load-bearing — *still* (nothing moving),
+*changed* since the last capture (a parked scene cannot photograph itself
+forever), and *detail* in the middle of the frame (lifting a card away leaves
+a scene that is changed and still and yet bare desk). Drop the third and the
+shutter fires every time a card is removed.
+
+It is a floor under the rectangle path, never a replacement: when rectangles
+work they fire first and the stillness count never matures. `HOARD_SCAN_AUTO_STILL=0`
+turns it off without a rebuild, which is the thing to try first if a session
+starts firing at nothing.
+
+This trades evidence for latency, so some captures read nothing. That is the
+accepted deal — a wasted capture costs ~0.7s and is invisible, against a 1.7s
+settle and constant nudging — but the rate is the number to watch, and the
+outcome telemetry already counts it.
+
+**Before collector numbers, the card says almost nothing about its printing.**
+A 4th Edition card's whole bottom line is two centred rows:
+
+    Illus. Dameon Willich
+    © 1995 Wizards of the Coast, Inc. All rights reserved.
+
+No collector number, no set code, no language code, and a **single year** where
+later frames print a `1993-2003` range. `parseCopyrightCollector` extracted the
+year only through the range regex, so that entire era shipped with no year at
+all — confirmed against a pristine scan that read the line perfectly and still
+reported nothing. Accepting a lone year is the fix, and it is the only printing
+evidence those cards carry.
+
+It goes only so far. Measured over the 6,411 pre-1998 printings of cards that
+have more than one printing — the ones that queue — the year alone pins 24% of
+them outright, and cuts the rest from a median of 12 candidate printings (worst
+case 861) to a median of 3. The residual is real: Alpha and Beta are both 1993
+and both black-bordered, Revised and Summer Magic both 1994 and both white. The
+card face cannot separate those, which is why collector numbers exist.
+
+**Border colour would have doubled that, and could not be read reliably.**
+Border is the era's other discriminator and the catalog already stores it;
+year plus border pins 47% rather than 24%. A pixel classifier over the
+perspective crop was built and then removed, because the crop does not
+reliably contain the border: Vision locks onto whichever edge has contrast, so
+sometimes the crop starts at the card's outer edge and sometimes at the frame
+just inside it. An 8th Edition Gaea's Herald — white-bordered — was classified
+black off its gold-brown inner frame. Saturation was tried as the fix and does
+not separate the cases (0.40 for a genuine white border under tungsten light,
+0.43 for the gold frame); luminance position separates cleanly (0.95 vs 0.18)
+but is measuring the wrong ring. The missing signal is not in the pixels, it is
+knowing whether the crop is the card. Left undone rather than left guessing —
+a wrong border silently picks the wrong printing.
+
+**The background baseline could swallow a card, and never gave it back.** The
+furniture baseline is taken from the first sample after auto arms and is never
+re-learned, so a card already on the desk at that instant became furniture for
+the whole session — invisible at exactly the spot every card lands. Live:
+`baseline: 1 background rect(s)`, then 46 seconds in which the detector kept
+finding Sacred Ground and the filter kept deleting it, ending only when the
+card was lifted and put back far enough off the learned box to read as novel.
+The stall's fingerprint is bare `searching → stabilizing → searching` pairs
+lasting exactly `grace + 1` samples, with no `stable`, `flicker tolerated` or
+`scene moved` line between them.
+
+The recovery counts *abandoned stabilization passes* rather than swallowed
+samples, and the distinction is the whole safety of it: a desk whose real
+furniture is correctly absorbed never enters stabilizing at all, so it can
+never trip this, while a half-absorbed card keeps almost producing a candidate
+and trips it quickly. Measured on the session that prompted it — 58 of 59
+captures fired after fewer than 8 abandoned passes, worst healthy stretch 6,
+the stall 13 — so the bar is 8, with room on both sides.
+
+It only ever *forgets*. Nothing is added to the baseline at runtime; that is
+the memory that once killed auto capture outright, and this is the same lesson
+read from the other side — a baseline that can only be learned and never
+questioned is just as capable of parking the trigger.
+
+**Beware "improvements" that only look measured.** Opting the photo output in
+to the format's largest still, to beat the preset's cap, read `activeFormat`
+before the session was running — so it got the device's low-res default and
+pinned every capture to *that*, dropping stills from 1920x1080 to 640x480 and
+quietly shrinking every collector number for a whole session. The opt-in had
+never gained anything (Continuity Camera reports 1920x1080 either way); it only
+ever cost. Reverted, and the still size is now reported after `startRunning`,
+where the number is true. Check that line first when reads go soft.
+
+**Two agreeing signals outrank a mangled title; one does not.** A number that
+named exactly one printing used to stop there, and a title OCR'd badly enough
+queued the card anyway — "Stemal Dragon" resolved to Eternal Dragon at 76%
+similarity while the band read a clean `12/143` and the copyright said
+1993-2003, which is Scourge 12 released 2003, agreeing twice over (live). The
+year was never consulted, because it was only ever used to break a tie *between*
+number matches, and here the number had already picked one.
+
+So the year is now checked against the winner even when it had nothing to
+break, and the pairing earns its own rank (`number+year`) that waives the name
+gate exactly as `set+number` does. The pairing is what matters, not the number:
+collector number 12 alone is shared by five cards released in 2003, so a fuzzy
+match onto the wrong card could collide with it by luck. A second field of the
+same card agreeing is what removes the luck, and a misread year simply matches
+nothing and leaves the rank where it was.
+
 **The copyright year can name a printing on its own.** Old frames print no
 number the band can reach, so most of what queues from them queues for want of
 *any* printing evidence — while the copyright line has been carrying some all
@@ -372,6 +571,27 @@ card's foot, the way `flavorAttribution` uses the quote above it), but the
 self-reference candidate usually rescues these frames anyway, so the ghost
 costs a queue entry rather than a card. Unfixed, and known.
 
+### Measuring which kinds of card parse at all
+
+`scan/corpus/` samples card images stratified by frame era × border colour and
+scores the helper against known answers, per stratum:
+
+    ./scan/corpus/fetch.sh && ./scan/corpus/sweep.sh
+
+It is the only check that isolates frame-era parsing from capture quality —
+the fixtures pin decisions on real photographs, `TestSessionReplay` measures a
+session, and this answers "which *kinds* of card can we read". The images are
+clean digital scans, so nothing about the trigger, the crop, glare or focus is
+exercised; and because the card fills the frame, the detector locks onto the
+border/frame boundary rather than the card edge, so the crop excludes the
+printed border. Do not tune anything border-related against it.
+
+The first run found two gaps worth naming: **borderless cards read 14% by
+name** — the title sits over art with no frame to anchor it — and **gold
+borders never yield a collector number**, because World Championship cards
+number them `jn12`/`gn12a` and no numeric pattern matches. Baselines per
+stratum live in `scan/corpus/README.md`; update them when they move.
+
 ### Measuring a session end to end
 
 `make scan-check` proves what the *helper* reads. It cannot prove the number a
@@ -389,23 +609,22 @@ models the nudge echo, the duplicate window, or a capture the trigger would
 never have fired, and it therefore counts re-looks the live session would have
 collapsed. The per-card lines are the reliable part.
 
+One more caveat, learned by being confused by it: **replaying a saved frame does
+not reproduce the live read exactly.** Repeated `--image` runs on one PNG are
+deterministic, but the live capture path OCR'd the same card as
+"son curtnot jon the storm" where the replay reads "sou curtnot", and one
+Keeper of the Nine Gales that committed live on a 2003 copyright read 2009 on
+replay and queued. Before blaming a change for a difference between a session
+log and its replay, check whether the OCR text itself moved.
+
 **1080p is the camera's ceiling.** Continuity Camera reports `still=1920x1080`
-even after the format opt-in, so a card fills roughly 680 pixels and the
-collector band is a few pixels tall. Everything above is tuned for that; do not
-plan around more pixels without checking the capability line first.
+on the `scan: still=` line the helper prints once the session is live, so a
+card fills roughly 680 pixels and the collector band is a few pixels tall.
+Everything above is tuned for that; do not plan around more pixels without
+reading that line first — and see the lesson above for what happened the last
+time it was "improved".
 
 ## Open questions for the next session
 
-**Does the background baseline poison long sessions?** The trigger's
-furniture baseline is taken from the first sample after arming and is never
-re-learned — not by `forceRearm`, not by `captureFinished`. Anything in frame
-at that instant is furniture for the rest of the session. One session showed
-a 37s stall and ~50s of bare `searching → stabilizing → searching` flapping
-with no `stable`, `flicker tolerated`, or `scene moved` lines between the
-transitions, which is the signature of `novel` being empty on every sample —
-either the baseline swallowed the scanning pile, or the detector genuinely
-returned nothing. Only `HOARD_SCAN_AUTO_TRACE=1` separates the two: `rects=N
-novel=0` is absorption, `rects=0` is dropout. That session did not have the
-flag set, so this stays a question rather than a diagnosis — resist "fixing"
-it until a trace says which it is, since the last self-tuning baseline idea
-is the one that killed auto capture at the exact spot every card lands.
+*(The background-baseline question that stood here is answered — see "The
+background baseline could swallow a card" in the field lessons.)*
