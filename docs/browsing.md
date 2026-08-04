@@ -38,7 +38,7 @@ what is inside whichever row you have selected.
 | <kbd>v</kbd> | switch view: holdings → movers → market → watches → unpriced |
 | <kbd>B</kbd> | flip the left pane: binders & decks ↔ the sets you own cards from |
 | <kbd>+</kbd> <kbd>-</kbd> | change how many copies you hold |
-| <kbd>d</kbd> | remove the card, or the deck — asks first |
+| <kbd>d</kbd> | remove the card, or the deck — asks first (browsing by set: from every binder holding it) |
 | <kbd>u</kbd> | undo the last edit |
 | <kbd>a</kbd> | add cards — the add flow opens right here, browser state intact |
 | <kbd>r</kbd> | reload |
@@ -132,9 +132,19 @@ from, newest release first — Alpha and Beta live at the bottom. Sets whose
 printings Scryfall hasn't described yet show their code and sort last until
 `UpdatePrices` runs. Selecting a set works exactly like selecting a binder:
 the right pane shows that set's holdings and every analytical view narrows
-to the set. The rows themselves are read-only — a set is how cards were
-printed, not where they live, so edits point you back at the card's binder
-or deck. The toggle lasts for the session.
+to the set. The set rows on the left are a lens rather than a place: they
+can't be renamed, removed, or exported.
+
+Their *cards* can be edited, because a set row still names a real printing
+you hold. hoard resolves it back to the binders holding it: <kbd>+</kbd> and
+<kbd>-</kbd> change the count when exactly one binder has it (the receipt
+says which), and with several the status line says so and points at
+<kbd>enter</kbd>, whose detail lists every copy per binder. <kbd>d</kbd>
+removes the printing from every binder holding it, asking first and naming
+them, with a single <kbd>u</kbd> putting them all back. Only the finish on
+the row goes — a foil copy in the same binder is a different row and stays.
+Deck copies are never touched, the same rule as everywhere else. The toggle
+lasts for the session.
 
 **Movers hides sub-$0.20 cards by default** — bulk twitching by cents is
 volume, not information. The status line says so, and the palette's

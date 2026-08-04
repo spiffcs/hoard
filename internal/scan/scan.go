@@ -94,6 +94,10 @@ type CollectorAlt struct {
 	Number string `json:"number"`
 	Set    string `json:"set"`
 	Finish string `json:"finish"`
+	// Source and Year mirror Card.NumberSource and Card.CopyrightYear for this
+	// block; see those fields for the trust semantics.
+	Source string `json:"source"`
+	Year   int    `json:"year"`
 }
 
 // Card is one card of a capture. Name and Candidates mirror the event's flat
@@ -119,6 +123,20 @@ type Card struct {
 	CollectorAlts []CollectorAlt `json:"collectorAlts"`
 	// FinishHint is the printed finish marker; see Event.FinishHint.
 	FinishHint string `json:"finishHint"`
+	// NumberSource is where CollectorNumber was read from. "" is the collector
+	// band of a modern frame — self-consistent evidence, trusted enough that a
+	// number matching no printing vetoes an auto-commit. "copyright" is the
+	// tail of an old frame's bottom-centre copyright line ("… Wizards of the
+	// Coast, Inc. 95/350"), tiny italic serif that misreads digits often enough
+	// that it must only ever upgrade a match, never veto one. The Event's flat
+	// CollectorNumber stays band-only: an old Go binary reading the flat fields
+	// would treat any number there as trusted.
+	NumberSource string `json:"numberSource"`
+	// CopyrightYear is the end year of the copyright range on the same line
+	// ("1993-2003" → 2003), which equals the printing's release year and can
+	// break a collector-number tie between two printings of the same card.
+	// Zero means no year was read.
+	CopyrightYear int `json:"copyrightYear"`
 }
 
 // Lines returns the card's OCR'd text, best guess first, falling back to Name

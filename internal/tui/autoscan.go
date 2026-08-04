@@ -229,11 +229,27 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				// neighbour's number can't match this card's printings, the
 				// real one can.
 				cands := append([]scan.CollectorAlt{
-					{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint}},
+					{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint,
+						Source: c.NumberSource, Year: c.CopyrightYear}},
 					c.CollectorAlts...)
+				// A copyright-line number is upgrade-only evidence: the tiny
+				// italic serif misreads digits (observed live: "30/145" read
+				// as "80/145" on a card that must keep auto-committing), so
+				// when no trusted band number was read, an empty sentinel
+				// re-derives the no-number outcome as the floor — a matching
+				// copyright number can only rank higher, never veto. A band
+				// number that matches nothing keeps its veto: there the
+				// number is trusted, so the mismatch means the name match
+				// itself is suspect.
+				trusted := slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
+					return cd.Number != "" && cd.Source != "copyright"
+				})
+				if !trusted {
+					cands = append(cands, scan.CollectorAlt{Finish: c.FinishHint})
+				}
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
 				for _, cd := range cands {
-					ranked, r := rankByScanStrength(prints, cd.Set, cd.Number)
+					ranked, r := rankByScanStrength(prints, cd.Set, cd.Number, cd.Year)
 					if r > it.rank {
 						it.prints, it.rank = ranked, r
 						// The winning candidate becomes the item's collector
@@ -316,10 +332,48 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 	return true, finish, ""
 }
 
+// variationMarkers are the suffixes Scryfall appends to a collector number for
+// a same-set variation — † (theme-deck alternates), ★ (foil-only rows),
+// Φ (Phyrexian-text printings).
+const variationMarkers = "†★Φ"
+
+// collapseVariants reports whether every printing is the same logical printing
+// — one set, one base collector number, the rows differing only by a variation
+// marker — returning the unmarked row first when so. Without this, a card
+// whose only reprint is its own theme-deck alternate (`ody 72` beside
+// `ody 72†`, observed live) never clears the single-print bar and queues on
+// every scan.
+func collapseVariants(cards []scryfall.Card) ([]scryfall.Card, bool) {
+	base := func(c scryfall.Card) string {
+		return strings.ToLower(c.Set) + "/" + strings.TrimRight(c.CollectorNumber, variationMarkers)
+	}
+	for _, c := range cards[1:] {
+		if base(c) != base(cards[0]) {
+			return cards, false
+		}
+	}
+	ranked := make([]scryfall.Card, 0, len(cards))
+	for _, c := range cards {
+		if c.CollectorNumber == strings.TrimRight(c.CollectorNumber, variationMarkers) {
+			ranked = append(ranked, c)
+		}
+	}
+	for _, c := range cards {
+		if c.CollectorNumber != strings.TrimRight(c.CollectorNumber, variationMarkers) {
+			ranked = append(ranked, c)
+		}
+	}
+	return ranked, true
+}
+
 // rankByScanStrength is rankByScan with the match strength kept: the picker
 // only needs "promote and mark", but the auto-commit bar has to distinguish a
-// set-verified match from a number that several printings share.
-func rankByScanStrength(cards []scryfall.Card, set, number string) ([]scryfall.Card, scanMatch) {
+// set-verified match from a number that several printings share. year, when
+// non-zero, is the copyright range's end year — it equals the printing's
+// release year, so it can break a number tie ("95" is both 7th and 8th
+// Edition; only one was printed in 2003). A misread year simply matches no
+// printing and leaves the tie ambiguous, exactly as if it were never read.
+func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]scryfall.Card, scanMatch) {
 	if len(cards) == 0 {
 		return cards, scanMatchNone
 	}
@@ -327,14 +381,17 @@ func rankByScanStrength(cards []scryfall.Card, set, number string) ([]scryfall.C
 		if len(cards) == 1 {
 			return cards, scanMatchSinglePrint
 		}
+		if ranked, ok := collapseVariants(cards); ok {
+			return ranked, scanMatchSinglePrint
+		}
 		return cards, scanMatchNone
 	}
-	best, matches, exactSet := -1, 0, false
+	best, matchIdxs, exactSet := -1, []int(nil), false
 	for i, c := range cards {
 		if !strings.EqualFold(c.CollectorNumber, number) {
 			continue
 		}
-		matches++
+		matchIdxs = append(matchIdxs, i)
 		if set != "" && strings.EqualFold(c.Set, set) && !exactSet {
 			best, exactSet = i, true
 			continue
@@ -348,6 +405,23 @@ func rankByScanStrength(cards []scryfall.Card, set, number string) ([]scryfall.C
 		// suspect then: the name match may have landed on the wrong card.
 		return cards, scanMatchNone
 	}
+	yearPinned := false
+	if !exactSet && len(matchIdxs) > 1 && year > 0 {
+		prefix := fmt.Sprintf("%d", year)
+		inYear := -1
+		for _, i := range matchIdxs {
+			if strings.HasPrefix(cards[i].ReleasedAt, prefix) {
+				if inYear >= 0 {
+					inYear = -1
+					break
+				}
+				inYear = i
+			}
+		}
+		if inYear >= 0 {
+			best, yearPinned = inYear, true
+		}
+	}
 	ranked := make([]scryfall.Card, 0, len(cards))
 	ranked = append(ranked, cards[best])
 	ranked = append(ranked, cards[:best]...)
@@ -355,7 +429,7 @@ func rankByScanStrength(cards []scryfall.Card, set, number string) ([]scryfall.C
 	switch {
 	case exactSet:
 		return ranked, scanMatchSetAndNumber
-	case matches == 1:
+	case len(matchIdxs) == 1 || yearPinned:
 		return ranked, scanMatchNumberOnly
 	default:
 		return ranked, scanMatchNumberAmbiguous

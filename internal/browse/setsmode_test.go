@@ -239,9 +239,9 @@ func TestMarketScopedToSet(t *testing.T) {
 	}
 }
 
-// A set row is a read-only lens: quantity edits, removals, and renames all
-// refuse, on both panes.
-func TestSetRowRefusesEdits(t *testing.T) {
+// The set row on the *container* pane stays a lens: it is not a place, so
+// it cannot be removed or renamed.
+func TestSetContainerRowRefusesEdits(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "B")
 	m = atSet(t, m, "uma") // focus starts on the container pane
@@ -255,17 +255,271 @@ func TestSetRowRefusesEdits(t *testing.T) {
 	if !m.statusErr || !strings.Contains(m.status, "named by Wizards") {
 		t.Errorf("R on the set row: status = %q err=%v", m.status, m.statusErr)
 	}
+}
 
-	m = key(m, "tab") // into the card pane
-	m.status, m.statusErr = "", false
+// heldIn is one binder's holding of the uma Bitterblossom, the fixture the
+// set-row edit tests resolve through.
+func heldIn(id int64, name string, qty int) store.Holding {
+	return store.Holding{
+		ContainerID: id, ContainerName: name, ContainerKind: store.KindCollection,
+		Finish: "nonfoil", Board: "main", Quantity: qty,
+	}
+}
+
+// deckCopy is a deck's entry for the uma Bitterblossom — entry() stamps
+// every card mh3, and this row has to land in the set under test.
+func deckCopy(qty int) store.EntryView {
+	e := entry("Bitterblossom", "main", "nonfoil", qty, 34)
+	e.Card.SetCode, e.Card.CollectorNumber = "uma", "85"
+	return e
+}
+
+// atSetCard selects a set and puts the cursor on one of its cards.
+func atSetCard(t *testing.T, m Model, code, name string) Model {
+	t.Helper()
+	m = atSet(t, m, code)
+	m = key(m, "tab")
+	for i, c := range m.cards {
+		if c.Name == name {
+			m.cursor[paneCards] = i
+			return m
+		}
+	}
+	t.Fatalf("no card %s in %s: %+v", name, code, m.cards)
+	return m
+}
+
+// qtyIn reads a container's count of a printing straight out of the fixture.
+func qtyIn(st *fakeStore, cid int64, id, finish string) int {
+	for _, r := range st.rowsIn(cid) {
+		if r.ScryfallID == id && r.Finish == finish {
+			return r.Quantity
+		}
+	}
+	return 0
+}
+
+// With one binder holding the printing, +/- on a set row edits that binder
+// and says which one, and u puts the count back.
+func TestSetRowAdjustsTheOneBinder(t *testing.T) {
+	st := testStore()
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {heldIn(1, "Binder", 4)},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+
 	m = key(m, "+")
-	if !m.statusErr || !strings.Contains(m.status, "every printing from") {
-		t.Errorf("+ on a set's card: status = %q err=%v, want the refusal", m.status, m.statusErr)
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 5 {
+		t.Errorf("binder quantity = %d after +, want 5", got)
+	}
+	if m.statusErr || !strings.Contains(m.status, "×5 in Binder") {
+		t.Errorf("status = %q err=%v, want the receipt naming the binder", m.status, m.statusErr)
+	}
+	m = key(m, "u")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 4 {
+		t.Errorf("binder quantity = %d after undo, want 4 back", got)
+	}
+}
+
+// The row's total counts deck copies too, so the edit must start from the
+// binder's own count — otherwise + on a 4-loose/1-in-deck row would write 6.
+func TestSetRowAdjustUsesTheBinderCountNotTheRowTotal(t *testing.T) {
+	st := testStore()
+	// The Rich Deck holds a copy of the same printing.
+	st.deckCards[202] = append(st.deckCards[202], deckCopy(1))
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {
+			heldIn(1, "Binder", 4),
+			{ContainerID: 202, ContainerName: "Rich Deck", ContainerKind: store.KindDeck,
+				Finish: "nonfoil", Board: "main", Quantity: 1},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+	if c := m.selectedCard(); c == nil || c.Quantity != 5 {
+		t.Fatalf("set row = %+v, want the 4 loose + 1 in deck total", c)
+	}
+
+	m = key(m, "+")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 5 {
+		t.Errorf("binder quantity = %d after +, want 5 (not 6, the row total + 1)", got)
+	}
+}
+
+// With several binders holding it there is no "the" binder to change, so
+// +/- says where the copies are instead of guessing.
+func TestSetRowAdjustRefusesAcrossBinders(t *testing.T) {
+	st := testStore()
+	st.binders = map[int64]string{7: "Trades"}
+	st.binderRows = map[int64][]store.CollectionRow{
+		7: {row("Bitterblossom", "uma", "85", "nonfoil", 2, 68)},
+	}
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {heldIn(1, "Binder", 4), heldIn(7, "Trades", 2)},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+
+	m = key(m, "+")
+	if !m.statusErr || !strings.Contains(m.status, "2 binders") || !strings.Contains(m.status, "enter") {
+		t.Errorf("status = %q err=%v, want the count and the pointer at the detail", m.status, m.statusErr)
+	}
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 4 {
+		t.Errorf("binder quantity = %d, want it untouched", got)
+	}
+	if got := qtyIn(st, 7, "Bitterblossom-id", "nonfoil"); got != 2 {
+		t.Errorf("Trades quantity = %d, want it untouched", got)
+	}
+}
+
+// Every copy in a deck is not editable here, exactly as on the holdings
+// pane — and d must not even stage a question.
+func TestSetRowWithOnlyDeckCopiesRefuses(t *testing.T) {
+	st := testStore()
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {
+			{ContainerID: 202, ContainerName: "Rich Deck", ContainerKind: store.KindDeck,
+				Finish: "nonfoil", Board: "main", Quantity: 1},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+
+	m = key(m, "+")
+	if !m.statusErr || !strings.Contains(m.status, "imported list") {
+		t.Errorf("+ status = %q err=%v, want the deck refusal", m.status, m.statusErr)
 	}
 	m.status, m.statusErr = "", false
 	m = key(m, "d")
-	if !m.statusErr {
-		t.Errorf("d on a set's card: status = %q, want a refusal", m.status)
+	if m.confirm != nil {
+		t.Fatalf("d staged %+v, want no question for deck-only copies", m.confirm)
+	}
+	if !m.statusErr || !strings.Contains(m.status, "imported list") {
+		t.Errorf("d status = %q err=%v, want the deck refusal", m.status, m.statusErr)
+	}
+}
+
+// d on a set row held in one binder names that binder in the question, and
+// u puts the copies back.
+func TestSetRowRemoveFromOneBinder(t *testing.T) {
+	st := testStore()
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {heldIn(1, "Binder", 4)},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+
+	m = key(m, "d")
+	if m.confirm == nil {
+		t.Fatal("d staged no confirm")
+	}
+	if !strings.Contains(m.confirm.prompt, "×4 from Binder") {
+		t.Errorf("prompt = %q, want the binder and count named", m.confirm.prompt)
+	}
+	m = key(m, "y")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 0 {
+		t.Errorf("binder quantity = %d after removal, want gone", got)
+	}
+	if m.statusErr || !strings.Contains(m.status, "removed Bitterblossom (nonfoil) from Binder") {
+		t.Errorf("status = %q err=%v, want the removal receipt", m.status, m.statusErr)
+	}
+	m = key(m, "u")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 4 {
+		t.Errorf("binder quantity = %d after undo, want 4 back", got)
+	}
+}
+
+// Across binders, d says how many it will empty, empties them all, leaves
+// the deck's copy alone, and one u restores every binder.
+func TestSetRowRemoveAcrossBindersUndoesTogether(t *testing.T) {
+	st := testStore()
+	st.binders = map[int64]string{7: "Trades"}
+	st.binderRows = map[int64][]store.CollectionRow{
+		7: {row("Bitterblossom", "uma", "85", "nonfoil", 2, 68)},
+	}
+	st.deckCards[202] = append(st.deckCards[202], deckCopy(1))
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {
+			heldIn(1, "Binder", 4), heldIn(7, "Trades", 2),
+			{ContainerID: 202, ContainerName: "Rich Deck", ContainerKind: store.KindDeck,
+				Finish: "nonfoil", Board: "main", Quantity: 1},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom")
+
+	m = key(m, "d")
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "from 2 binders?") {
+		t.Fatalf("confirm = %+v, want the binder count named", m.confirm)
+	}
+	m = key(m, "y")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 0 {
+		t.Errorf("Binder quantity = %d, want emptied", got)
+	}
+	if got := qtyIn(st, 7, "Bitterblossom-id", "nonfoil"); got != 0 {
+		t.Errorf("Trades quantity = %d, want emptied", got)
+	}
+	if n := len(st.deckCards[202]); n != 3 {
+		t.Errorf("deck entries = %d, want the deck's copy untouched", n)
+	}
+	if !strings.Contains(m.status, "from 2 binders") {
+		t.Errorf("status = %q, want the multi-binder receipt", m.status)
+	}
+
+	m = key(m, "u")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 4 {
+		t.Errorf("Binder quantity = %d after undo, want 4 back", got)
+	}
+	if got := qtyIn(st, 7, "Bitterblossom-id", "nonfoil"); got != 2 {
+		t.Errorf("Trades quantity = %d after undo, want 2 back", got)
+	}
+}
+
+// The row says one finish, so only that finish goes: a foil copy in the
+// same binder is not part of what the question named.
+func TestSetRowRemoveKeepsTheOtherFinish(t *testing.T) {
+	st := testStore()
+	foil := row("Bitterblossom", "uma", "85", "foil", 1, 60)
+	st.collection = append(st.collection, foil)
+	st.holdingsByID = map[string][]store.Holding{
+		"Bitterblossom-id": {
+			heldIn(1, "Binder", 4),
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "foil", Board: "main", Quantity: 1},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "B")
+	m = atSetCard(t, m, "uma", "Bitterblossom") // the nonfoil row sorts first
+
+	m = key(m, "d")
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "(nonfoil)") {
+		t.Fatalf("confirm = %+v, want the nonfoil row named", m.confirm)
+	}
+	m = key(m, "y")
+	if got := qtyIn(st, 1, "Bitterblossom-id", "nonfoil"); got != 0 {
+		t.Errorf("nonfoil quantity = %d, want gone", got)
+	}
+	if got := qtyIn(st, 1, "Bitterblossom-id", "foil"); got != 1 {
+		t.Errorf("foil quantity = %d, want the unnamed finish left alone", got)
+	}
+}
+
+// The card pane advertises the edit verbs in sets mode now that they work.
+func TestSetsModeCardHelpAdvertisesEdits(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "B")
+	m = atSet(t, m, "uma")
+	m = key(m, "tab")
+	if h := m.helpLine(); !strings.Contains(h, "+/- qty · d remove · u undo") {
+		t.Errorf("help = %q, want the edit keys on a set's cards", h)
 	}
 }
 

@@ -160,6 +160,43 @@ func TestParseEventConfidenceFields(t *testing.T) {
 	}
 }
 
+func TestParseEventCopyrightProvenance(t *testing.T) {
+	// An old-frame read: the number came off the copyright line, with the
+	// range's end year alongside, and an alternative block carries the same
+	// provenance vocabulary.
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Remove Soul",` +
+			`"cards":[{"name":"Remove Soul","collectorNumber":"95",` +
+			`"numberSource":"copyright","copyrightYear":2003,` +
+			`"collectorAlts":[{"number":"93","source":"copyright","year":2001}]}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c := ev.CardList()[0]
+	if c.NumberSource != "copyright" || c.CopyrightYear != 2003 {
+		t.Errorf("provenance = %q/%d, want copyright/2003", c.NumberSource, c.CopyrightYear)
+	}
+	if a := c.CollectorAlts[0]; a.Source != "copyright" || a.Year != 2001 {
+		t.Errorf("alt provenance = %q/%d, want copyright/2001", a.Source, a.Year)
+	}
+
+	// A helper that predates provenance omits the fields: zero values mean a
+	// trusted band read, which is what every number from such a helper is.
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring","collectorNumber":"125",` +
+			`"collectorAlts":[{"number":"126"}]}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c = ev.CardList()[0]
+	if c.NumberSource != "" || c.CopyrightYear != 0 {
+		t.Errorf("old-helper card should carry zero provenance, got %+v", c)
+	}
+	if a := c.CollectorAlts[0]; a.Source != "" || a.Year != 0 {
+		t.Errorf("old-helper alt should carry zero provenance, got %+v", a)
+	}
+}
+
 func TestCardListCarriesAnchoringIntoFallback(t *testing.T) {
 	// The synthesized flat-fields card borrows Source's vocabulary: its
 	// collector read is card-anchored exactly when the band was.

@@ -40,7 +40,8 @@ func (m Model) View() string {
 		// it is asking about.
 		v := m.addChild.View()
 		if m.confirm != nil {
-			v += "\n" + m.theme.Err.Render(m.confirm.prompt) + m.theme.Help.Render("  y/n")
+			v += "\n" + m.theme.Err.Render(m.confirm.prompt) +
+				m.theme.Help.Render("  "+m.confirmHint())
 		}
 		return v
 	}
@@ -542,7 +543,7 @@ func (m Model) window(lines []string, p pane, width int) []string {
 func (m Model) statusLine() string {
 	switch m.mode() {
 	case modeConfirm:
-		return m.theme.Err.Render(m.confirm.prompt) + m.theme.Help.Render("  y/n")
+		return m.theme.Err.Render(m.confirm.prompt) + m.theme.Help.Render("  "+m.confirmHint())
 	case modePrompt:
 		return m.promptLine()
 	case modePalette:
@@ -663,6 +664,18 @@ func (m Model) selectedItemName() string {
 	return name(len(m.cards), func(i int) string { return m.cards[i].Name })
 }
 
+// confirmHint is the keys a staged confirm answers to, for the slot beside
+// its prompt. The question's own wording when it has one — "y/n" alone left
+// readers guessing whether n was required or any key would do (and on the
+// add-cascade takeover, where no help line renders, it is the only place
+// the answer appears at all).
+func (m Model) confirmHint() string {
+	if m.confirm != nil && m.confirm.help != "" {
+		return m.confirm.help
+	}
+	return "y/n"
+}
+
 func (m Model) helpLine() string {
 	switch {
 	case m.confirm != nil:
@@ -736,8 +749,12 @@ func (m Model) helpLine() string {
 		}
 		return ": import/export · tab cards · B by set · n new binder · a add cards · R rename · d remove · / filter · M floor · F refresh prices · v views · u undo · q quit"
 	}
+	// Set rows take the edit verbs: they resolve to the binders holding the
+	// printing. +/- is offered unconditionally — with several binders in
+	// play it answers by naming them, which is the more useful reply than a
+	// key that looks unavailable.
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
-		return ": commands · tab sets · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · q quit"
+		return ": commands · tab sets · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
 	}
 	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
 		return ": commands · tab decks · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · q quit"

@@ -1198,6 +1198,12 @@ func (m *Model) askRemoval() {
 		return
 	}
 
+	// A set row is removed from the binders that hold it, not from the set —
+	// which is a printing fact, not a place.
+	if sel := m.selectedContainer(); m.view == viewHoldings && sel != nil && sel.Kind == kindSet {
+		m.askSetRemoval()
+		return
+	}
 	if ok, why := m.editable(); !ok {
 		if why != "" {
 			m.status, m.statusErr = why, true

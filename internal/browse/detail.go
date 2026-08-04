@@ -203,6 +203,26 @@ func (m *Model) reloadDetail() tea.Cmd {
 	return m.fetchDetailComps(d.card.ScryfallID)
 }
 
+// closeDetailIfUnheld drops the overlay when a removal left no copies of
+// the card anywhere. The overlay is a card's holdings; with the last one
+// gone it would go on showing the row that was just removed, and the reader
+// has to press esc to find out nothing is there. The removal receipt in
+// m.status survives the close, so the main view says what happened.
+//
+// Only the removal paths call this: a detail opened from watches or market
+// on a card nobody holds is legitimately empty and must stay open.
+func (m *Model) closeDetailIfUnheld() {
+	d := m.detail
+	if d == nil {
+		return
+	}
+	holdings, err := m.store.HoldingsOfName(d.card.Name)
+	if err != nil || len(holdings) > 0 {
+		return
+	}
+	m.detail, m.detailComps = nil, nil
+}
+
 // refreshLinks rebuilds the vendor links for the printing and finish the
 // held cursor is on — the Card Kingdom page differs per finish, so links
 // follow the cursor even when the printing does not change.

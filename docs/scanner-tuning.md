@@ -169,3 +169,38 @@ queues rather than guessing (wrong-set commits are invisible until
 valuation), but phantoms in multi-card captures die with a note rather than
 queueing — a queue full of ghosts trains the user to ignore it. The one card
 of a single-card capture must never vanish silently.
+
+**Old frames hide their collector number in the copyright line.** Pre-M15
+frames print it at the tail of the bottom-centre copyright line ("™ & ©
+1993-2003 Wizards of the Coast, Inc. 95/350") in italic serif the band crop
+returns as fragments — the full-resolution frame pass reads it far better,
+so both feed the extraction. The same line's range *end year equals the
+printing's release year*, which is what breaks a number tie: "95" is Remove
+Soul in both 7th and 8th Edition, and only one was printed in 2003.
+(`parseCopyrightCollector` in main.swift; the year filter in
+`rankByScanStrength`, internal/tui/autoscan.go.)
+
+**A copyright-line number may upgrade, never veto.** That glyph size misreads
+digits — Aven Envoy's "30/145" arrived as "80/145", live — and a trusted
+number that matches no printing rightly vetoes an auto-commit. So copyright
+reads carry `numberSource: "copyright"` on the wire, and the resolver adds an
+empty sentinel candidate whenever no *band* number was read: the sentinel
+re-derives the no-number outcome as the floor, and the copyright number can
+only rank higher. The flat event fields stay band-only for the same reason —
+an old parent binary would trust anything it finds there.
+(`resolveCardCmd`, internal/tui/autoscan.go.)
+
+**Catalog variation rows defeat the single-print bar.** Scryfall's bulk data
+carries same-set variations as separate rows (`ody 72` beside `ody 72†`, the
+theme-deck alternate), so a card with one real printing counts as two and
+queues "printing unverified" on a perfect read (Cephalid Looter, live). Rows
+differing only by a trailing variation marker (†, ★, Φ) within one set are
+one logical printing; the unmarked row leads. (`collapseVariants`,
+internal/tui/autoscan.go.)
+
+**Token names ghost the queue.** The catalog's name index includes token
+cards, so a type-line fragment ("Creature — Bird Soldier" split across OCR
+lines) resolves to the *token* "Bird Soldier" and queues, and a partial read
+("aldier") lands on the token "Soldier". Left as-is for now — filtering
+token names would also make real token cards unscannable — but it is the
+known residual source of queue ghosts.

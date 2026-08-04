@@ -88,9 +88,9 @@ func (f *fakeScanner) Open(_ context.Context, deviceID string) (ScanSession, err
 // fakeSession stands in for a live camera window. Tests push events onto it to
 // simulate the helper reporting captures, rotations, and closure.
 type fakeSession struct {
-	chimes   int
-	results  []scan.HUDResult
-	events   chan scan.Event
+	chimes     int
+	results    []scan.HUDResult
+	events     chan scan.Event
 	captures   int
 	rotates    int
 	autoOn     int
@@ -1448,6 +1448,102 @@ func TestUncertainScanQueues(t *testing.T) {
 	}
 }
 
+func TestCopyrightNumberNeverVetoesAutoCommit(t *testing.T) {
+	// The old-frame copyright line misreads digits (observed live: Aven
+	// Envoy's "30/145" read as "80/145"). A copyright-sourced number is
+	// upgrade-only evidence: on a single-printing card the mismatch must not
+	// demote the auto-commit — and the printed finish hint must survive the
+	// sentinel candidate winning the rank.
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Aven Envoy": "Aven Envoy"},
+		prints: map[string][]scryfall.Card{"Aven Envoy": {
+			{ID: "lgn", Name: "Aven Envoy", Set: "lgn", CollectorNumber: "30",
+				Finishes: []string{"nonfoil", "foil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Aven Envoy",
+		Cards: []scan.Card{{Name: "Aven Envoy", Candidates: []string{"Aven Envoy"},
+			CollectorNumber: "80", NumberSource: "copyright", Confidence: 0.95,
+			FinishHint: "foil", Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — a copyright misread must not veto", len(ra.got))
+	}
+	if r := ra.got[0]; !strings.EqualFold(r.Card.Set, "lgn") || r.Finish != "foil" {
+		t.Errorf("result = %+v, want the lone printing with the finish hint kept", r)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want empty", got.review)
+	}
+}
+
+func TestBandNumberMismatchStillVetoes(t *testing.T) {
+	// The flip side of the copyright sentinel: a trusted band number that
+	// matches nothing keeps its veto — the band is reliable, so the mismatch
+	// means the name fuzzy match may have landed on the wrong card.
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Aven Envoy": "Aven Envoy"},
+		prints: map[string][]scryfall.Card{"Aven Envoy": {
+			{ID: "lgn", Name: "Aven Envoy", Set: "lgn", CollectorNumber: "30",
+				Finishes: []string{"nonfoil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Aven Envoy",
+		Cards: []scan.Card{{Name: "Aven Envoy", Candidates: []string{"Aven Envoy"},
+			CollectorNumber: "80", Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 0 {
+		t.Fatalf("adder called %d times, want 0 — a trusted mismatch queues", len(ra.got))
+	}
+	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "printing unverified") {
+		t.Fatalf("review = %+v, want the card queued unverified", got.review)
+	}
+}
+
+func TestCopyrightYearBreaksTieToAutoCommit(t *testing.T) {
+	// Remove Soul, observed live: the band read "95/350", which is both 7th
+	// and 8th Edition — ambiguous, queued. The copyright range on the same
+	// line ends in the release year; carried as evidence it pins 8th Edition
+	// and the scan commits.
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Remove Soul": "Remove Soul"},
+		prints: map[string][]scryfall.Card{"Remove Soul": {
+			{ID: "7ed", Name: "Remove Soul", Set: "7ed", CollectorNumber: "95",
+				ReleasedAt: "2001-04-11", Finishes: []string{"nonfoil"}},
+			{ID: "8ed", Name: "Remove Soul", Set: "8ed", CollectorNumber: "95",
+				ReleasedAt: "2003-07-28", Finishes: []string{"nonfoil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Remove Soul",
+		Cards: []scan.Card{{Name: "Remove Soul", Candidates: []string{"Remove Soul"},
+			CollectorNumber: "95", CopyrightYear: 2003, Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — the year breaks the tie", len(ra.got))
+	}
+	if r := ra.got[0]; !strings.EqualFold(r.Card.Set, "8ed") {
+		t.Errorf("committed set = %q, want the printing released that year", r.Card.Set)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want empty", got.review)
+	}
+}
+
 func TestVerdict(t *testing.T) {
 	verified := solRingPrints()[2:] // the MH3 printing first
 	multi := solRingPrints()
@@ -1554,29 +1650,99 @@ func TestVerdict(t *testing.T) {
 
 func TestRankByScanStrength(t *testing.T) {
 	cards := solRingPrints()
-	if _, s := rankByScanStrength(cards, "MH3", "123"); s != scanMatchSetAndNumber {
+	if _, s := rankByScanStrength(cards, "MH3", "123", 0); s != scanMatchSetAndNumber {
 		t.Errorf("set+number strength = %v, want scanMatchSetAndNumber", s)
 	}
-	if _, s := rankByScanStrength(cards, "", "263"); s != scanMatchNumberOnly {
+	if _, s := rankByScanStrength(cards, "", "263", 0); s != scanMatchNumberOnly {
 		t.Errorf("unique number strength = %v, want scanMatchNumberOnly", s)
 	}
 	dupes := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
 	}
-	if _, s := rankByScanStrength(dupes, "", "7"); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(dupes, "", "7", 0); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared number strength = %v, want scanMatchNumberAmbiguous", s)
 	}
-	if _, s := rankByScanStrength(cards[:1], "", ""); s != scanMatchSinglePrint {
+	if _, s := rankByScanStrength(cards[:1], "", "", 0); s != scanMatchSinglePrint {
 		t.Errorf("single printing strength = %v, want scanMatchSinglePrint", s)
 	}
 	// A number that matches nothing makes even a lone printing suspect: the
 	// name match may have landed on the wrong card entirely.
-	if _, s := rankByScanStrength(cards[:1], "", "999"); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards[:1], "", "999", 0); s != scanMatchNone {
 		t.Errorf("conflicting number strength = %v, want scanMatchNone", s)
 	}
-	if _, s := rankByScanStrength(cards, "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards, "", "", 0); s != scanMatchNone {
 		t.Errorf("no signal strength = %v, want scanMatchNone", s)
+	}
+}
+
+func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
+	// A card whose only "reprint" is its own theme-deck alternate — one set,
+	// one base number, rows differing only by the variation marker — is a
+	// single logical printing, and the unmarked row must lead so it is the one
+	// verdict prices and the commit writes. Observed live: Cephalid Looter
+	// (ody 72 beside ody 72†) queued "printing unverified: 2 printings" on a
+	// perfect read.
+	variants := []scryfall.Card{
+		{ID: "alt", Name: "X", Set: "ody", CollectorNumber: "72†"},
+		{ID: "plain", Name: "X", Set: "ody", CollectorNumber: "72"},
+	}
+	ranked, s := rankByScanStrength(variants, "", "", 0)
+	if s != scanMatchSinglePrint {
+		t.Errorf("variant pair strength = %v, want scanMatchSinglePrint", s)
+	}
+	if ranked[0].ID != "plain" {
+		t.Errorf("ranked[0] = %s, want the unmarked row first", ranked[0].ID)
+	}
+	// ★ rows collapse the same way (TrimRight's cutset is runes, not bytes).
+	stars := []scryfall.Card{
+		{ID: "plain", Name: "X", Set: "8ed", CollectorNumber: "95"},
+		{ID: "star", Name: "X", Set: "8ed", CollectorNumber: "95★"},
+	}
+	if _, s := rankByScanStrength(stars, "", "", 0); s != scanMatchSinglePrint {
+		t.Errorf("star pair strength = %v, want scanMatchSinglePrint", s)
+	}
+	// Variants across different sets are genuinely different printings.
+	spread := []scryfall.Card{
+		{ID: "a", Name: "X", Set: "7ed", CollectorNumber: "95"},
+		{ID: "b", Name: "X", Set: "8ed", CollectorNumber: "95★"},
+	}
+	if _, s := rankByScanStrength(spread, "", "", 0); s != scanMatchNone {
+		t.Errorf("cross-set variants strength = %v, want scanMatchNone", s)
+	}
+}
+
+func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
+	// "95" is Remove Soul in both 7th and 8th Edition; the copyright range's
+	// end year ("1993-2003") equals the release year and picks one (observed
+	// live — the read queued as ambiguous without it).
+	prints := []scryfall.Card{
+		{ID: "7ed", Name: "Remove Soul", Set: "7ed", CollectorNumber: "95", ReleasedAt: "2001-04-11"},
+		{ID: "8ed", Name: "Remove Soul", Set: "8ed", CollectorNumber: "95", ReleasedAt: "2003-07-28"},
+	}
+	ranked, s := rankByScanStrength(prints, "", "95", 2003)
+	if s != scanMatchNumberOnly {
+		t.Errorf("year-pinned strength = %v, want scanMatchNumberOnly", s)
+	}
+	if ranked[0].ID != "8ed" {
+		t.Errorf("ranked[0] = %s, want the printing released that year", ranked[0].ID)
+	}
+	// A misread year matches no printing and must leave the tie as it found
+	// it — ambiguous queues, never a guessed commit.
+	if _, s := rankByScanStrength(prints, "", "95", 2013); s != scanMatchNumberAmbiguous {
+		t.Errorf("misread year strength = %v, want scanMatchNumberAmbiguous", s)
+	}
+	// A year shared by both matches decides nothing either.
+	same := []scryfall.Card{
+		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7", ReleasedAt: "2003-01-01"},
+		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7", ReleasedAt: "2003-06-01"},
+	}
+	if _, s := rankByScanStrength(same, "", "7", 2003); s != scanMatchNumberAmbiguous {
+		t.Errorf("shared year strength = %v, want scanMatchNumberAmbiguous", s)
+	}
+	// The year never overrides a full set+number verification.
+	if _, s := rankByScanStrength(prints, "7ed", "95", 2003); s != scanMatchSetAndNumber {
+		t.Errorf("set+number with year = %v, want scanMatchSetAndNumber", s)
 	}
 }
 
@@ -1828,7 +1994,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0)
 	m.review = []queueItem{{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		raw:    scan.Card{SetCode: "MH3", CollectorNumber: "123", Confidence: 0.5},
 		match:  cardname.Match{Exact: true, Similarity: 1},
@@ -1875,7 +2041,7 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0)
 	item := queueItem{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		match:  cardname.Match{Exact: true, Similarity: 1},
 		prints: ranked, rank: rank, note: "queued"}

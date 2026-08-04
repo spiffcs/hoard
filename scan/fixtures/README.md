@@ -16,6 +16,11 @@ Each frame is here because it pinned a decision:
 | `ocr-mangle` | a misread title ("Manfled Marauder") ships as read — downstream fuzzy matching owns the fix, the helper must not invent |
 | `empty-desk` | a frame with no cards yields an empty list, not junk entries |
 | `rules-quote-title` | a crop whose "title" is the rules line quoting the name ("If Quicksilver, Brash Blur is in your…") keeps the frame's clean title and contributes only its printing — wholesale replacement fed the junk name downstream, broke the nudge echo-swallow, and let a keyword fallback line become a phantom ("Haste" → Haste Magic, observed live) |
+| `old-frame-copyright-number` | an old frame's collector number lives at the tail of the copyright line ("… Wizards of the Coast, Inc. 95/350") and is extracted along with the range's end year, which breaks the 7ED/8ED number tie downstream |
+| `old-frame-copyright-misread` | the copyright line's italic serif misreads digits ("30/145" → "80/145") — the helper ships the number *as read* but tagged `copyright`, and the Go side's upgrade-only rule owns keeping the card auto-committable |
+| `old-frame-same-set-variants` | a clean old-frame read with no number anywhere (Cephalid Looter) — the same-set variation collapse on the Go side owns the single-print verdict |
+| `old-frame-fuzzy-title` | the old serif title face misreads ("Scho Tracer") and ships as read; downstream fuzzy matching owns it |
+| `old-frame-no-number` | an old frame whose copyright line is too mangled to yield a number (Frozen Solid) — genuinely ambiguous across two sets, and must stay an empty collector read rather than a guess |
 
 Adding one: capture a live session with `HOARD_SCAN_DEBUG_DIR`, copy the
 problem frame's `capture-N-ocr.png` here under a name that says what it

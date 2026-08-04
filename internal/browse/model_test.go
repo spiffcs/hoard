@@ -66,6 +66,10 @@ type fakeStore struct {
 	bidSeries map[string][]store.PricePoint
 	// holdingsByName backs HoldingsOfName, keyed by card name.
 	holdingsByName map[string][]store.Holding
+	// holdingsByID backs HoldingsOf, keyed by scryfall id — the per-container
+	// view a set row resolves through. Nil means "no holdings known", which
+	// is what the detail overlay's fallback path expects.
+	holdingsByID map[string][]store.Holding
 
 	// holdings tracks SetHoldingQuantity so an edit and its undo can be
 	// observed without a database.
@@ -111,6 +115,30 @@ func (f *fakeStore) EnrichedCount() (int, int, error) {
 // The fake's single binder carries id defaultBinderID, mirroring the real
 // store where the default binder is an ordinary row with an id.
 const defaultBinderID = 1
+
+// rowsIn and setRowsIn are the fake's container routing: the default binder
+// is the collection slice, any other binder its binderRows entry. An extra
+// binder with no entry falls back to the collection, the fake's long-
+// standing behavior — so a test asserting on one binder of several must
+// seed binderRows for each.
+func (f *fakeStore) rowsIn(cid int64) []store.CollectionRow {
+	if cid != defaultBinderID {
+		if rows, ok := f.binderRows[cid]; ok {
+			return rows
+		}
+	}
+	return f.collection
+}
+
+func (f *fakeStore) setRowsIn(cid int64, rows []store.CollectionRow) {
+	if cid != defaultBinderID {
+		if _, ok := f.binderRows[cid]; ok {
+			f.binderRows[cid] = rows
+			return
+		}
+	}
+	f.collection = rows
+}
 
 func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 	if f.err != nil {
@@ -215,7 +243,34 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 	d.CKURL, d.CKFoilURL = &ck, &ckFoil
 	return d, f.err
 }
-func (f *fakeStore) HoldingsOf(string) ([]store.Holding, error) { return nil, f.err }
+
+// HoldingsOf serves the holdingsByID fixture, tracking live quantities per
+// container the way HoldingsOfName does for the default binder — so a set
+// row resolved through it sees the effect of the edit before it. Like the
+// real store's by-id query, the returned rows leave ScryfallID unset
+// (store/detail.go documents that gotcha).
+func (f *fakeStore) HoldingsOf(id string) ([]store.Holding, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []store.Holding
+	for _, h := range f.holdingsByID[id] {
+		if h.ContainerKind == store.KindCollection {
+			qty := 0
+			for _, r := range f.rowsIn(h.ContainerID) {
+				if r.ScryfallID == id && r.Finish == h.Finish {
+					qty = r.Quantity
+				}
+			}
+			if qty == 0 {
+				continue // removed rows stop being holdings
+			}
+			h.Quantity = qty
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
 
 // HoldingsOfName serves the holdingsByName fixture, keyed by card name.
 // Collection-kind rows track the live fixture the way the real store
@@ -300,17 +355,29 @@ func (f *fakeStore) SetsHeld() ([]store.SetSummary, error) {
 	return out, nil
 }
 
-// SetByFinish is AllByFinish narrowed to one set code, like the store's.
+// SetByFinish is AllByFinish narrowed to one set code, like the store's —
+// grouped by printing and finish, so a card held loose *and* in a deck is
+// one row carrying the sum, which is what makes a set row's total unlike
+// any one container's count.
 func (f *fakeStore) SetByFinish(code string) ([]store.CollectionRow, error) {
 	all, err := f.AllByFinish()
 	if err != nil {
 		return nil, err
 	}
 	var out []store.CollectionRow
+	at := map[string]int{}
 	for _, r := range all {
-		if r.SetCode == code {
-			out = append(out, r)
+		if r.SetCode != code {
+			continue
 		}
+		key := r.ScryfallID + "|" + r.Finish
+		if i, ok := at[key]; ok {
+			out[i].Quantity += r.Quantity
+			out[i].Value += r.Value
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, r)
 	}
 	return out, nil
 }
@@ -380,15 +447,18 @@ func (f *fakeStore) DeleteBinder(id int64) error {
 }
 
 // SetHoldingQuantity mutates the fixture the way the store mutates the
-// database, so an edit followed by an undo is observable end to end.
-func (f *fakeStore) SetHoldingQuantityIn(_ int64, id, finish string, qty int) (int, error) {
+// database, so an edit followed by an undo is observable end to end. The
+// container is honored, so an edit aimed at one binder of several is
+// observable as such.
+func (f *fakeStore) SetHoldingQuantityIn(cid int64, id, finish string, qty int) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
+	rows := f.rowsIn(cid)
 	var previous int
 	var found bool
-	out := f.collection[:0]
-	for _, r := range f.collection {
+	out := rows[:0:0]
+	for _, r := range rows {
 		if r.ScryfallID == id && r.Finish == finish {
 			previous, found = r.Quantity, true
 			if qty == 0 {
@@ -400,14 +470,14 @@ func (f *fakeStore) SetHoldingQuantityIn(_ int64, id, finish string, qty int) (i
 		}
 		out = append(out, r)
 	}
-	f.collection = out
 
 	// The real store upserts, so setting a quantity on a printing with no row
 	// creates one — which is exactly what undoing a zeroed holding depends on.
 	if !found && qty > 0 {
-		f.collection = append(f.collection,
+		out = append(out,
 			row(strings.TrimSuffix(id, "-id"), "uma", "1", finish, qty, float64(qty)))
 	}
+	f.setRowsIn(cid, out)
 	return previous, nil
 }
 
@@ -530,23 +600,23 @@ func (f *fakeStore) UpsertPrintings(cards []scryfall.Card) error {
 	return nil
 }
 
-func (f *fakeStore) RemoveFromBinder(_ int64, id string) ([]store.Holding, error) {
+func (f *fakeStore) RemoveFromBinder(cid int64, id string) ([]store.Holding, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	var removed []store.Holding
 	var kept []store.CollectionRow
-	for _, r := range f.collection {
+	for _, r := range f.rowsIn(cid) {
 		if r.ScryfallID == id {
 			removed = append(removed, store.Holding{
-				ContainerKind: store.KindCollection, Finish: r.Finish,
-				Board: "main", Quantity: r.Quantity,
+				ContainerID: cid, ContainerKind: store.KindCollection,
+				Finish: r.Finish, Board: "main", Quantity: r.Quantity,
 			})
 			continue
 		}
 		kept = append(kept, r)
 	}
-	f.collection = kept
+	f.setRowsIn(cid, kept)
 	if f.removedCard == nil {
 		f.removedCard = map[string][]store.Holding{}
 	}
@@ -554,13 +624,20 @@ func (f *fakeStore) RemoveFromBinder(_ int64, id string) ([]store.Holding, error
 	return removed, nil
 }
 
+// RestoreHoldings puts each holding back in the container it came from, the
+// way the store does — which is what makes one undo of a multi-binder
+// removal observable.
 func (f *fakeStore) RestoreHoldings(id string, holdings []store.Holding) error {
 	if f.err != nil {
 		return f.err
 	}
 	for _, h := range holdings {
-		f.collection = append(f.collection,
-			row(strings.TrimSuffix(id, "-id"), "uma", "1", h.Finish, h.Quantity, float64(h.Quantity)))
+		cid := h.ContainerID
+		if cid == 0 {
+			cid = defaultBinderID
+		}
+		f.setRowsIn(cid, append(f.rowsIn(cid),
+			row(strings.TrimSuffix(id, "-id"), "uma", "1", h.Finish, h.Quantity, float64(h.Quantity))))
 	}
 	return nil
 }
@@ -1337,6 +1414,27 @@ func TestRemoveAsksBeforeActing(t *testing.T) {
 	m = key(m, "n")
 	if m.confirm != nil || findCard(m, "Sol Ring") == -1 {
 		t.Error("n did not cancel the removal")
+	}
+}
+
+// The hint beside a staged question spells out the keys it answers to.
+// "y/n" alone left readers guessing whether n was required or any key would
+// do — and the question already carries the wording for its help line.
+func TestConfirmHintNamesTheKeys(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	m.cursor[paneCards] = findCard(m, "Sol Ring")
+	m = key(m, "d")
+	if m.confirm == nil {
+		t.Fatal("d staged no confirm")
+	}
+	if got := m.statusLine(); !strings.Contains(got, "y remove · any other key cancels") {
+		t.Errorf("status line = %q, want the confirm's own keys", got)
+	}
+	// A question with no wording of its own still says something.
+	m.confirm = &pendingConfirm{prompt: "sure?"}
+	if got := m.statusLine(); !strings.Contains(got, "y/n") {
+		t.Errorf("status line = %q, want the y/n fallback", got)
 	}
 }
 

@@ -734,6 +734,55 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 	}
 }
 
+// Removing the last copy closes the overlay: a detail is a card's
+// holdings, and with none left it would go on showing the row that was just
+// removed. The receipt survives the close, so the main view says what
+// happened.
+func TestDetailClosesWhenTheLastCopyGoes(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+
+	m = key(m, "d")
+	if m.confirm == nil {
+		t.Fatal("d staged no removal")
+	}
+	m = key(m, "y")
+	if m.detail != nil {
+		t.Error("the overlay outlived the card's last copy")
+	}
+	if !strings.Contains(m.status, "removed Bitterblossom") {
+		t.Errorf("status = %q, want the removal receipt to survive the close", m.status)
+	}
+
+	// The same holds for editing the count to zero, the other way a row
+	// leaves.
+	st2 := testStore()
+	st2.holdingsByName = st.holdingsByName
+	m2 := newTestModel(t, st2)
+	m2 = key(m2, "tab")
+	next, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 = next.(Model)
+	for range 4 {
+		m2 = key(m2, "-")
+	}
+	if m2.detail != nil {
+		t.Error("the overlay outlived a count edited down to nothing")
+	}
+}
+
 // The held zone's field editor: ↑ climbs from the links into the held
 // list, ←/→ highlight quantity, set, or location, and enter edits the
 // highlighted field — quantity by number, set by re-pointing the row at

@@ -95,6 +95,15 @@ printing list and marked `← scanned`, with the cursor already on it. This matt
 for reprinted cards: Sol Ring has over a hundred printings, and the number in
 your hand says which one it is.
 
+On pre-M15 frames the number hides at the tail of the copyright line ("™ & ©
+1993-2003 Wizards of the Coast, Inc. 95/350"), and hoard reads it from there
+too — along with the copyright range's end year, which equals the printing's
+release year and settles a number shared across editions ("95" is Remove Soul
+in both 7th and 8th Edition; the year says which). Because that italic print
+misreads digits more often than the modern collector block, a copyright-line
+read only ever *strengthens* a match — a garbled digit never demotes a card
+that would have added itself without it.
+
 The card is located in the frame first, and the border is then read relative to
 the card's own bottom edge, so the card does not need to fill the shot or sit at
 any particular height — anywhere in frame, roughly upright, is enough.
@@ -104,7 +113,9 @@ any particular height — anywhere in frame, roughly upright, is enough.
 A scanned card writes itself to the collection — quantity 1, no keys
 pressed — only when the evidence adds up. The printing must be pinned: the
 collector read matched a real printing of the resolved card (or it is the
-only printing that exists). A full set-and-number verification carries the
+only printing that exists — where a same-set variation row, like a
+theme-deck alternate art, counts as the same printing). A full
+set-and-number verification carries the
 rest by itself — it is self-consistent, since a name misresolved to the wrong
 card could not have its number match that card's printings — so a
 glare-truncated title or a low-confidence read doesn't queue a card whose

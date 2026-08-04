@@ -163,6 +163,17 @@ struct CardRead {
     /// The finish the primary block's separator marked: "foil" (printed star),
     /// "nonfoil" (bullet), or "" when the frame carries no marker.
     var finishHint = ""
+    /// A collector number read off the tail of the copyright line — the only
+    /// place pre-8th-edition frames print one ("™ & © 1993-2003 Wizards of the
+    /// Coast, Inc. 95/350", tiny italic serif). Kept apart from collectorNumber
+    /// on purpose: the flat event fields must stay band-only, because a parent
+    /// that predates provenance treats any flat number as trusted, and this
+    /// glyph size misreads digits often enough that a copyright read may only
+    /// ever upgrade a match, never veto one.
+    var copyrightNumber = ""
+    /// End year of the copyright range on the same line ("1993-2003" → 2003),
+    /// which equals the printing's release year. 0 when unread.
+    var copyrightYear = 0
 }
 
 /// CardEntry is one card of a capture, as the scan event reports it: the title
@@ -189,6 +200,14 @@ struct CardEntry: Encodable {
     var collectorAlts: [CollectorRead]? = nil
     /// The primary block's printed finish marker; see CollectorRead.finish.
     var finishHint: String = ""
+    /// Where collectorNumber came from: nil/"" is the trusted collector band,
+    /// "copyright" the old-frame copyright-line tail (upgrade-only evidence —
+    /// see CardRead.copyrightNumber). Optional so events keep their old wire
+    /// shape when no copyright read happened.
+    var numberSource: String? = nil
+    /// End year of the copyright range, when one was read; see
+    /// CardRead.copyrightYear.
+    var copyrightYear: Int? = nil
 }
 
 /// collectorBandFraction is how far up the *card* the collector band reaches, as a
@@ -400,6 +419,77 @@ func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
     return Array(reads.prefix(4))
 }
 
+// The copyright line of pre-M15 frames, where old frames hide their collector
+// number. Two shapes matter: the range whose END year equals the printing's
+// release year ("1993-2003" — 8th Edition, 2003; its 7th Edition sibling says
+// "1993-2001"), and the collector pair at the line's tail ("… Wizards of the
+// Coast, Inc. 95/350"). The dash arrives as "-", "–", "—" or, at this glyph
+// size, a bare space — hence the optional separator.
+let copyrightYearRE = try! NSRegularExpression(
+    pattern: #"(?:19|20)\d{2}\s*[-–—]?\s*((?:19|20)\d{2})"#)
+let copyrightTailPairRE = try! NSRegularExpression(
+    pattern: #"(\d{1,5})\s*/\s*(\d{1,5})\s*[.,]?\s*$"#)
+
+/// copyrightFurniture reports whether a line is (a fragment of) the bottom
+/// copyright line — "™ & © 1993-2003 Wizards of the Coast, Inc. 95/350" and
+/// the OCR manglings thereof ("te Coast, Inc", "Coast, Ine: 30/1", "1993-2003
+/// Wizar"). Two signals are required: a brand token (coast, or a wizar…
+/// prefix — Vision truncates the word) plus corroboration (©/™, an inc-shaped
+/// token, a year range, or a collector pair), so that real titles sharing a
+/// token — "Coast Watcher", "Wizard's Retort" — survive.
+func copyrightFurniture(_ s: String) -> Bool {
+    let tokens = s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+    let brand = tokens.contains("coast") || tokens.contains(where: { $0.hasPrefix("wizar") })
+    guard brand else { return false }
+    if s.contains("©") || s.contains("™") { return true }
+    if tokens.contains(where: { ["inc", "ine", "in", "ir", "lnc"].contains($0) }) { return true }
+    let ascii = asciify(s)
+    if group(copyrightYearRE, ascii) != nil { return true }
+    if group(collectorPairRE, ascii) != nil { return true }
+    return false
+}
+
+/// parseCopyrightCollector pulls the old-frame collector evidence out of a
+/// capture's text: the pair at the tail of a copyright line (total ≥ 20, the
+/// same guard that keeps a P/T out of the band parse — "Coast, Ine: 30/1"
+/// dies here) and the range's end year. Number and year are independent
+/// finds: a fragment may carry one without the other, and the year matters
+/// even beside a trusted band number — it is what breaks a collector-number
+/// tie between two printings ("95" is both 7th and 8th Edition; only one was
+/// printed in 2003).
+func parseCopyrightCollector(_ texts: [String]) -> (number: String, year: Int)? {
+    var number = ""
+    var year = 0
+    for raw in texts {
+        guard copyrightFurniture(raw) else { continue }
+        let line = asciify(raw)
+        if year == 0, let y = group(copyrightYearRE, line), let n = Int(y),
+           n >= 1993, n <= 2035 {
+            year = n
+        }
+        if number.isEmpty,
+           let n = group(copyrightTailPairRE, line),
+           let total = group(copyrightTailPairRE, line, 2), (Int(total) ?? 0) >= 20 {
+            number = normalizeNumber(n)
+        }
+        if !number.isEmpty && year != 0 { break }
+    }
+    if number.isEmpty && year == 0 { return nil }
+    return (number, year)
+}
+
+/// applyCopyrightCollector folds a copyright-line read into a CardRead. A
+/// trusted band number always wins the number slot — the copyright read is
+/// the fallback for frames whose band gave nothing — but the year rides along
+/// regardless, since it is evidence about the printing either way.
+func applyCopyrightCollector(_ read: inout CardRead, _ texts: [String]) {
+    guard let hit = parseCopyrightCollector(texts) else { return }
+    read.copyrightYear = hit.year
+    if read.collectorNumber.isEmpty {
+        read.copyrightNumber = hit.number
+    }
+}
+
 /// findCard locates the card in the frame, so the collector band can be anchored
 /// to the card's own bottom edge instead of the frame's.
 ///
@@ -531,6 +621,7 @@ func readCard(_ cg: CGImage) -> CardRead {
         lines.append(Line(text: t, box: obs.boundingBox, confidence: cand.confidence))
     }
     if lines.isEmpty {
+        applyCopyrightCollector(&read, bottomLines)
         return read
     }
 
@@ -557,6 +648,10 @@ func readCard(_ cg: CGImage) -> CardRead {
     read.candidates = candidates
     read.lines = plausible
     read.nameConfidence = plausible.first?.confidence ?? ranked.first!.confidence
+    // The copyright line reads better in the full-resolution frame pass than
+    // in the band crop — the band's tiny italic serif came back as fragments
+    // in every observed old-frame capture — so both sources feed it.
+    applyCopyrightCollector(&read, bottomLines + lines.map { $0.text })
     return read
 }
 
@@ -784,7 +879,10 @@ func boilerplate(_ s: String) -> Bool {
     if words.count == 2, words[0].count == 1, words[1] == "marvel" {
         return true
     }
-    return false
+    // Old-frame copyright fragments ("Coast, Ine: 30/1", "te Coast, Inc")
+    // survive every check above — no bullet, no full "wizards of the coast",
+    // Title Case enough — and became phantom entries (observed live).
+    return copyrightFurniture(s)
 }
 
 /// scanFrame is the whole capture read: the frame-wide single-card read the
@@ -842,11 +940,20 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
         }
         var e = CardEntry(name: cropRead.name, candidates: Array(cropRead.candidates.prefix(8)),
                           confidence: cropRead.nameConfidence, source: "crop")
+        if cropRead.copyrightYear > 0 {
+            e.copyrightYear = cropRead.copyrightYear
+        }
         // A bare number off a crop is a mana cost or power box as often as a
         // collector number; only a set-and-number pair is worth reporting.
+        // The copyright-line tail is the exception: its signature and total
+        // guard make it far harder to fake than a bare band number, and on
+        // old frames it is the only number printed at all.
         if !cropRead.setCode.isEmpty && !cropRead.collectorNumber.isEmpty {
             e.setCode = cropRead.setCode
             e.collectorNumber = cropRead.collectorNumber
+        } else if !cropRead.copyrightNumber.isEmpty {
+            e.collectorNumber = cropRead.copyrightNumber
+            e.numberSource = "copyright"
         }
         // The crop's band is anchored to this card, so its alternates and
         // finish marker are per-card by construction.
@@ -860,6 +967,10 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
             if entries[idx].entry.collectorNumber.isEmpty && !e.collectorNumber.isEmpty {
                 entries[idx].entry.setCode = e.setCode
                 entries[idx].entry.collectorNumber = e.collectorNumber
+                entries[idx].entry.numberSource = e.numberSource
+            }
+            if entries[idx].entry.copyrightYear == nil {
+                entries[idx].entry.copyrightYear = e.copyrightYear
             }
             if entries[idx].entry.collectorAlts == nil {
                 entries[idx].entry.collectorAlts = e.collectorAlts
@@ -931,16 +1042,29 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
     // construction: collector numbers are per-card within a set, so a
     // neighbour's number cannot verify against the wrong card's printings —
     // it queues, exactly as an unattached read would have.
-    if !cards.isEmpty, !cards.contains(where: { !$0.collectorNumber.isEmpty }),
-       !read.collectorNumber.isEmpty || !read.setCode.isEmpty {
-        cards[0].collectorNumber = read.collectorNumber
-        cards[0].setCode = read.setCode
+    if !cards.isEmpty, !cards.contains(where: { !$0.collectorNumber.isEmpty }) {
+        if !read.collectorNumber.isEmpty || !read.setCode.isEmpty {
+            cards[0].collectorNumber = read.collectorNumber
+            cards[0].setCode = read.setCode
+        } else if !read.copyrightNumber.isEmpty {
+            // The frame-wide copyright read is as card-anchored as the band
+            // read in a single-card scene, and carries the same commit-safety:
+            // on the Go side a copyright number can upgrade a match but never
+            // veto one.
+            cards[0].collectorNumber = read.copyrightNumber
+            cards[0].numberSource = "copyright"
+        }
         if cards[0].collectorAlts == nil, !read.collectorAlts.isEmpty {
             cards[0].collectorAlts = read.collectorAlts
         }
         if cards[0].finishHint.isEmpty {
             cards[0].finishHint = read.finishHint
         }
+    }
+    // The year is printing evidence whichever channel read the number; attach
+    // it to the top-most card — in a single-card scene, the card itself.
+    if !cards.isEmpty, cards[0].copyrightYear == nil, read.copyrightYear > 0 {
+        cards[0].copyrightYear = read.copyrightYear
     }
     return (read, cards)
 }

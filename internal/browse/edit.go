@@ -48,6 +48,10 @@ func (m Model) editable() (bool, string) {
 	if sel.Kind == kindAllCards {
 		return false, "this list merges every container · edit the card in its binder or deck"
 	}
+	// A set row's cards are editable, but not through here: the selected
+	// container's id is synthetic, so the verbs resolve each row back to its
+	// binders and branch before this gate (see setsmode.go). This stays as
+	// the backstop for any caller that does not.
 	if sel.Kind == kindSet {
 		return false, "this list is every printing from " + sel.Name + " · edit the card in its binder or deck"
 	}
@@ -59,6 +63,12 @@ func (m Model) editable() (bool, string) {
 
 // adjustQuantity changes the selected holding by delta.
 func (m *Model) adjustQuantity(delta int) {
+	// A set row has no container to edit through — it resolves to whichever
+	// binders hold the printing.
+	if sel := m.selectedContainer(); m.view == viewHoldings && sel != nil && sel.Kind == kindSet {
+		m.adjustSetQuantity(delta)
+		return
+	}
 	ok, why := m.editable()
 	if !ok {
 		if why != "" {
@@ -234,6 +244,9 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
 	m.statusErr = false
 	m.refresh()
 	m.reloadDetail()
+	if want == 0 {
+		m.closeDetailIfUnheld()
+	}
 }
 
 // promptHeldFinish asks for the held row's finish — the fix for copies
@@ -552,6 +565,7 @@ func (m *Model) removeHeld(h store.Holding, name string) {
 	m.statusErr = false
 	m.refresh()
 	m.reloadDetail()
+	m.closeDetailIfUnheld()
 }
 
 // removeDeck deletes the selected deck.
