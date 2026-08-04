@@ -1,9 +1,14 @@
 [
   {
-    "finish": "",
+    "candidates": [
+      "Titania, Rugged Rumbler",
+      "Legendary Creature - Human Villain",
+      "As an additional cost to cast this spell,"
+    ],
+    "finish": "foil",
     "name": "Titania, Rugged Rumbler",
     "number": "235",
-    "set": "AND",
+    "set": "MSH",
     "source": "crop"
   }
 ]

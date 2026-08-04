@@ -9,7 +9,7 @@ Each frame is here because it pinned a decision:
 
 | fixture | pins |
 | --- | --- |
-| `single-card-crop` | clean outline → perspective crop, collector read off the border (a non-Marvel frame, for set diversity) |
+| `single-card-crop` | clean outline → perspective crop, collector read off the border — and the set code comes from the border line (`MSH *EN …`), not from the flavor text's "…and it ain't you!", which used to win as set `AND` |
 | `frame-fallback-collector` | no usable outline — whole-frame channel still pairs the title with a collector block |
 | `flavor-attribution` | the "—Doctor Doom" phantom: a flavor credit under a quote must not become a card, even tilted (the quote's box *contains* the attribution's) and with the dash lost by OCR |
 | `two-card-pile` | two title bands from one frame via the text channel |
@@ -21,6 +21,18 @@ Each frame is here because it pinned a decision:
 | `old-frame-same-set-variants` | a clean old-frame read with no number anywhere (Cephalid Looter) — the same-set variation collapse on the Go side owns the single-print verdict |
 | `old-frame-fuzzy-title` | the old serif title face misreads ("Scho Tracer") and ships as read; downstream fuzzy matching owns it |
 | `old-frame-no-number` | an old frame whose copyright line is too mangled to yield a number (Frozen Solid) — genuinely ambiguous across two sets, and must stay an empty collector read rather than a guess |
+| `old-frame-crop-title-wins` | the crop read "Caller of the Claw" exactly while the frame offered the rules fragment "When Caller of"; the merge must adopt the crop's name instead of pinning the frame's furniture |
+| `old-frame-crop-title-disagree` | the same card read two ways ("Etemal Dragon"), with the frame's rival reading kept as a candidate — the live session's "Gremal Dragon" fuzzy-resolved to the unrelated *Green Dragon* |
+| `old-frame-self-reference` | the title band is lost and the card names itself in its rules text — "Dwarven Ruins" is recovered as the second candidate, and the mangled artist credit ("Tins. Liz Danforth") must not become the name |
+| `old-frame-set-code-from-rules` | "…and put it into your hand" must not parse as set `PUT` + Italian; the collector number survives the set code's removal |
+| `old-frame-pair-number-no-set` | a pair-form number ("29/143") is its own corroboration — it stays after the prose-derived set code (`FOR`) is refused, where requiring a set would have dropped a correct number |
+| `modern-copyright-tail-number` | a modern frame prints one year and a bare number ("© 2024 Wizards of the Coast 418"), not the old range-and-pair — both must be read, and the number is tied to the brand word so a half-read "143/350" cannot donate its total |
+| `title-lost-block-intact` | the title reads as a line of rules text while the collector block is perfect (MSH/412) — the helper ships the block, and the Go side resolves the card from it rather than queueing an unidentifiable entry |
+
+The goldens also pin the first three candidates. The Go side gives up after
+the first few lines, so which readings sit at the front decides whether a
+name recovered from rules text is reachable at all; the jittery tail of the
+list stays out.
 
 Adding one: capture a live session with `HOARD_SCAN_DEBUG_DIR`, copy the
 problem frame's `capture-N-ocr.png` here under a name that says what it

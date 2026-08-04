@@ -1,5 +1,10 @@
 [
   {
+    "candidates": [
+      "Remove Soul",
+      "Instant",
+      "Counter target creature spell."
+    ],
     "finish": "",
     "name": "Remove Soul",
     "number": "95",

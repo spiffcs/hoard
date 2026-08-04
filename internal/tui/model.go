@@ -1219,6 +1219,14 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 	return m, again
 }
 
+// note writes one line to the session telemetry log. Best effort: no session,
+// no log, no matter.
+func (m model) note(format string, args ...any) {
+	if m.session != nil {
+		m.session.Note(fmt.Sprintf(format, args...))
+	}
+}
+
 // onResolveDone lands one background resolution: a confident card writes
 // itself and shows up on the tally; anything else joins the review queue. The
 // UI state is deliberately untouched — captures keep flowing while this fires.
@@ -1233,11 +1241,14 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	now := m.now()
 
 	// The Go half of the per-card latency line, next to the helper's timing
-	// lines in the telemetry log. Best effort: no session, no log, no matter.
-	if m.session != nil {
-		m.session.Note(fmt.Sprintf("resolve %q line=%d name=%dms prints=%dms",
-			it.canonical, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds()))
-	}
+	// lines in the telemetry log, plus the evidence verdict is about to weigh.
+	// Without the evidence a log can say what the helper saw but never why Go
+	// decided what it did, and re-deriving it offline means refetching every
+	// printing.
+	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s",
+		it.canonical, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds(),
+		it.rank, matchDesc(it.match), orDash(it.raw.SetCode), orDash(it.raw.CollectorNumber),
+		numberSourceSuffix(it.raw.NumberSource), len(it.prints), siblingSuffix(it))
 
 	// A nudge-fired re-read of any recently processed card is the trigger
 	// seeing what we already know — swallow it, and stop nudging: one echo is
@@ -1247,7 +1258,45 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// recent set, not a single last name: a multi-card recheck echoes every
 	// card of the previous capture, and remembering only the last one let the
 	// rest dup-queue (observed live: a re-shot pair queued both).
+	// …unless this look brought finish evidence the commit never had. The
+	// echo is normally the same card telling us nothing new, but a marker
+	// read on the second look and not the first is strictly better than the
+	// nonfoil default already written, and swallowing it loses the only
+	// chance to notice (observed live: a foil Inspired Fire recorded nonfoil,
+	// its foil marker legible on the very next capture).
+	if was, ok := finishConflict(m.recent, it, now); ok {
+		card := it.prints[0]
+		res := Result{Card: card, Finish: it.finishHint, Qty: 1,
+			ContainerID: m.dest.ID, ReplacesFinish: was}
+		if err := m.adder(res); err != nil {
+			// The correction failed, so the guessed row stands and the user
+			// has to know: this is the one place a silent failure would leave
+			// a wrong price in the collection.
+			m.note("outcome %q correction failed: %v", it.canonical, err)
+			m.reviewFlash()
+			it.note = fmt.Sprintf("reads %s but was added as %s, and the correction failed: %v",
+				it.finishHint, was, err)
+			m.review = append(m.review, it)
+			nudge := m.scheduleNudge()
+			next, cmd := m.reviewChanged()
+			return next, tea.Batch(cmd, nudge)
+		}
+		m.note("outcome %q corrected: %s → %s", card.Name, was, it.finishHint)
+		m.recent = correctRecentFinish(m.recent, card.ID, it.finishHint)
+		m.recentNames = recordName(m.recentNames, it.canonical, now)
+		// The count is unchanged — no new card arrived — but the value is not:
+		// the two finishes price differently, which is the whole point.
+		m.addedValue += priceValue(card, it.finishHint) - priceValue(card, was)
+		line := fmt.Sprintf("%s (%s/%s) %s → %s", card.Name,
+			strings.ToUpper(card.Set), card.CollectorNumber, was, it.finishHint)
+		m.tally = append(m.tally, line)
+		m.summary.add("auto", line)
+		m.status = fmt.Sprintf("%s is %s — corrected", card.Name, it.finishHint)
+		m.statusErr = false
+		return m, m.scheduleNudge()
+	}
 	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
+		m.note("outcome %q dropped: nudge echo of a card already handled", it.canonical)
 		m.nudgeDrops++
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.status = fmt.Sprintf("still seeing %s, waiting for the next card", it.canonical)
@@ -1260,7 +1309,24 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// note rather than queueing, exactly as the batch flow always skipped them.
 	// A single-card capture keeps queueing: the only card of a shot must never
 	// vanish silently.
-	if it.canonical == "" && it.errText == "" && it.siblings > 1 {
+	// A nudge-fired capture is a second look at a scene already handled, so an
+	// entry there that resolves to nothing is noise rather than a card about to
+	// be lost — the same reasoning as the multi-card case, and together they
+	// account for most of what a session leaves in review.
+	//
+	// Never on an entry still holding a usable collector block, though. That
+	// block is evidence a real card was in frame, resolveByBlock can name it
+	// outright, and killing it would delete the only trace (observed live:
+	// Quicksilver, Brash Blur arrived with a clean MSH/412 and a title read as
+	// rules text). A scene-fired solo capture still queues: the one card of a
+	// shot the user just placed must never vanish silently.
+	if it.canonical == "" && it.errText == "" &&
+		(it.siblings > 1 || it.fromNudge) && !hasCollectorBlock(it.raw) {
+		why := fmt.Sprintf("phantom in a %d-card capture", it.siblings)
+		if it.siblings <= 1 {
+			why = "phantom in a nudge re-look"
+		}
+		m.note("outcome %q killed: %s", it.ocrLine, why)
 		m.status = fmt.Sprintf("ignored %q: not a card", it.ocrLine)
 		m.statusErr = false
 		return m, m.scheduleNudge()
@@ -1280,6 +1346,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// in frame beside the new one. An un-swapped pile is not a
 				// playset signal — drop it silently (observed live: one card
 				// queued five re-sightings of itself this way).
+				m.note("outcome %q dropped: lingering neighbour of a just-added card", it.canonical)
 				m.recentNames = recordName(m.recentNames, it.canonical, now)
 				m.status = fmt.Sprintf("still seeing %s beside the new card", it.canonical)
 				m.statusErr = false
@@ -1297,6 +1364,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
 		if err := m.adder(res); err != nil {
 			// The write failed, so the card is review-bound, not celebrated.
+			m.note("outcome %q queued: add failed: %v", it.canonical, err)
 			m.reviewFlash()
 			nudge := m.scheduleNudge()
 			it.note = "add failed: " + err.Error()
@@ -1304,7 +1372,10 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			next, cmd := m.reviewChanged()
 			return next, tea.Batch(cmd, nudge)
 		}
-		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now)
+		m.note("outcome %q committed: %s/%s %s", card.Name,
+			strings.ToUpper(card.Set), card.CollectorNumber, finish)
+		_, evidenced := finishFromEvidence(card, it.finishHint)
+		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now, !evidenced)
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.nudgeDrops = 0
 		m.addedCount++
@@ -1332,6 +1403,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			probe = it.ocrLine
 		}
 		if name, ok := similarRecent(m.recentNames, probe, now); ok {
+			m.note("outcome %q dropped: OCR variant of %q, seen moments ago", probe, name)
 			m.recentNames = recordName(m.recentNames, name, now)
 			m.status = fmt.Sprintf("still seeing %s, waiting for the next card", name)
 			m.statusErr = false
@@ -1342,6 +1414,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	if it.canonical != "" {
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 	}
+	m.note("outcome %q queued: %s", orDash(it.canonical), note)
 	m.nudgeDrops = 0
 	m.reviewFlash()
 	it.note = note

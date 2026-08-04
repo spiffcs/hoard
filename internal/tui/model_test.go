@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1483,9 +1484,39 @@ func TestCopyrightNumberNeverVetoesAutoCommit(t *testing.T) {
 }
 
 func TestBandNumberMismatchStillVetoes(t *testing.T) {
-	// The flip side of the copyright sentinel: a trusted band number that
-	// matches nothing keeps its veto — the band is reliable, so the mismatch
-	// means the name fuzzy match may have landed on the wrong card.
+	// A band number that matches nothing keeps its veto when the name was
+	// only a fuzzy match — that is what the veto was always for: the band is
+	// reliable, so the mismatch means the name may have landed on the wrong
+	// card. ("Aven Envo" is the glare-truncated read, not an exact hit.)
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Aven Envo": "Aven Envoy"},
+		prints: map[string][]scryfall.Card{"Aven Envoy": {
+			{ID: "lgn", Name: "Aven Envoy", Set: "lgn", CollectorNumber: "30",
+				Finishes: []string{"nonfoil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Aven Envo",
+		Cards: []scan.Card{{Name: "Aven Envo", Candidates: []string{"Aven Envo"},
+			CollectorNumber: "80", Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 0 {
+		t.Fatalf("adder called %d times, want 0 — a fuzzy name plus a bad number queues", len(ra.got))
+	}
+	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "printing unverified") {
+		t.Fatalf("review = %+v, want the card queued unverified", got.review)
+	}
+}
+
+// An exact name on a card with one printing outlives a misread number. The
+// digits are what this glyph size gets wrong — Aven Envoy's "30" arrived as
+// "80", live — and refusing the card left it worse off than if the band had
+// been unreadable, which is the outcome an exact name already commits on.
+func TestExactNameSinglePrintSurvivesBadNumber(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Aven Envoy": "Aven Envoy"},
 		prints: map[string][]scryfall.Card{"Aven Envoy": {
@@ -1502,8 +1533,40 @@ func TestBandNumberMismatchStillVetoes(t *testing.T) {
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := resolve(t, mm.(model), ev.CardList()[0])
 
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — an exact name with one printing commits", len(ra.got))
+	}
+	if ra.got[0].Card.ID != "lgn" {
+		t.Errorf("committed %q, want the card's only printing", ra.got[0].Card.ID)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued", got.review)
+	}
+}
+
+// The rescue is a floor, not a licence: with several printings there is still
+// nothing to pick between them, so a bad number queues exactly as before.
+func TestExactNameManyPrintsStillQueuesOnBadNumber(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Brain Freeze": "Brain Freeze"},
+		prints: map[string][]scryfall.Card{"Brain Freeze": {
+			{ID: "scg", Name: "Brain Freeze", Set: "scg", CollectorNumber: "29",
+				Finishes: []string{"nonfoil"}},
+			{ID: "vma", Name: "Brain Freeze", Set: "vma", CollectorNumber: "60",
+				Finishes: []string{"nonfoil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Brain Freeze",
+		Cards: []scan.Card{{Name: "Brain Freeze", Candidates: []string{"Brain Freeze"},
+			CollectorNumber: "999", Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
 	if len(ra.got) != 0 {
-		t.Fatalf("adder called %d times, want 0 — a trusted mismatch queues", len(ra.got))
+		t.Fatalf("adder called %d times, want 0 — two printings and no usable number", len(ra.got))
 	}
 	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "printing unverified") {
 		t.Fatalf("review = %+v, want the card queued unverified", got.review)
@@ -1589,10 +1652,18 @@ func TestVerdict(t *testing.T) {
 			queueItem{errText: "api down"}, false, "", "lookup failed"},
 		{"no name queues",
 			queueItem{ocrLine: "Blrgh"}, false, "", "couldn't identify"},
-		{"fallback-line match queues",
+		// A fallback line is a weak place to find a name, so it queues on its
+		// own — but a number that matches a printing of the card that line
+		// resolved to could not have agreed with a wrong name (live: a Forest
+		// with an exact name and a full MSH/286 match sat in review).
+		{"fallback-line match queues without printing evidence",
+			queueItem{canonical: "Sol Ring", lineIdx: 2, match: exact,
+				prints: verified[:1], rank: scanMatchSinglePrint},
+			false, "", "fallback"},
+		{"fallback-line match commits when the number verifies",
 			queueItem{canonical: "Sol Ring", lineIdx: 2, match: exact,
 				prints: verified, rank: scanMatchSetAndNumber},
-			false, "", "fallback"},
+			true, "nonfoil", ""},
 		{"set+number verification carries a shaky name",
 			// Glare truncated the title (observed live: "Danther Wakandan
 			// King"), but the collector block pinned the printing — and a
@@ -1611,11 +1682,19 @@ func TestVerdict(t *testing.T) {
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.8},
 				prints: verified[:1], rank: scanMatchNumberOnly},
 			false, "", "uncertain name"},
-		{"low OCR confidence on a fuzzy name without strong printing queues",
+		// Vision's confidence describes the glyphs; a matched number answers it,
+		// because the digits and the name agree on a real printing. With no
+		// number to check, the floor still stands.
+		{"low OCR confidence on a fuzzy name without a number queues",
+			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.95},
+				prints: verified[:1], rank: scanMatchSinglePrint,
+				raw: scan.Card{Confidence: 0.5}},
+			false, "", "low OCR confidence"},
+		{"low OCR confidence commits when the number verifies",
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.95},
 				prints: verified[:1], rank: scanMatchNumberOnly,
 				raw: scan.Card{Confidence: 0.5}},
-			false, "", "low OCR confidence"},
+			true, "nonfoil", ""},
 		{"exact name with low confidence and weak printing still commits",
 			// Exact normalized equality IS the confidence check: the text
 			// matched a real card name letter for letter.
@@ -2393,5 +2472,370 @@ func TestEnterDoesNotCapture(t *testing.T) {
 	}
 	if got.state != stateCapture {
 		t.Fatalf("state = %v, want stateCapture unchanged", got.state)
+	}
+}
+
+// layeredFakeSearcher records which lines were resolved against the catalog
+// alone and which were allowed off-machine, so the fallback-line policy can be
+// asserted rather than inferred from timing.
+type layeredFakeSearcher struct {
+	fakeSearcher
+	remote []string
+	local  []string
+}
+
+func (s *layeredFakeSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
+	s.remote = append(s.remote, text)
+	return s.fakeSearcher.NamedFuzzy(ctx, text)
+}
+
+func (s *layeredFakeSearcher) NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
+	s.local = append(s.local, text)
+	return s.fakeSearcher.NamedFuzzy(ctx, text)
+}
+
+// Only the helper's own title guess may reach the network. verdict refuses to
+// auto-commit a fallback-line match, so a round trip spent on one buys nothing
+// but latency and a chance to ghost a real card into the queue — one live
+// session lost 19s across 15 failed resolutions this way.
+func TestResolveNameKeepsFallbackLinesLocal(t *testing.T) {
+	s := &layeredFakeSearcher{fakeSearcher: fakeSearcher{
+		fuzzy: map[string]string{"Dwarven Ruins": "Dwarven Ruins"},
+	}}
+	lines := []string{"Tins. Liz Danforth", "Dwarven Ruins", "Sacrifice Dwarven Ruins"}
+
+	name, _, idx, _, err := resolveName(context.Background(), s, lines)
+	if err != nil {
+		t.Fatalf("resolveName: %v", err)
+	}
+	if name != "Dwarven Ruins" || idx != 1 {
+		t.Fatalf("resolved %q at line %d, want \"Dwarven Ruins\" at line 1", name, idx)
+	}
+	if want := []string{"Tins. Liz Danforth"}; !slices.Equal(s.remote, want) {
+		t.Errorf("lines allowed off-machine = %v, want only the title guess %v", s.remote, want)
+	}
+	if want := []string{"Dwarven Ruins"}; !slices.Equal(s.local, want) {
+		t.Errorf("catalog-only lines = %v, want %v", s.local, want)
+	}
+}
+
+// The empty sentinel exists to re-derive the no-number outcome as a floor, so
+// it must never displace evidence that a set and number both matched — that
+// would clear the winning collector context and drop the card back under the
+// strict name gates verdict exempts a set+number match from.
+func TestSetAndNumberOutranksSinglePrint(t *testing.T) {
+	if !(scanMatchSetAndNumber > scanMatchSinglePrint) {
+		t.Errorf("scanMatchSetAndNumber (%d) must outrank scanMatchSinglePrint (%d)",
+			scanMatchSetAndNumber, scanMatchSinglePrint)
+	}
+	if !(scanMatchSinglePrint > scanMatchNumberOnly) {
+		t.Errorf("scanMatchSinglePrint (%d) must outrank scanMatchNumberOnly (%d)",
+			scanMatchSinglePrint, scanMatchNumberOnly)
+	}
+	if got := scanMatchSetAndNumber.String(); got != "set+number" {
+		t.Errorf("scanMatchSetAndNumber.String() = %q, want %q", got, "set+number")
+	}
+}
+
+// keeperPrints is the case the year cannot settle: two printings that shipped
+// in the *same* year, so a copyright read naming that year still leaves the
+// card ambiguous. The fixture exists to pin the failing-closed direction.
+func keeperPrints() []scryfall.Card {
+	return []scryfall.Card{
+		{ID: "lgn", Name: "Keeper of the Nine Gales", Set: "lgn", CollectorNumber: "42",
+			ReleasedAt: "2003-02-03", Finishes: []string{"nonfoil"}},
+		{ID: "8ed", Name: "Keeper of the Nine Gales", Set: "8ed", CollectorNumber: "88",
+			ReleasedAt: "2003-07-28", Finishes: []string{"nonfoil"}},
+	}
+}
+
+func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "lgn", Name: "Keeper of the Nine Gales", Set: "lgn", CollectorNumber: "42",
+			ReleasedAt: "2003-02-03", Finishes: []string{"nonfoil"}},
+		{ID: "10e", Name: "Keeper of the Nine Gales", Set: "10e", CollectorNumber: "88",
+			ReleasedAt: "2007-07-13", Finishes: []string{"nonfoil"}},
+	}
+	ranked, rank := rankByScanStrength(prints, "", "", 2003)
+	if rank != scanMatchYearOnly {
+		t.Fatalf("rank = %v, want scanMatchYearOnly", rank)
+	}
+	if ranked[0].ID != "lgn" {
+		t.Errorf("ranked[0] = %q, want the 2003 printing to lead", ranked[0].ID)
+	}
+	if rank.String() != "year-only" {
+		t.Errorf("String() = %q, want %q", rank.String(), "year-only")
+	}
+}
+
+// Two printings from the same year settle nothing, so the card must queue
+// rather than pick whichever the catalog happened to list first.
+func TestCopyrightYearAmbiguousLeavesUnverified(t *testing.T) {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003); rank != scanMatchNone {
+		t.Errorf("rank = %v, want scanMatchNone — both printings are 2003", rank)
+	}
+	// A year matching no printing is the misread case: unchanged behavior.
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997); rank != scanMatchNone {
+		t.Errorf("rank = %v, want scanMatchNone for a year no printing shares", rank)
+	}
+	// And with no year read at all, nothing changes either.
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0); rank != scanMatchNone {
+		t.Errorf("rank = %v, want scanMatchNone without a year", rank)
+	}
+}
+
+// A year is weaker evidence than a collector number and must rank below one,
+// so a candidate that actually verified by number always wins the selection.
+func TestYearOnlyRanksBelowNumber(t *testing.T) {
+	if !(scanMatchYearOnly < scanMatchNumberOnly) {
+		t.Errorf("year-only (%d) must rank below number-only (%d)",
+			scanMatchYearOnly, scanMatchNumberOnly)
+	}
+	if !(scanMatchYearOnly > scanMatchNumberAmbiguous) {
+		t.Errorf("year-only (%d) must rank above number-ambiguous (%d)",
+			scanMatchYearOnly, scanMatchNumberAmbiguous)
+	}
+}
+
+// End to end: the old frame gave a name and a copyright year and nothing else,
+// and the card commits to the printing that year names.
+func TestYearOnlyAutoCommits(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Keeper of the Nine Gales": "Keeper of the Nine Gales"},
+		prints: map[string][]scryfall.Card{"Keeper of the Nine Gales": {
+			{ID: "lgn", Name: "Keeper of the Nine Gales", Set: "lgn", CollectorNumber: "42",
+				ReleasedAt: "2003-02-03", Finishes: []string{"nonfoil"}},
+			{ID: "10e", Name: "Keeper of the Nine Gales", Set: "10e", CollectorNumber: "88",
+				ReleasedAt: "2007-07-13", Finishes: []string{"nonfoil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Keeper of the Nine Gales",
+		Cards: []scan.Card{{Name: "Keeper of the Nine Gales",
+			Candidates:    []string{"Keeper of the Nine Gales"},
+			CopyrightYear: 2003, Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — the year names one printing", len(ra.got))
+	}
+	if ra.got[0].Card.ID != "lgn" {
+		t.Errorf("committed %q, want the 2003 printing", ra.got[0].Card.ID)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued", got.review)
+	}
+}
+
+// inspiredFire is the live case: one printing, both finishes available, and a
+// frame whose foil marker only reads on some captures.
+func inspiredFirePrints() []scryfall.Card {
+	return []scryfall.Card{{ID: "msc690", Name: "Inspired Fire", Set: "msc",
+		CollectorNumber: "690", Finishes: []string{"nonfoil", "foil"}}}
+}
+
+// A first look with no legible marker commits the nonfoil default; the recheck
+// nudge then reads the foil star. Swallowing that echo threw away the only
+// evidence the card was foil, and the collection kept a silently wrong finish
+// (observed live on Inspired Fire, MSC 690). The second look re-keys the row
+// it wrote rather than adding beside it.
+func TestEchoWithFinishEvidenceCorrectsTheCommit(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
+		prints: map[string][]scryfall.Card{"Inspired Fire": inspiredFirePrints()},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// First look: no marker anywhere, so the default is written.
+	blind := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
+			Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
+	m = resolve(t, mm.(model), blind.CardList()[0])
+
+	if len(ra.got) != 1 || ra.got[0].Finish != "nonfoil" {
+		t.Fatalf("first look = %+v, want one nonfoil commit", ra.got)
+	}
+
+	// Second look, fired by the nudge: this time the star reads.
+	m.nudgeSentAt = m.now()
+	marked := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
+			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: marked})
+	m = resolve(t, mm.(model), marked.CardList()[0])
+
+	if len(ra.got) != 2 {
+		t.Fatalf("adder called %d times, want 2 — the add and its correction", len(ra.got))
+	}
+	fix := ra.got[1]
+	if fix.Finish != "foil" || fix.ReplacesFinish != "nonfoil" {
+		t.Errorf("correction = %+v, want foil replacing nonfoil", fix)
+	}
+	if fix.Card.ID != "msc690" {
+		t.Errorf("corrected %q, want the card already committed", fix.Card.ID)
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued once it self-corrects", m.review)
+	}
+	// A correction is not a second card.
+	if m.addedCount != 1 {
+		t.Errorf("addedCount = %d, want 1", m.addedCount)
+	}
+	// And it must not correct itself again on the next look.
+	m.nudgeSentAt = m.now()
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
+	m = resolve(t, mm.(model), blind.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("adder called %d times after a third look, want 2", len(ra.got))
+	}
+}
+
+// The guard is the *guess*, not merely a difference: a finish the card itself
+// chose is not second-guessed by a later look, or a genuine foil commit would
+// queue itself every time the next capture failed to read the marker.
+func TestEvidencedFinishIsNotReopenedByEcho(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
+		prints: map[string][]scryfall.Card{"Inspired Fire": inspiredFirePrints()},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	foil := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
+			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: foil})
+	m = resolve(t, mm.(model), foil.CardList()[0])
+	if len(ra.got) != 1 || ra.got[0].Finish != "foil" {
+		t.Fatalf("first look = %+v, want one foil commit", ra.got)
+	}
+
+	// The echo reads nonfoil. The commit was evidence-backed, so it stands and
+	// the echo is swallowed as usual.
+	m.nudgeSentAt = m.now()
+	plain := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
+			FinishHint: "nonfoil", Confidence: 0.95, Source: "crop"}}}
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: plain})
+	m = resolve(t, mm.(model), plain.CardList()[0])
+
+	if len(m.review) != 0 {
+		t.Fatalf("review = %+v, want an evidenced finish left alone", m.review)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adder called %d times, want 1", len(ra.got))
+	}
+}
+
+// blockFakeSearcher adds collector-block lookup to the cascade fake.
+type blockFakeSearcher struct {
+	fakeSearcher
+	byBlock map[string]scryfall.Card // "set/number" (lowercased) -> card
+	asked   []string
+}
+
+func (s *blockFakeSearcher) PrintBySetNumber(_ context.Context, set, number string) (*scryfall.Card, error) {
+	key := strings.ToLower(set) + "/" + number
+	s.asked = append(s.asked, key)
+	if c, ok := s.byBlock[key]; ok {
+		return &c, nil
+	}
+	return nil, nil
+}
+
+func quicksilverEvent(name string, alts []scan.CollectorAlt) scan.Event {
+	return scan.Event{Kind: scan.EventScan, Name: name,
+		Cards: []scan.Card{{Name: name, Candidates: []string{name},
+			SetCode: "MSH", CollectorNumber: "412", Confidence: 0.95, Source: "crop",
+			CollectorAlts: alts}}}
+}
+
+// A title that reads as rules text does not make the card unidentifiable: the
+// block names it exactly. Live, "If Quicksilver, Brash Blur is in your" came
+// with a clean MSH/412 and the card went unrecorded for the whole session.
+func TestUnreadableTitleResolvesFromItsCollectorBlock(t *testing.T) {
+	card := scryfall.Card{ID: "msh412", Name: "Quicksilver, Brash Blur", Set: "msh",
+		CollectorNumber: "412", Finishes: []string{"nonfoil"}}
+	fs := &blockFakeSearcher{byBlock: map[string]scryfall.Card{"msh/412": card}}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := quicksilverEvent("If Quicksilver, Brash Blur is in your", nil)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — the block identifies the card", len(ra.got))
+	}
+	if ra.got[0].Card.ID != "msh412" {
+		t.Errorf("committed %q, want msh412", ra.got[0].Card.ID)
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued", got.review)
+	}
+}
+
+// A copyright-line number misreads digits, so it may rank a card but never
+// conjure one: resolving a card that was never identified from a number we
+// distrust would invent the card outright.
+func TestBlockResolutionRefusesACopyrightNumber(t *testing.T) {
+	card := scryfall.Card{ID: "msh412", Name: "Quicksilver, Brash Blur", Set: "msh",
+		CollectorNumber: "412", Finishes: []string{"nonfoil"}}
+	fs := &blockFakeSearcher{byBlock: map[string]scryfall.Card{"msh/412": card}}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := quicksilverEvent("If Quicksilver, Brash Blur is in your", nil)
+	ev.Cards[0].NumberSource = "copyright"
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(ra.got) != 0 {
+		t.Fatalf("adder called %d times, want 0 — a copyright number must not name a card", len(ra.got))
+	}
+	if len(got.review) != 1 {
+		t.Errorf("review = %+v, want the card queued unidentified", got.review)
+	}
+}
+
+// The phantom kill clears the noise a nudge re-look leaves behind, but a block
+// is evidence a real card is in frame — killing that would delete the only
+// trace of it, which is exactly what block resolution exists to rescue.
+func TestNudgePhantomKillSparesAnEntryWithACollectorBlock(t *testing.T) {
+	// No block lookup available, so the card stays unidentified either way;
+	// what is under test is whether it survives to the queue.
+	fs := &blockFakeSearcher{}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	m.nudgeSentAt = m.now()
+
+	withBlock := quicksilverEvent("If Quicksilver, Brash Blur is in your", nil)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: withBlock})
+	got := resolve(t, mm.(model), withBlock.CardList()[0])
+	if len(got.review) != 1 {
+		t.Fatalf("review = %+v, want an entry with a block kept", got.review)
+	}
+
+	// The same nudge re-look with nothing but junk text is noise and dies.
+	m2 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m2, _ = openCapture(t, m2)
+	m2.nudgeSentAt = m2.now()
+	junk := scan.Event{Kind: scan.EventScan, Name: "G: Add *",
+		Cards: []scan.Card{{Name: "G: Add *", Candidates: []string{"G: Add *"},
+			Confidence: 0.9, Source: "crop"}}}
+	mm2, _ := m2.onSessionEvent(sessionEventMsg{gen: m2.sessionGen, ok: true, ev: junk})
+	got2 := resolve(t, mm2.(model), junk.CardList()[0])
+	if len(got2.review) != 0 {
+		t.Errorf("review = %+v, want the blockless nudge phantom killed", got2.review)
 	}
 }

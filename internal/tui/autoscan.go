@@ -27,13 +27,92 @@ import (
 // scanMatch is how strongly a capture's collector info pinned a printing.
 type scanMatch int
 
+// The order is the strength order: resolveCardCmd keeps the highest-ranking
+// candidate, so set+number sits at the top. It is self-consistent evidence —
+// a name fuzzy-resolved to the wrong card could not have its number match
+// that card's printings — and must outrank the no-number sentinel, which is
+// only ever a floor.
 const (
 	scanMatchNone            scanMatch = iota
 	scanMatchNumberAmbiguous           // number matched, but several printings share it
+	scanMatchYearOnly                  // no number, but the copyright year names one printing
 	scanMatchNumberOnly                // number matched exactly one printing
-	scanMatchSetAndNumber              // set and number both matched
 	scanMatchSinglePrint               // no number read, but only one printing exists
+	scanMatchSetAndNumber              // set and number both matched
 )
+
+// numberVerified reports whether a collector number actually matched a
+// printing of the resolved card. That is the corroboration the weaker gates
+// defer to: a wrong name could not have produced a number that agrees with it.
+// The no-number ranks are excluded — single-print and year-only never had a
+// number to check.
+func numberVerified(r scanMatch) bool {
+	return r == scanMatchSetAndNumber || r == scanMatchNumberOnly
+}
+
+// String names the match for the telemetry log.
+func (m scanMatch) String() string {
+	switch m {
+	case scanMatchNumberAmbiguous:
+		return "number-ambiguous"
+	case scanMatchYearOnly:
+		return "year-only"
+	case scanMatchNumberOnly:
+		return "number-only"
+	case scanMatchSinglePrint:
+		return "single-print"
+	case scanMatchSetAndNumber:
+		return "set+number"
+	default:
+		return "none"
+	}
+}
+
+// The telemetry formatters. Every scan decision the log records goes through
+// these, so a session log reads the same way whichever branch produced it.
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// matchDesc renders how the name resolved: an exact hit, or the similarity
+// the auto-commit gate will compare against.
+func matchDesc(m cardname.Match) string {
+	if m.Exact {
+		return "exact"
+	}
+	return fmt.Sprintf("%d%%", int(m.Similarity*100))
+}
+
+// numberSourceSuffix marks a number read off the copyright line, since that
+// one is upgrade-only evidence and reads differently from a band number.
+func numberSourceSuffix(src string) string {
+	if src == "" {
+		return ""
+	}
+	return "(" + src + ")"
+}
+
+// siblingSuffix records the context a card was seen in, plus the one flag
+// worth auditing after the fact. The first two are inputs to the phantom,
+// duplicate, and echo rules; number-overridden marks a card that committed
+// despite its collector read rather than because of it.
+func siblingSuffix(it queueItem) string {
+	var s string
+	if it.siblings > 1 {
+		s += fmt.Sprintf(" siblings=%d", it.siblings)
+	}
+	if it.fromNudge {
+		s += " nudged"
+	}
+	if it.numberOverridden {
+		s += " number-overridden"
+	}
+	return s
+}
 
 // queueItem is one scanned card and everything its background resolution
 // learned: enough to re-enter the interactive cascade at the right depth
@@ -59,6 +138,14 @@ type queueItem struct {
 	dup        bool   // flagged as a possible duplicate of a recent commit
 	note       string // human-readable reason the card queued
 	errText    string // resolve error, if any
+	// numberOverridden records that a collector number was read but no
+	// candidate carrying one verified, so the card rests on its name and a
+	// single printing instead. Rare and worth auditing: it is the one path
+	// that commits in spite of collector evidence rather than because of it.
+	numberOverridden bool
+	// viaBlock records that the card was identified from its collector block
+	// because no line of text resolved — the title never read at all.
+	viaBlock bool
 }
 
 // resolveDoneMsg carries one finished background resolution. gen ties it to
@@ -164,11 +251,72 @@ func keywordLine(line string) bool {
 	return true
 }
 
+// hasCollectorBlock reports whether a capture carried a set and number good
+// enough to name a printing on their own — the signal that an unidentified
+// entry is a real card whose title would not read, not a phantom. Copyright
+// numbers do not count; they are too misread-prone to identify a card.
+func hasCollectorBlock(c scan.Card) bool {
+	if c.SetCode != "" && c.CollectorNumber != "" && c.NumberSource != "copyright" {
+		return true
+	}
+	return slices.ContainsFunc(c.CollectorAlts, func(a scan.CollectorAlt) bool {
+		return a.Set != "" && a.Number != "" && a.Source != "copyright"
+	})
+}
+
+// blockSearcher is implemented by searchers that can resolve a printing from
+// its collector block alone.
+type blockSearcher interface {
+	PrintBySetNumber(ctx context.Context, set, number string) (*scryfall.Card, error)
+}
+
+// resolveByBlock identifies a card from a collector block when no line of text
+// resolved. Every block the capture offered is tried, primary first, and the
+// first that names exactly one printing wins.
+//
+// A copyright-sourced number is not allowed to do this. Everywhere else it is
+// upgrade-only evidence because that glyph size misreads digits, and a misread
+// number here would not merely rank a card wrongly — it would invent one out of
+// a card that was never identified.
+func resolveByBlock(ctx context.Context, s Searcher, c scan.Card) (*scryfall.Card, scan.CollectorAlt) {
+	byBlock, ok := s.(blockSearcher)
+	if !ok {
+		return nil, scan.CollectorAlt{}
+	}
+	blocks := append([]scan.CollectorAlt{
+		{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint, Source: c.NumberSource}},
+		c.CollectorAlts...)
+	for _, b := range blocks {
+		if b.Set == "" || b.Number == "" || b.Source == "copyright" {
+			continue
+		}
+		card, err := byBlock.PrintBySetNumber(ctx, b.Set, b.Number)
+		if err == nil && card != nil {
+			return card, b
+		}
+	}
+	return nil, scan.CollectorAlt{}
+}
+
+// localOnlySearcher is implemented by searchers with a local catalog layer,
+// resolving without the network fallthrough.
+type localOnlySearcher interface {
+	NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error)
+}
+
 // resolveName tries each OCR line in order until one fuzzy-matches, returning
 // which line it was — the auto-commit bar treats a fallback-line match as
 // suspect, since only line 0 is the helper's actual title guess.
+//
+// Only line 0 is allowed off-machine. verdict refuses to auto-commit any
+// fallback-line match, so the network fallthrough that keeps newly-released
+// cards scannable can buy a fallback line nothing but latency and a queue
+// ghost — and it charged a lot: one live session spent 19s across 15 failed
+// resolutions, the worst single line taking 4.8s, against 0-15ms for every
+// catalog hit.
 func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
 	var firstErr error
+	local, hasLocal := s.(localOnlySearcher)
 	for i, line := range lines {
 		if i >= maxFuzzyTries {
 			break
@@ -179,7 +327,11 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 		if i > 0 && (fallbackLineSuspect(line) || !titleLikely(line) || keywordLine(line)) {
 			continue
 		}
-		card, m, ferr := s.NamedFuzzy(ctx, line)
+		search := s.NamedFuzzy
+		if i > 0 && hasLocal {
+			search = local.NamedFuzzyLocal
+		}
+		card, m, ferr := search(ctx, line)
 		if ferr != nil {
 			if firstErr == nil {
 				firstErr = ferr
@@ -216,6 +368,21 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 		if err != nil {
 			it.errText = err.Error()
 		}
+		// A title that would not read does not make the card unidentifiable:
+		// the collector block names it just as precisely. Only reached when
+		// every line failed, so this costs nothing on the normal path.
+		if canonical == "" {
+			if card, blk := resolveByBlock(ctx, s, c); card != nil {
+				it.canonical, it.match = card.Name, cardname.Match{Exact: true}
+				it.lineIdx = 0
+				it.prints, it.rank = []scryfall.Card{*card}, scanMatchSetAndNumber
+				it.raw.SetCode, it.raw.CollectorNumber = blk.Set, blk.Number
+				it.finishHint = blk.Finish
+				it.viaBlock = true
+				return resolveDoneMsg{gen: gen, item: it,
+					nameDur: nameDur, printsDur: printsDur}
+			}
+		}
 		if canonical != "" {
 			tPrints := time.Now()
 			prints, perr := s.SearchPrints(ctx, canonical)
@@ -241,11 +408,44 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				// number that matches nothing keeps its veto: there the
 				// number is trusted, so the mismatch means the name match
 				// itself is suspect.
+				//
+				// The alts carry no Source of their own and so read as band
+				// numbers here. That holds because the helper fills a
+				// copyright number only when the band gave nothing at all,
+				// and the alts are the band parse's own tail — so a
+				// copyright-sourced primary always arrives with an empty alt
+				// list and an empty set code. Keep those facts together if
+				// either side changes: an alt able to carry a copyright
+				// number would silently defeat this gate.
 				trusted := slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
 					return cd.Number != "" && cd.Source != "copyright"
 				})
-				if !trusted {
-					cands = append(cands, scan.CollectorAlt{Finish: c.FinishHint})
+				// An exact name earns the same floor. The veto below exists
+				// because a number matching nothing suggests the *name* landed
+				// on the wrong card — but that reasoning is about a fuzzy
+				// match, and it inverts when the name is exact: there the
+				// mismatch is the digits, and this glyph size misreads digits
+				// constantly (Lethal Vapors' 68 arrived as 8, live, on a card
+				// with one printing and a perfect name read).
+				//
+				// The floor only pays out when the printings collapse to one,
+				// since rankByScanStrength gives an empty number nothing to
+				// work with otherwise — so a card with nine printings and a
+				// bad number still queues. The effect is simply that a garbage
+				// number can no longer be worse than no number at all, which
+				// is the outcome an exact name already commits on.
+				//
+				// The risk it accepts: scanning off a stack, an exact read of
+				// a *neighbour's* title whose card has one printing will now
+				// commit that neighbour instead of queueing. Auditable — the
+				// resolve line marks every rescue `number-overridden`.
+				// The year rides along: without it the sentinel re-derives the
+				// no-number outcome blind, and soleIndexInYear cannot fire in
+				// the one situation it exists for — an old frame whose only
+				// number came off the copyright line and matched nothing.
+				if !trusted || match.Exact {
+					cands = append(cands, scan.CollectorAlt{
+						Finish: c.FinishHint, Year: c.CopyrightYear})
 				}
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
 				for _, cd := range cands {
@@ -260,6 +460,13 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 						it.finishHint = cd.Finish
 					}
 				}
+				// A number was printed on the wire and none of the candidates
+				// carrying one verified: whatever committed rests on the name
+				// and a lone printing.
+				it.numberOverridden = it.raw.CollectorNumber == "" &&
+					slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
+						return cd.Number != ""
+					})
 			}
 		}
 		return resolveDoneMsg{gen: gen, item: it, nameDur: nameDur, printsDur: printsDur}
@@ -291,45 +498,66 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 		}
 		return false, "", fmt.Sprintf("couldn't identify %q", it.ocrLine)
 	}
-	if it.lineIdx != 0 {
-		return false, "", "matched a fallback OCR line; check it's the right card"
-	}
 	if len(it.prints) == 0 {
 		return false, "", "no printings found"
 	}
 	switch it.rank {
-	case scanMatchSetAndNumber, scanMatchNumberOnly, scanMatchSinglePrint:
+	case scanMatchSetAndNumber, scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly:
 	default:
 		return false, "", fmt.Sprintf("printing unverified: %d printings", len(it.prints))
 	}
+	// A fallback line is a weak place to find a name — it is not the helper's
+	// own title guess — so it queues unless the printing evidence stands on its
+	// own. A number that matches a printing of the card the line resolved to is
+	// exactly that: the line could not have picked the wrong card and then had
+	// its number agree. Ordered after the rank switch for that reason; as an
+	// unconditional veto it queued a Forest holding an exact name and a full
+	// MSH/286 match, and a Glowrider whose number named one printing (live).
+	if it.lineIdx != 0 && !numberVerified(it.rank) {
+		return false, "", "matched a fallback OCR line; check it's the right card"
+	}
 	// The name gates weigh in only when the printing evidence is short of a
-	// full set+number verification. That verification is self-consistent by
-	// construction — a name fuzzy-resolved to the wrong card could not have
-	// its number match that card's printings — so glare that truncates a name
-	// (similarity 0.79, observed live) or drags Vision's line confidence to
-	// 0.5 on an exactly-matching read must not queue a card the collector
-	// block already pinned.
+	// verified number. That verification is self-consistent by construction — a
+	// name fuzzy-resolved to the wrong card could not have its number match
+	// that card's printings — so glare that truncates a name (similarity 0.79,
+	// observed live) must not queue a card the collector block already pinned.
 	if it.rank != scanMatchSetAndNumber {
 		if !it.match.Exact && it.match.Similarity < cardname.AutoCommitSimilarity {
 			return false, "", fmt.Sprintf("uncertain name match (%d%%)", int(it.match.Similarity*100))
 		}
+	}
+	// Vision's confidence is a statement about the *glyphs*, and a matched
+	// number answers it: the digits and the name agree on a real printing, so a
+	// soft-looking title is soft, not wrong. Eternal Dragon (name 92%, number
+	// naming one printing) and Hobgoblin (96%, same) both queued on a 0.5
+	// reading, live. Below a verified number the floor still stands.
+	if !numberVerified(it.rank) {
 		if c := it.raw.Confidence; !it.match.Exact && c > 0 && c < autoCommitOCRConfidence {
 			return false, "", fmt.Sprintf("low OCR confidence (%d%%)", int(c*100))
 		}
 	}
-	// A single finish is that finish. Otherwise the printed marker decides —
-	// modern frames star the collector line on foil printings and bullet it
-	// on nonfoil ones — and only markerless frames fall back to nonfoil, with
-	// the tally as the audit trail.
-	finishes := finishOptions(it.prints[0])
-	finish = "nonfoil"
-	switch {
-	case len(finishes) == 1:
-		finish = finishes[0]
-	case it.finishHint != "" && slices.Contains(finishes, it.finishHint):
-		finish = it.finishHint
-	}
+	finish, _ = finishFromEvidence(it.prints[0], it.finishHint)
 	return true, finish, ""
+}
+
+// finishFromEvidence picks the finish to record and says whether the card
+// actually told us. A single-finish printing is not a choice at all, and a
+// printed marker the printing recognizes is evidence; anything else is the
+// nonfoil default, which is a guess and has to be remembered as one.
+//
+// Old frames make that distinction matter. They carry no set/language line, so
+// no marker ever reaches here and every old foil records as nonfoil — silently,
+// and foil is worth a multiple. Callers that keep the guess flag can at least
+// notice when a later look disagrees.
+func finishFromEvidence(card scryfall.Card, hint string) (finish string, evidenced bool) {
+	finishes := finishOptions(card)
+	if len(finishes) == 1 {
+		return finishes[0], true
+	}
+	if hint != "" && slices.Contains(finishes, hint) {
+		return hint, true
+	}
+	return "nonfoil", false
 }
 
 // variationMarkers are the suffixes Scryfall appends to a collector number for
@@ -366,6 +594,42 @@ func collapseVariants(cards []scryfall.Card) ([]scryfall.Card, bool) {
 	return ranked, true
 }
 
+// soleIndexInYear returns the one index among idxs whose printing was released
+// in the given year, or -1 when none or several were. "Several" is a failure
+// on purpose: two printings sharing a year means the year settles nothing.
+func soleIndexInYear(cards []scryfall.Card, idxs []int, year int) int {
+	prefix := fmt.Sprintf("%d", year)
+	found := -1
+	for _, i := range idxs {
+		if !strings.HasPrefix(cards[i].ReleasedAt, prefix) {
+			continue
+		}
+		if found >= 0 {
+			return -1
+		}
+		found = i
+	}
+	return found
+}
+
+// allIndexes is every position in a slice of n, for a search over all cards.
+func allIndexes(n int) []int {
+	idxs := make([]int, n)
+	for i := range idxs {
+		idxs[i] = i
+	}
+	return idxs
+}
+
+// moveToFront promotes one printing to the head, leaving the rest in order —
+// the shape the picker reads as "this is the scanned one".
+func moveToFront(cards []scryfall.Card, i int) []scryfall.Card {
+	ranked := make([]scryfall.Card, 0, len(cards))
+	ranked = append(ranked, cards[i])
+	ranked = append(ranked, cards[:i]...)
+	return append(ranked, cards[i+1:]...)
+}
+
 // rankByScanStrength is rankByScan with the match strength kept: the picker
 // only needs "promote and mark", but the auto-commit bar has to distinguish a
 // set-verified match from a number that several printings share. year, when
@@ -383,6 +647,22 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 		}
 		if ranked, ok := collapseVariants(cards); ok {
 			return ranked, scanMatchSinglePrint
+		}
+		// Old frames print no collector number the band can reach, so most of
+		// what queues here queues for want of *any* printing evidence — and
+		// the copyright line has been carrying some all along. Its range end
+		// is the printing's release year, which on a card reprinted years
+		// apart names exactly one printing on its own.
+		//
+		// Weaker than a number, and deliberately ranked below one: the year is
+		// four small italic digits, the same glyphs that turn "30" into "80",
+		// so it only ever picks between printings rather than confirming a
+		// card. Ambiguity fails closed — zero or several printings in that
+		// year leave the card queued exactly as before.
+		if year > 0 {
+			if i := soleIndexInYear(cards, allIndexes(len(cards)), year); i >= 0 {
+				return moveToFront(cards, i), scanMatchYearOnly
+			}
 		}
 		return cards, scanMatchNone
 	}
@@ -407,25 +687,11 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 	}
 	yearPinned := false
 	if !exactSet && len(matchIdxs) > 1 && year > 0 {
-		prefix := fmt.Sprintf("%d", year)
-		inYear := -1
-		for _, i := range matchIdxs {
-			if strings.HasPrefix(cards[i].ReleasedAt, prefix) {
-				if inYear >= 0 {
-					inYear = -1
-					break
-				}
-				inYear = i
-			}
-		}
-		if inYear >= 0 {
+		if inYear := soleIndexInYear(cards, matchIdxs, year); inYear >= 0 {
 			best, yearPinned = inYear, true
 		}
 	}
-	ranked := make([]scryfall.Card, 0, len(cards))
-	ranked = append(ranked, cards[best])
-	ranked = append(ranked, cards[:best]...)
-	ranked = append(ranked, cards[best+1:]...)
+	ranked := moveToFront(cards, best)
 	switch {
 	case exactSet:
 		return ranked, scanMatchSetAndNumber
@@ -463,6 +729,59 @@ type recentCommit struct {
 	finish     string
 	captureSeq int
 	at         time.Time
+	// finishGuessed records that nothing on the card chose this finish — it
+	// is the nonfoil default. A later look that *does* carry a marker is
+	// better evidence than this row, and finishConflict finds that case.
+	finishGuessed bool
+}
+
+// finishConflict reports when this look carries a printed finish marker that
+// contradicts a finish we recorded moments ago *by default*. It is the case
+// where the echo swallow would otherwise throw away the better evidence: the
+// first look at a card saw no marker and committed the nonfoil default, and
+// the second look — the one the recheck nudge fired — actually read one.
+// Observed live on a foil Inspired Fire, recorded nonfoil.
+//
+// Deliberately not a silent correction. Two copies of a card, one foil and one
+// not, scanned back to back look exactly like this, and rewriting the first row
+// would be as wrong as dropping the second. The caller queues it instead, which
+// is the only outcome that survives both readings.
+func finishConflict(recent []recentCommit, it queueItem, now time.Time) (was string, ok bool) {
+	if it.finishHint == "" || len(it.prints) == 0 {
+		return "", false
+	}
+	card := it.prints[0]
+	if !slices.Contains(finishOptions(card), it.finishHint) {
+		return "", false
+	}
+	for i := len(recent) - 1; i >= 0; i-- {
+		r := recent[i]
+		if r.scryfallID != card.ID || now.Sub(r.at) > dupWindow {
+			continue
+		}
+		// Only the most recent commit of this printing matters; an older one
+		// has already been superseded by it.
+		if r.finishGuessed && r.finish != it.finishHint {
+			return r.finish, true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// correctRecentFinish restates the finish of the latest commit of a printing,
+// and marks it evidenced so the correction is not itself reconsidered by the
+// next look — the card has now told us, and a later capture that fails to read
+// the marker is silence, not contradiction.
+func correctRecentFinish(recent []recentCommit, id, to string) []recentCommit {
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].scryfallID == id {
+			recent[i].finish = to
+			recent[i].finishGuessed = false
+			return recent
+		}
+	}
+	return recent
 }
 
 // dupCapture reports whether the same printing-and-finish was auto-committed
@@ -478,9 +797,10 @@ func dupCapture(recent []recentCommit, id, finish string, now time.Time) (captur
 }
 
 // recordCommit appends to the window, pruning it to a fixed size.
-func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now time.Time) []recentCommit {
+func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now time.Time,
+	finishGuessed bool) []recentCommit {
 	recent = append(recent, recentCommit{scryfallID: id, finish: finish,
-		captureSeq: captureSeq, at: now})
+		captureSeq: captureSeq, at: now, finishGuessed: finishGuessed})
 	if len(recent) > dupKeep {
 		recent = recent[len(recent)-dupKeep:]
 	}

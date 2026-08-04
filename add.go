@@ -136,6 +136,18 @@ func addList(ctx context.Context, st *store.Store, data []byte, display, binderR
 // cascade and the one embedded in browse.
 func storeAdder(st *store.Store) tui.Adder {
 	return func(res tui.Result) error {
+		// A finish correction re-keys the row the scan just wrote instead of
+		// adding beside it: the first look at a foil whose marker would not
+		// read committed the nonfoil default, and a later look read it.
+		if res.ReplacesFinish != "" && res.ReplacesFinish != res.Finish {
+			if res.ContainerID != 0 {
+				_, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
+					res.ReplacesFinish, res.Finish)
+				return err
+			}
+			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)
+			return err
+		}
 		if res.ContainerID != 0 {
 			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
 		}

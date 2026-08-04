@@ -11,6 +11,12 @@
 # what collector read) rather than the full event: OCR candidate lists are
 # long and jitter-prone, the card list is what the Go side acts on.
 #
+# The exception is the head of the candidate list. The Go side only tries the
+# first few lines before giving up, so which readings sit at the front is a
+# decision too — it is what makes a name recovered from rules text reachable
+# at all. Three is enough to pin the ordering without dragging the jittery
+# tail of the list into the goldens.
+#
 # Vision's output can shift across macOS releases. If a sweep fails right
 # after an OS update, eyeball the diff — legitimate OCR drift gets a
 # --update with the diff quoted in the commit; anything else is a
@@ -49,6 +55,7 @@ for ln in sys.stdin:
             "set": c.get("setCode", ""),
             "number": c.get("collectorNumber", ""),
             "finish": c.get("finishHint", ""),
+            "candidates": (c.get("candidates") or [])[:3],
         })
 print(json.dumps(out, indent=2, sort_keys=True))
 '

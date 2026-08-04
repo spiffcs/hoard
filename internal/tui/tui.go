@@ -109,6 +109,13 @@ type Result struct {
 	Finish      string // normal|foil|etched
 	Qty         int
 	ContainerID int64
+	// ReplacesFinish, when set, restates a holding already added in this
+	// session rather than adding another copy: the scan committed the nonfoil
+	// default because no marker was legible, and a later look at the same card
+	// read the real one. Adders that cannot re-key a finish may treat this as
+	// an ordinary add — the result is a duplicate rather than a correction,
+	// which is the safer way to be wrong.
+	ReplacesFinish string
 }
 
 // Adder persists a confirmed selection. It is called once per card the user

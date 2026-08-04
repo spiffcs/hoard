@@ -77,6 +77,54 @@ ORDER BY released_at DESC, set_code, collector_number`, norm)
 	return out, rows.Err()
 }
 
+// PrintBySetNumber resolves a printing from its collector block alone.
+//
+// A card whose title will not read is not necessarily unidentifiable: the
+// bottom band names it just as precisely, and "MSH 412" is one printing and no
+// other. Scanning is where that matters — an old frame's serif title, or a
+// glare across the name, leaves the block as the only legible key, and without
+// this the card becomes an unidentifiable queue entry (observed live:
+// Quicksilver, Brash Blur arrived with a perfect MSH/412 block and its title
+// read as a line of rules text).
+//
+// Both halves are required. A bare number is shared by every set ever printed,
+// so a number without a set is not evidence of anything. Returns nil when the
+// block matches no printing, which is the honest answer for a misread.
+func (c *Catalog) PrintBySetNumber(_ context.Context, set, number string) (*scryfall.Card, error) {
+	set, number = strings.TrimSpace(set), strings.TrimSpace(number)
+	if set == "" || number == "" {
+		return nil, nil
+	}
+	rows, err := c.db.Query(`
+SELECT `+cardColumns+`
+FROM cards WHERE set_code = ? COLLATE NOCASE AND collector_number = ? COLLATE NOCASE
+ORDER BY released_at DESC
+LIMIT 2`, set, number)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: looking up %s %s: %w", set, number, err)
+	}
+	defer rows.Close()
+
+	var found []scryfall.Card
+	for rows.Next() {
+		card, err := scanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, card)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// A set and number should name one row. More than one means the catalog
+	// holds variants under the same key, and picking between them without a
+	// name is a guess — the caller is better served by the ordinary path.
+	if len(found) != 1 {
+		return nil, nil
+	}
+	return &found[0], nil
+}
+
 // fuzzyCandidates is how many trigram-ranked names are scored properly.
 //
 // Trigram overlap is a cheap filter, not an answer — it favours long names

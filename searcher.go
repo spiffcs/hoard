@@ -73,6 +73,35 @@ func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall
 	return s.remote.NamedFuzzy(ctx, text)
 }
 
+// PrintBySetNumber resolves a printing from its collector block, catalog only.
+// There is no API fallthrough on purpose: the block is a last resort reached
+// when the name would not read at all, and a network round trip per unreadable
+// title is the cost the scan flow least wants to pay. A card newer than the
+// catalog simply stays unidentified, as it would have anyway.
+func (s layeredSearcher) PrintBySetNumber(ctx context.Context, set, number string) (*scryfall.Card, error) {
+	// local is the general Searcher interface, so the capability is asked for
+	// rather than assumed — a nil or fake local simply declines.
+	byBlock, ok := s.local.(interface {
+		PrintBySetNumber(context.Context, string, string) (*scryfall.Card, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return byBlock.PrintBySetNumber(ctx, set, number)
+}
+
+// NamedFuzzyLocal resolves against the catalog alone. The scan flow uses it
+// for fallback OCR lines, which can never auto-commit: there the fallthrough
+// above would spend a network round trip per junk line and, at best, name a
+// review-queue entry. With no catalog to consult there is nothing to prefer,
+// so it degrades to the ordinary layered path.
+func (s layeredSearcher) NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
+	if s.local == nil {
+		return s.remote.NamedFuzzy(ctx, text)
+	}
+	return s.local.NamedFuzzy(ctx, text)
+}
+
 // scryfallSearcher adapts the package-level scryfall functions to tui.Searcher.
 // It lives here, beside the layering policy, so internal/tui itself never
 // talks to the network.

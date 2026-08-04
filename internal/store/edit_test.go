@@ -173,3 +173,48 @@ func TestRemoveFromCollectionOnUnheldCard(t *testing.T) {
 		t.Errorf("RestoreHoldings on an empty list: %v", err)
 	}
 }
+
+// The scan flow's finish correction: a foil whose marker would not read on the
+// first capture lands as the nonfoil default, and the next look re-keys that
+// row rather than adding a second one beside it.
+func TestMoveCardFinishRekeysTheDefaultBinder(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+
+	if _, err := s.MoveCardFinish("ulamog-id", "nonfoil", "foil"); err != nil {
+		t.Fatalf("MoveCardFinish: %v", err)
+	}
+
+	held := heldByFinish(t, s, "ulamog-id")
+	if held["foil"] != 1 {
+		t.Errorf("foil = %d, want 1", held["foil"])
+	}
+	if _, ok := held["nonfoil"]; ok {
+		t.Errorf("holdings = %v, want the nonfoil row gone, not left at zero", held)
+	}
+}
+
+// Correcting into a finish already held merges instead of colliding — the same
+// card can legitimately be owned both ways.
+func TestMoveCardFinishMergesWithAnExistingHolding(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "foil", 2); err != nil {
+		t.Fatalf("AddCard foil: %v", err)
+	}
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCard nonfoil: %v", err)
+	}
+
+	prev, err := s.MoveCardFinish("ulamog-id", "nonfoil", "foil")
+	if err != nil {
+		t.Fatalf("MoveCardFinish: %v", err)
+	}
+	if prev != 2 {
+		t.Errorf("previous foil quantity = %d, want 2 so an undo can split them back", prev)
+	}
+	if held := heldByFinish(t, s, "ulamog-id"); held["foil"] != 3 {
+		t.Errorf("foil = %d, want 3", held["foil"])
+	}
+}

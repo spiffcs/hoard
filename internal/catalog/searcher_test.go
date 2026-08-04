@@ -247,3 +247,43 @@ func TestAutocompleteEscapesWildcards(t *testing.T) {
 		t.Errorf("a wildcard query matched %v", got)
 	}
 }
+
+// A card whose title will not read is still named by its collector block, and
+// the block is the only key left when the title comes back as rules text
+// (live: Quicksilver, Brash Blur arrived as "If Quicksilver, Brash Blur is in
+// your" with a clean MSH/412 beside it).
+func TestPrintBySetNumberResolvesFromTheBlockAlone(t *testing.T) {
+	c := stocked(t)
+	got, err := c.PrintBySetNumber(context.Background(), "c21", "263")
+	if err != nil {
+		t.Fatalf("PrintBySetNumber: %v", err)
+	}
+	if got == nil || got.Name != "Sol Ring" {
+		t.Fatalf("got %+v, want Sol Ring", got)
+	}
+	// Set codes come off the card in caps and out of the catalog in lower.
+	up, err := c.PrintBySetNumber(context.Background(), "C21", "263")
+	if err != nil || up == nil || up.ID != got.ID {
+		t.Errorf("uppercase set = %+v (%v), want the same printing", up, err)
+	}
+}
+
+// Half a block is not evidence. A number without a set is shared by every set
+// ever printed, so it must never resolve on its own.
+func TestPrintBySetNumberRefusesAnIncompleteOrUnknownBlock(t *testing.T) {
+	c := stocked(t)
+	for _, tc := range []struct{ set, number string }{
+		{"", "263"},    // number alone
+		{"c21", ""},    // set alone
+		{"c21", "999"}, // no such printing
+		{"zzz", "263"}, // no such set
+	} {
+		got, err := c.PrintBySetNumber(context.Background(), tc.set, tc.number)
+		if err != nil {
+			t.Fatalf("PrintBySetNumber(%q,%q): %v", tc.set, tc.number, err)
+		}
+		if got != nil {
+			t.Errorf("PrintBySetNumber(%q,%q) = %+v, want no match", tc.set, tc.number, got)
+		}
+	}
+}

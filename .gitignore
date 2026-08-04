@@ -50,3 +50,8 @@ hoard.db
 # Scan-tuning artifacts: personal card photos and session telemetry
 scan-fixtures/
 leader-debug/
+
+# The foil-marker corpus: card photos and third-party image-search results.
+# The labels beside it are tracked, the pixels are not — see
+# scan/foil-dataset/README.md.
+scan/foil-dataset/images/

@@ -166,6 +166,16 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 	return prevTarget, tx.Commit()
 }
 
+// MoveCardFinish is MoveEntryFinish in the default binder — the counterpart to
+// AddCardFinish, for the scan flow correcting a finish it had to guess.
+func (s *Store) MoveCardFinish(scryfallID, fromFinish, toFinish string) (prevTarget int, err error) {
+	cid, err := s.collectionID()
+	if err != nil {
+		return 0, err
+	}
+	return s.MoveEntryFinish(cid, scryfallID, fromFinish, toFinish)
+}
+
 // RemoveFromCollection drops every entry for a printing from the loose
 // collection and returns what it removed.
 //

@@ -1,0 +1,10 @@
+id	source	provenance	name	set	number	finish	marker	frame	notes
+20260803-capture-1	session	2026-08-03	Trap Digger	scg	24	foil	old-star	old	star confirmed by eye; magenta here, dark on an earlier capture of the same card — polarity flips with the light. Scanner committed it nonfoil.
+20260803-capture-2	session	2026-08-03	Green Goblin, Back for More	msc	657	foil	modern-separator	modern	printed star read off the set/language line
+20260803-capture-3	session	2026-08-03	Inspired Fire	msc	690	foil	none	modern	same physical card as capture-4; no marker legible here, and this is the capture that committed — recorded nonfoil despite being foil
+20260803-capture-4	session	2026-08-03	Inspired Fire	msc	690	foil	modern-separator	modern	title misread as flavor text, but the separator is legible so the finish is certain
+20260803-capture-5	session	2026-08-03	Aerial Doombot	msh	43	foil	modern-separator	modern	printed star read off the set/language line
+20260803-capture-6	session	2026-08-03	Snow-Covered Wastes	mh3	229	foil	modern-separator	modern	printed star read off the set/language line
+20260803-capture-7	session	2026-08-03	Dress Down	-	-	foil	old-star	unknown	starburst visible at the text-box corner but faint, and a hand occludes most of the patch — confirm the frame era against the physical card
+20260803-capture-8	session	2026-08-03	-	-	-	unknown	unknown	unknown	partial frame, no card identified; keep only if it can be labelled
+20260803-capture-9	session	2026-08-03	Meltdown	-	-	foil	old-star	retro	the retro case: cyan old-style starburst with comet trail over a "© 202x" copyright, so the marker outlives the old frame

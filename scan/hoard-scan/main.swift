@@ -163,6 +163,10 @@ struct CardRead {
     /// The finish the primary block's separator marked: "foil" (printed star),
     /// "nonfoil" (bullet), or "" when the frame carries no marker.
     var finishHint = ""
+    /// Whether collectorNumber was read in "n/total" form; see
+    /// CollectorRead.pair. The crop channel needs it to tell a real number
+    /// with an unreadable set line from a bare digit off the card face.
+    var collectorPair = false
     /// A collector number read off the tail of the copyright line — the only
     /// place pre-8th-edition frames print one ("™ & © 1993-2003 Wizards of the
     /// Coast, Inc. 95/350", tiny italic serif). Kept apart from collectorNumber
@@ -335,6 +339,23 @@ func lowercaseCount(_ s: String) -> Int {
     s.filter { $0.isLowercase }.count
 }
 
+/// setLangFurniture gates which lines may yield a set code. The set/language
+/// line is border print — "MSC ★ EN", "MH3 • EN I TOMAS HONZ" — set in caps,
+/// so it carries almost no lowercase. Rules text does, and because setLangRE
+/// tolerates a bare space between the code and the language, ordinary prose
+/// matches it constantly once asciify uppercases everything: "…and put it into
+/// your hand" yields set PUT, language Italian. Three captures of Eternal
+/// Dragon shipped `PUT` that way in one live session, and a wrong set code is
+/// the failure that stays invisible until valuation.
+///
+/// Only the extraction is gated. boilerplate still uses the same regex to kill
+/// lines, where a generous match is the safe direction.
+func setLangFurniture(_ s: String) -> Bool {
+    let letters = s.filter { $0.isLetter }.count
+    guard letters > 0 else { return true }
+    return lowercaseCount(s) * 4 <= letters
+}
+
 /// CollectorRead is one parsed border block: a collector number, the set code
 /// printed beside it, and the finish the set line's separator marked — "foil"
 /// for the printed star, "nonfoil" for the bullet, "" when the frame carries
@@ -343,6 +364,15 @@ struct CollectorRead: Encodable {
     var number = ""
     var set = ""
     var finish = ""
+    /// Whether the number was read in "n/total" form. A bare number shares its
+    /// shape with a mana cost and a power box; a pair with a plausible total
+    /// does not, so the crop channel can trust one and not the other. Local
+    /// only — the wire shape stays what parent binaries already parse.
+    var pair = false
+
+    enum CodingKeys: String, CodingKey {
+        case number, set, finish
+    }
 }
 
 /// parseCollectorInfo pulls every collector-number candidate out of the bottom
@@ -364,10 +394,13 @@ func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
             let (la, lb) = (lowercaseCount(a.element), lowercaseCount(b.element))
             return la == lb ? a.offset < b.offset : la < lb
         }
-        .map { (offset: $0.offset, text: asciify($0.element)) }
+        .map { (offset: $0.offset, text: asciify($0.element), raw: $0.element) }
 
     var sets: [(offset: Int, code: String, finish: String)] = []
     for l in ranked {
+        // asciify has already folded the case away, so the prose test has to
+        // run against what Vision actually read.
+        guard setLangFurniture(l.raw) else { continue }
         if let s = group(setLangRE, l.text) {
             // The separator lands in group 2 (symbols) or 3 (letter misreads
             // of the star); whichever matched carries the finish.
@@ -387,9 +420,10 @@ func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
 
     var reads: [CollectorRead] = []
     var seen = Set<String>()
-    func add(_ offset: Int, _ n: String) {
+    func add(_ offset: Int, _ n: String, pair: Bool) {
         let near = setNear(offset)
-        let read = CollectorRead(number: normalizeNumber(n), set: near.code, finish: near.finish)
+        let read = CollectorRead(number: normalizeNumber(n), set: near.code,
+                                 finish: near.finish, pair: pair)
         let key = read.number + "/" + read.set
         if !seen.contains(key) {
             seen.insert(key)
@@ -405,7 +439,7 @@ func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
     for l in ranked {
         if let n = group(collectorPairRE, l.text), let total = group(collectorPairRE, l.text, 2),
            (Int(total) ?? 0) >= 20 || n.count >= 3 {
-            add(l.offset, n)
+            add(l.offset, n, pair: true)
         }
     }
     // Bare numbers after: a lone number is much easier to confuse with a
@@ -413,7 +447,7 @@ func parseCollectorInfo(_ lines: [String]) -> [CollectorRead] {
     for l in ranked {
         let t = l.text.trimmingCharacters(in: .whitespaces)
         if let n = group(collectorSoloRE, t), !looksLikeAYear(n) {
-            add(l.offset, n)
+            add(l.offset, n, pair: false)
         }
     }
     return Array(reads.prefix(4))
@@ -429,6 +463,19 @@ let copyrightYearRE = try! NSRegularExpression(
     pattern: #"(?:19|20)\d{2}\s*[-–—]?\s*((?:19|20)\d{2})"#)
 let copyrightTailPairRE = try! NSRegularExpression(
     pattern: #"(\d{1,5})\s*/\s*(\d{1,5})\s*[.,]?\s*$"#)
+/// A lone copyright year, for the modern frame's "© 2024 Wizards of the Coast".
+let copyrightLoneYearRE = try! NSRegularExpression(pattern: #"\b((?:19|20)\d{2})\b"#)
+/// The modern frame's version of the collector tail: one number, no total
+/// ("™ & © 2024 Wizards of the Coast 418").
+///
+/// Tied to the brand word rather than merely anchored to the line end, and that
+/// is the whole safety of it. A free-floating tail match harvested "350" — the
+/// set *total* of a half-read "143/350" — and "14" off a truncated number,
+/// both measured against a live session. Only punctuation and space may sit
+/// between "COAST" and the number, which is the shape the modern frame
+/// actually prints and nothing else is.
+let copyrightTailSoloRE = try! NSRegularExpression(
+    pattern: #"COAST[^0-9A-Z]{0,4}(\d{1,5})\s*[.,]?\s*$"#)
 
 /// copyrightFurniture reports whether a line is (a fragment of) the bottom
 /// copyright line — "™ & © 1993-2003 Wizards of the Coast, Inc. 95/350" and
@@ -446,6 +493,14 @@ func copyrightFurniture(_ s: String) -> Bool {
     let ascii = asciify(s)
     if group(copyrightYearRE, ascii) != nil { return true }
     if group(collectorPairRE, ascii) != nil { return true }
+    // Old frames print a range ("1993-2003"); modern ones print a single year
+    // ("™ & © 2024 Wizards of the Coast 418"). Requiring the range rejected
+    // every modern copyright line outright, which cost both the release year
+    // and the collector number printed beside it — and the ™/© that would
+    // otherwise vouch for the line comes back as "Iм & C" at this glyph size.
+    if let y = group(copyrightLoneYearRE, ascii), let n = Int(y), n >= 1993, n <= 2035 {
+        return true
+    }
     return false
 }
 
@@ -470,6 +525,14 @@ func parseCopyrightCollector(_ texts: [String]) -> (number: String, year: Int)? 
         if number.isEmpty,
            let n = group(copyrightTailPairRE, line),
            let total = group(copyrightTailPairRE, line, 2), (Int(total) ?? 0) >= 20 {
+            number = normalizeNumber(n)
+        }
+        // Modern frames print the number alone, with no set total to vouch for
+        // it ("… Wizards of the Coast 418", observed live on Meltdown and a
+        // Snow-Covered Wastes). Weaker than the pair, and it does not need to
+        // be strong: this rides the wire as numberSource "copyright", which the
+        // Go side may only ever upgrade a match with, never veto one.
+        if number.isEmpty, let n = group(copyrightTailSoloRE, line), !looksLikeAYear(n) {
             number = normalizeNumber(n)
         }
         if !number.isEmpty && year != 0 { break }
@@ -611,6 +674,7 @@ func readCard(_ cg: CGImage) -> CardRead {
     read.collectorNumber = collectorReads.first?.number ?? ""
     read.setCode = collectorReads.first?.set ?? ""
     read.finishHint = collectorReads.first?.finish ?? ""
+    read.collectorPair = collectorReads.first?.pair ?? false
     read.collectorAlts = Array(collectorReads.dropFirst())
 
     var lines: [Line] = []
@@ -637,17 +701,47 @@ func readCard(_ cg: CGImage) -> CardRead {
 
     let plausible = ranked.filter { plausibleName($0.text) }
     let names = plausible.map { $0.text }
-    let primary = names.first ?? ranked.first!.text
+    // Prefer a line that reads like a title. Taking the top plausible line
+    // outright let an old frame's copyright tail become the card's name at
+    // full confidence — "008 Wizards of the Coast, Iac. 15/145", which the
+    // multi trace had already logged as not title-like (observed live).
+    // Boilerplate can never be the name: a frame that read nothing but its
+    // own border has no title, and "" queues the card as unidentified, which
+    // is honest. The middle fallback is what keeps single-word titles
+    // (Ponder) working — titleLike rejects those by design.
+    let primary = names.first(where: { titleLike($0) })
+        ?? names.first(where: { !boilerplate($0) })
+        ?? ""
     // Report several lines, best-guess first. The caller tries each against
     // Scryfall, so a card still resolves when the top-line guess is wrong —
     // which happens whenever the capture reaches Vision at an odd angle.
-    var candidates = Array(names.prefix(8))
-    if candidates.first != primary { candidates.insert(primary, at: 0) }
+    //
+    // Order is not cosmetic: the caller stops after the first handful of
+    // lines, so anything worth resolving has to be near the front. A card's
+    // rules text names the card, and on an old frame whose title band was
+    // lost that is the only place the name survives — so those recovered
+    // names sit directly behind the primary, ahead of the raw prose lines
+    // they were mined from.
+    var candidates: [String] = []
+    var seenCandidates = Set<String>()
+    func offer(_ s: String) {
+        let key = normTitle(s)
+        guard !key.isEmpty, !seenCandidates.contains(key) else { return }
+        seenCandidates.insert(key)
+        candidates.append(s)
+    }
+    offer(primary)
+    for line in ranked {
+        if let name = parseSelfReference(line.text) { offer(name) }
+    }
+    for n in names { offer(n) }
+    candidates = Array(candidates.prefix(8))
 
     read.name = primary
     read.candidates = candidates
     read.lines = plausible
-    read.nameConfidence = plausible.first?.confidence ?? ranked.first!.confidence
+    read.nameConfidence = plausible.first(where: { $0.text == primary })?.confidence
+        ?? plausible.first?.confidence ?? ranked.first!.confidence
     // The copyright line reads better in the full-resolution frame pass than
     // in the band crop — the band's tiny italic serif came back as fragments
     // in every observed old-frame capture — so both sources feed it.
@@ -764,9 +858,16 @@ func titleLike(_ s: String) -> Bool {
     let tokens = words.map { String($0.lowercased().filter { $0.isLetter }) }
     if tokens.contains(where: { typeLineWords.contains($0) }) { return false }
     // Rules text that opens a line with its trigger word capitalizes like a
-    // title ("Whenever Black Panther…"). No card is named "Whenever …", so the
-    // lead token alone is a safe rejection.
-    if tokens.first == "whenever" { return false }
+    // title ("Whenever Black Panther…", "When Parallel Thoughts comes into").
+    // No card is named "When…", so the lead token alone is a safe rejection.
+    if let lead = tokens.first, lead == "whenever" || lead == "when" { return false }
+    // A card's rules text names the card itself, so the self-reference reads
+    // as Title Case for exactly as long as the name runs and then trails off
+    // into a sentence ("Dwarven Ruins comes into play tapped."). The idiom
+    // that follows the name is the tell — and it is worth catching, because
+    // these lines otherwise pass every test below and become the card's name.
+    // parseSelfReference mines the name back out of them.
+    if selfReferenceIdiom(tokens) != nil { return false }
     // The border block prints in small caps and reads as (nearly) all caps —
     // "KEy WALKER", "IN & C", a mangled set line — while real card titles are
     // Title Case with plenty of lowercase. A multi-word line with at most one
@@ -853,6 +954,97 @@ func sameTitle(_ a: String, _ b: String) -> Bool {
     return editDistance(x, y) * 4 <= max(x.count, y.count) // ≤ a quarter differs
 }
 
+/// selfReferenceIdiom finds where a line stops naming a card and starts
+/// describing it, returning the index of the first idiom token. The runs are
+/// deliberately short and must sit past the first token — there has to be a
+/// name in front of them for the phrase to be self-reference at all.
+func selfReferenceIdiom(_ tokens: [String]) -> Int? {
+    let idioms = [["comes", "into"], ["enters", "the"], ["leaves", "play"]]
+    guard tokens.count >= 2 else { return nil }
+    for start in 1..<tokens.count {
+        for idiom in idioms where start + idiom.count <= tokens.count {
+            if Array(tokens[start..<(start + idiom.count)]) == idiom { return start }
+        }
+    }
+    return nil
+}
+
+/// parseSelfReference recovers a card's name from its own rules text. Magic
+/// cards name themselves, so an old frame whose title band was lost — the
+/// common failure, where the serif title sits against the art and the band
+/// crop returns fragments — is usually still named in plain text further down
+/// ("Dwarven Ruins comes into play tapped."). Two cards were total losses in
+/// one live session with their names sitting on the wire this way.
+///
+/// The result ships as an extra candidate only, never as the entry's name: it
+/// is a guess built from a heuristic, and the resolver already owns choosing
+/// among candidates.
+func parseSelfReference(_ s: String) -> String? {
+    var words = s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    if let lead = words.first?.lowercased().filter({ $0.isLetter }),
+        lead == "when" || lead == "whenever" {
+        words.removeFirst()
+    }
+    let tokens = words.map { String($0.lowercased().filter { $0.isLetter }) }
+    guard let idx = selfReferenceIdiom(tokens) else { return nil }
+    let lead = Array(words[0..<idx])
+    // A name is Title Case throughout; a lowercase word means the run started
+    // mid-sentence and the "name" would be a fragment of prose.
+    guard lead.allSatisfy({ $0.first?.isUppercase == true }) else { return nil }
+    let name = lead.joined(separator: " ")
+        .trimmingCharacters(in: CharacterSet(charactersIn: " ,.:;"))
+    // One word left over is as often a pronoun ("It comes into play") as a
+    // name, and single-word names already have the crop channel.
+    guard name.split(whereSeparator: { $0.isWhitespace }).count >= 2 else { return nil }
+    return name
+}
+
+/// addCandidate records an alternate reading of an entry's title. The merge
+/// ladder has to pick one name per card, but the reading it drops is often the
+/// one downstream fuzzy matching could have used — so the loser rides along
+/// instead of being discarded. Nothing empty, nothing already present, and the
+/// same prefix cap the crop channel applies.
+/// Dedup is exact-normalized, deliberately not sameTitle: its containment
+/// tolerance would treat "Shivan Oasis" as already present in the rules line
+/// "Shivan Oasis comes into play tapped." and drop the very reading worth
+/// keeping.
+func addCandidate(_ entry: inout CardEntry, _ name: String) {
+    let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty, entry.candidates.count < 8 else { return }
+    let key = normTitle(t)
+    guard !key.isEmpty, !entry.candidates.contains(where: { normTitle($0) == key }) else { return }
+    entry.candidates.append(t)
+}
+
+/// artistCredit matches the "Illus. <Name>" line even when OCR has mangled the
+/// credit word. On old frames it is set in the same small serif as the
+/// copyright, and the exact `illus` prefix missed "Tins. Liz Danforth" — which
+/// then read as a perfectly good Title Case name and won a live capture's
+/// merge, burying Dwarven Ruins.
+///
+/// The credit word is only allowed to be wrong by a letter or two, and only
+/// when what follows looks like a person: a mangled word alone is not enough,
+/// or real two-word titles would start dying.
+func artistCredit(_ s: String) -> Bool {
+    let words = s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    // "Illus. Liz Danforth" — the credit word, then a two-word personal name.
+    // Artists are credited first-and-last, and holding the count to exactly
+    // two is what lets the credit word itself be read loosely.
+    guard words.count == 3 else { return false }
+    // The abbreviation's trailing period is the load-bearing signal. Magic
+    // titles use commas for epithets ("Jaya Ballard, Task Mage"), never a
+    // period after their first word, so this is the shape no real name has.
+    // OCR turns the period into a comma often enough to accept both.
+    guard let last = words[0].last, last == "." || last == "," else { return false }
+    let head = words[0].lowercased().filter { $0.isLetter }
+    guard head.count >= 3, head.count <= 6 else { return false }
+    // Wide enough for the observed mangles — "Illus." came back as "Tins."
+    // and "Tims.", both four edits out — and safe only because the period and
+    // the two-word name have already narrowed the field this far.
+    guard editDistance(head, "illus") <= 4 else { return false }
+    return words.dropFirst().allSatisfy { $0.first?.isUppercase == true }
+}
+
 /// boilerplate matches the card frame's own print that reads at title-like
 /// isolation and capitalization — the copyright border line, the artist
 /// credit, and the collector block — which would otherwise become phantom
@@ -877,6 +1069,9 @@ func boilerplate(_ s: String) -> Bool {
     let words = t.split(whereSeparator: { $0.isWhitespace })
         .map { $0.trimmingCharacters(in: .punctuationCharacters) }
     if words.count == 2, words[0].count == 1, words[1] == "marvel" {
+        return true
+    }
+    if artistCredit(s) {
         return true
     }
     // Old-frame copyright fragments ("Coast, Ine: 30/1", "te Coast, Inc")
@@ -948,7 +1143,14 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
         // The copyright-line tail is the exception: its signature and total
         // guard make it far harder to fake than a bare band number, and on
         // old frames it is the only number printed at all.
-        if !cropRead.setCode.isEmpty && !cropRead.collectorNumber.isEmpty {
+        // A pair-form number counts as its own corroboration: "29/143" carries
+        // the set total, which a mana cost or power box has no way to fake, and
+        // the total guard has already vetted it. Requiring a set code as well
+        // used to be harmless, but the set line is the frailer read of the two
+        // — once prose stopped fabricating set codes, a real number went with
+        // the fake set it happened to be paired with (Brain Freeze, live).
+        if !cropRead.collectorNumber.isEmpty
+            && (!cropRead.setCode.isEmpty || cropRead.collectorPair) {
             e.setCode = cropRead.setCode
             e.collectorNumber = cropRead.collectorNumber
         } else if !cropRead.copyrightNumber.isEmpty {
@@ -962,7 +1164,17 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
         }
         e.finishHint = cropRead.finishHint
         // mergeInto folds the crop's card-anchored printing and foil marker
-        // into an existing entry without touching its (better) name.
+        // into an existing entry. The name is decided rather than assumed: the
+        // frame line is usually the better read, but when it is furniture and
+        // the crop's is title-shaped, keeping the frame's was always wrong —
+        // a whole live session's pins went that way, including a crop that had
+        // read "Caller of the Claw" exactly while the frame offered the rules
+        // fragment "When Caller of", and a "Gremal Dragon" that fuzzy-resolved
+        // to the unrelated Green Dragon while the crop's "Eiteral Dragon"
+        // would have landed on Eternal Dragon.
+        //
+        // Whichever name loses still ships as a candidate. Downstream owns
+        // fuzzy matching, and it cannot choose a reading the helper dropped.
         func mergeInto(_ idx: Int, why: String) {
             if entries[idx].entry.collectorNumber.isEmpty && !e.collectorNumber.isEmpty {
                 entries[idx].entry.setCode = e.setCode
@@ -978,14 +1190,24 @@ func scanFrame(_ cg: CGImage) -> (read: CardRead, cards: [CardEntry]) {
             if entries[idx].entry.finishHint.isEmpty {
                 entries[idx].entry.finishHint = e.finishHint
             }
-            multiDebug("crop \(i) pins \"\(entries[idx].entry.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber) (\(why), crop read \"\(e.name)\")")
+            let kept = entries[idx].entry.name
+            let adopt = !titleLike(kept) && titleLike(e.name)
+            if adopt {
+                entries[idx].entry.name = e.name
+                entries[idx].entry.confidence = e.confidence
+            }
+            addCandidate(&entries[idx].entry, adopt ? kept : e.name)
+            let verb = adopt ? "adopts" : "pins"
+            multiDebug("crop \(i) \(verb) \"\(entries[idx].entry.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber) (\(why), crop read \"\(e.name)\")")
         }
         let frameIdxs = entries.indices.filter { entries[$0].entry.source == "frame" }
         if let idx = entries.firstIndex(where: { sameTitle($0.entry.name, e.name) }) {
             if titleLike(e.name) || !titleLike(entries[idx].entry.name) {
                 // The crop read the same title off straightened pixels —
                 // usually the cleaner read — and may carry the printing.
+                let replaced = entries[idx].entry.name
                 entries[idx].entry = e
+                addCandidate(&entries[idx].entry, replaced)
                 multiDebug("crop \(i) refines \"\(e.name)\" \(e.setCode.isEmpty ? "-" : e.setCode)/\(e.collectorNumber.isEmpty ? "-" : e.collectorNumber)")
             } else {
                 // sameTitle's containment tolerance also matches the rules
@@ -2023,6 +2245,11 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// Whether this device supports Center Stage (the system's auto-framing);
     /// gates the feature advertisement and the toggle.
     private var framingAvailable = false
+    /// The largest still the active format will produce, opted into once at
+    /// setup and repeated on every shot — the settings object resets to the
+    /// output's default otherwise. nil when the format reports nothing, which
+    /// leaves the old default-sized behavior.
+    private var maxPhotoDimensions: CMVideoDimensions?
     /// Whether this device carries a torch — the phone's flashlight, which
     /// Continuity Camera exposes and which is the only light macOS lets an
     /// app control (exposure bias is iOS-only).
@@ -2131,9 +2358,12 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         setUpFocus(device)
         let focusCaps = device.isFocusModeSupported(.continuousAutoFocus)
             ? "af" + (device.isFocusModeSupported(.locked) ? "+lock" : "") : "fixed"
+        let stills = device.activeFormat.supportedMaxPhotoDimensions
+            .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
+        let stillLabel = stills.map { "\($0.width)x\($0.height)" } ?? "default"
         let caps = "scan: \(device.localizedName) [\(kindLabel(device))] torch=\(device.hasTorch) "
             + "centerStage=\(device.activeFormat.isCenterStageSupported) "
-            + "focus=\(focusCaps) (policy \(focusControl))\n"
+            + "focus=\(focusCaps) (policy \(focusControl)) still=\(stillLabel)\n"
         FileHandle.standardError.write(Data(caps.utf8))
         guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
             fail("could not configure capture session")
@@ -2147,6 +2377,18 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         }
         session.addInput(input)
         session.addOutput(photoOutput)
+        // …and .photo alone is not enough. The output still hands back its
+        // default dimensions unless asked otherwise, which is how a phone that
+        // shoots 12MP was returning 1080p stills — the card filling barely 680
+        // pixels of frame, the collector band a few pixels tall, and the
+        // old-frame foil star too small to analyse at all. Opting in to the
+        // format's largest supported still is the difference between reading
+        // the fine print and guessing at it.
+        maxPhotoDimensions = device.activeFormat.supportedMaxPhotoDimensions
+            .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
+        if let dims = maxPhotoDimensions {
+            photoOutput.maxPhotoDimensions = dims
+        }
 
         // The video tap is best-effort: a session that refuses it just means no
         // auto mode, which the ready event's feature list reports honestly.
@@ -2441,7 +2683,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         // in auto mode can't be followed by an auto fire on the same card.
         autoTrigger.captureBegan()
         captureRequestedAt = Date()
-        photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
+        // The output's ceiling is not the shot's size: each settings object
+        // starts back at the default, so the request has to ask again.
+        let settings = AVCapturePhotoSettings()
+        if let dims = maxPhotoDimensions {
+            settings.maxPhotoDimensions = dims
+        }
+        photoOutput.capturePhoto(with: settings, delegate: self)
     }
 
     /// autoFire is the trigger's shutter: identical to a space press except the

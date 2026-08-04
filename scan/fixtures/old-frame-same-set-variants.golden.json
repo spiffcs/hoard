@@ -1,5 +1,10 @@
 [
   {
+    "candidates": [
+      "Cephalid Looter",
+      "Creature - Cephalid",
+      "@: Target player draws a card, then"
+    ],
     "finish": "",
     "name": "Cephalid Looter",
     "number": "",
