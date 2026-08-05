@@ -146,23 +146,23 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
             fail("could not configure capture session")
         }
         // Ask for full-resolution stills. The default preset is .high, which caps
-        // the capture at video resolution (1080p on Continuity Camera) and leaves
-        // the collector number under 1% of the frame height — right at the edge of
-        // what Vision can resolve. .photo gives the sensor's full frame instead.
+        // the capture at video resolution and leaves the collector number under
+        // 1% of the frame height — right at the edge of what Vision can resolve.
+        // .photo does better, but not best: see raiseToBestFormat, which runs
+        // once the session is live and undoes the preset's own crop.
         if session.canSetSessionPreset(.photo) {
             session.sessionPreset = .photo
         }
         session.addInput(input)
         session.addOutput(photoOutput)
-        // Deliberately NOT setting photoOutput.maxPhotoDimensions. Asking the
-        // format for its largest still looks like the way to beat the preset's
-        // cap, and it backfires: read before the session runs, activeFormat is
-        // still the device's low-res default, so pinning the output to *its*
-        // maximum capped captures at 640x480 — a third of the linear resolution
-        // the preset alone was already giving. Measured on Continuity Camera,
-        // which reports 1920x1080 either way; the opt-in bought nothing and
-        // cost two thirds of the frame. The still size is reported after
-        // startRunning instead, where it is true.
+        // Nothing is asked of photoOutput.maxPhotoDimensions here, and that is
+        // deliberate. Reading the format for its largest still *before* the
+        // session runs looks like the way to beat the preset's cap and
+        // backfires: activeFormat is still the device's low-res default at this
+        // point, so pinning the output to its maximum capped captures at
+        // 640x480 — a third of the linear resolution the preset alone was
+        // already giving. The dimensions are set in raiseToBestFormat instead,
+        // after startRunning, where activeFormat means something.
 
         // The video tap is best-effort: a session that refuses it just means no
         // auto mode, which the ready event's feature list reports honestly.
@@ -199,13 +199,13 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                     self.photoOutput.connection(with: .video)?.isActive == true
                 }
                 spinRunLoop(seconds: 0.75) { false }
+                self.raiseToBestFormat()
                 // Now that the session is live the active format is the one
                 // that will actually be used, so this number means something.
                 // It is the first thing to check when reads go soft.
                 if let d = self.device {
-                    let dims = d.activeFormat.supportedMaxPhotoDimensions
-                        .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
-                    let label = dims.map { "\($0.width)x\($0.height)" } ?? "unreported"
+                    let label = maxPhoto(d.activeFormat)
+                        .map { "\($0.width)x\($0.height)" } ?? "unreported"
                     FileHandle.standardError.write(Data("scan: still=\(label)\n".utf8))
                 }
                 emit(Event(event: "ready", rotation: self.manualRotation,
@@ -216,6 +216,50 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
                                + ["effects", "hud", "border"]))
                 if self.autoRequested { self.setAuto(true) }
             }
+        }
+    }
+
+    /// raiseToBestFormat puts the device on the format with the largest still it
+    /// offers, and only then tells the photo output to use all of it.
+    ///
+    /// The ordering is the whole trick, and it is the opposite of the obvious
+    /// one. `sessionPreset = .photo` does not pick the biggest format — it picks
+    /// a 16:9 one, and on Continuity Camera that is a vertical crop of a 4:3
+    /// sensor. Measured with `--probe`: the device wakes up on 1920x1440, the
+    /// preset *drops* it to 1920x1080 at startRunning, and assigning
+    /// activeFormat back afterwards is accepted. Doing the same thing before
+    /// startRunning is the documented 640x480 trap, because activeFormat is
+    /// still the low-res default to read from at that point.
+    ///
+    /// Setting activeFormat directly moves the session to .inputPriority, which
+    /// is AVFoundation's way of saying the app owns the format now. That is what
+    /// we want: the preset has already been shown to have worse taste than the
+    /// device's own default.
+    ///
+    /// Refusals are logged and survived. A camera that will not budge keeps
+    /// whatever the preset chose, which is exactly today's behaviour.
+    private func raiseToBestFormat() {
+        guard let device, let best = bestPhotoFormat(device) else { return }
+        let current = maxPhoto(device.activeFormat).map { Int($0.width) * Int($0.height) } ?? 0
+        guard let target = maxPhoto(best), Int(target.width) * Int(target.height) > current else {
+            // Already on the best format the device offers — the preset and the
+            // sensor happen to agree. Still worth pinning the output below.
+            if let m = maxPhoto(device.activeFormat) { photoOutput.maxPhotoDimensions = m }
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = best
+            device.unlockForConfiguration()
+        } catch {
+            autoDebug("format raise refused: \(error.localizedDescription)")
+            return
+        }
+        // Re-read rather than trusting the assignment: the point of this whole
+        // method is that what the device reports and what it was asked for are
+        // not the same thing.
+        if let m = maxPhoto(device.activeFormat) {
+            photoOutput.maxPhotoDimensions = m
         }
     }
 

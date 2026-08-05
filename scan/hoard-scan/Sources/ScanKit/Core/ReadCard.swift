@@ -69,9 +69,33 @@ func readCard(_ cg: CGImage) -> CardRead {
 
 // MARK: - The two passes
 
+/// The Vision algorithm generation both passes are pinned to.
+///
+/// Left unset, a request uses `defaultRevision`, which is whatever the OS build
+/// ships — so scan/fixtures' goldens silently describe the machine that
+/// generated them rather than this code. That is already the suspected cause of
+/// live-vs-replay disagreements on one machine (see the OCR-moved note in
+/// docs/scanner-tuning.md), and it becomes a much bigger problem the moment a
+/// second platform reads the same pixels.
+///
+/// Honest about what this buys: a revision pins the algorithm generation, not
+/// the per-OS-build model weights behind it. It narrows drift, it does not
+/// eliminate it. `--probe` prints this alongside the OS's supported set so the
+/// two can be compared before a golden is trusted anywhere.
+///
+/// Falls back to `currentRevision` if the pinned one is ever dropped from a
+/// future OS — a hard-coded constant that stops being supported would throw at
+/// perform() time, which is a worse failure than reading with a newer engine.
+let textRecognitionRevision: Int = {
+    let preferred = VNRecognizeTextRequestRevision3
+    return VNRecognizeTextRequest.supportedRevisions.contains(preferred)
+        ? preferred : VNRecognizeTextRequest.currentRevision
+}()
+
 /// The whole-frame pass, which reads the title and the rules text.
 private func frameTextRequest() -> VNRecognizeTextRequest {
     let request = VNRecognizeTextRequest()
+    request.revision = textRecognitionRevision
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
     // Pinning the language skips Vision's language identification. Card titles
@@ -87,10 +111,15 @@ private func frameTextRequest() -> VNRecognizeTextRequest {
 /// way for this to stop working.
 private func bandTextRequest(roi: CGRect) -> VNRecognizeTextRequest {
     let bottom = VNRecognizeTextRequest()
+    bottom.revision = textRecognitionRevision
     bottom.recognitionLevel = .accurate
     bottom.usesLanguageCorrection = false
     bottom.recognitionLanguages = ["en-US"]
     bottom.regionOfInterest = roi
+    // minimumTextHeight is deliberately left at Vision's default. Lowering it to
+    // 0.005 and 0.01 changed nothing across all 26 fixtures — the band read is
+    // not floor-limited, so there is nothing here to win. See the band-upscale
+    // entry in docs/scanner-tuning.md.
     return bottom
 }
 

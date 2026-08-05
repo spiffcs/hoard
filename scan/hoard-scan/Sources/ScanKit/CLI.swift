@@ -2,6 +2,9 @@
 //
 // Modes:
 //   hoard-scan --list-devices   Print the available cameras as JSON, exit.
+//   hoard-scan --probe          Dump every camera format and control the platform
+//                               admits to, as plain text for the capability ledger
+//                               in docs/scanner-tuning.md. Exit.
 //   hoard-scan --image <path>   Headless: OCR an existing image file, print JSON, exit.
 //   hoard-scan [--device <id>] [--rotate <deg>]
 //                               Live session: open a camera preview window and keep
@@ -68,6 +71,37 @@ public func runCLI() {
             fail(noPhoneMessage, code: 4)
         }
         emit(DeviceList(devices: devices))
+        exit(0)
+    }
+
+    // --probe dumps what the camera will actually admit to: every format, every
+    // control, and activeFormat at three moments around startRunning. It exists
+    // because the numbers the capture path is built on — 1080p stills, no zoom,
+    // no exposure, no torch — were each established by being surprised, and the
+    // output is meant to be pasted into the capability ledger in
+    // docs/scanner-tuning.md rather than remembered.
+    if args.contains("--probe") {
+        // Same dance as --list-devices: Continuity Camera is only published to a
+        // GUI process with a running run loop, and device names stay empty until
+        // camera access is granted.
+        NSApplication.shared.setActivationPolicy(.accessory)
+        var granted = false
+        var answered = false
+        AVCaptureDevice.requestAccess(for: .video) { g in
+            granted = g
+            answered = true
+        }
+        spinRunLoop(seconds: 120) { answered }
+        if !granted {
+            fail("camera access denied — grant it in System Settings › Privacy & Security › Camera")
+        }
+        spinRunLoop(seconds: continuityWait, until: hasContinuityCamera)
+
+        var probeDevice: String?
+        if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
+            probeDevice = args[i + 1]
+        }
+        FileHandle.standardOutput.write(Data(probeReport(deviceID: probeDevice).utf8))
         exit(0)
     }
 

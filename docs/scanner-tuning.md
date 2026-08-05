@@ -805,6 +805,126 @@ Everything above is tuned for that; do not plan around more pixels without
 reading that line first — and see the lesson above for what happened the last
 time it was "improved".
 
+*Superseded — the ceiling is 1920x1440, and `.photo` is what costs the 360
+lines. See the capability ledger below.*
+
+## Camera capability ledger
+
+What the camera admits to, rather than what it is believed to do. Regenerate
+with `hoard-scan --probe`, which dumps every format and control for every
+camera the platform will name, and runs the session experiment below. Measured
+2026-08-04, macOS 15.6 (24G84), iPhone 16 (`iPhone17,3`) over Continuity.
+
+**Continuity Camera formats — eight, topping out at 1920x1440.**
+
+      [0] 640x480    [2] 1280x720   [4] 1920x1080  [6] 1920x1440
+      [1] 640x480    [3] 1280x720   [5] 1920x1080  [7] 1920x1440   (odd = 60fps)
+
+**`sessionPreset = .photo` is a downgrade, not an upgrade.** The session
+experiment reads `activeFormat` at three moments:
+
+      before any configuration          video=1920x1440 photo=1920x1440
+      after .photo, before startRunning video=1920x1440 photo=1920x1440
+      after startRunning                video=1920x1080 photo=1920x1080   ← the preset lands here
+
+The device wakes up on its best format and the preset *reduces* it once the
+session starts. That is the whole explanation for `still=1920x1080`.
+
+**Assigning `activeFormat` after `startRunning` works.** This is the path the
+`maxPhotoDimensions` lesson above never tried — that one set the *output's*
+dimensions before the session ran, when `activeFormat` was still the low-res
+default, and got 640x480. Setting the *device's* format once the session is
+live is accepted:
+
+      activeFormat = <1920x1440 format>   accepted
+      photoOutput.maxPhotoDimensions      set 1920x1440, reads back 1920x1440
+
+**But 1440 is field of view, not detail.** Both formats are 1920 across; 4:3
+is the uncropped sensor and 16:9 is a vertical crop of it. The card's long axis
+sits on the 1920 axis either way, so this does not by itself put more pixels on
+the card — it removes a crop. Whether it converts into a legible collector band
+depends on reframing the rig closer, and that is a live session's question, not
+arithmetic. Worth taking regardless: it is free and it is strictly more sensor.
+
+**Every lens and light control is unsupported, including the ones the code
+handles.** Measured on the Continuity Camera device:
+
+      focus     continuousAutoFocus no · locked no · pointOfInterest no
+      exposure  continuousAutoExposure no · locked no
+      white bal locked no
+      light     hasTorch no · torchAvailable no · hasFlash yes
+
+The focus row is the surprising one. `App/FocusPolicy.swift` guards every
+mutation on `isFocusModeSupported`, so on this hardware the policy is inert:
+it never sets continuous AF, never locks after a good read, and its
+`isAdjustingFocus` observer never fires. The trigger's `focusSettled` input is
+therefore always true, and the `focusWait` valve never opens. The capability
+line prints `focus=fixed`. None of this is broken — it is a whole subsystem
+that costs nothing and does nothing here, and any field lesson attributing
+behaviour to focus hunts on this setup needs re-reading.
+
+`hasFlash yes` alongside `hasTorch no` is unexplained and untested; nothing
+sets `AVCapturePhotoSettings.flashMode` today.
+
+**Desk View is also 1920x1440.** Equal pixel count to the main camera's best
+format, which weakens the resolution argument in `CameraDiscovery.swift` for
+excluding it — though it is a dewarped crop of the ultra-wide, so equal pixels
+are not equal detail. Re-measure against a real card before acting on this.
+
+**Vision's revision is now pinned.** `ReadCard.textRecognitionRevision` sets
+`VNRecognizeTextRequest.revision` on both passes. Left unset it takes
+`defaultRevision`, which is whatever the OS build ships — so the goldens
+described the machine that generated them rather than this code, and that is a
+candidate explanation for the live-vs-replay disagreements noted above. On
+macOS 15.6 the supported set is `[1, 2, 3]` and the default is already 3, so
+pinning changed no golden. It is insurance, not a fix, and it pins the
+algorithm generation rather than the model weights behind it.
+
+## Upscaling the collector band does not work
+
+Measured 2026-08-04 against all 26 fixtures, and recorded here because it is the
+most obvious idea in the scanner and it is wrong.
+
+The premise: the bottom band is the highest-value read in the pipeline — the
+field lesson above puts bottom-band legibility "worth more than any further
+border or symbol work" — and its glyphs are a few pixels tall. So crop the band,
+enlarge it with `CILanczosScaleTransform`, and read it again on its own handler.
+Rescue only: the second read was used *only* where the normal band pass had
+parsed no collector block at all, so nothing that already worked could be
+disturbed.
+
+**Result at 2x and 3x: zero rescues, three corruptions.**
+
+| fixture | golden | with upscale |
+|---|---|---|
+| `old-frame-black-border` (Builder's Bane) | `""` | `"1000"` — invented from an `01000` misread |
+| `old-frame-same-set-variants` (Cephalid Looter) | `""` | `"72"` — invented |
+| `old-frame-copyright-misread` | `"80"` | `"30"` — a correct read corrupted |
+
+4x was worse. Narrowing the merge to replace only the parsed block, leaving
+`bottomLines` alone, changed nothing — the corruption is in the rescued parse
+itself, not in what it was allowed to touch.
+
+**Why, and this is the transferable part.** The band's failure mode is not "text
+too small for Vision to attempt". It is "text too degraded to read correctly".
+Vision was already attempting these rows and correctly declining to commit.
+Enlarging degraded pixels does not add detail; it adds *confidence*, and it
+turns an abstention into a confident error. For a pipeline where an invented
+collector number does not rank a card wrongly but invents one, that trade is
+strictly bad. Any future "help Vision see it better" idea — sharpening,
+contrast stretch, thresholding, super-resolution — should be measured against
+this table first, because they all fail the same way.
+
+**`minimumTextHeight` is a dead end too.** It is never set, and Vision's default
+is 1/32 of the image height, which looks like it should be excluding the band
+outright. It is not: setting it to 0.005 and 0.01 changed nothing across all 26
+fixtures. The band read is not floor-limited. `ReadCard.bandTextRequest` carries
+a comment saying so.
+
+**What this leaves.** The band does not need better software on the same pixels.
+It needs more pixels — and Continuity Camera has none left to give beyond the
+1920x1440 above.
+
 ## Open questions for the next session
 
 *(The background-baseline question that stood here is answered — see "The
