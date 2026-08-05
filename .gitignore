@@ -31,6 +31,9 @@ go.work.sum
 # Native scan helper build output (produced by `make scan`); Swift source is tracked
 /bin/
 
+# SwiftPM's build directory for the scan helper package
+scan/hoard-scan/.build/
+
 # Local SQLite database(s) — the real hoard lives in a per-user data dir
 hoard.db
 *.db

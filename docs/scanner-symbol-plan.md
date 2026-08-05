@@ -134,7 +134,7 @@ nothing.
 ## Where the code is
 
 - `CardLayout.symbolU` / `symbolV`, `symbolInk`, `CardGeometry.point(u:v:)`,
-  `CardLayout.leftU` — `scan/hoard-scan/main.swift`
+  `CardLayout.leftU` — `scan/hoard-scan/Sources/ScanKit/Core/Border/CardLayout.swift`
 - Scoring harness and the `--dump` mode — `scan/corpus/border.sh`
 - Ranking and the abstain discipline to copy — `applyBorderEvidence`,
   `internal/tui/autoscan.go`

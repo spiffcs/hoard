@@ -151,7 +151,7 @@ fix lives.
 **A creature's power/toughness reads as a collector number.** "2/2" matches
 the pair regex perfectly and shares the bottom band. Guard: a pair only
 counts if the total is ≥ 20 or the numerator is zero-padded.
-(`parseCollectorInfo`, main.swift.)
+(`parseCollectorInfo`; see docs/scanning.md for where each name lives.)
 
 **Licensed frames break format assumptions.** Marvel frames print the rarity
 *before* the number ("R 0657"), and mythic's M arrives as Cyrillic М until
@@ -169,7 +169,7 @@ real cards (Kev Walker became *Kiln Walker* in the queue). Titles are Title
 Case; a multi-word line with ≤1 lowercase letter is furniture. Similarly,
 fallback OCR lines carrying type-line vocabulary ("creature.") must never
 reach the searcher — "creature." resolved to *Creature Guy*.
-(`titleLike`/`boilerplate` in main.swift; `fallbackLineSuspect` in
+(`titleLike`/`boilerplate` in ScanKit; `fallbackLineSuspect` in
 internal/tui/autoscan.go.)
 
 **Scanning off a stack is normal, so every border in frame is a candidate.**
@@ -231,7 +231,7 @@ returns as fragments — the full-resolution frame pass reads it far better,
 so both feed the extraction. The same line's range *end year equals the
 printing's release year*, which is what breaks a number tie: "95" is Remove
 Soul in both 7th and 8th Edition, and only one was printed in 2003.
-(`parseCopyrightCollector` in main.swift; the year filter in
+(`parseCopyrightCollector` in ScanKit; the year filter in
 `rankByScanStrength`, internal/tui/autoscan.go.)
 
 **A copyright-line number may upgrade, never veto.** That glyph size misreads
@@ -591,7 +591,7 @@ so. And the black pile's one abstention was a glared re-shot of a card the
 previous capture had read cleanly — tone 0.18 against its sibling's −0.90 —
 which is exactly the reading that must not round toward white, because that is
 the shape of every wrong-set commit this reader could ever cause.
-(`readBorder` in main.swift; `applyBorderEvidence` in autoscan.go.)
+(`readBorder` in ScanKit; `applyBorderEvidence` in autoscan.go.)
 
 **The background baseline could swallow a card, and never gave it back.** The
 furniture baseline is taken from the first sample after auto arms and is never
@@ -689,7 +689,7 @@ resolved to the unrelated *Green Dragon* while the crop's "Eiteral Dragon"
 would have landed on Eternal Dragon. Adopt the crop's name when the frame's
 is furniture and the crop's is title-shaped — and ship whichever name loses
 as a candidate either way, since downstream owns fuzzy matching and cannot
-choose a reading the helper dropped. (`mergeInto` in main.swift.)
+choose a reading the helper dropped. (`mergeInto` in ScanKit.)
 
 **Prose fabricates set codes.** The set/language regex tolerates a bare space
 between code and language, so once `asciify` uppercases everything, ordinary
@@ -699,7 +699,7 @@ session shipped a fabricated set code, and a checked-in fixture had been
 pinning one for months. Gate *extraction* on the line reading like border
 print — the set line is set in caps and carries almost no lowercase — but
 leave `boilerplate`'s use of the same regex generous, because there a loose
-match only kills a line. (`setLangFurniture` in main.swift.)
+match only kills a line. (`setLangFurniture` in ScanKit.)
 
 **A pair-form number is its own corroboration.** The crop channel demanded a
 set code beside a number, because a bare number is a mana cost as often as a
@@ -716,7 +716,7 @@ card twice over. Mine the leading Title Case run back out and ship it as an
 extra candidate, never as the primary: it is a heuristic guess, and the
 resolver already owns choosing among candidates. Order matters as much as
 extraction — the Go side gives up after five lines, so the recovered name
-sits directly behind the primary. (`parseSelfReference` in main.swift.)
+sits directly behind the primary. (`parseSelfReference` in ScanKit.)
 
 **Border print must never become the primary name.** Choosing the name from
 the top *plausible* line — three letters or more — let an old frame's

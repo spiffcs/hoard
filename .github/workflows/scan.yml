@@ -1,29 +1,57 @@
-# The Swift camera helper: compile it and replay the checked-in capture
-# fixtures (scan/fixtures/) against their golden card lists.
+# The Swift camera helper: compile it, unit-test it, and replay the checked-in
+# capture fixtures (scan/fixtures/) against their golden card lists.
 #
-# Its own workflow rather than a job in ci.yml because macOS runners bill
-# private-repo minutes at 10x and path filtering is workflow-level: the
-# sweep only needs to run when something that can change the helper's
-# behavior changes, which is rare.
+# ---------------------------------------------------------------------------
+# THIS WORKFLOW IS MANUAL-ONLY ON PURPOSE.
+#
+# macOS runners bill private-repo minutes at 10x, and this job needs one: the
+# helper links AppKit, AVFoundation and Vision, so it cannot build on the
+# ubuntu runner ci.yml uses. A run is only ~30s of work, but with image
+# spin-up it lands around 2-3 wall-clock minutes — call it 20-30 billed
+# minutes each time, on every push and every PR update.
+#
+# So it runs from the Actions tab (or `gh workflow run scan.yml`) when someone
+# asks for it, and not otherwise.
+#
+# WHAT THIS COSTS YOU: nothing checks the goldens automatically any more. A
+# change that alters what the scanner reads will reach master unnoticed unless
+# somebody runs the sweep. Until this is re-enabled, the real gate is local and
+# it is on you:
+#
+#     make scan && make scan-test && make scan-check
+#
+# TO TURN IT BACK ON: delete the `workflow_dispatch:` line below and uncomment
+# the push/pull_request block under it. The path filters are already written —
+# they keep it off Go-only changes, which is what made it affordable before.
+# ---------------------------------------------------------------------------
 name: Scan helper
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - "scan/**"
-      - "build-scan.sh"
-      - "Makefile"
-      - ".github/workflows/scan.yml"
-  pull_request:
-    paths:
-      - "scan/**"
-      - "build-scan.sh"
-      - "Makefile"
-      - ".github/workflows/scan.yml"
+  workflow_dispatch:
+
+  # push:
+  #   branches: [master]
+  #   paths:
+  #     - "scan/**"
+  #     - "build-scan.sh"
+  #     - "Makefile"
+  #     - ".github/workflows/scan.yml"
+  # pull_request:
+  #   paths:
+  #     - "scan/**"
+  #     - "build-scan.sh"
+  #     - "Makefile"
+  #     - ".github/workflows/scan.yml"
 
 permissions:
   contents: read
+
+# Superseded runs are cancelled rather than queued. Costs nothing while this is
+# manual, and matters the moment the triggers above come back: three pushes to
+# a PR used to mean three full macOS runs.
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Pinned to macos-15, not -latest: the goldens pin Vision's OCR output,
@@ -35,8 +63,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The helper's Package.swift declares swift-tools-version 6.0, so a runner
+      # image that regressed to an older Xcode fails the build with a manifest
+      # error rather than anything to do with the scanner. Printing the version
+      # first makes that five seconds to diagnose instead of a puzzle.
+      - name: toolchain
+        run: swift --version
+
       - name: build scan helper
         run: make scan
+
+      # Before the sweep: seconds rather than a minute, and a broken trigger
+      # rule or parser predicate is far easier to read here than as a golden
+      # diff. Debug rather than release deliberately — release was measured
+      # slower (10s vs 8s), since the test target compiles fresh either way.
+      - name: unit tests
+        run: make scan-test
 
       - name: fixture sweep
         run: make scan-check

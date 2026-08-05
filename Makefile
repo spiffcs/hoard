@@ -1,4 +1,4 @@
-.PHONY: build scan scan-check test vet all clean generate-json-schema
+.PHONY: build scan scan-check scan-test test vet all clean generate-json-schema
 
 # Build the hoard binary.
 build:
@@ -12,6 +12,13 @@ scan:
 # extracted card lists against their goldens (macOS only; needs `make scan`).
 scan-check:
 	./scan/fixtures/sweep.sh
+
+# Unit-test the helper's pure logic — the trigger state machine, the text
+# heuristics, the border reader's arithmetic. Complements scan-check rather
+# than replacing it: the sweep proves what the helper reads off real frames,
+# these prove the rules in isolation and run in milliseconds.
+scan-test:
+	swift test --package-path scan/hoard-scan
 
 # Build everything needed for the full experience (binary + scan helper).
 all: build scan

@@ -7,7 +7,7 @@ nonfoil when the printed text cannot.
 
 The scanner reads finish from one signal: the star that modern frames print as
 the set/language separator (`MSC ★ EN`), classified by `finishFromSeparator`
-in `main.swift`. Pre-8th-Edition frames have no set/language line at all, so
+in `ScanKit` (see docs/scanning.md). Pre-8th-Edition frames have no set/language line at all, so
 old foils carry no finish evidence and commit as **nonfoil** — silently, and
 foil is worth a multiple of nonfoil.
 

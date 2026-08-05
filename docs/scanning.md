@@ -268,6 +268,51 @@ export HOARD_SCAN=~/src/hoard/bin/hoard-scan.app
 Everything else works without the helper; if it isn't found, the in-app scan
 action reports that it's unavailable rather than failing.
 
+## Where the code lives
+
+The helper is a SwiftPM package at `scan/hoard-scan/`. Everything is in the
+`ScanKit` library; the executable target is a three-line shell that calls
+`runCLI()`, which is what lets the tests reach the whole helper with
+`@testable`.
+
+    Sources/ScanKit/
+      CLI.swift                the five modes and their exit codes
+      Core/                    the read pipeline — no camera, no window
+        Wire.swift             Event, emit, and the NDJSON contract
+        ScanCommand.swift      the stdin verbs the parent sends
+        OCRTypes.swift         Line, CardRead, CardEntry
+        ReadCard.swift         the frame-wide Vision read
+        ScanFrame.swift        the two-channel capture read
+        CardDetection.swift    findCard, cardRects, perspectiveCrop
+        TitleSelection.swift   titleLike, boilerplate, parseSelfReference
+        CollectorNumber.swift  parseCollectorInfo, setLangFurniture
+        CopyrightLine.swift    parseCopyrightCollector
+        TextUtilities.swift    asciify, editDistance, normalizeNumber
+        Images.swift           uprighted, rotatedImage, cgImage
+        Diagnostics.swift      multi:/border:/auto:/timing: tracing
+        Border/                CardLayout, CardGeometry, BorderGate, readBorder
+        Trigger/               Tuning, AutoTrigger, SceneSignature, TriggerRects
+      App/                     camera, window, HUD, sound
+        CaptureController.swift  the live session
+        FocusPolicy.swift        the lens: focus once, freeze, thaw on evidence
+        OutlineOverlay.swift     the trigger's on-screen cue
+        PriceHUD.swift, SoundBank.swift, PreviewView.swift
+        CameraDiscovery.swift, PhotoDecode.swift, AppLifecycle.swift
+
+**Core must not import AppKit, AVFoundation or QuartzCore.** That direction is
+what keeps `--image` able to replay a fixture through the identical path a live
+capture takes, which is the whole basis of `scan/fixtures`. ScanKit is one
+module, so the compiler does not enforce it —
+`ScanKitTests/LayeringTests.swift` does.
+
+`docs/scanner-tuning.md` names the function each field lesson is enforced at;
+this tree is how to find them. Two commands, both fast:
+
+```sh
+make scan-test    # unit tests: the trigger machine, the parsers, the maths
+make scan-check   # replay the 26 capture fixtures against their goldens
+```
+
 ## Notes and troubleshooting
 
 - Continuity Camera needs an iPhone signed into the same Apple ID, nearby and
