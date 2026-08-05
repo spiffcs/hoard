@@ -66,15 +66,26 @@ func (w logWriter) Write(p []byte) (int, error) {
 // Open starts a capture session on the given camera. deviceID may be empty to
 // let the helper choose; rotation is the previously-saved preview correction.
 // The returned Session's Events channel is closed when the helper exits.
-func Open(ctx context.Context, deviceID string, rotation int) (*Session, error) {
+func Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	path, err := helperPath()
 	if err != nil {
 		return nil, err
 	}
 
-	args := []string{"--rotate", strconv.Itoa(rotation)}
-	if deviceID != "" {
-		args = append(args, "--device", deviceID)
+	args := []string{"--rotate", strconv.Itoa(opts.Rotation)}
+	if opts.DeviceID != "" {
+		args = append(args, "--device", opts.DeviceID)
+	}
+	// A pairing code is what distinguishes the two backends. With one, the
+	// helper owns no camera and translates for an iPhone running the companion
+	// app; without one it opens a Continuity Camera as it always has. Both
+	// speak the identical protocol on this pipe, which is why nothing below
+	// this line has to know which it got.
+	if opts.PairingCode != "" {
+		args = append(args, "--remote", "--code", opts.PairingCode)
+		if opts.Mirror {
+			args = append(args, "--mirror")
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, path, args...)

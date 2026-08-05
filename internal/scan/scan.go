@@ -85,6 +85,15 @@ type HUDResult struct {
 	Amount *float64 `json:"amount,omitempty"`
 	Tier   string   `json:"tier,omitempty"` // bulk | win | jackpot | unpriced | review
 	Total  *float64 `json:"total,omitempty"`
+	// Finish is what actually got written — "foil" or "nonfoil" — so a source
+	// with a screen can say so.
+	//
+	// Decided here rather than on the phone, for the same reason the tier is:
+	// this side has the catalog. The phone can only report whether it saw a
+	// star between the set code and the language, which is a different and
+	// weaker claim — plenty of foils print no marker at all, and a printing
+	// that does not come in foil cannot be one however the glyph read.
+	Finish string `json:"finish,omitempty"`
 }
 
 // CollectorAlt is one alternative collector block read from the band. Finish
@@ -228,6 +237,36 @@ type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
+	// NeedsPairing is set by the caller, not by the helper: whether a device
+	// requires a pairing code depends on what this machine has already paired
+	// with, which the helper cannot know. Excluded from the wire for the same
+	// reason.
+	NeedsPairing bool `json:"-"`
+}
+
+// KindRemote is the Device.Kind an iPhone running the companion app carries.
+// The helper sets it; the Go side matches on it to decide whether a device
+// needs a pairing code, so the two spellings have to stay in step.
+const KindRemote = "Hoard Scan"
+
+// OpenOptions says which camera to open and how.
+//
+// A struct rather than positional arguments because the two backends differ by
+// exactly one field — a pairing code — and a fourth bare parameter at every
+// call site would make that difference invisible.
+type OpenOptions struct {
+	// DeviceID is the camera or paired phone to use; empty lets the helper pick.
+	DeviceID string
+	// Rotation is extra clockwise preview rotation in degrees.
+	Rotation int
+	// PairingCode, when set, opens a session against an iPhone running the
+	// companion app instead of a local Continuity Camera. Six digits, shown in
+	// the app, remembered per device in scan.json.
+	PairingCode string
+	// Mirror asks a remote session to also open a preview window on this Mac.
+	// Off by default: the phone shows the preview, the price and the cue, and a
+	// second window is a second place to look during a session.
+	Mirror bool
 }
 
 var (

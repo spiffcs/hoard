@@ -1,3 +1,7 @@
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import AppKit
 
@@ -15,7 +19,7 @@ final class PriceHUD {
     private let container = CALayer()
     private let totalLayer = CATextLayer()
     private var scale: CGFloat = 2
-    private weak var preview: AVCaptureVideoPreviewLayer?
+    private weak var preview: (any PreviewHost)?
 
     private static let gold = NSColor(calibratedRed: 1, green: 0.84, blue: 0, alpha: 1)
 
@@ -27,13 +31,13 @@ final class PriceHUD {
     private var videoRect: CGRect {
         let bounds = container.bounds
         guard let preview else { return bounds }
-        let r = preview.layerRectConverted(fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let r = preview.videoRect
         guard !r.isNull, !r.isInfinite, r.width > 40, r.height > 40 else { return bounds }
         return r.intersection(bounds)
     }
 
     /// attach hangs the HUD's layers off the preview layer, above the outline.
-    func attach(to host: AVCaptureVideoPreviewLayer, scale: CGFloat) {
+    func attach(to host: any PreviewHost, scale: CGFloat) {
         self.scale = scale
         self.preview = host
         container.frame = host.bounds
@@ -224,3 +228,5 @@ final class PriceHUD {
         return image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
     }()
 }
+
+#endif

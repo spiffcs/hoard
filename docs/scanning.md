@@ -10,13 +10,15 @@ Inside an add session (`hoard add`, or <kbd>a</kbd> in the browser), press
 
 ## How it works
 
-Scanning uses **Continuity Camera only**, meaning your iPhone and never the Mac's
-built-in webcam. A fixed, user-facing camera can't be aimed at a card on the
-desk, so rather than fall back to one and produce unreadable captures, hoard
-tells you no iPhone is connected. If you have more than one iPhone paired you're
-asked which to use; the choice is remembered for the session so bulk scanning
-doesn't ask again, and <kbd>ctrl+r</kbd> at the prompt re-runs detection or
-switches phones.
+Scanning never uses the Mac's built-in webcam. A fixed, user-facing camera can't
+be aimed at a card on the desk, so rather than fall back to one and produce
+unreadable captures, hoard tells you no camera is connected.
+
+<kbd>ctrl+o</kbd> is where you choose a source. It lists every Continuity Camera
+and every paired phone running Hoard Scan, so picking between them — or between
+two phones — is the same action. While a camera window is already open,
+<kbd>ctrl+o</kbd> takes you back to it instead; close it with <kbd>c</kbd> first
+to choose a different source.
 
 A window opens with the live feed **and stays open** — and with a current
 helper it watches the feed itself: set a card down, hold it still for about a
@@ -253,6 +255,42 @@ below the sensor's full photo resolution, and the collector number is already
 at the edge of what Vision resolves at full resolution; on Desk View it
 becomes a coin flip and the review queue fills up. The main camera at photo
 resolution is the scanner.
+
+## Scanning with the iPhone app
+
+There are two ways to point a camera at a card. **Continuity Camera** needs no
+app at all — connect an iPhone and it appears. The **hoard scan app** is the
+other, and it is what gets past Continuity's limits: 48 MP stills instead of
+1920x1440, a lens locked at a measured distance, exposure and white balance
+frozen, and the price read aloud on the phone while the terminal keeps the
+queue.
+
+**Pair once, from the name prompt: `ctrl+p`.** It opens with the three things
+that have to be true — the app open, on screen, and showing its Pair tab —
+because a phone that is not yet running looks exactly like a phone that is not
+there. Press enter when it is, and hoard searches. `ctrl+p` lists the phones it
+can see, and typing that code pairs them. The code is kept on the phone and the
+pairing is kept beside the database, so this is a once-per-phone step rather
+than a once-per-session one.
+
+After that the phone is simply another row in the `ctrl+o` picker, beside any
+Continuity cameras. Picking it opens the same session, emits the same events and
+drives the same review queue — the difference is only where the pixels come
+from.
+
+Two things worth knowing:
+
+- **The app must be open and on screen.** iOS suspends background apps, and a
+  suspended app stops advertising, so a phone that has been switched away from
+  looks exactly like a phone that is not there. If `ctrl+o` shows only the
+  Continuity camera, that is usually why.
+- **The phone shows the price and plays the sound; the terminal has everything
+  else.** That split is deliberate: the phone is in a stand facing the desk, so
+  it gets the feedback you can take in without looking, and the queue, the
+  tally and the review cascade stay where your attention already is.
+
+To revoke a Mac, use **Generate a new code** on the Pair tab. Every existing pairing stops
+working, and `ctrl+p` re-pairs.
 
 ## Finding the helper
 

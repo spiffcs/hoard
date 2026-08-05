@@ -1,3 +1,7 @@
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import AppKit
 
@@ -31,7 +35,7 @@ final class OutlineOverlay {
     /// The layer the cue is drawn over, which also owns the mapping from
     /// buffer space into what is actually on screen. Weak: the preview layer
     /// belongs to the window, and the cue must not keep it alive past close.
-    private weak var preview: AVCaptureVideoPreviewLayer?
+    private weak var preview: (any PreviewHost)?
 
     /// The rectangles the trigger last saw, kept so a phase change can recolor
     /// the cue without waiting for the next sample.
@@ -44,7 +48,7 @@ final class OutlineOverlay {
 
     /// attach hangs the cue's layer off the preview layer. Call it before the
     /// HUD attaches, so the price flash sits above the brackets.
-    func attach(to preview: AVCaptureVideoPreviewLayer, bounds: CGRect) {
+    func attach(to preview: any PreviewHost, bounds: CGRect) {
         self.preview = preview
         shape.frame = bounds
         shape.fillColor = nil
@@ -141,8 +145,7 @@ final class OutlineOverlay {
     /// so immune to the converter's sense) is asked of the layer.
     private func bracketRect(for b: CGRect, rotation: Int) -> CGRect? {
         guard let preview else { return nil }
-        let video = preview.layerRectConverted(
-            fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let video = preview.videoRect
         guard !video.isNull, video.width > 1, video.height > 1 else { return nil }
         // Buffer space, normalized, top-left origin.
         var r = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
@@ -199,3 +202,5 @@ final class OutlineOverlay {
         }
     }
 }
+
+#endif

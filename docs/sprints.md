@@ -20,6 +20,7 @@ stable and looks the part.
 | 4 | TUI completion — seamless add + parity ledger | ✅ implemented 2026-07-31 | plan pruned; the add flow lives in [browsing.md](browsing.md) |
 | 5 | UI beautification — WUBRG identity | ✅ implemented 2026-08-01 (A–F; live visual smoke pending) | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
 | 6 | Distribution | 💭 backlog (unplanned) | — |
+| 7 | iPhone capture head — a third scan source | 🚧 in progress (A–C done, D building) | [sprint-iphone-capture-head.md](sprint-iphone-capture-head.md) |
 
 ## One-line summaries
 
@@ -46,6 +47,13 @@ stable and looks the part.
 - **Distribution** (backlog): goreleaser + Homebrew tap + version in
   buildinfo — the "other people can use this" release. Unplanned; plan it
   when parity + beautification land.
+- **iPhone capture head** (in progress): a companion iOS app as a third scan
+  source beside Continuity Camera, which stays first-class so scanning still
+  works with no app installed. Captures at 48.8 MP against Continuity's
+  1920x1440 ceiling and reads printing evidence the old rig could not resolve.
+  Its **known-gaps table is the place to look when picking up scanner backlog
+  work** — it separates real regressions from parity and from harness
+  limitations.
 
 ## Scanner: expansion symbols (planned, not started)
 

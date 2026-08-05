@@ -118,6 +118,53 @@ sequence is the argument.
 | 0.1s | 4 | 3 | 1,536ms | 12% | — | shortening the streak bought almost nothing |
 | **0.1s** | **6** | **6** | 1,700ms | **7%** | **1.1** | + wider grace; **cadence 9.6s → 5.1s** |
 
+### The remote source (iPhone app), first measured session
+
+Same trigger, different camera and a network in the middle, so it gets its own
+row rather than inheriting the one above. 61 captures, 48 commits, 2026-08-04.
+
+| source | cadence med | captures/commit | captures reading nothing | shutter→result |
+|---|---|---|---|---|
+| Continuity (local) | 5.1s | 1.1 | 7% | ~700ms budget |
+| **Hoard Scan (iPhone)** | **4.90s** | **1.27** | **0%** | **456ms** |
+
+The phone is faster than the pipe it replaced and reads more reliably — not one
+capture in 61 came back with nothing — but it spends that lead on extra
+captures. Both facts have the same cause, and it is not the trigger.
+
+**Where the loop goes.** shutter 149ms, read 302ms, phone total 447ms, `net`
+(wire + the Mac's resolve) 8ms median and 45ms at p90. The network is not the
+problem and never was; the read is 68% of the loop and the wire is noise. That
+is why the ledger's remote row is about the *parser*, and why `net=` is now on
+the timing line — so a future session can tell the two halves apart without
+guessing.
+
+**The nudge was firing on every card.** `nudgeBaseDelay` is 2500ms, fitted to
+the local pipe. Across 60 result-to-next-capture gaps on the phone, **none was
+under 2500ms** — the fastest swap was 3856ms, the median 4896ms, p75 7047ms. So
+the nudge never once caught a parked card; it fired mid-swap, every time, and 43
+of 61 resolves came back tagged `nudged`. Each one re-arms during the swap and
+buys a capture nobody asked for, which is most of the distance between 1.27
+captures per commit and the local 1.1.
+
+Retuned to **5500ms for the remote source only** — above the observed median
+swap, below the p75 — so it fires when a card is genuinely parked and stays
+quiet when the operator is just working at their own pace. Pinned by
+`TestSourceTuningIsPerSource`, with the measurement in the test's comment so the
+number cannot be "cleaned up" back to the local one.
+
+`remoteNameTimeout` went the other way, **500ms → 250ms for the remote source**.
+The 700ms budget is shutter-to-result, the phone already spends 447ms of it at
+the median and 472ms at p90, and a 500ms Scryfall escalation on top blows it
+outright. 250ms still catches a catalog miss on a fast network and gives up
+before the card stops feeling immediate.
+
+**Read the numbers as one session.** Cadence and captures-per-commit are the
+honest columns here as above, and one sitting of 48 commits is enough to justify
+a retune but not to close the question. The next session should show
+captures/commit falling toward 1.1 with cadence unchanged; if cadence rises
+instead, 5500ms is too long and the operator is waiting on the nudge.
+
 Read the last column, not the settle column. Settle medians mislead once grace
 is wide: a pass that used to fail fast and retry now lingers and succeeds, so
 the median rises while the user waits less. **Card-to-card cadence and captures
@@ -924,6 +971,208 @@ a comment saying so.
 **What this leaves.** The band does not need better software on the same pixels.
 It needs more pixels — and Continuity Camera has none left to give beyond the
 1920x1440 above.
+
+## The iPhone head: what the pixels bought
+
+First real captures from the native iOS app, 2026-08-04, iPhone 16, wide lens,
+focus locked at ~0.24, exposure and white balance locked, no torch, no zoom.
+
+    still   6048x8064   48.8 MP        (Continuity's ceiling: 1920x1440, 2.8 MP)
+    card    ~2400x3370  38-42% of frame
+    band    ~2400x605
+    read    ~540 ms for two full-resolution Vision passes
+
+**Three cards, three bands read.**
+
+| card | what came off the bottom |
+|---|---|
+| MSC (2026) | `R 0339` · `MSC • EN ALEXANDER SKRIPNIKOY` · `TM & C 2026 Wizards of the Coast` |
+| MH3 (2024) | `R 0338` · `MH3 • EN OLENA RICHARDS` · `2024 Wizards of the Coast` |
+| FEM (1994) | `Illus. Amy Weber` · `©1994 Wizards of the Coast, Inc. All rights reserved` |
+
+Against the 31% footer-read rate in the field lessons above. The FEM row is the
+one that matters: that copyright line is what `docs/scanner-symbol-plan.md`
+calls "precisely the line a desk photo of that frame fails to read", and names
+as the blocker for anchoring the symbol patch. At 48 MP it is crisp.
+
+Note what the FEM row does *not* contain: a set code. Nothing in that capture
+identifies the set, because the frame does not print one — the year and the
+illustrator are the whole of the printing evidence. That is the case the symbol
+plan exists for, and it is worth being strict about, because the set is very
+easy to supply from outside the read and call it a result.
+
+**The card fills 40% of the frame, so all of this used ~16% of the sensor.**
+Card height is ~3370 px against the ~880 px this document records at 1080p —
+close to 4x linear before any attempt to frame tighter, and framing tighter is
+worth roughly 2.5x more. The expansion symbol goes from 35x23 px to about
+134x88, or ~350x230 if the card fills the frame.
+
+**A fixed fraction of the frame is not a band.** The first two captures read
+*nothing* off the bottom while the rules text read perfectly, because the band
+was taken as the bottom 18% of the *frame* and the card only occupies the middle
+40% of it — so the crop was a photograph of the desk. Anchoring the band to a
+detected card fixed it outright. This is the same lesson `collectorBand` already
+encodes on the macOS side; it had to be relearned because the iOS pipeline
+deliberately started from nothing.
+
+**Two ways a shape test lies, both worth carrying into the new parser.** The
+first pass at counting "did a collector number read" was wrong in both
+directions on real data:
+
+- *False negative.* The modern band prints the number and the set code on
+  **separate lines** — `R 0338` then `MH3 • EN OLENA RICHARDS`. A pattern
+  expecting them adjacent scored a perfect read as unreadable.
+- *False positive.* `\d+/\d+` matches the **power/toughness box**, which sits in
+  the same bottom strip. A 1994 card scored a collector number of `0/1`.
+  Pre-Exodus cards carry none, so it never could have been one.
+
+**Total megapixels is the wrong number. Count pixels on the card.**
+
+Zooming drops the still from 48.8 MP to 24.5 and then 12.2, because the 48 MP
+mode is 1x only and past it the wide camera falls back to a binned readout. That
+looks alarming and is nearly irrelevant, because the sensor area being discarded
+is desk. Measured on one card at a fixed distance:
+
+| zoom | still | card fills | **card height** |
+|---|---|---|---|
+| 1.00x | 6048x8064 (48.8 MP) | 41% | 3306 px |
+| 1.41x | 4288x5716 (24.5 MP) | 60% | 3462 px |
+| 2.27x | 3024x4032 (12.2 MP) | 97% | 3911 px |
+
+Card pixels go *up* with zoom, mildly. Digital zoom is pre-cropping, and the
+binned mode holds up slightly better than a naive crop would. An earlier version
+of this section read the megapixel column and concluded zoom was a costly
+mistake; that was measuring the frame instead of the card, and it was wrong.
+
+**Sharpness beats resolution, and it is not close.** The same session, two
+captures:
+
+| | closest possible | backed off |
+|---|---|---|
+| focus | **0.00** (lens at its near limit) | 0.23 |
+| card height | **5608 px** | 3462 px |
+| copyright read | `т* д C 2028 Wizacd of dox Coкel` | `™ & © 2026 Wizards of the Coast` |
+| set row read | `MSC•EN • ALERANDER SKRIPNINON` | `MSC • EN ALEXANDER SKRIPNIKOV` |
+
+A 62% larger card read *worse* — garbled into Cyrillic, and the year wrong by
+two. `minimumFocusDistance` on the wide lens is **150 mm**, and a card closer
+than that cannot be focused no matter what the lens position is set to. A focus
+position pinned at 0.00 is the tell: autofocus wanted to go nearer than the
+optics allow.
+
+So the ceiling on useful card resolution is working distance, not sensor size,
+and the ultra-wide's macro range was tried and rejected on image quality.
+
+## The iOS rig's operating point
+
+Fixed by the above, and what the read pipeline should be designed against rather
+than hoped to exceed:
+
+    lens        wide (not ultra-wide — macro range costs too much quality)
+    distance    at or beyond 150 mm; nearer will not focus
+    focus       locked ~0.23, and 0.00 means the card is too close
+    zoom        whatever fills the frame at that distance (~1.4x)
+    card        ~3460 px tall · band crop ~2470x625
+    still       24.5 MP
+
+At that operating point the collector row, the set code, the artist, the
+copyright line and the expansion symbol all read cleanly on a modern frame, and
+the symbol is around 150 px across.
+
+### Thirteen cards at the operating point
+
+A deliberate spread — white-bordered and black-bordered 1994/1995, the
+1993-2003 reprint frames, and four modern cards — all at zoom 1.61x, focus
+0.24-0.25, card 3320-3660 px tall.
+
+**Every card gave up every piece of printing evidence it physically carries.**
+
+| frame era | n | what the band gave |
+|---|---|---|
+| 1994-1995 | 5 | illustrator + copyright year. There is no collector number on these cards to miss |
+| 1993-2003 | 4 | **the collector number, out of the copyright line** — `93/350`, `112/350`, `15/145`, `24/143` |
+| modern | 4 | rarity + number, set code + language + artist, copyright |
+
+The middle row is the one that matters. `docs/scanner-symbol-plan.md` records
+that "8ED cards queue because their collector number sits in a copyright line
+that a 1080p desk photo cannot resolve". It resolves, denominator included, on
+every one of them.
+
+Against a 31% footer-read rate. The comparison is not quite like for like — this
+is a fixed, well-lit rig rather than a live session — but the failure mode it
+replaces was *illegibility*, and illegibility is gone.
+
+**Residual OCR noise, none of it load-bearing so far:** `™ &` reads as `IM &`,
+`TN &`, `rM &`; `Illus.` as `fllus,` and `Ius.`; `Inc.` as `Inr.`. One year
+came back `1093-2003` for `1993-2003`, which is the only error that touches a
+field the parser uses — and the `-2003` half survived it.
+
+### The expansion symbol is legible
+
+Five pre-1999 cards, patches cropped from card space at the operating point
+above. The symbol is **not** in the collector band — it sits at the right end of
+the type line, a little over half way down the card, and a band crop that appears
+to contain one is showing the holofoil rarity stamp instead.
+
+    patch size   ~450x370 px      (Continuity, per the symbol plan: 35x23)
+    card height  3200-3540 px
+
+Five sets, five distinct glyphs, every one of them sharp:
+
+| symbol | set | copyright row |
+|---|---|---|
+| portcullis | Stronghold | ©1998 |
+| palm tree | Mirage | ©1996 |
+| crown | Fallen Empires | ©1994 |
+| interlocking gears | Urza's Saga | ©1993-1998 |
+| hammer | Urza's Legacy | ©1993-1999, 36/143 |
+
+That answers `scanner-symbol-plan.md`'s own cheapest disconfirming test — "see
+whether anything can tell a 7 from an 8; if the pixels do not carry it at that
+size, the feature is dead" — in the affirmative, with roughly twenty times the
+area it assumed.
+
+**Match against reference art. Never against recall.** Reading this table off
+the captures, the portcullis was first written down as Urza's Saga — confidently,
+with Urza's actual gears sitting in the next capture along. That is the whole
+risk of this feature in miniature: a wrong set does not rank a card badly, it
+invents a printing, exactly as a misread collector number does. A distance
+against reference crops can return "uncertain"; recognition from memory returns
+a wrong answer with no signal that it is wrong.
+
+Note also that the copyright row cannot stand in for the symbol here.
+Stronghold, Urza's Saga and Exodus are all 1998. The year narrows; the glyph
+separates.
+
+The Fallen Empires card is the case worth keeping in mind: its footer carries no
+set information whatsoever, only `Illus. Amy Weber` and `1994 Wizards of the
+Coast`. The crown is the only set evidence the card has.
+
+**Two things measured while looking.** The symbol's position inside the patch
+drifts by frame era — centre-right on the Urza's frame, upper-left on the old
+frame — which matches the two positions the symbol plan measured, and is why the
+crop window here is deliberately generous rather than fitted. And rarity colour
+varies within a set exactly as that document warns: the portcullis came back
+gold, the hammer black. Match shape, never colour.
+
+**Still unproven:** the patch is computed from an axis-aligned bounding box, so
+it assumes the card is square to the frame. It held over five captures on a
+fixed overhead rig. Under real tilt it will drift, and the fix is perspective-
+correcting the card before cropping rather than adjusting constants.
+
+**Power/toughness versus collector number.** Both are `\d+/\d+` and both sit in
+the bottom strip. Digit count does not separate them: `93/350` and `2/2` are
+equally plausible shapes, and a rule requiring three digits on the left rejects
+exactly the 8ED numbers above. What separates them is position — the collector
+pair is printed *inside* the copyright line, after "Wizards of the Coast, Inc.",
+while power/toughness stands alone on its own line. Observed across all thirteen
+without exception.
+
+Card detection here is `VNDetectDocumentSegmentationRequest` rather than the
+`VNDetectRectanglesRequest` the macOS path uses. Too early to claim it is
+better — but it is the right shape of tool for one printed rectangle on a desk,
+and the rectangle detector's habit of returning quads that span several cards is
+what the macOS merge ladder exists to survive.
 
 ## Open questions for the next session
 

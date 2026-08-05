@@ -34,6 +34,16 @@ go.work.sum
 # SwiftPM's build directory for the scan helper package
 scan/hoard-scan/.build/
 
+# The iPhone capture head. project.yml is the source of truth and is tracked;
+# the Xcode project it generates, the build output, and the local signing team
+# are not. A team identifier is account data, not project configuration.
+scan/hoard-scan-ios/*.xcodeproj/
+scan/hoard-scan-ios/.build/
+scan/hoard-scan-ios/Signing.xcconfig
+# Info.plist is generated from project.yml's info.properties block. Tracking it
+# would give the same settings two homes, and the checked-in one would rot.
+scan/hoard-scan-ios/Info.plist
+
 # Local SQLite database(s) — the real hoard lives in a per-user data dir
 hoard.db
 *.db

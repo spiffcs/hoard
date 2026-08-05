@@ -239,7 +239,7 @@ func TestAutoCommitAccumulatesValue(t *testing.T) {
 // standalone it says quit — the same key, labeled for what it does.
 func TestEscHelpWording(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	if v := c.View(); !strings.Contains(v, "ctrl+d done adding · esc back") {
+	if v := c.View(); !strings.Contains(v, "ctrl+d done · esc back") {
 		t.Fatalf("embedded help missing the done/back wording:\n%s", v)
 	}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)

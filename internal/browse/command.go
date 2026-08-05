@@ -386,7 +386,7 @@ func commands() []command {
 		{
 			id: "movers.pennies", title: "TogglePennyFilter",
 			aliases: "pennies cheap bulk noise show hide",
-			desc:    "Show or hide movers priced at or under the penny limit — hidden by default.",
+			desc:    "Show or hide movers priced at or under the penny limit. Hidden by default.",
 			where:   func(m *Model) bool { return m.view == viewMovers },
 			rank:    onView(viewMovers, 1),
 			run: func(m *Model) tea.Cmd {
@@ -405,7 +405,7 @@ func commands() []command {
 		{
 			id: "movers.pennies.limit", title: "SetPennyFilter",
 			aliases: "penny limit threshold ceiling default set filter line",
-			desc:    "Move the penny filter's line — movers at or under it hide.",
+			desc:    "Move the penny filter's line. Movers at or under it hide.",
 			where:   func(m *Model) bool { return m.view == viewMovers },
 			rank:    onView(viewMovers, 1),
 			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
@@ -413,7 +413,7 @@ func commands() []command {
 		{
 			id: "market.pennies", title: "TogglePennyFilter",
 			aliases: "pennies cheap bulk noise floor show hide",
-			desc:    "Show or hide market rows whose low ask sits under the floor — hidden by default.",
+			desc:    "Show or hide market rows whose low ask sits under the floor. Hidden by default.",
 			where:   func(m *Model) bool { return m.view == viewMarket },
 			rank:    onView(viewMarket, 1),
 			run: func(m *Model) tea.Cmd {
@@ -434,7 +434,7 @@ func commands() []command {
 		{
 			id: "market.pennies.limit", title: "SetPennyFilter",
 			aliases: "penny limit threshold ceiling floor default set filter line",
-			desc:    "Move the market floor — rows whose low ask sits under it hide.",
+			desc:    "Move the market floor. Rows whose low ask sits under it hide.",
 			where:   func(m *Model) bool { return m.view == viewMarket },
 			rank:    onView(viewMarket, 1),
 			run:     func(m *Model) tea.Cmd { m.promptSetMarketFloor(); return nil },

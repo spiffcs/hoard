@@ -147,7 +147,7 @@ private func describe(_ device: AVCaptureDevice) -> String {
         out += "      switchOverFactors \(device.virtualDeviceSwitchOverVideoZoomFactors)\n"
         out += "      constituents      \(device.constituentDevices.map(\.localizedName))\n"
     #else
-        out += "      \(notHere) — Center Stage is the only framing lever\n"
+        out += "      \(notHere). Center Stage is the only framing lever\n"
     #endif
 
     out += "\n    light:\n"
@@ -165,7 +165,7 @@ private func describe(_ device: AVCaptureDevice) -> String {
 /// pumping run loop before Continuity Camera will even appear — hence the
 /// spinRunLoop calls, same as the live path.
 private func sessionExperiment(on device: AVCaptureDevice) -> String {
-    var out = "\n## Session experiment — \(device.localizedName)\n\n"
+    var out = "\n## Session experiment: \(device.localizedName)\n\n"
 
     guard let input = try? AVCaptureDeviceInput(device: device) else {
         return out + "    could not open the device for input\n"
@@ -184,7 +184,7 @@ private func sessionExperiment(on device: AVCaptureDevice) -> String {
         session.sessionPreset = .photo
         out += "    sessionPreset = .photo (accepted)\n"
     } else {
-        out += "    sessionPreset = .photo REFUSED — this is new, and worth chasing\n"
+        out += "    sessionPreset = .photo REFUSED. This is new, and worth chasing\n"
     }
     session.addInput(input)
     session.addOutput(photoOutput)
@@ -276,7 +276,12 @@ func probeReport(deviceID: String? = nil) -> String {
 
     let cameras = allCameras()
     if cameras.isEmpty {
-        return out + "\nno cameras found.\n\n" + noPhoneMessage + "\n"
+        #if os(macOS)
+            return out + "\nno cameras found.\n\n" + noPhoneMessage + "\n"
+        #else
+            return out + "\nno cameras found. This build expects a physical device;"
+                + " the simulator has none.\n"
+        #endif
     }
     out += "cameras found: \(cameras.count)\n"
     for device in cameras { out += describe(device) }

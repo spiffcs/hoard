@@ -27,6 +27,18 @@ const (
 	// opening the chosen one — so the name does not promise which.
 	stateCameraBusy
 	stateCameraPick
+	// statePairIntro tells the user to open the app *before* searching for it.
+	// Without this the first thing a new user meets is a failed search, and the
+	// instruction that would have prevented it is in the error message.
+	statePairIntro
+	// statePairCode collects the six digits an iPhone-app source shows on
+	// screen, once per phone.
+	statePairCode
+	// statePairBusy waits on the phone answering the pairing check. Its own
+	// state because that check is a round trip over the network — blocking the
+	// update loop for it froze the whole TUI with no spinner and no way to tell
+	// a slow phone from a hung one.
+	statePairBusy
 	stateCapture   // camera window live, waiting for the user to frame and capture
 	stateCapturing // shutter pressed, waiting on the OCR result
 	stateLoading
@@ -170,6 +182,7 @@ type model struct {
 
 	nameInput textinput.Model
 	qtyInput  textinput.Model
+	codeInput textinput.Model
 	// The capture command line (:): its input and the last parse error.
 	paletteInput textinput.Model
 	paletteErr   string
@@ -281,6 +294,25 @@ type model struct {
 	cameraID     string
 	cameraName   string
 	cameraChosen bool
+	// justPairedID is the phone this run has just finished pairing with, and it
+	// is consumed by the very next camera list.
+	//
+	// A one-shot rather than a preference. Having typed a six-digit code onto a
+	// phone a second ago, being asked "scan with what?" and offered that phone
+	// beside a Continuity camera is asking a question whose answer was the last
+	// thing the user did. But a *later* ctrl+o is a different situation — there
+	// the picker is how someone switches cameras at all — so this clears as
+	// soon as it is used and the choice reverts to being offered.
+	justPairedID string
+	// cameraKind is the chosen device's scan.Device.Kind, kept because the two
+	// timing constants in autoscan.go are fitted per source rather than shared
+	// (see sourceTuning). Empty until a device is chosen, which selects the
+	// local defaults — the right answer for a session that has not opened yet.
+	cameraKind string
+	// pairing is set while the camera flow is being used to set a phone up
+	// rather than to open a session. The discovery, the picker and the code
+	// prompt are the same three steps either way; only the ending differs.
+	pairing bool
 
 	// the live camera session. It outlives individual cards: the window stays up
 	// while the cascade runs, and the flow returns here after each add. gen tags
@@ -317,6 +349,11 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	qi.CharLimit = 6
 	qi.Width = 10
 
+	ci := textinput.New()
+	ci.Placeholder = "123456"
+	ci.CharLimit = 7
+	ci.Width = 12
+
 	pi := textinput.New()
 	pi.Placeholder = "win 5"
 	pi.CharLimit = 40
@@ -349,6 +386,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		dests:        dests,
 		nameInput:    ni,
 		qtyInput:     qi,
+		codeInput:    ci,
 		paletteInput: pi,
 		spinner:      sp,
 		list:         l,
@@ -434,7 +472,7 @@ func nextEventCmd(s ScanSession, gen int) tea.Cmd {
 // With several destinations, the first scan of the session asks where cards
 // land — once. Every auto-commit and every queued card defaults there; the
 // per-card cascade can still override.
-func (m *model) beginScan(force bool) tea.Cmd {
+func (m *model) beginScan() tea.Cmd {
 	if len(m.dests) > 1 && !m.destPicked {
 		m.status = ""
 		m.destForSession = true
@@ -449,15 +487,11 @@ func (m *model) beginScan(force bool) tea.Cmd {
 		}
 		return nil
 	}
-	if m.session != nil && !force {
+	if m.session != nil {
+		// A live session: ctrl+o is the way back to it, not a way to reopen it.
 		m.status = ""
 		m.state = stateCapture
 		return nil
-	}
-	if m.cameraChosen && !force {
-		m.status = ""
-		m.state = stateCameraBusy
-		return tea.Batch(m.spinner.Tick, m.openSessionCmd())
 	}
 	m.status = ""
 	m.state = stateCameraBusy
@@ -508,6 +542,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case namesMsg:
 		return m.onNames(msg)
 
+	case pairedMsg:
+		return m.onPaired(msg)
 	case camerasMsg:
 		return m.onCameras(msg)
 
@@ -573,13 +609,27 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.leaveFrom = stateName
 			m.state = stateLeaveConfirm
 			return m, nil
-		case tea.KeyCtrlO, tea.KeyCtrlR:
-			// Ctrl-R re-opens the camera picker even when this session already
-			// chose one.
+		case tea.KeyCtrlP:
+			// Pairing a phone deliberately, rather than meeting the prompt on the
+			// way into a scan: set one up before scanning, re-pair after a code is
+			// rotated, or just see what is on the network.
 			if m.scanner == nil {
-				return m.failToName("card scanning isn't available in this build")
+				return m.failToName("Card scanning isn't available in this build")
 			}
-			return m, m.beginScan(msg.Type == tea.KeyCtrlR)
+			m.pairing = true
+			m.state = statePairIntro
+			return m, nil
+		case tea.KeyCtrlO:
+			if m.scanner == nil {
+				return m.failToName("Card scanning isn't available in this build")
+			}
+			// Two steps, not `return m, m.beginScan()`: beginScan takes a
+			// pointer receiver and sets the next state, and the order of a
+			// value copy against a mutating call in one return statement is
+			// not specified. The copy can be taken before the mutation, which
+			// returns the *previous* state and looks like the key did nothing.
+			cmd := m.beginScan()
+			return m, cmd
 		case tea.KeyEnter:
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
@@ -594,6 +644,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.cancelToName()
 		}
 	case stateCameraPick:
+		if msg.Type == tea.KeyEsc {
+			m.pairing = false
+		}
 		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
 			ci, ok := it.(cameraItem)
 			if !ok {
@@ -601,7 +654,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.cameraID = ci.dev.ID
 			m.cameraName = ci.dev.Name
+			m.cameraKind = ci.dev.Kind
 			m.cameraChosen = true
+			// A phone this machine has never paired with needs its code
+			// before a session can open. Once per phone, not once per run —
+			// and always, when the user came here to pair on purpose.
+			if m.pairing || ci.dev.NeedsPairing {
+				m.codeInput.SetValue("")
+				m.codeInput.Focus()
+				m.state = statePairCode
+				return m, nil, true
+			}
 			m.state = stateCameraBusy
 			return m, tea.Batch(m.spinner.Tick, m.openSessionCmd()), true
 		}); ok {
@@ -644,11 +707,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.closeSession()
 				return m.cancelToName()
 			}
-		case tea.KeyCtrlR:
-			// Switch phones without leaving the camera step.
-			m.closeSession()
-			cmd := m.beginScan(true)
-			return m, cmd
 		case tea.KeyEsc:
 			// Esc keeps its session-wide meaning — the gated quit — rather
 			// than doubling as the close key (that's c). The gate itself
@@ -798,13 +856,30 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.destForSession {
 				m.destForSession = false
 				m.destPicked = true
-				cmd := m.beginScan(false)
+				cmd := m.beginScan()
 				return m, cmd, true
 			}
 			next, cmd := m.toQty()
 			return next, cmd, true
 		}); ok {
 			return next, cmd
+		}
+	case statePairIntro:
+		if msg.Type == tea.KeyEsc {
+			m.pairing = false
+			return m.cancelToName()
+		}
+		if msg.Type == tea.KeyEnter {
+			m.state = stateCameraBusy
+			return m, tea.Batch(m.spinner.Tick, m.listCamerasCmd())
+		}
+	case statePairCode:
+		if msg.Type == tea.KeyEsc {
+			m.pairing = false
+			return m.cancelToName()
+		}
+		if msg.Type == tea.KeyEnter {
+			return m.submitPairCode()
 		}
 	case stateQty:
 		if msg.Type == tea.KeyEsc {
@@ -840,6 +915,8 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
+	case statePairCode:
+		m.codeInput, cmd = m.codeInput.Update(msg)
 	case statePalette:
 		m.paletteInput, cmd = m.paletteInput.Update(msg)
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick, stateQueueReview:
@@ -884,7 +961,7 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	if m.scannedNumber != "" && !matched {
 		// Either the digits were misread or the name match is wrong. Saying so
 		// beats silently showing an unranked list as though nothing was scanned.
-		m.status = fmt.Sprintf("card #%s isn't among these printings · pick manually", m.scannedNumber)
+		m.status = fmt.Sprintf("Card #%s isn't among these printings · pick manually", m.scannedNumber)
 		m.statusErr = true
 	}
 	return m, nil
@@ -927,7 +1004,7 @@ func rankByScan(cards []scryfall.Card, set, number string) ([]scryfall.Card, boo
 func (m model) onNames(msg namesMsg) (tea.Model, tea.Cmd) {
 	switch len(msg.names) {
 	case 0:
-		return m.failToName(fmt.Sprintf("no cards found matching %q", m.nameInput.Value()))
+		return m.failToName(fmt.Sprintf("No cards found matching %q", m.nameInput.Value()))
 	case 1:
 		m.state = stateLoading
 		return m, tea.Batch(m.spinner.Tick, m.searchPrintsCmd(msg.names[0]))
@@ -947,16 +1024,63 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 		// so pass it through unprefixed.
 		return m.failToName(msg.err.Error())
 	}
+	if m.pairing {
+		phones := make([]scan.Device, 0, len(msg.devices))
+		for _, d := range msg.devices {
+			if d.Kind == scan.KindRemote {
+				phones = append(phones, d)
+			}
+		}
+		if len(phones) == 0 {
+			// Back to the instruction, not out to the name prompt. "I hadn't
+			// opened it yet" is the overwhelmingly likely reason, and the fix
+			// is to open it and press enter — not to start the flow again.
+			m.state = statePairIntro
+			m.status = "No phone found. Is Hoard Scan open and on screen?"
+			m.statusErr = true
+			return m, nil
+		}
+		if len(phones) == 1 {
+			// Don't ask someone to choose between one thing — the scan path
+			// right below has always auto-selected a lone camera, and pairing
+			// has no reason to be different.
+			m.cameraID = phones[0].ID
+			m.cameraName = phones[0].Name
+			m.cameraKind = phones[0].Kind
+			m.codeInput.SetValue("")
+			m.codeInput.Focus()
+			m.state = statePairCode
+			return m, nil
+		}
+		showPicker(&m, "Pair with which phone?", phones, stateCameraPick,
+			func(_ int, d scan.Device) list.Item { return cameraItem{dev: d} })
+		return m, nil
+	}
 	switch len(msg.devices) {
 	case 0:
-		return m.failToName("no iPhone found: scanning uses Continuity Camera; connect an iPhone and try again")
+		return m.failToName("No camera found: connect an iPhone by USB or unlock it nearby for Continuity Camera, or open the hoard scan app on your phone")
 	case 1:
 		m.cameraID = msg.devices[0].ID
 		m.cameraName = msg.devices[0].Name
+		m.cameraKind = msg.devices[0].Kind
 		m.cameraChosen = true
 		return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
 	default:
-		showPicker(&m, "Scan with which iPhone?", msg.devices, stateCameraPick, func(_ int, d scan.Device) list.Item {
+		// A phone paired moments ago is not a question. Consumed either way:
+		// if it is no longer in the list the picker is the right answer, and
+		// the flag must not survive to surprise a later ctrl+o.
+		if id := m.justPairedID; id != "" {
+			m.justPairedID = ""
+			for _, d := range msg.devices {
+				if d.ID != id {
+					continue
+				}
+				m.cameraID, m.cameraName, m.cameraKind = d.ID, d.Name, d.Kind
+				m.cameraChosen = true
+				return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
+			}
+		}
+		showPicker(&m, "Scan with what?", msg.devices, stateCameraPick, func(_ int, d scan.Device) list.Item {
 			return cameraItem{dev: d}
 		})
 		// Pre-select the session's current camera so re-picking is a single enter.
@@ -975,7 +1099,7 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 // the TUI moves to a waiting state.
 func (m model) requestCapture() (tea.Model, tea.Cmd) {
 	if m.session == nil {
-		return m.failToName("the camera isn't open")
+		return m.failToName("The camera isn't open")
 	}
 	if err := m.session.Capture(); err != nil {
 		m.closeSession()
@@ -1150,8 +1274,21 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 	case scan.EventScan:
 		cards := msg.ev.CardList()
 		if len(cards) == 0 {
-			m.status = "nothing readable in that frame · reframe and capture again"
-			m.statusErr = true
+			// Silent when the trigger fired it, loud when a person did.
+			//
+			// "Reframe and capture again" is exactly right after someone
+			// presses space and gets nothing: they asked, and this is the
+			// answer. It is noise after a hands-free fire, because nobody
+			// asked — the trigger goes off on a hand mid-swap and on bare desk,
+			// and the ledger has always budgeted ~7% of captures reading
+			// nothing. Telling the operator to reframe a capture they did not
+			// request, in the error style, turns an expected event into an
+			// alarm; one session produced seven of them, five while the card
+			// they were about to scan was still in the air.
+			if !msg.ev.Auto {
+				m.status = "Nothing readable in that frame · reframe and capture again"
+				m.statusErr = true
+			}
 			if m.state == stateCapturing {
 				m.state = stateCapture
 			}
@@ -1201,10 +1338,17 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		// A helper that can fire itself is asked to: hands-free is the point.
 		// Feature-gated, so an old helper is never sent a command it would
 		// answer with an error event.
-		if slices.Contains(msg.ev.Features, "auto") {
+		// Assigned unconditionally, not set-on-true. A ready event can arrive
+		// more than once — a network source re-announces after a reconnect —
+		// and a sticky flag would keep sending Rearm() to a source that no
+		// longer advertises the feature, which answers with an error event per
+		// nudge for the rest of the session.
+		m.autoCapable = slices.Contains(msg.ev.Features, "auto")
+		if m.autoCapable {
 			_ = m.session.Auto(true)
 			m.autoState = "armed"
-			m.autoCapable = true
+		} else {
+			m.autoState = ""
 		}
 		m.hudCapable = slices.Contains(msg.ev.Features, "hud")
 		// The helper forces auto-framing off at startup, and the torch
@@ -1323,17 +1467,41 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			strings.ToUpper(card.Set), card.CollectorNumber, was, it.finishHint)
 		m.tally = append(m.tally, line)
 		m.summary.add("auto", line)
-		m.status = fmt.Sprintf("%s is %s — corrected", card.Name, it.finishHint)
+		m.status = fmt.Sprintf("%s is %s, corrected", card.Name, it.finishHint)
 		m.statusErr = false
 		return m, m.scheduleNudge()
 	}
 	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
-		m.note("outcome %q dropped: nudge echo of a card already handled", it.canonical)
-		m.nudgeDrops++
-		m.recentNames = recordName(m.recentNames, it.canonical, now)
-		m.status = fmt.Sprintf("still seeing %s, waiting for the next card", it.canonical)
-		m.statusErr = false
-		return m, nil
+		// Unless this look is better than the one still sitting in review.
+		//
+		// The swallow assumes an echo is the same card saying the same thing,
+		// which is true when the first look already committed. It is not true
+		// when the first look *queued*: then the card is unresolved, the echo
+		// is a second reading of it, and the second reading is often the better
+		// one because the operator's hand has left the frame.
+		//
+		// Observed live: Prodigal Sorcerer's first capture abstained on the
+		// border ("ring not uniform") and queued as "printing unverified: 23
+		// printings"; its echo read the border cleanly, ranked year+border, and
+		// was thrown away as a duplicate. The worse read won purely by
+		// arriving first.
+		//
+		// Only ever a queued entry, never the one under the cursor: swapping a
+		// card out from under someone mid-cascade is worse than a stale rank.
+		if upgraded, ok := m.upgradeQueued(it); ok {
+			m.note("outcome %q re-read: %s beats the queued %s, replacing it",
+				it.canonical, it.rank, upgraded)
+			// Fall through to the normal path, which commits it if the new
+			// evidence clears the bar and re-queues it with the better
+			// printing if it does not.
+		} else {
+			m.note("outcome %q dropped: nudge echo of a card already handled", it.canonical)
+			m.nudgeDrops++
+			m.recentNames = recordName(m.recentNames, it.canonical, now)
+			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", it.canonical)
+			m.statusErr = false
+			return m, nil
+		}
 	}
 
 	// A multi-card capture's unresolvable entries are phantoms — ability names,
@@ -1359,7 +1527,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			why = "phantom in a nudge re-look"
 		}
 		m.note("outcome %q killed: %s", it.ocrLine, why)
-		m.status = fmt.Sprintf("ignored %q: not a card", it.ocrLine)
+		m.status = fmt.Sprintf("Ignored %q: not a card", it.ocrLine)
 		m.statusErr = false
 		return m, m.scheduleNudge()
 	}
@@ -1380,7 +1548,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// queued five re-sightings of itself this way).
 				m.note("outcome %q dropped: lingering neighbour of a just-added card", it.canonical)
 				m.recentNames = recordName(m.recentNames, it.canonical, now)
-				m.status = fmt.Sprintf("still seeing %s beside the new card", it.canonical)
+				m.status = fmt.Sprintf("Still seeing %s beside the new card", it.canonical)
 				m.statusErr = false
 				return m, m.scheduleNudge()
 			default:
@@ -1413,7 +1581,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
 		// After the increment, so the HUD total is the post-commit number.
-		m.celebrate(priceValuePtr(card, finish))
+		m.celebrate(priceValuePtr(card, finish), finish)
 		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.tally = append(m.tally, line)
@@ -1437,7 +1605,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		if name, ok := similarRecent(m.recentNames, probe, now); ok {
 			m.note("outcome %q dropped: OCR variant of %q, seen moments ago", probe, name)
 			m.recentNames = recordName(m.recentNames, name, now)
-			m.status = fmt.Sprintf("still seeing %s, waiting for the next card", name)
+			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", name)
 			m.statusErr = false
 			return m, m.scheduleNudge()
 		}
@@ -1471,7 +1639,7 @@ func (m model) chime() {
 // rides along. Fired at auto-commit and at review confirm (where it answers
 // the queue-time question sound). Helpers without the hud feature get the
 // plain chime instead.
-func (m model) celebrate(price *float64) {
+func (m model) celebrate(price *float64, finish string) {
 	if m.session == nil {
 		return
 	}
@@ -1479,7 +1647,9 @@ func (m model) celebrate(price *float64) {
 		m.chime()
 		return
 	}
-	r := scan.HUDResult{Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot)}
+	r := scan.HUDResult{
+		Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot), Finish: finish,
+	}
 	// An unpriced commit moves nothing, so no total rides along — sending one
 	// would only surface the counter to announce an unchanged number.
 	if price != nil {
@@ -1534,6 +1704,29 @@ func (m model) reviewChanged() (tea.Model, tea.Cmd) {
 
 // reviewing reports whether a review item's cascade is running.
 func (m model) reviewing() bool { return m.current != nil }
+
+// upgradeQueued drops a queued entry that a new read of the same card beats,
+// reporting the rank it displaced.
+//
+// "Beats" is strictly higher printing evidence and nothing else. Equal ranks
+// change nothing worth the churn, and a *lower* rank arriving later is exactly
+// the echo the swallow exists to absorb.
+//
+// The item being reviewed right now (m.current) is deliberately out of scope.
+// It is on screen with a cascade open against it, and replacing it underneath
+// the operator would be a worse bug than the one this fixes.
+func (m *model) upgradeQueued(it queueItem) (scanMatch, bool) {
+	if it.canonical == "" {
+		return 0, false
+	}
+	for i, q := range m.review {
+		if q.canonical == it.canonical && it.rank > q.rank {
+			m.review = append(m.review[:i], m.review[i+1:]...)
+			return q.rank, true
+		}
+	}
+	return 0, false
+}
 
 // takeFromReview removes an item from the queue by id.
 func (m *model) takeFromReview(id int) {
@@ -1693,7 +1886,7 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 			v := *p * float64(res.Qty)
 			amt = &v
 		}
-		m.celebrate(amt)
+		m.celebrate(amt, res.Finish)
 	} else {
 		// A manual add never asked a question; only the HUD's session
 		// counter moves, silently.
@@ -1757,7 +1950,7 @@ func (m model) abandonReviewWalk() (tea.Model, tea.Cmd) {
 	m.resolving = 0
 	m.review = nil
 	m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
-	m.status = fmt.Sprintf("review abandoned · %d cards not added", dropped)
+	m.status = fmt.Sprintf("Review abandoned · %d cards not added", dropped)
 	m.statusErr = false
 	return m.resetForNext()
 }
@@ -1803,6 +1996,76 @@ func (m model) toQty() (tea.Model, tea.Cmd) {
 	m.qtyInput.Focus()
 	m.state = stateQty
 	return m, textinput.Blink
+}
+
+// submitPairCode records the code the phone is showing and opens the session.
+//
+// Validated here rather than after a failed connection because the failure mode
+// otherwise is a browse that finds the phone, a handshake that is refused, and
+// a timeout — three steps away from the typo that caused it.
+// pairedMsg carries the result of a pairing check.
+type pairedMsg struct{ err error }
+
+// pairCmd asks the phone to accept a code, off the update loop.
+func (m model) pairCmd(deviceID, code string) tea.Cmd {
+	sc := m.scanner
+	return func() tea.Msg {
+		return pairedMsg{err: sc.Pair(deviceID, code)}
+	}
+}
+
+// onPaired lands the pairing check.
+func (m model) onPaired(msg pairedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		// Back to the code prompt rather than out to the name prompt: a
+		// mistyped digit is the likeliest cause and retyping six characters is
+		// the whole fix.
+		m.state = statePairCode
+		m.status = "Pairing failed: " + msg.err.Error()
+		m.statusErr = true
+		m.codeInput.Focus()
+		return m, nil
+	}
+	// Straight into a session. This used to stop at the name prompt on the
+	// reasoning that the user asked to set a phone up, not to start scanning —
+	// dogfooding said otherwise, and it is right: having just picked a phone and
+	// typed its code, wanting to scan with it is the only plausible next intent.
+	//
+	// The pairing check disconnects after verifying, so this reconnects a moment
+	// later. That is the seam to look at if the hand-off ever feels ragged.
+	m.pairing = false
+	m.cameraChosen = true
+	// The next camera list goes straight to this phone rather than offering it
+	// beside the Continuity camera, which is a question the last six keystrokes
+	// already answered.
+	m.justPairedID = m.cameraID
+	m.status = fmt.Sprintf("Paired with %s", m.cameraName)
+	// statusErr is sticky across states, so a banner left over from an earlier
+	// failure would render this success in the error style.
+	m.statusErr = false
+	cmd := m.beginScan()
+	return m, cmd
+}
+
+func (m model) submitPairCode() (tea.Model, tea.Cmd) {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, m.codeInput.Value())
+	if len(digits) != 6 {
+		m.status = "The pairing code is six digits, shown on the phone"
+		m.statusErr = true
+		return m, nil
+	}
+	// Off the update loop. Pair reaches the phone to check the code, so it is a
+	// round trip over the network — running it inline froze the TUI with no
+	// spinner, which is indistinguishable from a crash.
+	m.status = ""
+	m.statusErr = false
+	m.state = statePairBusy
+	return m, tea.Batch(m.spinner.Tick, m.pairCmd(m.cameraID, digits))
 }
 
 func (m model) submitQty() (tea.Model, tea.Cmd) {
@@ -1895,7 +2158,7 @@ func (m model) listHeight() int {
 // labels, worded like every other esc hint (the confirm gate speaks for
 // itself when it appears).
 func (m model) escHelp() string {
-	return "ctrl+d done adding · " + m.escLabel()
+	return "ctrl+d done · " + m.escLabel()
 }
 
 // help renders a help line wrapped between its " · " entries, so a hint that
@@ -1988,9 +2251,18 @@ func (m model) viewContent() string {
 		b.WriteString(m.nameInput.View() + "\n\n")
 		scanHint := ""
 		if m.scanner != nil {
-			scanHint = "ctrl+o scan card · ctrl+r change camera · "
+			// Same register as the capture step's line: a key and one or two
+			// words. "ctrl+o scan card · ctrl+d done adding" reads as prose and
+			// wraps badly at a normal terminal width; the capture step gets away
+			// with more entries precisely because each one is shorter.
+			//
+			// Pairing leads. It is the once-per-phone step that has to happen
+			// before scanning works at all, so it is what a first-time reader
+			// needs to find — and once a phone is paired the reader has stopped
+			// reading this line anyway.
+			scanHint = "ctrl+p pair · ctrl+o scan · "
 			if m.session != nil {
-				scanHint = "ctrl+o back to camera · ctrl+r change camera · "
+				scanHint = "ctrl+p pair · ctrl+o camera · "
 			}
 		}
 		help := scanHint + "enter search · " + m.escHelp() + " · ctrl+c force quit"
@@ -2000,8 +2272,37 @@ func (m model) viewContent() string {
 		b.WriteString(m.help(help))
 		return b.String()
 	case stateCameraBusy:
-		return fmt.Sprintf("%s looking for a connected iPhone…\n\n%s",
+		if m.pairing {
+			return fmt.Sprintf("%s looking for a phone running Hoard Scan…\n\n%s",
+				m.spinner.View(), m.help("esc cancel · ctrl+c force quit"))
+		}
+		return fmt.Sprintf("%s looking for a camera or a paired phone…\n\n%s",
 			m.spinner.View(), m.help("esc cancel · ctrl+c force quit"))
+	case statePairBusy:
+		return fmt.Sprintf("%s asking %s to accept that code…\n\n%s",
+			m.spinner.View(), m.cameraName, m.help("ctrl+c force quit"))
+	case statePairIntro:
+		banner := ""
+		if m.status != "" && m.statusErr {
+			banner = m.theme.Err.Render(m.status) + "\n\n"
+		}
+		return banner + fmt.Sprintf(
+			"Pair a phone\n\n%s\n\n%s",
+			m.help("1. Open Hoard Scan on your iPhone.\n"+
+				"   2. Leave it on screen. iOS hides backgrounded apps from the network.\n"+
+				"   3. Open its Pair tab to see the six-digit code."),
+			m.help("enter search for the phone · esc back · ctrl+c force quit"))
+	case statePairCode:
+		banner := ""
+		if m.status != "" && m.statusErr {
+			banner = m.theme.Err.Render(m.status) + "\n\n"
+		}
+		return banner + fmt.Sprintf(
+			"Pair with %s\n\n%s\n\n%s\n\n%s",
+			m.cameraName,
+			m.help("Open hoard scan on the phone; it shows a six-digit code."),
+			m.codeInput.View(),
+			m.help("enter pair and scan · esc back · ctrl+c force quit"))
 	case stateCameraPick:
 		return m.list.View() + "\n" +
 			m.help("↑/↓ move · enter scan with this camera · esc back · ctrl+c force quit")

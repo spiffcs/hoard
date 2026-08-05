@@ -13,7 +13,7 @@ import Foundation
 /// An unknown verb is deliberately not an error case here: the caller reports
 /// it and keeps the session alive, because a newer hoard talking to an older
 /// helper is a supported pairing.
-enum ScanCommand: Equatable {
+public enum ScanCommand: Equatable {
     case capture
     case rotate(clockwise: Bool)
     case framing(Bool)
@@ -24,6 +24,21 @@ enum ScanCommand: Equatable {
     case effects
     case auto(Bool)
     case rearm
+    /// Ask the phone to send each capture's full-resolution still back, so a
+    /// session builds a fixture set. Off unless the parent asks: a 4032x3024
+    /// JPEG per card is far more than the wire carries in normal use, and the
+    /// whole point of reading on the phone is not shipping these.
+    case stills(Bool)
+    /// Set the trigger's stillness knobs: consecutive still samples, and the
+    /// seconds between samples. Their product is the floor on how long a card
+    /// must sit before the shutter fires, which is the largest single term in
+    /// the wait from "holding still" to the confirming sound.
+    ///
+    /// Sent rather than baked so a session can A/B them. The ledger's warning
+    /// against shortening the streak was fitted on the Continuity rig, which
+    /// had neither a motion sensor nor locked metering; whether it holds on a
+    /// phone is an empirical question and this is how it gets asked.
+    case tune(stable: Int, interval: Double)
     case chime
     /// The `result` verb is the only one carrying a payload — scan.HUDResult as
     /// compact JSON, decoded as HUDCommand.
@@ -32,7 +47,7 @@ enum ScanCommand: Equatable {
 
     /// init parses one stdin line: a verb plus an optional payload after the
     /// first space. Returns nil for anything unrecognized.
-    init?(line: String) {
+    public init?(line: String) {
         let parts = line.split(separator: " ", maxSplits: 1)
         let payload = parts.count > 1 ? String(parts[1]) : ""
         switch parts.first.map(String.init) ?? "" {
@@ -47,6 +62,15 @@ enum ScanCommand: Equatable {
         case "auto-on": self = .auto(true)
         case "auto-off": self = .auto(false)
         case "rearm": self = .rearm
+        case _ where line.hasPrefix("tune "):
+            // "tune <stable> <interval>", both required — a half-specified
+            // tuning is a worse experiment than none.
+            let f = line.split(separator: " ")
+            guard f.count == 3, let n = Int(f[1]), let i = Double(f[2]),
+                  n > 0, i > 0 else { return nil }
+            self = .tune(stable: n, interval: i)
+        case "stills-on": self = .stills(true)
+        case "stills-off": self = .stills(false)
         case "chime": self = .chime
         case "result": self = .result(payload: payload)
         case "quit": self = .quit

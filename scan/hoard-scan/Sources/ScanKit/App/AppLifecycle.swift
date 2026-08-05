@@ -1,3 +1,7 @@
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AppKit
 
 // MARK: - App lifecycle
@@ -55,3 +59,5 @@ func installMainMenu() {
     main.addItem(appItem)
     NSApp.mainMenu = main
 }
+
+#endif

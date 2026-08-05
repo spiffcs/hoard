@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/tui"
@@ -20,18 +21,69 @@ import (
 type helperScanner struct{}
 
 func (helperScanner) Devices(ctx context.Context) ([]scan.Device, error) {
-	return scan.ListDevices(ctx)
+	devices, err := scan.ListDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// An iPhone-app source needs a code the first time it is used, and never
+	// again. Marked here rather than in the helper because whether a phone is
+	// already paired is a fact about this machine.
+	prefs := loadScanPrefs()
+	for i, d := range devices {
+		if d.Kind == scan.KindRemote && prefs.Codes[d.ID] == "" {
+			devices[i].NeedsPairing = true
+		}
+	}
+	return devices, nil
 }
+
+// Pair checks a code against the phone, then remembers it.
+//
+// Verified before saving, deliberately: a pairing that has never been tested is
+// a pairing that might be a typo, and the typo would otherwise surface at the
+// start of the next scanning session as a link that never comes up. Better to
+// fail here, while the user is still looking at the six digits.
+func (helperScanner) Pair(deviceID, code string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pairTimeout)
+	defer cancel()
+	if err := scan.VerifyPairing(ctx, deviceID, code); err != nil {
+		return err
+	}
+	rememberPairingCode(deviceID, code)
+	return nil
+}
+
+// pairTimeout bounds the check. The helper has its own shorter deadline; this
+// is the backstop for a helper that hangs rather than answers.
+const pairTimeout = 20 * time.Second
 
 func (helperScanner) Open(ctx context.Context, deviceID string) (tui.ScanSession, error) {
 	// The preview rotation the user last settled on is replayed into the helper,
 	// so a phone that previews sideways is corrected once rather than every run.
 	prefs := loadScanPrefs()
-	s, err := scan.Open(ctx, deviceID, prefs.Rotation)
+	s, err := scan.Open(ctx, scan.OpenOptions{
+		DeviceID: deviceID,
+		Rotation: prefs.Rotation,
+		// Empty for a Continuity Camera, which is what makes this one call
+		// serve both backends: the helper opens a local camera when there is no
+		// code and translates for a phone when there is.
+		PairingCode: prefs.Codes[deviceID],
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &persistingSession{Session: s, rotation: prefs.Rotation}, nil
+}
+
+// rememberPairingCode saves a code for a device, so the prompt is a
+// once-per-phone event rather than a once-per-session one.
+func rememberPairingCode(deviceID, code string) {
+	prefs := loadScanPrefs()
+	if prefs.Codes == nil {
+		prefs.Codes = map[string]string{}
+	}
+	prefs.Codes[deviceID] = code
+	saveScanPrefs(prefs)
 }
 
 // persistingSession watches a live session's events for rotation changes and
@@ -54,7 +106,13 @@ func (p *persistingSession) Events() <-chan scan.Event {
 				if ev.Kind == scan.EventRotation || ev.Kind == scan.EventClosed {
 					if ev.Rotation != p.rotation {
 						p.rotation = ev.Rotation
-						saveScanPrefs(scanPrefs{Rotation: ev.Rotation})
+						// Read-modify-write, not a fresh struct: prefs now
+						// carries pairing codes too, and replacing the whole
+						// file to record a rotation would silently unpair
+						// every phone the moment the preview was turned.
+						prefs := loadScanPrefs()
+						prefs.Rotation = ev.Rotation
+						saveScanPrefs(prefs)
 					}
 				}
 				p.events <- ev
@@ -86,6 +144,13 @@ func (p *persistingSession) Close() error {
 type scanPrefs struct {
 	// Rotation is extra clockwise preview rotation in degrees (0/90/180/270).
 	Rotation int `json:"rotation"`
+	// Codes are pairing codes for iPhone-app sources, keyed by device id.
+	//
+	// Kept per device rather than globally: two phones are two pairings, and a
+	// single code would silently stop working the moment a second one appeared.
+	// Absent means "never paired with this one", which is what makes the prompt
+	// a once-per-phone event rather than a once-per-session one.
+	Codes map[string]string `json:"codes,omitempty"`
 }
 
 // defaultScanRotation corrects the sideways preview a portrait-held iPhone

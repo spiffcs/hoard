@@ -62,8 +62,10 @@ func everySourceIsFiled() throws {
     let core = try swiftFiles(under: scanKitRoot.appendingPathComponent("Core"))
     let app = try swiftFiles(under: scanKitRoot.appendingPathComponent("App"))
     let all = try swiftFiles(under: scanKitRoot)
-    // CLI.swift is the entry point and sits above both, so it is the only file
-    // allowed to be loose at the top of the module.
+    // Two entry points sit above both halves and are the only files allowed to
+    // be loose at the top of the module: CLI.swift, which the macOS executable
+    // calls, and ScanPublic.swift, which is everything the iPhone app target can
+    // see. Anything else loose is a file nobody decided where to put.
     let loose = all.count - core.count - app.count
-    #expect(loose == 1, "unfiled sources at the top of ScanKit: \(loose)")
+    #expect(loose == 2, "unfiled sources at the top of ScanKit: \(loose)")
 }

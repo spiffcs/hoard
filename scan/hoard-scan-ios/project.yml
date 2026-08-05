@@ -1,0 +1,88 @@
+# XcodeGen spec for the iPhone capture head.
+#
+# The generated .xcodeproj is a build artifact and is gitignored; this file is
+# the source of truth. That matches how build-scan.sh hand-assembles the macOS
+# .app rather than carrying an Xcode project — the repo keeps readable, diffable
+# inputs and treats Xcode's output as disposable. It also keeps a 3000-line
+# pbxproj out of every diff.
+#
+#   brew install xcodegen
+#   make scan-ios
+#
+# Signing is deliberately not in this file. DEVELOPMENT_TEAM lives in
+# Signing.xcconfig, which is gitignored, so a team identifier never lands in the
+# repo. build-scan-ios.sh writes a template if it is missing.
+
+name: HoardScan
+options:
+  bundleIdPrefix: dev.spiffcs.hoard
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  ScanKit:
+    path: ../hoard-scan
+
+targets:
+  HoardScan:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      # The app icon, derived from the macOS helper's .icns by make-icon.swift
+      # so both platforms ship the same artwork from one source file.
+      - path: Resources
+    dependencies:
+      - package: ScanKit
+        product: ScanKit
+      - package: ScanKit
+        product: CardKit
+      - package: ScanKit
+        product: ScanLink
+      - package: ScanKit
+        product: ScanWire
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: hoard scan
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription:
+          hoard uses the camera to scan and identify Magic cards.
+        # Required from iOS 14 for the Bonjour link to the Mac (stage C). The
+        # permission prompt is one-time and cannot be re-offered without
+        # deleting the app, so it is declared before it is needed rather than
+        # discovered during a session.
+        NSLocalNetworkUsageDescription:
+          hoard scan sends card reads to the hoard app running on your Mac.
+        NSBonjourServices:
+          - _hoardscan._tcp
+        # The capture log accumulates in Documents/ and is pulled off the device
+        # with `devicectl device copy from`. These make the container reachable
+        # from the Files app too, so a session's numbers can be recovered by hand
+        # when the tooling misbehaves — which it has.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.spiffcs.hoard.scan.ios
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig

@@ -106,24 +106,6 @@ func setLangFurniture(_ s: String) -> Bool {
     return lowercaseCount(s) * 4 <= letters
 }
 
-/// CollectorRead is one parsed border block: a collector number, the set code
-/// printed beside it, and the finish the set line's separator marked — "foil"
-/// for the printed star, "nonfoil" for the bullet, "" when the frame carries
-/// no marker.
-struct CollectorRead: Encodable {
-    var number = ""
-    var set = ""
-    var finish = ""
-    /// Whether the number was read in "n/total" form. A bare number shares its
-    /// shape with a mana cost and a power box; a pair with a plausible total
-    /// does not, so the crop channel can trust one and not the other. Local
-    /// only — the wire shape stays what parent binaries already parse.
-    var pair = false
-
-    enum CodingKeys: String, CodingKey {
-        case number, set, finish
-    }
-}
 
 /// parseCollectorInfo pulls every collector-number candidate out of the bottom
 /// band's text. That covers both places the number appears — the bottom-left

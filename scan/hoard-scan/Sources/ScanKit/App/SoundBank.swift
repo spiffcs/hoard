@@ -1,3 +1,7 @@
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import AppKit
 
@@ -52,7 +56,7 @@ final class SoundBank {
                 custom[tier] = snd
             } else {
                 emit(Event(event: "error",
-                           message: "could not load \(tier) sound \(path); using the built-in"))
+                           message: "Could not load \(tier) sound \(path); using the built-in"))
             }
         }
         let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
@@ -142,3 +146,5 @@ final class SoundBank {
         player.play()
     }
 }
+
+#endif

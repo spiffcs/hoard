@@ -22,6 +22,22 @@ func ListDevices(ctx context.Context) ([]Device, error) {
 	return parseDevices(out)
 }
 
+// VerifyPairing checks that a code actually opens a link to a phone.
+//
+// Pairing without this means "six digits were written to a file": a mistyped
+// code is accepted happily and fails much later, at the start of a scanning
+// session, looking like a network fault rather than a typo. The helper connects,
+// waits for the phone's ready event — which it only sends after the pairing
+// check passes — and exits.
+func VerifyPairing(ctx context.Context, deviceID, code string) error {
+	args := []string{"--remote", "--verify", "--code", code}
+	if deviceID != "" {
+		args = append(args, "--device", deviceID)
+	}
+	_, err := runHelper(ctx, args...)
+	return err
+}
+
 // runHelper executes the helper for a one-shot query and returns its stdout. The
 // helper emits JSON even when it exits non-zero, so stdout wins over the exit
 // status; stderr is only surfaced when there's no JSON at all — a hard failure

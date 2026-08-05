@@ -22,11 +22,15 @@ func (*Session) Shutdown() error        { return nil }
 func (*Session) Close() error           { return nil }
 
 // Open is unsupported off macOS; the camera+OCR helper is macOS-only.
-func Open(context.Context, string, int) (*Session, error) {
+func Open(context.Context, OpenOptions) (*Session, error) {
 	return nil, ErrUnsupported
 }
 
 // ListDevices is unsupported off macOS, for the same reason as Open.
+func VerifyPairing(context.Context, string, string) error {
+	return ErrUnsupported
+}
+
 func ListDevices(context.Context) ([]Device, error) {
 	return nil, ErrUnsupported
 }

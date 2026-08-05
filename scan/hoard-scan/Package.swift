@@ -20,16 +20,72 @@
 // (parser, border reader, trigger) and App is camera, window and HUD. That
 // direction is a convention here rather than a compiler rule, checked by
 // ScanKitTests.testCoreDoesNotImportUIFrameworks.
+//
+// iOS is declared because Core/ is the read pipeline for the iPhone capture
+// head too — it imports only Foundation, CoreGraphics, Vision, ImageIO,
+// CoreVideo and CoreImage, all of which exist on both platforms, and the
+// layering test is what has quietly kept that true. App/ is fenced off with
+// `#if os(macOS)` rather than split into a second target: the split is the
+// better design and costs ~140 `public` annotations on interfaces that are
+// still moving, so it stays deferred. App/RunLoopPump.swift is the one
+// deliberate exception, being Foundation and a deadline.
+//
+// The executable target is macOS-only in effect — runCLI() and main.swift are
+// both behind the same fence, so an iOS build of it links an empty main.
 
 import PackageDescription
 
 let package = Package(
     name: "hoard-scan",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS(.v18)],
+    products: [
+        // The iPhone capture head is a separate Xcode target (see
+        // scan/hoard-scan-ios), so ScanKit has to be consumable from outside
+        // this package. Only ScanPublic.swift is public; everything else stays
+        // internal and reachable from the tests with @testable.
+        .library(name: "ScanKit", targets: ["ScanKit"]),
+        // The iPhone app links these three: the read pipeline, the link to the
+        // Mac, and the protocol they both speak.
+        .library(name: "CardKit", targets: ["CardKit"]),
+        .library(name: "ScanLink", targets: ["ScanLink"]),
+        .library(name: "ScanWire", targets: ["ScanWire"]),
+    ],
     targets: [
-        .target(name: "ScanKit"),
+        // The NDJSON contract with the Go side, and nothing else. Two pipelines
+        // speak it now — ScanKit's Continuity path and CardKit's iPhone head,
+        // which share no other code — so it gets one definition rather than one
+        // per pipeline. Foundation only: no camera, no window, no read pipeline.
+        .target(name: "ScanWire"),
+        .testTarget(name: "ScanWireTests", dependencies: ["ScanWire"]),
+        // Network.framework plumbing for the link to the phone. Separate from
+        // ScanWire because that target promises Foundation and the shape of a
+        // JSON line, and a socket is neither; separate from ScanKit and CardKit
+        // because both ends of the link need it.
+        .target(name: "ScanLink", dependencies: ["ScanWire"]),
+        // Loopback tests: a real listener, a real browser and a real TLS-PSK
+        // handshake in one process. Slower than the rest of the suite and worth
+        // it — a handshake that silently never completes is the failure mode
+        // here, and a mock reproduces none of them.
+        .testTarget(name: "ScanLinkTests", dependencies: ["ScanLink"]),
+        // ScanKit depends on ScanLink for one thing: RemoteController, the
+        // backend where the camera is an iPhone app rather than a Continuity
+        // Camera. The read pipeline under Core/ still touches neither.
+        .target(name: "ScanKit", dependencies: ["ScanWire", "ScanLink"]),
         .executableTarget(name: "hoard-scan", dependencies: ["ScanKit"]),
         .testTarget(name: "ScanKitTests", dependencies: ["ScanKit"]),
+        // CardKit is the iPhone head's read pipeline, written from scratch
+        // rather than ported. It shares no code with ScanKit — only ScanWire,
+        // which is the Go side's protocol and must not fork. Same package
+        // purely so one `swift test` covers both and the corpus harness can
+        // build a macOS binary for it.
+        .target(name: "CardKit", dependencies: ["ScanWire"]),
+        .testTarget(name: "CardKitTests", dependencies: ["CardKit"]),
+        // A macOS shim so CardKit can be scored against scan/corpus's 231
+        // labelled images with the harness that already exists: it speaks the
+        // same event shape, so `HELPER=... ./scan/corpus/sweep.sh` reports the
+        // new pipeline's numbers in exactly the table the old one is measured
+        // in. Rewriting from scratch is only defensible if it can be compared.
+        .executableTarget(name: "cardkit-probe", dependencies: ["CardKit", "ScanWire"]),
     ],
     swiftLanguageModes: [.v5]
 )

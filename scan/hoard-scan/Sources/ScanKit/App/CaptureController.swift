@@ -1,6 +1,10 @@
 // The live session: camera, window, trigger wiring and the stdin verbs that
 // drive them.
 
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import AppKit
 import Foundation
@@ -337,7 +341,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// it can reflect the state without watching the window.
     fileprivate func setAutoFraming(_ on: Bool) {
         guard framingAvailable else {
-            emit(Event(event: "error", message: "auto-framing is not adjustable on this camera"))
+            emit(Event(event: "error", message: "Auto-framing is not adjustable on this camera"))
             return
         }
         autoFraming = on
@@ -353,7 +357,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// took, so its mirror never drifts from the hardware.
     fileprivate func setTorch(_ on: Bool) {
         guard torchAvailable, let device else {
-            emit(Event(event: "error", message: "no torch on this camera"))
+            emit(Event(event: "error", message: "No torch on this camera"))
             return
         }
         do {
@@ -380,7 +384,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         let mode = autoTrigger.phase == .off ? "" : "AUTO · "
         let framing = autoFraming ? " · FRAMED" : ""
         let torch = torchOn ? " · TORCH" : ""
-        window?.title = "hoard — \(deviceName) · \(mode)\(total % 360)° "
+        window?.title = "hoard · \(deviceName) · \(mode)\(total % 360)° "
             + "(auto \(Int(autoPreviewAngle))°)\(framing)\(torch) · Space capture · A auto · "
             + "←/→ rotate · Z framing · T torch · V effects · Esc cancel"
     }
@@ -389,7 +393,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        win.title = "hoard — \(deviceName) · Space to capture · Esc to cancel"
+        win.title = "hoard · \(deviceName) · Space to capture · Esc to cancel"
         win.center()
 
         let view = PreviewView(frame: win.contentLayoutRect)
@@ -450,7 +454,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// setAuto turns the trigger on or off, keeping the window chrome honest.
     fileprivate func setAuto(_ on: Bool) {
         guard autoAvailable else {
-            if on { emit(Event(event: "error", message: "auto capture unavailable on this session")) }
+            if on { emit(Event(event: "error", message: "Auto capture unavailable on this session")) }
             return
         }
         autoRequested = on
@@ -493,7 +497,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     /// windows — which is the point of keeping the session open.
     func handle(command: String) {
         guard let verb = ScanCommand(line: command) else {
-            emit(Event(event: "error", message: "unknown command: \(command)"))
+            emit(Event(event: "error", message: "Unknown command: \(command)"))
             return
         }
         switch verb {
@@ -503,6 +507,18 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
         case .torch(let on): setTorch(on)
         case .effects: AVCaptureDevice.showSystemUserInterface(.videoEffects)
         case .auto(let on): setAuto(on)
+        case .tune(let stable, let interval):
+            // The local helper already takes these from the environment at
+            // startup, so arriving as a command is a no-op rather than a second
+            // way to say the same thing. Named explicitly so the switch stays
+            // exhaustive and a future build cannot silently drop it.
+            autoDebug("tune ignored on the local path: stable=\(stable) interval=\(interval)")
+        case .stills:
+            // A no-op on this path, and deliberately not an error. The local
+            // helper already writes every capture to HOARD_SCAN_DEBUG_DIR
+            // itself (saveDebugImage) because the pixels never leave this
+            // process; the verb exists for the phone, which has to be asked.
+            break
         case .rearm: autoTrigger.forceRearm()
         case .chime: NSSound(named: "Glass")?.play()
         case .result(let payload): showResult(payload: payload)
@@ -516,7 +532,7 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
     private func showResult(payload: String) {
         guard let data = payload.data(using: .utf8), !payload.isEmpty,
               let cmd = try? JSONDecoder().decode(HUDCommand.self, from: data) else {
-            emit(Event(event: "error", message: "bad result payload"))
+            emit(Event(event: "error", message: "Bad result payload"))
             return
         }
         if let tier = cmd.tier { sounds.play(tier: tier) }
@@ -534,13 +550,20 @@ final class CaptureController: NSObject, AVCapturePhotoCaptureDelegate {
             // about whether the rectangle is a card.
             autoTrigger.captureFinished()
             lastCaptureFinishedAt = Date()
-            emit(Event(event: "error", message: "capture failed: \(error.localizedDescription)"))
+            // Same split the link uses: the terminal gets a sentence about the
+            // card, the framework's wording goes to stderr with the rest of the
+            // session's diagnostics. AVFoundation's own text here is written
+            // for a developer reading a crash report, not for someone holding
+            // a stack of cards.
+            FileHandle.standardError.write(
+                Data("scan: capture failed: \(error.localizedDescription)\n".utf8))
+            emit(Event(event: "error", message: "The camera did not return a photo. Try that card again"))
             return
         }
         guard let (cg, orientation) = decodePhoto(photo) else {
             autoTrigger.captureFinished()
             lastCaptureFinishedAt = Date()
-            emit(Event(event: "error", message: "no image from capture"))
+            emit(Event(event: "error", message: "No image from capture"))
             return
         }
         // Normalize the capture's own orientation first, then match the framing
@@ -599,3 +622,5 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
 }
+
+#endif

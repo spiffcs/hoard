@@ -1,3 +1,7 @@
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import CoreGraphics
 import Foundation
@@ -106,3 +110,5 @@ final class FocusPolicy {
         device.unlockForConfiguration()
     }
 }
+
+#endif

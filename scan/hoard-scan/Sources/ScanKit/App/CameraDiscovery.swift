@@ -1,6 +1,10 @@
 // Which cameras the helper will use, and the waiting Continuity Camera needs
 // before it will admit to existing.
 
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import Foundation
 
@@ -36,18 +40,6 @@ Connect an iPhone by USB, or unlock it nearby with Continuity Camera enabled \
 phone, toggle that setting off and on to re-offer it.
 """
 
-/// spinRunLoop pumps the main run loop for up to `seconds`, returning as soon as
-/// `ready()` is true. Continuity Camera is published to AVFoundation
-/// asynchronously and only to a process that is pumping its run loop, so a bare
-/// enumeration on a blocked main thread reports "no iPhone" even when one is
-/// connected. Anything that needs a complete device list has to wait like this.
-func spinRunLoop(seconds: Double, until ready: () -> Bool) {
-    let deadline = Date().addingTimeInterval(seconds)
-    while !ready(), Date() < deadline {
-        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-    }
-}
-
 /// hasContinuityCamera reports whether an iPhone has shown up yet.
 func hasContinuityCamera() -> Bool { !availableCameras().isEmpty }
 
@@ -55,5 +47,19 @@ func hasContinuityCamera() -> Bool { !availableCameras().isEmpty }
 /// Everything discoverable is a Continuity Camera, so this is only interesting
 /// when someone has two phones paired.
 func kindLabel(_ d: AVCaptureDevice) -> String {
-    d.deviceType == .continuityCamera ? "iPhone" : "camera"
+    d.deviceType == .continuityCamera ? "Continuity Camera" : "camera"
 }
+
+/// deviceLabel is the device's name with macOS's trailing " Camera" removed.
+///
+/// The kind now says what it is, and "Billionaires are Parasites Camera ·
+/// Continuity Camera" reads like a stutter. Only the suffix goes; a phone
+/// actually named "… Camera" keeps its name plus one dropped word, which is a
+/// better trade than the stutter on every row.
+func deviceLabel(_ d: AVCaptureDevice) -> String {
+    let name = d.localizedName
+    guard d.deviceType == .continuityCamera, name.hasSuffix(" Camera") else { return name }
+    return String(name.dropLast(" Camera".count))
+}
+
+#endif

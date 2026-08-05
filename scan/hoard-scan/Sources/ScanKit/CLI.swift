@@ -16,6 +16,13 @@
 //                               same things in the window itself.
 //   hoard-scan --hud-demo       Live window with no camera, for eyeballing the
 //                               price HUD: pipe `result {...}` lines on stdin.
+//   hoard-scan --remote --code <digits> [--mirror]
+//                               The camera is an iPhone running the companion
+//                               app, reached over the network. Same events on
+//                               stdout and same verbs on stdin; this process
+//                               owns no camera and translates. Headless unless
+//                               --mirror, because the phone shows the preview,
+//                               the price and the cue and plays the sounds.
 //
 // The window persisting across captures is the point: relaunching the helper per
 // card costs a camera warm-up each time, and forces the user back to a keystroke
@@ -29,8 +36,13 @@
 //
 // The Go side (internal/scan) manages this process and parses those events.
 
+// macOS only. This is the camera, window and HUD half of ScanKit; the read
+// pipeline under Core/ is what compiles for iOS. See Package.swift.
+#if os(macOS)
+
 import AVFoundation
 import AppKit
+import ScanLink
 
 /// runCLI is the helper's whole entry point, called by the executable target's
 /// main.swift. It lives in the library rather than in top-level code so the
@@ -57,15 +69,25 @@ public func runCLI() {
         }
         spinRunLoop(seconds: 120) { answered }
         if !granted {
-            fail("camera access denied — grant it in System Settings › Privacy & Security › Camera")
+            fail("Camera access denied. Grant it in System Settings › Privacy & Security › Camera")
         }
 
         // Give a nearby iPhone a moment to publish itself before concluding it isn't
         // there; returns as soon as one appears.
         spinRunLoop(seconds: continuityWait, until: hasContinuityCamera)
 
-        let devices = availableCameras().map {
-            Device(id: $0.uniqueID, name: $0.localizedName, kind: kindLabel($0))
+        var devices = availableCameras().map {
+            Device(id: $0.uniqueID, name: deviceLabel($0), kind: kindLabel($0))
+        }
+        // Phones running the companion app, found on the network. Browsing
+        // needs no pairing code — only connecting does — so this can enumerate
+        // freely and let the caller sort out pairing when one is chosen.
+        //
+        // `kind` is what tells the two apart downstream, and it is already a
+        // field the picker renders. A remote source needs no new concept: it is
+        // another row in the same list.
+        devices += PeerBrowser().browse(seconds: remoteBrowseWait).map {
+            Device(id: $0.id, name: $0.name, kind: remoteKind)
         }
         if devices.isEmpty {
             fail(noPhoneMessage, code: 4)
@@ -93,7 +115,7 @@ public func runCLI() {
         }
         spinRunLoop(seconds: 120) { answered }
         if !granted {
-            fail("camera access denied — grant it in System Settings › Privacy & Security › Camera")
+            fail("Camera access denied. Grant it in System Settings › Privacy & Security › Camera")
         }
         spinRunLoop(seconds: continuityWait, until: hasContinuityCamera)
 
@@ -148,11 +170,39 @@ public func runCLI() {
         exit(Event.readAnything(scan) ? 0 : 3)
     }
 
-    // Live mode: request camera access, then run the AppKit event loop.
     var requestedDevice: String?
     if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
         requestedDevice = args[i + 1]
     }
+
+    // --remote: the camera is an iPhone running the companion app, reached over
+    // the network. This process becomes a translator — frames in, NDJSON out —
+    // and owns no camera at all, so it skips the AVFoundation permission dance
+    // entirely. The phone shows the preview, the price and the outline cue and
+    // plays the sounds; --mirror opens a window here anyway, for framing the
+    // rig and for debugging the link.
+    if args.contains("--remote") {
+        guard let i = args.firstIndex(of: "--code"), i + 1 < args.count,
+              let code = PairingCode(args[i + 1])
+        else {
+            fail("--remote needs --code <six digits>, shown in the app on your phone")
+        }
+        let app = NSApplication.shared
+        // Accessory unless mirroring: a translator has no business taking focus
+        // from the terminal the user is working in.
+        app.setActivationPolicy(args.contains("--mirror") ? .regular : .accessory)
+        let remote = RemoteController(
+            deviceID: requestedDevice, rotation: requestedRotation,
+            code: code, mirror: args.contains("--mirror"),
+            verifyOnly: args.contains("--verify"))
+        installStdinPump(
+            onCommand: { remote.handle(command: $0) },
+            onClosed: { remote.shutdown() })
+        DispatchQueue.main.async { remote.start() }
+        app.run()
+    }
+
+    // Live mode: request camera access, then run the AppKit event loop.
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)
     let controller = CaptureController(deviceID: requestedDevice, rotation: requestedRotation,
@@ -163,18 +213,9 @@ public func runCLI() {
     app.delegate = appDelegate
     installMainMenu()
 
-    // Commands arrive as bare lines on stdin (capture / rotate-left / rotate-right /
-    // quit) so the parent can drive the camera while the terminal keeps focus. A
-    // closed stdin means the parent is gone, so shut down rather than linger with an
-    // orphaned window.
-    Thread.detachNewThread {
-        while let line = readLine(strippingNewline: true) {
-            let cmd = line.trimmingCharacters(in: .whitespaces)
-            if cmd.isEmpty { continue }
-            DispatchQueue.main.async { controller.handle(command: cmd) }
-        }
-        DispatchQueue.main.async { controller.shutdown() }
-    }
+    installStdinPump(
+        onCommand: { controller.handle(command: $0) },
+        onClosed: { controller.shutdown() })
 
     if args.contains("--hud-demo") {
         // No camera, no permission prompt: the demo exists to see the HUD.
@@ -182,10 +223,31 @@ public func runCLI() {
     } else {
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
-                if !granted { fail("camera access denied — grant it in System Settings › Privacy › Camera") }
+                if !granted { fail("Camera access denied. Grant it in System Settings › Privacy › Camera") }
                 controller.start()
             }
         }
     }
     app.run()
 }
+
+/// installStdinPump reads the parent's verbs off stdin forever.
+///
+/// Commands arrive as bare lines (capture / rotate-left / rotate-right / quit)
+/// so the parent can drive the camera while the terminal keeps focus. A closed
+/// stdin means the parent is gone, so shut down rather than linger with an
+/// orphaned window — or, in remote mode, an orphaned link holding the phone's
+/// camera open.
+func installStdinPump(onCommand: @escaping (String) -> Void,
+                      onClosed: @escaping () -> Void) {
+    Thread.detachNewThread {
+        while let line = readLine(strippingNewline: true) {
+            let cmd = line.trimmingCharacters(in: .whitespaces)
+            if cmd.isEmpty { continue }
+            DispatchQueue.main.async { onCommand(cmd) }
+        }
+        DispatchQueue.main.async { onClosed() }
+    }
+}
+
+#endif

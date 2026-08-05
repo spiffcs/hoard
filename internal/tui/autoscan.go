@@ -36,6 +36,7 @@ const (
 	scanMatchNone            scanMatch = iota
 	scanMatchNumberAmbiguous           // number matched, but several printings share it
 	scanMatchYearOnly                  // no number, but the copyright year names one printing
+	scanMatchYearAndMarks              // year narrowed to a few, the card's printed markings picked one
 	scanMatchNumberOnly                // number matched exactly one printing
 	scanMatchSinglePrint               // no number read, but only one printing exists
 	scanMatchNumberAndYear             // number named a printing and its release year agrees
@@ -69,6 +70,8 @@ func (m scanMatch) String() string {
 	switch m {
 	case scanMatchNumberAmbiguous:
 		return "number-ambiguous"
+	case scanMatchYearAndMarks:
+		return "year+marks"
 	case scanMatchYearOnly:
 		return "year-only"
 	case scanMatchNumberOnly:
@@ -348,6 +351,55 @@ type localOnlySearcher interface {
 	NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error)
 }
 
+// sourceTuning is the two timing constants, fitted per scan source.
+//
+// They were both measured against the local Continuity pipe and inherited by
+// the phone unexamined, which the sprint plan flagged as the thing to fix once
+// there was a session to fit against. There now is; see the remote row in
+// docs/scanner-tuning.md.
+type sourceTuning struct {
+	// nudgeDelay is the quiet period after a processed scan before the helper
+	// is nudged to re-arm.
+	nudgeDelay time.Duration
+	// nameTimeout bounds the Scryfall escalation for a line the local catalog
+	// could not place.
+	nameTimeout time.Duration
+}
+
+// tuningFor picks the constants for a source.
+func tuningFor(kind string) sourceTuning {
+	if kind == scan.KindRemote {
+		return sourceTuning{nudgeDelay: remoteNudgeDelay, nameTimeout: remoteNameTimeoutRemote}
+	}
+	return sourceTuning{nudgeDelay: nudgeBaseDelay, nameTimeout: remoteNameTimeout}
+}
+
+// remoteNudgeDelay is the phone's quiet period, and it is much longer than the
+// local one because the local value never once did its job here.
+//
+// Measured over a 61-capture session: the gap from a result to the next capture
+// was *never* under 2500ms — the fastest was 3856ms, the median 4896ms. So the
+// local delay fired on every single card, during the operator's swap rather
+// than after it, and 43 of 61 resolves came back tagged as nudged. Its cost is
+// not nothing: each one re-arms mid-swap and buys an extra capture, which is
+// most of the gap between this session's 1.27 captures per commit and the
+// ledger's 1.1.
+//
+// 5500ms sits above the observed median swap and below the p75 of 7047ms, so
+// it fires when a card is genuinely parked and stays quiet when someone is
+// simply working at their own pace.
+const remoteNudgeDelay = 5500 * time.Millisecond
+
+// remoteNameTimeoutRemote is tighter than the local bound because the remote
+// loop has less headroom to give away, not more.
+//
+// The budget is 700ms shutter-to-result. The phone's own half of that measured
+// 447ms median and 472ms at p90, leaving roughly 230ms before the rhythm the
+// sounds depend on starts to slip. A 500ms escalation would blow it outright.
+// 250ms still catches a catalog miss on a fast network and gives up before the
+// card stops feeling immediate.
+const remoteNameTimeoutRemote = 250 * time.Millisecond
+
 // remoteNameTimeout bounds a Scryfall lookup. The catalog has already answered
 // by this point; the network call only catches a card printed since the last
 // catalog build, which is a bonus and must never be a stall. Past this the card
@@ -358,7 +410,8 @@ const remoteNameTimeout = 500 * time.Millisecond
 // Fallback lines stay catalog-only (verdict refuses to auto-commit them
 // anyway); line 0 escalates only when it reads like a title.
 func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
-	hasLocal bool, line string, i int) (*scryfall.Card, cardname.Match, error) {
+	hasLocal bool, line string, i int, tune sourceTuning,
+) (*scryfall.Card, cardname.Match, error) {
 	if !hasLocal {
 		return s.NamedFuzzy(ctx, line)
 	}
@@ -369,7 +422,7 @@ func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
 	if i > 0 || !titleLikely(line) {
 		return card, m, err
 	}
-	rctx, cancel := context.WithTimeout(ctx, remoteNameTimeout)
+	rctx, cancel := context.WithTimeout(ctx, tune.nameTimeout)
 	defer cancel()
 	rc, rm, rerr := s.NamedFuzzy(rctx, line)
 	// A timeout is this policy working, not a failure to report. Surfacing it
@@ -392,7 +445,7 @@ func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
 // ghost — and it charged a lot: one live session spent 19s across 15 failed
 // resolutions, the worst single line taking 4.8s, against 0-15ms for every
 // catalog hit.
-func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
+func resolveName(ctx context.Context, s Searcher, lines []string, tune sourceTuning) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
 	var firstErr error
 	local, hasLocal := s.(localOnlySearcher)
 	for i, line := range lines {
@@ -413,7 +466,7 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 		// returned nothing after ~600ms each, the worst loop costing 3.9s.
 		// So the two layers are split here, and only a line that looks like a
 		// title is allowed off the machine.
-		card, m, ferr := searchLine(ctx, s, local, hasLocal, line, i)
+		card, m, ferr := searchLine(ctx, s, local, hasLocal, line, i, tune)
 		if ferr != nil {
 			if firstErr == nil {
 				firstErr = ferr
@@ -437,13 +490,14 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	gen := m.resolveGen
 	ctx, s := m.ctx, m.searcher
+	tune := tuningFor(m.cameraKind)
 	fromNudge := m.lastScanNudged
 	captureSeq := m.captureSeq
 	return func() tea.Msg {
 		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
 			captureSeq: captureSeq}
 		tName := time.Now()
-		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
+		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines(), tune)
 		nameDur := time.Since(tName)
 		var printsDur time.Duration
 		it.canonical, it.ocrLine, it.lineIdx, it.match = canonical, ocr, idx, match
@@ -531,7 +585,8 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				}
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
 				for _, cd := range cands {
-					ranked, r := rankByScanStrength(prints, cd.Set, cd.Number, cd.Year)
+					ranked, r := rankByScanStrength(
+						prints, cd.Set, cd.Number, cd.Year, c.BorderColor, c.FinishHint)
 					if r > it.rank {
 						it.prints, it.rank = ranked, r
 						// The winning candidate becomes the item's collector
@@ -590,7 +645,33 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 	}
 	switch it.rank {
 	case scanMatchSetAndNumber, scanMatchNumberAndYear, scanMatchNumberOnly,
-		scanMatchSinglePrint, scanMatchYearOnly:
+		scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks:
+	case scanMatchNumberAmbiguous:
+		// A number that matched several printings commits the one the ranking
+		// put in front, rather than queuing.
+		//
+		// This is a deliberate trade, made on the operator's preference for
+		// false positives over false negatives: a wrong printing is one row to
+		// correct later, while a queued card is a stop in a session whose whole
+		// point is not stopping. The ranking already believed enough to reorder
+		// the list; acting on that belief and refusing to write it down were
+		// hard to justify together.
+		//
+		// The ordering is not arbitrary. Printings come back newest-first with
+		// ties broken by set code, and a promo set is its regular set's code
+		// with a `p` in front — `dom` before `pdom` — so on the collision this
+		// case is really about, the regular printing leads its own promos.
+		//
+		// Never against evidence, though. Absence of a year is why this pick is
+		// uncertain; a year that *disagrees* is a different thing entirely, and
+		// committing a 2024 printing when the band read 2018 would be ignoring
+		// the card rather than guessing without it.
+		if y := it.raw.CopyrightYear; y > 0 &&
+			!strings.HasPrefix(it.prints[0].ReleasedAt, fmt.Sprintf("%d", y)) {
+			return false, "", fmt.Sprintf(
+				"printing unverified: %d printings, and the front one is not from %d",
+				len(it.prints), y)
+		}
 	default:
 		return false, "", fmt.Sprintf("printing unverified: %d printings", len(it.prints))
 	}
@@ -701,6 +782,100 @@ func soleIndexInYear(cards []scryfall.Card, idxs []int, year int) int {
 	return found
 }
 
+// borderRulesOut reports whether a read border excludes a printing.
+//
+// One definition, shared by the ordering and the ranking, because they must
+// never disagree about what a border means — a printing promoted to the top of
+// the review list and a printing chosen for an unattended commit have to be the
+// same printing.
+//
+// The reader answers only "white" or "black", but those two answers do not
+// carry the same weight, and treating them as if they did is what produced a
+// wrong commit. Gold and silver borders are *light*:
+//
+//   - A **black** read excludes them. Black sits at the dark end of the card's
+//     own tone range, measured at -0.11 to -0.23 across live captures, and no
+//     gold or silver border lands there. So reading black on Mana Leak's 1998
+//     line rules out `wc98/rb36` and confirms `sth/36`.
+//   - A **white** read excludes neither, because white, gold and silver are all
+//     bright and the reader was built to tell dark from light. This is not
+//     caution for its own sake: a white read on that same card once eliminated
+//     the black printing, left the gold one standing alone, and committed a
+//     World Championship card by pure elimination.
+//
+// Borderless is never excluded by either. Its "border" is whatever the art does
+// at the edge, which can be any tone at all.
+func borderRulesOut(c scryfall.Card, border string) bool {
+	if border == "" {
+		return false
+	}
+	// Keyed on what was *read*, not on what the printing is. Keyed the other
+	// way, a read this build does not produce — "gold", or a value from a
+	// newer helper — would start excluding printings on the strength of not
+	// matching, which is the opposite of failing closed.
+	switch strings.ToLower(border) {
+	case "black":
+		return isLightBorder(c.BorderColor)
+	case "white":
+		return strings.EqualFold(c.BorderColor, "black")
+	default:
+		return false
+	}
+}
+
+// isLightBorder reports whether a printing's border is one of the bright ones.
+//
+// White, gold and silver all sit at the light end and are what a black read
+// excludes. Borderless is deliberately absent: its edge is whatever the art
+// does there, so it can be any tone and is never excluded by either answer.
+func isLightBorder(color string) bool {
+	switch strings.ToLower(color) {
+	case "white", "gold", "silver":
+		return true
+	}
+	return false
+}
+
+// finishRulesOut reports whether a read foil marker excludes a printing.
+//
+// The set promo is the case this exists for. A prerelease or set promo is
+// printed *foil only* — `psoi/59s` beside `soi/59`, `paer/29s` beside `aer/29`,
+// same card, same set, same release date — so the year cannot separate them and
+// the card queues holding two choices that differ in exactly one visible way.
+//
+// The card says which it is. A bullet between the set code and the language is
+// the nonfoil marker, and a printing that only ever existed as a foil cannot be
+// the card that printed a bullet. The reverse holds too: a star cannot be a
+// printing that never came in foil.
+//
+// Silence excludes nothing. Frames before ~2003 print no marker at all, and a
+// glyph too small to read comes back empty rather than as "nonfoil" — treating
+// either as evidence would rule out real printings on the strength of a marker
+// that was never there to read.
+func finishRulesOut(c scryfall.Card, finish string) bool {
+	if finish == "" {
+		return false
+	}
+	return !slices.Contains(finishOptions(c), finish)
+}
+
+// markingsAgree reports whether a printing positively matches every marking the
+// capture actually read.
+//
+// The counterpart to the narrowing above, and the lesson from a wrong commit:
+// surviving elimination is not agreement. A printing left standing only because
+// nothing could exclude it has no evidence behind it, so each signal that was
+// read has to point *at* the winner rather than merely fail to point away.
+func markingsAgree(c scryfall.Card, border, finish string) bool {
+	if border != "" && !strings.EqualFold(c.BorderColor, border) {
+		return false
+	}
+	if finish != "" && !slices.Contains(finishOptions(c), finish) {
+		return false
+	}
+	return true
+}
+
 // applyBorderEvidence promotes the printings whose border matches the one read
 // off the card, reporting whether it changed anything. It is ordering only: no
 // printing is ever removed, no rank is ever raised, no commit is ever blocked.
@@ -750,13 +925,9 @@ func applyBorderEvidence(prints []scryfall.Card, border string, year int) ([]scr
 	// have a gold or silver sibling somewhere, and Control Magic, one of the
 	// cards this whole feature exists for, lost its border to two Pro Tour
 	// Collector Set rows it was never going to be confused with.
-	ruledOut := func(c scryfall.Card) bool {
-		known := strings.EqualFold(c.BorderColor, "white") ||
-			strings.EqualFold(c.BorderColor, "black")
-		return known && !strings.EqualFold(c.BorderColor, border)
-	}
 	yearPrefix := fmt.Sprintf("%d", year)
 	var both, borderOnly, rest []scryfall.Card
+	ruledOut := func(c scryfall.Card) bool { return borderRulesOut(c, border) }
 	for _, c := range prints {
 		switch {
 		case ruledOut(c):
@@ -804,7 +975,9 @@ func moveToFront(cards []scryfall.Card, i int) []scryfall.Card {
 // release year, so it can break a number tie ("95" is both 7th and 8th
 // Edition; only one was printed in 2003). A misread year simply matches no
 // printing and leaves the tie ambiguous, exactly as if it were never read.
-func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]scryfall.Card, scanMatch) {
+func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
+	border, finish string,
+) ([]scryfall.Card, scanMatch) {
 	if len(cards) == 0 {
 		return cards, scanMatchNone
 	}
@@ -829,6 +1002,48 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 		if year > 0 {
 			if i := soleIndexInYear(cards, allIndexes(len(cards)), year); i >= 0 {
 				return moveToFront(cards, i), scanMatchYearOnly
+			}
+			// The year found several, so ask the border which of those it is.
+			//
+			// This is the case the whole stratum turns on. A 1995 copyright
+			// line narrows Prodigal Sorcerer's 23 printings to `4ed/94` and
+			// `4bb/94` — same set, same collector number, same year, differing
+			// only in that one is white-bordered and the other black. Nothing
+			// else printed on the card can separate them, so before this the
+			// year did all the work it could and the card still queued.
+			//
+			// Deliberately reached only *after* the year has already narrowed
+			// the field. The border is one bit and would settle almost nothing
+			// on its own; it is decisive here precisely because the year has
+			// left a handful of candidates for it to choose between.
+			//
+			// And the survivor must *match* the read, not merely survive it.
+			// That distinction was missing and it committed a wrong card live:
+			// Mana Leak's 1998 line is `sth/36` black and `wc98/rb36` gold, the
+			// reader said white, black was ruled out, and gold — which the
+			// reader cannot read and so never excludes — was left standing
+			// alone and committed as a World Championship printing. Survival is
+			// not agreement. A card picked purely by eliminating its siblings
+			// has no positive evidence behind it, and the one printing that can
+			// never be eliminated is exactly the one to distrust.
+			if border != "" || finish != "" {
+				kept := make([]int, 0, len(cards))
+				for i, c := range cards {
+					if borderRulesOut(c, border) || finishRulesOut(c, finish) {
+						continue
+					}
+					kept = append(kept, i)
+				}
+				// Fails closed twice over: if the markings ruled nothing out
+				// they added no information, and if they ruled everything out
+				// they disagree with every printing the catalog has, which is a
+				// reason to distrust the read rather than to pick from nothing.
+				if len(kept) > 0 && len(kept) < len(cards) {
+					if i := soleIndexInYear(cards, kept, year); i >= 0 &&
+						markingsAgree(cards[i], border, finish) {
+						return moveToFront(cards, i), scanMatchYearAndMarks
+					}
+				}
 			}
 		}
 		return cards, scanMatchNone
@@ -858,6 +1073,31 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 			best, yearPinned = inYear, true
 		}
 	}
+	// The markings break a number tie the same way the year does.
+	//
+	// A collector number is not unique across printings — `dom/76` sits beside
+	// `pdom/76` and `pdom/76s`, the two promos, and a card that read a clean
+	// 076/269 still queued as "number matched, but several printings share it".
+	// Both promos are foil-only, so the bullet on the card ruled them out and
+	// nothing was asking it to.
+	//
+	// Narrowing only ran when there was *no* number at all, which is backwards:
+	// a number that matched several printings is exactly the situation where a
+	// second signal is worth having.
+	markPinned := false
+	if !exactSet && !yearPinned && len(matchIdxs) > 1 && (border != "" || finish != "") {
+		kept := make([]int, 0, len(matchIdxs))
+		for _, i := range matchIdxs {
+			if borderRulesOut(cards[i], border) || finishRulesOut(cards[i], finish) {
+				continue
+			}
+			kept = append(kept, i)
+		}
+		// Exactly one survivor, and it has to agree rather than merely survive.
+		if len(kept) == 1 && markingsAgree(cards[kept[0]], border, finish) {
+			best, markPinned = kept[0], true
+		}
+	}
 	// The year is checked against the winner even when it had no tie to break.
 	// A number that named one printing is one piece of evidence; the same
 	// printing's release year agreeing with the copyright line is a second,
@@ -870,9 +1110,9 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int) ([]
 	switch {
 	case exactSet:
 		return ranked, scanMatchSetAndNumber
-	case (len(matchIdxs) == 1 || yearPinned) && yearAgrees:
+	case (len(matchIdxs) == 1 || yearPinned || markPinned) && yearAgrees:
 		return ranked, scanMatchNumberAndYear
-	case len(matchIdxs) == 1 || yearPinned:
+	case len(matchIdxs) == 1 || yearPinned || markPinned:
 		return ranked, scanMatchNumberOnly
 	default:
 		return ranked, scanMatchNumberAmbiguous
@@ -1061,8 +1301,9 @@ const nudgeEchoWindow = 4 * time.Second
 func (m *model) scheduleNudge() tea.Cmd {
 	m.nudgeGen++
 	gen := m.nudgeGen
+	delay := tuningFor(m.cameraKind).nudgeDelay
 	return func() tea.Msg {
-		time.Sleep(nudgeBaseDelay)
+		time.Sleep(delay)
 		return nudgeMsg{gen: gen}
 	}
 }

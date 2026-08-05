@@ -6,4 +6,10 @@
 
 import ScanKit
 
-runCLI()
+// runCLI() is the macOS helper's entry point and lives behind the same fence
+// App/ does. An iOS build of this target therefore links an empty main, which
+// is harmless: the phone runs the ScanKit library from its own app target, not
+// this executable.
+#if os(macOS)
+    runCLI()
+#endif

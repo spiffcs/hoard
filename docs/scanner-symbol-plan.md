@@ -47,6 +47,26 @@ Numbers to trust; they cost a day to get.
 
 ## What blocks it today
 
+*On the Continuity Camera path, all of the below still stands. On the iPhone
+capture head it does not.*
+
+*Two of the three things this document is waiting on have been measured on real
+captures — see "The expansion symbol is legible" and "Thirteen cards at the
+operating point" in `scanner-tuning.md`. The copyright row that blocks anchoring
+reads cleanly, collector number and denominator included, on every 1993-2003
+frame tried. And step 2's disconfirming test is answered: patches crop at
+~450x370 px rather than 35x23, and five sets — Stronghold's portcullis, Mirage's
+palm tree, Fallen Empires' crown, Urza's Saga's gears and Urza's Legacy's
+hammer — are separable by eye without effort.*
+
+*What that changes: the feature is not dead, and the landmark problem is gone.
+What it does not change: type-line anchoring below is still the better fix,
+because its error budget is proportional rather than absolute, and the patch is
+currently cropped from an axis-aligned box that assumes the card is square to
+the frame. It also reframes the goal — the symbol does not need to identify one
+of 986 sets, only to separate the handful of printings that share a title, which
+is a feature-print distance rather than a classifier.*
+
 **The patch cannot be located on a live 8th Edition frame.** It is positioned
 from the footer landmark, and the only landmark tight enough to use on that
 frame is the `™ &` copyright row — which is precisely the line a desk photo of
