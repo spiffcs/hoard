@@ -758,3 +758,45 @@ func TestResultCarriesTheCommittedFinish(t *testing.T) {
 			"has no foil to be", got, evidenced)
 	}
 }
+
+// The parent believes the phone about why a capture happened.
+//
+// This replaced a guess. `fromNudge` was inferred here from a clock — whether a
+// nudge had been sent in the last four seconds — and the comment on that window
+// conceded the flaw: a real scan can race the nudge onto the wire. The phone
+// takes three distinct code paths when it re-arms and now says which one.
+func TestFireReasonBeatsTheClock(t *testing.T) {
+	ev, fs := confidentFixture()
+	for _, tc := range []struct {
+		name, reason string
+		nudgedRecent bool
+		wantNudge    bool
+	}{
+		{"a placement during the nudge window is still a placement",
+			scan.FireReplaced, true, false},
+		{"a card leaving and another arriving is a placement",
+			scan.FireRemoved, true, false},
+		{"a nudge is a nudge even outside the window",
+			scan.FireNudge, false, true},
+		{"no reason falls back to the clock, for older helpers",
+			"", true, true},
+		{"no reason and no recent nudge is not an echo",
+			"", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+			clock := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+			m.now = func() time.Time { return clock }
+			m, _ = openCapture(t, m)
+			if tc.nudgedRecent {
+				m.nudgeSentAt = clock
+			}
+			e := ev
+			e.FireReason = tc.reason
+			mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: e})
+			if got := mm.(model).lastScanNudged; got != tc.wantNudge {
+				t.Errorf("lastScanNudged = %v, want %v", got, tc.wantNudge)
+			}
+		})
+	}
+}

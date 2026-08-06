@@ -83,6 +83,12 @@ report in the same table.
 **Consult this when picking up backlog work.** Percentages are the corpus
 strata; `n` is 8 per stratum except pre-1998 which is 40.
 
+The full accuracy picture — every stratum, every failure classified by root
+cause, and which numbers are the scorer's fault rather than the scanner's —
+lives in [scanner-accuracy.md](scanner-accuracy.md). Read it before treating any
+figure below as a defect: a fifth of all name misses are the scanner reading a
+foreign-language card *correctly* and being scored against its English name.
+
 | stratum | measure | new | old | note |
 |---|---|---|---|---|
 | gold border, all post-1998 | number | 0% | 0% | **parity, not a regression.** World Championship cards; neither pipeline reads them. Their footer carries a sideboard marker (`SB`/`GB`) where a number would be |

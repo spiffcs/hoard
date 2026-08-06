@@ -6,6 +6,7 @@
 // session that was supposed to build a fixture set quietly builds nothing.
 // That is exactly what happened the first time this shipped.
 
+import Foundation
 import Testing
 
 @testable import ScanWire
@@ -48,4 +49,23 @@ func tuneVerb() {
     for bad in ["tune", "tune 4", "tune 4 x", "tune 0 0.1", "tune 4 0", "tune -1 0.1"] {
         #expect(ScanCommand(line: bad) == nil, "\(bad) should not parse")
     }
+}
+
+@Test("the fire reason survives a round trip, and is absent when unset")
+func fireReasonOnTheWire() throws {
+    // The field the parent stops guessing with. Absent rather than empty on a
+    // manual shutter: an older parent must not see a value it cannot read, and
+    // a newer one must be able to tell "no reason given" from "nudge".
+    // Encode-only: Event is what a source *sends*, and the Go side is the only
+    // thing that parses it.
+    func json(_ e: Event) throws -> String {
+        String(data: try JSONEncoder().encode(e), encoding: .utf8) ?? ""
+    }
+    let placed = try json(
+        Event(event: "scan", name: "X", auto: true, fireReason: "replaced"))
+    #expect(placed.contains("\"fireReason\":\"replaced\""), "\(placed)")
+
+    let manual = try json(Event(event: "scan", name: "X"))
+    #expect(!manual.contains("fireReason"),
+            "a manual shutter sends no reason: \(manual)")
 }

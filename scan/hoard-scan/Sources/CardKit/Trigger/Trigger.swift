@@ -82,6 +82,19 @@ public struct TriggerTuning: Sendable {
     public var rearmSamples = 3
     /// Mean per-cell luma change below which two frames are the same picture.
     public var stillDelta = 2.5
+    /// How far the picture *inside the card's own rect* must differ from the
+    /// captured card before it counts as a different card.
+    ///
+    /// Compared against a signature sampled inside the box, not across the
+    /// frame, so it answers about the card rather than about the desk. Two
+    /// different cards differ enormously by this measure; the same card
+    /// jostled and settling back differs by sensor noise.
+    ///
+    /// Set well above noise and well below "two different card faces". The
+    /// risk of setting it too low is a machine that re-fires on the card it
+    /// just shot, which shows up as captures-per-commit rising — watch that
+    /// number rather than this one.
+    public var cardChanged = 12.0
     /// How far the scene must differ from the last capture before firing again,
     /// so a parked scene cannot photograph itself forever.
     public var sceneChanged = 6.0
@@ -98,6 +111,15 @@ public struct TriggerSample: Sendable {
     public var boxes: [CGRect]
     /// A coarse luma grid of the frame; see SceneSignature.
     public var scene: SceneSignature
+    /// The same grid sampled *inside* each box, parallel to `boxes`.
+    ///
+    /// What lets the machine tell one card from another. Geometry alone cannot:
+    /// a card laid on the spot the last one occupied produces a box in the same
+    /// place, and the only thing that differs is the picture inside it.
+    ///
+    /// Empty is tolerated — a caller that cannot sample them gets the old
+    /// geometry-only behaviour rather than an error.
+    public var boxScenes: [SceneSignature] = []
     /// False while the lens is hunting. Blur reads as stillness, so a hunting
     /// lens freezes the machine entirely rather than feeding it.
     public var focusSettled: Bool
@@ -106,9 +128,11 @@ public struct TriggerSample: Sendable {
     public var rigMoving: Bool
 
     public init(boxes: [CGRect], scene: SceneSignature,
+                boxScenes: [SceneSignature] = [],
                 focusSettled: Bool = true, rigMoving: Bool = false) {
         self.boxes = boxes
         self.scene = scene
+        self.boxScenes = boxScenes
         self.focusSettled = focusSettled
         self.rigMoving = rigMoving
     }
@@ -152,6 +176,31 @@ public final class Trigger {
     private var disruptCount = 0
     private var prevScene: SceneSignature?
     private var capturedScene: SceneSignature?
+
+    /// Why the machine last left `.hold`.
+    ///
+    /// The parent cannot tell a new card from a second look at the old one, and
+    /// has been guessing from a clock — a four-second window whose own comment
+    /// concedes "a real scan can race the nudge onto the wire". The machine
+    /// takes three distinct code paths here and then throws the distinction
+    /// away, so the guess is reconstructing a fact that was available.
+    public private(set) var rearmCause: RearmCause = .none
+
+    public enum RearmCause: String, Sendable {
+        /// Nothing has re-armed yet, or the pass was armed from scratch.
+        case none
+        /// No box overlapped the watched card any more: it left the frame.
+        case removed
+        /// A box held the place but its picture changed: swapped in place.
+        case replaced
+        /// The parent asked, with no physical evidence at all.
+        case nudged
+    }
+
+    /// The picture inside the card that was last captured.
+    private var capturedCardScene: SceneSignature?
+    /// What the disruption looked like, banked until it crosses the threshold.
+    private var pendingCause: RearmCause = .removed
 
     /// The most recent sample's box count, kept only for the snapshot.
     private var lastBoxes = 0
@@ -230,6 +279,8 @@ public final class Trigger {
     /// The staging area should be clear when this happens: a card already
     /// sitting there reads as furniture until it is removed and re-placed.
     public func arm(with sample: TriggerSample) {
+        rearmCause = .none
+        capturedCardScene = nil
         baseline = sample.boxes
         abandonedPasses = 0
         resetPass()
@@ -253,6 +304,10 @@ public final class Trigger {
     /// scene fires, and an identical read is the parent's to discard.
     public func forceRearm() {
         guard phase == .hold else { return }
+        // No physical evidence whatsoever: a timer on the parent expired. This
+        // is exactly the case the parent must be able to tell apart, and until
+        // now it could only guess.
+        rearmCause = .nudged
         resetPass()
         disruptCount = 0
         watched = nil
@@ -261,8 +316,12 @@ public final class Trigger {
     }
 
     /// captureFinished parks the machine on what it just shot.
-    public func captureFinished(scene: SceneSignature?) {
+    public func captureFinished(scene: SceneSignature?, cardScene: SceneSignature? = nil) {
         capturedScene = scene
+        // The picture *inside* the card that was just shot, which is what tells
+        // a swapped card from the same one settling back. Optional so a caller
+        // that cannot sample it keeps the frame-wide behaviour.
+        capturedCardScene = cardScene
         // Deliberately *not* learning a no-card shot as background: telemetry
         // showed that absorbing the scanning pile itself after one glared read.
         phase = .hold
@@ -397,8 +456,24 @@ public final class Trigger {
             disruptCount += tuning.rearmSamples
             return rearmIfDisrupted()
         }
-        let stillThere = sample.boxes.contains { box in
-            watched.map { overlap($0, box) > tuning.backgroundIoU } ?? false
+        // Same place *and* same picture.
+        //
+        // Geometry alone said a card was still there whenever any box overlapped
+        // the watched rect — so a card laid on the spot the last one occupied
+        // read as "unchanged", disruption decayed, and the machine never
+        // re-armed. That card was not double-counted, it was **never scanned**,
+        // and nothing in the telemetry said so.
+        //
+        // A caller that supplies no box signatures gets the old geometry-only
+        // behaviour, which keeps the machine usable from a test that does not
+        // care about content.
+        let stillThere = sample.boxes.indices.contains { i in
+            guard let watched,
+                  overlap(watched, sample.boxes[i]) > tuning.backgroundIoU
+            else { return false }
+            guard i < sample.boxScenes.count, let captured = capturedCardScene
+            else { return true }
+            return sample.boxScenes[i].delta(to: captured) < tuning.cardChanged
         }
         if stillThere {
             // Decay, never zero. Placement disruption arrives in one- and
@@ -408,12 +483,20 @@ public final class Trigger {
             disruptCount = max(0, disruptCount - 1)
             return .nothing
         }
+        // Which of the two disruptions this is, for the parent. A box still
+        // sitting on the watched rect means the card was swapped in place; no
+        // box there at all means it left.
+        let occupied = sample.boxes.contains { box in
+            watched.map { overlap($0, box) > tuning.backgroundIoU } ?? false
+        }
+        pendingCause = occupied ? .replaced : .removed
         disruptCount += 1
         return rearmIfDisrupted()
     }
 
     private func rearmIfDisrupted() -> Decision {
         guard disruptCount >= tuning.rearmSamples else { return .nothing }
+        rearmCause = pendingCause
         // Novelty is judged against the desk baseline, never against the card
         // just shot — so the next card fires even sitting in exactly the same
         // place.
@@ -444,7 +527,22 @@ public final class Trigger {
         return prevScene.delta(to: sample.scene) <= tuning.stillDelta
     }
 
+    /// Whether anything has changed since the shutter, so a parked scene cannot
+    /// photograph itself forever.
+    ///
+    /// Asks about the *card* when it can, and falls back to the frame when it
+    /// cannot. The frame-wide test was the only one available and it is blunt in
+    /// both directions: a card is a fraction of the frame, so swapping one for a
+    /// completely different card barely moves a mean over 384 cells spread
+    /// across the desk — two similar cards in the same spot never fired at all —
+    /// while a hand crossing a corner moves it easily.
     private func sceneChangedSinceCapture(_ sample: TriggerSample) -> Bool {
+        if let captured = capturedCardScene, let watched,
+           let i = sample.boxes.indices.first(where: {
+               overlap(watched, sample.boxes[$0]) > tuning.backgroundIoU
+           }), i < sample.boxScenes.count {
+            return sample.boxScenes[i].delta(to: captured) >= tuning.cardChanged
+        }
         guard let capturedScene else { return true }
         return capturedScene.delta(to: sample.scene) >= tuning.sceneChanged
     }

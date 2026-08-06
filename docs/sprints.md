@@ -20,6 +20,7 @@ stable and looks the part.
 | 4 | TUI completion — seamless add + parity ledger | ✅ implemented 2026-07-31 | plan pruned; the add flow lives in [browsing.md](browsing.md) |
 | 5 | UI beautification — WUBRG identity | ✅ implemented 2026-08-01 (A–F; live visual smoke pending) | [sprint-ui-beautification.md](sprint-ui-beautification.md) |
 | 6 | Distribution | 💭 backlog (unplanned) | — |
+| — | App Store release (placeholder, nothing attempted) | ⬜ not started | [app-store-release.md](app-store-release.md) |
 | 7 | iPhone capture head — a third scan source | 🚧 in progress (A–C done, D building) | [sprint-iphone-capture-head.md](sprint-iphone-capture-head.md) |
 
 ## One-line summaries

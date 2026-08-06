@@ -1976,7 +1976,12 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 }
 
-func TestDedupeQueuesRefire(t *testing.T) {
+// A second copy of a card commits rather than stopping the session.
+//
+// This used to queue. It cost three stops on a playset of four, and it was not
+// even consistent — a copy scanned past the window committed anyway, so the
+// same physical action gave different answers depending on how fast you were.
+func TestRefireCommitsAsASecondCopy(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -1990,25 +1995,24 @@ func TestDedupeQueuesRefire(t *testing.T) {
 		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
 	}
 
-	// The same card re-fires seconds later: queued as a possible duplicate,
-	// never silently dropped — a playset is legitimate.
+	// The same card again seconds later: a second copy, committed.
 	clock = clock.Add(2 * time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
-	if len(ra.got) != 1 {
-		t.Fatalf("a refire inside the window must not auto-commit, adder got %d", len(ra.got))
+	if len(ra.got) != 2 {
+		t.Fatalf("a second copy should commit, adder got %d", len(ra.got))
 	}
-	if len(got.review) != 1 || !got.review[0].dup ||
-		!strings.Contains(got.review[0].note, "duplicate") {
-		t.Fatalf("review = %+v, want the refire queued as a possible duplicate", got.review)
+	if len(got.review) != 0 {
+		t.Fatalf("review = %+v, want nothing queued", got.review)
 	}
 
-	// Past the window it is just the next copy, and commits.
+	// And past the window, which used to be the only way it committed. Same
+	// answer either side of the boundary now, which is the point.
 	clock = clock.Add(dupWindow + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
-	if len(ra.got) != 2 {
-		t.Errorf("past the window the same card should commit again, adder got %d", len(ra.got))
+	if len(ra.got) != 3 {
+		t.Errorf("timing must not change the answer, adder got %d", len(ra.got))
 	}
 }
 
@@ -2145,13 +2149,16 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 		t.Errorf("nudgeDrops = %d, want 1", got.nudgeDrops)
 	}
 
-	// The same card again, fired by real disruption (window long expired):
-	// dup-queue.
+	// The same card again, fired by real disruption rather than the nudge:
+	// a placement the phone watched happen, so a second copy commits.
 	got.nudgeSentAt = time.Time{}
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
-	if len(got.review) != 1 || !got.review[0].dup {
-		t.Errorf("disruption-fired identical read should dup-queue, review=%+v", got.review)
+	if len(ra.got) != 2 {
+		t.Errorf("a disruption-fired repeat is a second copy, adds=%d", len(ra.got))
+	}
+	if len(got.review) != 0 {
+		t.Errorf("nothing should queue, review=%+v", got.review)
 	}
 }
 
@@ -2552,36 +2559,41 @@ func TestLingeringNeighborDropped(t *testing.T) {
 	}
 }
 
-// Two copies fanned in one frame stay a queue-not-drop: the second copy is a
-// possible playset and the review confirm is its "yes, really".
-func TestFannedPlaysetStillQueues(t *testing.T) {
+// Two copies fanned in one frame are two cards, and both commit.
+//
+// This used to queue the second for a deliberate confirm. Two copies visible in
+// one photograph is not ambiguous — it is a playset, which is exactly the pile
+// a hands-free session exists to get through without stopping.
+func TestFannedPlaysetCommitsBothCopies(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Sol Ring", "MH3", "123"))
-	if len(ra.got) != 1 {
-		t.Errorf("adds = %d, want the first copy auto-added", len(ra.got))
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want both copies committed", len(ra.got))
 	}
-	if len(m.review) != 1 || !strings.Contains(m.review[0].note, "twice in this capture") {
-		t.Fatalf("review = %+v, want the second copy queued as a same-capture duplicate", m.review)
+	if len(m.review) != 0 {
+		t.Fatalf("review = %+v, want nothing queued", m.review)
 	}
 }
 
-// A deliberate solo re-scan still queues as a possible duplicate —
-// sequential playset scanning must never lose the copy.
-func TestSoloRescanStillQueuesDuplicate(t *testing.T) {
+// A deliberate solo re-scan is a second card and commits.
+//
+// The phone has said a card was placed — it watched the last one leave, or
+// watched this one laid over it — so there is nothing left to confirm.
+func TestSoloRescanCommitsAsASecondCopy(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
-	if len(ra.got) != 1 {
-		t.Errorf("adds = %d, want only the first auto-added", len(ra.got))
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want both scans committed", len(ra.got))
 	}
-	if len(m.review) != 1 || !strings.Contains(m.review[0].note, "auto-added just now") {
-		t.Fatalf("review = %+v, want the re-scan queued as a possible duplicate", m.review)
+	if len(m.review) != 0 {
+		t.Fatalf("review = %+v, want nothing queued", m.review)
 	}
 }
 
@@ -2817,12 +2829,18 @@ func inspiredFirePrints() []scryfall.Card {
 		CollectorNumber: "690", Finishes: []string{"nonfoil", "foil"}}}
 }
 
-// A first look with no legible marker commits the nonfoil default; the recheck
-// nudge then reads the foil star. Swallowing that echo threw away the only
-// evidence the card was foil, and the collection kept a silently wrong finish
-// (observed live on Inspired Fire, MSC 690). The second look re-keys the row
-// it wrote rather than adding beside it.
-func TestEchoWithFinishEvidenceCorrectsTheCommit(t *testing.T) {
+// A nonfoil and then a foil of one card are two cards.
+//
+// This used to *correct* the first row instead of adding a second, which made
+// scanning a card and its foil impossible to express. The removed function's
+// own comment had spotted the conflict: two copies scanned back to back look
+// exactly like one misread copy, and rewriting the first row is as wrong as
+// dropping the second.
+//
+// The cost of choosing this way is real: on the case it was built for — a foil
+// Inspired Fire recorded nonfoil, its marker legible on the very next capture —
+// the collection now keeps one wrong row *and* one right one.
+func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
 		prints: map[string][]scryfall.Card{"Inspired Fire": inspiredFirePrints()},
@@ -2842,43 +2860,54 @@ func TestEchoWithFinishEvidenceCorrectsTheCommit(t *testing.T) {
 		t.Fatalf("first look = %+v, want one nonfoil commit", ra.got)
 	}
 
-	// Second look, fired by the nudge: this time the star reads.
-	m.nudgeSentAt = m.now()
+	// The foil is laid down where the nonfoil was. The phone watched that
+	// happen and says so, which is what makes it a placement rather than
+	// another look — a nudge echo would be swallowed, and should be.
 	marked := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+		FireReason: scan.FireReplaced,
 		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
 			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
 	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: marked})
 	m = resolve(t, mm.(model), marked.CardList()[0])
 
 	if len(ra.got) != 2 {
-		t.Fatalf("adder called %d times, want 2 — the add and its correction", len(ra.got))
+		t.Fatalf("adder called %d times, want 2 — two cards", len(ra.got))
 	}
-	fix := ra.got[1]
-	if fix.Finish != "foil" || fix.ReplacesFinish != "nonfoil" {
-		t.Errorf("correction = %+v, want foil replacing nonfoil", fix)
+	second := ra.got[1]
+	if second.Finish != "foil" {
+		t.Errorf("second = %+v, want a foil added", second)
 	}
-	if fix.Card.ID != "msc690" {
-		t.Errorf("corrected %q, want the card already committed", fix.Card.ID)
+	if second.ReplacesFinish != "" {
+		t.Errorf("second replaced %q; it should replace nothing", second.ReplacesFinish)
 	}
 	if len(m.review) != 0 {
-		t.Errorf("review = %+v, want nothing queued once it self-corrects", m.review)
+		t.Errorf("review = %+v, want nothing queued", m.review)
 	}
-	// A correction is not a second card.
-	if m.addedCount != 1 {
-		t.Errorf("addedCount = %d, want 1", m.addedCount)
+	// Two cards, so two in the count.
+	if m.addedCount != 2 {
+		t.Errorf("addedCount = %d, want 2", m.addedCount)
 	}
-	// And it must not correct itself again on the next look.
-	m.nudgeSentAt = m.now()
-	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
-	m = resolve(t, mm.(model), blind.CardList()[0])
+	// And the swallow still works: the same card looked at again because the
+	// parent nudged, with no placement behind it, adds nothing.
+	echo := marked
+	echo.FireReason = scan.FireNudge
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: echo})
+	m = resolve(t, mm.(model), echo.CardList()[0])
 	if len(ra.got) != 2 {
-		t.Errorf("adder called %d times after a third look, want 2", len(ra.got))
+		t.Errorf("a nudge echo must add nothing, adder got %d", len(ra.got))
 	}
 }
 
-// The guard is the *guess*, not merely a difference: a finish the card itself
-// chose is not second-guessed by a later look, or a genuine foil commit would
-// queue itself every time the next capture failed to read the marker.
+// A nudge echo of a committed foil is still an echo.
+//
+// The finish correction is gone, so the risk this pins has changed shape: a
+// second look that misreads the marker must not become a second card.
+//
+// Note what does *not* rescue it. The swallow keys on the name alone, so the
+// contradicting hint below is simply ignored — which is the point. A nudge echo
+// is a second look at a scene nobody touched, and a card actually swapped for
+// its foil arrives as `replaced` and never reaches this gate at all. Keying the
+// gate on the finish as well would let this misread through as a phantom card.
 func TestEvidencedFinishIsNotReopenedByEcho(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},

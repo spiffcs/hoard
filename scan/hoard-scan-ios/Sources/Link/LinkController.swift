@@ -283,8 +283,11 @@ final class LinkController: ObservableObject {
     }
 
     /// sendScan reports one capture's read.
-    func sendScan(_ reading: CardReading, rotation: Int, auto: Bool) {
-        send(reading.scanEvent(rotation: rotation, auto: auto ? true : nil))
+    func sendScan(
+        _ reading: CardReading, rotation: Int, auto: Bool, fireReason: String? = nil
+    ) {
+        send(reading.scanEvent(
+            rotation: rotation, auto: auto ? true : nil, fireReason: fireReason))
     }
 
     /// sendAuto reports the trigger's phase, so the terminal's status line says

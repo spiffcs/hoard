@@ -7,6 +7,9 @@
 # Scores two things against manifest.tsv: did the *name* come back, and did the
 # *collector number* come back correct. Reported per stratum so a frame era
 # that parses badly is obvious rather than averaged away.
+#
+# English printings only, matching `cardkit-probe --score`. See
+# docs/scanner-accuracy.md for why, and scan/corpus/lang.py for the column.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,7 +26,13 @@ fi
 [ -f "$manifest" ] || { echo "no manifest — run ./scan/corpus/fetch.sh" >&2; exit 2; }
 
 results=$(mktemp); trap 'rm -f "$results"' EXIT
-tail -n +2 "$manifest" | while IFS=$'\t' read -r sid era border name set num rel; do
+tail -n +2 "$manifest" | while IFS=$'\t' read -r sid era border name set num rel lang; do
+    # Non-English printings are scored apart, exactly as cardkit-probe --score
+    # does. Their images are Italian, Spanish and Japanese cards while the
+    # manifest holds the English name, so counting them as name failures says
+    # nothing about the reader. Two scorers reporting different headline numbers
+    # is worse than either number, so this skip has to match that one.
+    [ "${lang:-en}" = "en" ] || continue
     img="$images/$sid.png"
     [ -f "$img" ] || continue
     "$helper" --image "$img" --rotate 0 2>/dev/null \

@@ -20,7 +20,9 @@ extension CardReading {
     /// `rotation` is reported back rather than applied — the caller has already
     /// baked orientation into the pixels, and an event that claimed to have
     /// rotated them would invite a second turn downstream.
-    public func scanEvent(rotation: Int, auto: Bool? = nil) -> Event {
+    public func scanEvent(
+        rotation: Int, auto: Bool? = nil, fireReason: String? = nil
+    ) -> Event {
         Event(
             event: "scan",
             name: title,
@@ -37,6 +39,7 @@ extension CardReading {
             // already declines to trust an unanchored read.
             bandAnchored: located,
             auto: auto,
+            fireReason: fireReason,
             collectorAlts: nil,
             // The printed foil marker, when the set row carried one. Left nil
             // rather than "nonfoil" when it did not: the Go side's

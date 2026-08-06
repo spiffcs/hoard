@@ -139,6 +139,11 @@ final class CameraSession: NSObject, ObservableObject {
         triggerRunner.stop()
     }
     func nudgeTrigger() { triggerRunner.nudge() }
+    /// Why the trigger armed for the capture now in flight, for the wire.
+    var fireCause: String? {
+        let c = triggerRunner.lastFireCause
+        return c == .none ? nil : c.rawValue
+    }
     /// Apply a tuning sent by the parent. Takes effect on the next sample, so a
     /// session can be retuned without reconnecting.
     func tuneTrigger(stable: Int, interval: Double) {

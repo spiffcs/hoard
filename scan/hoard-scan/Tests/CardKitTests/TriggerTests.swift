@@ -435,3 +435,114 @@ func disarmClearsWatchedBox() {
     t.disarm()
     #expect(t.snapshot.cue == nil)
 }
+
+// MARK: - Telling a new card from another look at the old one
+
+/// A luma grid that is uniformly `v`, standing in for "a card that looks like
+/// this". Two cards differ by their art; the same card differs by noise.
+private func face(_ v: UInt8) -> SceneSignature {
+    SceneSignature(cells: [UInt8](repeating: v, count: 16 * 24))
+}
+
+private func sample(
+    _ boxes: [CGRect], _ scene: SceneSignature, faces: [SceneSignature] = []
+) -> TriggerSample {
+    TriggerSample(boxes: boxes, scene: scene, boxScenes: faces)
+}
+
+@Test("a card laid over another is a new card, not the old one settling")
+func cardCoveringAnotherRearms() {
+    // The case that was silently broken. Geometry alone said "still there"
+    // whenever any box overlapped the watched rect, so a card placed on the
+    // spot the last one occupied read as unchanged, disruption decayed, and the
+    // machine never re-armed. That card was never scanned at all — not
+    // double-counted, *missed*, with nothing in the telemetry to say so.
+    var t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60))
+    #expect(t.phase == .hold)
+
+    // A different card, same spot, frame never empties. The box overlaps
+    // perfectly; only the picture inside it differs.
+    for _ in 0..<Trigger().tuning.rearmSamples {
+        _ = t.observe(sample([spot], frame, faces: [face(200)]))
+    }
+    #expect(t.phase != .hold, "a different card on the same spot must re-arm")
+    #expect(t.rearmCause == .replaced, "cause = \(t.rearmCause)")
+}
+
+@Test("the same card settling back does not re-arm")
+func sameCardSettlingDoesNotRearm() {
+    // The other side of the same threshold, and the one that would show up as
+    // re-firing on a card already counted. Sensor noise is not a new card.
+    var t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60))
+
+    // Jostled: the box shifts a little and the picture moves by a couple of
+    // levels, which is what noise and a shadow look like.
+    for _ in 0..<12 {
+        let nudged = spot.offsetBy(dx: 0.004, dy: 0.004)
+        _ = t.observe(sample([nudged], frame, faces: [face(62)]))
+    }
+    #expect(t.phase == .hold, "the same card must not re-arm on noise")
+}
+
+@Test("a card removed reports a different cause than a card replaced")
+func removedIsDistinctFromReplaced() {
+    // The parent needs these apart from a nudge, but they are both placements
+    // and both mean "a new card is coming". Distinguished so the telemetry can
+    // say which physical thing happened.
+    var t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60))
+
+    for _ in 0..<Trigger().tuning.rearmSamples { _ = t.observe(sample([], frame)) }
+    #expect(t.rearmCause == .removed, "an empty frame is a removal")
+}
+
+@Test("the parent's nudge is marked as having no evidence behind it")
+func nudgeIsMarkedAsSuch() {
+    // The whole point. A nudge is a timer expiring on another machine; a
+    // placement is something the trigger watched happen. The parent has been
+    // guessing between them from a four-second window whose own comment admits
+    // "a real scan can race the nudge onto the wire".
+    var t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60))
+
+    t.forceRearm()
+    #expect(t.rearmCause == .nudged)
+    #expect(t.phase == .searching)
+}
+
+@Test("a sample carrying no box signatures keeps the old behaviour")
+func missingFacesFallBackToGeometry() {
+    // Every existing test builds samples without them, and a caller that cannot
+    // sample the pixels should degrade rather than break.
+    var t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame)) }
+    t.captureFinished(scene: frame)
+    for _ in 0..<12 { _ = t.observe(sample([spot], frame)) }
+    #expect(t.phase == .hold, "geometry-only must still park on a present card")
+}

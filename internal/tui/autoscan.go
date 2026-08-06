@@ -1152,55 +1152,6 @@ type recentCommit struct {
 	finishGuessed bool
 }
 
-// finishConflict reports when this look carries a printed finish marker that
-// contradicts a finish we recorded moments ago *by default*. It is the case
-// where the echo swallow would otherwise throw away the better evidence: the
-// first look at a card saw no marker and committed the nonfoil default, and
-// the second look — the one the recheck nudge fired — actually read one.
-// Observed live on a foil Inspired Fire, recorded nonfoil.
-//
-// Deliberately not a silent correction. Two copies of a card, one foil and one
-// not, scanned back to back look exactly like this, and rewriting the first row
-// would be as wrong as dropping the second. The caller queues it instead, which
-// is the only outcome that survives both readings.
-func finishConflict(recent []recentCommit, it queueItem, now time.Time) (was string, ok bool) {
-	if it.finishHint == "" || len(it.prints) == 0 {
-		return "", false
-	}
-	card := it.prints[0]
-	if !slices.Contains(finishOptions(card), it.finishHint) {
-		return "", false
-	}
-	for i := len(recent) - 1; i >= 0; i-- {
-		r := recent[i]
-		if r.scryfallID != card.ID || now.Sub(r.at) > dupWindow {
-			continue
-		}
-		// Only the most recent commit of this printing matters; an older one
-		// has already been superseded by it.
-		if r.finishGuessed && r.finish != it.finishHint {
-			return r.finish, true
-		}
-		return "", false
-	}
-	return "", false
-}
-
-// correctRecentFinish restates the finish of the latest commit of a printing,
-// and marks it evidenced so the correction is not itself reconsidered by the
-// next look — the card has now told us, and a later capture that fails to read
-// the marker is silence, not contradiction.
-func correctRecentFinish(recent []recentCommit, id, to string) []recentCommit {
-	for i := len(recent) - 1; i >= 0; i-- {
-		if recent[i].scryfallID == id {
-			recent[i].finish = to
-			recent[i].finishGuessed = false
-			return recent
-		}
-	}
-	return recent
-}
-
 // dupCapture reports whether the same printing-and-finish was auto-committed
 // within the time window, and by which capture — the discriminator between a
 // fanned playset and a lingering neighbour.

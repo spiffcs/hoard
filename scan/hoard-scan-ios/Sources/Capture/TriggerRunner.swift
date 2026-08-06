@@ -32,6 +32,12 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     var onFire: (@MainActor () -> Void)?
     /// Called on the main actor when the phase changes, for the wire.
     var onPhase: (@MainActor (TriggerPhase) -> Void)?
+    /// The picture inside each box on the most recent sample, so the capture
+    /// can hand the shot card's own signature back to the trigger.
+    private var lastFaces: [SceneSignature] = []
+    /// The boxes those signatures came from, so the shot card's own face can be
+    /// found again when the capture completes.
+    private var lastBoxes: [CGRect] = []
     /// The box to draw, raised on every sample — including nil, since the view
     /// needs to know when to stop drawing as much as when to start.
     ///
@@ -41,6 +47,8 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// property, so six samples is what transfers from the macOS rig, not its
     /// half-second wall clock.
     var onBox: (@MainActor (CGRect?) -> Void)?
+    /// Why the trigger armed for the capture now in flight.
+    private(set) var lastFireCause: Trigger.RearmCause = .none
     /// One diagnostic line, for the tuning log. Raised at the two moments that
     /// explain a session's waste: when the baseline is learned, and when the
     /// trigger decides to fire.
@@ -156,7 +164,18 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     /// captureFinished parks the trigger on what was just shot.
     func captureFinished() {
-        trigger.captureFinished(scene: lastScene)
+        // The shot card's own picture goes with it, so `hold` can tell a card
+        // laid on the same spot from this one settling back. The card being
+        // watched is the one that fired, so its signature is the one whose box
+        // still overlaps.
+        let watched = trigger.snapshot.cue
+        let cardFace = watched.flatMap { box -> SceneSignature? in
+            guard let i = lastBoxes.indices.first(where: {
+                overlapFraction(lastBoxes[$0], box) > 0.5
+            }), i < lastFaces.count else { return nil }
+            return lastFaces[i]
+        }
+        trigger.captureFinished(scene: lastScene, cardScene: cardFace)
         busy.clear()
         Task { @MainActor in self.onPhase?(self.trigger.phase) }
     }
@@ -218,8 +237,14 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         let scene = sceneSignature(buffer)
         lastScene = scene
         let boxes = triggerRects(buffer)
+        // One signature per box, sampled inside it. Costs the same 384 point
+        // samples each as the frame-wide grid, and it is what lets the trigger
+        // tell a card laid over another from the same card sitting still.
+        let faces = boxes.map { sceneSignature(buffer, in: $0) }
+        lastFaces = faces
+        lastBoxes = boxes
         let sample = TriggerSample(
-            boxes: boxes, scene: scene,
+            boxes: boxes, scene: scene, boxScenes: faces,
             // A hunting lens produces blur, and blur is indistinguishable from
             // stillness to a rectangle detector. Reading the device rather than
             // assuming settled is what lets the streak be shortened safely: the
@@ -255,13 +280,18 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             busy.set()
             // Captured before the capture runs, so it describes the decision
             // rather than whatever the scene became afterwards.
-            var fired = trigger.snapshot
+            let fired = trigger.snapshot
             // Reported in milliseconds as well as samples, so a run at one
             // interval can be read against a run at another without arithmetic.
             let settleMS = Int(Double(fired.settleSamples) * trigger.tuning.interval * 1000)
-            _ = settleMS
+            // Why the machine armed for this fire — a placement the trigger
+            // watched happen, or a timer that expired on the parent. The parent
+            // has been inferring this from a clock; now it is told.
+            let cause = trigger.rearmCause
+            lastFireCause = cause
             Task { @MainActor in
-                self.onTrace?("trigger fire \(fired.line) settleMS=\(settleMS)")
+                self.onTrace?(
+                    "trigger fire \(fired.line) settleMS=\(settleMS) cause=\(cause.rawValue)")
                 self.onFire?()
             }
         case .phaseChanged(let phase):
@@ -310,4 +340,16 @@ final class Flag: @unchecked Sendable {
         defer { lock.unlock() }
         return value
     }
+}
+
+/// How much of the smaller rect the two share, for matching a box to the one
+/// the trigger settled on. Not IoU: the trigger's watched rect is frozen at the
+/// geometry the card was first seen with, so a fresher box of the same card can
+/// be offset from it and still plainly be the same thing.
+private func overlapFraction(_ a: CGRect, _ b: CGRect) -> CGFloat {
+    let i = a.intersection(b)
+    guard !i.isNull else { return 0 }
+    let smaller = min(a.width * a.height, b.width * b.height)
+    guard smaller > 0 else { return 0 }
+    return (i.width * i.height) / smaller
 }

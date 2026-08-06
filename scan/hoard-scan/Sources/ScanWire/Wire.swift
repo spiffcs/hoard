@@ -58,6 +58,16 @@ public struct Event: Encodable {
     /// (true) or fell back to the frame's lower half (false). An anchored band
     /// is the only one whose collector read deserves trust.
     public var bandAnchored: Bool? = nil
+    /// Why the trigger fired: "removed", "replaced" or "nudge". Absent on a
+    /// manual shutter, and absent from helpers older than this field.
+    ///
+    /// The distinction the parent could not make. A capture following a card
+    /// leaving the frame, or a card being laid over the last one, is a new
+    /// placement *as a fact*; a capture following the parent's own nudge is a
+    /// second look at something already handled. Both arrive as `auto: true`,
+    /// so the parent was reconstructing the difference from a four-second
+    /// window — and a real scan can race a nudge onto the wire.
+    public var fireReason: String? = nil
     /// True when this scan was fired by the auto trigger rather than a capture
     /// command or the space key.
     public var auto: Bool? = nil
@@ -90,6 +100,7 @@ public struct Event: Encodable {
         confidence: Float? = nil,
         bandAnchored: Bool? = nil,
         auto: Bool? = nil,
+        fireReason: String? = nil,
         features: [String]? = nil,
         state: String? = nil,
         collectorAlts: [CollectorRead]? = nil,
@@ -108,6 +119,7 @@ public struct Event: Encodable {
         self.confidence = confidence
         self.bandAnchored = bandAnchored
         self.auto = auto
+        self.fireReason = fireReason
         self.features = features
         self.state = state
         self.collectorAlts = collectorAlts

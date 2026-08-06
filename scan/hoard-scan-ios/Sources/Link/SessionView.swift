@@ -251,7 +251,11 @@ struct SessionView: View {
             guard #available(iOS 18, *) else { return }
             let reading = await readCard(uprighted(frame.image, frame.orientation))
             let read = Date()
-            link.sendScan(reading, rotation: 0, auto: auto)
+            // The trigger's own account of why it fired travels with the read.
+            // A manual shutter sends none: nobody watched a card arrive, the
+            // operator simply pressed the button.
+            link.sendScan(reading, rotation: 0, auto: auto,
+                          fireReason: auto ? camera.fireCause : nil)
 
             // Every leg of the loop, in the shape the macOS helper's timing
             // line already has, so HOARD_SCAN_LOG reads the same whichever

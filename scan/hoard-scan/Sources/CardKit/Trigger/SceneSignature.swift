@@ -11,6 +11,7 @@
 // floor moves none, which is the entire discrimination required.
 
 import Accelerate
+import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -74,7 +75,21 @@ public struct SceneSignature: Sendable, Equatable {
 /// actually delivers, and approximates it for packed BGRA. Sampling rather than
 /// averaging: this runs ten times a second beside a Vision pass, and one pixel
 /// per cell is enough to answer the only question being asked.
-public func sceneSignature(_ buffer: CVPixelBuffer) -> SceneSignature {
+/// sceneSignature samples a coarse luma grid, over the whole frame or inside a
+/// normalized sub-rect.
+///
+/// The sub-rect form is what lets the trigger tell one card from another. The
+/// whole-frame signature answers "did the picture change", and a card occupies
+/// a fraction of the frame, so swapping one card for a completely different one
+/// barely moves a mean taken over 384 cells spread across the desk. Sampling
+/// the same grid *inside the card* asks about the card instead — a different
+/// card is a different picture, unmistakably.
+///
+/// It costs the same either way: the grid was always 384 point samples at
+/// computed coordinates, and this only changes which coordinates.
+public func sceneSignature(
+    _ buffer: CVPixelBuffer, in rect: CGRect? = nil
+) -> SceneSignature {
     CVPixelBufferLockBaseAddress(buffer, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
 
@@ -98,11 +113,29 @@ public func sceneSignature(_ buffer: CVPixelBuffer) -> SceneSignature {
     guard let base else { return .unknown }
     let bytes = base.assumingMemoryBound(to: UInt8.self)
 
+    // The window to sample, in pixels. Vision's boxes are y-up and the buffer
+    // is y-down, so the rect flips on the way in — getting this wrong samples
+    // the opposite end of the card and still returns a plausible signature,
+    // which is the failure mode that costs a session before anyone notices.
+    let win: (x: Int, y: Int, w: Int, h: Int)
+    if let rect, rect.width > 0.01, rect.height > 0.01 {
+        let x0 = max(0, Int(rect.minX * CGFloat(width)))
+        let y0 = max(0, Int((1 - rect.maxY) * CGFloat(height)))
+        win = (x0, y0,
+               max(1, min(width - x0, Int(rect.width * CGFloat(width)))),
+               max(1, min(height - y0, Int(rect.height * CGFloat(height)))))
+    } else {
+        win = (0, 0, width, height)
+    }
+
     var cells = [UInt8](repeating: 0, count: SceneSignature.columns * SceneSignature.rows)
     for r in 0..<SceneSignature.rows {
-        let y = min(height - 1, (r * height) / SceneSignature.rows + height / (SceneSignature.rows * 2))
+        let y = min(height - 1,
+                    win.y + (r * win.h) / SceneSignature.rows + win.h / (SceneSignature.rows * 2))
         for c in 0..<SceneSignature.columns {
-            let x = min(width - 1, (c * width) / SceneSignature.columns + width / (SceneSignature.columns * 2))
+            let x = min(width - 1,
+                        win.x + (c * win.w) / SceneSignature.columns
+                            + win.w / (SceneSignature.columns * 2))
             let value: UInt8
             if planar {
                 value = bytes[y * bytesPerRow + x]

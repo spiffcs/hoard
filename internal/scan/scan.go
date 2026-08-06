@@ -58,6 +58,14 @@ type Event struct {
 	// Auto is true when the helper's auto trigger fired this scan rather than
 	// a capture command or the space key.
 	Auto bool `json:"auto"`
+	// FireReason is why the trigger fired, when the source can say: a card
+	// left the frame, a card was laid over the last one, or the parent's own
+	// nudge asked for another look.
+	//
+	// The first two are placements the source watched happen; the third has no
+	// physical evidence behind it at all. Empty from a helper too old to send
+	// it, which is why the timing fallback survives.
+	FireReason string `json:"fireReason,omitempty"`
 	// Features lists helper capabilities, advertised on EventReady ("auto"
 	// means the helper understands auto-on/auto-off).
 	Features []string `json:"features"`
@@ -230,6 +238,17 @@ func parseEvent(data []byte) (Event, error) {
 	}
 	return e, nil
 }
+
+// Fire reasons a source may report on a scan event.
+//
+// The first two are placements the source watched happen — a card left, or a
+// card was laid over the last one. The third has no physical evidence behind
+// it: a timer expired on this side and asked for another look.
+const (
+	FireRemoved  = "removed"
+	FireReplaced = "replaced"
+	FireNudge    = "nudge"
+)
 
 // Device is a camera the helper can capture from. Kind is a short human tag
 // ("iPhone", "built-in", "external") for telling similar names apart.

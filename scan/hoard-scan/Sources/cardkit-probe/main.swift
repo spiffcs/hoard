@@ -90,6 +90,7 @@ func score(manifest: String, misses: Bool) async -> Never {
         s.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
+    var foreignTotal = 0, foreignNameOK = 0, foreignNumOK = 0
     var borderAsked = 0, borderAnswered = 0, borderRight = 0
     var borderWrong: [String] = [], borderFalse: [String] = []
     var coverRight: [Double] = [], coverWrong: [Double] = []
@@ -100,10 +101,12 @@ func score(manifest: String, misses: Bool) async -> Never {
 
     for row in text.split(separator: "\n").dropFirst() {
         let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        // Manifest columns: sid, era, border, name, set, number, rel — the set
-        // sits between the name and the number, which is easy to skip past.
+        // Manifest columns: sid, era, border, name, set, number, rel, lang —
+        // the set sits between the name and the number, which is easy to skip
+        // past, and lang was appended later so older manifests lack it.
         guard f.count >= 6 else { continue }
         let (sid, era, border, wantName, wantNum) = (f[0], f[1], f[2], f[3], f[5])
+        let lang = f.count >= 8 ? f[7] : "en"
         let img = dir.appendingPathComponent("images/\(sid).png")
         guard let src = CGImageSourceCreateWithURL(img as CFURL, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { continue }
@@ -145,6 +148,23 @@ func score(manifest: String, misses: Bool) async -> Never {
         let numOK = r.printing.number == wantNum
             || (era == "pre1998" && r.printing.number.isEmpty)
 
+        // Non-English printings are scored apart, not counted as failures.
+        //
+        // Their images are Italian, Spanish, Japanese cards; the manifest holds
+        // the *English* name because that is what the catalog is keyed on. A
+        // perfect read of "Miniera a Cielo Aperto" was being marked a failure
+        // to read "Strip Mine" — a fifth of all name misses, and most of why
+        // pre-1998 black looked 35 points worse than its white sibling.
+        //
+        // Reading them properly is its own piece of work. Until then the
+        // headline answers "how well does this read the cards it is for".
+        if lang != "en" {
+            foreignTotal += 1
+            if nameOK { foreignNameOK += 1 }
+            if numOK { foreignNumOK += 1 }
+            continue
+        }
+
         let key = "\(era)\t\(border)"
         var e = agg[key] ?? (0, 0, 0)
         e.n += 1; e.name += nameOK ? 1 : 0; e.num += numOK ? 1 : 0
@@ -174,6 +194,11 @@ func score(manifest: String, misses: Bool) async -> Never {
     }
     print(String(repeating: "-", count: 46))
     let med = times.isEmpty ? 0 : times.sorted()[times.count / 2]
+    if foreignTotal > 0 {
+        print(pad("(non-English)", 24) + pad("\(foreignTotal)", 6)
+            + pad(pct(foreignNameOK, foreignTotal), 8) + pct(foreignNumOK, foreignTotal)
+            + "   scored apart; see docs/scanner-accuracy.md")
+    }
     print(pad("ALL", 24) + pad("\(totals.n)", 6) + pad(pct(totals.name, totals.n), 8)
         + pct(totals.num, totals.n)
         + "   (median read " + String(format: "%.0f", med) + "ms)")

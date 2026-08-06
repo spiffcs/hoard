@@ -1299,8 +1299,25 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		// land; the rest queue. Each card's collector info travels with its own
 		// lines — pooling them per frame is how one card's name once got
 		// another card's printing.
-		m.lastScanNudged = !m.nudgeSentAt.IsZero() &&
-			m.now().Sub(m.nudgeSentAt) < nudgeEchoWindow
+		// Why this capture happened, from the source that watched it happen.
+		//
+		// This used to be inferred here from a clock — whether a nudge had been
+		// sent within the last four seconds — and the comment on that window
+		// conceded the flaw: a real scan can race the nudge onto the wire. The
+		// phone takes three distinct code paths when it re-arms and now says
+		// which one it took, so the guess is gone.
+		//
+		// The clock survives only for a helper too old to send the field. That
+		// is a compatibility path, not the mechanism.
+		switch msg.ev.FireReason {
+		case scan.FireNudge:
+			m.lastScanNudged = true
+		case scan.FireRemoved, scan.FireReplaced:
+			m.lastScanNudged = false
+		default:
+			m.lastScanNudged = !m.nudgeSentAt.IsZero() &&
+				m.now().Sub(m.nudgeSentAt) < nudgeEchoWindow
+		}
 		m.nudgeGen++ // a real capture voids any armed quiet-period timer
 		m.captureSeq++
 		cmds := []tea.Cmd{again}
@@ -1434,43 +1451,37 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// recent set, not a single last name: a multi-card recheck echoes every
 	// card of the previous capture, and remembering only the last one let the
 	// rest dup-queue (observed live: a re-shot pair queued both).
-	// …unless this look brought finish evidence the commit never had. The
-	// echo is normally the same card telling us nothing new, but a marker
-	// read on the second look and not the first is strictly better than the
-	// nonfoil default already written, and swallowing it loses the only
-	// chance to notice (observed live: a foil Inspired Fire recorded nonfoil,
-	// its foil marker legible on the very next capture).
-	if was, ok := finishConflict(m.recent, it, now); ok {
-		card := it.prints[0]
-		res := Result{Card: card, Finish: it.finishHint, Qty: 1,
-			ContainerID: m.dest.ID, ReplacesFinish: was}
-		if err := m.adder(res); err != nil {
-			// The correction failed, so the guessed row stands and the user
-			// has to know: this is the one place a silent failure would leave
-			// a wrong price in the collection.
-			m.note("outcome %q correction failed: %v", it.canonical, err)
-			m.reviewFlash()
-			it.note = fmt.Sprintf("reads %s but was added as %s, and the correction failed: %v",
-				it.finishHint, was, err)
-			m.review = append(m.review, it)
-			nudge := m.scheduleNudge()
-			next, cmd := m.reviewChanged()
-			return next, tea.Batch(cmd, nudge)
-		}
-		m.note("outcome %q corrected: %s → %s", card.Name, was, it.finishHint)
-		m.recent = correctRecentFinish(m.recent, card.ID, it.finishHint)
-		m.recentNames = recordName(m.recentNames, it.canonical, now)
-		// The count is unchanged — no new card arrived — but the value is not:
-		// the two finishes price differently, which is the whole point.
-		m.addedValue += priceValue(card, it.finishHint) - priceValue(card, was)
-		line := fmt.Sprintf("%s (%s/%s) %s → %s", card.Name,
-			strings.ToUpper(card.Set), card.CollectorNumber, was, it.finishHint)
-		m.tally = append(m.tally, line)
-		m.summary.add("auto", line)
-		m.status = fmt.Sprintf("%s is %s, corrected", card.Name, it.finishHint)
-		m.statusErr = false
-		return m, m.scheduleNudge()
-	}
+	// The finish correction used to sit here: a look carrying a marker that
+	// contradicted a finish recorded moments ago *by default* rewrote the
+	// earlier row instead of adding a card.
+	//
+	// Removed deliberately. A second scan is a second card — scanning a nonfoil
+	// and then its foil is two cards, and rewriting the first row made that
+	// impossible to express. The removed function's own comment had already
+	// spotted the conflict: "Two copies of a card, one foil and one not,
+	// scanned back to back look exactly like this, and rewriting the first row
+	// would be as wrong as dropping the second."
+	//
+	// The cost is real and worth naming. It existed for an observed case — a
+	// foil Inspired Fire recorded nonfoil, its marker legible on the very next
+	// capture — and without it that becomes one wrong row *plus* one right one
+	// rather than one corrected row. Two things make the trade better than it
+	// was: the footer recovery pass rescues most missed markers, and the star
+	// reads correctly on 93 of 95 captures that reach the footer.
+	//
+	// recentCommit.finishGuessed stays: it still marks rows nothing on the card
+	// chose, which is the audit question docs/scanner-accuracy.md asks.
+	// Name alone here, deliberately, and it is not the same question the
+	// duplicate window asks.
+	//
+	// A nudge echo means *nothing was placed*: a timer expired on this side and
+	// asked for another look at a scene nobody touched. Whatever finish that
+	// look reports is a second reading of one card, so a difference between the
+	// two is OCR noise and not a second card. Keying this gate on the printing
+	// as well would let that noise through as a phantom.
+	//
+	// The foil case does not need it. A card actually laid down reports
+	// `removed` or `replaced`, so `fromNudge` is false and this gate never runs.
 	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
 		// Unless this look is better than the one still sitting in review.
 		//
@@ -1537,10 +1548,11 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		if seq, dup := dupCapture(m.recent, it.prints[0].ID, finish, now); dup {
 			switch {
 			case seq == it.captureSeq:
-				// Two copies in one frame — a fanned playset. Queue for the
-				// deliberate confirm; never drop.
-				auto, it.dup = false, true
-				note = "possible duplicate: same card twice in this capture"
+				// Two copies in one frame — a fanned playset. Two cards visible
+				// is two cards, so both commit. This used to queue for a
+				// deliberate confirm, which cost a stop on exactly the pile a
+				// hands-free session exists for.
+				it.dup = true
 			case it.siblings > 1 || it.fromNudge:
 				// A lingering neighbour: the card added a moment ago is still
 				// in frame beside the new one. An un-swapped pile is not a
@@ -1552,9 +1564,20 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				m.statusErr = false
 				return m, m.scheduleNudge()
 			default:
-				// A deliberate solo re-scan: sequential playset scanning.
-				auto, it.dup = false, true
-				note = "possible duplicate: same card auto-added just now"
+				// A deliberate solo re-scan, and the phone has said a card was
+				// placed — it watched the last one leave, or watched this one
+				// laid over it. A second scan is a second card, so it commits.
+				//
+				// It used to queue. That cost three stops on a playset of four,
+				// and was not even consistent: a copy scanned outside the
+				// ten-second window committed anyway, so the same physical
+				// action gave different answers depending on how fast the
+				// operator was.
+				//
+				// `it.dup` still rides along so the outcome line and the
+				// session summary record that a repeat was seen — the only way
+				// a false positive would ever be noticed.
+				it.dup = true
 			}
 		}
 	}
