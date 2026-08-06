@@ -1,21 +1,20 @@
 package main
 
-// Camera glue for `hoard add --scan`: choosing a device and remembering the
-// choice, so the second scan of a session asks nothing.
+// Camera glue for `hoard add --scan`: choosing a phone and remembering the
+// pairing, so the second scan of a session asks nothing.
 
 import (
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/tui"
 )
 
-// helperScanner drives the native camera helper for the add TUI's scan action
+// helperScanner drives the native scan helper for the add TUI's scan action
 // (ctrl+o). On platforms without the helper its calls return errors that the TUI
 // surfaces as a banner, so the session continues.
 type helperScanner struct{}
@@ -25,12 +24,12 @@ func (helperScanner) Devices(ctx context.Context) ([]scan.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	// An iPhone-app source needs a code the first time it is used, and never
-	// again. Marked here rather than in the helper because whether a phone is
-	// already paired is a fact about this machine.
+	// A phone needs a code the first time it is used, and never again. Marked
+	// here rather than in the helper because whether a phone is already paired
+	// is a fact about this machine.
 	prefs := loadScanPrefs()
 	for i, d := range devices {
-		if d.Kind == scan.KindRemote && prefs.Codes[d.ID] == "" {
+		if prefs.Codes[d.ID] == "" {
 			devices[i].NeedsPairing = true
 		}
 	}
@@ -58,21 +57,20 @@ func (helperScanner) Pair(deviceID, code string) error {
 const pairTimeout = 20 * time.Second
 
 func (helperScanner) Open(ctx context.Context, deviceID string) (tui.ScanSession, error) {
-	// The preview rotation the user last settled on is replayed into the helper,
-	// so a phone that previews sideways is corrected once rather than every run.
+	// The code for this phone, saved by Pair. An empty one reaches the helper
+	// as a missing --code and fails there with a message about the Pair tab,
+	// which is the right place to say it — a device that got this far was
+	// listed without NeedsPairing, so an empty code here means the prefs file
+	// lost it rather than that the user skipped a step.
 	prefs := loadScanPrefs()
 	s, err := scan.Open(ctx, scan.OpenOptions{
-		DeviceID: deviceID,
-		Rotation: prefs.Rotation,
-		// Empty for a Continuity Camera, which is what makes this one call
-		// serve both backends: the helper opens a local camera when there is no
-		// code and translates for a phone when there is.
+		DeviceID:    deviceID,
 		PairingCode: prefs.Codes[deviceID],
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &persistingSession{Session: s, rotation: prefs.Rotation}, nil
+	return s, nil
 }
 
 // rememberPairingCode saves a code for a device, so the prompt is a
@@ -86,65 +84,14 @@ func rememberPairingCode(deviceID, code string) {
 	saveScanPrefs(prefs)
 }
 
-// persistingSession watches a live session's events for rotation changes and
-// saves the last one, so a correction made mid-session survives into the next
-// run. It sits here rather than in the TUI because writing preference files
-// isn't the TUI's job.
-type persistingSession struct {
-	*scan.Session
-	events   chan scan.Event
-	once     sync.Once
-	rotation int
-}
-
-func (p *persistingSession) Events() <-chan scan.Event {
-	p.once.Do(func() {
-		p.events = make(chan scan.Event, 8)
-		go func() {
-			defer close(p.events)
-			for ev := range p.Session.Events() {
-				if ev.Kind == scan.EventRotation || ev.Kind == scan.EventClosed {
-					if ev.Rotation != p.rotation {
-						p.rotation = ev.Rotation
-						// Read-modify-write, not a fresh struct: prefs now
-						// carries pairing codes too, and replacing the whole
-						// file to record a rotation would silently unpair
-						// every phone the moment the preview was turned.
-						prefs := loadScanPrefs()
-						prefs.Rotation = ev.Rotation
-						saveScanPrefs(prefs)
-					}
-				}
-				p.events <- ev
-			}
-		}()
-	})
-	return p.events
-}
-
-// Close shuts the session down through the forwarding goroutine rather than
-// through Session.Close, whose drain would race that goroutine for the same
-// channel — and a final rotation correction swallowed by the drain would never
-// reach the preferences file.
-func (p *persistingSession) Close() error {
-	if p.events == nil {
-		// Events was never called, so there is no forwarder to protect.
-		return p.Session.Close()
-	}
-	err := p.Session.Shutdown()
-	// Consume what the forwarder relays until it sees the session's channel
-	// close and exits. This both keeps it from blocking on a full buffer and
-	// guarantees every last event passed through the rotation check above.
-	for range p.events { //nolint:revive // draining
-	}
-	return err
-}
-
 // scanPrefs holds the small amount of scan state worth surviving between runs.
+//
+// It used to carry a preview rotation as well. That existed because Continuity
+// Camera handed the Mac a landscape frame it had to turn upright; the phone
+// reads its own already-upright frame, so there is nothing left to correct. A
+// `rotation` still sitting in an older scan.json is simply ignored.
 type scanPrefs struct {
-	// Rotation is extra clockwise preview rotation in degrees (0/90/180/270).
-	Rotation int `json:"rotation"`
-	// Codes are pairing codes for iPhone-app sources, keyed by device id.
+	// Codes are pairing codes for phones, keyed by device id.
 	//
 	// Kept per device rather than globally: two phones are two pairings, and a
 	// single code would silently stop working the moment a second one appeared.
@@ -152,13 +99,6 @@ type scanPrefs struct {
 	// a once-per-phone event rather than a once-per-session one.
 	Codes map[string]string `json:"codes,omitempty"`
 }
-
-// defaultScanRotation corrects the sideways preview a portrait-held iPhone
-// produces out of the box. Continuity Camera hands over a landscape frame and
-// the rotation coordinator often can't tell how the phone is being held, so the
-// image arrives turned a quarter-turn counter-clockwise; this turns it back.
-// Overridden the moment the user adjusts it with ←/→ in the capture window.
-const defaultScanRotation = 90
 
 // scanPrefsPath is where scan preferences live — beside the database, so they
 // follow the same per-user location.
@@ -170,12 +110,12 @@ func scanPrefsPath() (string, error) {
 	return filepath.Join(dir, "hoard", "scan.json"), nil
 }
 
-// loadScanPrefs reads saved scan preferences, falling back to the defaults if
+// loadScanPrefs reads saved scan preferences, falling back to an empty set if
 // they're missing or unreadable — a preferences file is never worth failing a
-// scan over. A saved rotation of 0 is honoured; only an absent file gets the
-// default.
+// scan over. An unreadable file reads as "no pairings", which costs a re-pair
+// and never silently uses the wrong code.
 func loadScanPrefs() scanPrefs {
-	p := scanPrefs{Rotation: defaultScanRotation}
+	var p scanPrefs
 	path, err := scanPrefsPath()
 	if err != nil {
 		return p
@@ -185,7 +125,7 @@ func loadScanPrefs() scanPrefs {
 		return p
 	}
 	if err := json.Unmarshal(data, &p); err != nil {
-		return scanPrefs{Rotation: defaultScanRotation}
+		return scanPrefs{}
 	}
 	return p
 }

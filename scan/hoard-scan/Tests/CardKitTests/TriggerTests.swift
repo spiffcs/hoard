@@ -58,6 +58,31 @@ func doesNotFireEarly() {
     #expect(!feed(t, 4, sample([card], busyScene())))
 }
 
+@Test("a fire reports how long the card actually settled")
+func fireReportsItsSettle() {
+    // Every `trigger fire` line ever written said `settle=0 settleMS=0`, and
+    // the reason is a two-step that no test caught: `count()` sets
+    // `phase = .capturing` before returning `.fire`, and `observe`'s `defer`
+    // then zeroes `samplesInPhase` because the phase changed. The caller reads
+    // the snapshot *after* `observe` returns, so it read the zero.
+    //
+    // The settle is the largest single term in the delay a person feels at the
+    // table. It has to be readable from a session log, and for that it has to
+    // survive the phase change that reports it.
+    let t = Trigger()
+    t.arm(with: sample([], flatScene()))
+    #expect(feed(t, 8, sample([card], busyScene())))
+    #expect(t.phase == .capturing)
+    #expect(t.snapshot.settleSamples > 0,
+            "settle read \(t.snapshot.settleSamples): the fire-time value was lost")
+    // It counts samples in the *phase*, which is one short of the stable streak
+    // that produced the fire: the first detection is what moves the machine
+    // into `.stabilizing`, and the counter restarts there. Both numbers are on
+    // the trace line — this pins that they stay a sample apart rather than one
+    // of them reading zero.
+    #expect(t.snapshot.settleSamples == t.snapshot.stable - 1)
+}
+
 @Test("furniture present when the trigger armed can never fire")
 func backgroundNeverFires() {
     // A deck box on the mat, a card sleeve, the edge of the playmat. Whatever
@@ -611,4 +636,110 @@ func heldWindowStillSeesASwap() {
     }
     #expect(rearmed, "a card laid over another must re-arm, so it can be scanned")
     #expect(t.rearmCause == .replaced, "it held the spot, so it was replaced")
+}
+
+/// A sample carrying both signatures: what the pinned capture window sees now,
+/// and what each live box looks like in its own right.
+private func sample(
+    _ boxes: [CGRect], _ scene: SceneSignature,
+    held: SceneSignature, boxFaces: [SceneSignature]
+) -> TriggerSample {
+    TriggerSample(boxes: boxes, scene: scene, holdScene: held, boxScenes: boxFaces)
+}
+
+@Test("a card that slides is moved, not replaced")
+func slidingCardIsMovedNotReplaced() {
+    // The bug this exists for. The pinned window cannot tell these apart by
+    // construction: sliding a card changes the pixels inside a fixed rectangle
+    // exactly as swapping it would, so the machine called it `replaced` and the
+    // Mac believed a placement had been witnessed. One live session committed
+    // Skirk Volcanist five times in six seconds on that word.
+    //
+    // What separates them is where you look. Through the pinned window the card
+    // is gone; through its own box it is still the same card.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+
+    // Slid far enough that the pinned window is now mostly desk, but not so far
+    // that it stops overlapping — which is exactly the range that produced the
+    // false `replaced`.
+    let slid = spot.offsetBy(dx: 0.05, dy: 0.03)
+    var rearmed = false
+    for _ in 0..<12 {
+        _ = t.observe(sample([slid], frame, held: face(160), boxFaces: [face(60)]))
+        if t.rearmCause != .none { rearmed = true; break }
+    }
+    #expect(rearmed, "the machine should still re-arm — the scene did change")
+    #expect(t.rearmCause == .moved,
+            "a card that kept its face only moved, cause = \(t.rearmCause)")
+}
+
+@Test("a different card in the same place is still replaced")
+func differentCardStillReplaced() {
+    // The other side. If the face check swallowed this, a card laid on the pile
+    // would never be scanned — silently, which is worse than a duplicate.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+
+    var rearmed = false
+    for _ in 0..<12 {
+        // New card: it does not look like the capture through any window.
+        _ = t.observe(sample([spot], frame, held: face(160), boxFaces: [face(160)]))
+        if t.rearmCause != .none { rearmed = true; break }
+    }
+    #expect(rearmed, "a card laid over another must re-arm, so it can be scanned")
+    #expect(t.rearmCause == .replaced, "a new face is a new card, cause = \(t.rearmCause)")
+}
+
+@Test("detector jitter on a moved card does not make it a new one")
+func jitterStaysWithinTheMovedBand() {
+    // The threshold has to clear jitter. Measured on real stills: the same card
+    // through a window shifted by half a percent reads 13.6, while a genuinely
+    // different card reads 29-50. A face 14 levels off the capture is the same
+    // card seen through a wobbling box, and must not read as a replacement.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+
+    let slid = spot.offsetBy(dx: 0.05, dy: 0.03)
+    for _ in 0..<12 {
+        _ = t.observe(sample([slid], frame, held: face(160), boxFaces: [face(74)]))
+        if t.rearmCause != .none { break }
+    }
+    #expect(t.rearmCause == .moved,
+            "a 14-level face difference is jitter, cause = \(t.rearmCause)")
+}
+
+@Test("without per-box faces the machine keeps its old answer")
+func noBoxFacesKeepsOldBehaviour() {
+    // Backward compatibility, and the reason the field is optional: a caller
+    // that cannot sample per-box signatures gets `replaced` exactly as before,
+    // rather than having every disruption quietly reclassified as a move.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+
+    for _ in 0..<12 {
+        _ = t.observe(sample([spot], frame, faces: [face(160)]))
+        if t.rearmCause != .none { break }
+    }
+    #expect(t.rearmCause == .replaced, "cause = \(t.rearmCause)")
 }

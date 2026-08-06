@@ -3,14 +3,13 @@
     "border": "white",
     "borderSource": "footer+ring",
     "candidates": [
-      "Control Magic",
-      "Magic"
+      "Control Magic"
     ],
     "finish": "",
     "name": "Control Magic",
     "number": "",
     "set": "",
-    "source": "frame",
+    "source": "crop",
     "year": 1995
   }
 ]

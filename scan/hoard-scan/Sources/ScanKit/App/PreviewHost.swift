@@ -1,33 +1,25 @@
-// macOS only. This is the camera, window and HUD half of ScanKit; the read
-// pipeline under Core/ is what compiles for iOS. See Package.swift.
+// macOS only. ScanKit is the Mac end of the link: the translator, and the
+// optional mirror window it can draw. See Package.swift.
 #if os(macOS)
 
-import AVFoundation
 import AppKit
 
-/// What the outline cue and the price HUD need from whatever is showing video.
+/// What the price HUD needs from whatever is showing video.
 ///
-/// Both used to take an `AVCaptureVideoPreviewLayer` directly, which was true
+/// It used to take an `AVCaptureVideoPreviewLayer` directly, which was true
 /// until the video started arriving from a phone over the network instead of
-/// from a local capture session. What they actually need turns out to be three
-/// things, two of which every `CALayer` already has — so the protocol is small
-/// and the local case conforms for free.
+/// from a local capture session. What it actually needs turns out to be three
+/// things, two of which every `CALayer` already has — so the protocol is small.
 ///
 /// The third is `videoRect`, and it is the one that matters. `.resizeAspect`
 /// letterboxes the frame inside the view, and a HUD pinned to the *view* corner
-/// lands in the black bars beside a portrait feed. Both overlays ask where the
+/// lands in the black bars beside a portrait feed. The overlay asks where the
 /// picture actually is, not where the view is.
 protocol PreviewHost: AnyObject {
     var bounds: CGRect { get }
     func addSublayer(_ layer: CALayer)
     /// Where the video actually shows inside `bounds`, letterboxing excluded.
     var videoRect: CGRect { get }
-}
-
-extension AVCaptureVideoPreviewLayer: PreviewHost {
-    var videoRect: CGRect {
-        layerRectConverted(fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
-    }
 }
 
 /// RemotePreviewLayer shows JPEG frames pushed from the phone.

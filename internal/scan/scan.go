@@ -1,7 +1,13 @@
-// Package scan reads Magic card names from a camera via an external,
-// platform-native helper (macOS: Continuity Camera + Vision OCR).
+// Package scan reads Magic card names from an iPhone running Hoardling, the
+// companion app, reached through an external macOS helper that translates the
+// phone's link into a pipe.
 //
-// A scan is a *session*, not a one-shot: Open leaves the camera window up so a
+// The phone is the camera and the reader both: it captures, OCRs the card and
+// sends finished events. Nothing here opens a camera, and there is no local
+// fallback — the Continuity Camera backend that used to sit beside this one was
+// removed once the phone proved better at every part of the job.
+//
+// A scan is a *session*, not a one-shot: Open holds the phone's camera up so a
 // run of cards can be captured one after another. The Go side stays
 // cross-platform, with stubs on platforms that have no helper.
 package scan
@@ -13,14 +19,12 @@ import (
 
 // Event kinds emitted by a live capture session.
 const (
-	EventReady    = "ready"    // window is up and previewing
-	EventScan     = "scan"     // a capture was taken and read
-	EventRotation = "rotation" // the user turned the preview
-	EventFraming  = "framing"  // auto-framing toggled; see Event.State
-	EventTorch    = "torch"    // phone torch toggled; see Event.State
-	EventError    = "error"    // capture failed; the session is still alive
-	EventClosed   = "closed"   // the window closed; the session is over
-	EventAuto     = "auto"     // auto-trigger state change; see Event.State
+	EventReady  = "ready"  // the phone's camera is up and previewing
+	EventScan   = "scan"   // a capture was taken and read
+	EventTorch  = "torch"  // phone torch toggled; see Event.State
+	EventError  = "error"  // capture failed; the session is still alive
+	EventClosed = "closed" // the session is over
+	EventAuto   = "auto"   // auto-trigger state change; see Event.State
 )
 
 // Event is one message from a capture session.
@@ -30,8 +34,11 @@ type Event struct {
 	// other lines read, best guess first. Set on EventScan.
 	Name       string   `json:"name"`
 	Candidates []string `json:"candidates"`
-	// Rotation is the manual preview correction currently in effect. Persist it
-	// and pass it back to Open so the correction sticks between runs.
+	// Rotation is the angle the phone applied before reading. Parsed but unused:
+	// it was the Mac's preview correction back when the Mac owned a camera, and
+	// the phone now hands over an already-upright frame. Kept on the struct
+	// because it is still on the wire, and a field silently dropped from a
+	// decoder is how a protocol forks.
 	Rotation int    `json:"rotation"`
 	Message  string `json:"message"`
 	Device   string `json:"device"`
@@ -66,11 +73,11 @@ type Event struct {
 	// physical evidence behind it at all. Empty from a helper too old to send
 	// it, which is why the timing fallback survives.
 	FireReason string `json:"fireReason,omitempty"`
-	// Features lists helper capabilities, advertised on EventReady ("auto"
-	// means the helper understands auto-on/auto-off).
+	// Features lists source capabilities, advertised on EventReady ("auto"
+	// means the phone understands auto-on/auto-off).
 	Features []string `json:"features"`
-	// State is the auto-trigger state carried by EventAuto, "auto"/"off"
-	// carried by EventFraming, or "on"/"off" carried by EventTorch.
+	// State is the auto-trigger state carried by EventAuto, or the "on"/"off"
+	// carried by EventTorch.
 	State string `json:"state"`
 	// CollectorAlts are collector blocks beyond the primary flat fields: a
 	// card scanned off a stack shows a sliver of the card beneath it, whose
@@ -242,16 +249,31 @@ func parseEvent(data []byte) (Event, error) {
 // Fire reasons a source may report on a scan event.
 //
 // The first two are placements the source watched happen — a card left, or a
-// card was laid over the last one. The third has no physical evidence behind
-// it: a timer expired on this side and asked for another look.
+// card was laid over the last one. FireMoved is the same card sliding, which
+// used to be reported as FireReplaced and is the reason one card could commit
+// five times in six seconds. FireNudge has no physical evidence behind it at
+// all: a timer expired on this side and asked for another look.
+//
+// Ordered by how much they license. Removed and Replaced are evidence a card
+// was placed; Moved is evidence the opposite — the source is saying it believes
+// this is the card it already read.
 const (
 	FireRemoved  = "removed"
 	FireReplaced = "replaced"
-	FireNudge    = "nudge"
+	FireMoved    = "moved"
+	// FireNudge is "nudged", not "nudge". The phone's enum case is `nudged` and
+	// always has been; this constant said "nudge" from the day it was written,
+	// so the branch matching on it never once ran. Nudge detection has been
+	// silently falling through to the clock fallback the field was added to
+	// replace — which is why a nudge re-look of an unreadable scene queued
+	// instead of being killed as a phantom, 10s after the commit that armed it
+	// and so outside the fallback's 4s window too.
+	FireNudge = "nudged"
 )
 
-// Device is a camera the helper can capture from. Kind is a short human tag
-// ("iPhone", "built-in", "external") for telling similar names apart.
+// Device is a phone the helper can capture from. Kind is a short human tag,
+// always KindRemote today, kept because it is on the wire and because it is
+// what a picker renders beside the name.
 type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -264,27 +286,27 @@ type Device struct {
 }
 
 // KindRemote is the Device.Kind an iPhone running the companion app carries.
-// The helper sets it; the Go side matches on it to decide whether a device
-// needs a pairing code, so the two spellings have to stay in step.
-const KindRemote = "Hoard Scan"
+// The helper sets it and the Go side reads it back, so the two spellings have
+// to stay in step. Every device carries it now that there is one kind of
+// source; it survives as the wire's own word for what a source is.
+const KindRemote = "Hoardling"
 
-// OpenOptions says which camera to open and how.
+// OpenOptions says which phone to open and how.
 //
-// A struct rather than positional arguments because the two backends differ by
-// exactly one field — a pairing code — and a fourth bare parameter at every
-// call site would make that difference invisible.
+// A struct rather than positional arguments: a session is identified by a
+// device *and* a code, and two bare strings at every call site would make it
+// easy to swap them.
 type OpenOptions struct {
-	// DeviceID is the camera or paired phone to use; empty lets the helper pick.
+	// DeviceID is the paired phone to use; empty lets the helper pick the only
+	// one it can see.
 	DeviceID string
-	// Rotation is extra clockwise preview rotation in degrees.
-	Rotation int
-	// PairingCode, when set, opens a session against an iPhone running the
-	// companion app instead of a local Continuity Camera. Six digits, shown in
-	// the app, remembered per device in scan.json.
+	// PairingCode authorizes the session. Six digits, shown on the app's Pair
+	// tab, remembered per device in scan.json. A session without one cannot
+	// complete the handshake, so this is required in practice.
 	PairingCode string
-	// Mirror asks a remote session to also open a preview window on this Mac.
-	// Off by default: the phone shows the preview, the price and the cue, and a
-	// second window is a second place to look during a session.
+	// Mirror asks for a preview window on this Mac too. Off by default: the
+	// phone shows the preview, the price and the cue, and a second window is a
+	// second place to look during a session.
 	Mirror bool
 }
 
@@ -295,7 +317,7 @@ var (
 	ErrHelperMissing = errors.New("hoard-scan helper not found; build it with ./build-scan.sh")
 )
 
-// deviceList mirrors the JSON the helper prints for --list-devices.
+// deviceList matches the JSON the helper prints for --list-devices.
 type deviceList struct {
 	Devices []Device `json:"devices"`
 }

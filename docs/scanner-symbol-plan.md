@@ -5,6 +5,15 @@ measurements behind it are fresh — see `docs/scanner-tuning.md` for the border
 reader this builds on, and `docs/scanner-limits.md` for where it sits in the
 coverage picture.
 
+> **2026-08-05: the Continuity Camera path was removed.** Everything below that
+> was measured on the macOS Continuity rig — its 1920x1440 ceiling, its
+> unlockable lens, its own read pipeline under `ScanKit/Core/` — is a historical
+> record and is kept as one. The scanner is now the iPhone app alone, reading
+> with `CardKit`. Where a measurement below names a Continuity number, the live
+> figure is the phone's; where it names a file under `ScanKit/Core/` or a
+> `hoard-scan` mode like `--image`, `--probe` or `--auto`, that code is gone and
+> `bin/cardkit-probe` is the equivalent.
+
 ## Why
 
 Two separate cases converge on the same signal.
@@ -47,8 +56,10 @@ Numbers to trust; they cost a day to get.
 
 ## What blocks it today
 
-*On the Continuity Camera path, all of the below still stands. On the iPhone
-capture head it does not.*
+*The blockers below were the Continuity Camera path's, and that path is gone —
+so on the only capture head there is, they no longer stand. This section is kept
+because it names what has to be true for the plan to work, and the paragraphs
+after it record that the phone already makes it true.*
 
 *Two of the three things this document is waiting on have been measured on real
 captures — see "The expansion symbol is legible" and "Thirteen cards at the

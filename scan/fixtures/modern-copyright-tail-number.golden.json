@@ -3,9 +3,7 @@
     "border": "black",
     "borderSource": "footer+ring",
     "candidates": [
-      "Meltdown",
-      "Sorcery",
-      "Destroy each artifact with mana"
+      "Meltdown"
     ],
     "finish": "",
     "name": "Meltdown",

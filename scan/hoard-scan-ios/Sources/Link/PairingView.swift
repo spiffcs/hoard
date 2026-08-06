@@ -14,6 +14,7 @@ import SwiftUI
 struct PairingView: View {
     @ObservedObject var link: LinkController
     @State private var confirmingNewCode = false
+    @AppStorage(DevMode.key) private var developerMode = false
 
     var body: some View {
         NavigationStack {
@@ -53,12 +54,20 @@ struct PairingView: View {
                 }
 
                 Section {
-                    ShareLink("Share session log", item: SessionLog.fileURL)
+                    Toggle("Developer mode", isOn: $developerMode)
+                    // Inside the toggle rather than beside it. The log is for
+                    // the same person the readouts are for, and a share sheet
+                    // on the setup screen of an app that scans cards is one
+                    // more row to read past for everyone else.
+                    if developerMode {
+                        ShareLink("Share session log", item: SessionLog.fileURL)
+                    }
                 } header: {
-                    Text("Diagnostics")
+                    Text("Developer")
                 } footer: {
-                    Text("Capture timings from the last session. Useful when tuning "
-                        + "the rig, and the fastest way to send them somewhere.")
+                    Text("Shows the trigger's state and the last card read on the "
+                        + "scanning screen. Off, that screen shows a price and "
+                        + "nothing else.")
                 }
 
                 Section {

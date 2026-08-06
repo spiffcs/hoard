@@ -6,8 +6,9 @@ import CoreGraphics
 import Foundation
 
 /// BorderReading is everything the reader saw, including when it refuses to
-/// answer. The numbers ride along regardless of the verdict because that is
-/// what --border-probe fits the constants from; only `color` is a claim.
+/// answer. The numbers ride along regardless of the verdict because that is what
+/// the constants are fitted from — `cardkit-probe --image X --border`, swept
+/// over the corpus by scan/corpus/border.sh; only `color` is a claim.
 public struct BorderReading: Encodable, Sendable {
     public init() {}
 

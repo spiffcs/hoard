@@ -1,16 +1,15 @@
 [
   {
-    "border": "black",
-    "borderSource": "footer+ring",
+    "border": "",
+    "borderSource": "",
     "candidates": [
-      "Eternal Dragon",
-      "Creature - Dragon Spirit",
-      "Flying"
+      "Etemnal Dragon",
+      "5"
     ],
-    "finish": "",
-    "name": "Eternal Dragon",
+    "finish": "nonfoil",
+    "name": "Etemnal Dragon",
     "number": "12",
-    "set": "",
+    "set": "CARD",
     "source": "crop",
     "year": 2003
   }

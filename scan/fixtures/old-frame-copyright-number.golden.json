@@ -1,11 +1,9 @@
 [
   {
-    "border": "white",
-    "borderSource": "footer",
+    "border": "",
+    "borderSource": "",
     "candidates": [
-      "Remove Soul",
-      "Instant",
-      "Counter target creature spell."
+      "Remove Soul"
     ],
     "finish": "",
     "name": "Remove Soul",

@@ -8,7 +8,7 @@
 
 Manage binders and decks all along current market prices in a terminal browser backed by a SQLite file you own.
 
-Includes an integration with iPhone cameras on OSX to scan and enter multiple cards into the collection.
+Includes a companion iPhone app that scans cards with your phone's camera and enters them into the collection hands-free.
 
 <p align="center">
  &nbsp;<a href="https://github.com/spiffcs/hoard/actions/workflows/ci.yml" target="_blank"><img alt="CI" src="https://github.com/spiffcs/hoard/actions/workflows/ci.yml/badge.svg"></a>&nbsp;
@@ -40,8 +40,10 @@ make build          # → ./hoard
 
 Or, without cloning: `go install github.com/spiffcs/hoard@latest`.
 
-On macOS with Xcode's Swift toolchain, `make all` also builds the iPhone
-[card-scanning helper](docs/scanning.md); everything can work without it but it's a helpful tool.
+On macOS with Xcode's Swift toolchain, `make all` also builds the Mac half of
+the [card scanner](docs/scanning.md). The other half is an iPhone app you build
+and install yourself — see [docs/ios-development.md](docs/ios-development.md).
+Everything else works without either.
 
 ## First five minutes
 
@@ -113,15 +115,19 @@ The text importer understands common formats — `2 Sol Ring`, `1x Lightning
 Bolt`, `1 Ulamog, the Infinite Gyre (UMA) 7 *F*` — plus `Commander`/`Sideboard`
 headers. 
 
-## Scanning cards (macOS)
+## Scanning cards (macOS + iPhone)
 
-With the helper built (`make all`), press <kbd>ctrl+o</kbd> in an `add` session to
-identify a card with your iPhone via the Continuity Camera. The capture window stays
-open between shots, so working through a box is: frame, press <kbd>space</kbd>,
-confirm, repeat. OCR can read the title *and* the collector number, so the exact
-printing has a chance of being pre-selected
+Your phone is the scanner. With **Hoardling**, the companion app, installed and
+the Mac
+helper built (`make all`), pair once with <kbd>ctrl+p</kbd> in an `add` session,
+then press <kbd>ctrl+o</kbd> to open the camera. The phone fires its own shutter
+when a card settles, so working through a box is: set a card down, wait for the
+chime, swap in the next. It reads the title *and* the collector number, so most
+cards add themselves at the right printing without a keystroke; anything less
+than certain lands in a review queue instead.
 
-Setup and troubleshooting for the scanner can be found here: [docs/scanning.md](docs/scanning.md).
+Building and installing the app: [docs/ios-development.md](docs/ios-development.md).
+Using it, and troubleshooting: [docs/scanning.md](docs/scanning.md).
 
 ## Database
 
@@ -142,13 +148,16 @@ your cache directory and are always safe to delete.
 make build     # go build -o hoard .
 make test      # go test ./...   (no network needed)
 make vet       # go vet ./...
-make scan      # macOS camera helper
+make scan      # the Mac half of the scanner (bin/hoard-scan.app)
+make scan-ios  # the iPhone app — see docs/ios-development.md
 make clean     # remove ./hoard and ./bin
 ```
 
-CI runs `gofmt`, `go vet`, `go test`, and `go build` on every push. Before
-changing how prices are stored, read
-[docs/mtgjson-storage.md](docs/mtgjson-storage.md).
+CI runs `gofmt`, `go vet`, `go test`, and `go build` on every push. The Swift
+scanner has its own manual-only macOS workflow (`make scan-test scan-check`
+locally). Before changing how prices are stored, read
+[docs/mtgjson-storage.md](docs/mtgjson-storage.md); before touching the
+scanner's trigger, read [docs/scanner-tuning.md](docs/scanner-tuning.md).
 
 ## License
 

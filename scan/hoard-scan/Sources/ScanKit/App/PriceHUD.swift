@@ -1,9 +1,10 @@
-// macOS only. This is the camera, window and HUD half of ScanKit; the read
-// pipeline under Core/ is what compiles for iOS. See Package.swift.
+// macOS only. ScanKit is the Mac end of the link: the translator, and the
+// optional mirror window it can draw. See Package.swift.
 #if os(macOS)
 
 import AVFoundation
 import AppKit
+import ScanWire
 
 // MARK: - Price HUD
 

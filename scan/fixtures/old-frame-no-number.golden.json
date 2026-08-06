@@ -3,15 +3,13 @@
     "border": "black",
     "borderSource": "footer+ring",
     "candidates": [
-      "Frozen Solid",
-      "Enchant Creature",
-      "Enchanted creature doesn't untap"
+      "Frozen Solid"
     ],
     "finish": "",
     "name": "Frozen Solid",
     "number": "",
     "set": "",
     "source": "crop",
-    "year": 2003
+    "year": 0
   }
 ]

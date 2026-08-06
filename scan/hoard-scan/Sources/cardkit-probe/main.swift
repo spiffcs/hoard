@@ -1,17 +1,19 @@
 // cardkit-probe — run CardKit over an image file and print the result.
 //
-// This exists so the new pipeline can be scored against the same 231 labelled
-// images the old one is, with the harness that already exists:
+// CardKit runs on the phone, which makes it awkward to measure. This is the same
+// code built for macOS and pointed at a file, so a read can be scored without a
+// phone in the loop. It is what drives both offline harnesses:
 //
-//     make cardkit && HELPER=./bin/cardkit-probe ./scan/corpus/sweep.sh
+//     make cardkit-score    # scan/corpus, the labelled accuracy table
+//     make scan-check       # scan/fixtures, real photographs against goldens
 //
-// It therefore speaks the old helper's event shape rather than CardKit's own.
-// That is not a wire contract here — it is a test adapter, and the shape it
-// emits is whatever scan/corpus/score.py reads: a `scan` event carrying a name
-// and a collector number.
+// It emits ScanWire's `scan` event — the same shape the phone sends the Mac —
+// so the harnesses read one format whatever produced it.
 //
-// Rewriting a pipeline from scratch is only defensible if the rewrite can be
-// compared to what it replaces, on ground truth, in the same table.
+// It began as an adapter for comparing this pipeline against the macOS helper's
+// on the same ground truth. That comparison is over: the helper's reader was
+// deleted with the Continuity Camera path it served, and this is now the only
+// reader there is to score.
 
 import CardKit
 import CoreGraphics

@@ -197,6 +197,12 @@ func printScanSummary(sum tui.Summary) {
 	if discarded > 0 {
 		line += fmt.Sprintf(", %d discarded", discarded)
 	}
+	// Captures that held no card at all. Not listed individually — there is
+	// nothing to name — but counted, so a run where the scanner was quietly
+	// throwing things away does not read the same as a clean one.
+	if sum.Ignored > 0 {
+		line += fmt.Sprintf(", %d unreadable", sum.Ignored)
+	}
 	r.Result("%s", line)
 	// The receipt already speaks the glyph vocabulary — ✓ auto-added, +
 	// reviewed, - dropped — so only the ✓ gains the ok color; the piped

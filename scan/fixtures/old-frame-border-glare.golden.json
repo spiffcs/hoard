@@ -3,12 +3,10 @@
     "border": "",
     "borderSource": "",
     "candidates": [
-      "Summon Merfolk",
-      "Seasinger",
-      "*: Gain control of a target creature if its controller"
+      "Seasinger"
     ],
     "finish": "",
-    "name": "Summon Merfolk",
+    "name": "Seasinger",
     "number": "",
     "set": "",
     "source": "crop",

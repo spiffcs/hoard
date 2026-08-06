@@ -255,11 +255,14 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         // Cheaper too: one grid instead of one per candidate box.
         let held = trigger.snapshot.capturedBox.map { sceneSignature(buffer, in: $0) }
         lastBoxes = boxes
-        // The per-box faces are still sampled, but only so the shutter can
-        // record the card it fired on. Nothing compares them frame to frame.
+        // The per-box faces, for two jobs: the shutter records the card it
+        // fired on, and HOLD asks whether anything in frame still looks like
+        // that card — which is how a card that slid is told from one laid over
+        // it. Still never compared frame to frame, where the detector's jitter
+        // would make a motionless card look new; only ever against the capture.
         lastFaces = boxes.map { sceneSignature(buffer, in: $0) }
         let sample = TriggerSample(
-            boxes: boxes, scene: scene, holdScene: held,
+            boxes: boxes, scene: scene, holdScene: held, boxScenes: lastFaces,
             // A hunting lens produces blur, and blur is indistinguishable from
             // stillness to a rectangle detector. Reading the device rather than
             // assuming settled is what lets the streak be shortened safely: the

@@ -12,19 +12,18 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Session is a running capture helper: one camera window, held open across many
-// captures. Commands go in, Events come out, until Close (or the user closing
-// the window) ends it.
+// Session is a running capture helper: one link to the phone, held open across
+// many captures. Commands go in, Events come out, until Close (or the phone
+// dropping off) ends it.
 //
-// The window is long-lived on purpose. Launching the helper per card costs a
-// camera warm-up every time and makes the user re-trigger it from the terminal
-// between cards.
+// The link is long-lived on purpose. Launching the helper per card costs a
+// browse, a handshake and a camera warm-up every time, and makes the user
+// re-trigger it from the terminal between cards.
 type Session struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -63,29 +62,25 @@ func (w logWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Open starts a capture session on the given camera. deviceID may be empty to
-// let the helper choose; rotation is the previously-saved preview correction.
-// The returned Session's Events channel is closed when the helper exits.
+// Open starts a capture session against the given phone. deviceID may be empty
+// to let the helper choose the only phone it can see. The returned Session's
+// Events channel is closed when the helper exits.
 func Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	path, err := helperPath()
 	if err != nil {
 		return nil, err
 	}
 
-	args := []string{"--rotate", strconv.Itoa(opts.Rotation)}
+	// --remote is redundant to a current helper, which has no other backend to
+	// select, and is passed anyway: an older helper still on this machine reads
+	// it as "do not open a local camera", which is the safe way for the two to
+	// disagree.
+	args := []string{"--remote", "--code", opts.PairingCode}
 	if opts.DeviceID != "" {
 		args = append(args, "--device", opts.DeviceID)
 	}
-	// A pairing code is what distinguishes the two backends. With one, the
-	// helper owns no camera and translates for an iPhone running the companion
-	// app; without one it opens a Continuity Camera as it always has. Both
-	// speak the identical protocol on this pipe, which is why nothing below
-	// this line has to know which it got.
-	if opts.PairingCode != "" {
-		args = append(args, "--remote", "--code", opts.PairingCode)
-		if opts.Mirror {
-			args = append(args, "--mirror")
-		}
+	if opts.Mirror {
+		args = append(args, "--mirror")
 	}
 
 	cmd := exec.CommandContext(ctx, path, args...)
@@ -213,22 +208,9 @@ func (s *Session) Result(r HUDResult) error {
 	return s.send("result " + string(js))
 }
 
-// AutoFraming turns the camera's auto-framing (Center Stage) on or off. The
-// helper forces it off at session start — its subject-tracking crop is the
-// too-close startup framing — so this is the mid-session escape hatch in both
-// directions. Only sent to helpers that advertised "framing" on their ready
-// event; the resulting state arrives as an EventFraming.
-func (s *Session) AutoFraming(on bool) error {
-	if on {
-		return s.send("frame-on")
-	}
-	return s.send("frame-off")
-}
-
-// Torch turns the phone's flashlight on or off to light the card — the one
-// brightness control macOS offers. Only sent to helpers that advertised
-// "torch" on their ready event; the state that actually took arrives as an
-// EventTorch.
+// Torch turns the phone's flashlight on or off to light the card. Only sent to
+// sources that advertised "torch" on their ready event; the state that actually
+// took arrives as an EventTorch.
 func (s *Session) Torch(on bool) error {
 	if on {
 		return s.send("torch-on")
@@ -242,22 +224,6 @@ func (s *Session) Torch(on bool) error {
 // swallows it.
 func (s *Session) Note(line string) {
 	s.logLine("~", []byte(line))
-}
-
-// VideoEffects opens the system's Video Effects panel — Studio Light (the
-// only software lighting macOS offers, since the phone's torch isn't bridged
-// over Continuity Camera) plus the system's own Center Stage and Desk View
-// toggles. Only sent to helpers that advertised "effects" on their ready
-// event. Fire-and-forget: the panel is system UI and reports nothing back.
-func (s *Session) VideoEffects() error { return s.send("effects") }
-
-// Rotate turns the preview a quarter-turn; the new angle arrives as an
-// EventRotation so it can be persisted.
-func (s *Session) Rotate(left bool) error {
-	if left {
-		return s.send("rotate-left")
-	}
-	return s.send("rotate-right")
 }
 
 // send writes one command line to the helper.
@@ -277,7 +243,7 @@ func (s *Session) send(cmd string) error {
 // caller that is itself consuming Events and must see the final ones — Close's
 // drain would race such a consumer and could swallow them. It is safe to call
 // more than once. Closing stdin is itself a shutdown signal, so a helper that
-// ignores the quit command still exits.
+// ignores the quit command still exits, and so does the phone's camera with it.
 func (s *Session) Shutdown() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

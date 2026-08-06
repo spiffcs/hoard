@@ -1,17 +1,15 @@
 [
   {
-    "border": "black",
-    "borderSource": "footer+ring",
+    "border": "",
+    "borderSource": "",
     "candidates": [
-      "Aven Envoy",
-      "HORLEY",
-      "Creature -"
+      "Aven Envoy"
     ],
     "finish": "",
     "name": "Aven Envoy",
-    "number": "80",
+    "number": "",
     "set": "",
     "source": "crop",
-    "year": 2003
+    "year": 0
   }
 ]

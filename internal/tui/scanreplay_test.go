@@ -4,20 +4,25 @@ package tui
 // the real helper, the real resolution, and the real verdict against the real
 // catalog, and reports what the scanner would have done with it.
 //
-// The fixture sweep (scan/fixtures/sweep.sh) proves what the *helper* reads.
+// The fixture sweep (scan/fixtures/sweep.sh) proves what the *reader* reads.
 // It cannot prove the thing a session is actually judged on — how many cards
 // land in review — because that decision is all on this side of the wire. This
 // closes that gap, so "the tool got better" can be measured against the very
 // frames a session queued rather than argued from the code.
 //
-// Skipped unless pointed at a session, since it needs both a built helper and
-// a populated catalog:
+// The reader is cardkit-probe, which is CardKit — the same pipeline the phone
+// runs — driven over an image file. That is the point: the frames were captured
+// by the phone, so replaying them through anything else would score a reader
+// the session never used.
+//
+// Skipped unless pointed at a session, since it needs both a built probe and a
+// populated catalog:
 //
 //	HOARD_REPLAY_FRAMES=/path/to/capture-frames \
 //	go test ./internal/tui -run TestSessionReplay -v
 //
 // Optional: HOARD_REPLAY_CATALOG (defaults to the user cache location),
-// HOARD_REPLAY_HELPER (defaults to bin/hoard-scan.app in the repo).
+// HOARD_REPLAY_HELPER (defaults to bin/cardkit-probe in the repo).
 
 import (
 	"context"
@@ -40,7 +45,7 @@ func replayHelper(t *testing.T) string {
 	if h := os.Getenv("HOARD_REPLAY_HELPER"); h != "" {
 		return h
 	}
-	return filepath.Join("..", "..", "bin", "hoard-scan.app", "Contents", "MacOS", "hoard-scan")
+	return filepath.Join("..", "..", "bin", "cardkit-probe")
 }
 
 func replayCatalog(t *testing.T) *catalog.Catalog {
@@ -82,7 +87,7 @@ func TestSessionReplay(t *testing.T) {
 	}
 	helper := replayHelper(t)
 	if _, err := os.Stat(helper); err != nil {
-		t.Skipf("helper not built at %s — run: make scan", helper)
+		t.Skipf("reader not built at %s — run: make cardkit", helper)
 	}
 	cat := replayCatalog(t)
 	defer cat.Close()
@@ -97,9 +102,9 @@ func TestSessionReplay(t *testing.T) {
 	for _, frame := range frames {
 		out, err := exec.Command(helper, "--image", frame, "--rotate", "0").Output()
 		if err != nil {
-			// Exit code 3 is the helper's "nothing readable", not a failure.
+			// Exit code 3 is the reader's "nothing readable", not a failure.
 			if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 3 {
-				t.Errorf("%s: helper failed: %v", filepath.Base(frame), err)
+				t.Errorf("%s: reader failed: %v", filepath.Base(frame), err)
 				continue
 			}
 		}

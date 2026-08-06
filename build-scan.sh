@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Build the macOS Swift camera-scan helper into bin/hoard-scan.app.
+# Build the macOS Swift scan helper into bin/hoard-scan.app.
 # Requires Xcode's Swift toolchain. No-op meaning: the Go build does NOT produce
 # this — run `./build-scan.sh` (or `make scan`) on macOS to enable the `ctrl+o`
 # scan feature in `hoard add`.
 #
+# The helper owns no camera. It is the Mac end of the link to the iPhone running
+# Hoardling (scan/hoard-scan-ios), which is what actually captures and
+# reads the card; see docs/ios-development.md to build that side.
+#
 # The helper is a SwiftPM package (scan/hoard-scan/Package.swift), so this script
 # builds the executable and then assembles the .app around it by hand. SwiftPM
 # has no notion of an app bundle, and the bundle is not cosmetic: TCC attributes
-# the camera permission to the bundle's signed identity, so a bare executable
-# would re-prompt and Continuity Camera would not be offered at all.
+# the local-network permission the Bonjour link needs to the bundle's signed
+# identity, so a bare executable would prompt oddly or not at all.
 set -euo pipefail
 
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -38,8 +42,8 @@ echo "Compiling hoard-scan…" >&2
 swift build --package-path "$PKG" -c release
 cp "$(swift build --package-path "$PKG" -c release --show-bin-path)/hoard-scan" "$MACOS/hoard-scan"
 
-# Ad-hoc sign so the camera (TCC) permission prompt is attributed to the app.
+# Ad-hoc sign so the local-network (TCC) permission prompt is attributed to the app.
 codesign --force --sign - --identifier dev.spiffcs.hoard.scan "$APP" 2>/dev/null || \
-	echo "warning: codesign failed (unsigned build); camera permission may prompt oddly." >&2
+	echo "warning: codesign failed (unsigned build); network permission may prompt oddly." >&2
 
 echo "Built $APP" >&2

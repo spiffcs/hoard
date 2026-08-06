@@ -3,9 +3,7 @@
     "border": "white",
     "borderSource": "footer+ring",
     "candidates": [
-      "Energy Tap",
-      "Sorcery",
-      "Tap target creature you"
+      "Energy Tap"
     ],
     "finish": "",
     "name": "Energy Tap",

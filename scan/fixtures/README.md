@@ -1,9 +1,22 @@
 # Scan fixtures
 
-Real capture frames, replayed through the helper's exact pipeline by
+Real capture frames, replayed through the reader's exact pipeline by
 `sweep.sh` and diffed against `.golden.json` card lists. `make scan-check`
 runs the sweep; `./scan/fixtures/sweep.sh --update` regenerates goldens
 after a *deliberate* behavior change (quote the diff in the commit).
+
+> **The goldens were re-baselined on 2026-08-05 against a different reader.**
+> They used to record the macOS helper's own pipeline, which existed for the
+> Continuity Camera path; that path and that pipeline were both removed, and
+> the reader is now `CardKit` via `bin/cardkit-probe` — the same code the
+> iPhone app runs. 28 of 29 fixtures changed. What the goldens pin is
+> unchanged in kind (the decisions, not the readings); what they pin is now
+> the behavior that actually ships.
+>
+> The table below still says what each frame was *captured to pin*, because
+> that is why the frame is worth keeping. Where the current reader does not
+> deliver it, the row is marked — those are open gaps, recorded rather than
+> quietly rewritten. See **Gaps against the current reader** below.
 
 Each frame is here because it pinned a decision:
 
@@ -35,10 +48,37 @@ Each frame is here because it pinned a decision:
 | `old-frame-white-border-committed` | the same read where the collector number already settled the printing (SCG 39, 2003): the border must agree rather than interfere, and it is the corroboration a rank pairing year with border would rest on |
 | `title-lost-block-intact` | the title reads as a line of rules text while the collector block is perfect (MSH/412) — the helper ships the block, and the Go side resolves the card from it rather than queueing an unidentifiable entry |
 
+## Gaps against the current reader
+
+Recorded at the 2026-08-05 re-baseline. Each is a decision a fixture was
+captured to pin that `CardKit` does not currently deliver; the golden records
+what it does instead, so the gap is visible in the diff the day it closes.
+
+| fixture | the gap |
+| --- | --- |
+| `two-card-pile` | **Multi-card capture is gone.** `CardKit` emits at most one card per frame (`cards: cardEntry.map { [$0] } ?? []`), so the second title band is not read. `white-border-control` (3 cards) and `white-border-on-light-desk` (2) collapsed to one the same way. This left with the Continuity path — the two-channel frame reader was the macOS pipeline's — and is the largest single capability the removal cost |
+| `old-frame-self-reference` | **Reads nothing at all** (empty name, empty candidate list) where the old pipeline recovered "Dwarven Ruins" from the rules text. The hardest frame in the set, and now a total miss rather than a partial one |
+| `old-frame-black-border` | the black border read is lost (was `black`/`footer+ring`). `8ed-frame-positional-anchor` likewise lost its `white`/`footer` read. `BorderKit` is shared, so this is the anchoring in front of it, not the border maths — matching the corpus, where the reader answers only 24% of the time |
+| `old-frame-border-glare` | the name now reads as the subtitle ("Seasinger" rather than "Summon Merfolk"). The border still abstains correctly, which is what the frame was really captured for |
+| `old-frame-copyright-misread`, `old-frame-fuzzy-title`, `old-frame-no-number`, `old-frame-same-set-variants` | the copyright-line year is no longer read (2003/2001 → 0), and with it the tie-break it existed to feed. `flavor-attribution`, `old-frame-pair-number-no-set` and `old-frame-copyright-misread` likewise lost their collector numbers |
+
+Not everything moved that way. `title-lost-block-intact` now reads the real
+title instead of a line of rules text, `old-frame-crop-title-disagree` reads
+"Eternal Dragon" where the old pipeline read "Etemal Dragon",
+`8ed-frame-brush-credit` gained a white border read and stopped confusing the
+paintbrush credit for a title, and `two-card-pile`'s surviving card lost its
+trailing OCR junk. The corpus numbers are the fuller picture:
+`make cardkit-score`.
+
+These fixtures are real photographs; the corpus is clean scans. The two
+disagree most on exactly this era, which is why both harnesses exist.
+
 The goldens also pin the first three candidates. The Go side gives up after
 the first few lines, so which readings sit at the front decides whether a
 name recovered from rules text is reachable at all; the jittery tail of the
-list stays out.
+list stays out. `CardKit` returns a shorter list than the old pipeline did —
+typically the title alone rather than title, type line and a rules fragment —
+which is visible in nearly every golden here.
 
 Adding one: capture a live session with `HOARD_SCAN_DEBUG_DIR`, copy the
 problem frame's `capture-N-ocr.png` here under a name that says what it

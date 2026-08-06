@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# sweep.sh — replay every checked-in fixture frame through the built scan
-# helper and diff the extracted card list against its golden. This is the
-# scanner's regression suite: run it after any change to the helper's
-# detection, OCR filtering, or multi-card logic.
+# sweep.sh — replay every checked-in fixture frame through the card reader and
+# diff the extracted card list against its golden. This is the scanner's
+# regression suite: run it after any change to detection, OCR filtering, or the
+# border reader.
 #
-#   make scan scan-check          # build the helper, then sweep
+# The reader is cardkit-probe, which is CardKit — the same pipeline the iPhone
+# app runs. It used to be the macOS helper's own reader; that reader existed for
+# the Continuity Camera path and went with it, so the goldens now pin what the
+# phone actually reads rather than what a second implementation did.
+#
+#   make cardkit scan-check             # build the reader, then sweep
 #   ./scan/fixtures/sweep.sh --update   # regenerate goldens (deliberate!)
 #
 # The goldens pin the *decisions* (which cards, from which channel, with
@@ -25,14 +30,14 @@
 # Vision's output can shift across macOS releases. If a sweep fails right
 # after an OS update, eyeball the diff — legitimate OCR drift gets a
 # --update with the diff quoted in the commit; anything else is a
-# regression in the helper.
+# regression in the reader.
 set -u
 
 dir=$(cd "$(dirname "$0")" && pwd)
-helper=${HELPER:-"$dir/../../bin/hoard-scan.app/Contents/MacOS/hoard-scan"}
+helper=${HELPER:-"$dir/../../bin/cardkit-probe"}
 
 if [ ! -x "$helper" ]; then
-    echo "helper not built at $helper — run: make scan" >&2
+    echo "reader not built at $helper — run: make cardkit" >&2
     exit 2
 fi
 

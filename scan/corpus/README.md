@@ -1,12 +1,18 @@
 # The parser corpus
 
-A stratified sample of card images, replayed through the helper and scored
+A stratified sample of card images, replayed through the reader and scored
 against known-good answers, so a frame era that parses badly is visible instead
 of averaged away.
 
     ./scan/corpus/fetch.sh [per-stratum]   # default 25; writes images/ + manifest.tsv
-    ./scan/corpus/sweep.sh                 # score per era × border
-    ./scan/corpus/sweep.sh --misses        # and list every card that failed
+    make cardkit-score                     # score per era × border
+    make cardkit-score ARGS=--misses       # and list every card that failed
+
+The reader is `CardKit` — the pipeline the iPhone app runs — scored in one
+process by `cardkit-probe --score`. There used to be a `sweep.sh` beside it that
+scored the macOS helper's own reader by launching one process per image; that
+reader existed for the Continuity Camera path and went with it, and the script
+went too. It was the same numbers several minutes slower.
 
 ## What it does and does not test
 
@@ -19,7 +25,7 @@ broken in a way no lighting will fix.
 
 That is the point: it isolates frame-era parsing from capture quality, which no
 other check in this repo does. `make scan-check` pins specific decisions on
-19 real photographs; `TestSessionReplay` measures a whole session end to end.
+29 real photographs; `TestSessionReplay` measures a whole session end to end.
 This one answers "which *kinds* of card can we read at all".
 
 One consequence of the clean-scan format worth knowing: the card fills the

@@ -3,13 +3,11 @@
     "border": "black",
     "borderSource": "footer+ring",
     "candidates": [
-      "Brain Freeze",
-      "Instant",
-      "Target player puts the top three"
+      "Brain Freeze"
     ],
     "finish": "",
     "name": "Brain Freeze",
-    "number": "29",
+    "number": "",
     "set": "",
     "source": "crop",
     "year": 2003

@@ -5,52 +5,54 @@
 build:
 	go build -o hoard .
 
-# Build the macOS camera-scan helper (bin/hoard-scan.app). macOS + Xcode only.
+# Build the macOS scan helper (bin/hoard-scan.app). macOS + Xcode only.
+#
+# The helper owns no camera: it is the Mac end of the link to the iPhone app,
+# which is what actually captures and reads. See docs/ios-development.md for
+# building that side.
 scan:
 	./build-scan.sh
 
-# Replay the checked-in scan fixtures through the built helper and diff the
-# extracted card lists against their goldens (macOS only; needs `make scan`).
-scan-check:
+# Replay the checked-in scan fixtures through the reader and diff the extracted
+# card lists against their goldens (macOS only). The reader is cardkit-probe,
+# so this needs `make cardkit` rather than `make scan`.
+scan-check: cardkit
 	./scan/fixtures/sweep.sh
 
-# Unit-test the helper's pure logic — the trigger state machine, the text
-# heuristics, the border reader's arithmetic. Complements scan-check rather
-# than replacing it: the sweep proves what the helper reads off real frames,
-# these prove the rules in isolation and run in milliseconds.
+# Unit-test the Swift side's pure logic — the trigger state machine, the text
+# heuristics, the border reader's arithmetic, the wire contract. Complements
+# scan-check rather than replacing it: the sweep proves what the reader gets
+# off real frames, these prove the rules in isolation and run in milliseconds.
 scan-test:
 	swift test --package-path scan/hoard-scan
 
-# Build the iPhone capture head. Needs xcodegen, the iOS platform payload
-# (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
-# reports whichever is missing.
-# Build the iPhone head's read pipeline as a macOS binary, so it can be scored
-# against scan/corpus's 231 labelled images with the harness the old pipeline is
-# measured by:
-#
-#   make cardkit-score
-#
-# A rewrite is only defensible if it can be compared to what it replaces, on
-# ground truth, in the same table.
+# Build the iPhone head's read pipeline as a macOS binary, so it can be run over
+# an image file: it scores scan/corpus's labelled images and replays
+# scan/fixtures' frames against their goldens.
 cardkit:
 	swift build -c release --package-path scan/hoard-scan --product cardkit-probe
 	@mkdir -p bin
 	@cp scan/hoard-scan/.build/release/cardkit-probe bin/cardkit-probe
 	@echo "Built bin/cardkit-probe"
 
-# Score the corpus in one process: ~23s, against sweep.sh's several minutes.
+# Score the corpus in one process: ~23s.
 #
-# sweep.sh spends its time launching 231 processes rather than reading 231
-# cards, which made the one loop guarding against accuracy regressions the
-# slowest loop in the project — slow enough to be skipped, which is the same as
-# not having it. It stays as the cross-check for the *macOS* helper, which is a
-# separate binary and cannot be scored in-process from here.
+# There used to be a scan/corpus/sweep.sh beside this that scored the macOS
+# helper's own reader by launching one process per image. That reader belonged
+# to the Continuity Camera path and went with it; the script went too, and this
+# is now the only corpus scorer. Launching 231 processes rather than reading 231
+# cards had made the one loop guarding against accuracy regressions the slowest
+# loop in the project — slow enough to be skipped, which is the same as not
+# having it.
 #
-#   make cardkit-score            # the table
+#   make cardkit-score                 # the table
 #   make cardkit-score ARGS=--misses   # and every card that failed
 cardkit-score: cardkit
 	@./bin/cardkit-probe --score scan/corpus/manifest.tsv $(ARGS)
 
+# Build the iPhone capture head. Needs xcodegen, the iOS platform payload
+# (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
+# reports whichever is missing. See docs/ios-development.md.
 scan-ios:
 	./build-scan-ios.sh
 

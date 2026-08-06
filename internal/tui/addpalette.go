@@ -60,7 +60,7 @@ func addCommands() []addCommand {
 			PaletteItem: ui.PaletteItem{
 				Title:   "Pair",
 				Aliases: "phone iphone code connect setup",
-				Desc:    "Pair an iPhone running Hoard Scan, or re-pair after its code rotated.",
+				Desc:    "Pair an iPhone running Hoardling, or re-pair after its code rotated.",
 				Key:     "ctrl+p",
 			},
 			applies: func(m model) bool { return m.scanner != nil },

@@ -1,8 +1,8 @@
-// Waiting for a device to admit it exists.
+// Waiting for a phone to admit it exists.
 //
-// This is the one file under App/ that is not macOS-only. It touches no camera
-// and no window — it is Foundation and a deadline — and both platforms' capture
-// code needs it, so guarding it would only force the iOS side to keep a copy.
+// Foundation and a deadline: no camera, no window, no platform fence. It is how
+// the browse and the pairing check both wait for an answer without blocking the
+// main queue they are already running on.
 
 import Foundation
 

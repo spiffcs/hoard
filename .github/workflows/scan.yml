@@ -1,12 +1,13 @@
-# The Swift camera helper: compile it, unit-test it, and replay the checked-in
-# capture fixtures (scan/fixtures/) against their golden card lists.
+# The Swift side of the scanner: compile the Mac helper and the card reader,
+# unit-test them, and replay the checked-in capture fixtures (scan/fixtures/)
+# against their golden card lists.
 #
 # ---------------------------------------------------------------------------
 # THIS WORKFLOW IS MANUAL-ONLY ON PURPOSE.
 #
 # macOS runners bill private-repo minutes at 10x, and this job needs one: the
-# helper links AppKit, AVFoundation and Vision, so it cannot build on the
-# ubuntu runner ci.yml uses. A run is only ~30s of work, but with image
+# helper links AppKit and Network.framework and the reader links Vision, so
+# neither builds on the ubuntu runner ci.yml uses. A run is only ~30s of work, but with image
 # spin-up it lands around 2-3 wall-clock minutes — call it 20-30 billed
 # minutes each time, on every push and every PR update.
 #
@@ -70,6 +71,8 @@ jobs:
       - name: toolchain
         run: swift --version
 
+      # The Mac end of the link to the phone. It owns no camera and reads no
+      # cards — this step only proves it still compiles.
       - name: build scan helper
         run: make scan
 
@@ -80,5 +83,7 @@ jobs:
       - name: unit tests
         run: make scan-test
 
+      # Builds cardkit-probe as a dependency: the reader behind the goldens is
+      # CardKit, the same pipeline the iPhone app runs.
       - name: fixture sweep
         run: make scan-check

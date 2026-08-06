@@ -5,7 +5,7 @@
 	<key>CFBundleName</key>
 	<string>hoard-scan</string>
 	<key>CFBundleDisplayName</key>
-	<string>hoard scan</string>
+	<string>hoard</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.spiffcs.hoard.scan</string>
 	<key>CFBundleExecutable</key>
@@ -18,15 +18,22 @@
 	<string>0.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<!-- 14.0: the helper uses .continuityCamera, AVCaptureDevice.RotationCoordinator,
-	     and AVCaptureConnection.videoRotationAngle, all introduced in macOS 14. -->
+	<!-- 14.0 is where Network.framework's peer-to-peer Bonjour browsing behaves
+	     the way the link depends on. The helper opens no camera of its own, so
+	     nothing here needs a camera key: the phone owns the camera and asks for
+	     its own permission. -->
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>hoard uses the camera (including your iPhone via Continuity Camera) to scan and identify Magic cards.</string>
-	<key>NSCameraUseContinuityCameraDeviceType</key>
-	<true/>
+	<!-- The link to the phone is Bonjour on the local network. macOS attributes
+	     that permission to the bundle's signed identity, which is why
+	     build-scan.sh assembles a .app rather than shipping a bare executable. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>hoard receives card reads from Hoardling on your iPhone.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_hoardscan._tcp</string>
+	</array>
 </dict>
 </plist>

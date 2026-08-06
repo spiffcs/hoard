@@ -13,15 +13,15 @@ import Foundation
 /// An unknown verb is deliberately not an error case here: the caller reports
 /// it and keeps the session alive, because a newer hoard talking to an older
 /// helper is a supported pairing.
+/// Three verbs are gone: `rotate-left`/`rotate-right`, `frame-on`/`frame-off`
+/// and `effects`. All three were Continuity Camera concepts — a preview the Mac
+/// had to turn upright, Center Stage, and the system Video Effects panel — and
+/// the phone answered none of them. They are not reserved: an old hoard sending
+/// one gets the same "unknown verb" treatment as a typo, which is exactly the
+/// forward/backward compatibility this type already promises.
 public enum ScanCommand: Equatable {
     case capture
-    case rotate(clockwise: Bool)
-    case framing(Bool)
     case torch(Bool)
-    /// The system Video Effects panel: Studio Light (the only software lighting
-    /// macOS offers, since the torch isn't bridged), plus the system's own
-    /// Center Stage and Desk View toggles.
-    case effects
     case auto(Bool)
     case rearm
     /// Ask the phone to send each capture's full-resolution still back, so a
@@ -52,13 +52,8 @@ public enum ScanCommand: Equatable {
         let payload = parts.count > 1 ? String(parts[1]) : ""
         switch parts.first.map(String.init) ?? "" {
         case "capture": self = .capture
-        case "rotate-left": self = .rotate(clockwise: false)
-        case "rotate-right": self = .rotate(clockwise: true)
-        case "frame-on": self = .framing(true)
-        case "frame-off": self = .framing(false)
         case "torch-on": self = .torch(true)
         case "torch-off": self = .torch(false)
-        case "effects": self = .effects
         case "auto-on": self = .auto(true)
         case "auto-off": self = .auto(false)
         case "rearm": self = .rearm

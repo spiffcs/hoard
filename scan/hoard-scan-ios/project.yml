@@ -24,8 +24,10 @@ configs:
   Debug: debug
   Release: release
 
+# The shared SwiftPM package. Named for the directory it lives in rather than
+# for any one product: the app links four of them.
 packages:
-  ScanKit:
+  HoardScanPackage:
     path: ../hoard-scan
 
 targets:
@@ -37,32 +39,34 @@ targets:
       # The app icon, derived from the macOS helper's .icns by make-icon.swift
       # so both platforms ship the same artwork from one source file.
       - path: Resources
+    # ScanKit is deliberately absent: it is the *Mac* end of the link — the
+    # translator and its mirror window — and no source here imports it. It was
+    # listed until 2026-08-05 and never used, which only surfaced when the
+    # package stopped vending it as a product.
     dependencies:
-      - package: ScanKit
-        product: ScanKit
-      - package: ScanKit
+      - package: HoardScanPackage
         product: CardKit
-      - package: ScanKit
+      - package: HoardScanPackage
         product: ScanLink
-      - package: ScanKit
+      - package: HoardScanPackage
         product: ScanWire
     info:
       path: Info.plist
       properties:
-        CFBundleDisplayName: hoard scan
+        CFBundleDisplayName: hoardling
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription:
-          hoard uses the camera to scan and identify Magic cards.
+          Hoardling uses the camera to scan and identify Magic cards.
         # Required from iOS 14 for the Bonjour link to the Mac (stage C). The
         # permission prompt is one-time and cannot be re-offered without
         # deleting the app, so it is declared before it is needed rather than
         # discovered during a session.
         NSLocalNetworkUsageDescription:
-          hoard scan sends card reads to the hoard app running on your Mac.
+          Hoardling sends card reads to the hoard app running on your Mac.
         NSBonjourServices:
           - _hoardscan._tcp
         # The capture log accumulates in Documents/ and is pulled off the device

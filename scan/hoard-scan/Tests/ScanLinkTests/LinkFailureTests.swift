@@ -14,7 +14,7 @@ import Testing
 @Test("a suspended app reads as something the user can act on")
 func backgroundedAppMessage() {
     let f = LinkFailure(NWError.posix(.ECONNABORTED))
-    #expect(f.reason.contains("Hoard Scan"), "should name the app: \(f.reason)")
+    #expect(f.reason.contains("Hoardling"), "should name the app: \(f.reason)")
     #expect(!f.reason.contains("NWError"))
     #expect(!f.reason.contains("errno"))
     // The framework's words survive for the log, just not for the terminal.

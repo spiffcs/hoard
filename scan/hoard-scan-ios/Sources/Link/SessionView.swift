@@ -31,6 +31,9 @@ struct SessionView: View {
     /// preview once its layer exists, because only the layer knows the gravity
     /// and rotation involved.
     @State private var toLayer: ((CGRect) -> CGRect)?
+    /// Set on the Pair tab. Gates the two readouts that are an account of the
+    /// machinery rather than an answer about a card.
+    @AppStorage(DevMode.key) private var developerMode = false
 
     var body: some View {
         ZStack {
@@ -175,7 +178,16 @@ struct SessionView: View {
 
     private var footer: some View {
         VStack(spacing: 6) {
-            if !lastRead.isEmpty {
+            // Behind developer mode, both of the lines this footer used to show
+            // unconditionally.
+            //
+            // "Sol Ring  LEA 270" is a check on the reader, and "(nothing read)"
+            // is the same check reporting a miss — neither is something to do
+            // anything about mid-box, and the miss in particular reads as an
+            // error when it is usually just a card halfway onto the mat. The
+            // read goes to the wire and to SessionLog either way, so nothing is
+            // lost by not saying it here.
+            if developerMode, !lastRead.isEmpty {
                 Text(lastRead).font(.caption2.monospaced()).lineLimit(1)
             }
             // The per-capture timing used to sit here — "163ms shutter · 299ms
@@ -212,8 +224,19 @@ struct SessionView: View {
                         .font(.caption2).foregroundStyle(.orange)
                 }
             }
-            Text(autoStatus)
-                .font(.caption2)
+            // The trigger's running commentary — "Waiting for a card",
+            // "Holding still…", "Focused · tap to focus" — is a window onto the
+            // state machine, and watching it is tuning work. A camera that
+            // never opened is not: that line stays, in the colour the sound
+            // warning above uses, because it is the only explanation the person
+            // holding the phone would get for a preview that never appears.
+            if developerMode {
+                Text(autoStatus)
+                    .font(.caption2)
+            } else if !camera.failure.isEmpty {
+                Label(camera.failure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
         }
         .foregroundStyle(.white.opacity(0.6))
         .padding(.bottom, 10)

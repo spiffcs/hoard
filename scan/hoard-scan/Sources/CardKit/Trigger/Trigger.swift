@@ -95,6 +95,34 @@ public struct TriggerTuning: Sendable {
     /// just shot, which shows up as captures-per-commit rising — watch that
     /// number rather than this one.
     public var cardChanged = 12.0
+    /// How close a live box's *own* picture must stay to the card that was shot
+    /// before the machine calls it that same card having moved.
+    ///
+    /// Sampled through the box itself rather than the pinned capture window,
+    /// which is the whole point: a card that slides keeps its face and loses
+    /// the pinned window, so the two measurements disagree exactly when motion
+    /// is what happened.
+    ///
+    /// Sits in the gap between jitter and a different card. The measurements in
+    /// `TriggerSample.holdScene`: an identical window reads 2.7, a window
+    /// shifted by half a percent of the card reads 13.6 — that is the same card
+    /// through a jittering box — and a genuinely different card reads 29-50. So
+    /// this has to clear ~14 and stay well under 29.
+    ///
+    /// 20 is interpolated from those three numbers rather than measured
+    /// directly at this threshold, and the first live session with the tracing
+    /// in place did not vindicate it: across a run where the operator jostled
+    /// cards repeatedly, this branch never once fired, so every re-read of a
+    /// card that was never swapped still reported as `replaced`.
+    ///
+    /// That points at the signature rather than the number. A per-box grid is
+    /// point-sampled and normalized to the box, so a detector rectangle that
+    /// comes back a few percent different samples different parts of the art —
+    /// the same instability that made an unpinned `holdScene` unusable. If the
+    /// `face=` field on the trace line reads high on cards the operator knows
+    /// were never swapped, raising this threshold will not help; the comparison
+    /// needs a signature that survives the box moving.
+    public var movedFaceMax = 20.0
     /// How far the scene must differ from the last capture before firing again,
     /// so a parked scene cannot photograph itself forever.
     public var sceneChanged = 6.0
@@ -134,6 +162,22 @@ public struct TriggerSample: Sendable {
     /// Nil is tolerated — a caller that cannot sample it gets the old
     /// geometry-only behaviour rather than an error.
     public var holdScene: SceneSignature?
+    /// One signature per entry in `boxes`, each sampled inside its own box.
+    ///
+    /// The counterpart to `holdScene`, and useful for the opposite reason.
+    /// `holdScene` asks "is the picture in the place I shot still the picture I
+    /// shot", which a sliding card fails even though nothing was replaced.
+    /// These ask "does anything in frame still *look like* the card I shot",
+    /// which a sliding card passes and a genuinely new card does not.
+    ///
+    /// Deliberately not compared frame to frame — per-box signatures track the
+    /// detector's jitter, which is what made an unpinned window unusable. They
+    /// are only ever compared against the captured card, where the question is
+    /// about identity rather than change.
+    ///
+    /// Empty is tolerated: a caller that cannot sample them gets the old
+    /// behaviour, where a moved card is reported as replaced.
+    public var boxScenes: [SceneSignature]
     /// False while the lens is hunting. Blur reads as stillness, so a hunting
     /// lens freezes the machine entirely rather than feeding it.
     public var focusSettled: Bool
@@ -143,10 +187,12 @@ public struct TriggerSample: Sendable {
 
     public init(boxes: [CGRect], scene: SceneSignature,
                 holdScene: SceneSignature? = nil,
+                boxScenes: [SceneSignature] = [],
                 focusSettled: Bool = true, rigMoving: Bool = false) {
         self.boxes = boxes
         self.scene = scene
         self.holdScene = holdScene
+        self.boxScenes = boxScenes
         self.focusSettled = focusSettled
         self.rigMoving = rigMoving
     }
@@ -207,6 +253,20 @@ public final class Trigger {
         case removed
         /// A box held the place but its picture changed: swapped in place.
         case replaced
+        /// A box held the place, the picture through the *pinned* window
+        /// changed, but a live box still looks like the card that was shot —
+        /// so the same card moved rather than a new one arriving.
+        ///
+        /// This case exists because `replaced` was claiming it. The pinned
+        /// window cannot tell the two apart by construction: sliding a card
+        /// changes the pixels inside a fixed rectangle exactly as swapping it
+        /// would. A live session committed one card five times in six seconds
+        /// on the strength of that, every repeat tagged `replaced`.
+        ///
+        /// It still re-arms, so a card genuinely laid on the spot is never
+        /// missed — what changes is that the parent is told the evidence is
+        /// weak, instead of being told a placement was witnessed.
+        case moved
         /// The parent asked, with no physical evidence at all.
         case nudged
     }
@@ -230,6 +290,37 @@ public final class Trigger {
     /// the one number the telemetry could not report.
     private var samplesInPhase = 0
 
+    /// `samplesInPhase` frozen at the instant of a fire.
+    ///
+    /// The snapshot cannot read the live counter for a fire, and the reason is
+    /// a two-step: `count()` sets `phase = .capturing` *before* returning
+    /// `.fire`, and `observe`'s `defer` then zeroes `samplesInPhase` because the
+    /// phase changed. The caller reads `trigger.snapshot` after `observe`
+    /// returns, so it read the zero — every `trigger fire` line ever emitted
+    /// said `settle=0 settleMS=0`, which is why the settle time has never once
+    /// been visible in a session log despite being reported in two units.
+    private var settleAtFire = 0
+
+    /// The `holdScene` delta measured on the most recent HOLD sample, and the
+    /// samples elapsed since the shutter.
+    ///
+    /// The delta is the number that decides `replaced` against "still there",
+    /// and it was not traced — so a re-fire could be seen happening without any
+    /// way to know how far past `cardChanged` it was, or whether the comparison
+    /// ran at all. Nil when either signature was missing, which is itself worth
+    /// telling apart from a small delta.
+    private var lastHoldDelta: Double?
+    /// The closest any live box's own picture came to the captured card on the
+    /// last HOLD sample — the number `movedFaceMax` is compared against.
+    ///
+    /// Traced because that threshold is interpolated rather than measured, and
+    /// this is the measurement. A session where every re-read of a card the
+    /// operator never swapped reports a large value here is saying the per-box
+    /// signature is too jitter-sensitive to carry identity, which is a
+    /// different problem from the threshold being set wrong.
+    private var lastFaceDelta: Double?
+    private var samplesSinceCapture = 0
+
     public init() {}
 
     /// A read-only look at the counters, for telemetry.
@@ -242,13 +333,19 @@ public final class Trigger {
     /// private. Tuning a trigger by guessing at knobs has already cost this
     /// project twice; these are the numbers that make it arithmetic instead.
     public var snapshot: Snapshot {
+        // A firing machine reports the frozen settle, everything else the live
+        // counter. `.capturing` is only ever entered by `count()` on the way to
+        // returning `.fire`, so it is exactly the state whose counter has just
+        // been reset out from under the caller.
         Snapshot(phase: phase, baseline: baseline.count, boxes: lastBoxes,
                  cue: cue,
                  capturedBox: capturedCardBox,
-                 settleSamples: samplesInPhase,
+                 settleSamples: phase == .capturing ? settleAtFire : samplesInPhase,
                  stable: stableCount, grace: graceCount, blink: blinkCount,
                  real: realDetections, abandoned: abandonedPasses,
-                 disrupt: disruptCount)
+                 disrupt: disruptCount,
+                 holdDelta: lastHoldDelta, faceDelta: lastFaceDelta,
+                 sinceCapture: samplesSinceCapture)
     }
 
     public struct Snapshot: Sendable, Equatable {
@@ -281,13 +378,27 @@ public final class Trigger {
         public var real: Int
         public var abandoned: Int
         public var disrupt: Int
+        /// The last HOLD comparison between the live picture inside the pinned
+        /// captured window and the card that was shot through it. Nil when
+        /// either signature was missing, so the machine fell back to geometry.
+        public var holdDelta: Double?
+        /// The closest a live box's own picture came to the captured card.
+        /// Nil when there was nothing to compare. This is what `movedFaceMax`
+        /// is fitted against.
+        public var faceDelta: Double?
+        /// Samples since the shutter, so a re-fire's `hold` reading can be read
+        /// against how long the card had to change.
+        public var sinceCapture: Int
 
         /// One line, in the shape the rest of the telemetry uses.
         public var line: String {
-            "phase=\(phase) settle=\(settleSamples) baseline=\(baseline)"
+            let hold = holdDelta.map { String(format: "%.1f", $0) } ?? "-"
+            let facing = faceDelta.map { String(format: "%.1f", $0) } ?? "-"
+            return "phase=\(phase) settle=\(settleSamples) baseline=\(baseline)"
                 + " boxes=\(boxes) stable=\(stable)"
                 + " grace=\(grace) blink=\(blink) real=\(real)"
                 + " abandoned=\(abandoned) disrupt=\(disrupt)"
+                + " hold=\(hold) face=\(facing) sinceCapture=\(sinceCapture)"
         }
     }
 
@@ -359,6 +470,9 @@ public final class Trigger {
         // showed that absorbing the scanning pile itself after one glared read.
         phase = .hold
         disruptCount = 0
+        samplesSinceCapture = 0
+        lastHoldDelta = nil
+        lastFaceDelta = nil
     }
 
     // MARK: - The machine
@@ -366,6 +480,7 @@ public final class Trigger {
     public func observe(_ sample: TriggerSample) -> Decision {
         lastBoxes = sample.boxes.count
         samplesInPhase += 1
+        samplesSinceCapture += 1
         let phaseOnEntry = phase
         defer { if phase != phaseOnEntry { samplesInPhase = 0 } }
         defer { prevScene = sample.scene }
@@ -450,6 +565,8 @@ public final class Trigger {
         guard sample.scene.detail >= tuning.sceneDetail,
               sceneChangedSinceCapture(sample)
         else { return .nothing }
+        // Frozen before the phase change, which is what zeroes the live counter.
+        settleAtFire = samplesInPhase
         phase = .capturing
         return .fire
     }
@@ -500,6 +617,11 @@ public final class Trigger {
         // A caller that supplies no box signatures gets the old geometry-only
         // behaviour, which keeps the machine usable from a test that does not
         // care about content.
+        // Traced regardless of the outcome: this is the number that decides the
+        // branch below, and it was previously invisible.
+        lastHoldDelta = sample.holdScene.flatMap { live in
+            capturedCardScene.map { live.delta(to: $0) }
+        }
         let stillThere = sample.boxes.indices.contains { i in
             guard let watched,
                   overlap(watched, sample.boxes[i]) > tuning.backgroundIoU
@@ -516,15 +638,37 @@ public final class Trigger {
             disruptCount = max(0, disruptCount - 1)
             return .nothing
         }
-        // Which of the two disruptions this is, for the parent. A box still
-        // sitting on the watched rect means the card was swapped in place; no
-        // box there at all means it left.
+        // Which disruption this is, for the parent. No box on the watched rect
+        // at all means the card left; a box still sitting there means either a
+        // card was laid over it or the same card slid.
         let occupied = sample.boxes.contains { box in
             watched.map { overlap($0, box) > tuning.backgroundIoU } ?? false
         }
-        pendingCause = occupied ? .replaced : .removed
+        pendingCause = occupied ? (stillLooksLikeTheCapturedCard(sample) ? .moved : .replaced)
+                                : .removed
         disruptCount += 1
         return rearmIfDisrupted()
+    }
+
+    /// Whether anything in frame still looks like the card that was shot.
+    ///
+    /// Asked only once the pinned window has already said the picture changed,
+    /// and it is the question that separates the two ways that happens: a card
+    /// that *moved* takes its face with it, so some box still matches the
+    /// capture; a card that was *replaced* leaves a box whose face is new.
+    ///
+    /// False whenever the evidence is missing — no per-box signatures, or no
+    /// captured card to compare against — which keeps a caller that cannot
+    /// sample them on the old behaviour rather than silently calling everything
+    /// a move.
+    private func stillLooksLikeTheCapturedCard(_ sample: TriggerSample) -> Bool {
+        guard let captured = capturedCardScene, !sample.boxScenes.isEmpty else {
+            lastFaceDelta = nil
+            return false
+        }
+        let closest = sample.boxScenes.map { $0.delta(to: captured) }.min()
+        lastFaceDelta = closest
+        return (closest ?? .infinity) < tuning.movedFaceMax
     }
 
     private func rearmIfDisrupted() -> Decision {

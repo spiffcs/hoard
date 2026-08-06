@@ -97,23 +97,19 @@ func (f *fakeScanner) Open(_ context.Context, deviceID string) (ScanSession, err
 	return f.last, nil
 }
 
-// fakeSession stands in for a live camera window. Tests push events onto it to
-// simulate the helper reporting captures, rotations, and closure.
+// fakeSession stands in for a live link to the phone. Tests push events onto it
+// to simulate the phone reporting captures, trigger states, and closure.
 type fakeSession struct {
-	chimes     int
-	results    []scan.HUDResult
-	events     chan scan.Event
-	captures   int
-	rotates    int
-	autoOn     int
-	autoOff    int
-	framingOn  int
-	framingOff int
-	torchOn    int
-	torchOff   int
-	effects    int
-	rearms     int
-	closed     bool
+	chimes   int
+	results  []scan.HUDResult
+	events   chan scan.Event
+	captures int
+	autoOn   int
+	autoOff  int
+	torchOn  int
+	torchOff int
+	rearms   int
+	closed   bool
 }
 
 func (s *fakeSession) Result(r scan.HUDResult) error {
@@ -145,31 +141,12 @@ func (s *fakeSession) Auto(on bool) error {
 	return nil
 }
 
-func (s *fakeSession) Rotate(bool) error {
-	s.rotates++
-	return nil
-}
-
-func (s *fakeSession) AutoFraming(on bool) error {
-	if on {
-		s.framingOn++
-	} else {
-		s.framingOff++
-	}
-	return nil
-}
-
 func (s *fakeSession) Torch(on bool) error {
 	if on {
 		s.torchOn++
 	} else {
 		s.torchOff++
 	}
-	return nil
-}
-
-func (s *fakeSession) VideoEffects() error {
-	s.effects++
 	return nil
 }
 
@@ -615,7 +592,7 @@ func TestScanFallsBackToLaterOcrLines(t *testing.T) {
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
 
 	lines := []string{"control have indestructible.\"", "Volkan Baga", "Elspeth, Knight-Errant"}
-	canonical, ocr, idx, _, err := resolveName(context.Background(), fs, lines, tuningFor(""))
+	canonical, ocr, idx, _, err := resolveName(context.Background(), fs, lines)
 	if err != nil {
 		t.Fatalf("resolveName: %v", err)
 	}
@@ -679,7 +656,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 		"Elspeth, Knight-Errant": "Elspeth, Knight-Errant",
 	}}
 	canonical, _, _, _, _ := resolveName(context.Background(), fs,
-		[]string{"option", "Elspeth, Knight-Errant"}, tuningFor(""))
+		[]string{"option", "Elspeth, Knight-Errant"})
 	if canonical != "Elspeth, Knight-Errant" {
 		t.Errorf("canonical = %q, want the real card rather than the Opt false positive", canonical)
 	}
@@ -688,7 +665,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 func TestScanFuzzyMissReportsTopLine(t *testing.T) {
 	// Nothing matches → the best-guess line is what gets pre-filled for editing.
 	canonical, ocr, _, _, _ := resolveName(context.Background(), fakeSearcher{},
-		[]string{"Blrgh", "Nonsense"}, tuningFor(""))
+		[]string{"Blrgh", "Nonsense"})
 	if canonical != "" || ocr != "Blrgh" {
 		t.Errorf("miss: canonical=%q ocr=%q, want empty canonical and the top line", canonical, ocr)
 	}
@@ -703,12 +680,12 @@ func TestFallbackLinesWithTypeWordsNeverResolve(t *testing.T) {
 		"Creature Guy": "Creature Guy",
 	}}
 	canonical, _, _, _, _ := resolveName(context.Background(), fs,
-		[]string{"Inspired Fire deals + tam garbage xyz", "creature.", "flavor text"}, tuningFor(""))
+		[]string{"Inspired Fire deals + tam garbage xyz", "creature.", "flavor text"})
 	if canonical != "" {
 		t.Errorf("canonical = %q, want no match — the type-word fallback line must be skipped", canonical)
 	}
 	// The same text as the primary line still resolves: that IS the card.
-	canonical, _, _, _, _ = resolveName(context.Background(), fs, []string{"Creature Guy"}, tuningFor(""))
+	canonical, _, _, _, _ = resolveName(context.Background(), fs, []string{"Creature Guy"})
 	if canonical != "Creature Guy" {
 		t.Errorf("canonical = %q, want the primary line to stay eligible", canonical)
 	}
@@ -725,7 +702,7 @@ func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
 		// lookup, and this test is about the cap on lines that do.
 		lines[i] = fmt.Sprintf("Cardish Name %c", 'A'+rune(i))
 	}
-	resolveName(context.Background(), counting, lines, tuningFor(""))
+	resolveName(context.Background(), counting, lines)
 	if tries != maxFuzzyTries {
 		t.Errorf("made %d lookups, want %d", tries, maxFuzzyTries)
 	}
@@ -776,11 +753,11 @@ func TestKeywordFallbackLinesNeverResolve(t *testing.T) {
 
 	var tries int
 	counting := countingSearcher{onFuzzy: func() { tries++ }}
-	resolveName(context.Background(), counting, []string{"Blurred Junk", "Haste", "Flying"}, tuningFor(""))
+	resolveName(context.Background(), counting, []string{"Blurred Junk", "Haste", "Flying"})
 	if tries != 1 {
 		t.Errorf("made %d lookups, want 1 — keyword fallback lines must not reach the searcher", tries)
 	}
-	resolveName(context.Background(), counting, []string{"Flash"}, tuningFor(""))
+	resolveName(context.Background(), counting, []string{"Flash"})
 	if tries != 2 {
 		t.Errorf("made %d lookups, want 2 — a keyword as the primary line is still tried", tries)
 	}
@@ -800,7 +777,7 @@ func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
 		"\"Y'll hold down the fort while you guys bicker.\"",
 		"2/5",
 		"1M & : 2026 Wizards of the Coast",
-	}, tuningFor(""))
+	})
 	if tries != 1 {
 		t.Errorf("made %d lookups, want 1 — only the primary line", tries)
 	}
@@ -808,7 +785,7 @@ func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
 	// A real title on a fallback line still resolves.
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
 	canonical, _, idx, _, _ := resolveName(context.Background(), fs,
-		[]string{"blurred junk", "Elspeth, Knight-Errant"}, tuningFor(""))
+		[]string{"blurred junk", "Elspeth, Knight-Errant"})
 	if canonical != "Elspeth, Knight-Errant" || idx != 1 {
 		t.Errorf("canonical=%q idx=%d, want the fallback title to survive the gate", canonical, idx)
 	}
@@ -902,11 +879,11 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 	}
 
 	// Closing the camera and pressing ctrl+o again re-offers the picker. There
-	// is no separate "change camera" key: with a Continuity camera and a phone
-	// app both on the list, choosing is what ctrl+o is for.
-	// Close first, then return to the prompt: with a live session
-	// resetForNext deliberately keeps you at the camera step, which is where
-	// ctrl+o means "back to framing" rather than "choose a source".
+	// is no separate "change camera" key: with more than one phone on the list,
+	// choosing is what ctrl+o is for. Close first, then return to the prompt:
+	// with a live session resetForNext deliberately keeps you at the camera
+	// step, which is where ctrl+o means "back to framing" rather than "choose
+	// a source".
 	back := mm.(model)
 	back.closeSession()
 	mm, _ = back.cancelToName()
@@ -955,62 +932,34 @@ func TestSpaceCapturesWithoutReopeningTheCamera(t *testing.T) {
 	}
 }
 
-func TestArrowKeysRotateFromTheTerminal(t *testing.T) {
+// The keys that left with the Continuity Camera must stay inert.
+//
+// Rotation (arrows), auto-framing (z) and the Video Effects panel (v) were all
+// Mac-camera concepts: a landscape frame the Mac had to turn upright, Center
+// Stage, and Studio Light. The phone answers none of them. This pins that they
+// do nothing rather than falling through to something else — a stray binding
+// here would fire mid-pile, on a step where every other key does something.
+func TestRetiredCameraKeysDoNothingOnTheCaptureStep(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
-	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if sess.rotates != 2 {
-		t.Errorf("session rotates = %d, want 2", sess.rotates)
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyLeft},
+		{Type: tea.KeyRight},
+		{Type: tea.KeyRunes, Runes: []rune("z")},
+		{Type: tea.KeyRunes, Runes: []rune("v")},
+	} {
+		mm, _ := got.handleKey(key)
+		got = mm.(model)
+		if got.state != stateCapture {
+			t.Fatalf("%v left the capture step for %v", key, got.state)
+		}
+		if got.statusErr {
+			t.Errorf("%v raised an error banner; it should be ignored outright", key)
+		}
 	}
-	if s := mm.(model).state; s != stateCapture {
-		t.Errorf("rotating should stay on the capture step, got %v", s)
-	}
-}
-
-func TestZTogglesAutoFramingWhenTheHelperOffersIt(t *testing.T) {
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
-	got, sess := openCapture(t, m)
-
-	// Before the ready event advertises the feature, z refuses with a banner
-	// rather than sending a command an old helper would error on.
-	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
-	got = mm.(model)
-	if sess.framingOn+sess.framingOff != 0 {
-		t.Fatal("z before the feature is advertised must not reach the helper")
-	}
-	if !got.statusErr {
-		t.Error("z without the feature should explain itself in the status")
-	}
-
-	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
-		ev: scan.Event{Kind: scan.EventReady, Features: []string{"framing", "hud"}}})
-	got = mm.(model)
-	if !got.framingCapable || got.framingOn {
-		t.Fatalf("ready: framingCapable=%v framingOn=%v, want capable and off", got.framingCapable, got.framingOn)
-	}
-
-	// The session starts with framing forced off, so the first z asks for on;
-	// the state only flips when the helper's framing event confirms it.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
-	got = mm.(model)
-	if sess.framingOn != 1 {
-		t.Fatalf("session frame-on commands = %d, want 1", sess.framingOn)
-	}
-	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
-		ev: scan.Event{Kind: scan.EventFraming, State: "auto"}})
-	got = mm.(model)
-	if !got.framingOn {
-		t.Error("the framing event should flip the mirrored state on")
-	}
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
-	got = mm.(model)
-	if sess.framingOff != 1 {
-		t.Errorf("session frame-off commands = %d, want 1", sess.framingOff)
-	}
-	if got.state != stateCapture {
-		t.Errorf("toggling framing should stay on the capture step, got %v", got.state)
+	if sess.captures != 0 || sess.autoOn+sess.autoOff != 0 || sess.torchOn+sess.torchOff != 0 {
+		t.Errorf("a retired key reached the phone: %+v", sess)
 	}
 }
 
@@ -1976,11 +1925,14 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 }
 
-// A second copy of a card commits rather than stopping the session.
+// A second copy of a card commits rather than stopping the session — provided
+// enough time passed for a hand to have swapped it.
 //
-// This used to queue. It cost three stops on a playset of four, and it was not
-// even consistent — a copy scanned past the window committed anyway, so the
-// same physical action gave different answers depending on how fast you were.
+// Committing at all used to queue. It cost three stops on a playset of four,
+// and it was not even consistent: a copy scanned past the window committed
+// anyway, so the same physical action gave different answers depending on how
+// fast you were. What bounds it now is the one thing a person cannot fake —
+// nobody swaps a card in under 3856ms. See sameCardFloor.
 func TestRefireCommitsAsASecondCopy(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -1995,8 +1947,8 @@ func TestRefireCommitsAsASecondCopy(t *testing.T) {
 		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
 	}
 
-	// The same card again seconds later: a second copy, committed.
-	clock = clock.Add(2 * time.Second)
+	// The same card a whole swap later: a second copy, committed.
+	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
 	if len(ra.got) != 2 {
@@ -2007,12 +1959,109 @@ func TestRefireCommitsAsASecondCopy(t *testing.T) {
 	}
 
 	// And past the window, which used to be the only way it committed. Same
-	// answer either side of the boundary now, which is the point.
+	// answer either side of that boundary now, which is the point.
 	clock = clock.Add(dupWindow + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
 	if len(ra.got) != 3 {
 		t.Errorf("timing must not change the answer, adder got %d", len(ra.got))
+	}
+}
+
+// The same card again a second later is the card that is already there.
+//
+// Replayed from the session of 2026-08-05 19:21, where Skirk Volcanist
+// committed five times in six seconds while sitting still on the desk. Every
+// repeat arrived tagged `replaced`, because the phone's trigger cannot tell a
+// card that *moved* from one swapped in place — so the Mac stops believing that
+// field on a repeat this fast and believes the clock instead.
+func TestFastRepeatOfTheSameCardIsDropped(t *testing.T) {
+	ev, fs := confidentFixture()
+	ev.FireReason = scan.FireReplaced
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 19, 21, 57, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
+	}
+
+	// The real gaps from that burst, in order. Each one re-anchors the floor,
+	// which is what stops the third and fourth slipping past a fixed three
+	// seconds measured from the original commit.
+	for _, gap := range []time.Duration{931, 1604, 932, 2595} {
+		clock = clock.Add(gap * time.Millisecond)
+		mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+		got = resolve(t, mm.(model), ev.CardList()[0])
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adder called %d times, want 1 — four re-reads of one card", len(ra.got))
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the repeats dropped rather than queued", got.review)
+	}
+	if !strings.Contains(got.status, "Still seeing") {
+		t.Errorf("status = %q, want the still-seeing note", got.status)
+	}
+
+	// And the card genuinely swapped afterwards still lands.
+	clock = clock.Add(sameCardFloor + time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("adder called %d times, want the real second copy to commit", len(ra.got))
+	}
+}
+
+// A repeat the source itself calls a *move* is dropped however long ago the
+// card was last seen.
+//
+// The clock floor catches a fast repeat, but the phone can do better than a
+// clock: it watched a box hold the watched spot while still looking like the
+// card it had already read, and said so. Two of the eight duplicates in the
+// session that prompted this were 5.4s and 7.1s apart — past any defensible
+// time floor, and still the same card sitting there.
+func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 19, 21, 22, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	placed := ev
+	placed.FireReason = scan.FireRemoved
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: placed})
+	got := resolve(t, mm.(model), placed.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
+	}
+
+	// Seven seconds later — comfortably past the floor — but the source says
+	// the card only moved.
+	moved := ev
+	moved.FireReason = scan.FireMoved
+	clock = clock.Add(7 * time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: moved})
+	got = resolve(t, mm.(model), moved.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Errorf("adder called %d times, want 1 — the source said it only moved", len(ra.got))
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the move dropped rather than queued", got.review)
+	}
+
+	// And a genuine placement at the same remove still commits, so the rule is
+	// about the evidence rather than about the gap.
+	clock = clock.Add(7 * time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: placed})
+	got = resolve(t, mm.(model), placed.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("adder called %d times, want a witnessed placement to commit", len(ra.got))
 	}
 }
 
@@ -2023,7 +2072,14 @@ func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	unknown := scan.Event{Kind: scan.EventScan, Name: "Blrgh", Candidates: []string{"Blrgh"}}
+	// Unresolvable, but carrying a footer read — otherwise the junk filter
+	// ignores it outright and there is nothing left to land out of order. The
+	// number is copyright-sourced, so it is evidence a card was in frame
+	// without being enough to name one.
+	unknown := scan.Event{Kind: scan.EventScan, Name: "Blrgh",
+		Candidates: []string{"Blrgh"},
+		Cards: []scan.Card{{Name: "Blrgh", Candidates: []string{"Blrgh"},
+			CollectorNumber: "412", NumberSource: "copyright"}}}
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: unknown})
 	got := mm.(model)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: unknown})
@@ -2124,6 +2180,8 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
@@ -2149,9 +2207,11 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 		t.Errorf("nudgeDrops = %d, want 1", got.nudgeDrops)
 	}
 
-	// The same card again, fired by real disruption rather than the nudge:
-	// a placement the phone watched happen, so a second copy commits.
+	// The same card again, fired by real disruption rather than the nudge, and
+	// a whole swap later: a placement the phone watched happen, at a speed a
+	// person could actually have managed, so a second copy commits.
 	got.nudgeSentAt = time.Time{}
+	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
 	if len(ra.got) != 2 {
@@ -2187,12 +2247,133 @@ func TestMultiCardPhantomsDieQuietly(t *testing.T) {
 		t.Errorf("status = %q, want a quiet ignored note", got.status)
 	}
 
-	// The same unresolvable read from a single-card capture still queues —
-	// the only card of a shot must never vanish silently.
+	// The same unresolvable read from a single-card capture dies too. It used
+	// to queue, on the reasoning that the only card of a shot must never
+	// vanish silently — but a capture that read no name and nothing off a
+	// footer held no card to vanish, and the queue entry offered one action:
+	// discard. A live session of 25 left three of these in review.
 	mm, _ = got.Update(got.resolveCardCmd(3, ev.Cards[1], 1)())
 	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Fatalf("a single-card miss should be ignored, review = %+v", got.review)
+	}
+	if got.ignored != 2 {
+		t.Errorf("ignored = %d, want 2 — both misses counted for the receipt", got.ignored)
+	}
+
+	// But printing evidence keeps it alive, however weak. A footer read is
+	// proof a card was in frame even when the digits are too suspect to name
+	// one, and that is the case block resolution exists to rescue.
+	withFooter := scan.Card{Name: "Survey the Realm", Candidates: []string{"Survey the Realm"},
+		CollectorNumber: "412", NumberSource: "copyright"}
+	mm, _ = got.Update(got.resolveCardCmd(4, withFooter, 1)())
+	got = mm.(model)
 	if len(got.review) != 1 {
-		t.Fatalf("a single-card miss should queue, review = %d", len(got.review))
+		t.Errorf("review = %d, want a footer read kept for review", len(got.review))
+	}
+}
+
+// The three shapes of junk a live session actually produced, none of which
+// should reach review.
+//
+// From the session of 2026-08-05 20:00, 25 outcomes: a capture that read
+// literally nothing, a fragment of rules copy, and a mangled word off a card
+// whose crop was never located. Each queued, and each offered the user exactly
+// one action — discard.
+func TestUnidentifiableCapturesNeverReachReview(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		card scan.Card
+	}{
+		{"a capture that read nothing at all",
+			scan.Card{Source: "crop"}},
+		{"a fragment of rules text",
+			scan.Card{Name: "creature, then put a +1/+1 counter",
+				Candidates: []string{"creature, then put a +1/+1 counter",
+					"on each creature you control with a"},
+				Source: "crop"}},
+		{"a mangled word with no card located",
+			scan.Card{Name: "I tample", Candidates: []string{"I tample"},
+				Source: "frame"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+			m, _ = openCapture(t, m)
+			mm, _ := m.Update(m.resolveCardCmd(1, tc.card, 1)())
+			got := mm.(model)
+			if len(got.review) != 0 {
+				t.Errorf("review = %+v, want nothing queued", got.review)
+			}
+			if got.ignored != 1 {
+				t.Errorf("ignored = %d, want it counted for the receipt", got.ignored)
+			}
+			if got.statusErr {
+				t.Error("ignoring a non-card is not an error")
+			}
+		})
+	}
+}
+
+// A worse re-read of a card just committed is dropped, not queued.
+//
+// Live: Ancient Silverback committed on M15/168, and 918ms later the same card
+// came back with no collector number and a set code of "TAP" scavenged out of
+// its rules text. It ranked nothing, so it could not pin a printing among
+// seven, and it queued as "printing unverified" — asking the user a question
+// the capture before it had already answered.
+//
+// The same-card floor guarded only the commit path, so a repeat whose read
+// degraded slipped straight past it.
+func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "m15", Name: "Ancient Silverback", Set: "m15", CollectorNumber: "168",
+			ReleasedAt: "2014-07-18", Finishes: []string{"nonfoil"}},
+		{ID: "8ed", Name: "Ancient Silverback", Set: "8ed", CollectorNumber: "236",
+			ReleasedAt: "2003-07-28", Finishes: []string{"nonfoil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Ancient Silverback": "Ancient Silverback"},
+		prints: map[string][]scryfall.Card{"Ancient Silverback": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 20, 1, 13, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	// The good read: set and number, which pins the printing.
+	good := scan.Card{Name: "Ancient Silverback", Candidates: []string{"Ancient Silverback"},
+		SetCode: "M15", CollectorNumber: "168", Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, good, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: the good read should commit, adds = %d", len(ra.got))
+	}
+
+	// 918ms later: no number, and a set code scraped out of the rules text.
+	clock = clock.Add(918 * time.Millisecond)
+	worse := scan.Card{Name: "Ancient Silverback", Candidates: []string{"Ancient Silverback", "4 c"},
+		SetCode: "TAP", Confidence: 0.95, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(2, worse, 1)())
+	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the worse re-read dropped", got.review)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want no second copy either", len(ra.got))
+	}
+	if !strings.Contains(got.status, "Still seeing Ancient Silverback") {
+		t.Errorf("status = %q, want the still-seeing note", got.status)
+	}
+
+	// A genuine second copy, read just as poorly but a swap later, still
+	// queues: the rule is about how recently the card was seen, not about the
+	// quality of the read.
+	clock = clock.Add(sameCardFloor + time.Second)
+	mm, _ = got.Update(got.resolveCardCmd(3, worse, 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Errorf("review = %d, want a later poor read to reach review", len(got.review))
 	}
 }
 
@@ -2219,6 +2400,67 @@ func TestTabTogglesQueueReview(t *testing.T) {
 	}
 	if got.session == nil {
 		t.Error("visiting the queue must not close the camera")
+	}
+}
+
+func TestDropKeyRemovesQueuedCard(t *testing.T) {
+	// d on the review list drops the card under the cursor — the browser's
+	// removal key — and the drop shows up in the receipt as a skip.
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := openCapture(t, m)
+	m.review = []queueItem{
+		{id: 1, canonical: "Sol Ring", note: "printing unverified"},
+		{id: 2, canonical: "Serra Angel", note: "printing unverified"},
+	}
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got := mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got = mm.(model)
+	if got.state != stateQueueReview || len(got.review) != 1 || got.review[0].id != 2 {
+		t.Fatalf("d should drop the selected card and keep the list up: state=%v review=%+v",
+			got.state, got.review)
+	}
+	if got.summary.Count("skipped") != 1 {
+		t.Errorf("summary skipped = %d, want 1", got.summary.Count("skipped"))
+	}
+	if sess.closed {
+		t.Error("dropping a queued card must not close the camera")
+	}
+
+	// Emptying the queue hands the screen back to the camera, which is still
+	// live — the drop is a queue edit, not an exit.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got = mm.(model)
+	if got.state != stateCapture || len(got.review) != 0 {
+		t.Fatalf("last drop should return to capture: state=%v review=%d", got.state, len(got.review))
+	}
+	if got.summary.Count("skipped") != 2 {
+		t.Errorf("summary skipped = %d, want 2", got.summary.Count("skipped"))
+	}
+}
+
+func TestDropKeyIsTypedWhileFiltering(t *testing.T) {
+	// The queue's filter has first claim on printable keys: someone typing
+	// "dragon" must not lose the card they were narrowing toward.
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	m.review = []queueItem{{id: 1, canonical: "Shivan Dragon", note: "printing unverified"}}
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got := mm.(model)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	got = mm.(model)
+	if !got.list.SettingFilter() {
+		t.Fatal("/ should open the queue filter")
+	}
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Fatalf("d while filtering dropped the card: review=%d", len(got.review))
+	}
+	if v := got.list.FilterValue(); v != "d" {
+		t.Errorf("filter = %q, want the keystroke typed into it", v)
 	}
 }
 
@@ -2559,6 +2801,37 @@ func TestLingeringNeighborDropped(t *testing.T) {
 	}
 }
 
+// A banner does not outlive the capture it describes. The "Ignored" note for
+// a junk read used to sit above the "✓ Auto-added" row of the card scanned
+// after it, still claiming to be current (observed live: "O L" stranded over
+// an Ancient Silverback commit).
+func TestStaleStatusClearedByNextCapture(t *testing.T) {
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// A capture holding nothing the catalog would accept and no collector block.
+	m = sendScan(t, m, scan.Card{Name: "O L", Candidates: []string{"O L"}, Confidence: 0.95})
+	if !strings.Contains(m.status, "not a card") {
+		t.Fatalf("setup: status = %q, want the ignored note", m.status)
+	}
+	if len(ra.got) != 0 {
+		t.Fatalf("setup: adds = %d, want the junk read ignored", len(ra.got))
+	}
+
+	// The next capture commits a real card, and the stale note goes with it.
+	m = sendScan(t, m, scanCard("Ancient Tomb", "UMA", "236"))
+	if len(ra.got) != 1 {
+		t.Fatalf("adds = %d, want the card committed", len(ra.got))
+	}
+	if m.status != "" {
+		t.Errorf("status = %q, want it cleared by the newer capture", m.status)
+	}
+	if len(m.tally) != 1 {
+		t.Errorf("tally = %v, want the commit alone on the receipt", m.tally)
+	}
+}
+
 // Two copies fanned in one frame are two cards, and both commit.
 //
 // This used to queue the second for a deliberate confirm. Two copies visible in
@@ -2585,9 +2858,14 @@ func TestFannedPlaysetCommitsBothCopies(t *testing.T) {
 func TestSoloRescanCommitsAsASecondCopy(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
+	// Swapping one card for another is a physical act with a measured floor
+	// under it; a "re-scan" faster than that is the same card, not a new one.
+	clock = clock.Add(sameCardFloor + time.Second)
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
 	if len(ra.got) != 2 {
 		t.Errorf("adds = %d, want both scans committed", len(ra.got))
@@ -2667,7 +2945,7 @@ func TestResolveNameKeepsFallbackLinesLocal(t *testing.T) {
 	}}
 	lines := []string{"Tins. Liz Danforth", "Dwarven Ruins", "Sacrifice Dwarven Ruins"}
 
-	name, _, idx, _, err := resolveName(context.Background(), s, lines, tuningFor(""))
+	name, _, idx, _, err := resolveName(context.Background(), s, lines)
 	if err != nil {
 		t.Fatalf("resolveName: %v", err)
 	}
@@ -2696,7 +2974,7 @@ func TestImplausibleTitleGuessNeverLeavesTheMachine(t *testing.T) {
 	// Leads lowercase, so it cannot be a title.
 	lines := []string{"count on it. Then for each nor", "Dwarven Ruins"}
 
-	name, _, idx, _, err := resolveName(context.Background(), s, lines, tuningFor(""))
+	name, _, idx, _, err := resolveName(context.Background(), s, lines)
 	if err != nil {
 		t.Fatalf("resolveName: %v", err)
 	}
@@ -3167,6 +3445,11 @@ func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
 // never in danger: the window keys on printing *and* finish, so a different
 // finish does not reach it. The repeat does, and the phone said `removed` for
 // all three — it watched each card leave and the next go down.
+//
+// The session's own timings are replayed rather than treated as instantaneous,
+// because they are what makes the third scan legitimate: seven seconds separate
+// the two foils, comfortably past the floor under which a repeat is the card
+// that never left. Run with no clock at all this used to pass by accident.
 func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
@@ -3174,6 +3457,8 @@ func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 	}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 7, 30, 13, 12, 26, 0, time.UTC)
+	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
 	look := func(finish string) scan.Event {
@@ -3183,7 +3468,11 @@ func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 				Candidates: []string{"Inspired Fire"},
 				FinishHint: finish, Confidence: 0.95, Source: "crop"}}}
 	}
-	for _, finish := range []string{"foil", "nonfoil", "foil"} {
+	// 13:12:26, 13:12:30, 13:12:33 — the gaps as they were recorded.
+	for i, finish := range []string{"foil", "nonfoil", "foil"} {
+		if i > 0 {
+			clock = clock.Add([]time.Duration{0, 4, 3}[i] * time.Second)
+		}
 		ev := look(finish)
 		mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 		m = resolve(t, mm.(model), ev.CardList()[0])

@@ -3,26 +3,13 @@
     "border": "",
     "borderSource": "",
     "candidates": [
-      "Black Panther, Wakandan King OC"
+      "Black Panther, Wakandan King"
     ],
     "finish": "nonfoil",
-    "name": "Black Panther, Wakandan King OC",
+    "name": "Black Panther, Wakandan King",
     "number": "87",
     "set": "MAR",
-    "source": "frame",
+    "source": "crop",
     "year": 2026
-  },
-  {
-    "border": "",
-    "borderSource": "",
-    "candidates": [
-      "Survey the Realm"
-    ],
-    "finish": "",
-    "name": "Survey the Realm",
-    "number": "",
-    "set": "",
-    "source": "frame",
-    "year": 0
   }
 ]

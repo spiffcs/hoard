@@ -1,173 +1,77 @@
-// hoard-scan — capture a Magic card image and OCR its title.
+// hoard-scan — the Mac's half of the iPhone card scanner.
+//
+// This process owns no camera. The phone running Hoardling is the
+// camera: it captures, reads the card with CardKit, and sends finished events
+// over the network. What happens here is translation — frames from the link
+// become NDJSON on stdout, stdin verbs become frames on the link — so the Go
+// side talks to a pipe and never learns where the pixels came from.
 //
 // Modes:
-//   hoard-scan --list-devices   Print the available cameras as JSON, exit.
-//   hoard-scan --probe          Dump every camera format and control the platform
-//                               admits to, as plain text for the capability ledger
-//                               in docs/scanner-tuning.md. Exit.
-//   hoard-scan --image <path>   Headless: OCR an existing image file, print JSON, exit.
-//   hoard-scan [--device <id>] [--rotate <deg>]
-//                               Live session: open a camera preview window and keep
-//                               it open, emitting one JSON event per line on stdout
-//                               and reading commands (capture / rotate-left /
-//                               rotate-right / frame-on / frame-off / torch-on /
-//                               torch-off / effects / result {json} / quit) as
-//                               lines on stdin. Space, ←/→, Z, T, V and Esc do the
-//                               same things in the window itself.
-//   hoard-scan --hud-demo       Live window with no camera, for eyeballing the
-//                               price HUD: pipe `result {...}` lines on stdin.
-//   hoard-scan --remote --code <digits> [--mirror]
-//                               The camera is an iPhone running the companion
-//                               app, reached over the network. Same events on
-//                               stdout and same verbs on stdin; this process
-//                               owns no camera and translates. Headless unless
-//                               --mirror, because the phone shows the preview,
-//                               the price and the cue and plays the sounds.
+//   hoard-scan --list-devices   Print the phones visible on the network as JSON, exit.
+//   hoard-scan --code <digits> [--device <id>] [--mirror] [--verify]
+//                               Live session against a paired iPhone. One JSON
+//                               event per line on stdout, commands (capture /
+//                               auto-on / auto-off / rearm / torch-on /
+//                               torch-off / chime / result {json} / quit) as
+//                               lines on stdin.
 //
-// The window persisting across captures is the point: relaunching the helper per
-// card costs a camera warm-up each time, and forces the user back to a keystroke
-// in the terminal to reopen it.
+//                               Headless unless --mirror, because the phone
+//                               shows the preview, the price and the cue and
+//                               plays the sounds; --mirror opens a window here
+//                               anyway, for framing the rig and for debugging
+//                               the link.
 //
-// Capture is Continuity Camera (iPhone) only — webcams are never used; see
-// availableCameras() for why.
+//                               --verify connects, waits for the phone to accept
+//                               the code, and exits — that is what makes
+//                               "paired" mean "this works".
 //
-// Output is newline-delimited JSON; see Event for the shapes.
+// `--remote` is accepted and ignored. It used to select this backend over a
+// local Continuity Camera; the Continuity path is gone, so there is nothing
+// left to select, but the Go side still passes the flag so that a new hoard
+// driving an older helper still lands here rather than opening a camera.
+//
+// Output is newline-delimited JSON; see ScanWire's Event for the shapes.
 // For --list-devices: {"devices": [{"id": "...", "name": "...", "kind": "..."}]}
 //
 // The Go side (internal/scan) manages this process and parses those events.
+// Reading a card from an image file is cardkit-probe's job, not this one's —
+// see scan/fixtures/sweep.sh.
 
-// macOS only. This is the camera, window and HUD half of ScanKit; the read
-// pipeline under Core/ is what compiles for iOS. See Package.swift.
+// macOS only. ScanKit is the Mac end of the link: the translator, and the
+// optional mirror window it can draw. See Package.swift.
 #if os(macOS)
 
-import AVFoundation
 import AppKit
 import ScanLink
+import ScanWire
 
 /// runCLI is the helper's whole entry point, called by the executable target's
 /// main.swift. It lives in the library rather than in top-level code so the
 /// tests can link everything here; the executable is a three-line shell.
 ///
 /// Every mode either exits or blocks in `app.run()`, so this never returns
-/// normally — which is also what keeps `controller` and `appDelegate` alive,
-/// NSApplication not retaining its delegate.
+/// normally — which is also what keeps `remote` alive.
 public func runCLI() {
     let args = Array(CommandLine.arguments.dropFirst())
 
     if args.contains("--list-devices") {
-        // Become a real (if dock-less) app: AVFoundation only advertises Continuity
-        // Camera to a GUI process with a running run loop.
+        // Accessory rather than a plain process: this is a bundled app, and the
+        // local-network permission macOS attributes to that bundle is the one
+        // Bonjour browsing needs. Dock-less because a device query is not
+        // something to take focus for.
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        // Ask for camera access first: device names are only populated once granted,
-        // and it puts the permission prompt at picker time rather than mid-capture.
-        var granted = false
-        var answered = false
-        AVCaptureDevice.requestAccess(for: .video) { g in
-            granted = g
-            answered = true
-        }
-        spinRunLoop(seconds: 120) { answered }
-        if !granted {
-            fail("Camera access denied. Grant it in System Settings › Privacy & Security › Camera")
-        }
-
-        // Give a nearby iPhone a moment to publish itself before concluding it isn't
-        // there; returns as soon as one appears.
-        spinRunLoop(seconds: continuityWait, until: hasContinuityCamera)
-
-        var devices = availableCameras().map {
-            Device(id: $0.uniqueID, name: deviceLabel($0), kind: kindLabel($0))
-        }
-        // Phones running the companion app, found on the network. Browsing
-        // needs no pairing code — only connecting does — so this can enumerate
-        // freely and let the caller sort out pairing when one is chosen.
-        //
-        // `kind` is what tells the two apart downstream, and it is already a
-        // field the picker renders. A remote source needs no new concept: it is
-        // another row in the same list.
-        devices += PeerBrowser().browse(seconds: remoteBrowseWait).map {
+        // Browsing needs no pairing code — only connecting does — so this can
+        // enumerate freely and let the caller sort out pairing when one is
+        // chosen.
+        let devices = PeerBrowser().browse(seconds: remoteBrowseWait).map {
             Device(id: $0.id, name: $0.name, kind: remoteKind)
         }
         if devices.isEmpty {
-            fail(noPhoneMessage, code: 4)
+            fail(noPhoneAppMessage, code: 4)
         }
         emit(DeviceList(devices: devices))
         exit(0)
-    }
-
-    // --probe dumps what the camera will actually admit to: every format, every
-    // control, and activeFormat at three moments around startRunning. It exists
-    // because the numbers the capture path is built on — 1080p stills, no zoom,
-    // no exposure, no torch — were each established by being surprised, and the
-    // output is meant to be pasted into the capability ledger in
-    // docs/scanner-tuning.md rather than remembered.
-    if args.contains("--probe") {
-        // Same dance as --list-devices: Continuity Camera is only published to a
-        // GUI process with a running run loop, and device names stay empty until
-        // camera access is granted.
-        NSApplication.shared.setActivationPolicy(.accessory)
-        var granted = false
-        var answered = false
-        AVCaptureDevice.requestAccess(for: .video) { g in
-            granted = g
-            answered = true
-        }
-        spinRunLoop(seconds: 120) { answered }
-        if !granted {
-            fail("Camera access denied. Grant it in System Settings › Privacy & Security › Camera")
-        }
-        spinRunLoop(seconds: continuityWait, until: hasContinuityCamera)
-
-        var probeDevice: String?
-        if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
-            probeDevice = args[i + 1]
-        }
-        FileHandle.standardOutput.write(Data(probeReport(deviceID: probeDevice).utf8))
-        exit(0)
-    }
-
-    // Default to a quarter-turn clockwise: a portrait-held iPhone hands over a
-    // landscape frame, so the capture arrives turned 90° counter-clockwise. hoard
-    // passes --rotate explicitly (its own saved value), so this default only applies
-    // when the helper is run by hand.
-    var requestedRotation = 90
-    if let i = args.firstIndex(of: "--rotate"), i + 1 < args.count {
-        requestedRotation = Int(args[i + 1]) ?? 90
-    }
-
-    // --border-probe reads one image and reports everything the border reader saw,
-    // verdict or not. It exists to fit the constants in CardLayout and BorderGate
-    // against scan/corpus, where the card fills the frame and the card rect is
-    // therefore known exactly — which is the one thing that corpus can say about
-    // the border, and the reason it cannot say anything about the *crop*.
-    if let i = args.firstIndex(of: "--border-probe") {
-        guard i + 1 < args.count else { fail("--border-probe requires a file path") }
-        let path = args[i + 1]
-        guard let (cg, orientation) = cgImage(fromFile: path) else {
-            fail("could not read image: \(path)")
-        }
-        let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: requestedRotation)
-        let read = readCard(forOCR)
-        var reading = readBorder(forOCR, read)
-        reading.footerText = reading.footerText.isEmpty ? "" : reading.footerText
-        emit(reading)
-        exit(reading.color == nil ? 3 : 0)
-    }
-
-    if let i = args.firstIndex(of: "--image") {
-        guard i + 1 < args.count else { fail("--image requires a file path") }
-        guard let (cg, orientation) = cgImage(fromFile: args[i + 1]) else {
-            fail("could not read image: \(args[i + 1])")
-        }
-        // Byte-for-byte the live pipeline, so this mode reproduces real scans.
-        let forOCR = rotatedImage(uprighted(cg, orientation), clockwiseDegrees: requestedRotation)
-        // Write the same debug bitmap the live path does, so HOARD_SCAN_DEBUG_DIR can
-        // be used to tune the bottom band against a still photo.
-        saveDebugImage(forOCR, "capture-ocr.png")
-        let scan = scanFrame(forOCR)
-        emit(Event.scan(scan, rotation: requestedRotation))
-        exit(Event.readAnything(scan) ? 0 : 3)
     }
 
     var requestedDevice: String?
@@ -175,69 +79,35 @@ public func runCLI() {
         requestedDevice = args[i + 1]
     }
 
-    // --remote: the camera is an iPhone running the companion app, reached over
-    // the network. This process becomes a translator — frames in, NDJSON out —
-    // and owns no camera at all, so it skips the AVFoundation permission dance
-    // entirely. The phone shows the preview, the price and the outline cue and
-    // plays the sounds; --mirror opens a window here anyway, for framing the
-    // rig and for debugging the link.
-    if args.contains("--remote") {
-        guard let i = args.firstIndex(of: "--code"), i + 1 < args.count,
-              let code = PairingCode(args[i + 1])
-        else {
-            fail("--remote needs --code <six digits>, shown in the app on your phone")
-        }
-        let app = NSApplication.shared
-        // Accessory unless mirroring: a translator has no business taking focus
-        // from the terminal the user is working in.
-        app.setActivationPolicy(args.contains("--mirror") ? .regular : .accessory)
-        let remote = RemoteController(
-            deviceID: requestedDevice, rotation: requestedRotation,
-            code: code, mirror: args.contains("--mirror"),
-            verifyOnly: args.contains("--verify"))
-        installStdinPump(
-            onCommand: { remote.handle(command: $0) },
-            onClosed: { remote.shutdown() })
-        DispatchQueue.main.async { remote.start() }
-        app.run()
+    // A code is not optional. Saying so up front beats a browse that finds a
+    // phone and then silently fails its handshake.
+    guard let i = args.firstIndex(of: "--code"), i + 1 < args.count,
+          let code = PairingCode(args[i + 1])
+    else {
+        fail("hoard-scan needs --code <six digits>, shown on the Pair tab in the app on your phone")
     }
 
-    // Live mode: request camera access, then run the AppKit event loop.
     let app = NSApplication.shared
-    app.setActivationPolicy(.regular)
-    let controller = CaptureController(deviceID: requestedDevice, rotation: requestedRotation,
-                                       auto: args.contains("--auto"))
-
-    // Held in a top-level binding: NSApplication does not retain its delegate.
-    let appDelegate = AppDelegate(controller: controller)
-    app.delegate = appDelegate
-    installMainMenu()
-
+    // Accessory unless mirroring: a translator has no business taking focus
+    // from the terminal the user is working in.
+    app.setActivationPolicy(args.contains("--mirror") ? .regular : .accessory)
+    let remote = RemoteController(
+        deviceID: requestedDevice, code: code,
+        mirror: args.contains("--mirror"),
+        verifyOnly: args.contains("--verify"))
     installStdinPump(
-        onCommand: { controller.handle(command: $0) },
-        onClosed: { controller.shutdown() })
-
-    if args.contains("--hud-demo") {
-        // No camera, no permission prompt: the demo exists to see the HUD.
-        DispatchQueue.main.async { controller.startDemo() }
-    } else {
-        AVCaptureDevice.requestAccess(for: .video) { granted in
-            DispatchQueue.main.async {
-                if !granted { fail("Camera access denied. Grant it in System Settings › Privacy › Camera") }
-                controller.start()
-            }
-        }
-    }
+        onCommand: { remote.handle(command: $0) },
+        onClosed: { remote.shutdown() })
+    DispatchQueue.main.async { remote.start() }
     app.run()
 }
 
 /// installStdinPump reads the parent's verbs off stdin forever.
 ///
-/// Commands arrive as bare lines (capture / rotate-left / rotate-right / quit)
-/// so the parent can drive the camera while the terminal keeps focus. A closed
-/// stdin means the parent is gone, so shut down rather than linger with an
-/// orphaned window — or, in remote mode, an orphaned link holding the phone's
-/// camera open.
+/// Commands arrive as bare lines (capture / auto-on / rearm / quit) so the
+/// parent can drive the session while the terminal keeps focus. A closed stdin
+/// means the parent is gone, so shut down rather than linger with an orphaned
+/// link holding the phone's camera open.
 func installStdinPump(onCommand: @escaping (String) -> Void,
                       onClosed: @escaping () -> Void) {
     Thread.detachNewThread {

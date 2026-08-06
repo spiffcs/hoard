@@ -60,7 +60,11 @@ func (c Child) Done() bool { return c.m.done }
 // skips, discards. Valid at any time, complete once Done. Manual
 // type-a-name adds don't enter the summary (it is the scan receipt);
 // Added counts those too.
-func (c Child) Summary() Summary { return c.m.summary }
+func (c Child) Summary() Summary {
+	sum := c.m.summary
+	sum.Ignored = c.m.ignored
+	return sum
+}
 
 // Added is the total number of adds this cascade committed, manual and
 // scanned alike.

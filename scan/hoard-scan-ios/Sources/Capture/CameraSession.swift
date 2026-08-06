@@ -29,6 +29,17 @@ final class CameraSession: NSObject, ObservableObject {
 
     /// What the session is doing, in words fit to show a person.
     @Published var status = "Starting…"
+
+    /// The subset of `status` that is a dead end rather than a running
+    /// commentary, empty while nothing is wrong.
+    ///
+    /// Separate because the two have opposite audiences. "Focused", "Settling…"
+    /// and "Waiting for the first card" are a developer watching the rig, and
+    /// they live behind developer mode; a camera that never opened is something
+    /// the person holding the phone has to be told about, whatever mode they are
+    /// in. Without this the failures would hide with the chatter, and a denied
+    /// permission would look like a black screen with no explanation.
+    @Published private(set) var failure = ""
     @Published var lensPosition: Float = 0.5
     @Published var torchLevel: Float = 0
     @Published var locked = false
@@ -156,7 +167,8 @@ final class CameraSession: NSObject, ObservableObject {
 
     func start() async {
         guard await AVCaptureDevice.requestAccess(for: .video) else {
-            status = "Camera access denied. Grant it in Settings › hoard scan"
+            status = "Camera access denied. Grant it in Settings › hoardling"
+            failure = status
             return
         }
         configure()
@@ -180,6 +192,7 @@ final class CameraSession: NSObject, ObservableObject {
             lensType, for: .video, position: .back) else {
             session.commitConfiguration()
             status = "No wide camera on this device"
+            failure = status
             return
         }
         self.device = device
@@ -189,6 +202,7 @@ final class CameraSession: NSObject, ObservableObject {
               session.canAddInput(input) else {
             session.commitConfiguration()
             status = "Could not open the camera"
+            failure = status
             return
         }
         session.addInput(input)
@@ -206,6 +220,7 @@ final class CameraSession: NSObject, ObservableObject {
                 // developer reading a crash report.
                 SessionLog.write("camera format failed: \(error.localizedDescription)")
                 status = "Could not set up the camera"
+                failure = status
             }
         }
         // The tap's dimensions go to the trace line rather than to a label.
@@ -298,6 +313,7 @@ final class CameraSession: NSObject, ObservableObject {
         } catch {
             SessionLog.write("camera configure failed: \(error.localizedDescription)")
             status = "Could not set up the camera"
+            failure = status
             return
         }
 

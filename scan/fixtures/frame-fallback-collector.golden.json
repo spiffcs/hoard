@@ -3,14 +3,13 @@
     "border": "",
     "borderSource": "",
     "candidates": [
-      "Green Goblin, Back for More",
-      "Flying, menace"
+      "Green Goblin, Back for More 3&"
     ],
     "finish": "foil",
-    "name": "Green Goblin, Back for More",
+    "name": "Green Goblin, Back for More 3&",
     "number": "657",
-    "set": "MSC",
-    "source": "frame",
+    "set": "MSH",
+    "source": "crop",
     "year": 2026
   }
 ]

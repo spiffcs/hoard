@@ -54,12 +54,12 @@ public struct LinkFailure: Equatable, Sendable {
             // telling someone what they should have done does not get them
             // scanning again. The Pair tab's troubleshooting section carries
             // the standing advice, which is where a rule belongs.
-            reason = "iPhone disconnected. Check to make sure Hoard Scan is still open"
+            reason = "iPhone disconnected. Check to make sure Hoardling is still open"
         case .posix(.ENETDOWN), .posix(.ENETUNREACH), .posix(.EHOSTUNREACH),
              .posix(.EHOSTDOWN), .posix(.ENETRESET):
             reason = "Lost the network to the iPhone. Both devices need the same Wi-Fi, or a cable"
         case .posix(.ECONNREFUSED):
-            reason = "The iPhone refused the connection. Reopen Hoard Scan and try again"
+            reason = "The iPhone refused the connection. Reopen Hoardling and try again"
         case .dns:
             reason = "Could not find the iPhone on this network"
         case .tls:

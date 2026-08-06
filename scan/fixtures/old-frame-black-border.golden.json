@@ -1,11 +1,11 @@
 [
   {
-    "border": "black",
-    "borderSource": "footer+ring",
+    "border": "",
+    "borderSource": "",
     "candidates": [
       "Builder's Bane",
-      "Sorcery",
-      "Destroy X target artifacts. For each"
+      "X",
+      "\u20b4"
     ],
     "finish": "",
     "name": "Builder's Bane",

@@ -4,6 +4,15 @@ Feedback from live sessions on fresh hoards, with dispositions. Add a dated
 section per session; keep dispositions honest (done / deferred / declined,
 with why).
 
+> **2026-08-05: the Continuity Camera path was removed.** Everything below that
+> was measured on the macOS Continuity rig — its 1920x1440 ceiling, its
+> unlockable lens, its own read pipeline under `ScanKit/Core/` — is a historical
+> record and is kept as one. The scanner is now the iPhone app alone, reading
+> with `CardKit`. Where a measurement below names a Continuity number, the live
+> figure is the phone's; where it names a file under `ScanKit/Core/` or a
+> `hoard-scan` mode like `--image`, `--probe` or `--auto`, that code is gone and
+> `bin/cardkit-probe` is the equivalent.
+
 ## 2026-08-01 — round 2, post-beautification build
 
 1. **A mega list of every card, with binders/decks as subsets** — ✅ done.
@@ -252,7 +261,7 @@ with why).
    tilted card's axis-aligned boxes bleed, so the fixture's quote box
    vertically *contained* its attribution and a clean-gap test never fired.
    Verified by replaying all 18 captures of the session's fixture directory
-   (`HOARD_SCAN_DEBUG_DIR`) through `--image`: capture 9 loses exactly the
+   (`HOARD_SCAN_DEBUG_DIR`) through `cardkit-probe --image`: capture 9 loses exactly the
    phantom, the other 17 are byte-identical.
 8. **Palette add exits the TUI / should add be seamless?** — ✅ done
    (2026-07-31, TUI-completion sprint). The cascade now runs *inside*

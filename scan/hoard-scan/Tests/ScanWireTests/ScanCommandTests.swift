@@ -8,7 +8,7 @@
 
 import Testing
 
-@testable import ScanKit
+@testable import ScanWire
 
 @Test("every verb the Go side sends parses")
 func allVerbsFromTheParentParse() {
@@ -19,17 +19,23 @@ func allVerbsFromTheParentParse() {
         ("auto-off", .auto(false)),
         ("rearm", .rearm),
         ("chime", .chime),
-        ("frame-on", .framing(true)),
-        ("frame-off", .framing(false)),
         ("torch-on", .torch(true)),
         ("torch-off", .torch(false)),
-        ("effects", .effects),
-        ("rotate-left", .rotate(clockwise: false)),
-        ("rotate-right", .rotate(clockwise: true)),
         ("quit", .quit),
     ]
     for (line, want) in expected {
         #expect(ScanCommand(line: line) == want, "verb \"\(line)\" did not parse as expected")
+    }
+}
+
+@Test("the retired Continuity verbs are not silently still accepted")
+func continuityVerbsAreGone() {
+    // Rotation, Center Stage and the Video Effects panel left with the
+    // Continuity Camera. They must read as unknown rather than parse into
+    // something the phone would then ignore, because "parsed and dropped" is
+    // indistinguishable from "worked" at the far end of the pipe.
+    for line in ["rotate-left", "rotate-right", "frame-on", "frame-off", "effects"] {
+        #expect(ScanCommand(line: line) == nil, "retired verb \"\(line)\" still parses")
     }
 }
 

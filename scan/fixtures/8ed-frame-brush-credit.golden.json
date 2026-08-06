@@ -1,11 +1,9 @@
 [
   {
-    "border": "",
-    "borderSource": "",
+    "border": "white",
+    "borderSource": "footer",
     "candidates": [
-      "Tremor",
-      "Sorcery",
-      "Tremor deals 1 damage to each"
+      "Tremor"
     ],
     "finish": "",
     "name": "Tremor",

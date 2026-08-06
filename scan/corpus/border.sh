@@ -11,16 +11,22 @@
 # learn anything about the perspective crop (see README.md).
 #
 # Fit here, then confirm on scan/fixtures/, which are real photographs.
+#
+# The reader is cardkit-probe (CardKit — what the iPhone app runs) in --border
+# mode. It replaced the macOS helper's --border-probe, which went with the
+# Continuity Camera path. The two dump different key sets: what --border reports
+# is the verdict plus the anchoring numbers, not the full photometric ledger the
+# old probe printed, so --dump is correspondingly narrower.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
-helper=${HELPER:-"$here/../../bin/hoard-scan.app/Contents/MacOS/hoard-scan"}
+helper=${HELPER:-"$here/../../bin/cardkit-probe"}
 manifest="$here/manifest.tsv"
 images="$here/images"
 mode=${1:-}
 
 if [ ! -x "$helper" ]; then
-    echo "helper not built at $helper — run: make scan" >&2
+    echo "reader not built at $helper — run: make cardkit" >&2
     exit 2
 fi
 
@@ -31,7 +37,7 @@ while IFS=$'\t' read -r sid era border name set num rel; do
     [ "$sid" = "id" ] && continue
     img="$images/$sid.png"
     [ -f "$img" ] || continue
-    json=$("$helper" --border-probe "$img" --rotate 0 2>/dev/null)
+    json=$("$helper" --image "$img" --rotate 0 --border 2>/dev/null)
     [ -z "$json" ] && json='{}'
     printf '%s\t%s\t%s\t%s\n' "$era" "$border" "$name" "$json" >>"$results"
 done <"$manifest"
@@ -49,12 +55,13 @@ for line in open(sys.argv[1]):
     rows.append((era, border, name, d))
 
 if sys.argv[2] == "--dump":
-    keys = ["color", "source", "abstain", "anchorKind", "t", "ringBottom", "ringTop", "innerBottom",
-            "ringMAD", "innerMAD", "ringChroma", "patchDark", "patchBright",
-            "patchSeparation", "patchDarkFraction", "patchChroma", "clipHigh", "clipLow",
-            "cardHeightPx", "scaleAgreement", "thetaDegrees",
-            "footerVMeasured", "titleVMeasured", "footerGlyphVMeasured",
-            "footerLeftU", "footerRightU", "titleLeftU", "creditCandidateLeftU"]
+    # Exactly what cardkit-probe --border emits. It is a shorter list than the
+    # old --border-probe printed; the photometric intermediates (ring/inner
+    # tones, chroma, clipping) are no longer surfaced on the wire, so fitting
+    # those gates now means adding them to the probe rather than reading them
+    # here.
+    keys = ["color", "source", "abstain", "anchorKind", "t", "standoff",
+            "scaleAgreement", "cardHeightPx", "borderMS"]
     print("\t".join(["era", "border", "name"] + keys))
     for era, border, name, d in rows:
         vals = []

@@ -16,46 +16,48 @@ import (
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
-// The two timing constants are fitted per source, and the fit came from a
-// measured session rather than a guess — so the numbers are pinned here. The
-// local values are the originals, fitted to the Continuity pipe; the remote
-// ones come from the 61-capture session recorded in docs/scanner-tuning.md.
-func TestSourceTuningIsPerSource(t *testing.T) {
-	local := tuningFor("")
-	remote := tuningFor(scan.KindRemote)
 
-	if local.nudgeDelay != nudgeBaseDelay || local.nameTimeout != remoteNameTimeout {
-		t.Errorf("local source should keep the original constants, got %+v", local)
+// Both timing constants were fitted to the 61-capture session recorded in
+// docs/scanner-tuning.md rather than guessed, so the measurements that produced
+// them are what this pins.
+//
+// They used to be chosen per source, the phone's values sitting beside an
+// older, shorter pair fitted to the Continuity pipe. The Continuity path is
+// gone and so is the choice; what survives is the requirement that these
+// numbers stay inside the session that justified them.
+func TestNudgeDelayClearsTheObservedSwap(t *testing.T) {
+	// Across 60 result-to-capture gaps on the phone, the fastest was 3856ms and
+	// the median 4896ms. A delay under the fastest observed swap fires while
+	// the operator's hand is still moving, which buys an extra capture per card
+	// instead of catching a parked one.
+	if nudgeDelay < 3856*time.Millisecond {
+		t.Errorf("nudge delay %v is below the fastest observed swap (3856ms), "+
+			"so it will fire mid-swap", nudgeDelay)
 	}
-	// The measurement that forced this apart: across 60 result-to-capture gaps
-	// on the phone, none was under the local 2500ms delay and the fastest was
-	// 3856ms. A remote delay at or below the local one fires during every swap
-	// rather than after a card parks.
-	if remote.nudgeDelay <= local.nudgeDelay {
-		t.Errorf("remote nudge delay %v must exceed the local %v — it fired on "+
-			"every card at the local value", remote.nudgeDelay, local.nudgeDelay)
-	}
-	if remote.nudgeDelay < 3856*time.Millisecond {
-		t.Errorf("remote nudge delay %v is below the fastest observed swap "+
-			"(3856ms), so it will fire mid-swap", remote.nudgeDelay)
-	}
-	// The remote loop measured 447ms median on the phone alone against a 700ms
-	// shutter-to-result budget, so the escalation cannot be given 500ms.
-	if remote.nameTimeout >= local.nameTimeout {
-		t.Errorf("remote name timeout %v should be tighter than the local %v — "+
-			"the remote loop has less headroom, not more",
-			remote.nameTimeout, local.nameTimeout)
-	}
-	if budget := 700 * time.Millisecond; 447*time.Millisecond+remote.nameTimeout > budget {
-		t.Errorf("remote read (447ms) plus name timeout %v exceeds the %v budget",
-			remote.nameTimeout, budget)
+	// And above p75 it stops being a recheck at all — a card genuinely parked
+	// waits longer than the operator does.
+	if nudgeDelay > 7047*time.Millisecond {
+		t.Errorf("nudge delay %v exceeds the p75 swap (7047ms), so a parked "+
+			"card waits on the timer rather than the timer catching it", nudgeDelay)
 	}
 }
 
-// A session that has not chosen a device yet must not get the phone's timings.
-func TestTuningDefaultsToLocalBeforeADeviceIsChosen(t *testing.T) {
-	if tuningFor("") != tuningFor("Continuity Camera") {
-		t.Error("an unchosen source should tune as local")
+// The escalation has to fit in what is left of the shutter-to-result budget.
+func TestNameTimeoutFitsTheShutterToResultBudget(t *testing.T) {
+	// The budget is 700ms and the phone's own half measured 447ms median, so
+	// the Scryfall escalation gets the ~250ms that remains and no more — past
+	// that the rhythm the sounds depend on starts to slip.
+	//
+	// Fitted against the median rather than the p90 of 472ms, deliberately: at
+	// p90 the budget is already spent before the escalation starts, so pinning
+	// to it would forbid any network call at all. The escalation is a bonus
+	// that catches a card printed since the last catalog build, and the right
+	// trade is that it fits the typical card and is cut short on a slow one.
+	const budget = 700 * time.Millisecond
+	const phoneReadMedian = 447 * time.Millisecond
+	if phoneReadMedian+nameTimeout > budget {
+		t.Errorf("median phone read (%v) plus name timeout %v exceeds the %v budget",
+			phoneReadMedian, nameTimeout, budget)
 	}
 }
 
@@ -208,12 +210,13 @@ func TestYearAndBorderIsAutoCommittable(t *testing.T) {
 
 // A phone paired seconds ago is not a question worth asking.
 //
-// Live report: after typing a six-digit code onto the phone, ctrl+o offered
-// "Billionaires are Parasites: Continuity Camera" beside "Billionaires are
-// Parasites: Hoard Scan" — a choice the last six keystrokes had already made.
+// Live report: after typing a six-digit code onto the phone, ctrl+o offered it
+// beside the household's other phone — a choice the last six keystrokes had
+// already made. Two sources are still the case to test; they are simply two
+// phones now rather than a phone and a Continuity camera.
 func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
 	devices := []scan.Device{
-		cam("continuity", "Billionaires are Parasites", "Continuity Camera"),
+		cam("spare", "Spare iPhone", scan.KindRemote),
 		cam("phone", "Billionaires are Parasites", scan.KindRemote),
 	}
 	sc := &fakeScanner{devices: devices}
@@ -235,14 +238,14 @@ func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
 	if got.cameraID != "phone" {
 		t.Errorf("opened %q, want the phone that was just paired", got.cameraID)
 	}
-	// One shot: the picker is how a camera gets switched, so the next ctrl+o
+	// One shot: the picker is how a phone gets switched, so the next ctrl+o
 	// has to offer the choice again.
 	if got.justPairedID != "" {
 		t.Error("the just-paired mark must be consumed by the list that used it")
 	}
 	mm, _ = got.onCameras(camerasMsg{devices: devices})
 	if mm.(model).state != stateCameraPick {
-		t.Error("a later camera list should offer the picker again")
+		t.Error("a later device list should offer the picker again")
 	}
 }
 
@@ -250,7 +253,7 @@ func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
 // later ctrl+o by silently opening a camera nobody picked.
 func TestJustPairedMarkIsConsumedWhenThePhoneIsGone(t *testing.T) {
 	devices := []scan.Device{
-		cam("continuity", "Desk Cam", "Continuity Camera"),
+		cam("spare", "Spare iPhone", scan.KindRemote),
 		cam("other", "Someone Else's iPhone", scan.KindRemote),
 	}
 	sc := &fakeScanner{devices: devices}
@@ -278,7 +281,7 @@ func TestEmptyAutoCaptureIsSilent(t *testing.T) {
 	m.session, m.state = &fakeSession{}, stateCapture
 	mm, _ := m.onSessionEvent(sessionEventMsg{
 		gen: m.sessionGen, ok: true,
-		ev:  scan.Event{Kind: scan.EventScan, Auto: true},
+		ev: scan.Event{Kind: scan.EventScan, Auto: true},
 	})
 	got := mm.(model)
 	if got.status != "" || got.statusErr {
@@ -294,7 +297,7 @@ func TestEmptyAutoCaptureIsSilent(t *testing.T) {
 	m2.session, m2.state = &fakeSession{}, stateCapturing
 	mm2, _ := m2.onSessionEvent(sessionEventMsg{
 		gen: m2.sessionGen, ok: true,
-		ev:  scan.Event{Kind: scan.EventScan, Auto: false},
+		ev: scan.Event{Kind: scan.EventScan, Auto: false},
 	})
 	got2 := mm2.(model)
 	if got2.status == "" || !got2.statusErr {
@@ -841,3 +844,81 @@ func TestUncorroboratedNameBarAdmitsOldSerifSlips(t *testing.T) {
 	}
 }
 
+// dupCapture answers with the most recent sighting, not the oldest.
+//
+// It used to walk the slice forwards and return on the first match, which is
+// the *oldest* row. That was invisible while the answer was only "is this a
+// duplicate, yes or no", and became load-bearing the moment the age mattered:
+// with a card banked five times, the age it reported was the age of the first
+// sighting, so a floor measured against it would let every repeat through.
+func TestDupCaptureReportsTheMostRecentSighting(t *testing.T) {
+	now := time.Date(2026, 8, 5, 19, 21, 57, 0, time.UTC)
+	var recent []recentCommit
+	// The same printing seen three times, a second apart.
+	for i := range 3 {
+		at := now.Add(time.Duration(i-3) * time.Second)
+		recent = recordCommit(recent, "skirk", "nonfoil", i, at, false)
+	}
+	seq, since, dup := dupCapture(recent, "skirk", "nonfoil", now)
+	if !dup {
+		t.Fatal("three sightings inside the window should read as a duplicate")
+	}
+	if since != time.Second {
+		t.Errorf("since = %v, want 1s — the newest sighting, not the oldest", since)
+	}
+	if seq != 2 {
+		t.Errorf("captureSeq = %d, want 2 — the newest sighting's capture", seq)
+	}
+}
+
+// touchCommit rolls the anchor forward so a card re-read once a second stays
+// suppressed, rather than the third repeat ageing past a fixed floor.
+func TestTouchCommitRollsTheAnchorForward(t *testing.T) {
+	start := time.Date(2026, 8, 5, 19, 21, 57, 0, time.UTC)
+	recent := recordCommit(nil, "skirk", "nonfoil", 1, start, false)
+
+	// The Skirk burst's real gaps. Anchored on the original commit these sum
+	// past three seconds by the third repeat; re-anchored on each sighting,
+	// none of them ever does.
+	at := start
+	for _, gap := range []time.Duration{931, 1604, 932, 2595} {
+		at = at.Add(gap * time.Millisecond)
+		_, since, dup := dupCapture(recent, "skirk", "nonfoil", at)
+		if !dup {
+			t.Fatalf("at +%v the card should still be inside the window", at.Sub(start))
+		}
+		if since >= sameCardFloor {
+			t.Errorf("since = %v at +%v, want under the %v floor",
+				since, at.Sub(start), sameCardFloor)
+		}
+		recent = touchCommit(recent, "skirk", "nonfoil", at)
+	}
+	// And it never banked a second commit while doing it.
+	if len(recent) != 1 {
+		t.Errorf("recent has %d rows, want 1 — touching must not bank a commit", len(recent))
+	}
+}
+
+// The fire reasons the Go side matches on are the strings the phone sends.
+//
+// `FireNudge` said "nudge" for its whole life while the phone's enum case is
+// `nudged`, so the branch matching on it never once ran and nudge detection
+// silently fell back to the clock the field was added to replace. It surfaced
+// as an unreadable nudge re-look queueing for review: the phantom kill is
+// gated on `fromNudge`, and `fromNudge` was never true.
+//
+// These strings are `RearmCause`'s raw values in
+// scan/hoard-scan/Sources/CardKit/Trigger/Trigger.swift. Changing one without
+// the other is invisible at both compilers and at runtime.
+func TestFireReasonsMatchTheWireValues(t *testing.T) {
+	for _, tc := range []struct{ constant, wire string }{
+		{scan.FireRemoved, "removed"},
+		{scan.FireReplaced, "replaced"},
+		{scan.FireMoved, "moved"},
+		{scan.FireNudge, "nudged"},
+	} {
+		if tc.constant != tc.wire {
+			t.Errorf("constant %q does not match the phone's %q", tc.constant, tc.wire)
+		}
+	}
+}

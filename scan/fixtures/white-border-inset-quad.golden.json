@@ -3,9 +3,7 @@
     "border": "white",
     "borderSource": "footer+ring",
     "candidates": [
-      "Control Magic",
-      "Enchant Creature",
-      "Gain control of target creature."
+      "Control Magic"
     ],
     "finish": "",
     "name": "Control Magic",

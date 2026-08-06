@@ -1,11 +1,18 @@
-# Shipping Hoard Scan on the App Store
+# Shipping Hoardling on the App Store
 
 **Status: placeholder.** Nothing here has been attempted. This is the list of
 what stands between the app as it works today and a submission, written while
 the details are fresh so a future session does not have to rediscover them.
 
 The app currently installs to a registered device via `make scan-ios-install`
-and has never been through TestFlight, App Store Connect, or review.
+and has never been through TestFlight, App Store Connect, or review. See
+[ios-development.md](ios-development.md) for building and running it.
+
+Since 2026-08-05 it is also the *only* scanner: the macOS Continuity Camera path
+was removed. That raises the stakes on everything below — there is no longer a
+fallback if the app is unavailable to someone — and it strengthens the
+recommendation in the next section, since a standalone demo mode is now the only
+way to see the reader work at all without a Mac.
 
 ## The one that decides everything else
 
@@ -109,15 +116,39 @@ Worth recording so nobody re-solves it:
 - **Nothing leaves the local network.** Card reads go to a Mac on the same
   Wi-Fi. No servers, nothing to disclose as data collection.
 
+## The name
+
+**Hoardling**, decided 2026-08-05. It was "hoard scan", which reads as a
+feature of hoard rather than a thing you install — wrong for the one piece of
+the system that lives on another device and has to be found by name. Hoardling
+keeps the brand root, so nobody has to be told what it belongs to.
+
+| Where | Spelling |
+| --- | --- |
+| App Store name | `Hoardling`, subtitle `Card scanner for hoard` |
+| `CFBundleDisplayName` | `hoardling` — lowercase, as `hoard` presents itself |
+| Prose and UI copy | `Hoardling` — a coined proper noun |
+| The macOS helper bundle | `hoard`. It is not Hoardling; only the phone app is |
+
+**Not yet reserved.** No app of that exact name is on the store today, but a
+search only sees published apps — names are also held by unused reservations in
+other developers' accounts, and the only authoritative check is creating the app
+record in App Store Connect. Do that before the name spreads any further. If it
+is gone, `Wyrmling`, `Hoard Lens`, and `Hoardcam` were the runners-up that also
+showed no exact match.
+
+One thing to know before renaming again: `scan.KindRemote` (`internal/scan/scan.go`)
+and `remoteKind` (`ScanKit/App/RemoteController.swift`) both carry the name as a
+wire value, matched by string equality, and it is also what the camera picker
+shows as a device's description. They move together or pairing breaks.
+
 ## Open questions
 
 1. **Is the App Store even the right channel?** The app is only useful to people
    already running hoard on a Mac. Ad-hoc distribution or TestFlight might serve
    the actual audience with none of the review overhead. Worth deciding before
    the work is done, not after.
-2. **What is the app called on the home screen?** `CFBundleDisplayName` is
-   "hoard scan". Fine, but the App Store name has to be unique across the store.
-3. **Does the read pipeline's accuracy matter for review?** No — but see
+2. **Does the read pipeline's accuracy matter for review?** No — but see
    `docs/scanner-limits.md` before making claims in the description. Foreign
    language cards do not resolve, and planes and full-art cards with no printed
    title cannot be read at all.

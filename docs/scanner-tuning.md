@@ -6,6 +6,15 @@ them. Recognition went from 7/14 to 14/14 across these sessions, and every
 failure along the way is now a named regression test, a fixture, or a comment
 at the code it shaped.
 
+> **2026-08-05: the Continuity Camera path was removed.** Everything below that
+> was measured on the macOS Continuity rig — its 1920x1440 ceiling, its
+> unlockable lens, its own read pipeline under `ScanKit/Core/` — is a historical
+> record and is kept as one. The scanner is now the iPhone app alone, reading
+> with `CardKit`. Where a measurement below names a Continuity number, the live
+> figure is the phone's; where it names a file under `ScanKit/Core/` or a
+> `hoard-scan` mode like `--image`, `--probe` or `--auto`, that code is gone and
+> `bin/cardkit-probe` is the equivalent.
+
 ## The tuning loop
 
 The loop that made every failure reproducible offline:
@@ -17,7 +26,7 @@ The loop that made every failure reproducible offline:
 
    ```sh
    rm -f /tmp/scan-telemetry.log
-   HOARD_SCAN_LOG=/tmp/scan-telemetry.log HOARD_SCAN_AUTO=1 HOARD_SCAN_MULTI=1 \
+   HOARD_SCAN_LOG=/tmp/scan-telemetry.log \
    ./hoard --db /tmp/scan-test.db add
    ```
 
@@ -46,16 +55,17 @@ The loop that made every failure reproducible offline:
    session's Sandstone Needle and Glowrider went, unanswerably, because
    re-deriving the verdict offline means refetching every printing.
 
-2. **Turn problem captures into fixtures.** `HOARD_SCAN_DEBUG_DIR` saves
-   every capture's raw and OCR-processed frames. `--image` replays a frame
-   through the *identical* pipeline:
+2. **Turn problem captures into fixtures.** `HOARD_SCAN_DEBUG_DIR` asks the
+   phone to send each capture's full-resolution still back, and
+   `cardkit-probe --image` replays one through the *identical* pipeline:
 
    ```sh
-   HOARD_SCAN_DEBUG_DIR=$PWD/scan-fixtures ./bin/hoard-scan.app/Contents/MacOS/hoard-scan --auto
-   ./bin/hoard-scan.app/Contents/MacOS/hoard-scan --image scan-fixtures/capture-3-ocr.png --rotate 0
+   HOARD_SCAN_DEBUG_DIR=$PWD/scan-fixtures ./hoard add
+   make cardkit
+   ./bin/cardkit-probe --image scan-fixtures/capture-3-ocr.png --rotate 0
    ```
 
-   Once a problem card is on disk, iterate offline: change the helper, re-run
+   Once a problem card is on disk, iterate offline: change the reader, re-run
    the sweep over every fixture, and diff. Session directories stay out of
    the repo (gitignored — the frames are photos of your desk), but a frame
    that pinned a decision gets distilled into `scan/fixtures/` with a golden
@@ -100,8 +110,9 @@ disruption) rather than mistaking blur for motion, and defers a ready fire
 until the lens settles — mid-hunt captures were the out-of-focus scans, and
 hunt-driven rectangle flicker was most of the settle-time tail (71 flicker
 resets in a 15-card session). `focus hunt began/ended` lines appear in the
-`HOARD_SCAN_AUTO=1` trace; the capability line at session start reports what
-the device granted (`focus=af+lock`, `af`, or `fixed`).
+trace, which now reaches the same log by way of the phone's trace frames; the
+capability line at session start reports what the device granted
+(`focus=af+lock`, `af`, or `fixed`).
 
 ## The tuning ledger
 
@@ -131,6 +142,51 @@ row rather than inheriting the one above. 61 captures, 48 commits, 2026-08-04.
 The phone is faster than the pipe it replaced and reads more reliably — not one
 capture in 61 came back with nothing — but it spends that lead on extra
 captures. Both facts have the same cause, and it is not the trigger.
+
+### 2026-08-05 — a card that moved counted as a card that arrived
+
+27 outcomes, **8 of them duplicate writes**; Skirk Volcanist committed five
+times in six seconds while sitting on the desk. Every duplicate carried
+`fireReason: replaced`.
+
+**The cause is structural, not a threshold.** `Trigger.hold()` calls a card
+replaced when the picture inside the window *pinned at the last shutter*
+changes past `cardChanged`, while a box still overlaps `watched`. Sliding a
+card satisfies both clauses — the pinned window now sees a different part of
+the card, and the card's new box still overlaps its old one. The measurement
+that set `cardChanged = 12` compared **static (2.7)** against **swapped in
+place (29-50)**; it never measured **moved**.
+
+Same-printing gaps in that session, against the swap floor already fitted here
+(60 gaps, never under 3856ms):
+
+| gap | verdict |
+|---|---|
+| 0.91s, 0.93s, 0.93s, 0.96s, 1.60s, 2.60s | impossible as swaps |
+| 5.44s, 7.12s | plausible as swaps, still the same card sitting there |
+
+**Two fixes, one per half.**
+
+- The trigger gained a `moved` rearm cause. When the pinned window says the
+  picture changed, it now asks a second question — does any live box still
+  *look like* the card that was shot, sampled through the box itself rather
+  than the pinned window. A card that slid keeps its face; a new card does not.
+  `movedFaceMax = 20` sits in the gap between jitter (13.6 for the same card
+  through a shifted window) and a different card (29-50). **Interpolated, not
+  measured at that value** — see below.
+- The Mac stopped treating `replaced` as proof. A same-printing repeat is
+  dropped when the source says `moved`, or when it lands inside
+  `sameCardFloor = 3s`, whichever fires first. The floor re-anchors on every
+  sighting, so a card announcing itself once a second stays suppressed.
+
+**Two instrumentation bugs found in the process, both fixed.** `settleMS` had
+been printing `0` on every fire since it was added — `count()` changes phase
+before returning `.fire`, and `observe`'s `defer` zeroed the counter before the
+caller read the snapshot, so the largest single term in the delay a person feels
+had never once been visible. And the delta that *decides* `replaced` was never
+traced at all. The trigger line now carries `hold=` and `sinceCapture=`, which
+is what `movedFaceMax` should be fitted against on the next session rather than
+interpolated.
 
 **Where the loop goes.** shutter 149ms, read 302ms, phone total 447ms, `net`
 (wire + the Mac's resolve) 8ms median and 45ms at p90. The network is not the
@@ -802,9 +858,9 @@ costs a queue entry rather than a card. Unfixed, and known.
 ### Measuring which kinds of card parse at all
 
 `scan/corpus/` samples card images stratified by frame era × border colour and
-scores the helper against known answers, per stratum:
+scores the reader against known answers, per stratum:
 
-    ./scan/corpus/fetch.sh && ./scan/corpus/sweep.sh
+    ./scan/corpus/fetch.sh && make cardkit-score
 
 It is the only check that isolates frame-era parsing from capture quality —
 the fixtures pin decisions on real photographs, `TestSessionReplay` measures a
@@ -857,10 +913,15 @@ lines. See the capability ledger below.*
 
 ## Camera capability ledger
 
-What the camera admits to, rather than what it is believed to do. Regenerate
-with `hoard-scan --probe`, which dumps every format and control for every
-camera the platform will name, and runs the session experiment below. Measured
-2026-08-04, macOS 15.6 (24G84), iPhone 16 (`iPhone17,3`) over Continuity.
+What the camera admitted to, rather than what it was believed to do. Measured
+2026-08-04, macOS 15.6 (24G84), iPhone 16 (`iPhone17,3`) over Continuity, with
+`hoard-scan --probe`.
+
+*Historical.* The probe and the Continuity path it interrogated were both
+removed on 2026-08-05, so this ledger can no longer be regenerated — it is kept
+because it is the evidence for why the phone replaced that path, and the whole
+section below is the argument. The phone's own numbers are in the sections after
+it.
 
 **Continuity Camera formats — eight, topping out at 1920x1440.**
 

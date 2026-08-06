@@ -1,11 +1,9 @@
 [
   {
-    "border": "white",
-    "borderSource": "footer",
+    "border": "",
+    "borderSource": "",
     "candidates": [
-      "Sacred Ground",
-      "Enchantment",
-      "opponent controls causes a land to"
+      "Sacred Ground"
     ],
     "finish": "",
     "name": "Sacred Ground",

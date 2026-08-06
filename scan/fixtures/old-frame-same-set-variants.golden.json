@@ -1,17 +1,16 @@
 [
   {
-    "border": "black",
-    "borderSource": "footer+ring",
+    "border": "",
+    "borderSource": "",
     "candidates": [
       "Cephalid Looter",
-      "Creature - Cephalid",
-      "@: Target player draws a card, then"
+      "2"
     ],
     "finish": "",
     "name": "Cephalid Looter",
     "number": "",
     "set": "",
     "source": "crop",
-    "year": 2001
+    "year": 0
   }
 ]

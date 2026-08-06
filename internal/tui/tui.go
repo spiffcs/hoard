@@ -30,10 +30,13 @@ type Searcher interface {
 // Scanner disables scanning); errors are surfaced as a banner, so the add
 // session continues.
 type Scanner interface {
-	// Devices lists the cameras available to capture from. In practice these are
-	// iPhones offered via Continuity Camera; webcams are not eligible.
+	// Devices lists the phones available to capture from: iPhones running
+	// Hoardling, found on the local network. There is no other kind of
+	// source — the Mac's own cameras were never eligible (a fixed, user-facing
+	// lens cannot be aimed at a card on the desk) and the Continuity Camera
+	// path that used to sit here has been removed.
 	Devices(ctx context.Context) ([]scan.Device, error)
-	// Open starts a capture session on the given camera, leaving its window up
+	// Open starts a capture session on the given phone, holding its camera up
 	// until the session is closed. deviceID is empty to let the scanner pick.
 	Open(ctx context.Context, deviceID string) (ScanSession, error)
 	// Pair records the code for a device whose Devices entry reported
@@ -43,33 +46,19 @@ type Scanner interface {
 	Pair(deviceID, code string) error
 }
 
-// ScanSession is a live camera window. It stays open across many captures, so a
-// run of cards is scanned without reopening the camera between each one — which
-// would cost a warm-up every time and force the user back to the keyboard to
-// re-trigger it.
+// ScanSession is a live link to the phone's camera. It stays open across many
+// captures, so a run of cards is scanned without reopening the camera between
+// each one — which would cost a browse, a handshake and a warm-up every time
+// and force the user back to the keyboard to re-trigger it.
 type ScanSession interface {
 	// Capture takes a photo; the result arrives on Events as a scan event.
 	Capture() error
-	// Rotate turns the preview a quarter-turn.
-	Rotate(left bool) error
-	// Auto turns the helper's hands-free trigger on or off. Only sent to
-	// helpers that advertised the feature on their ready event.
+	// Auto turns the phone's hands-free trigger on or off. Only sent to
+	// sources that advertised the feature on their ready event.
 	Auto(on bool) error
-	// AutoFraming turns the camera's auto-framing (Center Stage) on or off —
-	// the only framing adjustment macOS offers. The helper starts every
-	// session with it off, since its subject-tracking crop frames cards too
-	// close. Only sent to helpers that advertised "framing" on their ready
-	// event.
-	AutoFraming(on bool) error
 	// Torch turns the phone's flashlight on or off to light the card. Only
-	// sent to helpers that advertised "torch" on their ready event — which
-	// Continuity Camera currently never does (the flashlight isn't bridged
-	// to the Mac); the control exists for the day it is.
+	// sent to sources that advertised "torch" on their ready event.
 	Torch(on bool) error
-	// VideoEffects opens the system's Video Effects panel, where Studio
-	// Light — the software lighting that IS available — lives. Only sent to
-	// helpers that advertised "effects" on their ready event.
-	VideoEffects() error
 	// Rearm nudges a parked auto trigger back to searching; the caller
 	// discards the re-read if it is the card it already processed.
 	Rearm() error
@@ -79,10 +68,10 @@ type ScanSession interface {
 	// resolution rather than capture time so a nudge-armed capture is
 	// never silent.
 	Chime() error
-	// Result reports a resolved card's price outcome for the camera HUD's
-	// price treatment: flash + tier sound when Tier is set, a silent update
-	// of the running session counter when Total is set. Only sent to
-	// helpers that advertised "hud" on their ready event; older helpers get
+	// Result reports a resolved card's price outcome for the phone's HUD:
+	// flash + tier sound when Tier is set, a silent update of the running
+	// session counter when Total is set. Only sent to sources that
+	// advertised "hud" on their ready event; older ones get
 	// Chime instead. One sound per moment: an auto-committed card sounds
 	// once, a reviewed card sounds at queue time (the question) and again
 	// at confirm time (the answer, with the amount).
@@ -91,9 +80,9 @@ type ScanSession interface {
 	// open — the Go side's slice of the per-card latency breakdown. Best
 	// effort and silent: telemetry must never affect the session.
 	Note(line string)
-	// Events streams what the camera window reports; closed when the session is.
+	// Events streams what the phone reports; closed when the session is.
 	Events() <-chan scan.Event
-	// Close ends the session and shuts the window.
+	// Close ends the session and releases the phone's camera.
 	Close() error
 }
 
@@ -141,6 +130,15 @@ type SummaryEntry struct {
 // the terminal scrollback records every unattended write.
 type Summary struct {
 	Entries []SummaryEntry
+	// Ignored counts captures that identified nothing — no name, no collector
+	// block — and were dropped rather than queued for review.
+	//
+	// A count rather than an entry each, because there is nothing to say about
+	// one: the whole point is that the capture held no card. It is reported at
+	// all because silently discarding captures and correctly discarding them
+	// look identical from the terminal, and a scanner quietly eating real cards
+	// should be visible in the scrollback.
+	Ignored int
 }
 
 // Count returns how many entries of one kind the session produced.
@@ -181,5 +179,7 @@ func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName str
 	if err != nil {
 		return Summary{}, err
 	}
-	return fm.summary, fm.err
+	sum := fm.summary
+	sum.Ignored = fm.ignored
+	return sum, fm.err
 }

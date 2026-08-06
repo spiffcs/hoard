@@ -150,6 +150,9 @@ func siblingSuffix(it queueItem) string {
 	if it.fromNudge {
 		s += " nudged"
 	}
+	if it.fromMoved {
+		s += " moved"
+	}
 	if it.numberOverridden {
 		s += " number-overridden"
 	}
@@ -162,8 +165,13 @@ func siblingSuffix(it queueItem) string {
 type queueItem struct {
 	id        int
 	raw       scan.Card
-	siblings  int    // how many cards the same capture yielded
-	fromNudge bool   // the capture was fired by our rearm nudge, not the scene
+	siblings  int  // how many cards the same capture yielded
+	fromNudge bool // the capture was fired by our rearm nudge, not the scene
+	// fromMoved marks a capture the source fired because a card *moved*: a box
+	// held the watched spot and still looked like the card already read. It is
+	// the source declining to claim a placement it cannot see, and the
+	// duplicate rules take it at its word.
+	fromMoved bool
 	canonical string // "" when the name never resolved
 	ocrLine   string // the line that matched, or the best guess on a miss
 	lineIdx   int    // which OCR line matched; 0 is the helper's title guess
@@ -311,6 +319,30 @@ func hasCollectorBlock(c scan.Card) bool {
 	})
 }
 
+// hasPrintingEvidence reports whether the capture read anything off a card's
+// footer at all — a set code, a collector number, a copyright year, or one of
+// those on an alternative block.
+//
+// Deliberately weaker than hasCollectorBlock, and asking a different question.
+// hasCollectorBlock asks "can this block *name* a card", which is why it
+// refuses a copyright-sourced number: those misread digits often enough that
+// resolving from one would invent cards. This asks only "was a card in frame",
+// and for that a suspect number is still evidence — a printing was read, the
+// digits are merely not trustworthy enough to act on alone.
+//
+// The distinction is what keeps the junk filter from eating a real card. A
+// capture of ability text with an empty footer identified nothing and is noise;
+// a capture whose title read as rules copy but whose footer says MSH/412 is a
+// card, and belongs in review where a person can finish the job.
+func hasPrintingEvidence(c scan.Card) bool {
+	if c.SetCode != "" || c.CollectorNumber != "" || c.CopyrightYear != 0 {
+		return true
+	}
+	return slices.ContainsFunc(c.CollectorAlts, func(a scan.CollectorAlt) bool {
+		return a.Set != "" || a.Number != "" || a.Year != 0
+	})
+}
+
 // blockSearcher is implemented by searchers that can resolve a printing from
 // its collector block alone.
 type blockSearcher interface {
@@ -351,66 +383,45 @@ type localOnlySearcher interface {
 	NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error)
 }
 
-// sourceTuning is the two timing constants, fitted per scan source.
+// nudgeDelay is the quiet period after a processed scan before the phone is
+// nudged to re-arm.
 //
-// They were both measured against the local Continuity pipe and inherited by
-// the phone unexamined, which the sprint plan flagged as the thing to fix once
-// there was a session to fit against. There now is; see the remote row in
-// docs/scanner-tuning.md.
-type sourceTuning struct {
-	// nudgeDelay is the quiet period after a processed scan before the helper
-	// is nudged to re-arm.
-	nudgeDelay time.Duration
-	// nameTimeout bounds the Scryfall escalation for a line the local catalog
-	// could not place.
-	nameTimeout time.Duration
-}
-
-// tuningFor picks the constants for a source.
-func tuningFor(kind string) sourceTuning {
-	if kind == scan.KindRemote {
-		return sourceTuning{nudgeDelay: remoteNudgeDelay, nameTimeout: remoteNameTimeoutRemote}
-	}
-	return sourceTuning{nudgeDelay: nudgeBaseDelay, nameTimeout: remoteNameTimeout}
-}
-
-// remoteNudgeDelay is the phone's quiet period, and it is much longer than the
-// local one because the local value never once did its job here.
-//
-// Measured over a 61-capture session: the gap from a result to the next capture
-// was *never* under 2500ms — the fastest was 3856ms, the median 4896ms. So the
-// local delay fired on every single card, during the operator's swap rather
-// than after it, and 43 of 61 resolves came back tagged as nudged. Its cost is
-// not nothing: each one re-arms mid-swap and buys an extra capture, which is
-// most of the gap between this session's 1.27 captures per commit and the
-// ledger's 1.1.
+// There used to be a second, shorter value here for the local Continuity pipe,
+// picked by source kind. The phone is the only source now, and its number is
+// the one that was actually fitted against a session: measured over 61
+// captures, the gap from a result to the next capture was *never* under 2500ms
+// — the fastest was 3856ms, the median 4896ms. The old local delay would have
+// fired on every single card, during the operator's swap rather than after it,
+// and 43 of 61 resolves came back tagged as nudged. That is not free: each one
+// re-arms mid-swap and buys an extra capture, which is most of the gap between
+// that session's 1.27 captures per commit and the ledger's 1.1.
 //
 // 5500ms sits above the observed median swap and below the p75 of 7047ms, so
 // it fires when a card is genuinely parked and stays quiet when someone is
-// simply working at their own pace.
-const remoteNudgeDelay = 5500 * time.Millisecond
+// simply working at their own pace. See the remote row in
+// docs/scanner-tuning.md.
+const nudgeDelay = 5500 * time.Millisecond
 
-// remoteNameTimeoutRemote is tighter than the local bound because the remote
-// loop has less headroom to give away, not more.
+// nameTimeout bounds the Scryfall escalation for a line the local catalog could
+// not place.
 //
-// The budget is 700ms shutter-to-result. The phone's own half of that measured
-// 447ms median and 472ms at p90, leaving roughly 230ms before the rhythm the
-// sounds depend on starts to slip. A 500ms escalation would blow it outright.
-// 250ms still catches a catalog miss on a fast network and gives up before the
-// card stops feeling immediate.
-const remoteNameTimeoutRemote = 250 * time.Millisecond
-
-// remoteNameTimeout bounds a Scryfall lookup. The catalog has already answered
-// by this point; the network call only catches a card printed since the last
-// catalog build, which is a bonus and must never be a stall. Past this the card
-// queues, which is a far better outcome than a session that freezes.
-const remoteNameTimeout = 500 * time.Millisecond
+// The catalog has already answered by this point; the network call only catches
+// a card printed since the last catalog build, which is a bonus and must never
+// be a stall. Past this the card queues, which is a far better outcome than a
+// session that freezes.
+//
+// 250ms rather than the 500ms the local pipe used, because this loop has less
+// headroom to give away, not more. The budget is 700ms shutter-to-result; the
+// phone's own half of that measured 447ms median and 472ms at p90, leaving
+// roughly 230ms before the rhythm the sounds depend on starts to slip. A 500ms
+// escalation would blow it outright.
+const nameTimeout = 250 * time.Millisecond
 
 // searchLine resolves one OCR line, choosing how far off-machine it may go.
 // Fallback lines stay catalog-only (verdict refuses to auto-commit them
 // anyway); line 0 escalates only when it reads like a title.
 func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
-	hasLocal bool, line string, i int, tune sourceTuning,
+	hasLocal bool, line string, i int,
 ) (*scryfall.Card, cardname.Match, error) {
 	if !hasLocal {
 		return s.NamedFuzzy(ctx, line)
@@ -422,7 +433,7 @@ func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
 	if i > 0 || !titleLikely(line) {
 		return card, m, err
 	}
-	rctx, cancel := context.WithTimeout(ctx, tune.nameTimeout)
+	rctx, cancel := context.WithTimeout(ctx, nameTimeout)
 	defer cancel()
 	rc, rm, rerr := s.NamedFuzzy(rctx, line)
 	// A timeout is this policy working, not a failure to report. Surfacing it
@@ -445,7 +456,7 @@ func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
 // ghost — and it charged a lot: one live session spent 19s across 15 failed
 // resolutions, the worst single line taking 4.8s, against 0-15ms for every
 // catalog hit.
-func resolveName(ctx context.Context, s Searcher, lines []string, tune sourceTuning) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
+func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
 	var firstErr error
 	local, hasLocal := s.(localOnlySearcher)
 	for i, line := range lines {
@@ -466,7 +477,7 @@ func resolveName(ctx context.Context, s Searcher, lines []string, tune sourceTun
 		// returned nothing after ~600ms each, the worst loop costing 3.9s.
 		// So the two layers are split here, and only a line that looks like a
 		// title is allowed off the machine.
-		card, m, ferr := searchLine(ctx, s, local, hasLocal, line, i, tune)
+		card, m, ferr := searchLine(ctx, s, local, hasLocal, line, i)
 		if ferr != nil {
 			if firstErr == nil {
 				firstErr = ferr
@@ -490,14 +501,14 @@ func resolveName(ctx context.Context, s Searcher, lines []string, tune sourceTun
 func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	gen := m.resolveGen
 	ctx, s := m.ctx, m.searcher
-	tune := tuningFor(m.cameraKind)
 	fromNudge := m.lastScanNudged
+	fromMoved := m.lastScanMoved
 	captureSeq := m.captureSeq
 	return func() tea.Msg {
 		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
-			captureSeq: captureSeq}
+			fromMoved: fromMoved, captureSeq: captureSeq}
 		tName := time.Now()
-		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines(), tune)
+		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
 		nameDur := time.Since(tName)
 		var printsDur time.Duration
 		it.canonical, it.ocrLine, it.lineIdx, it.match = canonical, ocr, idx, match
@@ -1141,6 +1152,27 @@ const (
 	dupKeep   = 10
 )
 
+// sameCardFloor is how soon after seeing a printing another sighting of it can
+// possibly be a second physical card.
+//
+// Under it, a repeat is the card that is already there — jostled, or re-read
+// after the trigger mistook motion for a placement — and committing it writes a
+// copy nobody owns.
+//
+// The number is measured, not chosen. Over 60 recorded result-to-capture gaps
+// (the session `nudgeDelay` was fitted from), a human swapping a card was
+// *never* faster than 3856ms. The session that prompted this floor committed
+// eight duplicates whose same-printing gaps were 0.91, 0.93, 0.93, 0.96, 1.60
+// and 2.60s — every one of them below the fastest swap a person has been
+// observed making, and one card committed five times in six seconds while
+// sitting still on the desk.
+//
+// 3s sits above every false repeat and below the fastest real one, so a
+// deliberate playset scanned at human speed still commits every copy. Two
+// copies visible in a *single* frame are a different case entirely and are
+// never subject to this — see the captureSeq branch in onResolveDone.
+const sameCardFloor = 3 * time.Second
+
 type recentCommit struct {
 	scryfallID string
 	finish     string
@@ -1152,16 +1184,23 @@ type recentCommit struct {
 	finishGuessed bool
 }
 
-// dupCapture reports whether the same printing-and-finish was auto-committed
-// within the time window, and by which capture — the discriminator between a
-// fanned playset and a lingering neighbour.
-func dupCapture(recent []recentCommit, id, finish string, now time.Time) (captureSeq int, dup bool) {
-	for _, rc := range recent {
+// dupCapture reports whether the same printing-and-finish was seen within the
+// time window, by which capture, and how long ago — the discriminators between
+// a fanned playset, a lingering neighbour, and a card that only moved.
+//
+// It answers with the *most recent* match. It used to answer with the first one
+// in the slice, which is the oldest: with five sightings of one card banked, the
+// age it reported was the age of the first, so any question about "how long
+// since I last saw this" got an answer several seconds too large. That is a bug
+// on its own and became load-bearing the moment sameCardFloor existed.
+func dupCapture(recent []recentCommit, id, finish string, now time.Time) (captureSeq int, since time.Duration, dup bool) {
+	for i := len(recent) - 1; i >= 0; i-- {
+		rc := recent[i]
 		if rc.scryfallID == id && rc.finish == finish && now.Sub(rc.at) <= dupWindow {
-			return rc.captureSeq, true
+			return rc.captureSeq, now.Sub(rc.at), true
 		}
 	}
-	return 0, false
+	return 0, 0, false
 }
 
 // recordCommit appends to the window, pruning it to a fixed size.
@@ -1171,6 +1210,26 @@ func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now 
 		captureSeq: captureSeq, at: now, finishGuessed: finishGuessed})
 	if len(recent) > dupKeep {
 		recent = recent[len(recent)-dupKeep:]
+	}
+	return recent
+}
+
+// touchCommit re-stamps the most recent sighting of a printing without banking
+// a new one, so sameCardFloor measures from the last time the card was *seen*
+// rather than the last time it was written.
+//
+// The difference is the whole guard. A card re-read every second anchors each
+// repeat on the original commit otherwise, so the third repeat lands outside a
+// three-second floor and commits — which is exactly the burst this exists to
+// stop (five commits of one card at 0.93s, 1.60s, 0.93s and 2.60s apart: two
+// suppressed, two through). Rolling the anchor forward suppresses all of them
+// for as long as the card keeps announcing itself.
+func touchCommit(recent []recentCommit, id, finish string, now time.Time) []recentCommit {
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].scryfallID == id && recent[i].finish == finish {
+			recent[i].at = now
+			return recent
+		}
 	}
 	return recent
 }
@@ -1200,12 +1259,22 @@ func recordName(recent []recentName, name string, now time.Time) []recentName {
 // seenRecently reports whether this exact name was processed inside the
 // window.
 func seenRecently(recent []recentName, name string, now time.Time) bool {
-	for _, rn := range recent {
+	_, ok := seenWithin(recent, name, now)
+	return ok
+}
+
+// seenWithin is seenRecently plus how long ago, taken from the *most recent*
+// sighting — the same newest-wins rule dupCapture follows, and for the same
+// reason: a card seen five times running would otherwise report the age of the
+// first sighting and read as older than it is.
+func seenWithin(recent []recentName, name string, now time.Time) (time.Duration, bool) {
+	for i := len(recent) - 1; i >= 0; i-- {
+		rn := recent[i]
 		if now.Sub(rn.at) <= dupWindow && strings.EqualFold(rn.name, name) {
-			return true
+			return now.Sub(rn.at), true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // similarRecent finds a recently processed name the text plausibly is — the
@@ -1237,8 +1306,6 @@ func similarRecent(recent []recentName, text string, now time.Time) (string, boo
 // to the scheduling generation; any newer scan or schedule voids it.
 type nudgeMsg struct{ gen int }
 
-const nudgeBaseDelay = 2500 * time.Millisecond
-
 // nudgeEchoWindow is how long after a sent nudge a scan counts as possibly
 // nudge-originated. A window rather than a consumed flag, because a real scan
 // can race the nudge onto the wire; a new card inside the window is never
@@ -1252,7 +1319,7 @@ const nudgeEchoWindow = 4 * time.Second
 func (m *model) scheduleNudge() tea.Cmd {
 	m.nudgeGen++
 	gen := m.nudgeGen
-	delay := tuningFor(m.cameraKind).nudgeDelay
+	delay := nudgeDelay
 	return func() tea.Msg {
 		time.Sleep(delay)
 		return nudgeMsg{gen: gen}

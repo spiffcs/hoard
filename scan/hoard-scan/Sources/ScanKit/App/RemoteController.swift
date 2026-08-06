@@ -1,5 +1,5 @@
-// macOS only. This is the camera, window and HUD half of ScanKit; the read
-// pipeline under Core/ is what compiles for iOS. See Package.swift.
+// macOS only. ScanKit is the Mac end of the link: the translator, and the
+// optional mirror window it can draw. See Package.swift.
 #if os(macOS)
 
 import AppKit
@@ -7,14 +7,15 @@ import Foundation
 import ScanLink
 import ScanWire
 
-/// RemoteController is the scan session when the camera is an iPhone app.
+/// RemoteController is the scan session. The camera is an iPhone running the
+/// companion app, reached over the network.
 ///
 /// It owns no camera, no trigger and no read pipeline — the phone has all
 /// three. What it does is translate: frames from the link become NDJSON on
-/// stdout, stdin verbs become frames on the link, and the Go side cannot tell
-/// the difference. That is the whole design. `internal/scan/session_darwin.go`
-/// is untouched, and so is every capability the parent negotiates through the
-/// `ready` event's feature list.
+/// stdout, stdin verbs become frames on the link, and the Go side talks to a
+/// pipe. That is the whole design, and it is why every capability the parent
+/// negotiates arrives through the `ready` event's feature list rather than
+/// being assumed here.
 ///
 /// **Headless by default.** The phone shows the preview, the price and the
 /// outline cue, and plays the sounds; the terminal shows the queue. There is
@@ -29,8 +30,6 @@ final class RemoteController: NSObject {
     private var window: NSWindow?
     private var preview: RemotePreviewLayer?
     private let hud = PriceHUD()
-    private let outlines = OutlineOverlay()
-    private var rotation: Int
 
     /// The pairing code, remembered between runs by the Go side and handed back
     /// on the command line. A session with no code cannot pair, and saying so
@@ -47,10 +46,9 @@ final class RemoteController: NSObject {
     /// network fault rather than a typo.
     private let verifyOnly: Bool
 
-    init(deviceID: String?, rotation: Int, code: PairingCode, mirror: Bool,
+    init(deviceID: String?, code: PairingCode, mirror: Bool,
          verifyOnly: Bool = false) {
         self.requestedDevice = deviceID
-        self.rotation = rotation
         self.code = code
         self.mirror = mirror
         self.verifyOnly = verifyOnly
@@ -58,9 +56,9 @@ final class RemoteController: NSObject {
     }
 
     func start() {
-        // The same patience the local path shows a Continuity Camera, for the
-        // same reason: a phone a beat slow to advertise is not an absent phone.
-        let services = browser.browse(seconds: continuityWait)
+        // A phone a beat slow to advertise is not an absent phone, so this
+        // waits rather than concluding on the first empty answer.
+        let services = browser.browse(seconds: phoneWait)
         let chosen = requestedDevice.flatMap { id in services.first { $0.id == id } }
             ?? services.first
         guard let chosen else {
@@ -222,7 +220,7 @@ final class RemoteController: NSObject {
                 Data("scan: link failed: \(failure.detail)\n".utf8))
             emit(Event(event: "error", message: failure.reason))
         case .cancelled:
-            emit(Event(event: "closed", rotation: rotation))
+            emit(Event(event: "closed"))
             exit(0)
         default:
             break
@@ -249,7 +247,7 @@ final class RemoteController: NSObject {
 
     func shutdown() {
         session?.cancel()
-        emit(Event(event: "closed", rotation: rotation))
+        emit(Event(event: "closed"))
         exit(0)
     }
 
@@ -273,12 +271,12 @@ final class RemoteController: NSObject {
         view.wantsLayer = true
         view.layer = layer
         preview = layer
-        outlines.attach(to: layer, bounds: view.bounds)
-        view.outlines = outlines
         hud.attach(to: layer, scale: win.backingScaleFactor)
         view.hud = hud
-        // Keys are deliberately not wired. The phone is the camera and the
-        // terminal is the controller; a mirror window that also accepted a
+        // No outline overlay and no keys. The phone draws its own cue over its
+        // own preview, so tracing one again here would be a second drawing of
+        // the same fact a frame later; and the phone is the camera while the
+        // terminal is the controller, so a mirror window that also accepted a
         // shutter press would be a third place to drive the session from.
         win.contentView = view
         win.makeKeyAndOrderFront(nil)
@@ -290,21 +288,26 @@ final class RemoteController: NSObject {
 /// The `kind` a network source carries in the device list. The Go side matches
 /// on this to decide whether a chosen device needs a pairing code, so it is a
 /// contract rather than a label — changing it silently breaks the picker.
-public let remoteKind = "Hoard Scan"
+public let remoteKind = "Hoardling"
 
 /// How long a pairing check waits for the phone to answer. Long enough for a
 /// handshake on a slow network, short enough that a wrong code fails while the
 /// user is still looking at the screen.
 let verifyTimeout = 6.0
 
-/// How long to browse for phones in `--list-devices`. Shorter than the
-/// Continuity wait: Bonjour on a local network answers fast, and this cost is
-/// paid every time the picker opens.
+/// How long to wait for the chosen phone to advertise itself when opening a
+/// session. Override with HOARD_SCAN_WAIT (seconds) on a slow network.
+let phoneWait = ProcessInfo.processInfo.environment["HOARD_SCAN_WAIT"]
+    .flatMap(Double.init) ?? 2.5
+
+/// How long to browse for phones in `--list-devices`. Shorter than `phoneWait`:
+/// Bonjour on a local network answers fast, and this cost is paid every time
+/// the picker opens, whereas opening a session is a once-per-run patience.
 let remoteBrowseWait = 1.5
 
 /// noPhoneAppMessage is the one place the "open the app" guidance is worded.
 let noPhoneAppMessage = """
-no iPhone running hoard scan was found on this network. Open the app on your \
+no iPhone running Hoardling was found on this network. Open the app on your \
 phone, make sure both devices are on the same Wi-Fi (or the phone is plugged \
 in), and check the pairing code matches.
 """
