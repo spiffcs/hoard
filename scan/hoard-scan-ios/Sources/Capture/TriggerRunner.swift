@@ -175,7 +175,13 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             }), i < lastFaces.count else { return nil }
             return lastFaces[i]
         }
-        trigger.captureFinished(scene: lastScene, cardScene: cardFace)
+        let cardBox = watched.flatMap { box -> CGRect? in
+            lastBoxes.first(where: { overlapFraction($0, box) > 0.5 })
+        }
+        // The window travels with the picture. Every later comparison samples
+        // through this exact rect, which is what keeps a motionless card
+        // reading as motionless.
+        trigger.captureFinished(scene: lastScene, cardScene: cardFace, cardBox: cardBox)
         busy.clear()
         Task { @MainActor in self.onPhase?(self.trigger.phase) }
     }
@@ -240,11 +246,20 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         // One signature per box, sampled inside it. Costs the same 384 point
         // samples each as the frame-wide grid, and it is what lets the trigger
         // tell a card laid over another from the same card sitting still.
-        let faces = boxes.map { sceneSignature(buffer, in: $0) }
-        lastFaces = faces
+        // One signature, sampled through the window the shutter fired on and
+        // held fixed since — never through this frame's own box. A per-box
+        // signature tracks the detector's jitter, and `sceneSignature` point
+        // samples one pixel per cell, so a card that has not moved reads as a
+        // different card. See `TriggerSample.holdScene` for the measurement.
+        //
+        // Cheaper too: one grid instead of one per candidate box.
+        let held = trigger.snapshot.capturedBox.map { sceneSignature(buffer, in: $0) }
         lastBoxes = boxes
+        // The per-box faces are still sampled, but only so the shutter can
+        // record the card it fired on. Nothing compares them frame to frame.
+        lastFaces = boxes.map { sceneSignature(buffer, in: $0) }
         let sample = TriggerSample(
-            boxes: boxes, scene: scene, boxScenes: faces,
+            boxes: boxes, scene: scene, holdScene: held,
             // A hunting lens produces blur, and blur is indistinguishable from
             // stillness to a rectangle detector. Reading the device rather than
             // assuming settled is what lets the streak be shortened safely: the

@@ -1482,30 +1482,46 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	//
 	// The foil case does not need it. A card actually laid down reports
 	// `removed` or `replaced`, so `fromNudge` is false and this gate never runs.
+	// A better read of a card still sitting unresolved in review replaces it,
+	// however this capture fired.
+	//
+	// This ran only for nudge echoes and that was too narrow. The shutter often
+	// fires while the card is still being lowered: the name reads off the top
+	// of the card but the footer does not, so it queues as "printing
+	// unverified", and about a second later the settled card is captured again
+	// and reads perfectly. That second capture arrives as `replaced` — the held
+	// window genuinely did change while the hand withdrew — so `fromNudge` is
+	// false and the upgrade was skipped entirely. Observed live in a stacking
+	// run: three pairs, each a queued phantom one second ahead of the correct
+	// commit of the same card.
+	//
+	// Safe to widen because "better" is strictly higher printing evidence. Two
+	// real copies scanned in a row read *equally* well, so neither displaces
+	// the other and both survive — the discriminator is the quality of the
+	// read, not the timing, which is what makes this something other than a
+	// duplicate rule in disguise.
+	//
+	// Only ever a queued entry, never the one under the cursor: swapping a card
+	// out from under someone mid-cascade is worse than a stale rank.
+	upgraded, replacedQueued := m.upgradeQueued(it)
+	if replacedQueued {
+		m.note("outcome %q re-read: %s beats the queued %s, replacing it",
+			it.canonical, it.rank, upgraded)
+	}
+
 	if it.fromNudge && it.canonical != "" && seenRecently(m.recentNames, it.canonical, now) {
-		// Unless this look is better than the one still sitting in review.
-		//
 		// The swallow assumes an echo is the same card saying the same thing,
 		// which is true when the first look already committed. It is not true
-		// when the first look *queued*: then the card is unresolved, the echo
-		// is a second reading of it, and the second reading is often the better
-		// one because the operator's hand has left the frame.
+		// when the first look *queued*: then the card is unresolved, this look
+		// is a second reading of it, and it has just replaced that entry — so
+		// swallowing it too would leave the card with no representation at all.
 		//
 		// Observed live: Prodigal Sorcerer's first capture abstained on the
 		// border ("ring not uniform") and queued as "printing unverified: 23
 		// printings"; its echo read the border cleanly, ranked year+border, and
 		// was thrown away as a duplicate. The worse read won purely by
 		// arriving first.
-		//
-		// Only ever a queued entry, never the one under the cursor: swapping a
-		// card out from under someone mid-cascade is worse than a stale rank.
-		if upgraded, ok := m.upgradeQueued(it); ok {
-			m.note("outcome %q re-read: %s beats the queued %s, replacing it",
-				it.canonical, it.rank, upgraded)
-			// Fall through to the normal path, which commits it if the new
-			// evidence clears the bar and re-queues it with the better
-			// printing if it does not.
-		} else {
+		if !replacedQueued {
 			m.note("outcome %q dropped: nudge echo of a card already handled", it.canonical)
 			m.nudgeDrops++
 			m.recentNames = recordName(m.recentNames, it.canonical, now)
@@ -1513,6 +1529,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			m.statusErr = false
 			return m, nil
 		}
+		// Otherwise fall through to the normal path, which commits it if the
+		// new evidence clears the bar and re-queues it with the better
+		// printing if it does not.
 	}
 
 	// A multi-card capture's unresolvable entries are phantoms — ability names,

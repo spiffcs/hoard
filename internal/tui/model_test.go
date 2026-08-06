@@ -3153,3 +3153,100 @@ func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
 		t.Errorf("confirming did not abandon: review=%d walking=%v", len(gone.review), gone.walking)
 	}
 }
+
+// The live foil / nonfoil / foil sequence, replayed from the wire.
+//
+// Copied from a real session (13:12:26, 13:12:30, 13:12:33 in
+// scan-telemetry.log): a foil Rampaging Ferocidon, its nonfoil, then the foil
+// again. The first two committed and the third queued as *"possible duplicate:
+// same card auto-added just now"* — the second foil is the same printing and
+// the same finish as the first, seven seconds apart, so the duplicate window
+// hit legitimately.
+//
+// It is the third scan that this pins, not the second. Nonfoil-after-foil was
+// never in danger: the window keys on printing *and* finish, so a different
+// finish does not reach it. The repeat does, and the phone said `removed` for
+// all three — it watched each card leave and the next go down.
+func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
+		prints: map[string][]scryfall.Card{"Inspired Fire": inspiredFirePrints()},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	look := func(finish string) scan.Event {
+		return scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
+			FireReason: scan.FireRemoved,
+			Cards: []scan.Card{{Name: "Inspired Fire",
+				Candidates: []string{"Inspired Fire"},
+				FinishHint: finish, Confidence: 0.95, Source: "crop"}}}
+	}
+	for _, finish := range []string{"foil", "nonfoil", "foil"} {
+		ev := look(finish)
+		mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+		m = resolve(t, mm.(model), ev.CardList()[0])
+	}
+
+	if len(ra.got) != 3 {
+		t.Fatalf("adder called %d times, want 3 — three cards were placed", len(ra.got))
+	}
+	for i, want := range []string{"foil", "nonfoil", "foil"} {
+		if ra.got[i].Finish != want {
+			t.Errorf("add %d = %q, want %q", i, ra.got[i].Finish, want)
+		}
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued", m.review)
+	}
+}
+
+// The settled card replaces the phantom the shutter caught on its way down.
+//
+// Replayed from a stacking run (13:33:00.742 / 13:33:01.789 and two more pairs
+// like it): the shutter fires while the card is still being lowered, so the
+// name reads but the footer does not and it queues as "printing unverified".
+// One second later the settled card is captured again and reads perfectly.
+//
+// The second capture arrives as `replaced` — the held window really did change
+// while the hand withdrew — which is exactly why this needs testing. The
+// upgrade used to run only for nudge echoes, so a placement-fired re-read left
+// the phantom sitting in review beside its own correct commit.
+func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
+	// Three printings, so a name with no footer behind it cannot pick one.
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": solRingPrints()},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// The name off the top of the card, no footer: several printings, nothing
+	// to choose between them.
+	early := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
+		Cards: []scan.Card{{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
+			Confidence: 0.62, Source: "line"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: early})
+	m = resolve(t, mm.(model), early.CardList()[0])
+	if len(m.review) != 1 {
+		t.Fatalf("review = %d, want the early read queued", len(m.review))
+	}
+
+	// The settled card, footer and all, fired by a placement.
+	settled := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
+		FireReason: scan.FireReplaced,
+		Cards: []scan.Card{{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
+			SetCode: "MH3", CollectorNumber: "123",
+			Confidence: 0.95, Source: "crop"}}}
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: settled})
+	m = resolve(t, mm.(model), settled.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want 1 — one card was on the desk", len(ra.got))
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want the phantom replaced by the settled read", m.review)
+	}
+}

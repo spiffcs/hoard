@@ -447,7 +447,10 @@ private func face(_ v: UInt8) -> SceneSignature {
 private func sample(
     _ boxes: [CGRect], _ scene: SceneSignature, faces: [SceneSignature] = []
 ) -> TriggerSample {
-    TriggerSample(boxes: boxes, scene: scene, boxScenes: faces)
+    // `faces` is the picture seen through the *held* window — the one the
+    // shutter fired on, not this sample's own box. Written as a list only
+    // because these tests read better that way; the machine gets one.
+    TriggerSample(boxes: boxes, scene: scene, holdScene: faces.first)
 }
 
 @Test("a card laid over another is a new card, not the old one settling")
@@ -545,4 +548,67 @@ func missingFacesFallBackToGeometry() {
     t.captureFinished(scene: frame)
     for _ in 0..<12 { _ = t.observe(sample([spot], frame)) }
     #expect(t.phase == .hold, "geometry-only must still park on a present card")
+}
+
+@Test("a motionless card is not replaced, however the detector box wanders")
+func jitteringBoxIsNotACardSwap() {
+    // The regression this shape exists to prevent, and it cost a live session.
+    //
+    // The card signature used to be sampled through each sample's *own*
+    // detector box. Vision's rectangle jitters every frame, and
+    // `sceneSignature` takes one point sample per cell rather than an average,
+    // so a window that moves half a percent lands its samples on different
+    // parts of a static card. Measured on real 4032x3024 stills: 2.7 through an
+    // identical window, 13.6 through one shifted 0.5%, against a threshold of
+    // 12. A parked card announced itself `replaced` 16 times in one minute and
+    // committed 16 copies.
+    //
+    // So the box below wanders — as a real one does — while the picture through
+    // the held window does not. Nothing may re-arm.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+    #expect(t.phase == .hold)
+
+    for i in 0..<40 {
+        // A box crawling around the card, well past the jitter that broke this.
+        let drift = CGFloat(i % 5) * 0.01 - 0.02
+        let wandering = spot.offsetBy(dx: drift, dy: -drift)
+        // The card itself has not changed, so the held window still sees it.
+        let ev = t.observe(sample([wandering], frame, faces: [face(60)]))
+        #expect(ev != .fire, "a still card fired again at sample \(i)")
+    }
+    #expect(t.phase == .hold, "the machine left hold with no card having moved")
+    #expect(t.rearmCause == .none, "nothing happened, so nothing caused a rearm")
+}
+
+@Test("the held window still catches a card swapped into the same spot")
+func heldWindowStillSeesASwap() {
+    // The other half, and the one that makes the fix worth having rather than
+    // just quiet. Fixing the window must not blind the machine to the case it
+    // was built for: on the same stills, a genuine swap measures 29-50 through
+    // a fixed window against 2.7 for a static card, so the gap is wide.
+    var t = Trigger()
+    let frame = face(100)
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60), cardBox: spot)
+
+    // A different card, laid on the same spot. Same geometry, new picture.
+    // Run the disruption out rather than stopping at the first decision:
+    // re-arming takes `rearmSamples` of accumulated evidence, and `observe`
+    // returns a value on every sample whether or not anything happened.
+    var rearmed = false
+    for _ in 0..<12 {
+        _ = t.observe(sample([spot], frame, faces: [face(160)]))
+        if t.rearmCause != .none { rearmed = true; break }
+    }
+    #expect(rearmed, "a card laid over another must re-arm, so it can be scanned")
+    #expect(t.rearmCause == .replaced, "it held the spot, so it was replaced")
 }

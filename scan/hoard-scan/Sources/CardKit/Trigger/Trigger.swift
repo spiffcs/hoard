@@ -111,15 +111,29 @@ public struct TriggerSample: Sendable {
     public var boxes: [CGRect]
     /// A coarse luma grid of the frame; see SceneSignature.
     public var scene: SceneSignature
-    /// The same grid sampled *inside* each box, parallel to `boxes`.
+    /// The same grid sampled through the window the shutter fired on —
+    /// `Snapshot.capturedBox`, held fixed since the capture.
     ///
     /// What lets the machine tell one card from another. Geometry alone cannot:
     /// a card laid on the spot the last one occupied produces a box in the same
     /// place, and the only thing that differs is the picture inside it.
     ///
-    /// Empty is tolerated — a caller that cannot sample them gets the old
+    /// **The window must not move.** This was first sampled through each
+    /// sample's own detector box, which was wrong in a way that only shows up
+    /// on a real camera: `sceneSignature` takes one *point* sample per cell, so
+    /// it is maximally sensitive to sub-cell shifts, and Vision's rectangle
+    /// jitters every frame. Measured on 4032x3024 stills of a card that never
+    /// moved — through an identical window the delta is 2.7, and shifting that
+    /// window by half a percent of the card takes it to 13.6, past any usable
+    /// threshold. A parked card reported itself replaced 16 times in one live
+    /// minute, and each one committed another copy.
+    ///
+    /// Fixed, the same measurement separates cleanly: 2.7 for a static card
+    /// against 29-50 for a card actually swapped in place.
+    ///
+    /// Nil is tolerated — a caller that cannot sample it gets the old
     /// geometry-only behaviour rather than an error.
-    public var boxScenes: [SceneSignature] = []
+    public var holdScene: SceneSignature?
     /// False while the lens is hunting. Blur reads as stillness, so a hunting
     /// lens freezes the machine entirely rather than feeding it.
     public var focusSettled: Bool
@@ -128,11 +142,11 @@ public struct TriggerSample: Sendable {
     public var rigMoving: Bool
 
     public init(boxes: [CGRect], scene: SceneSignature,
-                boxScenes: [SceneSignature] = [],
+                holdScene: SceneSignature? = nil,
                 focusSettled: Bool = true, rigMoving: Bool = false) {
         self.boxes = boxes
         self.scene = scene
-        self.boxScenes = boxScenes
+        self.holdScene = holdScene
         self.focusSettled = focusSettled
         self.rigMoving = rigMoving
     }
@@ -199,6 +213,9 @@ public final class Trigger {
 
     /// The picture inside the card that was last captured.
     private var capturedCardScene: SceneSignature?
+    /// The window `capturedCardScene` was sampled through, kept so every later
+    /// comparison uses the identical one. See `TriggerSample.holdScene`.
+    private var capturedCardBox: CGRect?
     /// What the disruption looked like, banked until it crosses the threshold.
     private var pendingCause: RearmCause = .removed
 
@@ -227,6 +244,7 @@ public final class Trigger {
     public var snapshot: Snapshot {
         Snapshot(phase: phase, baseline: baseline.count, boxes: lastBoxes,
                  cue: cue,
+                 capturedBox: capturedCardBox,
                  settleSamples: samplesInPhase,
                  stable: stableCount, grace: graceCount, blink: blinkCount,
                  real: realDetections, abandoned: abandonedPasses,
@@ -247,6 +265,14 @@ public final class Trigger {
         /// macOS overlay re-derives all of that precisely because it is handed
         /// raw per-sample boxes instead.
         public var cue: CGRect?
+        /// The window to sample `TriggerSample.holdScene` through: the card's
+        /// geometry as it was at the shutter, unchanged since. Nil outside
+        /// `.hold`, or when the shutter could not sample one.
+        ///
+        /// Handed out rather than re-derived per frame *because* it must not
+        /// move — a window that tracks the live detector box turns rectangle
+        /// jitter into a phantom card swap.
+        public var capturedBox: CGRect?
         /// Samples since the phase changed. Times the interval, the settle.
         public var settleSamples: Int
         public var stable: Int
@@ -281,6 +307,7 @@ public final class Trigger {
     public func arm(with sample: TriggerSample) {
         rearmCause = .none
         capturedCardScene = nil
+        capturedCardBox = nil
         baseline = sample.boxes
         abandonedPasses = 0
         resetPass()
@@ -316,12 +343,18 @@ public final class Trigger {
     }
 
     /// captureFinished parks the machine on what it just shot.
-    public func captureFinished(scene: SceneSignature?, cardScene: SceneSignature? = nil) {
+    public func captureFinished(scene: SceneSignature?, cardScene: SceneSignature? = nil,
+                                cardBox: CGRect? = nil) {
         capturedScene = scene
         // The picture *inside* the card that was just shot, which is what tells
         // a swapped card from the same one settling back. Optional so a caller
         // that cannot sample it keeps the frame-wide behaviour.
         capturedCardScene = cardScene
+        // And the window it was sampled through, which every later comparison
+        // has to reuse. Handing this back out is the whole point: the caller
+        // cannot pin the window without it, and an unpinned window makes a
+        // motionless card look replaced. See `TriggerSample.holdScene`.
+        capturedCardBox = cardBox
         // Deliberately *not* learning a no-card shot as background: telemetry
         // showed that absorbing the scanning pile itself after one glared read.
         phase = .hold
@@ -471,9 +504,9 @@ public final class Trigger {
             guard let watched,
                   overlap(watched, sample.boxes[i]) > tuning.backgroundIoU
             else { return false }
-            guard i < sample.boxScenes.count, let captured = capturedCardScene
+            guard let live = sample.holdScene, let captured = capturedCardScene
             else { return true }
-            return sample.boxScenes[i].delta(to: captured) < tuning.cardChanged
+            return live.delta(to: captured) < tuning.cardChanged
         }
         if stillThere {
             // Decay, never zero. Placement disruption arrives in one- and
@@ -537,11 +570,8 @@ public final class Trigger {
     /// across the desk — two similar cards in the same spot never fired at all —
     /// while a hand crossing a corner moves it easily.
     private func sceneChangedSinceCapture(_ sample: TriggerSample) -> Bool {
-        if let captured = capturedCardScene, let watched,
-           let i = sample.boxes.indices.first(where: {
-               overlap(watched, sample.boxes[$0]) > tuning.backgroundIoU
-           }), i < sample.boxScenes.count {
-            return sample.boxScenes[i].delta(to: captured) >= tuning.cardChanged
+        if let captured = capturedCardScene, let live = sample.holdScene {
+            return live.delta(to: captured) >= tuning.cardChanged
         }
         guard let capturedScene else { return true }
         return capturedScene.delta(to: sample.scene) >= tuning.sceneChanged
