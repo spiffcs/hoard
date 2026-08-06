@@ -277,8 +277,13 @@ struct SessionView: View {
             // The trigger's own account of why it fired travels with the read.
             // A manual shutter sends none: nobody watched a card arrive, the
             // operator simply pressed the button.
+            // The measurements ride the same gate as the cause for the same
+            // reason: on a manual shutter there was no trigger decision, so
+            // there are no numbers behind one either.
             link.sendScan(reading, rotation: 0, auto: auto,
-                          fireReason: auto ? camera.fireCause : nil)
+                          fireReason: auto ? camera.fireCause : nil,
+                          holdDelta: auto ? camera.fireHoldDelta : nil,
+                          faceDelta: auto ? camera.fireFaceDelta : nil)
 
             // Every leg of the loop, in the shape the macOS helper's timing
             // line already has, so HOARD_SCAN_LOG reads the same whichever

@@ -7,6 +7,7 @@
 // desk, five of them firing 1.6-2.0s before the real card committed while the
 // operator's hand was still moving.
 
+import Foundation
 import Testing
 
 @testable import CardKit
@@ -71,4 +72,32 @@ func scrapWithBandIsACard() {
                    "™M & © 1993-2002 Wizards of the Coast, Inc. 46/350"]
     #expect(r.scanEvent(rotation: 0).cards?.count == 1,
             "a capture holding a printing must not be dropped")
+}
+
+@Test("the trigger's measurements cross only when they were taken")
+func triggerDeltasCrossWhenMeasured() throws {
+    // The Go side decides whether a repeat is a second physical card from
+    // `faceDelta`, so the absent case has to stay absent. An omitted key
+    // decodes to nil there and falls back to the timing floor; a key carrying
+    // zero decodes to "identical picture", which is the strongest same-card
+    // evidence there is. Encoding one as the other inverts the answer.
+    var r = CardReading()
+    r.title = "No-Dachi"
+
+    let measured = r.scanEvent(rotation: 0, auto: true, fireReason: "replaced",
+                               holdDelta: 34.3, faceDelta: 32.5)
+    #expect(measured.holdDelta == 34.3)
+    #expect(measured.faceDelta == 32.5)
+
+    let json = try String(decoding: JSONEncoder().encode(measured), as: UTF8.self)
+    #expect(json.contains("faceDelta"))
+
+    // A manual shutter: no trigger decision, so no numbers behind one.
+    let manual = r.scanEvent(rotation: 0)
+    #expect(manual.holdDelta == nil)
+    #expect(manual.faceDelta == nil)
+    let bare = try String(decoding: JSONEncoder().encode(manual), as: UTF8.self)
+    #expect(!bare.contains("faceDelta"),
+            "an unmeasured delta must be absent, not zero: \(bare)")
+    #expect(!bare.contains("holdDelta"))
 }

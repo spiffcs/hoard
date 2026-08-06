@@ -155,6 +155,11 @@ final class CameraSession: NSObject, ObservableObject {
         let c = triggerRunner.lastFireCause
         return c == .none ? nil : c.rawValue
     }
+    /// The measurements behind `fireCause`, for the wire. Nil where the
+    /// comparison never ran — which is a different answer from zero, and the
+    /// one the parent has to be able to tell apart.
+    var fireHoldDelta: Double? { triggerRunner.lastFireHoldDelta }
+    var fireFaceDelta: Double? { triggerRunner.lastFireFaceDelta }
     /// Apply a tuning sent by the parent. Takes effect on the next sample, so a
     /// session can be retuned without reconnecting.
     func tuneTrigger(stable: Int, interval: Double) {

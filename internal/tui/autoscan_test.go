@@ -42,6 +42,37 @@ func TestNudgeDelayClearsTheObservedSwap(t *testing.T) {
 	}
 }
 
+// The recheck loop widens on repeat echoes and stops widening.
+//
+// The loop used to end instead of widening: the echo branch returned no
+// command, so a card the rules suppressed got exactly one recheck and then
+// waited on the phone's own re-arm — 73.5s in one observed session, for a
+// suppression the ten-second window should have released. Rescheduling
+// unconditionally is the fix; this is what keeps it from becoming a permanent
+// 5.5s poll of a card sitting still on the mat.
+func TestNudgeBacksOffAndCaps(t *testing.T) {
+	if got := nudgeBackoff(0); got != nudgeDelay {
+		t.Errorf("nudgeBackoff(0) = %v, want the base delay %v", got, nudgeDelay)
+	}
+	// Each consecutive echo doubles, so a card being shown repeatedly is asked
+	// about less and less often.
+	if got, want := nudgeBackoff(1), 2*nudgeDelay; got != want {
+		t.Errorf("nudgeBackoff(1) = %v, want %v", got, want)
+	}
+	// And the widening stops, because a card that arrives while the timer is
+	// parked does not wait for it — the phone fires on disruption and voids
+	// the pending generation. Only the case geometry cannot see is affected,
+	// and that one should not be left for minutes.
+	capped := nudgeDelay << nudgeBackoffSteps
+	if got := nudgeBackoff(nudgeBackoffSteps + 5); got != capped {
+		t.Errorf("nudgeBackoff past the cap = %v, want %v", got, capped)
+	}
+	if capped > time.Minute {
+		t.Errorf("the capped recheck is %v, longer than anyone waits before "+
+			"deciding the scanner has stopped working", capped)
+	}
+}
+
 // The escalation has to fit in what is left of the shutter-to-result budget.
 func TestNameTimeoutFitsTheShutterToResultBudget(t *testing.T) {
 	// The budget is 700ms and the phone's own half measured 447ms median, so

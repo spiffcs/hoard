@@ -58,8 +58,9 @@ public struct Event: Encodable {
     /// (true) or fell back to the frame's lower half (false). An anchored band
     /// is the only one whose collector read deserves trust.
     public var bandAnchored: Bool? = nil
-    /// Why the trigger fired: "removed", "replaced" or "nudge". Absent on a
-    /// manual shutter, and absent from helpers older than this field.
+    /// Why the trigger fired: "removed", "replaced", "moved" or "nudged".
+    /// Absent on a manual shutter, and absent from helpers older than this
+    /// field.
     ///
     /// The distinction the parent could not make. A capture following a card
     /// leaving the frame, or a card being laid over the last one, is a new
@@ -68,6 +69,27 @@ public struct Event: Encodable {
     /// so the parent was reconstructing the difference from a four-second
     /// window — and a real scan can race a nudge onto the wire.
     public var fireReason: String? = nil
+    /// How far the picture inside the pinned captured window had drifted from
+    /// the card that was shot through it, on the sample that fired. Compared
+    /// against the trigger's `cardChanged`.
+    ///
+    /// Carried for the parent's telemetry rather than for a decision: it is
+    /// the number that separates "the scene churned" from "the card changed",
+    /// and it existed only in a stderr trace line, which no golden and no log
+    /// analysis can read.
+    public var holdDelta: Double? = nil
+    /// How closely the nearest card still in frame resembled the one that was
+    /// shot, on the sample that fired. Compared against `movedFaceMax`.
+    ///
+    /// **Only meaningful when `fireReason` is "replaced" or "moved".** Those
+    /// are the two causes decided by measuring it; "removed" means nothing was
+    /// on the watched rect to measure, and "nudged" means no card comparison
+    /// ran at all. The trigger sends nil in both cases rather than the last
+    /// value it happened to hold — see the `.removed` branch of `hold(_:)`.
+    ///
+    /// This is what lets the parent tell a decisive replacement from a
+    /// marginal one, instead of taking a boolean's word for it.
+    public var faceDelta: Double? = nil
     /// True when this scan was fired by the auto trigger rather than a capture
     /// command or the space key.
     public var auto: Bool? = nil
@@ -101,6 +123,8 @@ public struct Event: Encodable {
         bandAnchored: Bool? = nil,
         auto: Bool? = nil,
         fireReason: String? = nil,
+        holdDelta: Double? = nil,
+        faceDelta: Double? = nil,
         features: [String]? = nil,
         state: String? = nil,
         collectorAlts: [CollectorRead]? = nil,
@@ -120,6 +144,8 @@ public struct Event: Encodable {
         self.bandAnchored = bandAnchored
         self.auto = auto
         self.fireReason = fireReason
+        self.holdDelta = holdDelta
+        self.faceDelta = faceDelta
         self.features = features
         self.state = state
         self.collectorAlts = collectorAlts

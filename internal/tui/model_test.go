@@ -2065,6 +2065,189 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 	}
 }
 
+// A second copy stacked faster than the floor allows still commits, when the
+// source measured the difference and says so.
+//
+// The session that prompted this: two physical No-Dachi stacked 1671ms apart.
+// The phone reported `replaced` with face=32.5 against its own movedFaceMax of
+// 20.0 — it looked at both cards and they were not the same one — and the
+// commit path threw that away because 1671ms is under sameCardFloor. The copy
+// was not written for another 73.5 seconds.
+//
+// The floor's 3856ms was fitted on card *swaps*, remove-then-place. Stacking
+// skips the removal and is quicker, so the number never described the motion
+// this flow is built around. Where the source can answer directly, it wins;
+// where it cannot, the clock still does.
+func TestDecisivePlacementBeatsTheSameCardFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason string
+		face   *float64
+		want   int // adds after the repeat, including the first copy
+	}{
+		// The live drop this exists to fix.
+		{"decisive replacement", scan.FireReplaced, fp(32.5), 2},
+		// The other side of the same measurement, from the same session.
+		{"moved", scan.FireMoved, fp(15.8), 1},
+		// Over movedFaceMax but under our margin: the source's claim is real
+		// and weak, so the clock keeps it.
+		{"marginal replacement", scan.FireReplaced, fp(20.1), 1},
+		// A claim with nothing behind it is a boolean, and a boolean from an
+		// interpolated threshold is what the floor exists to distrust.
+		{"replacement with no measurement", scan.FireReplaced, nil, 1},
+		// `removed` says the captured card left the watched rect — equally
+		// what picking it up and setting it down does. Never a placement
+		// claim, whatever number rides along.
+		{"removed", scan.FireRemoved, fp(40.0), 1},
+		// A helper too old to send any of this falls back to the clock, which
+		// is the compatibility path the floor must keep serving.
+		{"old helper", "", nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, fs := confidentFixture()
+			ra := &recordingAdder{}
+			m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+			clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+			m.now = func() time.Time { return clock }
+			m, _ = openCapture(t, m)
+
+			first := ev
+			first.FireReason = scan.FireRemoved
+			mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+			got := resolve(t, mm.(model), first.CardList()[0])
+			if len(ra.got) != 1 {
+				t.Fatalf("setup: first copy should commit, adds = %d", len(ra.got))
+			}
+
+			// The gap from the live session, comfortably under the floor.
+			clock = clock.Add(1671 * time.Millisecond)
+			repeat := ev
+			repeat.FireReason = tc.reason
+			repeat.FaceDelta = tc.face
+			mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: repeat})
+			got = resolve(t, mm.(model), repeat.CardList()[0])
+
+			if len(ra.got) != tc.want {
+				t.Errorf("adds = %d, want %d", len(ra.got), tc.want)
+			}
+			if len(got.review) != 0 {
+				t.Errorf("review = %+v, want the repeat decided without a stop", got.review)
+			}
+			// Whatever the verdict, a suppressed copy must be recoverable and
+			// must say so — the silence is what made the live drop cost a card.
+			if tc.want == 1 {
+				if got.pending == nil {
+					t.Error("pending = nil, want the suppressed copy held for +")
+				}
+				if !strings.Contains(got.status, "press +") {
+					t.Errorf("status = %q, want it to offer the recovery key", got.status)
+				}
+			}
+		})
+	}
+}
+
+// The floor still governs everything the source cannot answer for, including a
+// gap wide enough to have been a real swap.
+func TestSameCardFloorStillCommitsADeliberateReScan(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	first := ev
+	first.FireReason = scan.FireRemoved
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+	got := resolve(t, mm.(model), first.CardList()[0])
+
+	// Past the floor, and the source offers no measurement at all.
+	clock = clock.Add(sameCardFloor + time.Second)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: first})
+	got = resolve(t, mm.(model), first.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want a deliberate re-scan to commit", len(ra.got))
+	}
+}
+
+// A suppressed copy is written when the operator says it was real.
+//
+// The point of the key is the asymmetry it removes. Every rule above judges a
+// physical act nobody in this process witnessed, and placementFaceFloor is
+// fitted on a single negative sample; being wrong used to cost a card with no
+// trace, and now costs one keystroke.
+func TestPlusPromotesTheSuppressedCopy(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	first := ev
+	first.FireReason = scan.FireRemoved
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+	got := resolve(t, mm.(model), first.CardList()[0])
+
+	// A repeat the rules suppress: too fast, and no measurement behind it.
+	clock = clock.Add(900 * time.Millisecond)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: first})
+	got = resolve(t, mm.(model), first.CardList()[0])
+	if len(ra.got) != 1 || got.pending == nil {
+		t.Fatalf("setup: adds = %d, pending = %v, want one add and a held copy",
+			len(ra.got), got.pending != nil)
+	}
+
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
+	got = mm.(model)
+	if len(ra.got) != 2 {
+		t.Fatalf("adds = %d, want + to write the second copy", len(ra.got))
+	}
+	if got.pending != nil {
+		t.Error("pending survived the promotion — + would write a third copy")
+	}
+	if got.summary.Count("duplicate-confirmed") != 1 {
+		t.Errorf("summary = %+v, want the promotion on the receipt", got.summary.Entries)
+	}
+
+	// Pressing it again answers rather than silently doing nothing: the status
+	// line invited the key, so a no-op would read as a missed keystroke.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
+	got = mm.(model)
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want a second press to add nothing", len(ra.got))
+	}
+	if !strings.Contains(got.status, "Nothing to add") {
+		t.Errorf("status = %q, want the empty-slot answer", got.status)
+	}
+}
+
+// A promotion offered past its window is refused rather than written.
+func TestStalePendingCopyIsNotPromoted(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	first := ev
+	first.FireReason = scan.FireRemoved
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+	got := resolve(t, mm.(model), first.CardList()[0])
+	clock = clock.Add(900 * time.Millisecond)
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: first})
+	got = resolve(t, mm.(model), first.CardList()[0])
+
+	clock = clock.Add(pendingDupWindow + time.Second)
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
+	got = mm.(model)
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want a stale copy left unwritten", len(ra.got))
+	}
+}
+
 func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 	// Two captures in flight; the user tabs into the review list before either
 	// resolves. Both land regardless of UI state, out of order.
@@ -2169,6 +2352,37 @@ func TestAltCollectorCandidateVerifiesStackScan(t *testing.T) {
 	}
 	if len(got.review) != 0 {
 		t.Errorf("review = %d, want none — the alternate verified", len(got.review))
+	}
+}
+
+// A swallowed echo re-arms the recheck instead of ending it.
+//
+// This branch returned nil, which stopped the loop after a single echo. The
+// card then sat unprocessed until the phone re-fired on its own — 73.5s in the
+// session that surfaced it, against a suppression window of ten. Every other
+// drop in onResolveDone reschedules; this was the outlier.
+func TestNudgeEchoReschedulesTheRecheck(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	got := resolve(t, mm.(model), ev.CardList()[0])
+
+	got.nudgeSentAt = got.now()
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = mm.(model)
+	mm, cmd := got.Update(got.resolveCardCmd(got.nextResolveID, ev.CardList()[0], 1)())
+	got = mm.(model)
+	if got.nudgeDrops != 1 {
+		t.Fatalf("setup: nudgeDrops = %d, want the echo swallowed", got.nudgeDrops)
+	}
+	if cmd == nil {
+		t.Error("the echo returned no command, so the recheck loop ends here " +
+			"and the card waits on the phone")
 	}
 }
 

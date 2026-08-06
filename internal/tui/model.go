@@ -285,7 +285,24 @@ type model struct {
 	// direction that matters: a repeat carrying this is the card already
 	// counted, whatever the clock says.
 	lastScanMoved bool
-	nudgeDrops    int
+	// lastScanReplaced tags a capture the source fired because a box held the
+	// watched spot wearing a face it did not recognize — its positive claim
+	// that a *different* card is on the mat. The mirror of lastScanMoved, and
+	// the only reason strong enough to outrank sameCardFloor.
+	//
+	// Deliberately not "removed or replaced". Removed means the captured card
+	// left the watched rect, which is equally what a card picked up, looked
+	// at, and set back down does — no claim about identity at all.
+	lastScanReplaced bool
+	// lastScanFaceDelta is how far the nearest card in frame sat from the one
+	// already read, on the sample that fired. Nil when the source did not
+	// measure it: too old to send it, or fired for a reason that never runs
+	// the comparison. See scan.Event.FaceDelta.
+	lastScanFaceDelta *float64
+	// pending holds the last sighting the duplicate rules suppressed, so `+`
+	// can overrule them. Nil when there is nothing to promote.
+	pending    *pendingDup
+	nudgeDrops int
 	// ignored counts captures that identified nothing and were dropped rather
 	// than queued. Reported once at the end of the session: dropping them is
 	// right, but doing it invisibly would make a scanner that is quietly
@@ -727,6 +744,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch {
 			case strings.EqualFold(string(msg.Runes), "t"):
 				return m.toggleTorch()
+			case string(msg.Runes) == "+" || string(msg.Runes) == "=":
+				// "One more of that." The duplicate rules suppressed a
+				// sighting and said so; this overrules them.
+				//
+				// `=` too, unshifted on the same physical key: the operator's
+				// other hand is holding cards, and a shift-reach to correct
+				// the scanner is exactly the kind of stop this flow exists to
+				// avoid.
+				return m.promotePending()
 			case string(msg.Runes) == ":":
 				return m.openPalette()
 			case strings.EqualFold(string(msg.Runes), "c"):
@@ -1300,6 +1326,14 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		// a real capture, so it is not a nudge echo, but it is the opposite of
 		// evidence that a card was placed and the duplicate rules treat it so.
 		m.lastScanMoved = msg.ev.FireReason == scan.FireMoved
+		// `replaced` is the same machinery answering the other way: the box on
+		// the watched spot does *not* look like the capture. Kept with the
+		// measurement behind it, because the claim alone is a boolean from a
+		// threshold that was interpolated rather than measured, and the
+		// duplicate rules need to know whether it cleared that threshold by a
+		// hair or by a mile.
+		m.lastScanReplaced = msg.ev.FireReason == scan.FireReplaced
+		m.lastScanFaceDelta = msg.ev.FaceDelta
 		switch msg.ev.FireReason {
 		case scan.FireNudge:
 			m.lastScanNudged = true
@@ -1533,7 +1567,15 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			m.recentNames = recordName(m.recentNames, it.canonical, now)
 			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", it.canonical)
 			m.statusErr = false
-			return m, nil
+			// Rescheduled, not stopped. This returned nil, so a single echo
+			// ended the recheck loop and the card sat there until the phone
+			// happened to re-fire on its own — observed live at 73.5s for a
+			// suppression the ten-second window should have released.
+			//
+			// Every other drop in this function reschedules; this was the
+			// outlier, and the back-off below is what keeps the rescheduling
+			// from becoming a permanent 5.5s poll of a parked card.
+			return m, m.scheduleNudge()
 		}
 		// Otherwise fall through to the normal path, which commits it if the
 		// new evidence clears the bar and re-queues it with the better
@@ -1594,40 +1636,48 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// in frame beside the new one. An un-swapped pile is not a
 				// playset signal — drop it silently (observed live: one card
 				// queued five re-sightings of itself this way).
-				m.note("outcome %q dropped: lingering neighbour of a just-added card", it.canonical)
-				m.recentNames = recordName(m.recentNames, it.canonical, now)
-				m.status = fmt.Sprintf("Still seeing %s beside the new card", it.canonical)
-				m.statusErr = false
-				return m, m.scheduleNudge()
-			case it.fromMoved || since < sameCardFloor:
-				// The same card, by one of two independent measures.
+				return m.suppressRepeat(it, finish, now,
+					"lingering neighbour of a just-added card", true)
+			case it.fromMoved:
+				// The source's own answer, and the one measure that beats
+				// everything: a box held the watched spot and still looked like
+				// the card already read, so it declined to claim a placement.
+				// Honoured however long ago the last sighting was.
+				return m.suppressRepeat(it, finish, now,
+					"same card, the source says it only moved", false)
+			case it.placedDecisively():
+				// The same machinery answering the other way, and answering
+				// convincingly: a box on the watched spot wearing a face that
+				// is not the captured card's, by a margin over the threshold
+				// that decides it. The source looked at both cards. The floor
+				// below only counts seconds, and it exists to stand in for
+				// exactly this evidence — so where the evidence arrives, it
+				// governs.
 				//
-				// `fromMoved` is the source's own answer: a box held the
-				// watched spot and still looked like the card already read, so
-				// it declined to claim a placement. That is worth more than any
-				// clock and is honoured however long ago the last sighting was.
+				// This is what the floor was costing. Observed live: a second
+				// No-Dachi stacked 1671ms after the first, reported `replaced`
+				// with face=32.5 against a 20.0 threshold, dropped anyway on
+				// the clock, and not written until 73s later when the window
+				// aged out. The floor's own 3856ms measurement was fitted on
+				// card *swaps* — remove, then place — and stacking skips the
+				// removal, so it never described the faster motion at all.
 				//
-				// The floor catches what the source still gets wrong. A phone
-				// too old to send `moved` reports these as `replaced`, and so
-				// does a slide the face check does not catch — and on a repeat
-				// under three seconds that claim is not credible whatever it
-				// says, because nobody swaps a card in under 3856ms. See
-				// sameCardFloor.
-				//
-				// Dropped rather than queued, matching the lingering-neighbour
-				// case above: no write, no sound, no review stop. The anchor
-				// rolls forward so a card announcing itself once a second stays
-				// suppressed for as long as it keeps doing it.
-				why := fmt.Sprintf("re-read %dms after the last sighting", since.Milliseconds())
-				if it.fromMoved {
-					why = "the source says it only moved"
-				}
-				m.note("outcome %q dropped: same card, %s", it.canonical, why)
-				m.recent = touchCommit(m.recent, it.prints[0].ID, finish, now)
-				m.recentNames = recordName(m.recentNames, it.canonical, now)
-				m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", it.canonical)
-				m.statusErr = false
-				return m, m.scheduleNudge()
+				// `it.dup` rides along exactly as in the deliberate-re-scan
+				// case below: the outcome line and the session summary record
+				// that a repeat was seen, which is how a false positive here
+				// would ever be noticed.
+				it.dup = true
+			case since < sameCardFloor:
+				// The fallback, now covering only what the source cannot
+				// answer: a helper too old to send a reason, a manual shutter
+				// with no trigger decision behind it, a `removed` that says a
+				// card left without saying what replaced it, or a `replaced`
+				// too marginal to trust. On a repeat under three seconds none
+				// of those is credible, because nobody swaps a card in under
+				// 3856ms. See sameCardFloor.
+				return m.suppressRepeat(it, finish, now,
+					fmt.Sprintf("same card, re-read %dms after the last sighting",
+						since.Milliseconds()), false)
 			default:
 				// A deliberate solo re-scan, slow enough to have been a real
 				// swap, and the phone has said a card was placed — it watched
@@ -1667,6 +1717,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now, !evidenced)
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.nudgeDrops = 0
+		// A new card landed, so "was that a second copy" no longer refers to
+		// anything the operator is looking at.
+		m.pending = nil
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
 		// After the increment, so the HUD total is the post-commit number.
@@ -1689,9 +1742,15 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// printings". The first read had already answered the question the queue
 	// entry was asking.
 	//
-	// Same two tests as the commit path: the source calling it a move, or a
-	// repeat too fast to be a swap. A worse read is not new evidence.
-	if !it.dup && it.canonical != "" {
+	// Same tests as the commit path, and the same exception: a sighting the
+	// source decisively calls a placement is a second card however badly it
+	// read, so it queues for the cascade instead of vanishing. It cannot
+	// auto-commit — the read is the reason it got here — but "the operator
+	// confirms it" and "nobody ever sees it" are very different answers.
+	//
+	// Otherwise: the source calling it a move, or a repeat too fast to be a
+	// swap. A worse read is not new evidence.
+	if !it.dup && it.canonical != "" && !it.placedDecisively() {
 		if since, seen := seenWithin(m.recentNames, it.canonical, now); seen &&
 			(it.fromMoved || since < sameCardFloor) {
 			why := fmt.Sprintf("re-read %dms later", since.Milliseconds())
@@ -1734,12 +1793,98 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.note("outcome %q queued: %s", orDash(it.canonical), note)
 	m.nudgeDrops = 0
+	m.pending = nil
 	m.reviewFlash()
 	it.note = note
 	m.review = append(m.review, it)
 	nudge := m.scheduleNudge()
 	next, cmd := m.reviewChanged()
 	return next, tea.Batch(cmd, nudge)
+}
+
+// suppressRepeat drops a repeat sighting of a card already handled, and keeps
+// it on hand in case the drop was wrong.
+//
+// Dropped rather than queued: no write, no sound, no review stop. A
+// suppression is the scanner recognizing a card it already dealt with, and
+// every one of those it makes a review entry out of is a stop on the pile a
+// hands-free session exists to avoid.
+//
+// The anchor rolls forward so a card announcing itself once a second stays
+// suppressed for as long as it keeps doing it — see touchCommit.
+//
+// What is new is that the sighting survives the drop. The status line says so,
+// and `+` writes it. See pendingDup for why the silence needed an exit.
+func (m model) suppressRepeat(it queueItem, finish string, now time.Time,
+	why string, besideNew bool) (tea.Model, tea.Cmd) {
+	m.note("outcome %q dropped: %s", it.canonical, why)
+	m.recent = touchCommit(m.recent, it.prints[0].ID, finish, now)
+	m.recentNames = recordName(m.recentNames, it.canonical, now)
+	m.pending = &pendingDup{it: it, finish: finish, at: now}
+	seeing := fmt.Sprintf("Still seeing %s", it.canonical)
+	if besideNew {
+		seeing += " beside the new card"
+	}
+	// An instruction, not a report. The old line described the scanner's state
+	// and left the operator with nothing to do about it — which was accurate
+	// and useless in the one case that matters, where the suppression is
+	// wrong.
+	m.status = seeing + " — press + if that's a second copy"
+	m.statusErr = false
+	return m, m.scheduleNudge()
+}
+
+// promotePending writes the suppressed sighting `+` was pressed on.
+//
+// It goes through the ordinary commit bookkeeping rather than a shortcut of
+// its own: the same adder, the same recent-commit window, the same celebration
+// and receipt. A card promoted by hand is a card, and a session where it read
+// differently in the scrollback would be one nobody could audit.
+//
+// The summary kind is "duplicate-confirmed", which already means exactly this
+// — a repeat the operator confirmed — and already renders and counts.
+func (m model) promotePending() (tea.Model, tea.Cmd) {
+	p := m.pending
+	if p == nil || m.now().Sub(p.at) > pendingDupWindow {
+		// Answered rather than ignored. The status line invited this key, so a
+		// silent no-op would read as the program having missed it.
+		m.pending = nil
+		m.status = "Nothing to add a second copy of"
+		m.statusErr = false
+		return m, nil
+	}
+	m.pending = nil
+	now := m.now()
+	card := p.it.prints[0]
+	res := Result{Card: card, Finish: p.finish, Qty: 1, ContainerID: m.dest.ID}
+	if err := m.adder(res); err != nil {
+		m.note("outcome %q queued: promote failed: %v", p.it.canonical, err)
+		m.reviewFlash()
+		it := p.it
+		it.note = "add failed: " + err.Error()
+		m.review = append(m.review, it)
+		next, cmd := m.reviewChanged()
+		return next, cmd
+	}
+	m.note("outcome %q committed: %s/%s %s (promoted by hand)", card.Name,
+		strings.ToUpper(card.Set), card.CollectorNumber, p.finish)
+	_, evidenced := finishFromEvidence(card, p.it.finishHint)
+	// Banked under a fresh captureSeq so the copy just written cannot itself be
+	// read as the fanned-playset case by whatever the next capture brings.
+	m.captureSeq++
+	m.recent = recordCommit(m.recent, card.ID, p.finish, m.captureSeq, now, !evidenced)
+	m.recentNames = recordName(m.recentNames, p.it.canonical, now)
+	m.addedCount++
+	m.addedValue += priceValue(card, p.finish)
+	m.celebrate(priceValuePtr(card, p.finish), p.finish)
+	line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
+		strings.ToUpper(card.Set), card.CollectorNumber, p.finish,
+		priceForFinish(card, p.finish))
+	m.recordTally(line)
+	m.summary.add("duplicate-confirmed", line)
+	m.status = "✓ Added a second copy of " + card.Name
+	m.statusErr = false
+	return m, nil
 }
 
 // chime plays the card-processed sound: the audible receipt that this card

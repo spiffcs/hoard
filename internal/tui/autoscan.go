@@ -153,6 +153,17 @@ func siblingSuffix(it queueItem) string {
 	if it.fromMoved {
 		s += " moved"
 	}
+	if it.fromReplaced {
+		s += " replaced"
+	}
+	// The measurement behind moved/replaced, on the line that records the
+	// outcome it decided. The phone traces it too, but on a different line and
+	// only to stderr — and this is the number placementFaceFloor has to be
+	// re-fitted from, so it belongs next to the verdict it produced rather
+	// than one grep away from it.
+	if it.faceDelta != nil {
+		s += fmt.Sprintf(" face=%.1f", *it.faceDelta)
+	}
 	if it.numberOverridden {
 		s += " number-overridden"
 	}
@@ -172,12 +183,21 @@ type queueItem struct {
 	// the source declining to claim a placement it cannot see, and the
 	// duplicate rules take it at its word.
 	fromMoved bool
-	canonical string // "" when the name never resolved
-	ocrLine   string // the line that matched, or the best guess on a miss
-	lineIdx   int    // which OCR line matched; 0 is the helper's title guess
-	match     cardname.Match
-	prints    []scryfall.Card // ranked by rankByScanStrength; nil if never fetched
-	rank      scanMatch
+	// fromReplaced marks a capture the source fired because a box held the
+	// watched spot wearing a face it did not recognize: its positive claim
+	// that this is a different physical card. faceDelta is the measurement
+	// behind that claim, nil when the source never made one.
+	//
+	// Together they are the only evidence allowed to outrank sameCardFloor —
+	// see placedDecisively.
+	fromReplaced bool
+	faceDelta    *float64
+	canonical    string // "" when the name never resolved
+	ocrLine      string // the line that matched, or the best guess on a miss
+	lineIdx      int    // which OCR line matched; 0 is the helper's title guess
+	match        cardname.Match
+	prints       []scryfall.Card // ranked by rankByScanStrength; nil if never fetched
+	rank         scanMatch
 	// finishHint is the printed foil marker of whichever collector block won
 	// verification: "foil", "nonfoil", or "" for frames without one.
 	finishHint string
@@ -503,10 +523,13 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	ctx, s := m.ctx, m.searcher
 	fromNudge := m.lastScanNudged
 	fromMoved := m.lastScanMoved
+	fromReplaced := m.lastScanReplaced
+	faceDelta := m.lastScanFaceDelta
 	captureSeq := m.captureSeq
 	return func() tea.Msg {
 		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
-			fromMoved: fromMoved, captureSeq: captureSeq}
+			fromMoved: fromMoved, fromReplaced: fromReplaced, faceDelta: faceDelta,
+			captureSeq: captureSeq}
 		tName := time.Now()
 		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
 		nameDur := time.Since(tName)
@@ -1173,6 +1196,70 @@ const (
 // never subject to this — see the captureSeq branch in onResolveDone.
 const sameCardFloor = 3 * time.Second
 
+// placementFaceFloor is how far a card's face must sit from the one already
+// read before the source's claim that this is a different card outranks
+// sameCardFloor.
+//
+// The floor above is a fallback standing in for evidence the source could not
+// give. It no longer cannot. The phone measures the nearest in-frame card
+// against the one it shot and calls the result `moved` below its own
+// movedFaceMax (20.0) or `replaced` above it — the exact question the clock
+// was approximating. Where that measurement is decisive it wins, because it
+// looked at the cards and the clock only counted.
+//
+// Set at movedFaceMax plus a 25% margin rather than at it. Two reasons: the
+// phone's threshold is interpolated rather than measured, and exactly one
+// `moved` sample exists to fit against. A marginal `replaced` is therefore
+// still handed to the clock, which is the conservative answer — the cost is a
+// keystroke on the recovery affordance, not a lost card.
+//
+// Observed over 19 fires in one session: the sole `moved` reading was 15.8;
+// real placements ran 20.1 through 44.1, eight of nine at 26.4 or above. The
+// drop this exists to stop read 32.5. Re-fit it from live `face=` traces
+// before trusting it further; see docs/scanner-tuning.md.
+const placementFaceFloor = 25.0
+
+// placedDecisively reports whether the source watched a different card arrive
+// and measured the difference convincingly.
+//
+// Only `replaced` qualifies. `removed` says the captured card left the watched
+// rect, which is equally what picking a card up to look at it and setting it
+// back down does — it is evidence of motion, not of identity. And on
+// `removed` there is by construction no face to have measured, since the
+// comparison only runs when a box is sitting on the spot.
+func (it queueItem) placedDecisively() bool {
+	return it.fromReplaced && it.faceDelta != nil && *it.faceDelta >= placementFaceFloor
+}
+
+// pendingDup is the last repeat sighting the duplicate rules suppressed, held
+// so the operator can overrule them with one key.
+//
+// Every rule above is a judgement about a physical act nobody in this process
+// witnessed, and each is calibrated on a handful of live sessions —
+// placementFaceFloor on a single negative sample. They will be wrong
+// sometimes, and a wrong drop today costs a card: no write, no sound, no
+// review entry, nothing to act on. That asymmetry is the problem, not the
+// error rate. Holding the item turns being wrong into a keystroke.
+//
+// One slot rather than a queue, deliberately. The question it answers is "was
+// that a second copy", which is only ever about the sighting just suppressed;
+// a backlog of them would be a review queue with worse ergonomics, and the
+// review queue already exists.
+type pendingDup struct {
+	it     queueItem
+	finish string
+	at     time.Time
+}
+
+// pendingDupWindow is how long `+` can still promote a suppressed sighting.
+//
+// A backstop, not the mechanism: the slot is normally cleared by the next card
+// to commit or queue, because by then the operator has moved on and "that was
+// a second copy" no longer refers to anything they can see. This bounds the
+// other case — a session left sitting — and is set to comfortably cover
+// reading the status line and deciding, since the line itself is the prompt.
+const pendingDupWindow = 30 * time.Second
+
 type recentCommit struct {
 	scryfallID string
 	finish     string
@@ -1298,9 +1385,12 @@ func similarRecent(recent []recentName, text string, now time.Time) (string, boo
 // shot, so after processing a scan the model waits a beat and, if no new
 // capture arrived, nudges the helper to re-arm. A nudge-fired re-read of the
 // very card just processed is dropped silently and the next nudge backs off;
-// a new card commits normally. Disruption-fired identical reads still
-// dup-queue — only the nudge's own echoes are swallowed, so a deliberately
-// stacked playset copy is never lost to this.
+// a new card commits normally.
+//
+// Only the nudge's own echoes are swallowed here. An identical read fired by
+// real disruption goes to the duplicate rules instead, which commit it when
+// the source can show a placement happened — so a deliberately stacked
+// playset copy is never lost to this.
 
 // nudgeMsg fires when the post-processing quiet period elapses. gen ties it
 // to the scheduling generation; any newer scan or schedule voids it.
@@ -1313,13 +1403,46 @@ type nudgeMsg struct{ gen int }
 // bounds how stale an echo can be.
 const nudgeEchoWindow = 4 * time.Second
 
-// scheduleNudge arms the quiet-period timer for the current generation. It is
-// armed once per processed scan and never re-armed by its own echo, so a
-// parked card gets exactly one recheck.
+// nudgeBackoffSteps caps how far consecutive echoes push the quiet period out,
+// doubling each time: 5.5s, 11s, 22s, 44s, and no further.
+//
+// The cap exists because the ceiling is the only cost. A card that arrives
+// while the timer is parked does not wait for it — the phone fires on
+// disruption and the capture voids the pending generation — so the back-off
+// only ever governs the case geometry cannot see, a card stacked squarely on
+// the pile. Four doublings is enough that a genuinely abandoned session stops
+// asking, and short enough that the one blind case is not left for a minute.
+const nudgeBackoffSteps = 3
+
+// nudgeBackoff is the quiet period after `drops` consecutive echoes.
+//
+// Split out from scheduleNudge because the command it builds closes over a
+// sleep, so the delay is unobservable from a test once it is in there — and
+// this is the arithmetic that decides whether a parked card polls forever.
+func nudgeBackoff(drops int) time.Duration {
+	if drops < 0 {
+		drops = 0
+	}
+	return nudgeDelay << min(drops, nudgeBackoffSteps)
+}
+
+// scheduleNudge arms the quiet-period timer for the current generation, backing
+// off once per consecutive echo.
+//
+// The recheck used to be armed once per processed scan and never re-armed by
+// its own echo, so a parked card got exactly one look. That was not what the
+// code did: the echo path returned no command at all, which ended the loop
+// rather than bounding it, and a suppressed card then waited on the phone's own
+// re-arm — 73.5s in one observed session.
+//
+// Rescheduling unconditionally is the fix and the back-off is what makes it
+// affordable. nudgeDrops counts consecutive echoes and is zeroed by any card
+// that commits or queues, so the delay widens only while the scanner keeps
+// being shown something it has already handled.
 func (m *model) scheduleNudge() tea.Cmd {
 	m.nudgeGen++
 	gen := m.nudgeGen
-	delay := nudgeDelay
+	delay := nudgeBackoff(m.nudgeDrops)
 	return func() tea.Msg {
 		time.Sleep(delay)
 		return nudgeMsg{gen: gen}

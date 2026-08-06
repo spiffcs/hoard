@@ -152,15 +152,29 @@ foil printings (`MSC ★ EN`) and bullet it on nonfoil ones (`MAR • EN`), and 
 starred card whose printing offers both finishes is recorded foil — in the
 review cascade the finish picker opens with the marker's answer pre-selected.
 Frames without the marker (roughly pre-2020) default to nonfoil, with the
-tally as the audit trail. A recently added card seen again is judged by
-*how* it came back. Two copies in one capture — a fanned playset — queue the
-second as a *possible duplicate*, and so does deliberately re-scanning a
-card on its own; confirming from the queue is the "yes, really" a real
-playset needs. But the same card re-read by a nudge, or still sitting beside
-the next card you placed, is just an un-swapped pile: those re-sightings are
-dropped silently (a "still seeing…" note in the status line, no chime), even
-when the re-read comes back with an OCR mangle that would otherwise queue as
-uncertain.
+tally as the audit trail.
+
+A recently added card seen again is judged by *how* it came back, not by how
+long ago. Two copies visible in one capture — a fanned playset — are two cards
+and both commit. So does a repeat the phone reports as a **placement it
+watched happen**: it compares the card now on the mat against the one it shot,
+and where that comparison is decisive it is believed, which is what lets you
+stack a playset copy-on-copy as fast as your hands move. A repeat with nothing
+behind it still waits out a three-second floor, because nobody swaps a card
+that fast and a claim made without a measurement is not evidence.
+
+What comes back the other way is dropped: the same card re-read by a nudge,
+still sitting beside the card you just placed, or one the phone itself says
+only *moved* — an un-swapped pile is not a playset. Those go silently, with a
+"still seeing…" note in the status line and no chime, even when the re-read
+arrives with an OCR mangle that would otherwise queue as uncertain.
+
+Because every one of those judgements is about a physical act, the drop is
+never final. The status line names the card and offers <kbd>+</kbd>
+(or <kbd>=</kbd>, unshifted, for the hand that isn't holding cards) — press it
+and the suppressed copy is written, and shows on the session receipt as a
+confirmed duplicate. It costs a keystroke exactly when the scanner guessed
+wrong, and nothing when it guessed right.
 
 Everything that doesn't clear the bar lands in a **review queue** with the
 reason it queued. <kbd>tab</kbd> at the capture step opens the queue

@@ -73,6 +73,24 @@ type Event struct {
 	// physical evidence behind it at all. Empty from a helper too old to send
 	// it, which is why the timing fallback survives.
 	FireReason string `json:"fireReason,omitempty"`
+	// HoldDelta and FaceDelta are the measurements behind FireReason: how far
+	// the picture inside the pinned captured window had drifted from the card
+	// shot through it, and how closely the nearest card still in frame
+	// resembled that card. The source compares them against its own
+	// cardChanged and movedFaceMax to pick the reason.
+	//
+	// Pointers because absent and zero are different answers. A comparison
+	// that never ran is not a comparison that came back zero, and zero is the
+	// reading for "identical picture" — the strongest same-card evidence
+	// there is. Flattening the two would turn a missing measurement into the
+	// most confident possible one.
+	//
+	// FaceDelta is meaningful only on FireReplaced and FireMoved, the two
+	// reasons decided by measuring it. FireRemoved means nothing sat on the
+	// watched rect to measure and FireNudge means no comparison ran, and the
+	// source sends nil for both rather than whatever it last held.
+	HoldDelta *float64 `json:"holdDelta,omitempty"`
+	FaceDelta *float64 `json:"faceDelta,omitempty"`
 	// Features lists source capabilities, advertised on EventReady ("auto"
 	// means the phone understands auto-on/auto-off).
 	Features []string `json:"features"`

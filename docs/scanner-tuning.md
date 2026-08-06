@@ -227,6 +227,76 @@ the median rises while the user waits less. **Card-to-card cadence and captures
 per commit are the honest numbers**; both improved roughly twofold across this
 sequence while waste fell.
 
+### 2026-08-06 — the swap floor never described a stack
+
+19 fires. One card lost: a second No-Dachi, stacked 1671ms after the first,
+dropped and not written for **73.5 seconds**.
+
+```
+23:54:51.601  fire  hold=38.5 face=39.8  cause=removed   → committed CHK/264
+23:54:53.342  fire  hold=34.3 face=32.5  cause=replaced  → DROPPED
+              outcome "No-Dachi" dropped: same card, re-read 1671ms after the last sighting
+```
+
+**`sameCardFloor` was fitted on the wrong motion.** Its 3s rests on 60 measured
+gaps in which "a human swapping a card was never faster than 3856ms" — and
+every one of those was a *swap*: remove, then place. **Stacking skips the
+removal.** It is quicker, and it is the natural motion for a hands-free
+session, so the floor never described the case it now governs most often.
+
+**And the fallback had outlived its premise.** The floor was introduced above
+to catch what the source got wrong, on the reasoning that a phone too old to
+send `moved` reports these as `replaced`. That was true when the
+`movedFaceMax` branch never fired. It fires now — the same session dropped
+Root Elemental correctly at `hold=13.1 face=15.8 cause=moved`. The
+discriminator the clock stood in for works, and the clock was still outranking
+it.
+
+Separation across the session, which is the measurement the entry above asked
+the next session to take:
+
+| cause | `face=` readings |
+|---|---|
+| `moved` (same card) | 15.8 |
+| real placements | 20.1, 26.4, 29.4, 32.5, 36.6, 37.1, 39.8, 42.7, 44.1 |
+
+Real separation, **one negative sample**. So `placementFaceFloor = 25.0` —
+`movedFaceMax` plus a 25% margin — and a marginal `replaced` still defers to
+the clock. Only `replaced` qualifies: `removed` means the captured card left
+the watched rect, which is equally what picking a card up and setting it back
+down does.
+
+**`faceDelta` was stale on `removed`, and the trace was lying.**
+`stillLooksLikeTheCapturedCard` only runs on the occupied branch, and
+`lastFaceDelta` is cleared nowhere inside a HOLD run — so a reading taken while
+a box *was* there survived into every later `.removed` sample. Observed:
+`boxes=0 hold=49.1 face=29.4 cause=removed`, a frame with nothing in it
+reporting a face comparison. Fixed at the source. **Any `face=` reading on a
+`removed` line in a log older than this entry is a leftover — do not fit
+against it.**
+
+Both deltas now cross the wire as `holdDelta`/`faceDelta` rather than living
+only in the stderr trace, so the next refit is a log query instead of a
+transcription. They are pointers on the Go side: absent and zero are different
+answers, and zero is the reading for an identical picture.
+
+**Two nudge bugs turned a 10s suppression into 73.5s.** The nudge-echo branch
+returned no command at all, which *ended* the recheck loop rather than bounding
+it, so a suppressed card waited on the phone's own re-arm. And `nudgeDrops`,
+the counter documenting "the next nudge backs off", was incremented and never
+read — the back-off did not exist. The loop now always reschedules, and
+`nudgeBackoff` doubles per consecutive echo to a cap of 3 doublings (5.5s →
+44s). The cap is safe because a card arriving while the timer is parked never
+waits for it: the phone fires on disruption and voids the pending generation.
+
+**What to measure next.** `placementFaceFloor` is fitted against a single
+negative sample, so the session that confirms or moves it is the one that
+jostles a card *without* swapping it — under glare, at an angle, at the edge of
+the mat — and records every `face=` it produces. Until then the margin is doing
+the work a measurement should. The `+` key is what makes being wrong cost a
+keystroke rather than a card; if a live session needs it more than rarely, the
+threshold is wrong and not the affordance.
+
 ### Knobs that do not do what they look like they do
 
 - **`AUTO_STABLE` is not the latency knob.** Cutting it 6 → 4 moved settle 8%

@@ -743,3 +743,38 @@ func noBoxFacesKeepsOldBehaviour() {
     }
     #expect(t.rearmCause == .replaced, "cause = \(t.rearmCause)")
 }
+
+@Test("a removal reports no face measurement rather than a stale one")
+func removalClearsTheFaceDelta() {
+    // `faceDelta` is the number `movedFaceMax` is fitted from, and it is only
+    // measured on the branch that has a box to measure. The `.removed` branch
+    // has none and used to leave the field holding whatever an earlier sample
+    // had put there, so the trace reported a face comparison on frames with
+    // nothing in them at all — observed live as
+    // `boxes=0 hold=49.1 face=29.4 cause=removed`.
+    //
+    // It now crosses the wire, where the parent uses it to decide whether a
+    // repeat is a second physical card. A stale reading there is not a bad
+    // log line, it is a card written twice.
+    let t = Trigger()
+    let spot = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    let frame = face(100)
+
+    t.arm(with: sample([], frame))
+    for _ in 0..<8 { _ = t.observe(sample([spot], frame, faces: [face(60)])) }
+    t.captureFinished(scene: frame, cardScene: face(60))
+    #expect(t.phase == .hold)
+
+    // One sample with a box on the spot wearing a different face: the
+    // comparison runs and banks a number.
+    _ = t.observe(TriggerSample(boxes: [spot], scene: frame,
+                                holdScene: face(200), boxScenes: [face(200)]))
+    #expect(t.snapshot.faceDelta != nil, "the occupied branch must measure")
+
+    // Then the frame empties. Still inside `rearmSamples`, so the machine has
+    // not left HOLD and the snapshot is still describing this pass.
+    _ = t.observe(TriggerSample(boxes: [], scene: frame, holdScene: face(200)))
+    #expect(t.rearmCause == .none, "setup: must not have re-armed yet")
+    #expect(t.snapshot.faceDelta == nil,
+            "an empty frame reported face=\(String(describing: t.snapshot.faceDelta))")
+}

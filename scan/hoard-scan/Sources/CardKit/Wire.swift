@@ -21,7 +21,8 @@ extension CardReading {
     /// baked orientation into the pixels, and an event that claimed to have
     /// rotated them would invite a second turn downstream.
     public func scanEvent(
-        rotation: Int, auto: Bool? = nil, fireReason: String? = nil
+        rotation: Int, auto: Bool? = nil, fireReason: String? = nil,
+        holdDelta: Double? = nil, faceDelta: Double? = nil
     ) -> Event {
         Event(
             event: "scan",
@@ -40,6 +41,18 @@ extension CardReading {
             bandAnchored: located,
             auto: auto,
             fireReason: fireReason,
+            // The measurements behind `fireReason`, which clear the bar this
+            // file sets — the Go side has a use for them, and it is a use a
+            // boolean cannot serve. `fireReason: "replaced"` says the trigger
+            // believes a different card is on the mat; `faceDelta` says how
+            // strongly, which is what decides whether that belief outranks the
+            // parent's own same-card floor or defers to it.
+            //
+            // `holdDelta` decides nothing and crosses anyway: `movedFaceMax`
+            // is interpolated rather than measured, and re-fitting it needs
+            // both numbers in something a log analysis can read.
+            holdDelta: holdDelta,
+            faceDelta: faceDelta,
             collectorAlts: nil,
             // The printed foil marker, when the set row carried one. Left nil
             // rather than "nonfoil" when it did not: the Go side's

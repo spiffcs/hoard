@@ -234,3 +234,48 @@ func TestCardListPassesThroughCards(t *testing.T) {
 		t.Errorf("card Lines = %v", lines)
 	}
 }
+
+// The trigger's measurements decode when sent, and stay nil when not.
+//
+// Nil is the load-bearing case. A helper too old to send these fields must
+// leave the parent on its timing fallback, and the distinction between "the
+// comparison never ran" and "the comparison returned zero" is the reason the
+// fields are pointers: zero is the reading for an identical picture, which is
+// the strongest same-card evidence there is. Decoding an absent field into it
+// would turn a missing measurement into the most confident possible one.
+func TestParseEventTriggerDeltas(t *testing.T) {
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"No-Dachi","fireReason":"replaced",` +
+			`"holdDelta":34.3,"faceDelta":32.5}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.FireReason != FireReplaced {
+		t.Errorf("FireReason = %q, want %q", ev.FireReason, FireReplaced)
+	}
+	if ev.HoldDelta == nil || *ev.HoldDelta != 34.3 {
+		t.Errorf("HoldDelta = %v, want 34.3", ev.HoldDelta)
+	}
+	if ev.FaceDelta == nil || *ev.FaceDelta != 32.5 {
+		t.Errorf("FaceDelta = %v, want 32.5", ev.FaceDelta)
+	}
+
+	// A helper that predates the fields.
+	old, err := parseEvent([]byte(`{"event":"scan","name":"No-Dachi","fireReason":"replaced"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if old.HoldDelta != nil || old.FaceDelta != nil {
+		t.Errorf("deltas = %v/%v, want nil from a helper that sends neither",
+			old.HoldDelta, old.FaceDelta)
+	}
+
+	// And a genuine zero is not the same answer as an absent field.
+	zero, err := parseEvent([]byte(`{"event":"scan","name":"No-Dachi","faceDelta":0}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if zero.FaceDelta == nil || *zero.FaceDelta != 0 {
+		t.Errorf("FaceDelta = %v, want a decoded zero", zero.FaceDelta)
+	}
+}

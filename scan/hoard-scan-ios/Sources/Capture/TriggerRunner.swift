@@ -49,6 +49,16 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     var onBox: (@MainActor (CGRect?) -> Void)?
     /// Why the trigger armed for the capture now in flight.
     private(set) var lastFireCause: Trigger.RearmCause = .none
+    /// The two measurements behind `lastFireCause`, as they stood on the
+    /// sample that fired.
+    ///
+    /// Latched beside the cause and from the same frozen snapshot, because the
+    /// scene keeps moving while the capture runs: read live off the trigger at
+    /// send time they would describe the shutter's aftermath rather than the
+    /// decision, which is the mistake the `let fired = trigger.snapshot` below
+    /// already exists to avoid.
+    private(set) var lastFireHoldDelta: Double?
+    private(set) var lastFireFaceDelta: Double?
     /// One diagnostic line, for the tuning log. Raised at the two moments that
     /// explain a session's waste: when the baseline is learned, and when the
     /// trigger decides to fire.
@@ -307,6 +317,8 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             // has been inferring this from a clock; now it is told.
             let cause = trigger.rearmCause
             lastFireCause = cause
+            lastFireHoldDelta = fired.holdDelta
+            lastFireFaceDelta = fired.faceDelta
             Task { @MainActor in
                 self.onTrace?(
                     "trigger fire \(fired.line) settleMS=\(settleMS) cause=\(cause.rawValue)")

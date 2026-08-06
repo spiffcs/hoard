@@ -644,8 +644,24 @@ public final class Trigger {
         let occupied = sample.boxes.contains { box in
             watched.map { overlap($0, box) > tuning.backgroundIoU } ?? false
         }
-        pendingCause = occupied ? (stillLooksLikeTheCapturedCard(sample) ? .moved : .replaced)
-                                : .removed
+        if occupied {
+            pendingCause = stillLooksLikeTheCapturedCard(sample) ? .moved : .replaced
+        } else {
+            // Nothing on the watched rect means there is no face to compare,
+            // and `lastFaceDelta` must say so rather than keep reporting the
+            // one from an earlier sample. It is nil'd nowhere else inside a
+            // HOLD run — only `captureFinished` clears it — so a reading taken
+            // while a box *was* there survived into every later `.removed`
+            // sample and was traced as though it had just been measured.
+            //
+            // Observed: `boxes=0 hold=49.1 face=29.4 cause=removed`, a frame
+            // with nothing in it at all reporting how closely a card resembled
+            // the capture. `movedFaceMax` is interpolated rather than measured
+            // and this trace is the measurement it will be fitted from, so a
+            // stale number here is worse than no number.
+            lastFaceDelta = nil
+            pendingCause = .removed
+        }
         disruptCount += 1
         return rearmIfDisrupted()
     }
