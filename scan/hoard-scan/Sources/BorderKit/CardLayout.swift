@@ -44,15 +44,11 @@ enum CardLayout {
     /// docs/scanner-limits.md called this footer "two centred rows" — it is
     /// left-aligned, and the measurement is what says so.
     ///
-    /// **These hold for pre-1998 only, and the symbol reader cannot ship until
-    /// that is fixed.** Measured per era, the copyright row's left edge sits at
-    /// 0.086 before 1998, 0.260 from 1998–2002, and 0.594 on the M15 frame —
-    /// the line moves across the card as the frame is redesigned. Using the
-    /// pre-1998 value on a 7th Edition card threw the predicted symbol
-    /// position clean off the image. The era is recoverable from the same line
-    /// that anchors on it (parseCopyrightCollector already reads its year, and
-    /// a lone year means pre-1998 while a range means later), so the fix is a
-    /// lookup keyed on that rather than a single constant.
+    /// **These two are the pre-1998 values only** — kept because they are what
+    /// the era was originally fitted to, and superseded for every other frame by
+    /// `leftU` below, which is keyed per era because the row moves across the
+    /// card as the frame is redesigned: 0.086 before 1998, 0.233 from
+    /// 1998-2002, 0.079 on the 8th Edition frame and 0.593 on M15.
     static let copyrightLeftU: CGFloat = 0.086
     static let creditLeftU: CGFloat = 0.097
 
@@ -76,32 +72,59 @@ enum CardLayout {
     /// symbol clean off the image — which is exactly what a 7th Edition card
     /// did while this was a single constant. Nothing but the symbol reader
     /// consumes it, and it would rather have no answer than a wrong one.
-    static func leftU(kind: AnchorKind, prefix: LinePrefix, year: Int) -> CGFloat? {
+    static func leftU(kind: AnchorKind, prefix: LinePrefix,
+                      frame: FrameEvidence) -> CGFloat? {
+        let year = frame.year
         // A lone year, or none at all, is the pre-collector-number era: those
         // frames print no range, so there is nothing else it could be.
+        //
+        // Reading "no year" as pre-1998 is checked rather than assumed: over
+        // scan/corpus the cards whose year does not read anchor on their credit
+        // row at 0.097 (n=27, IQR 0.008), which is the pre-1998 credit value
+        // exactly.
         if year == 0 || year < 1998 {
             switch prefix {
-            case .copyrightGlyph, .trademark: return 0.086   // n=79, p10 .083 p90 .102
-            case .illus: return 0.097                        // n=23, p10 .091 p90 .099
-            case .year: return 0.102                         // n=8
+            case .copyrightGlyph, .trademark: return 0.086   // n=80, p10 .083 p90 .099
+            case .illus: return 0.097                        // n=30, p10 .091 p90 .102
+            case .year: return 0.102                         // n=3
             }
         }
         if year <= 2002 {
             switch prefix {
-            case .trademark: return 0.231                    // n=5, p10 .228 p90 .236
-            case .year: return 0.271                         // n=7, p10 .263 p90 .325
-            // "© 1993-2001…" spread 0.099 to 0.274 in this era — unusable.
+            case .trademark: return 0.233                    // n=6, IQR .006
+            case .year: return 0.260                         // n=9, IQR .005
+            // "© 1993-2001…" still spreads .214 to .274 — too loose to be a
+            // landmark when the lever to the card's far side is 0.8 of a width.
             case .copyrightGlyph, .illus: return nil
+            }
+        }
+        // From here there are *two* frames, not one, and reading them as one is
+        // what this function got wrong for as long as it existed.
+        //
+        // The M15 frame moved the copyright row from the card's left edge to
+        // under its centre: measured over scan/corpus it sits at **0.593**
+        // (n=35, IQR 0.004) where the 8th Edition frame sits at 0.079 (n=16,
+        // IQR 0.004). Both are tight; they are simply different places. Until
+        // this branch existed every M15 card was told 0.080 and every position
+        // derived from it landed half a card too far left.
+        //
+        // Nothing consumed `point()` yet, which is the only reason this was
+        // survivable — see the note on symbolU below.
+        if frame.isM15 {
+            switch prefix {
+            case .trademark: return kind == .copyright ? 0.593 : nil      // n=35, IQR .004
+            case .copyrightGlyph: return kind == .copyright ? 0.596 : nil // n=3, IQR .004
+            case .year, .illus: return nil
             }
         }
         // The 8th Edition frame. Only the trademark read is tight enough to be
         // a landmark, and it is measured on clean scans; note that this is
         // precisely the line a 1080p desk photograph of this frame fails to
         // read at all, so live captures mostly anchor on the credit row
-        // instead — whose left edge here is still too loose to use (n=15,
-        // IQR 0.067) and is deliberately left nil until it is measured.
+        // instead — whose left edge here is still too loose to use and is
+        // deliberately left nil until it is measured.
         switch prefix {
-        case .trademark: return kind == .copyright ? 0.080 : nil   // n=21, p10 .075 p90 .083
+        case .trademark: return kind == .copyright ? 0.079 : nil   // n=16, IQR .004
         case .copyrightGlyph, .year, .illus: return nil
         }
     }
@@ -129,4 +152,75 @@ enum CardLayout {
     /// absorbing the difference rather than on a constant that describes them.
     static let sparkleU: CGFloat = 0.205
     static let sparkleV: CGFloat = 0.889
+}
+
+/// AnchorMeasurement is where a footer anchor actually sat, reported so
+/// `CardLayout.leftU`'s table can be fitted from ground truth rather than
+/// argued about.
+///
+/// `leftU` returns a *card-space* fraction, so fitting it needs images where
+/// card space is known exactly — the clean scans in scan/corpus, where the card
+/// is the whole image. That is how the table was originally built, and
+/// measuring it any other way is what let it drift: taken through the wide
+/// flatten instead, the same pre-1998 anchors read 0.045 against a true 0.086,
+/// because the located quad does not reliably bound the printed card.
+public struct AnchorMeasurement: Sendable {
+    public let kind: String       // "copyright" | "credit"
+    public let prefix: String     // "trademark" | "copyrightGlyph" | "year" | "illus"
+    /// The anchor line's left edge, as a fraction of the image's width. On a
+    /// clean scan that is card space directly.
+    public let leftU: CGFloat
+    public let text: String
+}
+
+/// measureAnchor picks the anchor the border reader would pick and reports
+/// where it sat. Corpus tooling; nothing in a live read calls it.
+public func measureAnchor(_ lines: [Line], year: Int) -> AnchorMeasurement? {
+    guard let anchor = footerAnchor(lines) else { return nil }
+    guard let prefix = lineOpener(anchor.line.text, kind: anchor.kind) else { return nil }
+    let name: String
+    switch prefix {
+    case .trademark: name = "trademark"
+    case .copyrightGlyph: name = "copyrightGlyph"
+    case .year: name = "year"
+    case .illus: name = "illus"
+    }
+    return AnchorMeasurement(kind: anchor.kind.rawValue, prefix: name,
+                             leftU: anchor.line.box.minX, text: anchor.line.text)
+}
+
+/// What the footer says about which frame the card is printed with.
+///
+/// The copyright year alone cannot answer it, and that is not a subtlety — the
+/// M15 frame shipped with Magic 2015 in **July 2014**, so 2014 has cards of both
+/// designs and every year after it has only the new one. A table keyed on the
+/// year alone therefore has one bucket that must hold two frames whose
+/// copyright rows sit half a card apart.
+///
+/// So 2014 is decided on evidence rather than assumed: the M15 frame is the
+/// first to print a set/language row, and the first to print the collector
+/// number on a line of its own rather than in the tail of the copyright row.
+/// Either one is enough. Measured over scan/corpus, requiring *both* misses
+/// three real M15 cards (a Snakeskin Veil whose set code did not read, two
+/// Unsanctioned cards whose number did not), and requiring *either* one alone
+/// without the year would mislabel four older cards whose joke-set "code" is a
+/// misparse — `S.N.O.T.` reading as set `CYRIL`. The year does the work
+/// everywhere except the one year it cannot.
+public struct FrameEvidence: Sendable {
+    public let year: Int
+    public let hasSetCode: Bool
+    public let numberOnOwnRow: Bool
+
+    public init(year: Int, hasSetCode: Bool = false, numberOnOwnRow: Bool = false) {
+        self.year = year
+        self.hasSetCode = hasSetCode
+        self.numberOnOwnRow = numberOnOwnRow
+    }
+
+    /// Whether this is the M15 frame or later.
+    public var isM15: Bool {
+        if year >= 2015 { return true }
+        if year == 2014 { return hasSetCode || numberOnOwnRow }
+        return false
+    }
 }

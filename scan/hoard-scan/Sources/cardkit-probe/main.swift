@@ -52,6 +52,9 @@ func run() async -> Never {
         }
         sparkleFit(dir: args[f + 1], out: args[f + 2], onlySession: only)
     }
+    if let a = args.firstIndex(of: "--anchor-fit"), a + 1 < args.count {
+        await anchorFit(manifest: args[a + 1])
+    }
     if let s = args.firstIndex(of: "--sparkle-score"), s + 1 < args.count {
         var only: String? = nil
         if let o = args.firstIndex(of: "--only-session"), o + 1 < args.count {
@@ -107,6 +110,8 @@ func run() async -> Never {
             "sparkleOffsetU": reading.sparkle.map { Double($0.offsetU) } ?? 0,
             "sparkleOffsetV": reading.sparkle.map { Double($0.offsetV) } ?? 0,
             "sparkleSamples": reading.sparkle?.samples ?? 0,
+            "symbolCoverage": b.symbolCoverage,
+            "symbolContrast": b.symbolContrast,
             "sparkleMS": reading.timings.sparkle,
             "finish": reading.printing.finish,
             "finishSource": reading.printing.finishSource,

@@ -371,6 +371,59 @@ copyright rows also fail. Degrading the reader to accommodate a broken capture
 is backwards; the fixture went instead. `modern-copyright-tail-number`
 (Meltdown) was a genuine catch and its golden was updated to `foil`.
 
+### 2026-08-06 — leftU had one bucket holding two frames
+
+`CardLayout.leftU` is the card's horizontal landmark: find the copyright row,
+look up how far in from the left it starts, measure everything else from there.
+It was keyed on the copyright year, in three buckets, and the last one —
+"2003 and later" — held **two frame designs that put that row half a card
+apart**.
+
+Measured over `scan/corpus` with `cardkit-probe --anchor-fit`, which reads the
+raw corpus images (they *are* cards, so the anchor's box is card space with no
+card-location or flatten in between):
+
+| frame | copyright row starts at | n | IQR | table said |
+| --- | --- | --- | --- | --- |
+| pre-1998 | 0.086 | 80 | 0.016 | 0.086 ✓ |
+| 1998–2002 (trademark) | 0.233 | 6 | 0.006 | 0.231 ✓ |
+| 8th Edition (2003–2013) | 0.079 | 16 | 0.004 | 0.080 ✓ |
+| **M15 (2014+)** | **0.593** | **35** | **0.004** | **0.080** ✗ |
+
+Both are tight. They are simply different places, and every M15 card was told
+the 8th Edition value.
+
+**What it cost.** Nothing shipping, because the only consumer is `symbolInk`
+and nothing consumes that yet — which is exactly why it survived. The damage is
+visible the moment you look: on session 2's four M15-frame cards,
+`symbolCoverage` was **0.000** before the fix and **0.188–0.312** after. Zero
+because `point()` was throwing every sample clean off the image, which is the
+failure the function's own doc comment predicted for a wrong offset.
+
+**The year cannot decide it alone.** Magic 2015 shipped in **July 2014**, so
+2014 holds both frames and every later year holds only the new one. `2014` is
+therefore settled on evidence — the M15 frame is the first to print a
+set/language row and the first to put the collector number on its own line, and
+either is enough. Requiring *both* misses three real M15 cards (a Snakeskin Veil
+whose set code did not read, two Unsanctioned cards whose number did not);
+accepting either *without* the year mislabels four older cards whose joke-set
+text misparses as a set code (`S.N.O.T.` reads as set `CYRIL`). See
+`FrameEvidence`.
+
+**A wrong turn worth recording.** The first instinct was to stop guessing and
+measure the landmark off the flattened card. It does not work: against ground
+truth on clean scans the flatten reads pre-1998 anchors at 0.045 where they are
+really 0.086, because the located quad does not reliably bound the printed card
+— which is the reason the text-anchored table exists at all. Measuring through
+the flatten is what makes a right answer look wrong. Fit this table on raw
+corpus images or not at all.
+
+Also corrected while in there: the 1998–2002 `year` prefix from 0.271 to 0.260
+(n=9, IQR 0.005).
+
+Still open: the `1998-2002` / `copyrightGlyph` combination spreads 0.214–0.274
+and stays `nil`, and the 8th Edition credit row is still unmeasured.
+
 ### Knobs that do not do what they look like they do
 
 - **`AUTO_STABLE` is not the latency knob.** Cutting it 6 → 4 moved settle 8%

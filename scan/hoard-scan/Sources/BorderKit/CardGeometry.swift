@@ -39,7 +39,7 @@ struct CardGeometry {
 /// are the lines we think they are; the footer's own glyph height assumes
 /// nothing but is coarse. Neither is trusted alone. They have to agree, and
 /// when they do not the frame is not what it looks like and we stop.
-func cardGeometry(footer: Line, kind: AnchorKind, title: Line?, year: Int,
+func cardGeometry(footer: Line, kind: AnchorKind, title: Line?, frame: FrameEvidence,
                   frameW: CGFloat, frameH: CGFloat) -> CardGeometry? {
     let anchorV = kind == .copyright ? CardLayout.footerV : CardLayout.creditV
     guard let quad = footer.quad else { return nil }
@@ -61,7 +61,7 @@ func cardGeometry(footer: Line, kind: AnchorKind, title: Line?, year: Int,
     // wherever OCR gave up, which is not a landmark at all. Requiring the
     // opener is the same provenance-by-content rule the vertical anchor uses.
     let leftU = lineOpener(footer.text, kind: kind)
-        .flatMap { CardLayout.leftU(kind: kind, prefix: $0, year: year) }
+        .flatMap { CardLayout.leftU(kind: kind, prefix: $0, frame: frame) }
     let anchorLeft = leftU != nil
         ? CGPoint(x: (tl.x + bl.x) / 2, y: (tl.y + bl.y) / 2) : nil
     let anchorLeftU = leftU ?? 0

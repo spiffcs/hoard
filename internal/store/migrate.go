@@ -47,6 +47,7 @@ var migrations = []migration{
 	{17, tcgAltProductColumn},
 	{18, settingsTable},
 	{19, defaultBinderRealName},
+	{20, vendorProductIDs},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -365,6 +366,28 @@ CREATE TABLE settings (
 // this one, which is the point.
 const defaultBinderRealName = `
 UPDATE containers SET name = 'Binder' WHERE source_id = '__collection__';`
+
+// v20: the per-vendor product ids MTGJSON publishes beside the ones v14 and
+// v17 already store. They exist to answer a question the comps table could
+// not: is this vendor's price for the card actually held?
+//
+// A treated foil (ripple, surge, …) is one Scryfall printing, so every
+// vendor's foil bucket is keyed the same — but the vendors do not all sell
+// the same product under it. TCGplayer splits the treated foil into its own
+// listing (tcg_alt_product_id, v17); Card Kingdom publishes exactly one foil
+// id per printing, so its foil bucket is the treated foil; Manapool publishes
+// no identifier at all, which is why an unverifiable Manapool quote is the one
+// the comp sheet drops. Storing the ids makes that rule follow the feed rather
+// than a hardcoded opinion: if Card Kingdom starts splitting, or MTGJSON adds
+// a Manapool id, the answer changes with the data.
+//
+// From the MTGJSON set files the uuid resolver already downloads. NULL means
+// never asked, empty means asked and the feed had none — the ck_url
+// convention, so absence does not re-fetch the set file forever.
+const vendorProductIDs = `
+ALTER TABLE cards ADD COLUMN ck_foil_id TEXT;
+ALTER TABLE cards ADD COLUMN ck_etched_id TEXT;
+ALTER TABLE cards ADD COLUMN tcg_product_id TEXT;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

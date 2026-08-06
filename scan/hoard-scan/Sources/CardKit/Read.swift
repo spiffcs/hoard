@@ -201,7 +201,9 @@ public func readCard(_ image: CGImage) async -> CardReading {
             bandLines: bandRead.map {
                 intoWide($0, from: CardGeometry.band, margin: card.wideMarginUsed)
             },
-            copyrightYear: printing.year ?? 0)
+            frame: FrameEvidence(year: printing.year ?? 0,
+                                 hasSetCode: !printing.setCode.isEmpty,
+                                 numberOnOwnRow: printing.numberSource == .ownRow))
         out.timings.border = millis(since: borderStart)
     } else {
         out.border.abstain = "no wide crop"
@@ -457,4 +459,54 @@ func recognizeLines(_ cg: CGImage, correctLanguage: Bool) async -> [Line] {
                                bottomLeft: CGPoint(x: b.minX, y: b.minY),
                                bottomRight: CGPoint(x: b.maxX, y: b.minY)))
     }
+}
+
+/// measureAnchorOnFlatCard reads an image that *is* a card and reports where its
+/// footer anchor sat, in card space.
+///
+/// Corpus tooling for fitting `CardLayout.leftU`. It deliberately skips
+/// `locateCard` and the wide flatten: those exist to find a card inside a
+/// photograph, and running them over an image that is already nothing but card
+/// adds their error to a measurement whose whole purpose is to be exact.
+@available(macOS 15, iOS 18, *)
+public func measureAnchorOnFlatCard(_ image: CGImage) async -> AnchorFit? {
+    // Both passes, same as a real read: the band is where the footer usually
+    // reads, and the whole-card pass catches the rest.
+    var lines = await recognizeLines(image, correctLanguage: false)
+    var bandText: [String] = []
+    if let band = cropCard(image, CardGeometry.band) {
+        let read = await recognizeLines(band, correctLanguage: false)
+        bandText = read.map(\.text)
+        lines += read.map { intoWhole($0, from: CardGeometry.band) }
+    }
+    let printing = readPrinting(bandLines: bandText)
+    guard let m = measureAnchor(lines, year: printing.year ?? 0) else { return nil }
+    return AnchorFit(anchor: m, year: printing.year ?? 0,
+                     setCode: printing.setCode,
+                     numberSource: printing.numberSource.rawValue)
+}
+
+/// AnchorFit is one corpus card's anchor measurement plus the fields that are
+/// candidates for telling its frame family apart. The year cannot do it alone —
+/// 8th Edition shipped in July 2003 and Legions and Scourge are 2003 printings
+/// of the frame it replaced — so the fit needs the alternatives beside it.
+public struct AnchorFit: Sendable {
+    public let anchor: AnchorMeasurement
+    public let year: Int
+    public let setCode: String
+    public let numberSource: String
+}
+
+/// intoWhole moves a line's box from a card-space crop back onto the whole card.
+/// The crop's own normalisation is undone, so both passes report in one space.
+func intoWhole(_ line: Line, from crop: CGRect) -> Line {
+    // Vision's y counts up from the bottom of the crop; card space counts down
+    // from the card's top, so the box's edges swap roles on the way across.
+    let top = crop.minY + (1 - line.box.maxY) * crop.height
+    let bottom = crop.minY + (1 - line.box.minY) * crop.height
+    let box = CGRect(x: crop.minX + line.box.minX * crop.width,
+                     y: 1 - bottom,
+                     width: line.box.width * crop.width,
+                     height: bottom - top)
+    return Line(text: line.text, box: box, confidence: line.confidence, quad: nil)
 }

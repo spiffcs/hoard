@@ -49,6 +49,19 @@ func (c Comp) Printing() string {
 // HasSpread reports whether the spread is defined: it needs both sides.
 func (c Comp) HasSpread() bool { return c.HasBuylist && c.Low > 0 }
 
+// Figures counts the sale prices on the sheet — the vendors that survived
+// both the finish match and the product check. Two is the floor for a comp:
+// one voice compares nothing.
+func (c Comp) Figures() int {
+	n := 0
+	for _, has := range []bool{c.HasMarket, c.HasManapool, c.HasCK} {
+		if has {
+			n++
+		}
+	}
+	return n
+}
+
 // Spread is the fraction of the low ask a dealer's bid does not cover —
 // the hobby's confidence signal. 20-30% marks a liquid staple, ~50% is
 // typical, 80-90% means the retail price is not real yet.
@@ -111,17 +124,69 @@ const (
 	CompsNote  = "a list comparing vendor prices"
 )
 
+// productVerified reports whether a vendor's quote for this holding is known
+// to describe the product actually held.
+//
+// Only a treated foil can diverge. An untreated printing has one product per
+// finish, so every vendor's bucket refers to the same card and the question
+// does not arise. A ripple or surge printing is still one Scryfall id, so all
+// three vendors file their foil price under the same key while not
+// necessarily selling the same thing under it — which is how a comp sheet
+// ends up reporting 85% "disagreement" between a $4.61 ripple and a $26.69
+// something-else.
+//
+// The answer comes from the identifiers MTGJSON publishes, not from an
+// opinion about vendors. TCGplayer and Card Kingdom both identify their
+// products, so either way the printing splits, the price we hold is the
+// treated one: where TCGplayer sells the treatment separately hoard fetches
+// that listing (the feed carries no foil series for those printings at all,
+// verified across all 312 in a live hoard), and where it does not, the
+// ordinary foil listing is itself the treated foil. Card Kingdom publishes
+// one foil id per printing and no alternative-foil variant, so its foil
+// bucket is the treated foil by construction. Manapool publishes no
+// identifier of any kind, so its quote can never be tied to a product.
+//
+// Hence the check is "has the feed been asked about this printing", not "is
+// an id present" — an absent id is a real answer (no split product), while an
+// unread set file is a gap. If MTGJSON ever adds a Manapool id, or Card
+// Kingdom starts splitting treated foils, this follows the data.
+func productVerified(provider string, o store.OwnedFinish) bool {
+	if o.Treatment == "" {
+		return true
+	}
+	switch provider {
+	case MarketProvider, "cardkingdom":
+		return o.VendorIDsKnown
+	default:
+		return false
+	}
+}
+
 // AssessComp reduces one card's quotes to the per-vendor comp sheet for
 // the finish actually owned — the same finish translation as Assess.
+//
+// A vendor whose product cannot be matched to the copy held is dropped rather
+// than shown: every Has* stays false, so the renderers' existing dash covers
+// it and the spreads, Low, and the two-vendor gate all compute over the
+// figures that do describe the same card. A comp is a comparison, so a price
+// for the wrong product is worse than no price at all.
 func AssessComp(o store.OwnedFinish, qs []mtgjson.Quote) Comp {
 	c := Comp{Card: o}
 	finish := "normal"
 	if scryfall.PricedAsFoil(o.Finish) {
 		finish = "foil"
 	}
+	// An etched holding prefers the vendor's own etched series and falls back
+	// to its foil one, since not every vendor splits the product.
+	if o.Finish == "etched" && hasFinish(qs, "etched") {
+		finish = "etched"
+	}
 
 	for _, q := range qs {
 		if q.Finish != finish || q.Price <= 0 {
+			continue
+		}
+		if !productVerified(q.Provider, o) {
 			continue
 		}
 		switch q.Kind {
@@ -145,6 +210,18 @@ func AssessComp(o store.OwnedFinish, qs []mtgjson.Quote) Comp {
 	}
 	c.dropTrollListings()
 	return c
+}
+
+// hasFinish reports whether any quote names this finish, which is how an
+// etched holding tells "the vendors price the etched product" from "the feed
+// only knows this card as a foil".
+func hasFinish(qs []mtgjson.Quote, finish string) bool {
+	for _, q := range qs {
+		if q.Finish == finish && q.Price > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // listingOutlierRatio matches the pricing layer's troll-listing guard: a

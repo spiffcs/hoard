@@ -326,8 +326,17 @@ type setFile struct {
 				// etched cards as separate products; these are their ids.
 				// The feed's own tcgplayer prices cover only the base
 				// product, which is why these matter — see AltProductID.
+				TCGProductID string `json:"tcgplayerProductId"`
 				TCGAltFoilID string `json:"tcgplayerAlternativeFoilProductId"`
 				TCGEtchedID  string `json:"tcgplayerEtchedProductId"`
+				// Card Kingdom's, which split differently: one foil id per
+				// printing and no alternative-foil variant, so a treated
+				// printing's foil id *is* the treated product. Etched is the
+				// exception it does split out. Read to tell a vendor's quote
+				// apart from a base-product one — see SetCard.
+				CKID       string `json:"cardKingdomId"`
+				CKFoilID   string `json:"cardKingdomFoilId"`
+				CKEtchedID string `json:"cardKingdomEtchedId"`
 			} `json:"identifiers"`
 			PurchaseUrls struct {
 				CardKingdom     string `json:"cardKingdom"`
@@ -338,9 +347,10 @@ type setFile struct {
 }
 
 // SetCard is what one set-file card resolves to: the MTGJSON uuid the
-// price files key on, and Card Kingdom's sanctioned product links —
+// price files key on, Card Kingdom's sanctioned product links —
 // mtgjson.com redirects, one per finish, maintained by the feed so no
-// vendor URL scheme has to be guessed.
+// vendor URL scheme has to be guessed — and the per-vendor product ids that
+// say which physical product a vendor's price is for.
 type SetCard struct {
 	UUID      string
 	CKURL     string
@@ -350,6 +360,17 @@ type SetCard struct {
 	// product. The MTGJSON price feed never carries these products'
 	// prices, so this id is the key to fetching them elsewhere.
 	AltProductID string
+	// TCGProductID is the base product — the listing the feed's own
+	// tcgplayer prices describe. Stored beside AltProductID so the pair
+	// shows plainly whether a printing is split at TCGplayer at all.
+	TCGProductID string
+	// CKFoilID and CKEtchedID are Card Kingdom's per-finish product ids.
+	// There is deliberately no alternative-foil field: Card Kingdom
+	// publishes one foil id per printing, so on a treated printing that id
+	// is the treated foil, which is what makes its foil quote comparable to
+	// TCGplayer's treated-product price.
+	CKFoilID   string
+	CKEtchedID string
 }
 
 // ErrNoSuchSet reports a set code MTGJSON does not publish. Scryfall and MTGJSON
@@ -395,6 +416,9 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 				CKURL:        c.PurchaseUrls.CardKingdom,
 				CKFoilURL:    c.PurchaseUrls.CardKingdomFoil,
 				AltProductID: alt,
+				TCGProductID: c.Identifiers.TCGProductID,
+				CKFoilID:     c.Identifiers.CKFoilID,
+				CKEtchedID:   c.Identifiers.CKEtchedID,
 			}
 		}
 	}
@@ -402,9 +426,27 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 }
 
 // byFinish is a provider's prices for one side of the counter, keyed by date.
+//
+// Etched is a real bucket in the feed, not a synonym for Foil: an etched card
+// is a separate product every vendor prices separately, and reading it from
+// the foil bucket quotes the wrong card. Sparse — a few hundred uuids against
+// tens of thousands for the other two — but present on every vendor, retail
+// and buylist alike.
 type byFinish struct {
 	Normal map[string]float64 `json:"normal"`
 	Foil   map[string]float64 `json:"foil"`
+	Etched map[string]float64 `json:"etched"`
+}
+
+// foilSlot returns the series that fills hoard's single foil price slot: the
+// foil series, or the etched one for a printing sold only etched. It mirrors
+// scryfall.FoilPrice, which makes the same choice on the Scryfall side, so a
+// card valued from either source lands on the same product.
+func (b byFinish) foilSlot() map[string]float64 {
+	if len(b.Foil) > 0 {
+		return b.Foil
+	}
+	return b.Etched
 }
 
 // vendor is one provider's prices for a card, as MTGJSON nests them:
@@ -424,10 +466,14 @@ type priceRecord struct {
 }
 
 // Quote is one vendor's price for one finish, on one side of the counter.
+//
+// An etched quote appears only when the vendor publishes an etched series of
+// its own; nothing is invented from the foil bucket here, so a caller can tell
+// "this vendor prices the etched product" from "this vendor does not".
 type Quote struct {
 	Provider string // tcgplayer | cardkingdom | manapool
 	Kind     string // retail (what it charges) | buylist (what it pays)
-	Finish   string // normal | foil
+	Finish   string // normal | foil | etched
 	Price    float64
 }
 
@@ -507,7 +553,7 @@ func TodayQuotesWith(extra ExtraSeries) func(context.Context, Options, map[strin
 					for _, f := range []struct {
 						finish string
 						byDate map[string]float64
-					}{{"normal", k.side.Normal}, {"foil", k.side.Foil}} {
+					}{{"normal", k.side.Normal}, {"foil", k.side.Foil}, {"etched", k.side.Etched}} {
 						if p := latest(f.byDate); p != nil {
 							qs = append(qs, Quote{
 								Provider: name, Kind: k.kind, Finish: f.finish, Price: *p,
@@ -934,7 +980,7 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 				return nil
 			}
 			if finish == "foil" {
-				return v.Retail.Foil
+				return v.Retail.foilSlot()
 			}
 			return v.Retail.Normal
 		}
@@ -1034,7 +1080,7 @@ func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 		return &p, quotes[0].name
 	}
 	normal, normalSrc := pick(providerOrder, func(v vendor) map[string]float64 { return v.Retail.Normal })
-	foil, foilSrc := pick(foilProviderOrder, func(v vendor) map[string]float64 { return v.Retail.Foil })
+	foil, foilSrc := pick(foilProviderOrder, func(v vendor) map[string]float64 { return v.Retail.foilSlot() })
 	if normal == nil && foil == nil {
 		return Price{}, false
 	}

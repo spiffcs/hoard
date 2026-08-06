@@ -215,14 +215,19 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	if err != nil {
 		return nil, err
 	}
+	vendorStamped, err := f.st.KnownVendorProductIDs()
+	if err != nil {
+		return nil, err
+	}
 	bySet := map[string][]string{}
 	for _, r := range refs {
 		// A set is fetched when anything it can teach is still unknown:
-		// the uuid, the vendor links a pre-v15 card never learned, or the
-		// treated-product id a pre-v17 card never learned. All are stamped
-		// after one read, so this stays a once-per-set cost.
+		// the uuid, the vendor links a pre-v15 card never learned, the
+		// treated-product id a pre-v17 card never learned, or the per-vendor
+		// product ids a pre-v20 card never learned. All are stamped after one
+		// read, so this stays a once-per-set cost.
 		needUUID := r.MTGJSONUUID == "" && known[r.ScryfallID] == ""
-		if needUUID || !linked[r.ScryfallID] || !altStamped[r.ScryfallID] {
+		if needUUID || !linked[r.ScryfallID] || !altStamped[r.ScryfallID] || !vendorStamped[r.ScryfallID] {
 			bySet[r.SetCode] = append(bySet[r.SetCode], r.ScryfallID)
 		}
 	}
@@ -240,6 +245,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	learned := make(map[string]string)
 	links := make(map[string]store.CKLinks)
 	altIDs := make(map[string]string)
+	vendorIDs := make(map[string]store.VendorProductIDs)
 	n := 0
 	for setCode, sids := range bySet {
 		n++
@@ -268,6 +274,11 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 				// product id.
 				links[sid] = store.CKLinks{URL: sc.CKURL, FoilURL: sc.CKFoilURL}
 				altIDs[sid] = sc.AltProductID
+				vendorIDs[sid] = store.VendorProductIDs{
+					TCGProduct: sc.TCGProductID,
+					CKFoil:     sc.CKFoilID,
+					CKEtched:   sc.CKEtchedID,
+				}
 			}
 		}
 	}
@@ -278,6 +289,9 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 		return nil, err
 	}
 	if err := f.st.SaveTCGAltProducts(altIDs); err != nil {
+		return nil, err
+	}
+	if err := f.st.SaveVendorProductIDs(vendorIDs); err != nil {
 		return nil, err
 	}
 	return known, nil

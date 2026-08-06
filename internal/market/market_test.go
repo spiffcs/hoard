@@ -413,3 +413,96 @@ func TestAssessCompDropsTrollListings(t *testing.T) {
 		t.Errorf("lone figure = %+v, want trusted", lone)
 	}
 }
+
+// A treated foil is one Scryfall printing, so every vendor files its price
+// under the same key while not necessarily selling the same product under it.
+// Manapool publishes no identifier in the feed, so its figure cannot be tied
+// to the copy held and must not sit in a column claiming to compare like with
+// like — this is the live m3c/403 ripple, where a $26.69 something-else beside
+// a $4.61 ripple read as 85% "disagreement".
+func TestAssessCompDropsUnverifiableTreatedQuotes(t *testing.T) {
+	ripple := store.OwnedFinish{
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		Treatment: "ripple", VendorIDsKnown: true,
+	}
+	qs := []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 4.61},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 26.69},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 3.99},
+	}
+	c := AssessComp(ripple, qs)
+	if c.HasManapool {
+		t.Errorf("manapool = %v, want dropped: no product id to match it to the ripple", c.Manapool)
+	}
+	if !c.HasMarket || !c.HasCK {
+		t.Errorf("the identified vendors must survive: %+v", c)
+	}
+	if c.Low != 3.99 || c.LowFrom != "cardkingdom" {
+		t.Errorf("low = %v from %q, want the unverified figure excluded", c.Low, c.LowFrom)
+	}
+	got, ok := c.SaleSpread()
+	if !ok || got > 0.20 {
+		t.Errorf("sale spread = %v (ok %v), want the real TCG-vs-CK gap, not the bogus 85%%", got, ok)
+	}
+}
+
+// Only treated printings are ambiguous. An ordinary foil has one product per
+// finish at every vendor, so nothing is suppressed and Manapool keeps its
+// column.
+func TestAssessCompKeepsManapoolOnPlainFoils(t *testing.T) {
+	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	c := AssessComp(plain, []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 3.20},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 4.10},
+	})
+	if !c.HasManapool || c.Manapool != 4.10 {
+		t.Errorf("manapool = %+v, want kept: an untreated printing is unambiguous", c)
+	}
+}
+
+// An unread set file is a gap, not an answer: until hoard has asked, an absent
+// id cannot be read as "this vendor sells no split product", so even the
+// identified vendors stay out of the sheet.
+func TestAssessCompWaitsForVendorIDs(t *testing.T) {
+	unasked := store.OwnedFinish{
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		Treatment: "ripple", VendorIDsKnown: false,
+	}
+	c := AssessComp(unasked, []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 4.61},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 3.99},
+	})
+	if c.HasMarket || c.HasCK || c.HasManapool {
+		t.Errorf("comp = %+v, want nothing claimed before the ids are known", c)
+	}
+	if _, ok := c.SaleSpread(); ok {
+		t.Error("sale spread defined with no verified figures")
+	}
+}
+
+// An etched card is a separate product every vendor prices separately, and
+// the feed carries an etched bucket for it. Reading the foil bucket instead
+// quotes the wrong card.
+func TestAssessCompPrefersTheEtchedBucket(t *testing.T) {
+	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: "etched"}
+	c := AssessComp(owned, []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 9.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "etched", Price: 24.50},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "etched", Price: 27.99},
+	})
+	if !c.HasMarket || c.Market != 24.50 {
+		t.Errorf("market = %v, want the etched product's price", c.Market)
+	}
+	if !c.HasCK || c.CK != 27.99 {
+		t.Errorf("ck = %v, want the etched product's price", c.CK)
+	}
+
+	// Where no vendor splits it out, the foil bucket is all there is, and a
+	// foil quote beats no quote.
+	fallback := AssessComp(owned, []mtgjson.Quote{
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 9.99},
+	})
+	if !fallback.HasMarket || fallback.Market != 9.99 {
+		t.Errorf("fallback = %+v, want the foil bucket when there is no etched one", fallback)
+	}
+}

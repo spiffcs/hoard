@@ -14,6 +14,7 @@
 // business in a shipping read.
 
 import BorderKit
+import CardKit
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -256,6 +257,42 @@ func sparkleScoreCorpus(dir: String, verbose: Bool, onlySession: String?) -> Nev
     if maxSamples > SparkleGate.maxSamples {
         print("OVER BUDGET")
         exit(3)
+    }
+    exit(0)
+}
+
+// MARK: - Fitting CardLayout.leftU
+
+/// anchorFit sweeps scan/corpus and reports where each card's footer anchor sat.
+///
+/// This is the measurement `CardLayout.leftU`'s table is made of. It runs on the
+/// raw corpus images, which *are* cards, so the anchor's box is card space with
+/// nothing in between — no card location, no perspective flatten, no margin.
+///
+/// It reports the two candidate discriminators alongside, because the era alone
+/// provably cannot separate the frames: 8th Edition shipped in July 2003 and
+/// Legions and Scourge are 2003 printings of the frame it replaced, so a table
+/// keyed on the year alone puts both in one bucket and is wrong for one of them.
+@available(macOS 15, *)
+func anchorFit(manifest: String) async -> Never {
+    let dir = URL(fileURLWithPath: manifest).deletingLastPathComponent()
+    guard let text = try? String(contentsOfFile: manifest, encoding: .utf8) else {
+        die("no manifest at \(manifest)")
+    }
+    print("era\tframe\tkind\tprefix\tleftU\tsetCode\tnumberSource\tname")
+    for row in text.split(whereSeparator: \.isNewline).dropFirst() {
+        let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 6 else { continue }
+        let (sid, era, name) = (f[0], f[1], f[3])
+        let img = dir.appendingPathComponent("images/\(sid).png")
+        guard let src = CGImageSourceCreateWithURL(img as CFURL, nil),
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { continue }
+
+        guard let fit = await measureAnchorOnFlatCard(cg) else { continue }
+        let m = fit.anchor
+        print("\(era)\t\(fit.year)\t\(m.kind)\t\(m.prefix)"
+            + "\t\(String(format: "%.4f", Double(m.leftU)))"
+            + "\t\(fit.setCode.isEmpty ? "-" : fit.setCode)\t\(fit.numberSource)\t\(name)")
     }
     exit(0)
 }

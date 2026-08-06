@@ -274,24 +274,51 @@ func parseColorIdentity(v sql.NullString) []string {
 	return out
 }
 
-// foilTreatments maps Scryfall's foil-treatment promo_types tags to their
-// display words. Only tags that describe the foil finish itself belong
-// here — cosmetics like boosterfun, portrait or universesbeyond say
-// nothing about the foiling and are ignored. A new WotC treatment is one
-// entry here, never a migration: the column stores the raw tag array.
-var foilTreatments = map[string]string{
-	"ripplefoil":      "ripple",
-	"surgefoil":       "surge",
-	"galaxyfoil":      "galaxy",
-	"halofoil":        "halo",
-	"texturedfoil":    "textured",
-	"rainbowfoil":     "rainbow",
-	"oilslick":        "oilslick",
-	"confettifoil":    "confetti",
+// foilTreatmentWords overrides the display word for foil-treatment tags the
+// suffix rule below cannot derive one from, or derives badly. Two kinds live
+// here: tags that name a foiling without carrying the "foil" suffix, and tags
+// whose stripped form reads poorly in a column.
+//
+// An earlier hand-maintained allowlist drifted from the source — it keyed
+// "texturedfoil", which matches no printing Scryfall publishes (the tag is
+// "textured"), so textured foils read as plain foils for as long as it stood.
+// The suffix rule exists so a new WotC treatment needs no code at all.
+var foilTreatmentWords = map[string]string{
+	// No "foil" suffix to strip.
+	"textured":        "textured",
+	"embossed":        "embossed",
 	"gilded":          "gilded",
 	"neonink":         "neon",
+	"oilslick":        "oilslick",
+	"glossy":          "glossy",
 	"doublerainbow":   "dbl rainbow",
+	"doubleexposure":  "dbl exposure",
+	"invisibleink":    "invis ink",
 	"stepandcompleat": "compleat",
+
+	// Suffix present, but the stripped word reads badly.
+	"firstplacefoil":   "1st place",
+	"chocobotrackfoil": "chocobo",
+}
+
+// foilTreatmentOf returns one promo tag's display word, or "" when the tag
+// says nothing about the foiling.
+//
+// Tags ending in "foil" are treatments by construction — that is how WotC
+// names them (ripplefoil, surgefoil, silverfoil, fracturefoil, …) — so the
+// suffix carries the rule and the map above only handles exceptions.
+// Deliberately excluded: thick, serialized, magnified, plastic, metal and
+// friends describe the card's stock or print run rather than its foiling,
+// and cosmetics like boosterfun, portrait or universesbeyond say nothing at
+// all. None of those end in "foil", so they fall through on their own.
+func foilTreatmentOf(tag string) string {
+	if word, ok := foilTreatmentWords[tag]; ok {
+		return word
+	}
+	if len(tag) > len("foil") && strings.HasSuffix(tag, "foil") {
+		return strings.TrimSuffix(tag, "foil")
+	}
+	return ""
 }
 
 // FoilTreatment reads a promo_types JSON array and returns the display
@@ -305,7 +332,7 @@ func FoilTreatment(promoTypes sql.NullString) string {
 	}
 	for _, tag := range strings.Split(strings.Trim(promoTypes.String, "[]"), ",") {
 		tag = strings.Trim(strings.TrimSpace(tag), `"`)
-		if word, ok := foilTreatments[tag]; ok {
+		if word := foilTreatmentOf(tag); word != "" {
 			return word
 		}
 	}

@@ -133,6 +133,60 @@ func TestFoilTreatment(t *testing.T) {
 	}
 }
 
+// The "foil" suffix carries the rule, so a treatment WotC ships tomorrow
+// needs no code. The hand-written allowlist this replaced had drifted: it
+// keyed "texturedfoil", which matches nothing Scryfall publishes — the tag is
+// "textured" — so textured foils read as plain foils for as long as it stood.
+func TestFoilTreatmentDerivesFromTheSuffix(t *testing.T) {
+	ns := func(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
+	for in, want := range map[string]string{
+		// Real Scryfall tags the old allowlist never covered.
+		`["silverfoil"]`:       "silver",
+		`["fracturefoil"]`:     "fracture",
+		`["manafoil"]`:         "mana",
+		`["dragonscalefoil"]`:  "dragonscale",
+		`["singularityfoil"]`:  "singularity",
+		`["textured"]`:         "textured",
+		`["embossed"]`:         "embossed",
+		`["firstplacefoil"]`:   "1st place",
+		`["chocobotrackfoil"]`: "chocobo",
+
+		// Words that were already right must not shift.
+		`["galaxyfoil"]`:      "galaxy",
+		`["halofoil"]`:        "halo",
+		`["confettifoil"]`:    "confetti",
+		`["rainbowfoil"]`:     "rainbow",
+		`["neonink"]`:         "neon",
+		`["oilslick"]`:        "oilslick",
+		`["gilded"]`:          "gilded",
+		`["doublerainbow"]`:   "dbl rainbow",
+		`["stepandcompleat"]`: "compleat",
+
+		// Stock and print-run attributes are not foiling, and none of them
+		// carries the suffix — they fall through on their own.
+		`["thick"]`:                    "",
+		`["serialized"]`:               "",
+		`["magnified"]`:                "",
+		`["plastic"]`:                  "",
+		`["metal"]`:                    "",
+		`["prerelease","datestamped"]`: "",
+	} {
+		if got := FoilTreatment(ns(in)); got != want {
+			t.Errorf("FoilTreatment(%s) = %q, want %q", in, got, want)
+		}
+	}
+
+	// The dead key must stay dead: were Scryfall to start publishing it, the
+	// suffix rule answers anyway.
+	if got := FoilTreatment(ns(`["texturedfoil"]`)); got != "textured" {
+		t.Errorf("FoilTreatment(texturedfoil) = %q, want the suffix rule to answer", got)
+	}
+	// A bare "foil" tag is a finish, not a treatment, and must not become "".
+	if got := FoilTreatment(ns(`["foil"]`)); got != "" {
+		t.Errorf("FoilTreatment(foil) = %q, want empty", got)
+	}
+}
+
 // A ripple-tagged document surfaces Treatment on the query paths the
 // views read — the CE precon case (observed live: 400 ripple copies
 // reading as plain foil).

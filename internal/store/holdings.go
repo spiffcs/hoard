@@ -167,6 +167,18 @@ type OwnedFinish struct {
 	// Treatment is the foil treatment's display word, empty for plain —
 	// same semantics as Card.Treatment.
 	Treatment string
+	// TCGAltProductID and CKFoilID are the per-vendor product ids that make a
+	// treated foil's quotes checkable. Empty means the feed named none, which
+	// is an answer rather than a gap: no split product at that vendor means
+	// its ordinary foil listing *is* the treated foil. See VendorProductIDs
+	// for why Manapool has no counterpart.
+	TCGAltProductID string
+	CKFoilID        string
+	// VendorIDsKnown is whether the set file behind those ids has been read
+	// at all. Without it an empty id is ambiguous — "this vendor sells no
+	// split product" and "we have not looked yet" are opposite answers, and
+	// only the first one licenses trusting a quote.
+	VendorIDsKnown bool
 }
 
 // OwnedByFinish returns every printing held, split by finish.
@@ -176,7 +188,9 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
        c.collector_number, e.finish,
        SUM(e.quantity) AS copies,
        SUM(e.quantity * ` + entryValue + `) AS value,
-       c.color_identity, c.promo_types
+       c.color_identity, c.promo_types,
+       COALESCE(c.tcg_alt_product_id, ''), COALESCE(c.ck_foil_id, ''),
+       c.ck_foil_id IS NOT NULL
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 ` + altJoinCards + `
@@ -191,7 +205,8 @@ ORDER BY value DESC, c.name`)
 		var o OwnedFinish
 		var colors, promos sql.NullString
 		if err := rows.Scan(&o.ScryfallID, &o.MTGJSONUUID, &o.Name, &o.SetCode,
-			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &colors, &promos); err != nil {
+			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &colors, &promos,
+			&o.TCGAltProductID, &o.CKFoilID, &o.VendorIDsKnown); err != nil {
 			return nil, err
 		}
 		o.ColorIdentity = parseColorIdentity(colors)

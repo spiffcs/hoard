@@ -260,6 +260,44 @@ value rides MTGJSON's foil bucket, which tracks the treated product's
 market. The FINISH columns name the treatment so the number and the
 physical card read as the same thing.
 
+**Finish and treatment are different axes, in every source.** Scryfall
+publishes exactly three finishes — `nonfoil`, `foil`, `etched` — across
+all 107,000 paper printings, and MTGJSON publishes the same three. A
+treatment is a `promo_types` tag on the printing, never a finish of its
+own, so hoard stores the same three and derives the treatment word from
+the tag. Any tag ending in `foil` is a treatment, which is how WotC names
+them, plus a short list for the ones that don't (`textured`, `embossed`,
+`gilded`, `neonink`, …). That rule replaced a hand-written allowlist that
+had already drifted from the source: it keyed `texturedfoil`, a tag
+Scryfall does not publish, so textured foils read as plain foils.
+
+**Which vendor is selling which product.** A treated printing is one
+Scryfall id, so all three vendors file their price under the same key —
+but they do not all sell the same product under it, and a comp sheet that
+assumes they do reports a data defect as vendor disagreement (observed
+live: an 85% "spread" on `m3c/403`, between a $4.61 ripple and a $26.69
+something else). MTGJSON's set files answer the question directly, and
+hoard now stores what they say:
+
+| Vendor | Identifiers | Treated foil |
+|---|---|---|
+| TCGplayer | `tcgplayerProductId` + `tcgplayerAlternativeFoilProductId` | splits it into its own listing — the tcgcsv overlay above fetches that listing |
+| Card Kingdom | `cardKingdomId` + `cardKingdomFoilId`, no alternative-foil variant | does not split, so the one foil product *is* the treated foil |
+| Manapool | none published | cannot be tied to a product at all |
+
+Where TCGplayer splits, the feed carries no tcgplayer foil series for
+that printing whatsoever (verified across all 312 in a live hoard), so
+the overlay is the only foil price there is and the hole-filling merge is
+enough. Where it does not split, the ordinary foil listing is itself the
+treated foil. Either way the figure describes the card held — which is
+what lets the comps table drop Manapool's, and only Manapool's, on a
+treated foil. See [browsing.md](browsing.md#views).
+
+Etched is a real bucket in the price feed, not a synonym for foil: every
+vendor prices the etched product separately, on both sides of the
+counter. A comp for an etched copy reads that bucket, falling back to the
+foil one only where a vendor publishes no etched series.
+
 **Where treated-foil TCGplayer prices come from.** TCGplayer sells each
 treatment as a separate product — "Akroma's Will (Ripple Foil)" is its
 own listing beside the regular card — and MTGJSON's price feed ingests

@@ -231,7 +231,20 @@ itself: at or below zero is green (the bid meets or beats the ask — pure
 value), reddening linearly toward 100% — the retailer keeping the whole
 sale price. A dash means no buylist bid today (Card Kingdom runs the only
 buylist in the MTGJSON feed). Each side's status line states its spread
-formula. Transient receipts ("sorted by …") hold the status line only
+formula.
+
+A dash also means **we cannot show that vendor's price for this card**. A
+ripple or surge printing is one Scryfall id, so every vendor files a
+price under the same key while not necessarily selling the same product
+under it — and a comp is a comparison, so a price for the wrong product
+is worse than no price. TCGplayer and Card Kingdom both identify their
+products, so their figures stand; Manapool publishes no identifier in the
+feed, so on a treated foil its column is dashed and left out of the
+spread. A row left with one vendor drops out of the table entirely, the
+same rule any one-vendor card has always followed. Plain foils are
+unaffected — an untreated printing has one product per finish, so nothing
+is ambiguous and every vendor keeps its column. See
+[pricing.md](pricing.md#where-vendors-disagree). Transient receipts ("sorted by …") hold the status line only
 until the cursor moves; navigating always brings back the selected row's
 own summary, which leads with the selection itself — the card's name on
 the right pane, the binder, deck, or set's on the left

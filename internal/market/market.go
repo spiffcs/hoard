@@ -104,10 +104,12 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 		op, retailCount := Assess(o, qs)
 		if retailCount >= 2 {
 			res.Compared++
-			// The comps population is exactly the compared one: a sheet
-			// with one vendor on it compares nothing. minValue filters on
-			// the low ask, same as the opportunities.
-			if c := AssessComp(o, qs); c.Low >= minValue {
+			// A sheet with one vendor on it compares nothing, so the comp
+			// counts its own surviving figures rather than inheriting this
+			// count: a treated foil can arrive here with three quotes and
+			// keep only the one whose product is identified. minValue
+			// filters on the low ask, same as the opportunities.
+			if c := AssessComp(o, qs); c.Figures() >= 2 && c.Low >= minValue {
 				res.Comps = append(res.Comps, c)
 			}
 		}

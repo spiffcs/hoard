@@ -61,10 +61,10 @@ private struct BorderMeasurements {
 /// readBorder runs the whole chain and returns what it saw. It answers only
 /// when every gate passes; `abstain` always says which one did not.
 public func readBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
-                       copyrightYear: Int) -> BorderReading {
+                       frame: FrameEvidence) -> BorderReading {
     var out = BorderReading()
     guard let m = measureBorder(cg, lines: lines, bandLines: bandLines,
-                                copyrightYear: copyrightYear, into: &out)
+                                frame: frame, into: &out)
     else { return out }
     judgeBorder(m, into: &out)
     return out
@@ -74,7 +74,7 @@ public func readBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
 /// on `out` as it goes. Returns nil — having said which step could not be
 /// taken — when the chain cannot continue.
 private func measureBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
-                           copyrightYear: Int,
+                           frame: FrameEvidence,
                            into out: inout BorderReading) -> BorderMeasurements? {
     // Both passes are offered. The whole-frame pass usually has the title too,
     // which is what makes the scale checkable; the band pass is aimed at the
@@ -103,7 +103,7 @@ private func measureBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
         out.titleLeftU = Double(t.box.minX)
     }
     guard let g = cardGeometry(footer: footer, kind: anchor.kind, title: title,
-                               year: copyrightYear,
+                               frame: frame,
                                frameW: frameW, frameH: frameH) else {
         out.abstain = "no geometry"
         return nil

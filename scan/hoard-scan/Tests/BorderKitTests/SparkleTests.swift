@@ -137,3 +137,60 @@ private func syntheticCard(du: CGFloat = 0, dv: CGFloat = 0,
     #expect(!retroFrameFooter(["R 0338", "™ & © 2024 Wizards of the Coast"]))
     #expect(!retroFrameFooter([]))
 }
+
+// MARK: - CardLayout.leftU's frame families
+
+@Test func theM15FrameGetsItsOwnLandmark() {
+    // The bug this pins: every card from 2015 on was told its copyright row
+    // starts at 0.080, the 8th Edition frame's value. It starts at 0.593 —
+    // measured over 35 corpus cards with an IQR of 0.004. A landmark half a
+    // card out throws everything derived from it clean off the image.
+    let m15 = FrameEvidence(year: 2024, hasSetCode: true, numberOnOwnRow: true)
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .trademark, frame: m15) == 0.593)
+
+    let eighth = FrameEvidence(year: 2010)
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .trademark, frame: eighth) == 0.079)
+}
+
+@Test func twentyFourteenIsDecidedOnEvidenceNotOnTheYear() {
+    // Magic 2015 shipped in July 2014, so that one year holds both frames and
+    // the year alone cannot separate them. The M15 frame is the first to print
+    // a set/language row and the first to put the collector number on its own
+    // line; either is enough.
+    let ambiguous = FrameEvidence(year: 2014)
+    #expect(ambiguous.isM15 == false, "no evidence means the older frame")
+    #expect(FrameEvidence(year: 2014, hasSetCode: true).isM15)
+    #expect(FrameEvidence(year: 2014, numberOnOwnRow: true).isM15)
+
+    // After 2014 the year settles it on its own — a real M15 card whose set
+    // code failed to read must not fall back to the 8th Edition landmark.
+    #expect(FrameEvidence(year: 2021).isM15, "Snakeskin Veil reads no set code")
+    // And before it, no amount of misparsed evidence promotes an old frame.
+    // S.N.O.T. is a 2004 card whose joke-set text parses as set code CYRIL.
+    #expect(FrameEvidence(year: 2004, hasSetCode: true).isM15 == false)
+}
+
+@Test func theOlderErasKeepTheirFittedLandmarks() {
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .copyrightGlyph,
+                             frame: FrameEvidence(year: 1995)) == 0.086)
+    #expect(CardLayout.leftU(kind: .credit, prefix: .illus,
+                             frame: FrameEvidence(year: 1995)) == 0.097)
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .trademark,
+                             frame: FrameEvidence(year: 2001)) == 0.233)
+    // An unread year reads as pre-1998, and the corpus agrees: those cards
+    // anchor on their credit row at 0.097, the pre-1998 value exactly.
+    #expect(CardLayout.leftU(kind: .credit, prefix: .illus,
+                             frame: FrameEvidence(year: 0)) == 0.097)
+}
+
+@Test func aLandmarkThatWasNeverMeasuredStaysNil() {
+    // The whole point of the nil: the lever from the landmark to the card's far
+    // side is most of a width, so a guessed offset throws a predicted position
+    // off the image entirely. No answer beats a wrong one.
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .copyrightGlyph,
+                             frame: FrameEvidence(year: 2001)) == nil)
+    #expect(CardLayout.leftU(kind: .copyright, prefix: .year,
+                             frame: FrameEvidence(year: 2010)) == nil)
+    #expect(CardLayout.leftU(kind: .credit, prefix: .trademark,
+                             frame: FrameEvidence(year: 2024, hasSetCode: true)) == nil)
+}

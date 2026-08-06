@@ -243,6 +243,74 @@ func (s *Store) SaveTCGAltProducts(ids map[string]string) error {
 	return tx.Commit()
 }
 
+// KnownVendorProductIDs reports which printings have been asked about for
+// the v20 ids — NULL means never asked, the same stamp convention as the
+// links and the alt product id. A pre-v20 card re-reads its set file once so
+// the comp sheet can tell "Card Kingdom has no foil product here" from "we
+// have not looked yet", which are opposite answers.
+func (s *Store) KnownVendorProductIDs() (map[string]bool, error) {
+	rows, err := s.db.Query(`
+SELECT scryfall_id FROM cards WHERE ck_foil_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out[sid] = true
+	}
+	return out, rows.Err()
+}
+
+// VendorProductIDs is the rest of one printing's per-vendor product ids —
+// the ones that say which physical product a vendor's price describes.
+//
+// The treated foil is why they are here. A ripple or surge printing is one
+// Scryfall id, so every vendor's foil price is filed under the same key, but
+// they are not all selling the same thing under it: TCGplayer splits the
+// treated foil into its own listing, while Card Kingdom keeps one foil
+// product per printing. CKFoil being present is therefore the evidence that
+// Card Kingdom's foil quote is the treated copy and not a base-product price
+// wearing the same key. Manapool has no field here because MTGJSON publishes
+// no Manapool identifier — which is the whole reason its treated-foil quotes
+// cannot be confirmed.
+type VendorProductIDs struct {
+	TCGProduct string
+	CKFoil     string
+	CKEtched   string
+}
+
+// SaveVendorProductIDs records the per-vendor product ids a set-file read
+// produced, empty ones included — asked-and-none must be distinguishable
+// from never-asked, the same convention as the links and the alt product id.
+func (s *Store) SaveVendorProductIDs(ids map[string]VendorProductIDs) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`
+UPDATE cards SET tcg_product_id = ?, ck_foil_id = ?, ck_etched_id = ?
+WHERE scryfall_id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for sid, v := range ids {
+		if _, err := stmt.Exec(v.TCGProduct, v.CKFoil, v.CKEtched, sid); err != nil {
+			return fmt.Errorf("caching vendor product ids for %s: %w", sid, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveCardKingdomLinks records the links a set-file read produced,
 // including the empty ones — asked-and-none must be distinguishable from
 // never-asked.
