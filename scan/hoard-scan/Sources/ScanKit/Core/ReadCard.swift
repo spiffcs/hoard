@@ -1,6 +1,7 @@
 // The frame-wide Vision read: two text passes, then the title selection that
 // turns their lines into a name and its alternates.
 
+import BorderKit
 import CoreGraphics
 import Foundation
 import Vision

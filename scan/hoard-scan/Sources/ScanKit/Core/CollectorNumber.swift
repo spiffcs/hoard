@@ -1,6 +1,7 @@
 // The collector block printed along the card's bottom border: where to look
 // for it, and how to read a number, set code and finish marker out of it.
 
+import BorderKit
 import CoreGraphics
 import Foundation
 
@@ -41,7 +42,6 @@ let frameBandFallback: CGFloat = 0.5
 // ordinary prose — "cards equal to the sacrificed" uppercases to a tidy
 // "EQUAL TO" and yields a set code of "EQUAL".
 let cardLanguages = "EN|DE|FR|IT|ES|PT|JA|JP|KO|RU|ZH|ZHS|ZHT|CS|CT|HE|LA|AR|SA|PH"
-let collectorPairRE = try! NSRegularExpression(pattern: #"(\d{1,5})\s*/\s*(\d{1,5})"#)
 // The rarity letter may trail the number (M15 frames: "330 R") or lead it
 // (Marvel frames: "R 0330", where mythic's M also arrives as Cyrillic М until
 // asciify folds it).

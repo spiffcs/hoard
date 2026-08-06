@@ -27,6 +27,30 @@ public struct LocatedCard {
     public var bounds: CGRect
     /// The card, perspective-corrected and upright.
     public var image: CGImage
+    /// The same card flattened again with `wideMargin` of slack on every side.
+    ///
+    /// This exists because `image` cannot be trusted to contain the border.
+    /// Vision locks onto whichever edge has contrast, and on a white-bordered
+    /// card against a light desk the strongest edge in the frame is
+    /// border-to-art, not card-to-desk — so the quad settles *inside* the
+    /// card's cut edge and the white border is not in these pixels at all.
+    /// Measured live: Control Magic and Phantasmal Terrain, both white, both
+    /// sampled at the card's own ink point off the blue inner frame.
+    ///
+    /// Widening does not by itself say where the card is; it only guarantees
+    /// the border is somewhere in shot. Finding it is the border reader's job,
+    /// and it anchors on text to do it.
+    public var wide: CGImage?
+    /// The margin `wide` was actually built with, which is `wideMargin` only
+    /// when the frame had that much to give. Anything mapping coordinates into
+    /// `wide` has to use this number and not the constant.
+    public var wideMarginUsed: CGFloat = 0
+
+    /// How far past the quad the wide flatten reaches, as a fraction of the
+    /// card. A tenth covers every inset observed — the worst had the quad on
+    /// the inner frame, a few percent in — without reaching the next card on a
+    /// tightly packed desk.
+    public static let wideMargin: CGFloat = 0.10
 }
 
 
@@ -71,6 +95,40 @@ public func locateCard(_ cg: CGImage) -> LocatedCard? {
 
     guard let flat = flatten(cg, tl: tl, tr: tr, bl: bl, br: br) else { return nil }
 
+    // The same quad, pushed out about its own centre. Scaling by 1 + 2m puts m
+    // of slack on each side, in the card's own frame rather than the image's,
+    // so a tilted card widens along its own edges.
+    let centre = CGPoint(x: (tl.x + tr.x + bl.x + br.x) / 4,
+                         y: (tl.y + tr.y + bl.y + br.y) / 4)
+    // Only as far as the frame can actually supply.
+    //
+    // CIPerspectiveCorrection fills anything outside its input with transparent
+    // black, and black is a border colour — widening past the frame edge would
+    // manufacture a confident "black" out of nothing. A card photographed on a
+    // desk has room; a scan cropped to the card itself has none, and gets no
+    // wide flatten rather than a fabricated one.
+    let corners = [tl, tr, bl, br]
+    var k = 1 + 2 * LocatedCard.wideMargin
+    for p in corners {
+        // The largest scale about the centre that keeps this corner in frame.
+        if p.x != centre.x {
+            let limit = (p.x > centre.x ? w - centre.x : centre.x) / abs(p.x - centre.x)
+            k = min(k, limit)
+        }
+        if p.y != centre.y {
+            let limit = (p.y > centre.y ? h - centre.y : centre.y) / abs(p.y - centre.y)
+            k = min(k, limit)
+        }
+    }
+    func out(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: centre.x + (p.x - centre.x) * k, y: centre.y + (p.y - centre.y) * k)
+    }
+    // Below a couple of percent there is nothing to gain and the reader is
+    // better off saying so: nil abstains rather than failing the read.
+    let wide = k >= 1.02
+        ? flatten(cg, tl: out(tl), tr: out(tr), bl: out(bl), br: out(br))
+        : nil
+
     // Check the aspect *after* flattening, not before. A tilted card has a
     // bounding box of the wrong shape while the card itself is fine, and
     // rejecting on the box would throw away exactly the captures perspective
@@ -78,7 +136,8 @@ public func locateCard(_ cg: CGImage) -> LocatedCard? {
     let ratio = Double(flat.width) / Double(flat.height)
     guard abs(ratio - cardAspect) < aspectTolerance else { return nil }
 
-    return LocatedCard(bounds: box, image: flat)
+    return LocatedCard(bounds: box, image: flat, wide: wide,
+                       wideMarginUsed: wide == nil ? 0 : (k - 1) / 2)
 }
 
 /// flatten perspective-corrects the quad into an upright rectangle.

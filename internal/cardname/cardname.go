@@ -38,7 +38,24 @@ const (
 	// card may be written to the collection without a human confirming it.
 	// Deliberately far above MinSimilarity: 0.7 means "worth showing a person",
 	// this means "right often enough to act on silently".
-	AutoCommitSimilarity = 0.90
+	//
+	// 0.88 rather than the original 0.90, for old cards. Pre-1998 titles are
+	// small serif type and lose a glyph or two to it — the corpus is full of
+	// "Amrou Kichkin" for Amrou Kithkin and "Sisters of che Flame" for Sisters
+	// of the Flame — and a two-character slip on a short name lands just under
+	// 0.90. Prodigal Sorcerer scored exactly 0.88 live, on the right card, with
+	// its year and border already agreeing, and queued anyway.
+	//
+	// The room to move came from where the false matches actually sit. Every
+	// one on record is far below: "Stemal Dragon" at 0.76, a glare-truncated
+	// title at 0.79, and the copyright line resolving to "Wizards of Thay" at
+	// 0.71 — that last one the reason MaxLengthRatio exists, because no
+	// similarity threshold separates it. Nothing observed lives between 0.88
+	// and 0.90, so this widens the pass without reaching a known miss.
+	//
+	// It is still the *uncorroborated* bar. A card whose number and set agree
+	// never consults this at all.
+	AutoCommitSimilarity = 0.88
 )
 
 // Match describes how a fuzzy resolution earned its answer, so callers can

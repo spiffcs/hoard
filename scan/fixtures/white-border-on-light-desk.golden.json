@@ -1,0 +1,30 @@
+[
+  {
+    "border": "",
+    "borderSource": "",
+    "candidates": [
+      "Phantasmal Terrain",
+      "Enchant Land",
+      "Target land becomes any basic"
+    ],
+    "finish": "",
+    "name": "Phantasmal Terrain",
+    "number": "",
+    "set": "",
+    "source": "crop",
+    "year": 1995
+  },
+  {
+    "border": "",
+    "borderSource": "",
+    "candidates": [
+      "Enchant Land"
+    ],
+    "finish": "",
+    "name": "Enchant Land",
+    "number": "",
+    "set": "",
+    "source": "frame",
+    "year": 0
+  }
+]

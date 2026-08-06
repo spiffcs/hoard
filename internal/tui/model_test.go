@@ -3250,3 +3250,84 @@ func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
 		t.Errorf("review = %+v, want the phantom replaced by the settled read", m.review)
 	}
 }
+
+// The receipt shows a window onto the history, not all of it.
+func TestTallyWindowsAndScrolls(t *testing.T) {
+	m := model{}
+	for i := 1; i <= 25; i++ {
+		m.recordTally(fmt.Sprintf("card %d", i))
+	}
+
+	// Pinned to the newest while nobody has scrolled: the row that just landed
+	// is the one being watched for.
+	if m.tallyOffset != 0 {
+		t.Fatalf("tallyOffset = %d, want 0 — the resting state is the newest",
+			m.tallyOffset)
+	}
+	if got := m.tallyMaxOffset(); got != 15 {
+		t.Errorf("tallyMaxOffset = %d, want 15 (25 rows, 10 shown)", got)
+	}
+
+	// Scrolling back stops at the oldest row rather than running off the end.
+	mm, _ := m.scrollTally(999)
+	m = mm.(model)
+	if m.tallyOffset != 15 {
+		t.Errorf("tallyOffset = %d, want it clamped to 15", m.tallyOffset)
+	}
+
+	// A card arriving while scrolled back must not slide the rows along.
+	m.recordTally("card 26")
+	if m.tallyOffset != 16 {
+		t.Errorf("tallyOffset = %d, want 16 — the visible rows should not move",
+			m.tallyOffset)
+	}
+
+	// And forward returns to the newest, never past it.
+	mm, _ = m.scrollTally(-999)
+	m = mm.(model)
+	if m.tallyOffset != 0 {
+		t.Errorf("tallyOffset = %d, want 0 back at the newest", m.tallyOffset)
+	}
+}
+
+// A short session has nothing to scroll and says nothing about scrolling.
+func TestShortTallyNeedsNoScroll(t *testing.T) {
+	m := model{}
+	for i := 0; i < tallyShown; i++ {
+		m.recordTally(fmt.Sprintf("card %d", i))
+	}
+	if got := m.tallyMaxOffset(); got != 0 {
+		t.Errorf("tallyMaxOffset = %d, want 0 — everything already fits", got)
+	}
+	mm, _ := m.scrollTally(5)
+	if got := mm.(model).tallyOffset; got != 0 {
+		t.Errorf("tallyOffset = %d, want 0 — there is nothing to scroll to", got)
+	}
+}
+
+// The rendered view shows exactly the window, and slicing it cannot panic.
+func TestCaptureViewRendersTenRows(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+	for i := 1; i <= 25; i++ {
+		m.recordTally(fmt.Sprintf("card %d", i))
+	}
+	m.state = stateCapture
+
+	if got := strings.Count(m.View(), "Auto-added"); got != tallyShown {
+		t.Errorf("rendered %d rows, want %d", got, tallyShown)
+	}
+	if !strings.Contains(m.View(), "showing 16-25 of 25") {
+		t.Error("the newest window should say where it is in the history")
+	}
+
+	// Scrolled fully back: the oldest rows, still exactly ten of them.
+	mm, _ := m.scrollTally(999)
+	m = mm.(model)
+	if got := strings.Count(m.View(), "Auto-added"); got != tallyShown {
+		t.Errorf("scrolled back rendered %d rows, want %d", got, tallyShown)
+	}
+	if !strings.Contains(m.View(), "showing 1-10 of 25") {
+		t.Errorf("want the oldest window; got:\n%s", m.View())
+	}
+}

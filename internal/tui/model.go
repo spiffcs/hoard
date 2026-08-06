@@ -240,8 +240,17 @@ type model struct {
 	now    func() time.Time
 	// tally is the capture view's live receipt of auto-commits; summary is the
 	// whole session's, returned to the caller when the program exits.
-	tally   []string
-	summary Summary
+	tally []string
+	// How many rows the tally is scrolled back from its newest, so a long
+	// session's history stays reachable without the receipt taking the screen.
+	//
+	// Zero means pinned to the newest, which is the resting state: a scanning
+	// session is watched, not read, and the row that matters is the one that
+	// just landed. Scrolled back, it *stays* back — see recordTally, which
+	// grows the offset alongside the slice so an arriving card does not slide
+	// the rows out from under someone reading them.
+	tallyOffset int
+	summary     Summary
 	// autoState mirrors the helper's trigger phase ("armed", "held", …) for
 	// the capture view; empty when the helper has no auto capture.
 	autoState string
@@ -686,6 +695,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.rotatePreview(true)
 		case tea.KeyRight:
 			return m.rotatePreview(false)
+		case tea.KeyUp:
+			// The receipt's history. Up/down rather than the left/right beside
+			// them because those already turn the preview, and because up/down
+			// is what every other list in this program scrolls with.
+			return m.scrollTally(1)
+		case tea.KeyDown:
+			return m.scrollTally(-1)
+		case tea.KeyPgUp:
+			return m.scrollTally(tallyShown)
+		case tea.KeyPgDown:
+			return m.scrollTally(-tallyShown)
+		case tea.KeyHome:
+			return m.scrollTally(len(m.tally))
+		case tea.KeyEnd:
+			return m.scrollTally(-len(m.tally))
 		case tea.KeyRunes:
 			switch {
 			case strings.EqualFold(string(msg.Runes), "z"):
@@ -1626,7 +1650,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.celebrate(priceValuePtr(card, finish), finish)
 		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
-		m.tally = append(m.tally, line)
+		m.recordTally(line)
 		m.summary.add("auto", line)
 		return m, m.scheduleNudge()
 	}
@@ -1768,6 +1792,45 @@ func (m *model) upgradeQueued(it queueItem) (scanMatch, bool) {
 		}
 	}
 	return 0, false
+}
+
+// tallyShown is how many auto-commits the capture view shows at once.
+//
+// Ten rows rather than the whole list: the receipt shares the screen with the
+// status line, the counter and the key help, and an unbounded one pushed all of
+// that off the bottom on a long pile. The rest is reachable with ↑/↓.
+const tallyShown = 10
+
+// recordTally appends one auto-commit to the live receipt.
+//
+// If the operator has scrolled back, the offset grows with the slice so the
+// same rows stay put. Otherwise an arriving card would shunt the history along
+// by one under a reader's eyes — which is exactly the moment they are least
+// able to follow it.
+func (m *model) recordTally(line string) {
+	m.tally = append(m.tally, line)
+	if m.tallyOffset > 0 {
+		m.tallyOffset++
+	}
+	m.clampTally()
+}
+
+// tallyMaxOffset is the furthest back the receipt can scroll: the oldest row
+// sitting at the top of the window.
+func (m model) tallyMaxOffset() int {
+	return max(0, len(m.tally)-tallyShown)
+}
+
+// clampTally holds the offset inside the history that exists.
+func (m *model) clampTally() {
+	m.tallyOffset = min(max(m.tallyOffset, 0), m.tallyMaxOffset())
+}
+
+// scrollTally moves the receipt's window, positive for older rows.
+func (m model) scrollTally(by int) (tea.Model, tea.Cmd) {
+	m.tallyOffset += by
+	m.clampTally()
+	return m, nil
 }
 
 // takeFromReview removes an item from the queue by id.
@@ -2358,11 +2421,20 @@ func (m model) viewContent() string {
 			}
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
-		// The live tally: the last few auto-commits, so an unattended write is
-		// visible the moment it happens.
-		const tallyShown = 4
-		for _, line := range m.tally[max(0, len(m.tally)-tallyShown):] {
-			b.WriteString(m.theme.OK.Render("✓ Auto-added: "+line) + "\n")
+		// The live tally: a window onto the auto-commits, newest last, so an
+		// unattended write is visible the moment it happens.
+		if len(m.tally) > 0 {
+			end := len(m.tally) - min(m.tallyOffset, m.tallyMaxOffset())
+			start := max(0, end-tallyShown)
+			for _, line := range m.tally[start:end] {
+				b.WriteString(m.theme.OK.Render("✓ Auto-added: "+line) + "\n")
+			}
+			// Only once there is history to miss. Saying "1-3 of 3" on a short
+			// session is noise about a control nobody needs yet.
+			if len(m.tally) > tallyShown {
+				b.WriteString(m.help(fmt.Sprintf("showing %d-%d of %d · ↑/↓ history",
+					start+1, end, len(m.tally))) + "\n")
+			}
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
 			counter := fmt.Sprintf("%d auto-added · %d need review", len(m.tally), len(m.review))
@@ -2376,13 +2448,16 @@ func (m model) viewContent() string {
 		}
 		switch m.autoState {
 		case "armed":
-			b.WriteString("Set a card down and the app will run auto capture. A manual trigger with spacebar also works.\n\n")
+			b.WriteString("Set a card down and the app will run auto capture. Press spacebar to manually trigger a scan.\n\n")
 		case "held":
 			b.WriteString("Captured. Swap in the next card.\n\n")
 		default:
 			b.WriteString("Frame the next card, then press space.\n\n")
 		}
 		keys := []string{": commands", "space capture", "←/→ rotate"}
+		if len(m.tally) > tallyShown {
+			keys = append(keys, "↑/↓ history")
+		}
 		if m.framingCapable {
 			keys = append(keys, "z framing")
 		}

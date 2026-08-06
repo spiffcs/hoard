@@ -8,52 +8,54 @@ import Foundation
 /// BorderReading is everything the reader saw, including when it refuses to
 /// answer. The numbers ride along regardless of the verdict because that is
 /// what --border-probe fits the constants from; only `color` is a claim.
-struct BorderReading: Encodable {
-    var color: String? = nil        // "white" | "black", absent when abstaining
-    var source: String? = nil       // "footer" | "footer+ring"
-    var abstain: String = ""        // why, when color is absent
-    var anchorKind: String = ""     // which footer row the geometry came from
+public struct BorderReading: Encodable, Sendable {
+    public init() {}
+
+    public var color: String? = nil        // "white" | "black", absent when abstaining
+    public var source: String? = nil       // "footer" | "footer+ring"
+    public var abstain: String = ""        // why, when color is absent
+    public var anchorKind: String = ""     // which footer row the geometry came from
     /// Where the border sits in the card's own footer tone range: >1 is
     /// brighter than its paper, <0 darker than its ink. The decision.
-    var t: Double = 0
+    public var t: Double = 0
     /// Ring minus the frame just inside it — the corroborating check that the
     /// ring is a different surface at all.
-    var standoff: Double = 0
-    var ringBottom: Double = 0
-    var ringTop: Double = 0
-    var ringMAD: Double = 0
-    var ringChroma: Double = 0
+    public var standoff: Double = 0
+    public var ringBottom: Double = 0
+    public var ringTop: Double = 0
+    public var ringMAD: Double = 0
+    public var ringChroma: Double = 0
     /// The card's own frame just inside the bottom border — the candidate
     /// reference for normalizing illumination, since it is the same surface
     /// under the same light and is always present.
-    var innerBottom: Double = 0
-    var innerMAD: Double = 0
-    var patchDark: Double = 0
-    var patchBright: Double = 0
-    var patchSeparation: Double = 0
-    var patchDarkFraction: Double = 0
-    var patchChroma: Double = 0
-    var clipHigh: Double = 0
-    var clipLow: Double = 0
-    var cardHeightPx: Double = 0
-    var scaleAgreement: Double = 0
-    var thetaDegrees: Double = 0
-    var footerText: String = ""
-    var titleText: String = ""
+    public var innerBottom: Double = 0
+    public var innerMAD: Double = 0
+    public var patchDark: Double = 0
+    public var patchBright: Double = 0
+    public var patchSeparation: Double = 0
+    public var patchDarkFraction: Double = 0
+    public var patchChroma: Double = 0
+    public var clipHigh: Double = 0
+    public var clipLow: Double = 0
+    public var cardHeightPx: Double = 0
+    public var scaleAgreement: Double = 0
+    public var thetaDegrees: Double = 0
+    public var footerText: String = ""
+    public var titleText: String = ""
     /// Where the anchors actually sat, as a fraction of the frame's height
     /// measured down from the top. On a clean scan the card *is* the frame, so
     /// these are CardLayout.footerV and titleV measured directly — which is
     /// how those constants get fitted.
-    var footerVMeasured: Double = 0
-    var titleVMeasured: Double = 0
-    var footerGlyphVMeasured: Double = 0
+    public var footerVMeasured: Double = 0
+    public var titleVMeasured: Double = 0
+    public var footerGlyphVMeasured: Double = 0
     /// Horizontal extents of the anchors, as fractions of the frame's width.
     /// On a clean scan the card *is* the frame, so these read directly as card
     /// space — which is how the symbol reader's horizontal anchor gets chosen
     /// between them rather than assumed.
-    var footerLeftU: Double = 0
-    var footerRightU: Double = 0
-    var titleLeftU: Double = 0
+    public var footerLeftU: Double = 0
+    public var footerRightU: Double = 0
+    public var titleLeftU: Double = 0
     /// Whether a horizontal landmark was established at all, and what the type
     /// line's right margin holds if so. Reported, never acted on yet — this is
     /// the measurement the symbol reader will be built from.
@@ -61,10 +63,10 @@ struct BorderReading: Encodable {
     /// anchor. On a clean scan the copyright row reads and wins, so this is the
     /// only way to measure the credit row's landmark for a frame whose live
     /// photographs anchor on it instead.
-    var creditCandidateLeftU: Double = 0
-    var horizontalAnchor: Bool = false
-    var symbolCoverage: Double = 0
-    var symbolContrast: Double = 0
+    public var creditCandidateLeftU: Double = 0
+    public var horizontalAnchor: Bool = false
+    public var symbolCoverage: Double = 0
+    public var symbolContrast: Double = 0
 }
 
 /// Thresholds the reading has to clear. Every one of them exists because the
@@ -108,4 +110,5 @@ enum BorderGate {
     /// How far the two scale estimates may disagree before the frame is not
     /// what it looks like.
     static let maxScaleDisagreement: CGFloat = 0.35
+
 }

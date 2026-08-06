@@ -285,11 +285,16 @@ struct SessionView: View {
                 // no background to lock onto and trims the border away on
                 // roughly half of them. A live pile is the only source of the
                 // geometry this reader will actually see.
+                // `abstain` names the gate that refused, always. The reader
+                // this replaced reported "between tones" for every failure
+                // except ring uniformity, so two white cards that were actually
+                // rejected on the standoff check read as a tone problem — and
+                // the tuning that followed went looking in the wrong place.
                 + " border=\(reading.border.color ?? "-")"
                 + "(\(reading.border.source ?? reading.border.abstain))"
-                + String(format: " tone=%.2f chroma=%.3f standoff=%.2f",
-                         reading.border.tone, reading.border.chroma,
-                         reading.border.standoff))
+                + String(format: " t=%.2f standoff=%.2f anchor=%@ scale=%.2f",
+                         reading.border.t, reading.border.standoff,
+                         reading.border.anchorKind, reading.border.scaleAgreement))
             // Hand the clock to the link so the round trip back — resolve on the
             // Mac, price returned — can be closed out when the result lands.
             link.markCaptureSent(at: started, localMS: ms(started, read))

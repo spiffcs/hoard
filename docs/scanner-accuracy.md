@@ -8,6 +8,9 @@ border colour. Regenerate with `make cardkit-score` (about 23 seconds), or
 the numbers below are not the scanner being wrong; they are the scorer asking a
 question the scanner was never trying to answer. Those are called out.
 
+For what queues on a *live pile* rather than in the corpus, and the work that
+would recover it, see [scanner-review-cases.md](scanner-review-cases.md).
+
 ## Headline
 
 `make cardkit-score`, over the 214 English printings:
@@ -16,7 +19,7 @@ question the scanner was never trying to answer. Those are called out.
 |---|---|
 | name | **87%** |
 | collector number | **78%** |
-| border colour, when it answers | 60% on the corpus, but see the caveat |
+| border colour, when it answers | **90%** on the corpus (48 of 53) |
 
 **The 17 non-English printings are scored apart and reported on their own row**
 (18% name, 71% number). The manifest carries a `lang` column for exactly this,
@@ -35,9 +38,15 @@ reads fine regardless of language. It is only the *name* we cannot use.
 The corpus is Scryfall scans in which the card fills the frame. That is the
 right place to fit parser rules and the **wrong** place to judge anything that
 depends on finding the card, because segmentation has no background to lock
-onto. `scan/corpus/border.sh` says so in its own header. Border accuracy on real
-photographs is 100% of what it answers (23 for 23 across two cameras); the 60%
-here is an artifact and should not be quoted.
+onto. `scan/corpus/border.sh` says so in its own header.
+
+The border reader no longer reads the crop at all, which is what moved that
+number. It anchors its geometry on the copyright and credit rows — lines whose
+identity is proven by what they *say* — and judges the ring against the card's
+own printed ink and paper. Coverage fell from 37% of cards to 24% and accuracy
+rose from 60% to 90%: **wrong answers went from 32 to 5**, which is the trade
+worth having, because a wrong border commits a wrong printing while an abstain
+only queues the card.
 
 ## By stratum
 
@@ -144,7 +153,7 @@ Sisters of the Flame -> Sisters of che Flame
 
 Scored as misses here, but the corpus scorer is stricter than the app: it wants
 an exact or prefix match, while the live pipeline hands these to fuzzy matching
-with a 0.90 similarity floor. Most of these land. Treat this bucket as an upper
+with a 0.88 similarity floor. Most of these land. Treat this bucket as an upper
 bound on real-world failure, not a count of it.
 
 ### Read rules text instead of a title
@@ -197,10 +206,12 @@ bug: there is no text to read.
 This matches field experience, where ordinary borderless cards scan well. The
 43% is measuring special products, not borderless frames.
 
-**The border reader also over-reaches here.** It claimed `black` on Kess and
+**The border reader used to over-reach here**, claiming `black` on Kess and
 Heliod — borderless cards whose art runs dark to the edge, so the ring sample
-reads as a black border. It should abstain on cards with no printed border, and
-currently cannot tell the difference.
+read as a black border. The text-anchored reader judges the ring against the
+card's own footer tones instead, so a ring that is neither the card's ink nor
+its paper abstains. Not measured as a goal; re-check it on borderless cards
+before relying on it.
 
 ## Where numbers fail, and why
 

@@ -1,20 +1,18 @@
 // Pre-M15 frames hide their collector number in the copyright line, which is
 // the only printing evidence an old card carries besides its border.
 
+import BorderKit
 import Foundation
 
 // The copyright line of pre-M15 frames, where old frames hide their collector
 // number. Two shapes matter: the range whose END year equals the printing's
 // release year ("1993-2003" — 8th Edition, 2003; its 7th Edition sibling says
 // "1993-2001"), and the collector pair at the line's tail ("… Wizards of the
-// Coast, Inc. 95/350"). The dash arrives as "-", "–", "—" or, at this glyph
-// size, a bare space — hence the optional separator.
-let copyrightYearRE = try! NSRegularExpression(
-    pattern: #"(?:19|20)\d{2}\s*[-–—]?\s*((?:19|20)\d{2})"#)
+// Coast, Inc. 95/350"). copyrightYearRE moved to BorderKit with the footer
+// predicates that use it.
 let copyrightTailPairRE = try! NSRegularExpression(
     pattern: #"(\d{1,5})\s*/\s*(\d{1,5})\s*[.,]?\s*$"#)
 /// A lone copyright year, for the modern frame's "© 2024 Wizards of the Coast".
-let copyrightLoneYearRE = try! NSRegularExpression(pattern: #"\b((?:19|20)\d{2})\b"#)
 /// The modern frame's version of the collector tail: one number, no total
 /// ("™ & © 2024 Wizards of the Coast 418").
 ///
@@ -27,32 +25,7 @@ let copyrightLoneYearRE = try! NSRegularExpression(pattern: #"\b((?:19|20)\d{2})
 let copyrightTailSoloRE = try! NSRegularExpression(
     pattern: #"COAST[^0-9A-Z]{0,4}(\d{1,5})\s*[.,]?\s*$"#)
 
-/// copyrightFurniture reports whether a line is (a fragment of) the bottom
-/// copyright line — "™ & © 1993-2003 Wizards of the Coast, Inc. 95/350" and
-/// the OCR manglings thereof ("te Coast, Inc", "Coast, Ine: 30/1", "1993-2003
-/// Wizar"). Two signals are required: a brand token (coast, or a wizar…
-/// prefix — Vision truncates the word) plus corroboration (©/™, an inc-shaped
-/// token, a year range, or a collector pair), so that real titles sharing a
-/// token — "Coast Watcher", "Wizard's Retort" — survive.
-func copyrightFurniture(_ s: String) -> Bool {
-    let tokens = s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-    let brand = tokens.contains("coast") || tokens.contains(where: { $0.hasPrefix("wizar") })
-    guard brand else { return false }
-    if s.contains("©") || s.contains("™") { return true }
-    if tokens.contains(where: { ["inc", "ine", "in", "ir", "lnc"].contains($0) }) { return true }
-    let ascii = asciify(s)
-    if group(copyrightYearRE, ascii) != nil { return true }
-    if group(collectorPairRE, ascii) != nil { return true }
-    // Old frames print a range ("1993-2003"); modern ones print a single year
-    // ("™ & © 2024 Wizards of the Coast 418"). Requiring the range rejected
-    // every modern copyright line outright, which cost both the release year
-    // and the collector number printed beside it — and the ™/© that would
-    // otherwise vouch for the line comes back as "Iм & C" at this glyph size.
-    if let y = group(copyrightLoneYearRE, ascii), let n = Int(y), n >= 1993, n <= 2035 {
-        return true
-    }
-    return false
-}
+
 
 /// parseCopyrightCollector pulls the old-frame collector evidence out of a
 /// capture's text: the pair at the tail of a copyright line (total ≥ 20, the

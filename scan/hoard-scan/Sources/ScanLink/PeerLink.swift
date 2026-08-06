@@ -48,10 +48,13 @@ public struct LinkFailure: Equatable, Sendable {
         switch error {
         case .posix(.ECONNABORTED), .posix(.ECONNRESET), .posix(.ENOTCONN),
              .posix(.EPIPE), .posix(.ETIMEDOUT):
-            // Overwhelmingly this is iOS suspending the app. The phone has to
-            // stay on the scanning screen, which is the same thing the Pair
-            // tab's troubleshooting section says.
-            reason = "iPhone disconnected. Keep Hoard Scan open on screen while scanning"
+            // Overwhelmingly this is iOS suspending the app. Phrased as
+            // something to go and check rather than a rule to have followed:
+            // by the time this is on screen the disconnect has happened, and
+            // telling someone what they should have done does not get them
+            // scanning again. The Pair tab's troubleshooting section carries
+            // the standing advice, which is where a rule belongs.
+            reason = "iPhone disconnected. Check to make sure Hoard Scan is still open"
         case .posix(.ENETDOWN), .posix(.ENETUNREACH), .posix(.EHOSTUNREACH),
              .posix(.EHOSTDOWN), .posix(.ENETRESET):
             reason = "Lost the network to the iPhone. Both devices need the same Wi-Fi, or a cable"

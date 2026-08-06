@@ -800,3 +800,44 @@ func TestFireReasonBeatsTheClock(t *testing.T) {
 		})
 	}
 }
+
+// An old card's serif type costs a glyph or two, and that must still commit.
+//
+// The case that moved the bar: Prodigal Sorcerer read at 0.88 with its year and
+// border already agreeing on a printing, and queued. Pre-1998 titles are small
+// serif type and the corpus is full of these — "Amrou Kichkin", "Sisters of che
+// Flame" — where two characters of a short name is the whole difference.
+//
+// Both ends are asserted deliberately. A threshold is only meaningful if
+// something still fails it, and 0.63 is a real queued read from a live session
+// (Cement Shoes), not an invented number.
+func TestUncorroboratedNameBarAdmitsOldSerifSlips(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		similarity float64
+		wantAuto   bool
+	}{
+		{"a two-glyph slip on an old title", 0.88, true},
+		{"comfortably read", 0.94, true},
+		{"the shape of a false match", 0.79, false},
+		{"barely related", 0.63, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := queueItem{
+				canonical: "Prodigal Sorcerer",
+				prints:    solRingPrints(),
+				// Year and markings agree, but no number — so the name gate is
+				// the thing being tested rather than bypassed.
+				rank:  scanMatchYearAndMarks,
+				match: cardname.Match{Similarity: tc.similarity},
+				raw:   scan.Card{Confidence: 0.95},
+			}
+			auto, _, note := verdict(it)
+			if auto != tc.wantAuto {
+				t.Errorf("auto = %v at %.2f, want %v (note: %q)",
+					auto, tc.similarity, tc.wantAuto, note)
+			}
+		})
+	}
+}
+

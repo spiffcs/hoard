@@ -2,6 +2,7 @@
 // title's shape. Every predicate here exists because a real card defeated the
 // obvious rule; see docs/scanner-tuning.md.
 
+import BorderKit
 import Foundation
 
 /// typeLineWords are tokens that mark a card's *type* line ("Legendary
@@ -168,34 +169,7 @@ func addCandidate(_ entry: inout CardEntry, _ name: String) {
     entry.candidates.append(t)
 }
 
-/// artistCredit matches the "Illus. <Name>" line even when OCR has mangled the
-/// credit word. On old frames it is set in the same small serif as the
-/// copyright, and the exact `illus` prefix missed "Tins. Liz Danforth" — which
-/// then read as a perfectly good Title Case name and won a live capture's
-/// merge, burying Dwarven Ruins.
-///
-/// The credit word is only allowed to be wrong by a letter or two, and only
-/// when what follows looks like a person: a mangled word alone is not enough,
-/// or real two-word titles would start dying.
-func artistCredit(_ s: String) -> Bool {
-    let words = s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-    // "Illus. Liz Danforth" — the credit word, then a two-word personal name.
-    // Artists are credited first-and-last, and holding the count to exactly
-    // two is what lets the credit word itself be read loosely.
-    guard words.count == 3 else { return false }
-    // The abbreviation's trailing period is the load-bearing signal. Magic
-    // titles use commas for epithets ("Jaya Ballard, Task Mage"), never a
-    // period after their first word, so this is the shape no real name has.
-    // OCR turns the period into a comma often enough to accept both.
-    guard let last = words[0].last, last == "." || last == "," else { return false }
-    let head = words[0].lowercased().filter { $0.isLetter }
-    guard head.count >= 3, head.count <= 6 else { return false }
-    // Wide enough for the observed mangles — "Illus." came back as "Tins."
-    // and "Tims.", both four edits out — and safe only because the period and
-    // the two-word name have already narrowed the field this far.
-    guard editDistance(head, "illus") <= 4 else { return false }
-    return words.dropFirst().allSatisfy { $0.first?.isUppercase == true }
-}
+
 
 /// boilerplate matches the card frame's own print that reads at title-like
 /// isolation and capitalization — the copyright border line, the artist

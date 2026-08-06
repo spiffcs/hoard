@@ -44,6 +44,7 @@ let package = Package(
         // this package. Only ScanPublic.swift is public; everything else stays
         // internal and reachable from the tests with @testable.
         .library(name: "ScanKit", targets: ["ScanKit"]),
+        .library(name: "BorderKit", targets: ["BorderKit"]),
         // The iPhone app links these three: the read pipeline, the link to the
         // Mac, and the protocol they both speak.
         .library(name: "CardKit", targets: ["CardKit"]),
@@ -56,6 +57,14 @@ let package = Package(
         // which share no other code — so it gets one definition rather than one
         // per pipeline. Foundation only: no camera, no window, no read pipeline.
         .target(name: "ScanWire"),
+        // The border reader, and the only thing the Mac and the phone share.
+        // Both pipelines had one; the phone's read the perspective crop and
+        // could not tell a white border from the card's inner frame when the
+        // quad landed inside the card's cut edge — which is what a white
+        // border on a light desk provokes. This is the one that anchors on
+        // text instead, so neither pipeline keeps a copy.
+        .target(name: "BorderKit"),
+        .testTarget(name: "BorderKitTests", dependencies: ["BorderKit"]),
         .testTarget(name: "ScanWireTests", dependencies: ["ScanWire"]),
         // Network.framework plumbing for the link to the phone. Separate from
         // ScanWire because that target promises Foundation and the shape of a
@@ -70,7 +79,7 @@ let package = Package(
         // ScanKit depends on ScanLink for one thing: RemoteController, the
         // backend where the camera is an iPhone app rather than a Continuity
         // Camera. The read pipeline under Core/ still touches neither.
-        .target(name: "ScanKit", dependencies: ["ScanWire", "ScanLink"]),
+        .target(name: "ScanKit", dependencies: ["ScanWire", "ScanLink", "BorderKit"]),
         .executableTarget(name: "hoard-scan", dependencies: ["ScanKit"]),
         .testTarget(name: "ScanKitTests", dependencies: ["ScanKit"]),
         // CardKit is the iPhone head's read pipeline, written from scratch
@@ -78,7 +87,7 @@ let package = Package(
         // which is the Go side's protocol and must not fork. Same package
         // purely so one `swift test` covers both and the corpus harness can
         // build a macOS binary for it.
-        .target(name: "CardKit", dependencies: ["ScanWire"]),
+        .target(name: "CardKit", dependencies: ["ScanWire", "BorderKit"]),
         .testTarget(name: "CardKitTests", dependencies: ["CardKit"]),
         // A macOS shim so CardKit can be scored against scan/corpus's 231
         // labelled images with the harness that already exists: it speaks the

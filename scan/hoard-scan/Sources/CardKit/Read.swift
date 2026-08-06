@@ -13,6 +13,7 @@
 // perfectly, because the card only occupied the middle 40% and the crop was a
 // picture of the desk.
 
+@_exported import BorderKit
 import CoreGraphics
 import CoreImage
 import Foundation
@@ -54,10 +55,12 @@ public struct ReadTimings: Sendable {
     public var locate = 0.0
     public var whole = 0.0
     public var band = 0.0
+    public var border = 0.0
     public var total = 0.0
     public init() {}
     public var line: String {
-        String(format: "locate=%.0f whole=%.0f band=%.0f", locate, whole, band)
+        String(format: "locate=%.0f whole=%.0f band=%.0f border=%.0f",
+               locate, whole, band, border)
     }
 }
 
@@ -121,23 +124,29 @@ public func readCard(_ image: CGImage) async -> CardReading {
     // region survived the round trip as a usable tag. The idea is sound and the
     // API exists; identifying which request produced which observations is the
     // unsolved part.
-    async let whole = recognizeText(
+    // The head crop when there is one, the whole card when there is not — and
+    // which it was matters downstream, because the border reader needs these
+    // lines in card space and that is the rect they came from.
+    let headRect = cropCard(upright, CardGeometry.head) != nil
+        ? CardGeometry.head : CGRect(x: 0, y: 0, width: 1, height: 1)
+    async let whole = recognizeLines(
         cropCard(upright, CardGeometry.head) ?? upright, correctLanguage: true)
 
     // The band, as a fraction of the card. Language correction off: with it on,
     // Vision "corrects" 123/264 and set codes like MH3 into dictionary words,
     // which is the quietest possible way for this to stop working.
-    var bandLines: [String] = []
+    var bandRead: [Line] = []
     let bandStart = DispatchTime.now()
     if let band = cropCard(upright, CardGeometry.band) {
-        bandLines = await recognizeText(band, correctLanguage: false)
+        bandRead = await recognizeLines(band, correctLanguage: false)
     }
     out.timings.band = millis(since: bandStart)
 
-    out.lines = await whole
+    let headRead = await whole
+    out.lines = headRead.map(\.text)
     out.timings.whole = millis(since: wholeStart)
 
-    out.border = readBorder(upright)
+    var bandLines: [String] = bandRead.map(\.text)
 
     // If the band found no printing at all, look below the crop.
     //
@@ -161,6 +170,29 @@ public func readCard(_ image: CGImage) async -> CardReading {
         bandLines += recovered.lines
         printing = recovered.printing
         out.footerRecovered = true
+    }
+
+    // The border, last, because it wants the year the footer just gave up.
+    //
+    // Against `card.wide`, never `upright`: the quad cannot be trusted to
+    // contain the border, and a reader handed pixels the border is not in has
+    // no way to say so — it measured the inner frame and reported a confident
+    // number about the wrong surface. The wide flatten guarantees the border is
+    // in shot; anchoring on the footer text is what finds it there.
+    if let wide = card.wide {
+        let borderStart = DispatchTime.now()
+        out.border = readBorder(
+            wide,
+            lines: headRead.map {
+                intoWide($0, from: headRect, margin: card.wideMarginUsed)
+            },
+            bandLines: bandRead.map {
+                intoWide($0, from: CardGeometry.band, margin: card.wideMarginUsed)
+            },
+            copyrightYear: printing.year ?? 0)
+        out.timings.border = millis(since: borderStart)
+    } else {
+        out.border.abstain = "no wide crop"
     }
 
     out.bandLines = bandLines
@@ -244,6 +276,50 @@ public enum CardGeometry {
     public static let symbol = CGRect(x: 0.78, y: 0.53, width: 0.19, height: 0.11)
 }
 
+/// intoWide moves a line's box from a card-space crop into the wide flatten.
+///
+/// Three coordinate systems meet here and two of them disagree about which way
+/// is up, so this is written out rather than folded into an expression:
+///
+///   · Vision normalizes to the image it was given, origin bottom left.
+///   · Card space (`CardGeometry.band` and friends) runs top down.
+///   · The wide flatten holds the card inset by `wideMargin` on every side, so
+///     card space occupies `[m, 1-m] / (1 + 2m)` of it.
+///
+/// Getting this wrong samples the opposite end of the card and still returns a
+/// plausible number, which is the failure mode that costs a session before
+/// anyone notices — so `BorderMappingTests` pins each step against a hand-built
+/// box.
+func intoWide(_ line: Line, from crop: CGRect, margin m: CGFloat) -> Line {
+    let k = 1 + 2 * m
+    // Vision's y counts up from the bottom of the crop; card space counts down
+    // from the card's top, so the box's edges swap roles on the way across.
+    let cardTop = crop.minY + (1 - line.box.maxY) * crop.height
+    let cardBottom = crop.minY + (1 - line.box.minY) * crop.height
+    let cardLeft = crop.minX + line.box.minX * crop.width
+    let cardRight = crop.minX + line.box.maxX * crop.width
+
+    let wideTop = (m + cardTop) / k
+    let wideBottom = (m + cardBottom) / k
+    let box = CGRect(x: (m + cardLeft) / k, y: 1 - wideBottom,
+                     width: (cardRight - cardLeft) / k,
+                     height: wideBottom - wideTop)
+
+    // One point, through the same three systems. The corners matter as much as
+    // the box: the reader takes the card's tilt and scale off the footer row's
+    // own quad, and a Line without one has no geometry to offer.
+    func point(_ p: CGPoint) -> CGPoint {
+        let cardX = crop.minX + p.x * crop.width
+        let cardY = crop.minY + (1 - p.y) * crop.height
+        return CGPoint(x: (m + cardX) / k, y: 1 - (m + cardY) / k)
+    }
+    let quad = line.quad.map {
+        Quad(topLeft: point($0.topLeft), topRight: point($0.topRight),
+             bottomLeft: point($0.bottomLeft), bottomRight: point($0.bottomRight))
+    }
+    return Line(text: line.text, box: box, confidence: line.confidence, quad: quad)
+}
+
 /// cropCard cuts a card-space rect out of an already-perspective-corrected card.
 public func cropCard(_ card: CGImage, _ rect: CGRect) -> CGImage? {
     let px = CGRect(
@@ -268,14 +344,41 @@ private func normalize(_ r: CGRect, in image: CGImage) -> CGRect {
 /// machine that made it rather than this code.
 @available(macOS 15, iOS 18, *)
 func recognizeText(_ cg: CGImage, correctLanguage: Bool) async -> [String] {
+    await recognizeLines(cg, correctLanguage: correctLanguage).map(\.text)
+}
+
+@available(macOS 15, iOS 18, *)
+/// recognizeLines is the same call, keeping where each line sat.
+///
+/// The boxes were thrown away here, and that is what kept the phone on a border
+/// reader that guesses from the crop's outer edge: the good one anchors its
+/// geometry on lines whose identity is proven by their *content*, and needs to
+/// know where those lines are. Vision hands the box over with the string, so
+/// this costs nothing — it is the same request, read more completely.
+func recognizeLines(_ cg: CGImage, correctLanguage: Bool) async -> [Line] {
     var request = RecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = correctLanguage
     request.recognitionLanguages = [Locale.Language(identifier: "en-US")]
     guard let observations = try? await request.perform(on: cg) else { return [] }
-    return observations.compactMap {
-        let s = $0.topCandidates(1).first?.string
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (s?.isEmpty ?? true) ? nil : s
+    return observations.compactMap { o -> Line? in
+        guard let c = o.topCandidates(1).first else { return nil }
+        let text = c.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        // A quad, squared off the box.
+        //
+        // The reader takes the card's scale and tilt from the footer row's own
+        // corners, and iOS 18's RecognizedTextObservation offers only an
+        // axis-aligned box. That costs nothing *here* and would elsewhere: this
+        // pipeline reads a card that has already been perspective-corrected, so
+        // the footer is horizontal by construction and a squared quad is the
+        // true one. ScanKit reads the original frame, where the card can be
+        // tilted, and takes real corners from the older Vision API.
+        let b = o.boundingBox.cgRect
+        return Line(text: text, box: b, confidence: c.confidence,
+                    quad: Quad(topLeft: CGPoint(x: b.minX, y: b.maxY),
+                               topRight: CGPoint(x: b.maxX, y: b.maxY),
+                               bottomLeft: CGPoint(x: b.minX, y: b.minY),
+                               bottomRight: CGPoint(x: b.maxX, y: b.minY)))
     }
 }

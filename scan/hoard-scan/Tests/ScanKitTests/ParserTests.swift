@@ -6,6 +6,7 @@
 // happen to contain them — a predicate is far easier to reason about when you
 // can ask it one question at a time, which is the point of this file.
 
+import BorderKit
 import Testing
 
 @testable import ScanKit

@@ -1,0 +1,43 @@
+[
+  {
+    "border": "",
+    "borderSource": "",
+    "candidates": [
+      "Prodigal Sorcerer",
+      "Summon Wizard",
+      "\u00ae: Prodigal Sorcerer deals 1"
+    ],
+    "finish": "",
+    "name": "Prodigal Sorcerer",
+    "number": "",
+    "set": "",
+    "source": "crop",
+    "year": 1995
+  },
+  {
+    "border": "",
+    "borderSource": "",
+    "candidates": [
+      "Summon Wizard"
+    ],
+    "finish": "",
+    "name": "Summon Wizard",
+    "number": "",
+    "set": "",
+    "source": "frame",
+    "year": 0
+  },
+  {
+    "border": "",
+    "borderSource": "",
+    "candidates": [
+      "Institute of Arcane Study acquires"
+    ],
+    "finish": "",
+    "name": "Institute of Arcane Study acquires",
+    "number": "",
+    "set": "",
+    "source": "frame",
+    "year": 0
+  }
+]

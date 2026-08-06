@@ -60,9 +60,12 @@ private struct BorderMeasurements {
 
 /// readBorder runs the whole chain and returns what it saw. It answers only
 /// when every gate passes; `abstain` always says which one did not.
-func readBorder(_ cg: CGImage, _ read: CardRead) -> BorderReading {
+public func readBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
+                       copyrightYear: Int) -> BorderReading {
     var out = BorderReading()
-    guard let m = measureBorder(cg, read, into: &out) else { return out }
+    guard let m = measureBorder(cg, lines: lines, bandLines: bandLines,
+                                copyrightYear: copyrightYear, into: &out)
+    else { return out }
     judgeBorder(m, into: &out)
     return out
 }
@@ -70,12 +73,13 @@ func readBorder(_ cg: CGImage, _ read: CardRead) -> BorderReading {
 /// measureBorder reconstructs the card and samples it, recording every number
 /// on `out` as it goes. Returns nil — having said which step could not be
 /// taken — when the chain cannot continue.
-private func measureBorder(_ cg: CGImage, _ read: CardRead,
+private func measureBorder(_ cg: CGImage, lines: [Line], bandLines: [Line],
+                           copyrightYear: Int,
                            into out: inout BorderReading) -> BorderMeasurements? {
     // Both passes are offered. The whole-frame pass usually has the title too,
     // which is what makes the scale checkable; the band pass is aimed at the
     // footer and often the only one that read it at all.
-    guard let anchor = footerAnchor(read.lines + read.bandLines) else {
+    guard let anchor = footerAnchor(lines + bandLines) else {
         out.abstain = "no footer anchor"
         return nil
     }
@@ -85,13 +89,13 @@ private func measureBorder(_ cg: CGImage, _ read: CardRead,
     out.footerVMeasured = Double(1 - footer.box.midY)
     out.footerLeftU = Double(footer.box.minX)
     out.footerRightU = Double(footer.box.maxX)
-    if let c = positionalCredit(read.lines + read.bandLines) {
+    if let c = positionalCredit(lines + bandLines) {
         out.creditCandidateLeftU = Double(c.box.minX)
     }
 
     let frameW = CGFloat(cg.width), frameH = CGFloat(cg.height)
     // The title is whichever plausible line sits highest above the footer.
-    let title = read.lines.filter { $0.box.midY > footer.box.midY + 0.2 }
+    let title = lines.filter { $0.box.midY > footer.box.midY + 0.2 }
         .max { $0.box.midY < $1.box.midY }
     if let t = title {
         out.titleText = t.text
@@ -99,7 +103,7 @@ private func measureBorder(_ cg: CGImage, _ read: CardRead,
         out.titleLeftU = Double(t.box.minX)
     }
     guard let g = cardGeometry(footer: footer, kind: anchor.kind, title: title,
-                               year: read.copyrightYear,
+                               year: copyrightYear,
                                frameW: frameW, frameH: frameH) else {
         out.abstain = "no geometry"
         return nil

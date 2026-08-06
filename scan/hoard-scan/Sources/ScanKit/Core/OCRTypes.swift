@@ -1,40 +1,15 @@
 // What one capture yielded, from Vision's raw lines up to the per-card shape
 // the scan event reports.
 
+import BorderKit
 import CoreGraphics
 import Foundation
 
 // MARK: - OCR
 
-/// A recognized text line with its full normalized bounding box (Vision origin
-/// is bottom-left) and confidence. The box matters beyond ranking: multi-card
-/// clustering needs horizontal position to tell which card a line belongs to,
-/// which top-and-width alone cannot say.
-struct Line {
-    let text: String
-    let box: CGRect
-    let confidence: Float
-    /// The line's four corners. Vision hands these over already —
-    /// VNRecognizedTextObservation is a VNRectangleObservation — and the axis-
-    /// aligned box above throws away the one thing they add: how far the text
-    /// is turned. The border reader needs that, because a tilted card's border
-    /// ring is not a horizontal strip. nil only for lines built by hand.
-    var quad: Quad? = nil
-
-    var top: CGFloat { box.maxY }
-    var width: CGFloat { box.width }
-}
-
-/// Quad is a Vision rectangle's corners in normalized frame coordinates
-/// (origin bottom-left), kept apart from CGRect because the whole point is
-/// that it need not be axis-aligned.
-struct Quad {
-    let topLeft: CGPoint
-    let topRight: CGPoint
-    let bottomLeft: CGPoint
-    let bottomRight: CGPoint
-}
-
+// `Line` and `Quad` moved to BorderKit, which is the one thing the Mac and the
+// phone share. They are re-exported here so this file still reads as the
+// description of a capture.
 /// CardRead is everything one capture yielded: the title guess and its alternates,
 /// plus whatever the bottom border gave up. lines keeps the ranked plausible-name
 /// lines with their geometry, for the multi-card clustering that runs after the

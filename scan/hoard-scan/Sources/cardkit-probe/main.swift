@@ -63,6 +63,31 @@ func run() async -> Never {
         .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
 
     let reading = await readCard(uprighted(cg, orientation))
+    // --border prints what the border reader saw, verdict or not.
+    //
+    // The scan event carries only the colour, which is right for the wire and
+    // useless for diagnosis: a card that abstains looks identical to one never
+    // asked. Every gate's number rides along here so a fixture can be argued
+    // about from the numbers rather than from a hypothesis — which is what the
+    // white-on-white failures needed and did not have.
+    if args.contains("--border") {
+        let b = reading.border
+        let out: [String: Any] = [
+            "file": (path as NSString).lastPathComponent,
+            "name": reading.title,
+            "color": b.color ?? "-", "abstain": b.abstain,
+            "source": b.source ?? "-", "anchorKind": b.anchorKind,
+            "t": b.t, "standoff": b.standoff,
+            "scaleAgreement": b.scaleAgreement,
+            "cardHeightPx": b.cardHeightPx,
+            "borderMS": reading.timings.border,
+        ]
+        if let d = try? JSONSerialization.data(withJSONObject: out),
+           let line = String(data: d, encoding: .utf8) {
+            print(line)
+        }
+        exit(b.color == nil ? 3 : 0)
+    }
     // Through ScanWire's emit, so this speaks the identical dialect the helper
     // does rather than a probe-shaped approximation of it.
     emit(reading.scanEvent(rotation: rotation))
@@ -134,9 +159,10 @@ func score(manifest: String, misses: Bool) async -> Never {
                                $0.minX, $0.minY, $0.width, $0.height)
                     } ?? "box=none"
                     borderWrong.append(String(
-                        format: "%@: said %@, is %@  tone=%.2f chroma=%.3f standoff=%.2f %@",
+                        format: "%@: said %@, is %@  t=%.2f standoff=%.2f anchor=%@ %@",
                         wantName as NSString, c as NSString, border as NSString,
-                        r.border.tone, r.border.chroma, r.border.standoff, bx as NSString))
+                        r.border.t, r.border.standoff,
+                        r.border.anchorKind as NSString, bx as NSString))
                 }
             }
         } else if let c = r.border.color {
