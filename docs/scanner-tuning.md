@@ -297,6 +297,80 @@ the work a measurement should. The `+` key is what makes being wrong cost a
 keystroke rather than a card; if a live session needs it more than rarely, the
 threshold is wrong and not the affordance.
 
+### 2026-08-06 — the old-frame foil marker, read at last
+
+Retro-frame foils committed as nonfoil, silently, because the only finish
+signal is the star the modern set row prints and old frames have no set row.
+Fixed by reading the printed **sparkle** — the eight-point starburst with a
+comet trail at the text box's lower-left corner — by normalised
+cross-correlation against a fitted template. `SparkleGate` and
+`BorderKit/Sparkle.swift`; corpus and labels in `scan/foil-corpus`.
+
+**Where it landed.** End to end over session 2's 71 stills:
+
+| class | asked | accepted | range |
+| --- | --- | --- | --- |
+| retro foil | 13 | **11** | 0.374 … 0.778 |
+| retro nonfoil | 17 | **0** | −0.427 … 0.443 |
+| modern foil | 0 | 0 | never asked — the separator already answered |
+
+`sparkleMS` median 1.04, max 1.18, on a 129 ms read. `make cardkit-score`
+holds at 87% / 78%.
+
+**Constants, and what each one cost to learn.**
+
+- `accept = 0.52`. The live gap is 0.443 → 0.533, and the middle of it would be
+  0.49 — but `scan/fixtures`' Sacred Ground is a *confirmed nonfoil* scoring
+  **0.505** and Builder's Bane scores 0.509, both higher than any nonfoil either
+  live session produced. The bar sits above them. Margin is 0.015 on one side
+  and 0.013 on the other, pinned by single cards both ways: widen the corpus
+  before trusting it further.
+- `searchU/V = 0.0238 / 0.0216`. **Fitted, not slack.** At ±0.037/±0.042 the
+  highest nonfoil goes 0.470 → 0.676 and two false positives appear. Wide
+  horizontal with tight vertical is no better — foils median 0.320 against
+  nonfoils' 0.364, i.e. no separation at all. Fix recall by re-centring
+  `sparkleU`/`sparkleV`, never by searching wider.
+- `firstFoilYear = 1999`. Premium foils began with Urza's Legacy. Not
+  decoration: the template is fitted on 2001-2024 frames and the pre-1998 frame
+  lays its text box out differently, so the search runs to its window edge and
+  scores noise. Three pre-1998 fixtures cleared 0.50 before this gate. An
+  *unread* year deliberately does **not** skip — see below.
+- `spanU/spanV` are tied to `cols`/`rows` at 630×880. Widening the span without
+  adding cells samples a bigger region more coarsely, which is a different
+  template wearing the same name: at 0.150×0.075 the held-out foils fell from a
+  0.611 median into the nonfoils.
+
+**Three approaches that do not work, measured so nobody repeats them.**
+
+- **Whole-card holographic chroma does not separate at all.** Hue spread over
+  the text box, the art and the border overlaps completely between foil and
+  nonfoil — the desk lamp's cast and the card's own ink dominate any regional
+  colour measure. This is the intuitive approach and it is a dead end.
+- **Taking the verdict from the cheap decimated pass** is 31× faster and
+  manufactures a false positive (Frenetic Raptor, a nonfoil, 0.470 → 0.503).
+  Decimated scores run high. Locate cheaply; judge once at full resolution.
+- **Peak relief** (best score minus the median of the search surface) adds
+  nothing: a nonfoil scored 0.757 relief on a 0.312 match.
+
+**The reader does not use `CardGeometry`, and that is not an inconsistency.**
+Going through it was built first and produced no separation live — every score
+collapsed into 0.2-0.38. The cause is a real bug in `CardLayout.leftU`: it
+returns the 8th Edition frame's landmark for any card whose year is ≥ 2003, but
+**Legions and Scourge are 2003 printings of the old frame**. Their copyright row
+starts near u=0.23 against a table value of 0.080, so every derived position
+lands ~0.115 of a card-width right — measured, with the search pinned at its
+boundary. The sparkle sits at u≈0.2, v≈0.89, well inside the card, so it reads
+the perspective-corrected flatten directly and needs no text anchor. The `leftU`
+era bug is still there and still worth fixing for the expansion-symbol reader.
+
+**A fixture was deleted, not fixed.** `old-frame-border-glare` (Seasinger, a
+nonfoil) has a finger across its footer, so its year never reads and it scored
+0.751 on noise. Making the gate refuse it required treating an unread year as
+pre-1998, which costs Victimize and Consuming Corruption — two real foils whose
+copyright rows also fail. Degrading the reader to accommodate a broken capture
+is backwards; the fixture went instead. `modern-copyright-tail-number`
+(Meltdown) was a genuine catch and its golden was updated to `foil`.
+
 ### Knobs that do not do what they look like they do
 
 - **`AUTO_STABLE` is not the latency knob.** Cutting it 6 → 4 moved settle 8%

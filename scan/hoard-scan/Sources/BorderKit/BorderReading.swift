@@ -68,6 +68,7 @@ public struct BorderReading: Encodable, Sendable {
     public var horizontalAnchor: Bool = false
     public var symbolCoverage: Double = 0
     public var symbolContrast: Double = 0
+
 }
 
 /// Thresholds the reading has to clear. Every one of them exists because the
@@ -112,4 +113,75 @@ enum BorderGate {
     /// what it looks like.
     static let maxScaleDisagreement: CGFloat = 0.35
 
+}
+
+/// What the sparkle reader has to clear to claim a foil, and how hard it is
+/// allowed to look. Kept apart from `BorderGate` because it answers a different
+/// question off the same pixels, and its constants come from a different
+/// corpus — scan/foil-corpus rather than scan/corpus.
+public enum SparkleGate {
+    /// Correlation at or above this is a foil.
+    ///
+    /// Fitted on scan/foil-corpus with the template built from one session and
+    /// scored on the other, so the separation is held out rather than
+    /// remembered. End to end on session 2's stills, retro foils run
+    /// 0.533-0.778 and retro nonfoils -0.427 to 0.443 — a clean 0.09 gap.
+    ///
+    /// The threshold is not in the middle of that gap, and the reason is a
+    /// card outside the corpus. `scan/fixtures`' Sacred Ground is a confirmed
+    /// nonfoil that scores **0.505**, higher than any nonfoil either live
+    /// session produced, and Builder's Bane scores 0.509. So the bar sits just
+    /// above them rather than where the corpus alone would put it. It costs
+    /// nothing measured: the lowest true foil is 0.533.
+    ///
+    /// That margin is thin — 0.015 above the worst known nonfoil and 0.013
+    /// below the weakest true foil — and it is thin because it is pinned by
+    /// single cards on both sides. Widen the corpus before trusting it further.
+    ///
+    /// The five modern-frame foils reach 0.29-0.44. Their frame prints no
+    /// sparkle at all, so that band is what "this region holds no marker"
+    /// scores, and the bar clears it comfortably.
+    public static let accept: CGFloat = 0.52
+
+    /// Half-width of the search window, in card space, and how many cells that
+    /// is divided into. One cell is a pixel of a 630x880 card.
+    ///
+    /// **These are fitted, not slack.** Widening to 0.037/0.042 recovers one
+    /// foil and admits two false positives — the highest nonfoil goes from
+    /// 0.470 to 0.676. Do not widen them to chase recall; re-centre
+    /// `CardLayout.sparkleU`/`sparkleV` instead.
+    public static let searchU: CGFloat = 0.0238
+    public static let searchV: CGFloat = 0.0216
+    public static let searchCellsU = 15
+    public static let searchCellsV = 19
+
+    /// The coarse pass steps four cells at a time on a 4x-decimated template;
+    /// the refine pass walks every cell within this radius of the best coarse
+    /// hits. Together ~50,700 pixel reads against the brute force's 2,137,512,
+    /// for identical verdicts on all 50 corpus cards.
+    public static let coarseStride = 4
+    public static let refineCandidates = 2
+    public static let refineRadius = 3
+
+    /// Below this the patch has no structure to judge — a blown highlight or a
+    /// crushed shadow correlates with whatever the template happens to hold.
+    /// Measured as median absolute deviation of the patch's luma.
+    public static let minContrast: CGFloat = 0.005
+
+    /// Premium foils began with Urza's Legacy, February 1999. A card printed
+    /// before that is nonfoil as a matter of fact, whatever its pixels
+    /// correlate with, and no score should be able to say otherwise.
+    ///
+    /// This is not belt-and-braces — it is load-bearing. The template is fitted
+    /// on 2001-2024 frames, and the pre-1998 frame lays its text box out
+    /// differently enough that the search reaches the edge of its window and
+    /// scores whatever noise it finds there. Four pre-1998 cards in
+    /// scan/fixtures cleared 0.50 that way: Seasinger (1994), Control Magic
+    /// (1995), Builder's Bane, and one 2003 card this does not catch.
+    public static let firstFoilYear = 1999
+
+    /// The cost ceiling, asserted rather than hoped for. A previous attempt at
+    /// this feature put auto-commit times up more than tenfold, and what it
+    /// lacked was a number that said so before a live session did.
+    public static let maxSamples = 60_000
 }

@@ -42,6 +42,15 @@ public struct Printing: Equatable, Sendable {
     /// nonfoil from silence would state as read what was never printed — and
     /// foil is worth a multiple of nonfoil.
     public var finish = ""
+    /// Where `finish` came from. "separator" is the modern set row's glyph;
+    /// "sparkle" is the printed starburst a retro-frame foil carries, read by
+    /// BorderKit. Empty when nothing said.
+    ///
+    /// Reported rather than acted on: the Go side treats any present finish as
+    /// evidence. It is here so a session's telemetry can say which signal is
+    /// carrying the answer, which is the only way to notice one of them
+    /// quietly stopping.
+    public var finishSource = ""
     /// The single year, or the later end of a printed range.
     public var year: Int?
     /// The earlier end of a printed range, when one was printed.
@@ -102,6 +111,7 @@ public func readPrinting(bandLines lines: [String]) -> Printing {
             out.setCode = set.code
             out.language = set.language
             out.finish = set.finish
+            if !set.finish.isEmpty { out.finishSource = "separator" }
             continue
         }
 

@@ -118,6 +118,7 @@ extension CardReading {
             // one place and has it read from the other — which is exactly how a
             // foil Deserted Temple committed as nonfoil twice.
             finishHint: printing.finish,
+            finishSource: printing.finishSource.isEmpty ? nil : printing.finishSource,
             // A number lifted out of a copyright row is upgrade-only evidence
             // on the Go side, and mislabelling it as a band read is how a
             // guessed printing gets treated as a confirmed one.

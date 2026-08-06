@@ -112,4 +112,21 @@ enum CardLayout {
     /// margin is empty — and that absence is the signal.
     static let symbolU: CGFloat = 0.872
     static let symbolV: CGFloat = 0.584
+
+    /// The foil sparkle, at the text box's lower-left corner — the eight-point
+    /// starburst with a comet trail that a retro-frame foil prints and a
+    /// nonfoil does not. See Sparkle.swift.
+    ///
+    /// Measured on 27 live foils across two sessions, spanning the 2003 frame
+    /// and the 2024 retro frame: the marker sits in the same place on both,
+    /// which is why the reader is not keyed on era. It is emphatically *not*
+    /// centred by eye — these came from aligning every capture against a
+    /// running average and taking where they settled.
+    ///
+    /// Only two eras are actually fitted. The 2001, 2004 and 2006 cards in the
+    /// corpus are all nonfoils, so no foil between the two fitted points has
+    /// ever been measured; frames in that gap rely on the search window
+    /// absorbing the difference rather than on a constant that describes them.
+    static let sparkleU: CGFloat = 0.205
+    static let sparkleV: CGFloat = 0.889
 }

@@ -78,7 +78,12 @@ let package = Package(
         // line: it scores scan/corpus's labelled images and replays
         // scan/fixtures' frames against their goldens, which is what
         // `make cardkit-score` and `make scan-check` drive.
-        .executableTarget(name: "cardkit-probe", dependencies: ["CardKit", "ScanWire"]),
+        // BorderKit is named explicitly even though CardKit re-exports it: the
+        // foil-sparkle harness drives BorderKit's reader directly, and a
+        // dependency that only works because something else happens to
+        // re-export it is one refactor away from breaking.
+        .executableTarget(name: "cardkit-probe",
+                          dependencies: ["CardKit", "ScanWire", "BorderKit"]),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -54,3 +54,50 @@ func noMarkerLeavesBothEmpty() {
     #expect(ev.cards?.first?.finishHint == "")
     #expect(ev.finishHint == nil, "silence must not become a claim")
 }
+
+@Test("a sparkle-read finish crosses the wire the same way a printed one does")
+func sparkleFinishReachesTheCardEntry() {
+    // Old frames print no set row, so `readPrinting` finds no marker and the
+    // finish arrives from BorderKit's sparkle reader instead. It is written to
+    // the same field for the same reason `finishReachesTheCardEntry` exists:
+    // the parent reads the card entry, and a finish that lands anywhere else is
+    // a foil that commits as nonfoil.
+    var r = CardReading()
+    r.title = "Glowrider"
+    r.lines = ["Glowrider"]
+    r.bandLines = [
+        "Illus. Scott M. Fischer",
+        "TM & © 1993-2003 Wizards of the Coast, Inc. 15/145",
+    ]
+    r.printing = readPrinting(bandLines: r.bandLines)
+    // What readCard does once the correlation clears SparkleGate.accept.
+    #expect(r.printing.finish == "", "the band alone must say nothing")
+    r.printing.finish = "foil"
+    r.printing.finishSource = "sparkle"
+
+    let ev = r.scanEvent(rotation: 0)
+    #expect(ev.cards?.first?.finishHint == "foil")
+    #expect(ev.cards?.first?.finishSource == "sparkle",
+            "telemetry must be able to tell which signal answered")
+}
+
+@Test("the separator's provenance is recorded too")
+func separatorFinishCarriesItsSource() {
+    let p = readPrinting(bandLines: desertedTempleBand)
+    #expect(p.finish == "foil")
+    #expect(p.finishSource == "separator")
+}
+
+@Test("no finish means no source")
+func silenceCarriesNoProvenance() {
+    let p = readPrinting(bandLines: ["Illus. Amy Weber", "©1994 Wizards of the Coast, Inc."])
+    #expect(p.finish == "")
+    #expect(p.finishSource == "")
+    var r = CardReading()
+    r.title = "Seasinger"
+    r.lines = ["Seasinger"]
+    r.bandLines = ["Illus. Amy Weber", "©1994 Wizards of the Coast, Inc."]
+    r.printing = p
+    #expect(r.scanEvent(rotation: 0).cards?.first?.finishSource == nil,
+            "an absent finish must not ship an empty provenance string")
+}

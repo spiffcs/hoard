@@ -279,3 +279,46 @@ func TestParseEventTriggerDeltas(t *testing.T) {
 		t.Errorf("FaceDelta = %v, want a decoded zero", zero.FaceDelta)
 	}
 }
+
+func TestParseEventFinishProvenance(t *testing.T) {
+	// Two ways a finish arrives, and the hint itself is identical either way —
+	// the Go side treats a present finish as evidence whatever found it. Only
+	// the provenance differs, and it exists so a session's log can show which
+	// signal is carrying the answer.
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Glowrider","cards":[{"name":"Glowrider",` +
+			`"finishHint":"foil","finishSource":"sparkle","copyrightYear":2003}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c := ev.CardList()[0]
+	if c.FinishHint != "foil" || c.FinishSource != "sparkle" {
+		t.Errorf("finish = %q/%q, want foil/sparkle", c.FinishHint, c.FinishSource)
+	}
+
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Deserted Temple","cards":[{"name":"Deserted Temple",` +
+			`"finishHint":"foil","finishSource":"separator"}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if c := ev.CardList()[0]; c.FinishSource != "separator" {
+		t.Errorf("finishSource = %q, want separator", c.FinishSource)
+	}
+
+	// A helper that predates the field omits it. That must read as "no
+	// provenance recorded" and never as "no finish" — the hint is what decides,
+	// and an old helper's foil is still a foil.
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring","finishHint":"foil"}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c = ev.CardList()[0]
+	if c.FinishHint != "foil" {
+		t.Errorf("old helper's finish dropped: %q", c.FinishHint)
+	}
+	if c.FinishSource != "" {
+		t.Errorf("old helper should carry no provenance, got %q", c.FinishSource)
+	}
+}

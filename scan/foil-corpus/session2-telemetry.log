@@ -1,0 +1,722 @@
+01:09:50.786 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"ready","setCode":"","bottomLines":[],"features":["torch","hud","border","auto","rearm"],"candidates":[],"device":"iPhone"}
+01:09:50.800 ! scan: stills on
+01:09:50.811 ! scan: trigger tuned stable=6 interval=0.033
+01:09:50.945 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:09:51.227 < {"candidates":[],"rotation":0,"event":"auto","name":"","setCode":"","collectorNumber":"","bottomLines":[],"state":"armed","device":"","message":""}
+01:09:51.418 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:09:52.079 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","name":"","candidates":[],"collectorNumber":"","event":"auto"}
+01:09:52.146 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:09:54.905 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","name":"","candidates":[],"collectorNumber":"","event":"auto"}
+01:09:54.948 < {"candidates":[],"bottomLines":[],"event":"auto","device":"","state":"armed","collectorNumber":"","name":"","message":"","rotation":0,"setCode":""}
+01:09:55.952 < {"candidates":[],"bottomLines":[],"event":"auto","device":"","state":"armed","collectorNumber":"","name":"","message":"","rotation":0,"setCode":""}
+01:09:56.010 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","name":"","candidates":[],"collectorNumber":"","event":"auto"}
+01:09:56.346 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=6 disrupt=0 hold=2.2 face=- sinceCapture=210 settleMS=165 cause=removed
+01:09:56.787 < {"rotation":0,"auto":true,"cards":[{"source":"crop","finishHint":"","copyrightYear":2003,"borderColor":"black","borderSource":"footer+ring","setCode":"","candidates":["Glowrider","2 *"],"name":"Glowrider","confidence":0,"collectorNumber":"211"}],"bottomLines":["Illus. Scort ML. Fischer","TM & O 1993-2003 Wizards of the Coast, Inc. 15\/145","211"],"collectorNumber":"211","bandAnchored":true,"event":"scan","message":"","device":"","name":"Glowrider","fireReason":"removed","setCode":"","candidates":["Glowrider","2 *"]}
+01:09:56.789 ~ resolve "Glowrider" line=0 name=1ms prints=0ms rank=year-only match=exact set=- num=- prints=2 border=black(footer+ring) number-overridden
+01:09:56.793 ~ outcome "Glowrider" committed: LGN/15 nonfoil
+01:09:56.794 < {"collectorNumber":"","event":"auto","setCode":"","bottomLines":[],"state":"held","name":"","candidates":[],"message":"","device":"","rotation":0}
+01:09:56.794 ! scan: timing shutter=78ms read=257ms total=335ms still=3024x4032 tap=4032x3024 locate=46 whole=205 band=139 border=6 border=black(footer+ring) t=-0.65 standoff=-0.49 anchor=copyright scale=0.91
+01:09:56.806 ! scan: timing loop=448ms net=113ms tier=win
+01:09:57.546 < {"event":"auto","collectorNumber":"","setCode":"","bottomLines":[],"state":"armed","message":"","name":"","rotation":0,"candidates":[],"device":""}
+01:09:57.683 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","name":"","candidates":[],"collectorNumber":"","event":"auto"}
+01:09:58.078 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=4 abandoned=6 disrupt=0 hold=36.3 face=21.7 sinceCapture=21 settleMS=198 cause=removed
+01:09:58.408 < {"name":"","bandAnchored":true,"fireReason":"removed","cards":[],"event":"scan","setCode":"","rotation":0,"device":"","candidates":[],"bottomLines":[],"auto":true,"collectorNumber":"","message":""}
+01:09:58.413 < {"state":"held","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:09:58.413 ! scan: timing shutter=94ms read=233ms total=328ms still=3024x4032 tap=4032x3024 locate=48 whole=99 band=99 border=0 border=-(no footer anchor) t=0.00 standoff=0.00 anchor= scale=0.00
+01:09:58.743 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:09:58.814 < {"message":"","setCode":"","state":"armed","bottomLines":[],"collectorNumber":"","rotation":0,"event":"auto","candidates":[],"device":"","name":""}
+01:09:59.650 < {"setCode":"","bottomLines":[],"state":"armed","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:09:59.654 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:10:00.147 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=1 stable=7 grace=0 blink=0 real=8 abandoned=7 disrupt=0 hold=- face=- sinceCapture=25 settleMS=231 cause=removed
+01:10:00.363 < {"device":"","collectorNumber":"13","cards":[{"setCode":"","finishHint":"","source":"crop","borderSource":"footer+ring","candidates":["Unholy heat"],"collectorNumber":"13","copyrightYear":2024,"borderColor":"black","numberSource":"copyright","name":"Unholy heat","confidence":0}],"name":"Unholy heat","auto":true,"event":"scan","message":"","rotation":0,"fireReason":"removed","setCode":"","bottomLines":["graveyara.","\"The devils use fire. Why shouldn't we?\"","Illus. Kari Christensen","M & © 2024 Wizatds of the Coast 13"],"candidates":["Unholy heat"],"bandAnchored":true}
+01:10:00.365 ~ resolve "Unholy Heat" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=13(copyright) prints=6 border=black(footer+ring)
+01:10:00.368 ~ outcome "Unholy Heat" committed: H2R/13 nonfoil
+01:10:00.369 ! scan: timing shutter=84ms read=188ms total=273ms still=3024x4032 tap=4032x3024 locate=43 whole=140 band=133 border=5 border=black(footer+ring) t=-1.87 standoff=-0.26 anchor=copyright scale=0.91
+01:10:00.369 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"held","device":""}
+01:10:00.374 ! scan: timing loop=286ms net=13ms tier=bulk
+01:10:01.216 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:01.351 < {"setCode":"","device":"","name":"","bottomLines":[],"state":"armed","event":"auto","rotation":0,"collectorNumber":"","message":"","candidates":[]}
+01:10:01.802 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=3 real=4 abandoned=7 disrupt=0 hold=29.1 face=26.0 sinceCapture=21 settleMS=198 cause=removed
+01:10:02.009 < {"bottomLines":[],"device":"","message":"","collectorNumber":"","candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"setCode":"","event":"scan","fireReason":"removed","auto":true,"name":""}
+01:10:02.017 < {"setCode":"","event":"auto","state":"held","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:10:02.017 ! scan: timing shutter=86ms read=166ms total=252ms still=3024x4032 tap=4032x3024 locate=27 whole=140 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:03.018 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:10:03.082 < {"setCode":"","device":"","name":"","bottomLines":[],"state":"armed","event":"auto","rotation":0,"collectorNumber":"","message":"","candidates":[]}
+01:10:03.549 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:03.615 < {"setCode":"","device":"","name":"","bottomLines":[],"state":"armed","event":"auto","rotation":0,"collectorNumber":"","message":"","candidates":[]}
+01:10:04.088 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=8 abandoned=0 disrupt=0 hold=1.3 face=- sinceCapture=31 settleMS=231 cause=removed
+01:10:04.483 < {"name":"Myr Servitor","message":"","device":"","collectorNumber":"139","candidates":["Myr Servitor"],"rotation":0,"cards":[{"setCode":"","collectorNumber":"139","confidence":0,"numberSource":"copyright","finishHint":"","copyrightYear":2004,"borderSource":"footer","borderColor":"black","candidates":["Myr Servitor"],"name":"Myr Servitor","source":"crop"}],"bandAnchored":true,"setCode":"","fireReason":"removed","event":"scan","auto":true,"bottomLines":["The Krark Clan enjoys pulling them apart","just to watch them reassemble one another.","1\/1","-John Matson","TM & Ie 1993-2004 Wizards -of the Coast, Inc. 139\/165"]}
+01:10:04.486 ~ resolve "Myr Servitor" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=139(copyright) prints=2 border=black(footer)
+01:10:04.490 ~ outcome "Myr Servitor" committed: 5DN/139 nonfoil
+01:10:04.520 < {"event":"auto","state":"held","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:04.520 ! scan: timing shutter=88ms read=192ms total=281ms still=3024x4032 tap=4032x3024 locate=42 whole=144 band=143 border=6 border=black(footer) t=-0.31 standoff=-0.08 anchor=copyright scale=0.85
+01:10:04.525 ! scan: timing loop=436ms net=155ms tier=bulk
+01:10:05.151 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","message":"","device":"","name":""}
+01:10:05.281 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:06.221 ! scan: trigger fire phase=capturing settle=14 baseline=0 boxes=1 stable=6 grace=0 blink=3 real=6 abandoned=0 disrupt=0 hold=42.3 face=30.3 sinceCapture=28 settleMS=462 cause=removed
+01:10:06.448 < {"fireReason":"removed","device":"","bottomLines":[],"setCode":"","rotation":0,"collectorNumber":"","event":"scan","candidates":[],"name":"","bandAnchored":false,"auto":true,"cards":[],"message":""}
+01:10:06.453 < {"event":"auto","state":"held","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:06.453 ! scan: timing shutter=89ms read=141ms total=230ms still=3024x4032 tap=4032x3024 locate=26 whole=115 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:06.601 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:06.742 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:07.152 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:07.216 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:07.686 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:07.749 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:10.201 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:12.451 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:12.549 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:16.342 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:16.621 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:16.815 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:16.922 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:17.980 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:17.985 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:19.537 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:19.549 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:22.216 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:22.282 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","name":"","device":"","message":""}
+01:10:30.351 ! scan: trigger armed phase=searching settle=104 baseline=1 boxes=2 stable=0 grace=0 blink=0 real=0 abandoned=0 disrupt=0 hold=1.9 face=- sinceCapture=342
+01:10:30.369 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:30.412 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:30.850 < {"message":"","device":"","event":"auto","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:31.154 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:31.345 < {"message":"","device":"","event":"auto","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:31.596 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:31.900 < {"message":"","device":"","event":"auto","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:32.208 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:32.619 ! scan: trigger fire phase=capturing settle=7 baseline=1 boxes=1 stable=6 grace=0 blink=3 real=3 abandoned=3 disrupt=0 hold=1.9 face=- sinceCapture=376 settleMS=231 cause=none
+01:10:32.854 < {"event":"scan","bandAnchored":true,"device":"","candidates":["No-Dachi"],"message":"","collectorNumber":"264","name":"No-Dachi","setCode":"","bottomLines":["no-dachi slew by folding its victim rapıdly","and violently under the weight of its impact.","- Christopher Rush","TN & € 1993-2004 Wizards of the Coast, Inc. 264\/306"],"cards":[{"source":"crop","numberSource":"copyright","name":"No-Dachi","setCode":"","confidence":0,"finishHint":"","copyrightYear":2004,"candidates":["No-Dachi"],"collectorNumber":"264"}],"rotation":0,"auto":true}
+01:10:32.856 ~ resolve "No-Dachi" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=264(copyright) prints=1
+01:10:32.859 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"held","rotation":0,"name":""}
+01:10:32.859 ! scan: timing shutter=92ms read=196ms total=288ms still=3024x4032 tap=4032x3024 locate=45 whole=145 band=145 border=6 border=-(between tones) t=0.32 standoff=0.14 anchor=copyright scale=0.98
+01:10:32.861 ~ outcome "No-Dachi" committed: CHK/264 nonfoil
+01:10:32.868 ! scan: timing loop=322ms net=34ms tier=bulk
+01:10:33.006 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:33.280 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:34.016 ! scan: trigger fire phase=capturing settle=11 baseline=1 boxes=0 stable=6 grace=0 blink=1 real=6 abandoned=3 disrupt=0 hold=- face=- sinceCapture=18 settleMS=363 cause=removed
+01:10:34.253 < {"fireReason":"removed","device":"","rotation":0,"setCode":"","bottomLines":[],"collectorNumber":"","event":"scan","candidates":[],"name":"","bandAnchored":false,"auto":true,"cards":[],"message":""}
+01:10:34.259 ! scan: timing shutter=82ms read=134ms total=216ms still=3024x4032 tap=4032x3024 locate=25 whole=109 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:34.259 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"held"}
+01:10:34.400 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:34.538 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:34.972 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:35.349 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:35.628 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:35.677 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:36.743 ! scan: trigger fire phase=capturing settle=16 baseline=1 boxes=0 stable=6 grace=0 blink=3 real=5 abandoned=5 disrupt=0 hold=- face=- sinceCapture=38 settleMS=528 cause=removed
+01:10:37.020 < {"rotation":0,"auto":true,"cards":[],"bottomLines":[],"collectorNumber":"","event":"scan","bandAnchored":false,"message":"","device":"","name":"","fireReason":"removed","setCode":"","candidates":[]}
+01:10:37.025 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"held","rotation":0,"name":""}
+01:10:37.025 ! scan: timing shutter=86ms read=160ms total=247ms still=3024x4032 tap=4032x3024 locate=27 whole=134 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:37.197 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:37.410 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:38.246 ! scan: trigger fire phase=capturing settle=12 baseline=1 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=5 disrupt=0 hold=- face=- sinceCapture=18 settleMS=396 cause=removed
+01:10:38.556 < {"bottomLines":[],"device":"","message":"","collectorNumber":"","candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"setCode":"","event":"scan","fireReason":"removed","auto":true,"name":""}
+01:10:38.556 ! scan: timing shutter=85ms read=175ms total=260ms still=3024x4032 tap=4032x3024 locate=59 whole=116 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:38.556 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"held"}
+01:10:38.613 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:39.458 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:39.476 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:39.542 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:10:39.982 ! scan: trigger fire phase=capturing settle=6 baseline=1 boxes=2 stable=6 grace=0 blink=2 real=4 abandoned=7 disrupt=0 hold=- face=- sinceCapture=22 settleMS=198 cause=nudged
+01:10:40.222 < {"rotation":0,"auto":true,"cards":[{"source":"crop","candidates":["Guardian Idol"],"collectorNumber":"128","numberSource":"copyright","setCode":"","name":"Guardian Idol","confidence":0,"finishHint":"","copyrightYear":2004}],"bottomLines":["creature until end of turn.","Edward P. Beard, Jr.","1993-2004 Wizards of the Coast, Inc. 128\/165"],"collectorNumber":"128","event":"scan","bandAnchored":true,"message":"","device":"","name":"Guardian Idol","fireReason":"nudged","setCode":"","candidates":["Guardian Idol"]}
+01:10:40.224 ~ resolve "Guardian Idol" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=128(copyright) prints=4 nudged
+01:10:40.226 < {"message":"","device":"","event":"auto","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"held","rotation":0,"name":""}
+01:10:40.226 ! scan: timing shutter=89ms read=182ms total=272ms still=3024x4032 tap=4032x3024 locate=44 whole=134 band=127 border=5 border=-(between tones) t=0.23 standoff=0.12 anchor=copyright scale=0.93
+01:10:40.228 ~ outcome "Guardian Idol" committed: 5DN/128 nonfoil
+01:10:40.234 ! scan: timing loop=287ms net=15ms tier=bulk
+01:10:40.703 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:41.149 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:41.209 < {"setCode":"","bottomLines":[],"state":"armed","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:10:41.275 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:41.727 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=3 abandoned=0 disrupt=0 hold=30.3 face=8.2 sinceCapture=22 settleMS=198 cause=removed
+01:10:41.898 < {"device":"","fireReason":"removed","bottomLines":[],"setCode":"","rotation":0,"collectorNumber":"","event":"scan","candidates":[],"name":"","bandAnchored":false,"auto":true,"cards":[],"message":""}
+01:10:41.903 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"held","rotation":0,"name":""}
+01:10:41.903 ! scan: timing shutter=86ms read=129ms total=216ms still=3024x4032 tap=4032x3024 locate=32 whole=97 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:42.751 < {"message":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:10:42.814 < {"setCode":"","bottomLines":[],"state":"armed","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:10:44.176 < {"setCode":"","bottomLines":[],"state":"armed","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:10:44.209 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:10:44.546 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=1 disrupt=0 hold=- face=- sinceCapture=40 settleMS=165 cause=removed
+01:10:44.835 < {"device":"","collectorNumber":"264","cards":[{"setCode":"","finishHint":"","source":"crop","candidates":["No-Dachi"],"collectorNumber":"264","copyrightYear":2004,"numberSource":"copyright","name":"No-Dachi","confidence":0}],"name":"No-Dachi","auto":true,"message":"","event":"scan","rotation":0,"fireReason":"removed","bottomLines":["1IUU","no-dachi slew by folding its victim rapidly","and violently under the weight of its impact.","- Christopher Rush","TN & 6 1993-2004 Wizards of the Coast, Inc. 264\/306"],"setCode":"","candidates":["No-Dachi"],"bandAnchored":true}
+01:10:44.837 ~ resolve "No-Dachi" line=0 name=0ms prints=0ms rank=number+year match=exact set=- num=264(copyright) prints=1
+01:10:44.841 < {"setCode":"","bottomLines":[],"state":"held","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:10:44.841 ! scan: timing shutter=88ms read=196ms total=285ms still=3024x4032 tap=4032x3024 locate=46 whole=145 band=145 border=6 border=-(between tones) t=0.15 standoff=0.10 anchor=copyright scale=0.91
+01:10:44.843 ~ outcome "No-Dachi" committed: CHK/264 nonfoil
+01:10:44.851 ! scan: timing loop=302ms net=17ms tier=bulk
+01:10:45.610 < {"setCode":"","message":"","device":"","rotation":0,"bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:45.748 < {"event":"auto","collectorNumber":"","setCode":"","bottomLines":[],"state":"armed","message":"","name":"","rotation":0,"candidates":[],"device":""}
+01:10:46.334 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=5 abandoned=1 disrupt=0 hold=34.4 face=31.6 sinceCapture=21 settleMS=231 cause=removed
+01:10:46.442 < {"auto":true,"device":"","message":"","fireReason":"removed","rotation":0,"cards":[],"bandAnchored":false,"name":"","event":"scan","setCode":"","candidates":[],"collectorNumber":"","bottomLines":[]}
+01:10:46.447 < {"event":"auto","collectorNumber":"","setCode":"","bottomLines":[],"state":"held","message":"","name":"","rotation":0,"candidates":[],"device":""}
+01:10:46.447 ! scan: timing shutter=95ms read=137ms total=233ms still=3024x4032 tap=4032x3024 locate=28 whole=109 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:46.846 < {"device":"","collectorNumber":"","candidates":[],"event":"auto","name":"","setCode":"","message":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:10:46.874 < {"event":"auto","collectorNumber":"","setCode":"","bottomLines":[],"state":"armed","message":"","name":"","rotation":0,"candidates":[],"device":""}
+01:10:47.747 ! scan: trigger fire phase=capturing settle=13 baseline=0 boxes=1 stable=7 grace=0 blink=0 real=9 abandoned=1 disrupt=0 hold=1.4 face=- sinceCapture=20 settleMS=429 cause=removed
+01:10:48.077 < {"collectorNumber":"127","candidates":["Root Glemental","44"],"bandAnchored":true,"event":"scan","device":"","message":"","name":"Root Glemental","bottomLines":["your hand into play.","UATI","Illus. Anthony S. Waters","TN & O 1993-2003 Wizards of the Coast, Inc. 127\/143","6\/5"],"setCode":"","cards":[{"borderColor":"black","setCode":"","borderSource":"footer+ring","candidates":["Root Glemental","44"],"confidence":0,"finishHint":"","numberSource":"copyright","name":"Root Glemental","copyrightYear":2003,"source":"crop","collectorNumber":"127"}],"fireReason":"removed","rotation":0,"auto":true}
+01:10:48.084 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"held","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:10:48.084 ! scan: timing shutter=84ms read=192ms total=276ms still=3024x4032 tap=4032x3024 locate=46 whole=140 band=132 border=6 border=black(footer+ring) t=-0.63 standoff=-0.13 anchor=copyright scale=0.88
+01:10:48.116 ~ resolve "Root Elemental" line=0 name=38ms prints=0ms rank=number+year match=92% set=- num=127(copyright) prints=2 border=black(footer+ring)
+01:10:48.117 ~ outcome "Root Elemental" committed: SCG/127 nonfoil
+01:10:48.165 ! scan: timing loop=376ms net=100ms tier=bulk
+01:10:49.000 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","rotation":0,"device":"","name":"","setCode":""}
+01:10:49.102 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:10:49.507 ! scan: trigger fire phase=capturing settle=8 baseline=0 boxes=3 stable=6 grace=0 blink=2 real=4 abandoned=1 disrupt=0 hold=33.1 face=14.8 sinceCapture=22 settleMS=264 cause=removed
+01:10:49.718 < {"device":"","collectorNumber":"","cards":[],"name":"","event":"scan","rotation":0,"auto":true,"fireReason":"removed","candidates":[],"bandAnchored":false,"bottomLines":[],"setCode":"","message":""}
+01:10:49.723 < {"state":"held","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:10:49.723 ! scan: timing shutter=85ms read=150ms total=235ms still=3024x4032 tap=4032x3024 locate=34 whole=116 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:50.077 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:10:50.532 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:10:50.607 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:10:50.676 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:10:53.478 ! scan: trigger fire phase=capturing settle=42 baseline=0 boxes=1 stable=25 grace=0 blink=0 real=27 abandoned=2 disrupt=0 hold=1.3 face=- sinceCapture=56 settleMS=1386 cause=removed
+01:10:53.624 < {"candidates":[],"device":"","message":"","rotation":0,"name":"","collectorNumber":"","state":"capturing","setCode":"","bottomLines":[],"event":"auto"}
+01:10:53.770 < {"fireReason":"removed","device":"","bottomLines":["something glittered in the sand.","Hllus. Yeong-Hao Han","TN & © 2024 Wizards of the Coast 5"],"rotation":0,"setCode":"","collectorNumber":"5","event":"scan","candidates":["hard Evidence"],"name":"hard Evidence","bandAnchored":true,"auto":true,"cards":[{"name":"hard Evidence","collectorNumber":"5","setCode":"","borderColor":"black","numberSource":"copyright","candidates":["hard Evidence"],"source":"crop","finishHint":"","confidence":0,"borderSource":"footer+ring","copyrightYear":2024}],"message":""}
+01:10:53.773 ~ resolve "Hard Evidence" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=5(copyright) prints=3 border=black(footer+ring)
+01:10:53.775 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"held","device":""}
+01:10:53.775 ! scan: timing shutter=85ms read=199ms total=285ms still=3024x4032 tap=4032x3024 locate=46 whole=148 band=135 border=4 border=black(footer+ring) t=-0.88 standoff=-0.13 anchor=copyright scale=0.89
+01:10:53.777 ~ outcome "Hard Evidence" committed: H2R/5 nonfoil
+01:10:53.784 ! scan: timing loop=301ms net=16ms tier=bulk
+01:10:53.928 < {"candidates":[],"bottomLines":[],"event":"auto","device":"","state":"armed","collectorNumber":"","name":"","message":"","rotation":0,"setCode":""}
+01:10:53.999 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","device":"","message":"","name":""}
+01:10:54.525 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=2 disrupt=0 hold=15.4 face=25.4 sinceCapture=11 settleMS=231 cause=replaced
+01:10:54.726 < {"event":"scan","candidates":[],"bandAnchored":false,"device":"","name":"","message":"","collectorNumber":"","bottomLines":[],"setCode":"","cards":[],"fireReason":"replaced","rotation":0,"auto":true}
+01:10:54.732 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"held","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:10:54.732 ! scan: timing shutter=85ms read=160ms total=245ms still=3024x4032 tap=4032x3024 locate=48 whole=112 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:54.931 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:10:55.179 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:10:55.546 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:10:55.755 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:10:56.549 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:10:56.610 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:10:56.982 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=4 disrupt=0 hold=1.7 face=- sinceCapture=33 settleMS=165 cause=removed
+01:10:57.279 < {"rotation":0,"auto":true,"bottomLines":["sparr uRe winaoorne emoers, ana","only Alrund can capture them.","Illus, Liiga Smilshkalne","2021 Wizards","ofithe Coast 399"],"cards":[{"setCode":"","finishHint":"","source":"crop","borderSource":"footer+ring","candidates":["Brainsurge","2"],"collectorNumber":"","copyrightYear":2021,"borderColor":"black","confidence":0,"name":"Brainsurge"}],"collectorNumber":"","event":"scan","bandAnchored":true,"message":"","device":"","name":"Brainsurge","fireReason":"removed","setCode":"","candidates":["Brainsurge","2"]}
+01:10:57.282 ~ resolve "Brainsurge" line=0 name=1ms prints=0ms rank=none match=exact set=- num=- prints=2 border=black(footer+ring) unused
+01:10:57.282 ~ outcome "Brainsurge" queued: printing unverified: 2 printings
+01:10:57.284 < {"setCode":"","message":"","device":"","rotation":0,"bottomLines":[],"state":"held","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:57.284 ! scan: timing shutter=85ms read=194ms total=279ms still=3024x4032 tap=4032x3024 locate=46 whole=143 band=143 border=5 border=black(footer+ring) t=-2.32 standoff=-0.24 anchor=copyright scale=0.72
+01:10:57.291 ! scan: timing loop=342ms net=63ms tier=review
+01:10:58.108 < {"setCode":"","message":"","rotation":0,"device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:10:58.213 < {"candidates":[],"bottomLines":[],"device":"","event":"auto","state":"armed","collectorNumber":"","name":"","message":"","rotation":0,"setCode":""}
+01:10:58.412 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=1 real=5 abandoned=4 disrupt=0 hold=20.5 face=23.4 sinceCapture=18 settleMS=165 cause=removed
+01:10:58.652 < {"candidates":[],"event":"scan","name":"","rotation":0,"fireReason":"removed","device":"","collectorNumber":"","bottomLines":[],"cards":[],"bandAnchored":false,"auto":true,"message":"","setCode":""}
+01:10:58.658 < {"state":"held","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:10:58.658 ! scan: timing shutter=81ms read=149ms total=231ms still=3024x4032 tap=4032x3024 locate=30 whole=120 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:10:58.934 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:10:59.007 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:10:59.945 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","name":"","device":"","rotation":0,"setCode":""}
+01:11:00.077 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:11:00.620 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:11:00.676 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","name":"","device":"","rotation":0,"setCode":""}
+01:11:01.016 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=6 disrupt=0 hold=1.5 face=- sinceCapture=35 settleMS=165 cause=removed
+01:11:01.385 < {"name":"Trap Digger","message":"","device":"","collectorNumber":"24","candidates":["Trap Digger","3:"],"rotation":0,"cards":[{"collectorNumber":"24","candidates":["Trap Digger","3:"],"name":"Trap Digger","setCode":"","borderSource":"footer+ring","finishHint":"","source":"crop","numberSource":"copyright","copyrightYear":2003,"confidence":0,"borderColor":"black"}],"bandAnchored":true,"setCode":"","event":"scan","fireReason":"removed","auto":true,"bottomLines":["largel allacking crealure wilhoul","flying.","Tilus. Christopher Iloeller","TM & © 1993-2003 Wizards of the Coast, Inc. 24\/143","1\/3"]}
+01:11:01.387 ~ resolve "Trap Digger" line=0 name=0ms prints=0ms rank=number+year match=exact set=- num=24(copyright) prints=1 border=black(footer+ring) unused
+01:11:01.392 ~ outcome "Trap Digger" committed: SCG/24 nonfoil
+01:11:01.542 < {"device":"","collectorNumber":"","candidates":[],"name":"","event":"auto","setCode":"","message":"","bottomLines":[],"rotation":0,"state":"held"}
+01:11:01.542 ! scan: timing shutter=82ms read=193ms total=276ms still=3024x4032 tap=4032x3024 locate=45 whole=143 band=138 border=6 border=black(footer+ring) t=-0.84 standoff=-0.43 anchor=copyright scale=0.82
+01:11:01.551 ! scan: timing loop=466ms net=190ms tier=bulk
+01:11:02.308 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","device":"","name":"","message":""}
+01:11:02.542 < {"device":"","collectorNumber":"","candidates":[],"event":"auto","name":"","setCode":"","message":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:11:03.006 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=0 stable=6 grace=0 blink=2 real=4 abandoned=6 disrupt=0 hold=27.2 face=29.0 sinceCapture=25 settleMS=198 cause=removed
+01:11:03.183 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"device":"","name":"","setCode":"","fireReason":"removed","bottomLines":[],"collectorNumber":""}
+01:11:03.191 < {"setCode":"","event":"auto","state":"held","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:03.191 ! scan: timing shutter=91ms read=148ms total=239ms still=3024x4032 tap=4032x3024 locate=27 whole=121 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:03.400 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:03.611 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:04.356 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:11:04.410 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:04.746 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=7 disrupt=0 hold=- face=- sinceCapture=23 settleMS=165 cause=removed
+01:11:05.029 < {"candidates":["Abiding Grace","2"],"rotation":0,"cards":[{"setCode":"","collectorNumber":"1","name":"Abiding Grace","borderColor":"black","numberSource":"copyright","candidates":["Abiding Grace","2"],"source":"crop","finishHint":"","confidence":0,"borderSource":"footer+ring","copyrightYear":2024}],"bandAnchored":true,"event":"scan","message":"","auto":true,"bottomLines":["graveyard to the battlefield.","Illus, Jenn Raverna Tran","TM & O 2024 Wizards of the Coast 1"],"name":"Abiding Grace","setCode":"","fireReason":"removed","device":"","collectorNumber":"1"}
+01:11:05.031 ~ resolve "Abiding Grace" line=0 name=0ms prints=0ms rank=number+year match=exact set=- num=1(copyright) prints=2 border=black(footer+ring)
+01:11:05.034 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"held","device":""}
+01:11:05.034 ! scan: timing shutter=91ms read=190ms total=282ms still=3024x4032 tap=4032x3024 locate=47 whole=139 band=137 border=5 border=black(footer+ring) t=-0.76 standoff=-0.43 anchor=copyright scale=0.79
+01:11:05.036 ~ outcome "Abiding Grace" committed: H2R/1 nonfoil
+01:11:05.043 ! scan: timing loop=299ms net=17ms tier=bulk
+01:11:05.890 < {"bottomLines":[],"state":"armed","message":"","rotation":0,"event":"auto","name":"","setCode":"","collectorNumber":"","candidates":[],"device":""}
+01:11:06.000 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:11:06.300 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=1 real=5 abandoned=7 disrupt=0 hold=34.1 face=21.9 sinceCapture=19 settleMS=165 cause=removed
+01:11:06.518 < {"candidates":[],"event":"scan","rotation":0,"name":"","fireReason":"removed","device":"","collectorNumber":"","bottomLines":[],"cards":[],"bandAnchored":false,"auto":true,"message":"","setCode":""}
+01:11:06.523 < {"event":"auto","candidates":[],"rotation":0,"state":"held","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:06.523 ! scan: timing shutter=88ms read=148ms total=236ms still=3024x4032 tap=4032x3024 locate=43 whole=105 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:07.836 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:07.941 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:08.144 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=7 disrupt=0 hold=22.6 face=- sinceCapture=24 settleMS=165 cause=removed
+01:11:08.452 < {"device":"","fireReason":"removed","rotation":0,"bottomLines":["i mau masil.","When Gaea speaks, all of nature falls silent.","Illus. Yeong-Hao Han","IM & C 2024 Wizards of the Coast 429"],"setCode":"","collectorNumber":"429","event":"scan","candidates":["Primal Prayers","20"],"name":"Primal Prayers","bandAnchored":true,"auto":true,"cards":[{"numberSource":"copyright","source":"crop","finishHint":"","copyrightYear":2024,"borderColor":"black","borderSource":"footer+ring","collectorNumber":"429","setCode":"","confidence":0,"candidates":["Primal Prayers","20"],"name":"Primal Prayers"}],"message":""}
+01:11:08.454 ~ resolve "Primal Prayers" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=429(copyright) prints=4 border=black(footer+ring)
+01:11:08.458 < {"name":"","event":"auto","device":"","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"held","rotation":0,"message":""}
+01:11:08.458 ! scan: timing shutter=91ms read=200ms total=292ms still=3024x4032 tap=4032x3024 locate=46 whole=150 band=138 border=5 border=black(footer+ring) t=-0.85 standoff=-0.17 anchor=copyright scale=0.68
+01:11:08.460 ~ outcome "Primal Prayers" committed: MH3/429 nonfoil
+01:11:08.466 ! scan: timing loop=322ms net=30ms tier=bulk
+01:11:09.213 < {"state":"armed","bottomLines":[],"message":"","candidates":[],"setCode":"","rotation":0,"collectorNumber":"","name":"","device":"","event":"auto"}
+01:11:09.335 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","name":"","candidates":[],"collectorNumber":"","event":"auto"}
+01:11:09.679 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=4 abandoned=7 disrupt=0 hold=35.4 face=21.3 sinceCapture=19 settleMS=198 cause=removed
+01:11:09.986 < {"device":"","collectorNumber":"","cards":[],"name":"","event":"scan","rotation":0,"auto":true,"fireReason":"removed","candidates":[],"bandAnchored":false,"bottomLines":[],"setCode":"","message":""}
+01:11:09.993 < {"state":"held","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:11:09.993 ! scan: timing shutter=84ms read=159ms total=244ms still=3024x4032 tap=4032x3024 locate=41 whole=119 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:10.274 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:11:10.548 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:11.523 ! scan: trigger fire phase=capturing settle=12 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=7 abandoned=7 disrupt=0 hold=1.1 face=- sinceCapture=21 settleMS=396 cause=removed
+01:11:11.633 < {"rotation":0,"auto":true,"bottomLines":["Solayy","library. You may play it until you exile","another card with Unstable Amulet.","Illus. José Parodi","™M & © 2024 Wizards of the Coast 42f"],"cards":[{"setCode":"","collectorNumber":"42","name":"Unstable Amulet","borderColor":"black","numberSource":"copyright","candidates":["Unstable Amulet","1"],"source":"crop","finishHint":"","confidence":0,"borderSource":"footer+ring","copyrightYear":2024}],"collectorNumber":"42","bandAnchored":true,"event":"scan","message":"","device":"","name":"Unstable Amulet","fireReason":"removed","setCode":"","candidates":["Unstable Amulet","1"]}
+01:11:11.635 ~ resolve "Unstable Amulet" line=0 name=1ms prints=0ms rank=none match=exact set=- num=42(copyright) prints=3 border=black(footer+ring)
+01:11:11.635 ~ outcome "Unstable Amulet" queued: printing unverified: 3 printings
+01:11:11.638 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"held","device":""}
+01:11:11.638 ! scan: timing shutter=82ms read=198ms total=281ms still=3024x4032 tap=4032x3024 locate=43 whole=151 band=151 border=5 border=black(footer+ring) t=-1.19 standoff=-0.22 anchor=copyright scale=0.89
+01:11:11.643 ! scan: timing loop=290ms net=9ms tier=review
+01:11:12.443 < {"bottomLines":[],"state":"armed","message":"","rotation":0,"event":"auto","name":"","setCode":"","collectorNumber":"","candidates":[],"device":""}
+01:11:12.482 < {"setCode":"","bottomLines":[],"state":"armed","message":"","event":"auto","rotation":0,"candidates":[],"device":"","collectorNumber":"","name":""}
+01:11:12.853 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=0 stable=6 grace=0 blink=1 real=5 abandoned=7 disrupt=0 hold=28.9 face=22.2 sinceCapture=17 settleMS=165 cause=removed
+01:11:13.007 < {"message":"","device":"","collectorNumber":"","bandAnchored":false,"fireReason":"removed","auto":true,"candidates":[],"bottomLines":[],"rotation":0,"name":"","setCode":"","cards":[],"event":"scan"}
+01:11:13.007 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:11:13.007 ! scan: timing shutter=86ms read=160ms total=247ms still=3024x4032 tap=4032x3024 locate=51 whole=109 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:13.548 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:13.877 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:16.745 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:11:16.850 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:17.260 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:17.871 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:11:17.880 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:18.281 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=1 disrupt=0 hold=- face=- sinceCapture=78 settleMS=165 cause=removed
+01:11:18.492 < {"device":"","collectorNumber":"135","name":"Primal Whisperer","cards":[{"collectorNumber":"135","candidates":["Primal Whisperer","4"],"source":"crop","borderSource":"footer+ring","name":"Primal Whisperer","finishHint":"","setCode":"","confidence":0,"copyrightYear":2003,"numberSource":"copyright","borderColor":"black"}],"event":"scan","rotation":0,"auto":true,"fireReason":"removed","candidates":["Primal Whisperer","4"],"bandAnchored":true,"bottomLines":["jace up any time for its morph cost.)","Illus. Greg Staples","™M & © 1993-2003 Wizards of the Coast, Inc. 135\/145","2\/2"],"setCode":"","message":""}
+01:11:18.495 ~ resolve "Primal Whisperer" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=135(copyright) prints=1 border=black(footer+ring) unused
+01:11:18.497 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"held"}
+01:11:18.497 ! scan: timing shutter=84ms read=189ms total=273ms still=3024x4032 tap=4032x3024 locate=45 whole=139 band=134 border=4 border=black(footer+ring) t=-0.56 standoff=-0.13 anchor=copyright scale=0.92
+01:11:18.499 ~ outcome "Primal Whisperer" committed: LGN/135 nonfoil
+01:11:18.505 ! scan: timing loop=287ms net=14ms tier=bulk
+01:11:19.304 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:11:19.412 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:19.951 ! scan: trigger fire phase=capturing settle=8 baseline=0 boxes=1 stable=6 grace=0 blink=3 real=4 abandoned=1 disrupt=0 hold=35.2 face=- sinceCapture=22 settleMS=264 cause=removed
+01:11:20.226 < {"candidates":[],"event":"scan","rotation":0,"name":"","device":"","fireReason":"removed","collectorNumber":"","bottomLines":[],"cards":[],"bandAnchored":false,"auto":true,"message":"","setCode":""}
+01:11:20.231 < {"state":"held","event":"auto","rotation":0,"message":"","device":"","candidates":[],"setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:20.231 ! scan: timing shutter=82ms read=135ms total=218ms still=3024x4032 tap=4032x3024 locate=27 whole=108 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:20.396 < {"state":"armed","event":"auto","rotation":0,"message":"","device":"","candidates":[],"setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:20.471 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:11:21.352 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:11:21.395 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:21.764 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=2 disrupt=0 hold=1.2 face=- sinceCapture=23 settleMS=165 cause=removed
+01:11:21.964 < {"rotation":0,"auto":true,"bottomLines":["fled—but insects swarmed closer.","Illus. Matt Thompson","TM & © 1993-2003 Wizards of the Coast, Inc. 143\/145","3\/3"],"cards":[{"collectorNumber":"143","confidence":0,"name":"Vexing Beetle","finishHint":"","numberSource":"copyright","candidates":["Vexing Beetle","4"],"borderColor":"black","setCode":"","source":"crop","borderSource":"footer+ring","copyrightYear":2003}],"collectorNumber":"143","event":"scan","bandAnchored":true,"message":"","device":"","name":"Vexing Beetle","fireReason":"removed","setCode":"","candidates":["Vexing Beetle","4"]}
+01:11:21.966 ~ resolve "Vexing Beetle" line=0 name=0ms prints=0ms rank=number+year match=exact set=- num=143(copyright) prints=1 border=black(footer+ring) unused
+01:11:21.970 < {"state":"held","event":"auto","rotation":0,"candidates":[],"message":"","device":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:21.970 ! scan: timing shutter=93ms read=191ms total=284ms still=3024x4032 tap=4032x3024 locate=43 whole=142 band=141 border=6 border=black(footer+ring) t=-0.49 standoff=-0.13 anchor=copyright scale=0.99
+01:11:21.970 ~ outcome "Vexing Beetle" committed: LGN/143 nonfoil
+01:11:21.978 ! scan: timing loop=298ms net=14ms tier=bulk
+01:11:22.788 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:22.994 < {"state":"armed","event":"auto","rotation":0,"candidates":[],"message":"","device":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:23.812 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:23.916 < {"state":"armed","event":"auto","rotation":0,"candidates":[],"message":"","device":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:24.549 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:24.749 < {"state":"armed","event":"auto","rotation":0,"candidates":[],"message":"","device":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:25.478 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:11:25.755 < {"state":"armed","event":"auto","rotation":0,"candidates":[],"message":"","device":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:26.147 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=3 abandoned=5 disrupt=0 hold=33.4 face=18.6 sinceCapture=63 settleMS=198 cause=removed
+01:11:26.470 < {"message":"","device":"","collectorNumber":"","bandAnchored":false,"fireReason":"removed","auto":true,"candidates":[],"bottomLines":[],"rotation":0,"setCode":"","name":"","cards":[],"event":"scan"}
+01:11:26.523 < {"state":"held","event":"auto","rotation":0,"candidates":[],"device":"","message":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:26.523 ! scan: timing shutter=85ms read=160ms total=245ms still=3024x4032 tap=4032x3024 locate=33 whole=128 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:26.743 < {"state":"armed","event":"auto","rotation":0,"candidates":[],"device":"","message":"","setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:26.883 < {"device":"","message":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:11:27.291 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=5 disrupt=0 hold=- face=- sinceCapture=12 settleMS=165 cause=removed
+01:11:27.499 < {"event":"auto","candidates":[],"rotation":0,"state":"capturing","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:27.581 < {"candidates":["Victimize","2,"],"event":"scan","rotation":0,"name":"Victimize","fireReason":"removed","device":"","collectorNumber":"","bottomLines":["hje wil yrela a great bounty for me.","—Lul Ashur, lich lord","Illusr CraigJSpearing","™N&","the C"],"cards":[{"collectorNumber":"","finishHint":"","confidence":0,"borderSource":"footer+ring","candidates":["Victimize","2,"],"name":"Victimize","source":"crop","borderColor":"black","setCode":""}],"bandAnchored":true,"auto":true,"message":"","setCode":""}
+01:11:27.584 ~ resolve "Victimize" line=0 name=1ms prints=0ms rank=none match=exact set=- num=- prints=19 border=black(footer+ring) unused
+01:11:27.584 ~ outcome "Victimize" queued: printing unverified: 19 printings
+01:11:27.586 < {"event":"auto","candidates":[],"rotation":0,"state":"held","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:27.586 ! scan: timing shutter=86ms read=274ms total=360ms still=3024x4032 tap=4032x3024 locate=44 whole=136 band=130 border=4 border=black(footer+ring) t=-0.57 standoff=-0.12 anchor=credit scale=0.82
+01:11:27.591 ! scan: timing loop=372ms net=12ms tier=review
+01:11:28.315 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:28.345 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:11:29.613 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:11:29.781 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:30.080 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=6 disrupt=0 hold=24.8 face=- sinceCapture=38 settleMS=165 cause=removed
+01:11:30.363 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"device":"","name":"","setCode":"","fireReason":"removed","bottomLines":[],"collectorNumber":""}
+01:11:30.369 < {"event":"auto","candidates":[],"rotation":0,"state":"held","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:30.369 ! scan: timing shutter=85ms read=149ms total=235ms still=3024x4032 tap=4032x3024 locate=27 whole=123 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:30.980 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:11:31.145 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:11:31.486 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=6 disrupt=0 hold=1.4 face=- sinceCapture=17 settleMS=165 cause=removed
+01:11:31.797 < {"device":"","collectorNumber":"426","cards":[{"source":"crop","candidates":["Lion Umbra"],"collectorNumber":"426","numberSource":"copyright","name":"Lion Umbra","setCode":"","confidence":0,"finishHint":"","copyrightYear":2024,"borderColor":"black","borderSource":"footer+ring"}],"name":"Lion Umbra","auto":true,"message":"","event":"scan","rotation":0,"fireReason":"removed","setCode":"","bottomLines":["vuord armor","Illus, Julia Metzger","IM & O 2024 Wizards of the Coast 426"],"candidates":["Lion Umbra"],"bandAnchored":true}
+01:11:31.799 ~ resolve "Lion Umbra" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=426(copyright) prints=2 border=black(footer+ring)
+01:11:31.804 ~ outcome "Lion Umbra" committed: MH3/426 nonfoil
+01:11:31.922 < {"event":"auto","state":"held","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:11:31.922 ! scan: timing shutter=89ms read=186ms total=276ms still=3024x4032 tap=4032x3024 locate=45 whole=137 band=130 border=4 border=black(footer+ring) t=-0.92 standoff=-0.19 anchor=copyright scale=0.80
+01:11:31.941 ! scan: timing loop=396ms net=120ms tier=bulk
+01:11:32.821 < {"setCode":"","rotation":0,"message":"","device":"","bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:11:33.028 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:11:33.333 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=4 abandoned=6 disrupt=0 hold=32.4 face=- sinceCapture=23 settleMS=231 cause=removed
+01:11:33.548 < {"device":"","collectorNumber":"","cards":[],"name":"","event":"scan","rotation":0,"auto":true,"fireReason":"removed","candidates":[],"bandAnchored":false,"bottomLines":[],"setCode":"","message":""}
+01:11:33.553 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:11:33.553 ! scan: timing shutter=90ms read=176ms total=267ms still=3024x4032 tap=4032x3024 locate=68 whole=109 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:34.357 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:11:34.564 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:11:35.023 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:11:35.029 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:11:36.405 ! scan: trigger fire phase=capturing settle=20 baseline=0 boxes=1 stable=21 grace=0 blink=0 real=21 abandoned=7 disrupt=0 hold=- face=- sinceCapture=42 settleMS=660 cause=removed
+01:11:36.828 < {"candidates":["Consuming Corruption"],"rotation":0,"cards":[{"finishHint":"","borderColor":"black","source":"crop","setCode":"","borderSource":"footer+ring","collectorNumber":"","name":"Consuming Corruption","candidates":["Consuming Corruption"],"confidence":0}],"bandAnchored":true,"event":"scan","message":"","auto":true,"device":"","name":"Consuming Corruption","bottomLines":["found the perfect shortcut to the end of","his life.","PAus","Andrew Theophilopotlos","c24 Wizards","the Coas"],"fireReason":"removed","setCode":"","collectorNumber":""}
+01:11:36.831 ~ resolve "Consuming Corruption" line=0 name=1ms prints=0ms rank=none match=exact set=- num=- prints=2 border=black(footer+ring) unused
+01:11:36.831 ~ outcome "Consuming Corruption" queued: printing unverified: 2 printings
+01:11:36.896 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:11:36.896 ! scan: timing shutter=84ms read=283ms total=368ms still=3024x4032 tap=4032x3024 locate=45 whole=143 band=139 border=4 border=black(footer+ring) t=-0.53 standoff=-0.18 anchor=credit scale=0.86
+01:11:36.896 ! scan: timing loop=504ms net=136ms tier=review
+01:11:37.684 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:11:37.746 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:11:38.169 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=1 real=5 abandoned=7 disrupt=0 hold=27.3 face=28.7 sinceCapture=21 settleMS=198 cause=removed
+01:11:38.453 < {"collectorNumber":"","fireReason":"removed","rotation":0,"name":"","setCode":"","message":"","auto":true,"candidates":[],"device":"","bottomLines":[],"cards":[],"event":"scan","bandAnchored":false}
+01:11:38.531 < {"bottomLines":[],"collectorNumber":"","device":"","name":"","setCode":"","event":"auto","message":"","state":"held","rotation":0,"candidates":[]}
+01:11:38.531 ! scan: timing shutter=82ms read=149ms total=232ms still=3024x4032 tap=4032x3024 locate=38 whole=112 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:38.966 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:39.070 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","device":"","rotation":0,"name":"","setCode":""}
+01:11:39.783 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:39.813 < {"bottomLines":[],"collectorNumber":"","device":"","name":"","setCode":"","event":"auto","message":"","state":"armed","rotation":0,"candidates":[]}
+01:11:40.153 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=0 disrupt=0 hold=1.5 face=- sinceCapture=26 settleMS=165 cause=removed
+01:11:40.428 < {"device":"","collectorNumber":"399","cards":[{"collectorNumber":"399","confidence":0,"candidates":["Brainsurge","2"],"source":"crop","finishHint":"","numberSource":"copyright","copyrightYear":2024,"name":"Brainsurge","setCode":"","borderColor":"black","borderSource":"footer+ring"}],"name":"Brainsurge","auto":true,"event":"scan","message":"","rotation":0,"fireReason":"removed","bottomLines":["spark dRe windborne embers, and","only Alrund can capture them.","Tilus, Liga Smilshkalne","F& & 2024 Wizards of the Coast 399"],"setCode":"","candidates":["Brainsurge","2"],"bandAnchored":true}
+01:11:40.430 ~ resolve "Brainsurge" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=399(copyright) prints=2 border=black(footer+ring)
+01:11:40.430 ~ outcome "Brainsurge" re-read: number+year beats the queued none, replacing it
+01:11:40.433 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:40.433 ! scan: timing shutter=85ms read=185ms total=270ms still=3024x4032 tap=4032x3024 locate=42 whole=139 band=138 border=4 border=black(footer+ring) t=-1.35 standoff=-0.26 anchor=copyright scale=0.90
+01:11:40.434 ~ outcome "Brainsurge" committed: MH3/399 nonfoil
+01:11:40.442 ! scan: timing loop=287ms net=17ms tier=bulk
+01:11:41.321 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:11:41.327 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","device":"","name":"","rotation":0,"setCode":""}
+01:11:41.617 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=0 stable=6 grace=0 blink=1 real=5 abandoned=0 disrupt=0 hold=28.2 face=- sinceCapture=18 settleMS=165 cause=removed
+01:11:41.935 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"bottomLines":[],"device":"","name":"","fireReason":"removed","setCode":"","collectorNumber":""}
+01:11:42.029 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:11:42.029 ! scan: timing shutter=91ms read=157ms total=248ms still=3024x4032 tap=4032x3024 locate=33 whole=124 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:42.066 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:11:42.208 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:11:42.959 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:11:43.065 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:43.470 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:11:43.482 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:43.880 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=2 disrupt=0 hold=- face=- sinceCapture=29 settleMS=165 cause=removed
+01:11:44.092 < {"collectorNumber":"102","rotation":0,"fireReason":"removed","name":"hunter Sliver","message":"","setCode":"","auto":true,"candidates":["hunter Sliver"],"device":"","bottomLines":["escape.","Illus. Kev Walker","IN &","1993-2003 Wizards of the Coast, Inc. 102\/145","1\/1"],"cards":[{"source":"crop","numberSource":"copyright","name":"hunter Sliver","borderColor":"black","setCode":"","confidence":0,"finishHint":"","borderSource":"footer+ring","copyrightYear":2003,"candidates":["hunter Sliver"],"collectorNumber":"102"}],"event":"scan","bandAnchored":true}
+01:11:44.095 ~ resolve "Hunter Sliver" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=102(copyright) prints=4 border=black(footer+ring)
+01:11:44.098 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"held"}
+01:11:44.098 ! scan: timing shutter=85ms read=187ms total=272ms still=3024x4032 tap=4032x3024 locate=46 whole=136 band=131 border=4 border=black(footer+ring) t=-1.20 standoff=-0.20 anchor=copyright scale=0.99
+01:11:44.099 ~ outcome "Hunter Sliver" committed: LGN/102 nonfoil
+01:11:44.106 ! scan: timing loop=285ms net=13ms tier=bulk
+01:11:44.882 < {"message":"","device":"","event":"auto","bottomLines":[],"collectorNumber":"","setCode":"","candidates":[],"state":"armed","rotation":0,"name":""}
+01:11:44.985 < {"setCode":"","message":"","device":"","rotation":0,"bottomLines":[],"state":"armed","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:11:45.345 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=4 abandoned=2 disrupt=0 hold=23.3 face=- sinceCapture=19 settleMS=198 cause=removed
+01:11:45.600 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"bottomLines":[],"device":"","setCode":"","fireReason":"removed","name":"","collectorNumber":""}
+01:11:45.606 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:11:45.606 ! scan: timing shutter=95ms read=153ms total=249ms still=3024x4032 tap=4032x3024 locate=41 whole=112 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:45.802 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:46.133 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:11:46.384 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:11:46.644 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:11:46.950 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=3 disrupt=0 hold=- face=- sinceCapture=20 settleMS=165 cause=removed
+01:11:47.260 < {"device":"","collectorNumber":"3","cards":[{"borderSource":"footer+ring","setCode":"","collectorNumber":"3","name":"Frenetic Raptor","source":"crop","numberSource":"copyright","confidence":0,"copyrightYear":2003,"borderColor":"black","candidates":["Frenetic Raptor","5"],"finishHint":""}],"name":"Frenetic Raptor","auto":true,"message":"","event":"scan","rotation":0,"fireReason":"removed","setCode":"","bottomLines":["Illus. Daren Bader","TM & 1993-2003 Wizards of the Coast, Inc. 03\/145","6\/6"],"candidates":["Frenetic Raptor","5"],"bandAnchored":true}
+01:11:47.262 ~ resolve "Frenetic Raptor" line=0 name=1ms prints=0ms rank=single-print match=exact set=- num=-(copyright) prints=1 border=black(footer+ring) unused number-overridden
+01:11:47.265 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:47.265 ! scan: timing shutter=84ms read=190ms total=275ms still=3024x4032 tap=4032x3024 locate=45 whole=140 band=132 border=6 border=black(footer+ring) t=-1.21 standoff=-0.20 anchor=copyright scale=0.85
+01:11:47.267 ~ outcome "Frenetic Raptor" committed: LGN/93 nonfoil
+01:11:47.274 ! scan: timing loop=319ms net=44ms tier=bulk
+01:11:48.130 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:11:48.217 < {"device":"","message":"","setCode":"","event":"auto","rotation":0,"name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:11:48.553 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=0 stable=6 grace=0 blink=2 real=4 abandoned=3 disrupt=0 hold=26.2 face=22.1 sinceCapture=20 settleMS=165 cause=removed
+01:11:48.795 < {"rotation":0,"candidates":[],"bandAnchored":false,"message":"","fireReason":"removed","device":"","cards":[],"collectorNumber":"","bottomLines":[],"event":"scan","auto":true,"setCode":"","name":""}
+01:11:48.799 ! scan: timing shutter=87ms read=140ms total=227ms still=3024x4032 tap=4032x3024 locate=29 whole=111 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:48.799 < {"bottomLines":[],"collectorNumber":"","device":"","name":"","setCode":"","message":"","event":"auto","state":"held","rotation":0,"candidates":[]}
+01:11:49.701 < {"device":"","message":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:11:50.025 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:11:50.552 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:11:50.615 < {"device":"","message":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:11:52.552 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:11:52.614 < {"device":"","message":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:11:52.894 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:11:52.950 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=5 disrupt=0 hold=- face=- sinceCapture=63 settleMS=165 cause=removed
+01:11:53.233 < {"candidates":["Charitable Levy","1"],"event":"scan","name":"Charitable Levy","rotation":0,"fireReason":"removed","device":"","collectorNumber":"390","bottomLines":["tasc aprry fr Plains","card, put it onto the battlefield tapped,","then shuffle.","bllus, BlMinaya","TM & O 2024 Wizards of the Coast 390"],"cards":[{"setCode":"CARD","finishHint":"nonfoil","confidence":0,"candidates":["Charitable Levy","1"],"numberSource":"copyright","source":"crop","name":"Charitable Levy","copyrightYear":2024,"collectorNumber":"390","borderColor":"black","borderSource":"footer+ring"}],"bandAnchored":true,"finishHint":"nonfoil","auto":true,"message":"","setCode":"CARD"}
+01:11:53.235 ~ resolve "Charitable Levy" line=0 name=1ms prints=0ms rank=number+year match=exact set=CARD num=390(copyright) prints=2 border=black(footer+ring)
+01:11:53.238 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"held","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:11:53.238 ! scan: timing shutter=90ms read=190ms total=281ms still=3024x4032 tap=4032x3024 locate=45 whole=141 band=141 border=5 border=black(footer+ring) t=-0.90 standoff=-0.36 anchor=copyright scale=0.73
+01:11:53.240 ~ outcome "Charitable Levy" committed: MH3/390 nonfoil
+01:11:53.248 ! scan: timing loop=295ms net=14ms tier=bulk
+01:11:54.054 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:11:54.152 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:11:54.552 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:11:54.687 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","rotation":0,"device":"","name":"","setCode":""}
+01:11:55.087 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=6 disrupt=0 hold=34.7 face=23.9 sinceCapture=28 settleMS=198 cause=removed
+01:11:55.350 < {"collectorNumber":"","rotation":0,"fireReason":"removed","name":"","message":"","setCode":"","auto":true,"candidates":[],"device":"","bottomLines":[],"cards":[],"event":"scan","bandAnchored":false}
+01:11:55.356 < {"setCode":"","event":"auto","state":"held","device":"","candidates":[],"rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:55.356 ! scan: timing shutter=84ms read=140ms total=224ms still=3024x4032 tap=4032x3024 locate=30 whole=110 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:11:55.750 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:55.814 < {"state":"armed","event":"auto","rotation":0,"message":"","device":"","candidates":[],"setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:57.566 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:11:57.616 < {"state":"armed","event":"auto","rotation":0,"message":"","device":"","candidates":[],"setCode":"","bottomLines":[],"collectorNumber":"","name":""}
+01:11:58.012 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=7 disrupt=0 hold=1.3 face=- sinceCapture=40 settleMS=165 cause=removed
+01:11:58.234 < {"rotation":0,"auto":true,"cards":[{"finishHint":"","collectorNumber":"65","name":"Deathmark Prelate","numberSource":"copyright","candidates":["Deathmark Prelate","3"],"copyrightYear":2003,"setCode":"","confidence":0,"source":"crop"}],"bottomLines":["weatn is a secret he is willing to share.","Illus. Tony Szezudlo","rN &*C 1993-2003 Wizards of the Coast, Inc. 65\/145","2\/3"],"collectorNumber":"65","event":"scan","bandAnchored":true,"message":"","device":"","name":"Deathmark Prelate","fireReason":"removed","setCode":"","candidates":["Deathmark Prelate","3"]}
+01:11:58.236 ~ resolve "Deathmark Prelate" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=65(copyright) prints=1
+01:11:58.239 < {"setCode":"","event":"auto","state":"held","candidates":[],"device":"","rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:11:58.239 ! scan: timing shutter=85ms read=189ms total=274ms still=3024x4032 tap=4032x3024 locate=45 whole=138 band=132 border=6 border=-(ring matches inner frame) t=-0.13 standoff=-0.02 anchor=copyright scale=0.69
+01:11:58.241 ~ outcome "Deathmark Prelate" committed: LGN/65 nonfoil
+01:11:58.247 ! scan: timing loop=290ms net=16ms tier=bulk
+01:11:59.036 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:11:59.150 < {"message":"","device":"","setCode":"","event":"auto","rotation":0,"name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:12:00.059 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:12:00.084 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:12:00.571 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=1 real=5 abandoned=0 disrupt=0 hold=39.3 face=19.3 sinceCapture=34 settleMS=198 cause=removed
+01:12:00.714 ! scan: timing shutter=88ms read=137ms total=226ms still=3024x4032 tap=4032x3024 locate=27 whole=111 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:12:00.714 < {"rotation":0,"candidates":[],"bandAnchored":false,"message":"","device":"","fireReason":"removed","cards":[],"collectorNumber":"","bottomLines":[],"event":"scan","auto":true,"setCode":"","name":""}
+01:12:00.719 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:12:01.392 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:12:01.614 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:12:03.954 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:12:04.774 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"event":"auto","name":"","bottomLines":[],"setCode":"","state":"armed"}
+01:12:04.906 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","message":"","name":"","collectorNumber":"","rotation":0}
+01:12:09.993 < {"device":"","message":"","setCode":"","event":"auto","rotation":0,"name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:12:10.202 < {"device":"","message":"","setCode":"","event":"auto","rotation":0,"name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:12:14.955 ! scan: trigger fire phase=capturing settle=74 baseline=0 boxes=1 stable=31 grace=0 blink=0 real=35 abandoned=2 disrupt=0 hold=1.3 face=- sinceCapture=214 settleMS=2442 cause=removed
+01:12:15.304 < {"fireReason":"removed","cards":[{"source":"crop","candidates":["Slith Predator"],"collectorNumber":"129","numberSource":"copyright","setCode":"","confidence":0,"name":"Slith Predator","finishHint":"","copyrightYear":2003,"borderColor":"black","borderSource":"footer"}],"bandAnchored":true,"candidates":["Slith Predator"],"name":"Slith Predator","device":"","bottomLines":["born amia the molten metal oj the urreal","Furnace, the slith have more than adapted to","the perils of a metal world.","Justin Sweet","1\/1","&61993 2003 Wizards of the Coast: Ine. 129\/306"],"rotation":0,"message":"","auto":true,"setCode":"","collectorNumber":"129","event":"scan"}
+01:12:15.307 ~ resolve "Slith Predator" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=129(copyright) prints=1 border=black(footer) unused
+01:12:15.311 ~ outcome "Slith Predator" committed: MRD/129 nonfoil
+01:12:15.442 < {"setCode":"","rotation":0,"device":"","message":"","bottomLines":[],"state":"held","event":"auto","candidates":[],"collectorNumber":"","name":""}
+01:12:15.442 ! scan: timing shutter=88ms read=195ms total=284ms still=3024x4032 tap=4032x3024 locate=46 whole=144 band=144 border=5 border=black(footer) t=-1.60 standoff=-0.23 anchor=copyright scale=0.99
+01:12:15.469 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:12:15.469 ! scan: timing loop=438ms net=154ms tier=bulk
+01:12:15.472 < {"event":"auto","state":"armed","device":"","candidates":[],"message":"","collectorNumber":"","name":"","setCode":"","bottomLines":[],"rotation":0}
+01:12:15.820 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=2 disrupt=0 hold=19.8 face=- sinceCapture=9 settleMS=165 cause=removed
+01:12:16.240 < {"device":"","collectorNumber":"129","cards":[{"setCode":"","finishHint":"","confidence":0,"candidates":["Slith Predator"],"numberSource":"copyright","source":"crop","name":"Slith Predator","copyrightYear":2003,"collectorNumber":"129","borderColor":"black","borderSource":"footer+ring"}],"name":"Slith Predator","auto":true,"event":"scan","message":"","rotation":0,"fireReason":"removed","bottomLines":["Born amıd the molten metal of the Great","Furnace, the slith have more than adapted to","the perils of a metal world.","ae Justin Sweet","1\/1","C 1993-2003 Wizards of the Coast: Ine. 129\/306"],"setCode":"","candidates":["Slith Predator"],"bandAnchored":true}
+01:12:16.242 ~ resolve "Slith Predator" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=129(copyright) prints=1 border=black(footer+ring) unused
+01:12:16.242 ~ outcome "Slith Predator" dropped: same card, re-read 934ms after the last sighting
+01:12:16.306 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"held","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:12:16.306 ! scan: timing shutter=85ms read=259ms total=344ms still=3024x4032 tap=4032x3024 locate=45 whole=208 band=149 border=6 border=black(footer+ring) t=-1.01 standoff=-0.23 anchor=copyright scale=0.70
+01:12:16.359 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:16.445 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:12:16.854 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=4 abandoned=2 disrupt=0 hold=40.9 face=- sinceCapture=10 settleMS=198 cause=removed
+01:12:17.049 < {"fireReason":"removed","device":"","bottomLines":[],"setCode":"","rotation":0,"collectorNumber":"","event":"scan","candidates":[],"name":"","bandAnchored":false,"auto":true,"cards":[],"message":""}
+01:12:17.054 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:12:17.054 ! scan: timing shutter=87ms read=140ms total=227ms still=3024x4032 tap=4032x3024 locate=29 whole=111 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:12:17.553 < {"state":"armed","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:12:17.621 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:12:18.390 ! scan: trigger fire phase=capturing settle=10 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=8 abandoned=2 disrupt=0 hold=1.3 face=- sinceCapture=19 settleMS=330 cause=removed
+01:12:18.567 < {"candidates":["hunter Sliver"],"rotation":0,"cards":[{"borderSource":"footer+ring","setCode":"","collectorNumber":"102","name":"hunter Sliver","source":"crop","numberSource":"copyright","confidence":0,"copyrightYear":2003,"borderColor":"black","candidates":["hunter Sliver"],"finishHint":""}],"bandAnchored":true,"event":"scan","message":"","auto":true,"device":"","bottomLines":["escape.","Illus. Kev Walker","TN & C 1993-2003 Wizards of the Coast, Inc. 102\/145","1\/1"],"setCode":"","fireReason":"removed","name":"hunter Sliver","collectorNumber":"102"}
+01:12:18.569 ~ resolve "Hunter Sliver" line=0 name=0ms prints=0ms rank=number+year match=exact set=- num=102(copyright) prints=4 border=black(footer+ring)
+01:12:18.572 ~ outcome "Hunter Sliver" committed: LGN/102 nonfoil
+01:12:18.573 < {"state":"held","bottomLines":[],"setCode":"","candidates":[],"event":"auto","device":"","name":"","message":"","collectorNumber":"","rotation":0}
+01:12:18.573 ! scan: timing shutter=83ms read=188ms total=272ms still=3024x4032 tap=4032x3024 locate=44 whole=139 band=135 border=6 border=black(footer+ring) t=-1.23 standoff=-0.20 anchor=copyright scale=0.71
+01:12:18.580 ! scan: timing loop=285ms net=13ms tier=bulk
+01:12:19.286 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:12:19.588 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:12:19.954 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=4 abandoned=2 disrupt=0 hold=22.4 face=- sinceCapture=21 settleMS=198 cause=removed
+01:12:20.233 < {"collectorNumber":"","candidates":[],"name":"","device":"","event":"scan","bandAnchored":false,"message":"","bottomLines":[],"setCode":"","rotation":0,"cards":[],"fireReason":"removed","auto":true}
+01:12:20.240 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"held"}
+01:12:20.240 ! scan: timing shutter=83ms read=151ms total=234ms still=3024x4032 tap=4032x3024 locate=37 whole=115 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:12:20.634 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:12:20.753 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:21.257 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:12:21.362 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:21.558 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=3 disrupt=0 hold=1.3 face=- sinceCapture=20 settleMS=165 cause=removed
+01:12:21.871 < {"device":"","fireReason":"removed","rotation":0,"bottomLines":["never try to sneak up on you.","Illus. Ron Spears","TM & © 1993-2001 Wizards of the Coast, Inc. 195\/350","2|3"],"setCode":"","collectorNumber":"213","event":"scan","candidates":["Frenetic Ogre"],"name":"Frenetic Ogre","bandAnchored":true,"auto":true,"cards":[{"copyrightYear":2001,"source":"crop","candidates":["Frenetic Ogre"],"setCode":"","confidence":0,"borderColor":"black","borderSource":"footer+ring","collectorNumber":"213","finishHint":"","name":"Frenetic Ogre"}],"message":""}
+01:12:21.873 ~ resolve "Frenetic Ogre" line=0 name=0ms prints=0ms rank=single-print match=exact set=- num=- prints=1 border=black(footer+ring) unused number-overridden
+01:12:21.877 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:12:21.877 ! scan: timing shutter=90ms read=185ms total=275ms still=3024x4032 tap=4032x3024 locate=43 whole=136 band=133 border=6 border=black(footer+ring) t=-1.01 standoff=-0.19 anchor=copyright scale=0.78
+01:12:21.878 ~ outcome "Frenetic Ogre" committed: ODY/195 nonfoil
+01:12:21.884 ! scan: timing loop=328ms net=53ms tier=bulk
+01:12:22.622 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:12:22.820 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:23.204 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=3 abandoned=3 disrupt=0 hold=26.8 face=- sinceCapture=20 settleMS=165 cause=removed
+01:12:23.402 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"bottomLines":[],"device":"","name":"","fireReason":"removed","setCode":"","collectorNumber":""}
+01:12:23.408 < {"state":"held","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:12:23.408 ! scan: timing shutter=86ms read=154ms total=240ms still=3024x4032 tap=4032x3024 locate=35 whole=119 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:12:23.781 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:12:23.952 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:24.329 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:12:24.354 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:12:27.301 ! scan: trigger fire phase=capturing settle=44 baseline=0 boxes=1 stable=45 grace=0 blink=0 real=45 abandoned=4 disrupt=0 hold=- face=- sinceCapture=58 settleMS=1452 cause=removed
+01:12:27.448 < {"candidates":[],"bottomLines":[],"device":"","event":"auto","state":"capturing","collectorNumber":"","name":"","message":"","rotation":0,"setCode":""}
+01:12:27.564 < {"auto":true,"device":"","message":"","fireReason":"removed","rotation":0,"bandAnchored":true,"cards":[{"borderSource":"footer+ring","collectorNumber":"104","setCode":"","name":"Skirk Volcanist","source":"crop","numberSource":"copyright","confidence":0,"copyrightYear":2003,"borderColor":"black","candidates":["Skirk Volcanist","3"],"finishHint":""}],"name":"Skirk Volcanist","event":"scan","setCode":"","candidates":["Skirk Volcanist","3"],"bottomLines":["uanase aviaca as you choose","any number of target creatures.","Illus. Matt Cavotta","IN & C 1993-2003 Wizards of the Coast, Inc. 104\/143","3\/1"],"collectorNumber":"104"}
+01:12:27.566 ~ resolve "Skirk Volcanist" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=104(copyright) prints=1 border=black(footer+ring) unused
+01:12:27.569 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"held","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:12:27.569 ! scan: timing shutter=79ms read=191ms total=270ms still=3024x4032 tap=4032x3024 locate=47 whole=138 band=136 border=6 border=black(footer+ring) t=-0.98 standoff=-0.19 anchor=copyright scale=0.82
+01:12:27.571 ~ outcome "Skirk Volcanist" committed: SCG/104 nonfoil
+01:12:27.578 ! scan: timing loop=286ms net=16ms tier=bulk
+01:12:27.741 < {"candidates":[],"collectorNumber":"","name":"","event":"auto","message":"","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:12:27.881 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","event":"auto","message":"","candidates":[],"device":"","bottomLines":[]}
+01:12:28.324 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=4 abandoned=4 disrupt=0 hold=29.4 face=- sinceCapture=10 settleMS=165 cause=removed
+01:12:28.541 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":true,"event":"scan","message":"","auto":true,"bottomLines":[],"device":"","name":"","fireReason":"removed","setCode":"","collectorNumber":""}
+01:12:28.547 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"held","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:12:28.547 ! scan: timing shutter=83ms read=234ms total=317ms still=3024x4032 tap=4032x3024 locate=46 whole=101 band=101 border=0 border=-(no wide crop) t=0.00 standoff=0.00 anchor= scale=0.00
+01:12:28.886 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:12:29.023 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:32.214 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:32.221 < {"collectorNumber":"","rotation":0,"name":"","setCode":"","state":"armed","message":"","event":"auto","candidates":[],"device":"","bottomLines":[]}
+01:12:33.447 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:12:35.388 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:12:35.494 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:39.283 ! scan: timing loop=11058ms net=10741ms tier=bulk
+01:12:47.026 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:12:47.157 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:47.560 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:12:47.623 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:48.394 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:48.492 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:12:48.905 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:12:48.956 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:01.695 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:01.826 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:13.685 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:13.791 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:13:15.677 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:15.693 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:19.114 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:19.158 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:19.627 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:19.933 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:31.764 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:31.966 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:32.323 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:32.630 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:33.654 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:33.765 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:34.887 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:13:34.988 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:35.395 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:13:35.702 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:39.901 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:40.432 < {"collectorNumber":"","message":"","name":"","device":"","candidates":[],"event":"auto","setCode":"","rotation":0,"bottomLines":[],"state":"armed"}
+01:13:41.571 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:41.949 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:42.103 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:42.165 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:42.563 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=0 disrupt=0 hold=1.4 face=- sinceCapture=1109 settleMS=165 cause=removed
+01:13:42.973 < {"collectorNumber":"","fireReason":"removed","rotation":0,"name":"Rain of Rust","message":"","setCode":"","auto":true,"candidates":["Rain of Rust"],"device":"","bottomLines":["n Mrroan, mages who call upon the power","of rust are shunned by their people and often","turn mercenary to survive.","coTim Hildebrandt","30 1993-2004 W","dith"],"cards":[{"finishHint":"","collectorNumber":"","name":"Rain of Rust","candidates":["Rain of Rust"],"setCode":"","confidence":0,"source":"crop"}],"event":"scan","bandAnchored":true}
+01:13:42.975 ~ resolve "Rain of Rust" line=0 name=1ms prints=0ms rank=single-print match=exact set=- num=- prints=1
+01:13:42.978 < {"collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","message":"","state":"held","device":"","name":"","setCode":"","rotation":0}
+01:13:42.978 ! scan: timing shutter=92ms read=310ms total=403ms still=3024x4032 tap=4032x3024 locate=45 whole=137 band=137 border=0 border=-(no footer anchor) t=0.00 standoff=0.00 anchor= scale=0.00
+01:13:42.979 ~ outcome "Rain of Rust" committed: 5DN/76 nonfoil
+01:13:42.987 ! scan: timing loop=484ms net=81ms tier=bulk
+01:13:43.898 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:13:44.100 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:44.896 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:45.043 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:13:45.328 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=1 real=5 abandoned=1 disrupt=0 hold=33.4 face=40.1 sinceCapture=36 settleMS=165 cause=removed
+01:13:45.569 < {"candidates":[],"event":"scan","rotation":0,"name":"","fireReason":"removed","device":"","collectorNumber":"","bottomLines":[],"cards":[],"bandAnchored":false,"auto":true,"message":"","setCode":""}
+01:13:45.574 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"held","bottomLines":[],"device":"","name":""}
+01:13:45.574 ! scan: timing shutter=85ms read=161ms total=246ms still=3024x4032 tap=4032x3024 locate=34 whole=127 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:13:45.824 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:13:46.299 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:46.364 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:13:46.634 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:47.275 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:13:47.296 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:48.506 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:13:50.901 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","device":"","name":"","rotation":0,"setCode":""}
+01:13:50.966 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:13:51.327 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=4 disrupt=0 hold=1.3 face=- sinceCapture=86 settleMS=165 cause=removed
+01:13:51.679 < {"bottomLines":["memory, letting her piece together the","mystery of her own fiery end.","•Luca Zontini",":1093-2006 Wizards of the Coast, Inc: 74\/165","1\/1"],"message":"","device":"","collectorNumber":"74","candidates":["Scorched Rusalka"],"rotation":0,"cards":[{"source":"crop","candidates":["Scorched Rusalka"],"finishHint":"","copyrightYear":2006,"name":"Scorched Rusalka","collectorNumber":"74","setCode":"","numberSource":"copyright","confidence":0}],"bandAnchored":true,"setCode":"","event":"scan","fireReason":"removed","auto":true,"name":"Scorched Rusalka"}
+01:13:51.682 ~ resolve "Scorched Rusalka" line=0 name=1ms prints=0ms rank=number+year match=exact set=- num=74(copyright) prints=4
+01:13:51.688 ~ outcome "Scorched Rusalka" committed: GPT/74 nonfoil
+01:13:51.730 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"held","message":"","event":"auto","name":"","rotation":0,"device":"","setCode":""}
+01:13:51.730 ! scan: timing shutter=83ms read=191ms total=274ms still=3024x4032 tap=4032x3024 locate=43 whole=143 band=142 border=5 border=-(between tones) t=0.29 standoff=0.06 anchor=copyright scale=0.85
+01:13:51.746 ! scan: timing loop=418ms net=144ms tier=bulk
+01:13:52.599 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","rotation":0,"name":"","device":"","setCode":""}
+01:13:52.708 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:13:53.111 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","rotation":0,"name":"","device":"","setCode":""}
+01:13:53.305 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","rotation":0,"name":"","device":"","setCode":""}
+01:13:53.828 ! scan: trigger fire phase=capturing settle=7 baseline=0 boxes=0 stable=6 grace=0 blink=2 real=5 abandoned=5 disrupt=0 hold=36.4 face=17.0 sinceCapture=33 settleMS=231 cause=removed
+01:13:54.008 < {"collectorNumber":"","rotation":0,"fireReason":"removed","name":"","setCode":"","message":"","auto":true,"candidates":[],"device":"","bottomLines":[],"cards":[],"event":"scan","bandAnchored":false}
+01:13:54.013 < {"state":"held","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:13:54.013 ! scan: timing shutter=87ms read=149ms total=236ms still=3024x4032 tap=4032x3024 locate=39 whole=110 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:13:54.852 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:13:54.898 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:13:55.467 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:13:55.575 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:13:57.210 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:14:00.381 < {"event":"auto","candidates":[],"rotation":0,"state":"armed","name":"","device":"","collectorNumber":"","setCode":"","bottomLines":[],"message":""}
+01:14:00.499 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:14:03.965 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","device":"","name":"","rotation":0,"setCode":""}
+01:14:03.973 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","device":"","name":"","rotation":0,"setCode":""}
+01:14:04.375 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=0 disrupt=0 hold=- face=- sinceCapture=154 settleMS=165 cause=removed
+01:14:04.637 < {"fireReason":"removed","device":"","bottomLines":["When Rattleclaw Mystic is turned face","up, add","¿ to your mana pool.","144\/269 P Buy-a-Box","KTK * EN K MIN YUM","2\/1","r' & C 2014 Wizards of the Coast"],"rotation":0,"setCode":"KTK","collectorNumber":"144","finishHint":"foil","event":"scan","candidates":["Rattleclaw Mystic"],"name":"Rattleclaw Mystic","bandAnchored":true,"auto":true,"cards":[{"name":"Rattleclaw Mystic","confidence":0,"candidates":["Rattleclaw Mystic"],"borderSource":"footer","collectorNumber":"144","source":"crop","copyrightYear":2014,"borderColor":"white","finishHint":"foil","setCode":"KTK"}],"message":""}
+01:14:04.641 ~ resolve "Rattleclaw Mystic" line=0 name=2ms prints=0ms rank=set+number match=exact set=KTK num=144 prints=3 border=white(footer) unused
+01:14:04.644 ~ outcome "Rattleclaw Mystic" committed: KTK/144 foil
+01:14:04.644 ! scan: timing shutter=84ms read=206ms total=290ms still=3024x4032 tap=4032x3024 locate=47 whole=155 band=143 border=5 border=white(footer) t=1.56 standoff=0.30 anchor=copyright scale=0.99
+01:14:04.644 < {"state":"held","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:14:04.651 ! scan: timing loop=344ms net=54ms tier=win
+01:14:05.605 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:14:05.709 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:14:06.424 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"armed","message":"","event":"auto","name":"","rotation":0,"device":"","setCode":""}
+01:14:06.631 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:14:06.769 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=4 abandoned=1 disrupt=0 hold=26.4 face=- sinceCapture=32 settleMS=165 cause=removed
+01:14:07.142 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"device":"","bottomLines":[],"setCode":"","fireReason":"removed","name":"","collectorNumber":""}
+01:14:07.175 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"held","bottomLines":[],"device":"","name":""}
+01:14:07.175 ! scan: timing shutter=85ms read=158ms total=244ms still=3024x4032 tap=4032x3024 locate=36 whole=123 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:14:07.290 < {"candidates":[],"rotation":0,"event":"auto","setCode":"","collectorNumber":"","message":"","state":"armed","bottomLines":[],"device":"","name":""}
+01:14:07.653 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:14:08.061 ! scan: trigger fire phase=capturing settle=6 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=7 abandoned=1 disrupt=0 hold=1.3 face=- sinceCapture=14 settleMS=198 cause=removed
+01:14:08.250 < {"device":"","cards":[{"source":"crop","name":"Shamanic Revelation","setCode":"FRF","confidence":0,"finishHint":"foil","copyrightYear":2015,"collectorNumber":"138","candidates":["Shamanic Revelation","30"]}],"collectorNumber":"138","name":"Shamanic Revelation","finishHint":"foil","event":"scan","rotation":0,"auto":true,"fireReason":"removed","candidates":["Shamanic Revelation","30"],"bandAnchored":true,"bottomLines":["First, whispers of ancient days. Then,","visions of things to come.","138\/185 P Buy-a-Box","FRF * EN • MATT STEWART","TM & § 2015 Wizards of the Coast"],"setCode":"FRF","message":""}
+01:14:08.255 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"held"}
+01:14:08.255 ! scan: timing shutter=83ms read=193ms total=276ms still=3024x4032 tap=4032x3024 locate=45 whole=143 band=139 border=5 border=-(ring matches inner frame) t=-0.06 standoff=0.00 anchor=copyright scale=0.91
+01:14:08.258 ~ resolve "Shamanic Revelation" line=0 name=6ms prints=0ms rank=set+number match=exact set=FRF num=138 prints=18
+01:14:08.261 ~ outcome "Shamanic Revelation" committed: FRF/138 foil
+01:14:08.269 ! scan: timing loop=297ms net=21ms tier=win
+01:14:09.086 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:14:09.161 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:14:09.702 ! scan: trigger fire phase=capturing settle=8 baseline=0 boxes=1 stable=6 grace=0 blink=2 real=6 abandoned=1 disrupt=0 hold=27.8 face=- sinceCapture=21 settleMS=264 cause=removed
+01:14:09.866 < {"candidates":[],"rotation":0,"cards":[],"bandAnchored":false,"event":"scan","message":"","auto":true,"device":"","bottomLines":[],"setCode":"","name":"","fireReason":"removed","collectorNumber":""}
+01:14:09.871 < {"device":"","rotation":0,"bottomLines":[],"state":"held","message":"","setCode":"","candidates":[],"name":"","collectorNumber":"","event":"auto"}
+01:14:09.871 ! scan: timing shutter=87ms read=140ms total=227ms still=3024x4032 tap=4032x3024 locate=26 whole=114 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:14:10.621 < {"name":"","collectorNumber":"","message":"","rotation":0,"event":"auto","setCode":"","bottomLines":[],"candidates":[],"state":"armed","device":""}
+01:14:10.731 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","candidates":[],"name":"","collectorNumber":"","event":"auto"}
+01:14:11.974 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","message":"","device":"","name":""}
+01:14:12.106 < {"device":"","rotation":0,"bottomLines":[],"state":"armed","message":"","setCode":"","candidates":[],"name":"","collectorNumber":"","event":"auto"}
+01:14:13.284 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","message":"","device":"","name":""}
+01:14:13.370 < {"collectorNumber":"","setCode":"","event":"auto","bottomLines":[],"rotation":0,"candidates":[],"state":"armed","message":"","device":"","name":""}
+01:14:13.771 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=3 disrupt=0 hold=1.6 face=- sinceCapture=58 settleMS=165 cause=removed
+01:14:13.893 < {"collectorNumber":"","bottomLines":[],"candidates":[],"state":"capturing","message":"","event":"auto","name":"","rotation":0,"device":"","setCode":""}
+01:14:13.990 < {"device":"","fireReason":"removed","bottomLines":["The ultimate answer to intrigue and","subtlety.","16\/16","273\/259 M Buy-a-Box","GRN*EN Ie SIMON DOMINIC","TM & © 2018 Wizards of the Coast"],"rotation":0,"setCode":"GRN","collectorNumber":"273","finishHint":"foil","event":"scan","candidates":["LOLIGA","Impervious Greatwurm"],"name":"LOLIGA","bandAnchored":true,"auto":true,"cards":[{"collectorNumber":"273","candidates":["LOLIGA","Impervious Greatwurm"],"source":"crop","name":"LOLIGA","finishHint":"foil","confidence":0,"setCode":"GRN","copyrightYear":2018}],"message":""}
+01:14:13.995 ! scan: timing shutter=84ms read=194ms total=279ms still=3024x4032 tap=4032x3024 locate=45 whole=145 band=136 border=4 border=-(between tones) t=0.93 standoff=0.22 anchor=copyright scale=0.85
+01:14:13.995 < {"event":"auto","rotation":0,"candidates":[],"setCode":"","state":"held","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:14:14.257 ~ resolve "Impervious Greatwurm" line=1 name=265ms prints=0ms rank=set+number match=exact set=GRN num=273 prints=3
+01:14:14.260 ~ outcome "Impervious Greatwurm" committed: GRN/273 foil
+01:14:14.267 ! scan: timing loop=558ms net=279ms tier=win
+01:14:15.039 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:14:15.237 < {"rotation":0,"event":"auto","candidates":[],"setCode":"","state":"armed","device":"","bottomLines":[],"name":"","message":"","collectorNumber":""}
+01:14:15.845 ! scan: trigger fire phase=capturing settle=8 baseline=0 boxes=0 stable=6 grace=0 blink=3 real=3 abandoned=3 disrupt=0 hold=31.2 face=25.3 sinceCapture=27 settleMS=264 cause=removed
+01:14:16.001 < {"message":"","device":"","collectorNumber":"","bandAnchored":false,"fireReason":"removed","auto":true,"candidates":[],"bottomLines":[],"rotation":0,"name":"","setCode":"","cards":[],"event":"scan"}
+01:14:16.006 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"held"}
+01:14:16.006 ! scan: timing shutter=89ms read=139ms total=228ms still=3024x4032 tap=4032x3024 locate=26 whole=113 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:14:16.295 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:14:16.662 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:14:19.018 < {"setCode":"","event":"auto","state":"armed","device":"","candidates":[],"rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:14:19.123 < {"device":"","name":"","collectorNumber":"","bottomLines":[],"candidates":[],"event":"auto","rotation":0,"message":"","setCode":"","state":"armed"}
+01:14:19.405 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=4 disrupt=0 hold=- face=- sinceCapture=51 settleMS=165 cause=removed
+01:14:19.735 < {"rotation":0,"event":"scan","name":"Soulflayer","finishHint":"foil","collectorNumber":"84","cards":[{"confidence":0,"setCode":"FRF","finishHint":"foil","source":"crop","candidates":["Soulflayer","41"],"collectorNumber":"84","name":"Soulflayer","copyrightYear":2015}],"bottomLines":["aouble strike, deathtouch, haste, hexproof,","indestructible, lifelink, reach, trample, and","vigilance.","084\/185 R","4\/4","FRF * EN O SEB MCKINNON","TM & © 2015 Wizards of the Coast"],"device":"","bandAnchored":true,"message":"","auto":true,"candidates":["Soulflayer","41"],"fireReason":"removed","setCode":"FRF"}
+01:14:19.739 ~ resolve "Soulflayer" line=0 name=3ms prints=0ms rank=set+number match=exact set=FRF num=84 prints=3
+01:14:19.742 ~ outcome "Soulflayer" committed: FRF/84 foil
+01:14:19.802 < {"device":"","rotation":0,"bottomLines":[],"state":"held","message":"","setCode":"","candidates":[],"name":"","collectorNumber":"","event":"auto"}
+01:14:19.802 ! scan: timing shutter=80ms read=186ms total=267ms still=3024x4032 tap=4032x3024 locate=47 whole=135 band=135 border=5 border=-(between tones) t=0.53 standoff=0.23 anchor=copyright scale=0.72
+01:14:19.813 ! scan: timing loop=380ms net=113ms tier=win
+01:14:20.760 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:14:20.865 < {"name":"","rotation":0,"setCode":"","device":"","message":"","bottomLines":[],"candidates":[],"event":"auto","collectorNumber":"","state":"armed"}
+01:14:21.476 ! scan: trigger fire phase=capturing settle=11 baseline=0 boxes=1 stable=6 grace=0 blink=3 real=4 abandoned=4 disrupt=0 hold=40.1 face=- sinceCapture=27 settleMS=363 cause=removed
+01:14:21.790 < {"candidates":[],"event":"scan","rotation":0,"name":"","fireReason":"removed","device":"","collectorNumber":"","bottomLines":[],"cards":[],"bandAnchored":false,"auto":true,"message":"","setCode":""}
+01:14:21.833 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"held"}
+01:14:21.834 ! scan: timing shutter=88ms read=164ms total=253ms still=3024x4032 tap=4032x3024 locate=49 whole=116 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:14:22.296 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:14:22.305 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:14:25.269 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:14:25.674 < {"collectorNumber":"","bottomLines":[],"candidates":[],"message":"","event":"auto","state":"armed","device":"","name":"","setCode":"","rotation":0}
+01:14:25.781 < {"candidates":[],"collectorNumber":"","name":"","message":"","event":"auto","setCode":"","device":"","bottomLines":[],"rotation":0,"state":"armed"}
+01:14:25.973 ! scan: trigger fire phase=capturing settle=5 baseline=0 boxes=1 stable=6 grace=0 blink=0 real=6 abandoned=5 disrupt=0 hold=1.5 face=- sinceCapture=64 settleMS=165 cause=removed
+01:14:26.251 < {"device":"","collectorNumber":"61","cards":[{"setCode":"XLN","finishHint":"foil","confidence":0,"candidates":["Kopala, Warden of Waves","1"],"copyrightYear":2017,"source":"crop","name":"Kopala, Warden of Waves","collectorNumber":"61"}],"name":"Kopala, Warden of Waves","auto":true,"message":"","event":"scan","rotation":0,"fireReason":"removed","setCode":"XLN","bottomLines":["\"I know these waters better than you know","yourselves.","2\/2","061\/279 R","XLN * EN I• MAGALI VILLENEUVE","TM & © 2017 Wizards of the Coast"],"candidates":["Kopala, Warden of Waves","1"],"bandAnchored":true,"finishHint":"foil"}
+01:14:26.255 ~ resolve "Kopala, Warden of Waves" line=0 name=2ms prints=0ms rank=set+number match=exact set=XLN num=61 prints=4
+01:14:26.256 < {"state":"held","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:14:26.256 ! scan: timing shutter=82ms read=190ms total=273ms still=3024x4032 tap=4032x3024 locate=46 whole=139 band=133 border=5 border=-(between tones) t=0.66 standoff=0.22 anchor=copyright scale=0.95
+01:14:26.259 ~ outcome "Kopala, Warden of Waves" committed: XLN/61 foil
+01:14:26.266 ! scan: timing loop=288ms net=15ms tier=win
+01:14:27.210 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"message":"","name":"","collectorNumber":"","bottomLines":[]}
+01:14:27.315 < {"state":"armed","device":"","collectorNumber":"","name":"","message":"","candidates":[],"event":"auto","rotation":0,"bottomLines":[],"setCode":""}
+01:14:27.927 ! scan: trigger fire phase=capturing settle=10 baseline=0 boxes=2 stable=6 grace=0 blink=3 real=5 abandoned=5 disrupt=0 hold=32.5 face=- sinceCapture=25 settleMS=330 cause=removed
+01:14:28.233 < {"rotation":0,"event":"scan","name":"","collectorNumber":"","bottomLines":[],"cards":[],"device":"","bandAnchored":false,"message":"","auto":true,"candidates":[],"fireReason":"removed","setCode":""}
+01:14:28.285 < {"state":"held","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:28.285 ! scan: timing shutter=88ms read=162ms total=250ms still=3024x4032 tap=4032x3024 locate=51 whole=112 band=0 border=0 border=-() t=0.00 standoff=0.00 anchor= scale=0.00
+01:14:28.747 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:28.905 < {"rotation":0,"collectorNumber":"","message":"","device":"","candidates":[],"name":"","event":"auto","bottomLines":[],"setCode":"","state":"armed"}
+01:14:29.709 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:30.077 < {"message":"","device":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:14:31.822 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:47.282 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:47.590 < {"setCode":"","event":"auto","state":"armed","candidates":[],"device":"","rotation":0,"name":"","message":"","collectorNumber":"","bottomLines":[]}
+01:14:50.148 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:14:50.307 < {"message":"","device":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}
+01:15:08.784 < {"state":"armed","setCode":"","rotation":0,"device":"","collectorNumber":"","bottomLines":[],"message":"","name":"","candidates":[],"event":"auto"}
+01:15:09.113 < {"device":"","message":"","setCode":"","rotation":0,"event":"auto","name":"","collectorNumber":"","state":"armed","bottomLines":[],"candidates":[]}

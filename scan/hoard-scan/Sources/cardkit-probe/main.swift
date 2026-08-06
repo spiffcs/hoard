@@ -44,6 +44,22 @@ func run() async -> Never {
     if let m = args.firstIndex(of: "--score"), m + 1 < args.count {
         await score(manifest: args[m + 1], misses: args.contains("--misses"))
     }
+    // The foil-sparkle corpus: fit the template, and score it back.
+    if let f = args.firstIndex(of: "--sparkle-fit"), f + 2 < args.count {
+        var only: String? = nil
+        if let s = args.firstIndex(of: "--only-session"), s + 1 < args.count {
+            only = args[s + 1]
+        }
+        sparkleFit(dir: args[f + 1], out: args[f + 2], onlySession: only)
+    }
+    if let s = args.firstIndex(of: "--sparkle-score"), s + 1 < args.count {
+        var only: String? = nil
+        if let o = args.firstIndex(of: "--only-session"), o + 1 < args.count {
+            only = args[o + 1]
+        }
+        sparkleScoreCorpus(dir: args[s + 1], verbose: args.contains("--cards"),
+                           onlySession: only)
+    }
     guard let i = args.firstIndex(of: "--image"), i + 1 < args.count else {
         die("usage: cardkit-probe --image <path> | --bench <dir>")
     }
@@ -83,6 +99,18 @@ func run() async -> Never {
             "scaleAgreement": b.scaleAgreement,
             "cardHeightPx": b.cardHeightPx,
             "borderMS": reading.timings.border,
+            "horizontalAnchor": b.horizontalAnchor,
+            // The sparkle rides along because diagnosing a finish means seeing
+            // both: a card can read a perfect border and no marker, or the
+            // reverse, and the two are measured off different pixels.
+            "sparkleScore": reading.sparkle.map { Double($0.score) } ?? -9,
+            "sparkleOffsetU": reading.sparkle.map { Double($0.offsetU) } ?? 0,
+            "sparkleOffsetV": reading.sparkle.map { Double($0.offsetV) } ?? 0,
+            "sparkleSamples": reading.sparkle?.samples ?? 0,
+            "sparkleMS": reading.timings.sparkle,
+            "finish": reading.printing.finish,
+            "finishSource": reading.printing.finishSource,
+            "retroFooter": retroFrameFooter(reading.bandLines + reading.lines),
         ]
         if let d = try? JSONSerialization.data(withJSONObject: out),
            let line = String(data: d, encoding: .utf8) {

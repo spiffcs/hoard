@@ -172,6 +172,17 @@ public struct CardEntry: Encodable {
     public var collectorAlts: [CollectorRead]? = nil
     /// The primary block's printed finish marker; see CollectorRead.finish.
     public var finishHint: String = ""
+    /// Which signal produced finishHint: "separator" is the modern set row's
+    /// glyph, "sparkle" the starburst a retro-frame foil prints at the text
+    /// box's corner. Absent when no finish was read.
+    ///
+    /// Telemetry only — the Go side treats a present finishHint as evidence
+    /// whatever produced it. It is on the wire so a session's log can say which
+    /// signal is carrying the answer, because the failure mode this feature
+    /// exists to fix was precisely a signal that went quiet without anyone
+    /// noticing. Optional so a capture that reads no finish keeps the old wire
+    /// shape byte-for-byte.
+    public var finishSource: String? = nil
     /// Where collectorNumber came from: nil/"" is the trusted collector band,
     /// "copyright" the old-frame copyright-line tail (upgrade-only evidence —
     /// see CardRead.copyrightNumber). Optional so events keep their old wire
@@ -204,6 +215,7 @@ public struct CardEntry: Encodable {
         source: String = "",
         collectorAlts: [CollectorRead]? = nil,
         finishHint: String = "",
+        finishSource: String? = nil,
         numberSource: String? = nil,
         copyrightYear: Int? = nil,
         borderColor: String? = nil,
@@ -217,6 +229,7 @@ public struct CardEntry: Encodable {
         self.source = source
         self.collectorAlts = collectorAlts
         self.finishHint = finishHint
+        self.finishSource = finishSource
         self.numberSource = numberSource
         self.copyrightYear = copyrightYear
         self.borderColor = borderColor

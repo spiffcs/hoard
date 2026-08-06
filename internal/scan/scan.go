@@ -165,6 +165,16 @@ type Card struct {
 	CollectorAlts []CollectorAlt `json:"collectorAlts"`
 	// FinishHint is the printed finish marker; see Event.FinishHint.
 	FinishHint string `json:"finishHint"`
+	// FinishSource is which signal produced FinishHint: "separator" for the
+	// modern set row's glyph, "sparkle" for the starburst a retro-frame foil
+	// prints at the corner of its text box. Empty from helpers that predate it.
+	//
+	// Nothing reads this to make a decision, and that is deliberate — a finish
+	// is evidence or it is not, whichever signal found it. It is carried so a
+	// session's telemetry can show which one is doing the work, because the bug
+	// this exists to fix was a signal that was silently absent on every old
+	// frame and nobody could see it in the log.
+	FinishSource string `json:"finishSource,omitempty"`
 	// NumberSource is where CollectorNumber was read from. "" is the collector
 	// band of a modern frame — self-consistent evidence, trusted enough that a
 	// number matching no printing vetoes an auto-commit. "copyright" is the

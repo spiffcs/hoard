@@ -72,3 +72,11 @@ scan/foil-dataset/images/
 # The parser corpus: third-party card images, fetched not authored.
 # Labels beside them are tracked — see scan/corpus/README.md.
 scan/corpus/images/
+
+# The foil-sparkle corpus. Unlike the two above, these photographs CANNOT be
+# refetched, so the part the detector is fitted and scored on — cards/ — is
+# tracked on purpose. Only the bulky derivatives are ignored: full/ is the
+# whole flatten (44 MB) and stills/ the original camera frames (165 MB), both
+# re-derivable from stills/ if it survives. See scan/foil-corpus/README.md.
+scan/foil-corpus/full/
+scan/foil-corpus/stills/

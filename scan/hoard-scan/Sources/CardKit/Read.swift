@@ -35,6 +35,14 @@ public struct CardReading: Sendable {
     public var bandLines: [String] = []
     /// What colour border the card is printed with, when it could be read.
     public var border = BorderReading()
+    /// What the foil sparkle reader saw at the text box's lower-left corner —
+    /// nil when it could not be asked at all. See BorderKit's Sparkle.swift.
+    ///
+    /// On the reading rather than on `border` even though both answer questions
+    /// about pixels: the border reconstructs the card from text anchors and this
+    /// reads the flatten directly, so they share no geometry and coupling their
+    /// reporting would imply otherwise.
+    public var sparkle: SparkleReading? = nil
     /// Whether the printing came from the fallback strip below the located
     /// card rather than from the band inside it.
     ///
@@ -56,11 +64,15 @@ public struct ReadTimings: Sendable {
     public var whole = 0.0
     public var band = 0.0
     public var border = 0.0
+    /// The foil sparkle pass. Zero when the frame prints no marker, which is
+    /// most captures — reported separately from `border` so a regression in one
+    /// cannot hide inside the other.
+    public var sparkle = 0.0
     public var total = 0.0
     public init() {}
     public var line: String {
-        String(format: "locate=%.0f whole=%.0f band=%.0f border=%.0f",
-               locate, whole, band, border)
+        String(format: "locate=%.0f whole=%.0f band=%.0f border=%.0f sparkle=%.0f",
+               locate, whole, band, border, sparkle)
     }
 }
 
@@ -193,6 +205,70 @@ public func readCard(_ image: CGImage) async -> CardReading {
         out.timings.border = millis(since: borderStart)
     } else {
         out.border.abstain = "no wide crop"
+    }
+
+    // The foil sparkle, promoted to a finish.
+    //
+    // Three conditions, and the order is the argument. The frame has to be one
+    // that prints the marker at all, or a low score means nothing — a modern
+    // frame has no sparkle to find and would be scored against an empty patch.
+    // The card must not already have said "foil" in text, because when it did
+    // there is nothing to add. And the score has to clear a bar set above every
+    // nonfoil the corpus has ever produced.
+    //
+    // What this deliberately does *not* do is claim nonfoil. A score below the
+    // bar is not evidence the card is not foil — it is the absence of evidence
+    // that it is — and `Printing.finish` is documented as refusing exactly that
+    // inference. A miss costs what today costs: the Go side's nonfoil default,
+    // flagged as a guess.
+    //
+    // A "foil" here outranks a separator that said "nonfoil". That is a real
+    // decision and not an oversight: the sparkle is a printed graphic hundreds
+    // of pixels across and the separator is a three-pixel glyph Vision mangles
+    // routinely. Live, a foil Charitable Levy committed nonfoil off a set row
+    // whose own set code parsed as the token "CARD".
+    // Asked whenever the card has not already said "foil" in text. That is the
+    // whole gate, and it is deliberately not narrower.
+    //
+    // The obvious extra gate — only look at frames that print a marker, told by
+    // an `Illus.` credit row — was built, measured, and removed. It reads off
+    // OCR, and OCR is exactly what fails on these captures: Victimize, Consuming
+    // Corruption and Charitable Levy are all foils whose credit row did not
+    // come back, so the gate skipped three of eleven foils to save a millisecond
+    // on cards that were going to score 0.35 anyway. A gate that fails on the
+    // same inputs as the thing it guards is not protection.
+    //
+    // What makes running it everywhere safe is that a modern frame has no marker
+    // to find and says so: the five in the corpus score 0.35-0.44 against a bar
+    // of 0.50. `retroFrameFooter` survives as reported telemetry so that claim
+    // stays checkable.
+    //
+    // The one hard gate is the year, and it is not a heuristic: foil cards did
+    // not exist before Urza's Legacy in February 1999, so a card whose
+    // copyright says 1994 is nonfoil no matter what its pixels correlate with.
+    // That matters because it is exactly where the reader is weakest — the
+    // template is fitted on 2001-2024 frames and the pre-1998 frame lays its
+    // text box out differently, so the search runs to the edge of its window
+    // and scores whatever it finds there. Four of scan/fixtures' pre-1998 cards
+    // cleared the bar on noise before this gate existed.
+    //
+    // An unread year does *not* skip, which is a deliberate reversal of what
+    // `CardLayout.leftU` does with the same silence.
+    //
+    // Treating "no year" as pre-1998 was tried and measured. It refuses
+    // Victimize and Consuming Corruption — both foils in scan/foil-corpus whose
+    // copyright row never reads — to buy refusing two fixtures whose years are
+    // missing because a finger is across the footer. That is fixing real reads
+    // to accommodate broken test captures, which is backwards: those fixtures
+    // want recapturing, not a gate built around them.
+    if printing.finish != "foil", (printing.year ?? 9999) >= SparkleGate.firstFoilYear {
+        let sparkleStart = DispatchTime.now()
+        out.sparkle = sparkleInCard(upright)
+        out.timings.sparkle = millis(since: sparkleStart)
+        if let s = out.sparkle, s.score >= SparkleGate.accept {
+            printing.finish = "foil"
+            printing.finishSource = "sparkle"
+        }
     }
 
     out.bandLines = bandLines
