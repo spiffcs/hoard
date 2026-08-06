@@ -129,8 +129,9 @@ func TestOpOutcomeConfirmIsStaged(t *testing.T) {
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "Import it again") {
 		t.Fatalf("confirm = %+v, want the follow-up staged", m.confirm)
 	}
-	if !strings.Contains(m.helpLine(), "y import again") {
-		t.Errorf("helpLine = %q", m.helpLine())
+	// Beside the question, which is the only place a confirm's keys appear.
+	if !strings.Contains(m.statusLine(), "y import again") {
+		t.Errorf("statusLine = %q", m.statusLine())
 	}
 	m = key(m, "y")
 	if !ran {

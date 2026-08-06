@@ -558,7 +558,7 @@ func TestDetailShowsOpProgressAndReloads(t *testing.T) {
 
 	// Run Update prices through the overlay's palette.
 	m.openPalette()
-	m.palette.query = "update prices"
+	m.palette.Query = "update prices"
 	m.refreshPalette()
 	if len(m.palette.matches) == 0 {
 		t.Fatal("no match for update prices over the detail")

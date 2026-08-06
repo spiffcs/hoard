@@ -12,12 +12,7 @@ package browse
 // hide the very rows that give contextual commands their subject.
 
 import (
-	"slices"
-	"strings"
-	"unicode"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/sahilm/fuzzy"
 
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -32,33 +27,18 @@ func commandRank(m *Model, c *command) int {
 
 // paletteMaxRows is the most matches the drawer shows at once; the query
 // narrows the rest into view.
-const paletteMaxRows = 8
+const paletteMaxRows = ui.PaletteMaxRows
 
+// palette is the drawer's state plus the mapping back into the registry.
+// ui.Palette matches over a flat item list and knows nothing about which
+// commands apply; `backing` carries each item's index in m.commands so a
+// match can be run, and `matches` is that mapping already applied — the
+// shape the rest of this package and its tests reason in.
 type palette struct {
-	query   string
-	cursor  int
+	ui.Palette
+	items   []ui.PaletteItem
+	backing []int
 	matches []paletteMatch
-}
-
-// spacedTitle lowercases a PascalCase title into the words a search would
-// type — "AddDeckByURL" → "add deck by url" — so spaced queries keep
-// matching without every command restating its own name in aliases.
-func spacedTitle(title string) string {
-	var b strings.Builder
-	runes := []rune(title)
-	for i, r := range runes {
-		if i > 0 {
-			prev := runes[i-1]
-			boundary := (unicode.IsUpper(r) && !unicode.IsUpper(prev)) ||
-				(unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1])) ||
-				(unicode.IsDigit(r) && !unicode.IsDigit(prev))
-			if boundary {
-				b.WriteRune(' ')
-			}
-		}
-		b.WriteRune(unicode.ToLower(r))
-	}
-	return b.String()
 }
 
 // paletteMatch is one applicable command, with the rune positions the query
@@ -88,15 +68,13 @@ var detailPaletteIDs = map[string]bool{
 	"op.cancel":          true,
 }
 
-// refreshPalette recomputes the matches for the current query. Empty query:
-// every applicable command in registry order. Otherwise: fuzzy over
-// title+aliases, ranked by match quality.
+// refreshPalette rebuilds the applicable set and re-runs the match. Which
+// commands apply is this package's question; the matching is not.
 func (m *Model) refreshPalette() {
 	p := m.palette
-	p.matches = p.matches[:0]
+	p.items = p.items[:0]
+	p.backing = p.backing[:0]
 
-	applicable := make([]int, 0, len(m.commands))
-	targets := make([]string, 0, len(m.commands))
 	for i := range m.commands {
 		// Hidden commands keep their keys but never list: the palette is
 		// for the verbs, not the navigation reflexes. hide is the same,
@@ -114,34 +92,24 @@ func (m *Model) refreshPalette() {
 		if m.detail != nil && !detailPaletteIDs[m.commands[i].id] {
 			continue
 		}
-		applicable = append(applicable, i)
-		targets = append(targets,
-			m.commands[i].title+" "+spacedTitle(m.commands[i].title)+" "+m.commands[i].aliases)
-	}
-
-	if p.query == "" {
-		// Rank-ordered: the commands that help this view lead the list. The
-		// sort is stable, so equal ranks keep registry order.
-		for _, idx := range applicable {
-			p.matches = append(p.matches, paletteMatch{index: idx})
-		}
-		slices.SortStableFunc(p.matches, func(a, b paletteMatch) int {
-			return commandRank(m, &m.commands[b.index]) - commandRank(m, &m.commands[a.index])
+		p.items = append(p.items, ui.PaletteItem{
+			Title:   m.commands[i].title,
+			Aliases: m.commands[i].aliases,
+			Desc:    m.commands[i].desc,
+			Key:     m.commands[i].key,
+			Rank:    commandRank(m, &m.commands[i]),
 		})
-	} else {
-		for _, fm := range fuzzy.Find(p.query, targets) {
-			idx := applicable[fm.Index]
-			titleLen := len([]rune(m.commands[idx].title))
-			var pos []int
-			for _, at := range fm.MatchedIndexes {
-				if at < titleLen {
-					pos = append(pos, at)
-				}
-			}
-			p.matches = append(p.matches, paletteMatch{index: idx, positions: pos})
-		}
+		p.backing = append(p.backing, i)
 	}
-	p.cursor = min(p.cursor, max(len(p.matches)-1, 0))
+	p.Refresh(p.items)
+
+	// Back into registry indices, so nothing downstream carries two
+	// numbering schemes for the same row.
+	p.matches = p.matches[:0]
+	for _, pm := range p.Matches() {
+		p.matches = append(p.matches, paletteMatch{
+			index: p.backing[pm.Index], positions: pm.Positions})
+	}
 }
 
 // handlePaletteKey drives the drawer.
@@ -157,7 +125,7 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(p.matches) == 0 {
 			return m, nil
 		}
-		c := m.commands[p.matches[p.cursor].index]
+		c := m.commands[p.matches[p.Cursor].index]
 		// Close first, then run: the command may open a prompt or a
 		// confirm, which owns the same screen space the drawer held.
 		m.palette = nil
@@ -166,28 +134,25 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, c.run(&m)
 	case tea.KeyUp:
-		p.cursor = max(p.cursor-1, 0)
+		p.Up()
 		return m, nil
 	case tea.KeyDown:
-		p.cursor = min(p.cursor+1, max(len(p.matches)-1, 0))
+		p.Down()
 		return m, nil
 	case tea.KeyBackspace:
-		if p.query != "" {
-			r := []rune(p.query)
-			p.query = string(r[:len(r)-1])
-		}
+		p.Backspace()
 		m.refreshPalette()
 		return m, nil
 	case tea.KeyCtrlU:
-		p.query = ""
+		p.Clear()
 		m.refreshPalette()
 		return m, nil
 	case tea.KeySpace:
-		p.query += " "
+		p.Type(" ")
 		m.refreshPalette()
 		return m, nil
 	case tea.KeyRunes:
-		p.query += string(msg.Runes)
+		p.Type(string(msg.Runes))
 		m.refreshPalette()
 		return m, nil
 	}
@@ -195,82 +160,25 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // paletteRows is how many drawer rows the palette currently costs the
-// panes; zero when closed. At least one row renders even with no match, so
-// "no matching command" has somewhere to say itself.
+// panes; zero when closed.
 func (m Model) paletteRows() int {
 	if m.palette == nil {
 		return 0
 	}
-	return max(min(len(m.palette.matches), paletteMaxRows), 1)
+	return m.palette.Rows()
 }
 
 // paletteLines renders the drawer's match rows at the given width.
 func (m Model) paletteLines(width int) []string {
-	p := m.palette
-	if len(p.matches) == 0 {
-		return []string{m.theme.Help.Render("no matching command")}
-	}
-
-	// The window follows the cursor, same as the panes.
-	shown := m.paletteRows()
-	start := 0
-	if p.cursor >= shown {
-		start = p.cursor - shown + 1
-	}
-
-	lines := make([]string, 0, shown)
-	for i := start; i < min(start+shown, len(p.matches)); i++ {
-		match := p.matches[i]
-		c := m.commands[match.index]
-
-		marker := "  "
-		if i == p.cursor {
-			marker = "▸ "
-		}
-		title := m.boldRunes(c.title, match.positions)
-		hint := c.key
-
-		// Title left, key hint right-aligned dim; measured on the plain
-		// text so the bolding never shifts the column.
-		plainWidth := 2 + len([]rune(c.title))
-		gap := max(width-plainWidth-len([]rune(hint))-1, 1)
-		line := marker + title + strings.Repeat(" ", gap) + m.theme.Help.Render(hint)
-		if i == p.cursor {
-			line = m.theme.Cursor.Render(marker+c.title) + strings.Repeat(" ", gap) + m.theme.Help.Render(hint)
-		}
-		lines = append(lines, ui.Truncate(line, width))
-	}
-	return lines
+	return m.palette.Lines(m.palette.items, width, m.theme)
 }
 
 // paletteDesc is the highlighted command's one-line explanation, rendered
 // under the palette's help line; empty when the palette is closed, nothing
 // matches, or the command carries no description.
 func (m Model) paletteDesc() string {
-	p := m.palette
-	if p == nil || len(p.matches) == 0 || p.cursor >= len(p.matches) {
+	if m.palette == nil {
 		return ""
 	}
-	return m.commands[p.matches[p.cursor].index].desc
-}
-
-// boldRunes bolds the matched rune positions of s — the palette's only
-// styling, per the bold/dim-only rule.
-func (m Model) boldRunes(s string, positions []int) string {
-	if len(positions) == 0 {
-		return s
-	}
-	set := make(map[int]bool, len(positions))
-	for _, p := range positions {
-		set[p] = true
-	}
-	var b strings.Builder
-	for i, r := range []rune(s) {
-		if set[i] {
-			b.WriteString(m.theme.Title.Render(string(r)))
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
+	return m.palette.Desc(m.palette.items)
 }

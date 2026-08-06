@@ -9,7 +9,7 @@
 # that parses badly is obvious rather than averaged away.
 #
 # English printings only, matching `cardkit-probe --score`. See
-# docs/scanner-accuracy.md for why, and scan/corpus/lang.py for the column.
+# docs/scanner-limits.md for why, and scan/corpus/lang.py for the column.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)

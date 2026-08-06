@@ -2,7 +2,7 @@
 
 A plan, not a description: none of this is built. Written down while the
 measurements behind it are fresh — see `docs/scanner-tuning.md` for the border
-reader this builds on, and `docs/scanner-coverage.md` for where it sits in the
+reader this builds on, and `docs/scanner-limits.md` for where it sits in the
 coverage picture.
 
 ## Why

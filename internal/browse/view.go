@@ -547,7 +547,7 @@ func (m Model) statusLine() string {
 	case modePrompt:
 		return m.promptLine()
 	case modePalette:
-		return ": " + m.palette.query + "▏"
+		return ": " + m.palette.Query + "▏"
 	case modeFilter:
 		bar := "/" + m.filterText + "▏"
 		if m.filterErr != "" {
@@ -664,11 +664,13 @@ func (m Model) selectedItemName() string {
 	return name(len(m.cards), func(i int) string { return m.cards[i].Name })
 }
 
-// confirmHint is the keys a staged confirm answers to, for the slot beside
-// its prompt. The question's own wording when it has one — "y/n" alone left
-// readers guessing whether n was required or any key would do (and on the
-// add-cascade takeover, where no help line renders, it is the only place
-// the answer appears at all).
+// confirmHint is the keys a staged confirm answers to, in the slot beside
+// its prompt — which is the only place they appear. A question and its
+// answer belong on one line, and on the add-cascade takeover, where no help
+// line renders at all, this is the sole carrier.
+//
+// The question's own wording when it has one: "y/n" alone left readers
+// guessing whether n was required or any key would do.
 func (m Model) confirmHint() string {
 	if m.confirm != nil && m.confirm.help != "" {
 		return m.confirm.help
@@ -676,90 +678,149 @@ func (m Model) confirmHint() string {
 	return "y/n"
 }
 
+// helpLine is the curated prose under the frame: the handful of keys worth
+// naming on this view, in the order they are worth naming.
+//
+// Composed from entries rather than written as a string, so the palette hint
+// is one shared value instead of eleven literals that have to agree — see
+// ui.HelpCommands. Every line that offers the palette leads with it.
 func (m Model) helpLine() string {
+	// The keys shared by every table view, in the order they trail a line.
+	const quit = "q"
+	tail := func(extra ...ui.HelpEntry) []ui.HelpEntry {
+		return append(extra, ui.K(quit, "quit"))
+	}
+
 	switch {
 	case m.confirm != nil:
-		if m.confirm.help != "" {
-			return m.confirm.help
-		}
-		return "y confirm · any other key cancels"
+		// Nothing. The question above already carries its keys — see
+		// confirmHint — and repeating them here printed the same sentence
+		// twice, one line under the other. A staged question answers to
+		// exactly the keys it names, so there is no second set to list.
+		return ""
 	case m.prompt != nil:
 		if m.prompt.help != "" {
 			return m.prompt.help
 		}
-		return "type the answer · enter accept · esc cancel · ctrl+u wipe"
+		// No "type the answer": the cursor is already in the field and the
+		// question is on screen above it, so the only thing left to say is
+		// what the keys do.
+		return ui.Help(ui.K("enter", "accept"), ui.K("esc", "cancel"),
+			ui.K("ctrl+u", "wipe"))
 	case m.palette != nil:
-		return "enter run · esc close · ↑/↓ choose · type to narrow"
+		return ui.PaletteHelp
 	case m.filtering && m.watchPick:
-		return "type to find the card · ↑/↓ move · enter watch it · tab decks/binders · esc cancel"
+		return ui.Help(ui.Say("type to find the card"), ui.K("↑/↓", "move"),
+			ui.K("enter", "watch it"), ui.K("tab", "decks/binders"), ui.K("esc", "cancel"))
 	case m.filtering:
-		return "type to filter · enter keep · esc clear · ctrl+u wipe · ↑/↓ move"
+		return ui.Help(ui.Say("type to filter"), ui.K("enter", "keep"),
+			ui.K("esc", "clear"), ui.K("ctrl+u", "wipe"), ui.K("↑/↓", "move"))
 	case m.watchPick:
-		return "↑/↓ pick the card · enter watch it · tab decks/binders · / filter · esc cancel"
+		return ui.Help(ui.K("↑/↓", "pick the card"), ui.K("enter", "watch it"),
+			ui.K("tab", "decks/binders"), ui.K("/", "filter"), ui.K("esc", "cancel"))
 	case m.detail != nil:
+		// The overlay is a reading surface with its own zones, so its line is
+		// assembled from what the cursor is actually on.
 		if m.detail.zone == zoneHeld {
-			return "↑/↓ held rows · ←/→ field · enter edit · +/- qty · d remove · tab links · esc back · q quit"
+			return ui.Help(ui.K("↑/↓", "held rows"), ui.K("←/→", "field"),
+				ui.K("enter", "edit"), ui.K("+/-", "qty"), ui.K("d", "remove"),
+				ui.K("tab", "links"), ui.K("esc", "back"), ui.K(quit, "quit"))
 		}
-		help := ""
+		var e []ui.HelpEntry
 		if len(m.detail.holdings) > 0 {
-			help = "tab held list · "
+			e = append(e, ui.K("tab", "held list"))
 		}
 		// The edit keys show only when the row under the held cursor can
 		// take them — a deck row would answer every one with a refusal.
 		if d := m.detail; len(d.holdings) > 0 {
 			h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
 			if h.ContainerKind == store.KindCollection {
-				help += "+/- qty · d remove · "
+				e = append(e, ui.K("+/-", "qty"), ui.K("d", "remove"))
 			}
 		}
 		if m.openURL != nil && len(m.detail.links) > 0 {
-			help += "←/→ links · enter open in browser · "
+			e = append(e, ui.K("←/→", "links"), ui.K("enter", "open in browser"))
 		}
-		return help + "esc back · q quit"
+		return ui.Help(append(e, ui.K("esc", "back"), ui.K(quit, "quit"))...)
 	case m.text != nil:
-		return "↑/↓ scroll · pgup/pgdn page · g/G ends · esc back · ctrl+c force quit"
+		return ui.Help(ui.K("↑/↓", "scroll"), ui.K("pgup/pgdn", "page"),
+			ui.K("g/G", "ends"), ui.K("esc", "back"), ui.K("ctrl+c", "force quit"))
 	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:
-		return "F fetch vendor prices · v next view · q quit"
+		return ui.Help(ui.K("F", "fetch vendor prices"), ui.K("v", "next view"), ui.K(quit, "quit"))
 	case m.view == viewMarket && m.marketLoading:
-		return "esc cancel · ctrl+c force quit"
+		return ui.Help(ui.K("esc", "cancel"), ui.K("ctrl+c", "force quit"))
 	case m.view == viewMarket:
-		return ": commands · enter detail · ]/[ next/prev table · >/< turn page · b comps buy/sell · F refetch quotes · M floor · tab collections · v next view · ↑/↓ move · q quit"
+		return ui.Help(tail(ui.HelpCommands, ui.K("enter", "detail"),
+			ui.K("]/[", "next/prev table"), ui.K(">/<", "turn page"),
+			ui.K("b", "comps buy/sell"), ui.K("F", "refetch quotes"),
+			ui.K("M", "floor"), ui.K("tab", "collections"), ui.K("v", "next view"),
+			ui.K("↑/↓", "move"))...)
 	case m.view == viewWatches:
-		// Each analytical view leads with its own verbs — a generic line
-		// here once hid that watches can be added at all.
-		return ": add a watch · w edit threshold · d remove · enter detail · M floor · tab collections · v next view · ↑/↓ move · q quit"
+		// This line once read ": add a watch", because a generic label hid
+		// that watches can be added at all — the two commands that add one
+		// from here carry no key, so the palette is their only route. The
+		// label is uniform now for the same reason every other view's is;
+		// what recovers the discovery is that the palette ranks the watch
+		// verbs to the top of this view (see the watch commands' rank).
+		return ui.Help(tail(ui.HelpCommands, ui.K("w", "edit threshold"),
+			ui.K("d", "remove"), ui.K("enter", "detail"), ui.K("M", "floor"),
+			ui.K("tab", "collections"), ui.K("v", "next view"), ui.K("↑/↓", "move"))...)
 	case m.view == viewMovers:
-		return ": commands · W lookback 7/30/90 days · F update prices + history · enter detail · >/< page · M floor · tab collections · v next view · ↑/↓ move · s sort · q quit"
+		return ui.Help(tail(ui.HelpCommands, ui.K("W", "lookback 7/30/90 days"),
+			ui.K("F", "update prices + history"), ui.K("enter", "detail"),
+			ui.K(">/<", "page"), ui.K("M", "floor"), ui.K("tab", "collections"),
+			ui.K("v", "next view"), ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
 	case m.view == viewUnpriced:
-		return ": commands · F refresh prices · enter detail · tab collections · v next view · ↑/↓ move · s sort · q quit"
+		return ui.Help(tail(ui.HelpCommands, ui.K("F", "refresh prices"),
+			ui.K("enter", "detail"), ui.K("tab", "collections"), ui.K("v", "next view"),
+			ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
 	case m.view != viewHoldings:
 		// The editing keys do not apply to an analytical view, so offering
 		// them here would be an invitation to a refusal.
-		return ": commands · tab collections · v next view · F fetch data · ↑/↓ move · s sort · S reverse · q quit"
+		return ui.Help(tail(ui.HelpCommands, ui.K("tab", "collections"),
+			ui.K("v", "next view"), ui.K("F", "fetch data"), ui.K("↑/↓", "move"),
+			ui.K("s", "sort"), ui.K("S", "reverse"))...)
 	case m.focus == paneContainers:
 		// The sets pane is a read-only lens: no create/rename/remove verbs,
 		// just the toggle back.
 		if m.setsMode {
-			return ": commands · tab cards · B binders/decks · a add cards · / filter · M floor · F refresh prices · v views · q quit"
+			return ui.Help(tail(ui.HelpCommands, ui.K("tab", "cards"),
+				ui.K("B", "binders/decks"), ui.K("a", "add cards"), ui.K("/", "filter"),
+				ui.K("M", "floor"), ui.K("F", "refresh prices"), ui.K("v", "views"))...)
 		}
+		e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", "cards"), ui.K("B", "by set"),
+			ui.K("n", "new binder"), ui.K("a", "add cards")}
 		// The merged all-cards row is read-only, so its help drops the
 		// verbs that would only ever answer with a refusal.
-		if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-			return ": import/export · tab cards · B by set · n new binder · a add cards · / filter · M floor · F refresh prices · v views · q quit"
+		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
+			e = append(e, ui.K("R", "rename"), ui.K("d", "remove"))
 		}
-		return ": import/export · tab cards · B by set · n new binder · a add cards · R rename · d remove · / filter · M floor · F refresh prices · v views · u undo · q quit"
+		e = append(e, ui.K("/", "filter"), ui.K("M", "floor"),
+			ui.K("F", "refresh prices"), ui.K("v", "views"))
+		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
+			e = append(e, ui.K("u", "undo"))
+		}
+		return ui.Help(tail(e...)...)
 	}
-	// Set rows take the edit verbs: they resolve to the binders holding the
-	// printing. +/- is offered unconditionally — with several binders in
-	// play it answers by naming them, which is the more useful reply than a
-	// key that looks unavailable.
-	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
-		return ": commands · tab sets · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+
+	// The cards pane. Set rows take the edit verbs: they resolve to the
+	// binders holding the printing. +/- is offered unconditionally — with
+	// several binders in play it answers by naming them, which is the more
+	// useful reply than a key that looks unavailable.
+	sel := m.selectedContainer()
+	lens := "decks"
+	if sel != nil && sel.Kind == kindSet {
+		lens = "sets"
 	}
-	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindAllCards {
-		return ": commands · tab decks · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · q quit"
+	e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", lens), ui.K("enter", "detail"),
+		ui.K(">/<", "page"), ui.K("/", "filter"), ui.K("M", "floor"),
+		ui.K("s", "sort"), ui.K("S", "reverse"), ui.K("F", "refresh prices"),
+		ui.K("v", "views"), ui.K("a", "add")}
+	// The merged all-cards row is read-only.
+	if sel == nil || sel.Kind != kindAllCards {
+		e = append(e, ui.K("+/-", "qty"), ui.K("d", "remove"), ui.K("u", "undo"))
 	}
-	return ": commands · tab decks · enter detail · >/< page · / filter · M floor · s sort · S reverse · F refresh prices · v views · a add · +/- qty · d remove · u undo · q quit"
+	return ui.Help(tail(e...)...)
 }
 
 // lineAt is lines[i], or blank past the end, so both panes can be walked

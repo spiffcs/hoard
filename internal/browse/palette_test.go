@@ -216,27 +216,12 @@ func TestDetailPaletteOffersOnlyPriceRefreshers(t *testing.T) {
 // Spaced queries keep matching PascalCase titles: the palette derives the
 // spaced words from each title, so "update prices" finds UpdatePrices
 // without every command restating its own name in aliases.
-func TestSpacedTitle(t *testing.T) {
-	for title, want := range map[string]string{
-		"AddCards":               "add cards",
-		"AddDeckByURL":           "add deck by url",
-		"ImportCollectionCSV":    "import collection csv",
-		"BackfillPriceHistory30": "backfill price history 30",
-		"SetPennyFilter":         "set penny filter",
-		"":                       "",
-	} {
-		if got := spacedTitle(title); got != want {
-			t.Errorf("spacedTitle(%q) = %q, want %q", title, got, want)
-		}
-	}
-}
-
 // The registry search targets stay spaced-query friendly end to end.
 func TestPaletteMatchesSpacedQuery(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
 	m.openPalette()
-	m.palette.query = "update prices"
+	m.palette.Query = "update prices"
 	m.refreshPalette()
 	found := false
 	for _, match := range m.palette.matches {

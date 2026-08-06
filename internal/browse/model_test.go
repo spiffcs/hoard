@@ -2227,7 +2227,12 @@ func TestQuitPolicy(t *testing.T) {
 func TestHelpLineIsViewSpecific(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.view = viewWatches
-	if h := m.helpLine(); !strings.Contains(h, "w edit threshold") || !strings.Contains(h, "add a watch") {
+	// The palette's label is uniform across every view that offers it, so
+	// the view-specific part of this line is the verbs beside it. Finding
+	// *how to add* a watch from here is the palette's job now — it ranks the
+	// watch commands to the top on this view, which TestWatchesPaletteRanking
+	// pins.
+	if h := m.helpLine(); !strings.Contains(h, "w edit threshold") || !strings.Contains(h, ": commands") {
 		t.Errorf("watches help = %q", h)
 	}
 	m.view = viewMovers
@@ -2319,7 +2324,7 @@ func TestHoldingsHelpMentionsBinderAndInterop(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.focus = paneContainers
 	h := m.helpLine()
-	for _, want := range []string{"n new binder", "R rename", ": import/export"} {
+	for _, want := range []string{"n new binder", "R rename", ": commands"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("containers help missing %q: %q", want, h)
 		}

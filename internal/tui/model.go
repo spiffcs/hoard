@@ -186,8 +186,12 @@ type model struct {
 	// The capture command line (:): its input and the last parse error.
 	paletteInput textinput.Model
 	paletteErr   string
-	list         list.Model
-	spinner      spinner.Model
+	// addPalette is the name step's command drawer (see addpalette.go), open
+	// when non-nil. Distinct from paletteInput above, which is the capture
+	// step's older value-taking command line.
+	addPalette *addPalette
+	list       list.Model
+	spinner    spinner.Model
 
 	width, height int
 
@@ -590,18 +594,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status, m.statusErr = "skipped", false
 		return m.afterCard()
 	}
-	// ctrl+d finishes the add session cleanly from anywhere: everything
-	// confirmed so far is already saved, and the receipt says so. Pending
-	// review work blocks it — those cards deserve the queue's own exits
-	// rather than silent loss.
-	if msg.Type == tea.KeyCtrlD {
-		if m.reviewing() || len(m.review) > 0 || m.resolving > 0 {
-			m.status, m.statusErr = "cards are still queued for review · finish or ctrl+s them first", true
-			return m, nil
-		}
-		m.done = true
-		m.closeSession()
-		return m, tea.Quit
+	// ctrl+d finishes the add session from anywhere: everything confirmed so
+	// far is already saved, and the receipt says so. Pending review work does
+	// not block it — it asks, through the same gate esc uses, so leaving is a
+	// decision rather than an errand. See finishAdding.
+	//
+	// Not while a confirm is already up: ctrl+d there would re-enter the gate
+	// with leaveFrom pointing at the gate itself, and declining would loop.
+	if msg.Type == tea.KeyCtrlD &&
+		m.state != stateLeaveConfirm && m.state != stateAbandonConfirm &&
+		m.state != stateClosePrompt {
+		return m.finishAdding()
+	}
+	// The name step's command drawer owns the keyboard while it is open.
+	if m.addPalette != nil {
+		return m.handleAddPaletteKey(msg)
 	}
 	switch m.state {
 	case stateName:
@@ -639,6 +646,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// returns the *previous* state and looks like the key did nothing.
 			cmd := m.beginScan()
 			return m, cmd
+		case tea.KeyRunes:
+			// ':' opens the palette, but only on an empty field — the same
+			// key the browser uses, without taking a character away from the
+			// thing this view is mostly for. With a name part-typed it is
+			// just a colon, which is what someone mid-word meant by it.
+			if string(msg.Runes) == ":" && strings.TrimSpace(m.nameInput.Value()) == "" {
+				return m.openAddPalette()
+			}
 		case tea.KeyEnter:
 			name := strings.TrimSpace(m.nameInput.Value())
 			if name == "" {
@@ -1494,7 +1509,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// reads correctly on 93 of 95 captures that reach the footer.
 	//
 	// recentCommit.finishGuessed stays: it still marks rows nothing on the card
-	// chose, which is the audit question docs/scanner-accuracy.md asks.
+	// chose, which is the audit question docs/scanner-limits.md asks.
 	// Name alone here, deliberately, and it is not the same question the
 	// duplicate window asks.
 	//
@@ -2275,11 +2290,15 @@ func (m model) help(s string) string {
 
 // escLabel is the esc hint alone, shared by every step where esc opens the
 // leave gate.
-func (m model) escLabel() string {
+func (m model) escLabel() string { return "esc " + m.escWord() }
+
+// escWord is escLabel without its key, for lines composed from ui.HelpEntry
+// rather than spliced from strings.
+func (m model) escWord() string {
 	if m.embedded {
-		return "esc back"
+		return "back"
 	}
-	return "esc quit"
+	return "quit"
 }
 
 // batchHelp appends the skip key to a cascade help line while a review item's
@@ -2354,23 +2373,35 @@ func (m model) viewContent() string {
 			b.WriteString(style.Render(m.status) + "\n\n")
 		}
 		b.WriteString(m.nameInput.View() + "\n\n")
-		scanHint := ""
-		if m.scanner != nil {
-			// Same register as the capture step's line: a key and one or two
-			// words. "ctrl+o scan card · ctrl+d done adding" reads as prose and
-			// wraps badly at a normal terminal width; the capture step gets away
-			// with more entries precisely because each one is shorter.
-			//
-			// Pairing leads. It is the once-per-phone step that has to happen
-			// before scanning works at all, so it is what a first-time reader
-			// needs to find — and once a phone is paired the reader has stopped
-			// reading this line anyway.
-			scanHint = "ctrl+p pair · ctrl+o scan · "
-			if m.session != nil {
-				scanHint = "ctrl+p pair · ctrl+o camera · "
-			}
+		// The drawer, when it is open, replaces the hint line rather than
+		// stacking under it: the palette is the exhaustive answer to the
+		// question the hint line answers in curated prose, and showing both
+		// says the same thing twice in two registers.
+		if m.addPalette != nil {
+			b.WriteString(m.addPaletteView())
+			return b.String()
 		}
-		help := scanHint + "enter search · " + m.escHelp() + " · ctrl+c force quit"
+		// Composed from entries rather than spliced from strings, so the
+		// palette hint is the same shared value the browser's views use and
+		// a conditional slot is an append rather than a substring. See
+		// ui.HelpCommands.
+		e := []ui.HelpEntry{ui.HelpCommands}
+		if m.scanner != nil {
+			// Pairing leads the scanning pair. It is the once-per-phone step
+			// that has to happen before scanning works at all, so it is what
+			// a first-time reader needs to find — and once a phone is paired
+			// the reader has stopped reading this line anyway.
+			//
+			// A live session is returned to, not opened, and the word says so.
+			open := "scan"
+			if m.session != nil {
+				open = "camera"
+			}
+			e = append(e, ui.K("ctrl+p", "pair"), ui.K("ctrl+o", open))
+		}
+		e = append(e, ui.K("enter", "search"), ui.K("ctrl+d", "done"),
+			ui.K("esc", m.escWord()), ui.K("ctrl+c", "force quit"))
+		help := ui.Help(e...)
 		if m.addedCount > 0 {
 			help = m.sessionTally() + " · " + help
 		}

@@ -118,6 +118,6 @@ Worth recording so nobody re-solves it:
 2. **What is the app called on the home screen?** `CFBundleDisplayName` is
    "hoard scan". Fine, but the App Store name has to be unique across the store.
 3. **Does the read pipeline's accuracy matter for review?** No — but see
-   `docs/scanner-accuracy.md` before making claims in the description. Foreign
+   `docs/scanner-limits.md` before making claims in the description. Foreign
    language cards do not resolve, and planes and full-art cards with no printed
    title cannot be read at all.

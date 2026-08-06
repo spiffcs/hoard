@@ -38,8 +38,8 @@ func TestOpConfirmStagesQuestionAndYesAnswersTrue(t *testing.T) {
 	if m.confirm == nil || m.confirm.prompt != "download the catalog (1.2 GB)?" {
 		t.Fatalf("confirm = %+v, want the staged question", m.confirm)
 	}
-	if !strings.Contains(m.helpLine(), "y confirm · any other key declines") {
-		t.Errorf("helpLine = %q, want the bridge wording", m.helpLine())
+	if !strings.Contains(m.statusLine(), "y confirm · any other key declines") {
+		t.Errorf("statusLine = %q, want the bridge wording", m.statusLine())
 	}
 	m = key(m, "y")
 	mustReply(t, reply, true)
@@ -167,8 +167,12 @@ func TestRemovalConfirmKeepsRemoveWording(t *testing.T) {
 	m.confirm = &pendingConfirm{prompt: "remove x?",
 		help:  "y remove · any other key cancels",
 		onYes: func(*Model) tea.Cmd { return nil }}
-	if !strings.Contains(m.helpLine(), "y remove") {
-		t.Errorf("helpLine = %q, want the removal wording", m.helpLine())
+	if !strings.Contains(m.statusLine(), "y remove") {
+		t.Errorf("statusLine = %q, want the removal wording", m.statusLine())
+	}
+	// And nowhere else: the help line under it must not say it again.
+	if m.helpLine() != "" {
+		t.Errorf("helpLine = %q, want the question to carry its keys alone", m.helpLine())
 	}
 }
 
