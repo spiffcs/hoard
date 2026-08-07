@@ -84,6 +84,12 @@ all: build scan
 generate-json-schema:
 	go run ./schema/json/generate
 
+# Regenerate schema/sqlite/ from the migrations in internal/store/migrate.go.
+# Run after adding a migration; released schema files are immutable, so a new
+# migration writes a new file rather than editing an old one.
+generate-sqlite-schema:
+	go run ./schema/sqlite/generate
+
 test:
 	go test ./...
 

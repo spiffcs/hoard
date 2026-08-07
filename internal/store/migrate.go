@@ -53,6 +53,11 @@ var migrations = []migration{
 // schemaVersion is the version a database is brought up to.
 var schemaVersion = migrations[len(migrations)-1].Version
 
+// SchemaVersion is the schema version this build writes, the same number a
+// migrated database carries in PRAGMA user_version. Exported so the schema
+// dump under schema/sqlite/ can name the version it describes.
+func SchemaVersion() int { return schemaVersion }
+
 const schemaV1 = `
 CREATE TABLE IF NOT EXISTS cards (
     scryfall_id      TEXT PRIMARY KEY,

@@ -97,6 +97,26 @@ works.
 Pricing details, how history accumulates, MTGJSON gap-filling, the local
 catalog, and vendor arbitrage are covered in [docs/pricing.md](docs/pricing.md).
 
+## Scripting and your data
+
+Every read command takes `--json` and emits one versioned document on stdout, so
+`hoard | jq` works without screen-scraping a table:
+
+```sh
+hoard --json | jq '.summary.total.valueUsd'
+hoard export --binder Trade --json | jq -r '.holdings.rows[].card.scryfallId'
+```
+
+The documents validate against a published JSON Schema and every card carries a
+Scryfall id and an MTGJSON uuid, so a document joins straight against either
+ecosystem's bulk data — see [docs/json.md](docs/json.md).
+
+Your collection lives in a plain SQLite file with a published schema, readable by
+anything that speaks SQLite. What hoard stores, and how a printing is identified
+— including how borderless, showcase and foil-treatment variants are kept apart —
+is in [docs/data-model.md](docs/data-model.md). The CSV formats hoard reads and
+writes are in [docs/csv.md](docs/csv.md).
+
 ## Decks and binders
 
 A **binder** holds loose cards; a **deck** is imported from a source and stays
@@ -161,6 +181,11 @@ scanner has its own manual-only macOS workflow (`make scan-test scan-check`
 locally). Before changing how prices are stored, read
 [docs/mtgjson-storage.md](docs/mtgjson-storage.md); before touching the
 scanner's trigger, read [docs/scanner-tuning.md](docs/scanner-tuning.md).
+
+Both published schemas are generated from the code and guarded by drift tests —
+`make generate-json-schema` after changing `internal/hoardjson`, and
+`make generate-sqlite-schema` after adding a migration to
+`internal/store/migrate.go`.
 
 ## License
 
