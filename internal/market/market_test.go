@@ -174,6 +174,73 @@ func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 	}
 }
 
+// The lowball band answers the liquid question backwards: not who will
+// treat you fairly, but who is trying to rob you. Worst offer first, and
+// the 50–70%% middle belongs to neither band.
+func TestLowballsRankTheWorstOffersFirst(t *testing.T) {
+	res := Result{Opportunities: []Opportunity{
+		mk("liquid", 10, 10, 9),     // 90%: the good guys, not this band
+		mk("middle", 10, 10, 6),     // 60%: ordinary, listed in neither band
+		mk("edge", 10, 10, 5),       // exactly 50%: the ceiling is exclusive
+		mk("bad", 10, 10, 4),        // 40%
+		mk("worse", 10, 10, 1),      // 10%
+		mk("no-bid", 10, 10, 0),     // no buylist at all — an absent offer
+		mk("no-anchor", 0, 10, 1),   // nothing to be a fraction of
+		mk("profitable", 10, 2, 20), // pays over market: cannot be a lowball
+	}}
+
+	var got []string
+	for _, o := range Lowballs(res, 10) {
+		got = append(got, o.Card.Name)
+	}
+	if len(got) != 2 || got[0] != "worse" || got[1] != "bad" {
+		t.Errorf("lowballs = %v, want the worst offer first and nothing else", got)
+	}
+}
+
+// A card nobody bids on has SellAt 0, so its Liquidity reads 0 — the worst
+// number in the hoard. Without the HasBuy guard it would lead the table,
+// and "no offer" is not the same accusation as "an insulting offer".
+func TestLowballsExcludeCardsWithNoBid(t *testing.T) {
+	res := Result{Opportunities: []Opportunity{mk("unbid", 10, 10, 0)}}
+	if got := Lowballs(res, 10); len(got) != 0 {
+		t.Errorf("lowballs = %v, want no rows for an absent offer", got)
+	}
+}
+
+// The band is browser-only: adding it must not grow the CLI's tables or
+// change what Sections and Rows have always produced.
+func TestLowballIsNotASection(t *testing.T) {
+	for _, k := range Kinds {
+		if k == KindLowball {
+			t.Fatal("KindLowball must stay out of Kinds: the browser indexes [3] state by Kind")
+		}
+	}
+	res := Result{Opportunities: []Opportunity{mk("bad", 10, 10, 1)}}
+	for _, sec := range Sections(res, 10) {
+		if len(sec.Rows) != 0 {
+			t.Errorf("%s section = %d rows, want a lowball to reach no section", sec.Kind, len(sec.Rows))
+		}
+	}
+}
+
+func TestLowballGradeRunsOppositeToLiquidity(t *testing.T) {
+	// The ceiling is the mild end and the floor saturates — the reverse of
+	// LiquidityGrade, so a heat ramp paints worse offers louder.
+	if got := LowballGrade(0.5); got != 0 {
+		t.Errorf("LowballGrade(0.5) = %v, want 0 at the ceiling", got)
+	}
+	if got := LowballGrade(0.10); got != 1 {
+		t.Errorf("LowballGrade(0.10) = %v, want 1 at the floor", got)
+	}
+	if got := LowballGrade(0.01); got != 1 {
+		t.Errorf("LowballGrade(0.01) = %v, want the ramp clamped below the floor", got)
+	}
+	if a, b := LowballGrade(0.2), LowballGrade(0.4); a <= b {
+		t.Errorf("LowballGrade(0.2)=%v must exceed LowballGrade(0.4)=%v", a, b)
+	}
+}
+
 func TestSectionsRespectTheLimit(t *testing.T) {
 	var res Result
 	for i := range 20 {

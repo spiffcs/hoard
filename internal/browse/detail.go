@@ -125,9 +125,9 @@ func (m *Model) openDetail() tea.Cmd {
 		// own — and a comps row past the Kind sections just the same.
 		if c := m.selectedComp(); c != nil {
 			id = c.Card.ScryfallID
-		} else if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
-			id = m.marketRows[i].Card.ScryfallID
-			fromArbitrage = m.marketRows[i].Kind == market.KindProfit
+		} else if r := m.selectedMarketRow(); r != nil {
+			id = r.Card.ScryfallID
+			fromArbitrage = r.Kind == market.KindProfit
 		}
 	case viewUnpriced:
 		// And an unpriced row — the gap is the price, not the card.

@@ -37,22 +37,19 @@ var marketSortColumns = [...][]string{
 	market.KindBelowMarket: {"below", "name", "set/num", "ask", "at", "last sold"},
 }
 
-// selectedMarketKind is the table the cursor is in, defaulting to the first.
+// selectedMarketKind is the table the cursor is in — including an empty
+// one, whose heading the cursor still visits — defaulting to the first.
 func (m Model) selectedMarketKind() market.Kind {
-	if i := m.cursor[paneCards]; i >= 0 && i < len(m.marketRows) {
-		return m.marketRows[i].Kind
+	if sec, _ := m.marketCursorPos(); sec != compsSection {
+		return market.Kind(sec)
 	}
 	return market.KindProfit
 }
 
-// firstMarketRowOfKind is where a table starts in the flat row list.
+// firstMarketRowOfKind is where a table starts in the flat cursor space —
+// its heading's slot when the table has no rows.
 func (m Model) firstMarketRowOfKind(k market.Kind) int {
-	for i, r := range m.marketRows {
-		if r.Kind == k {
-			return i
-		}
-	}
-	return 0
+	return m.marketSections()[k].curStart
 }
 
 // sortLabel is how the status line describes the focused view's order. On
@@ -95,7 +92,7 @@ func (m *Model) cycleSort() {
 			// cursor was leafing.
 			m.marketPage[compsSection] = 0
 			m.sortCompRows()
-			m.cursor[paneCards] = len(m.marketRows) // the comps section's first row
+			m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 			m.scrollIntoView()
 			return
 		}
@@ -122,7 +119,7 @@ func (m *Model) reverseSort() {
 			m.compsSortRev = !m.compsSortRev
 			m.marketPage[compsSection] = 0
 			m.sortCompRows()
-			m.cursor[paneCards] = len(m.marketRows)
+			m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 			m.scrollIntoView()
 			return
 		}

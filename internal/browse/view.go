@@ -752,7 +752,7 @@ func (m Model) helpLine() string {
 	case m.view == viewMarket:
 		return ui.Help(tail(ui.HelpCommands, ui.K("enter", "detail"),
 			ui.K("]/[", "next/prev table"), ui.K(">/<", "turn page"),
-			ui.K("b", "comps buy/sell"), ui.K("F", "refetch quotes"),
+			ui.K("b", "table side/band"), ui.K("F", "refetch quotes"),
 			ui.K("M", "floor"), ui.K("tab", "collections"), ui.K("v", "next view"),
 			ui.K("↑/↓", "move"))...)
 	case m.view == viewWatches:

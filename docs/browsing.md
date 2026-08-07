@@ -191,9 +191,13 @@ independently when its rows overflow — the title line says where you are
 (`BUYLIST NEAR MARKET … · 1–8 of 32`), which is how the 70–80% pays tail stays
 reachable rather than hidden under the top of the ranking. A table emptied
 by the collection filter keeps its title over a note rather than
-vanishing. <kbd>]</kbd>/<kbd>[</kbd> jump straight to the next or previous
-table. <kbd>enter</kbd> opens any row's card detail, and
-<kbd>s</kbd>/<kbd>S</kbd> sort just the table the cursor is in, each
+vanishing — and it keeps a cursor slot for that heading, so a table with
+nothing in it can still be selected and still answers its own keys.
+<kbd>]</kbd>/<kbd>[</kbd> jump to the next or previous table, empty ones
+included; arriving, though, always lands on a table that has rows. <kbd>b</kbd> flips the table the cursor is in — the buylist band
+below, the comps side further down — and does nothing on ARBITRAGE, which
+has no second face. <kbd>enter</kbd> opens any row's card
+detail, and <kbd>s</kbd>/<kbd>S</kbd> sort just the table the cursor is in, each
 keeping its own column and direction. `hoard market` prints the fuller
 CLI report — including the BELOW MARKET section the browser dropped for
 comps room — with `--min` and `--limit`; see
@@ -213,8 +217,31 @@ armed floor (`penny filter < $1.00`). Moving the line re-collects from the
 day's cached quotes instantly — no refetch — and, like the movers gate,
 the floor persists across sessions.
 
+**BUYLIST NEAR MARKET** has two bands, and <kbd>b</kbd> flips between them
+while the cursor is in that table. The **near-market band** (default) is
+the good guys: shops paying at least 70% of the last-sold price, best
+offer first, graded green as they approach the full sales price. The
+**lowball band** is the same question asked backwards — who is paying
+under **50%** of what the card actually sells for — ranked worst offer
+first and painted on the warning ramp, reddening as the offer falls away
+from market. The 50–70% middle belongs to neither band on purpose: that is
+the ordinary trade, and the point of the flip is the two extremes.
+
+```
+BUYLIST LOWBALL  CK buylist pays under 50% of TCG last-sold
+NAME           SET/NUM  FIN  TCG SOLD  CK BUYLIST   PAYS
+Ragavan, Nim…  mh2/138  -       $58.00      $11.60  20.0%
+```
+
+Both bands read Card Kingdom's bid — it runs the only buylist in the
+MTGJSON feed — so the band names the offer, not a vendor to avoid. When the
+band on show has no rows, its heading is still selectable — that is what an
+empty table's cursor slot is for — so <kbd>b</kbd> reaches the other band
+from there. The band is browser-only; `hoard market` prints the
+near-market table alone.
+
 **COMPS** is the comp sheet sellers build by hand, and it has two halves —
-<kbd>b</kbd> flips between them. The **sell side** (default) is the
+<kbd>b</kbd> flips between them when the cursor is on a comp sheet. The **sell side** (default) is the
 sale-price comp: what each vendor sells the card for — tcg's last-sold
 price, manapool's ask, cardkingdom's ask — with **SPREAD** measuring how
 much they disagree (highest sale minus lowest, over the highest). It

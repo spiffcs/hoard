@@ -192,7 +192,11 @@ The first section is the only unambiguous one: a dealer's cash bid above what
 the card actually sells for is free money, though in practice a couple of
 dollars a card. The second is where the buylist pays as much as — or nearly as
 much as — the current sale price: cards you could turn into cash near full
-value, against a median card whose bid fetches about half. The third is
+value, against a median card whose bid fetches about half. In the browser
+that table flips with <kbd>b</kbd> to a **lowball band** — the bids paying
+under 50% of the last-sold price, worst first; see
+[browsing.md](browsing.md). The band is browser-only, and `hoard market`
+prints the near-market table alone. The third is
 where to buy: real asks at least 25% under the last-sold price. The other
 direction — a lone listing far above the sales price — is scalper noise and is
 deliberately not a section. **COMPS** is the per-card sheet: each vendor's ask,

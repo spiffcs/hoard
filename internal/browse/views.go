@@ -376,7 +376,9 @@ func (m Model) viewRowCount() int {
 	case viewWatches:
 		return len(m.watches)
 	case viewMarket:
-		return m.marketTotalRows()
+		// Slots, not rows: the market view's cursor also visits the heading
+		// of a table with nothing under it.
+		return m.marketCursorSlots()
 	}
 	return len(m.cards)
 }

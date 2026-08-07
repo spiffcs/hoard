@@ -21,6 +21,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -468,9 +469,53 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
 		},
 		{
+			// 'b' flips the table the cursor is in — the band here, the comps
+			// side below — and does nothing on a table with no second face.
+			// The guard needs no exception for an empty band: the cursor
+			// visits the heading of a table with no rows under it, which is
+			// how the other band stays reachable when the one on show is
+			// empty. See marketSection.
+			id: "market.buylist.band", aliases: "buylist lowball band good bad scam pays side",
+			key: "b", hidden: true,
+			where: func(m *Model) bool {
+				if m.view != viewMarket {
+					return false
+				}
+				sec, _ := m.marketCursorPos()
+				return sec == int(market.KindLiquid)
+			},
+			run: func(m *Model) tea.Cmd {
+				m.liquidLowball = !m.liquidLowball
+				// The bands rank by opposite ends of one column, so the flip
+				// lands on "pays" in the direction that reproduces the band's
+				// own arrival order — best first for near-market, worst first
+				// for lowball. Same reasoning as the comps side below.
+				m.marketSortIdx[market.KindLiquid] = 0
+				m.marketSortRev[market.KindLiquid] = m.liquidLowball
+				// Re-ranks and re-pages every section back to its top, which
+				// is what a swapped row set wants anyway.
+				m.applyMarketRows()
+				// The flip is a gesture made on this table, so the hand stays
+				// on it — including when the band flipped to has no rows and
+				// the heading is all there is to stand on.
+				m.cursor[paneCards] = m.marketSections()[market.KindLiquid].curStart
+				m.scrollIntoView()
+				if m.liquidLowball {
+					m.status, m.statusErr = "buylist · lowball band: who is paying under half of market", false
+				} else {
+					m.status, m.statusErr = "buylist · near-market band: who is paying close to market", false
+				}
+				return nil
+			},
+		},
+		{
 			id: "market.comps.side", aliases: "comps buy sell asks bids side",
 			key: "b", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket },
+			// Scoped to the comp sheets for the same reason the band above is
+			// scoped to the buylist table: 'b' flips whichever table the
+			// cursor is in, so the gesture means one thing and the reader
+			// never has to remember which table owns the key.
+			where: func(m *Model) bool { return m.view == viewMarket && m.selectedComp() != nil },
 			run: func(m *Model) tea.Cmd {
 				m.compsBuySide = !m.compsBuySide
 				// The sides sort by their own columns; an order chosen for

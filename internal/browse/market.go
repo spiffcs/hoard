@@ -224,29 +224,31 @@ func (m Model) marketLines(width int) []string {
 		if i > 0 {
 			out = append(out, "")
 		}
-		title, note := market.CompsTitle+" · SELL", compsSellNote
-		if m.compsBuySide {
-			title, note = market.CompsTitle+" · BUY", compsBuyNote
-		}
-		if i != compsSection {
-			title, note = market.Kind(i).Title(), market.Kind(i).Note()
-		}
+		title, note := m.marketSectionHead(i)
 		head := m.theme.Title.Render(title) + "  " + m.theme.Help.Render(note)
 		if frag := pagePhrase(m.marketSecOffset[i], budgets[i], sec.count,
 			m.marketPage[i], totals[i], pageSize); frag != "" {
 			head += m.theme.Help.Render(frag)
 		}
-		out = append(out, head)
 		if sec.count == 0 {
-			out = append(out, m.theme.Help.Render(emptyNote))
+			// The heading is the selection when there is nothing under it,
+			// so the bar goes on the heading itself — the table's own keys
+			// ('b', 's') act on whatever the bar is sitting on, and without
+			// it an empty table would look unreachable while answering them.
+			if hasCursor && i == cursorSec {
+				head = ui.Restyle(fit(head, width), m.theme.Cursor)
+			}
+			out = append(out, head, m.theme.Help.Render(emptyNote))
 			continue
 		}
+		out = append(out, head)
 
 		var t ui.Table
 		if i == compsSection {
 			t = compsSectionTable(env, m.marketComps, m.compsBuySide)
 		} else {
-			t = marketSectionTable(env, market.Kind(i), m.marketRows[sec.start:sec.start+sec.count])
+			t = marketSectionTable(env, market.Kind(i),
+				m.marketRows[sec.rowStart:sec.rowStart+sec.count], m.liquidLowball)
 		}
 		t.Env, t.Header = env, true
 		lines := t.Lines()
@@ -265,9 +267,29 @@ func (m Model) marketLines(width int) []string {
 	return out
 }
 
+// marketSectionHead is one table's heading and its explanatory note, in
+// the state the table is currently showing — which for the two flippable
+// tables is not the same thing as the section index alone.
+func (m Model) marketSectionHead(i int) (title, note string) {
+	if i == compsSection {
+		if m.compsBuySide {
+			return market.CompsTitle + " · BUY", compsBuyNote
+		}
+		return market.CompsTitle + " · SELL", compsSellNote
+	}
+	kind := market.Kind(i)
+	// The lowball rows travel as KindLiquid, so the heading is the one
+	// place that has to name the band the section is actually showing.
+	if kind == market.KindLiquid && m.liquidLowball {
+		kind = market.KindLowball
+	}
+	return kind.Title(), kind.Note()
+}
+
 // marketSectionTable lays out one kind's rows with headers that mean what
-// they say for that kind alone.
-func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Table {
+// they say for that kind alone. lowball selects the buylist table's band,
+// which shares the kind's columns and changes only how PAYS is painted.
+func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row, lowball bool) ui.Table {
 	name := ui.Col{Title: "NAME", Align: ui.Left, Flex: true, Min: 10}
 	setNum := ui.Col{Title: "SET/NUM", Align: ui.Left, Priority: 6, Style: env.Dim()}
 	fin := ui.Col{Title: "FIN", Align: ui.Left, Priority: 5, Style: env.Dim()}
@@ -309,11 +331,17 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row) ui.Tabl
 			money("TCG SOLD"), money("CK BUYLIST"), money("PAYS")}}
 		for _, r := range rows {
 			// The ratio columns grade on a color ramp — how close to the
-			// section's ideal, not a gain/loss direction.
+			// section's ideal, not a gain/loss direction. The two bands read
+			// opposite ideals off the same number, so they take opposite
+			// ramps: green as the near-market rows approach full price, red
+			// as the lowball rows fall away from it.
+			pays := ui.Cell{Text: ui.Percent(r.Liquidity()),
+				Style: env.Grade(market.LiquidityGrade(r.Liquidity()))}
+			if lowball {
+				pays.Style = env.Heat(market.LowballGrade(r.Liquidity()))
+			}
 			t.Add(append(cardCells(r),
-				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)),
-				ui.Cell{Text: ui.Percent(r.Liquidity()),
-					Style: env.Grade(market.LiquidityGrade(r.Liquidity()))})...)
+				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)), pays)...)
 		}
 	default:
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
@@ -375,9 +403,20 @@ func (m Model) marketStatus() string {
 		if m.compsBuySide {
 			suffix = "SPREAD = 1 − BUYLIST ÷ LOW"
 		}
+	} else if m.liquidLowball && sec == int(market.KindLiquid) {
+		// The lowball band is the one table whose heading is not the default,
+		// so the standing note says 'b' takes it back — otherwise a reader
+		// who flipped it by accident has no way to read the way out.
+		suffix = "lowball band · 'b' for the shops paying near market"
 	}
-	line := fmt.Sprintf("%d/%d · %s · %s",
-		idx+1, secs[sec].count, m.selectedMarketNote(), suffix)
+	// On an empty heading there is no Nth-of-M to report and no row note to
+	// print: the table itself is the selection, so the line names it.
+	title, _ := m.marketSectionHead(sec)
+	line := fmt.Sprintf("%s · empty · %s", title, suffix)
+	if secs[sec].count > 0 {
+		line = fmt.Sprintf("%d/%d · %s · %s",
+			idx+1, secs[sec].count, m.selectedMarketNote(), suffix)
+	}
 	// The selection leads here too — the container on the left, the row's
 	// card on the right — matching the generic position line.
 	if name := m.selectedItemName(); name != "" {
@@ -417,16 +456,25 @@ func (m Model) selectedMarketNote() string {
 		}
 		return strings.Join(parts, " · ")
 	}
-	i := m.cursor[paneCards]
-	if i < 0 || i >= len(m.marketRows) {
+	// A heading with no rows under it explains itself in the section note;
+	// there is no row here to read numbers off.
+	row := m.selectedMarketRow()
+	if row == nil {
 		return ""
 	}
-	r := m.marketRows[i]
+	r := *row
 	switch r.Kind {
 	case market.KindProfit:
 		return fmt.Sprintf("%s pays %s · tcg last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	case market.KindLiquid:
+		// "only" is the whole difference: the same three numbers read as a
+		// fair offer in one band and an insulting one in the other, and the
+		// row should say which it is without the reader doing the division.
+		if m.liquidLowball {
+			return fmt.Sprintf("%s pays only %s · tcg last sold for %s",
+				r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
+		}
 		return fmt.Sprintf("%s pays %s · tcg last sold for %s",
 			r.SellTo, ui.Money(r.SellAt), ui.Money(r.Market))
 	}
@@ -486,6 +534,22 @@ func (m *Model) applyMarketRows() {
 	// The whole ranking, not a top-N: paging owns the truncation now, so
 	// every section keeps its full run and shows pageSize at a time.
 	rows := market.Rows(res, len(res.Opportunities))
+	if m.liquidLowball {
+		// The band is a swap, not a fourth table: the lowball rows keep
+		// KindLiquid so the section geometry, paging and per-section sort
+		// state — all [3]-wide and indexed by Kind — stay untouched. Order
+		// here does not matter, sortArbRows groups by Kind first.
+		swapped := make([]market.Row, 0, len(rows))
+		for _, r := range rows {
+			if r.Kind != market.KindLiquid {
+				swapped = append(swapped, r)
+			}
+		}
+		for _, o := range market.Lowballs(res, len(res.Opportunities)) {
+			swapped = append(swapped, market.Row{Opportunity: o, Kind: market.KindLiquid})
+		}
+		rows = swapped
+	}
 	kept := rows[:0]
 	for _, r := range rows {
 		// The browser dropped its BELOW MARKET table — the space serves the
@@ -515,6 +579,14 @@ func (m *Model) applyMarketRows() {
 	// The rows under the old scroll positions are gone; every section
 	// starts back at its top.
 	m.marketSecOffset = [3]int{}
+	// And a cursor left on a table that no longer has rows moves to one
+	// that does — an empty heading is somewhere to navigate to, not
+	// somewhere to be put. Callers that mean to stay (the band flip) park
+	// the cursor themselves afterwards.
+	sec, _ := m.marketCursorPos()
+	if m.marketSections()[sec].count == 0 {
+		m.cursor[paneCards] = m.firstMarketCursor()
+	}
 }
 
 // marketSectionTotals is each section's full row count across every page —
@@ -651,7 +723,7 @@ func (m *Model) turnMarketPage(dir int) {
 	m.marketPage[sec] = next
 	m.deriveMarketPages()
 	m.marketSecOffset[sec] = 0
-	m.cursor[paneCards] = m.marketSections()[sec].start
+	m.cursor[paneCards] = m.marketSections()[sec].curStart
 	m.scrollIntoView()
 	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d · sorted by %s",
 		next+1, maxPage+1, next*pageSize+1, min((next+1)*pageSize, tot), tot,
@@ -736,10 +808,9 @@ func (m *Model) jumpMarketSection(dir int) {
 	secs := m.marketSections()
 	cur, _ := m.marketCursorPos()
 	for i := cur + dir; i >= 0 && i < len(secs); i += dir {
-		if secs[i].count == 0 {
-			continue
-		}
-		m.cursor[paneCards] = secs[i].start
+		// Empty tables are stops too: they keep their heading, and their
+		// heading is where the table's own keys land.
+		m.cursor[paneCards] = secs[i].curStart
 		// The jump is a card-pane gesture wherever the hand was.
 		m.focus = paneCards
 		m.scrollIntoView()

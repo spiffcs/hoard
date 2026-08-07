@@ -296,6 +296,12 @@ type Model struct {
 	// ask). 'b' toggles; selling is the default question.
 	compsBuySide bool
 
+	// liquidLowball flips the buylist table from its default near-market
+	// band (the shops treating you fairly) to the lowball band (the ones
+	// paying under half of market). 'b' toggles it while the cursor is in
+	// that table; the good guys are the default question.
+	liquidLowball bool
+
 	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int
 

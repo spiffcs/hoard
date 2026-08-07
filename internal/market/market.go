@@ -50,6 +50,13 @@ func (o Opportunity) Liquidity() float64 { return o.SellAt / o.Market }
 // reads from, so the two frontends coloring the column cannot disagree.
 func LiquidityGrade(r float64) float64 { return grade(r, liquidFloor, 1.0) }
 
+// LowballGrade positions a lowball ratio on 0..1 for the warning ramp,
+// running the opposite way to LiquidityGrade: the 50% ceiling (the most a
+// row can pay and still be listed as a lowball) is 0, and paying a tenth
+// of the sales price saturates. Frontends paint it with a heat ramp, where
+// high is the warning, so worse offers read louder.
+func LowballGrade(r float64) float64 { return 1 - grade(r, lowballFloor, lowballCeiling) }
+
 // BelowMarketGrade positions a discount on 0..1: the 25% listing floor is
 // 0, and 60% under the sales price — deep-discount territory — saturates.
 func BelowMarketGrade(b float64) float64 { return grade(b, belowMarketFloor, 0.6) }
@@ -171,6 +178,16 @@ const (
 	// The other direction (a lone listing far above the sales price) is
 	// scalper noise and is deliberately not a section.
 	KindBelowMarket
+	// KindLowball is KindLiquid's opposite end: a buylist offering well
+	// under what the card actually sells for. It answers "who is trying to
+	// rob me", where the liquid question is "who will treat me fairly".
+	//
+	// Deliberately absent from Kinds, so Sections, Rows, the CLI and the
+	// JSON output are untouched — it is a band the browser swaps into the
+	// liquid section, not a fourth table. For the same reason it must never
+	// be stamped onto a Row: the browser indexes [3]-wide per-section state
+	// by Kind, and a 3 would run off the end.
+	KindLowball
 )
 
 func (k Kind) String() string {
@@ -179,6 +196,8 @@ func (k Kind) String() string {
 		return "arbitrage"
 	case KindLiquid:
 		return "liquid"
+	case KindLowball:
+		return "lowball"
 	}
 	return "below-market"
 }
@@ -190,6 +209,8 @@ func (k Kind) Title() string {
 		return "ARBITRAGE"
 	case KindLiquid:
 		return "BUYLIST NEAR MARKET"
+	case KindLowball:
+		return "BUYLIST LOWBALL"
 	}
 	return "BELOW MARKET"
 }
@@ -200,6 +221,8 @@ func (k Kind) Note() string {
 		return "CK buylist pays more than TCG last-sold"
 	case KindLiquid:
 		return "CK buylist pays at least 70% of TCG last-sold"
+	case KindLowball:
+		return "CK buylist pays under 50% of TCG last-sold"
 	}
 	return "a marketplace is asking far under tcg's last-sold price"
 }
@@ -208,6 +231,18 @@ func (k Kind) Note() string {
 // price, to count as liquidity. Typical buylists sit near half of it; 70%
 // marks the cards genuinely easy to turn back into money.
 const liquidFloor = 0.7
+
+// lowballCeiling is the most a buylist may pay, as a fraction of the sales
+// price, and still count as a lowball. Half is the line because a typical
+// buylist already sits near it: paying 50% is the trade, and everything
+// under it is the shop asking you to fund its margin twice. The band
+// deliberately leaves 50–70% out of both tables — that middle is ordinary,
+// and the point of the flip is the two extremes.
+const lowballCeiling = 0.5
+
+// lowballFloor is only where the warning ramp saturates, not a filter: a
+// tenth of the sales price is as bad as the color needs to get.
+const lowballFloor = 0.10
 
 // belowMarketFloor is how far under the sales price an ask must sit to be
 // worth listing — a quarter off is a deal, a few percent is noise.
@@ -250,6 +285,14 @@ func Rows(r Result, limit int) []Row {
 	return out
 }
 
+// Lowballs ranks the buylist offers sitting well under the sales price,
+// worst first — the band a caller swaps in for KindLiquid's when it wants
+// the other end of the same question. Kept separate from Sections because
+// the two bands are alternatives, never shown together.
+func Lowballs(r Result, limit int) []Opportunity {
+	return top(r.Opportunities, limit, KindLowball)
+}
+
 // top filters and ranks the opportunities that answer one question.
 func top(all []Opportunity, limit int, k Kind) []Opportunity {
 	keep := func(o Opportunity) bool { return o.HasBuy && o.HasMarket && o.Profit() > 0 }
@@ -265,6 +308,16 @@ func top(all []Opportunity, limit int, k Kind) []Opportunity {
 			return o.HasBuy && o.HasMarket && o.Profit() <= 0 && o.Liquidity() >= liquidFloor
 		}
 		order = func(a, b Opportunity) int { return cmp.Compare(b.Liquidity(), a.Liquidity()) }
+	case KindLowball:
+		// HasBuy carries the weight here: without it a card nobody bids on
+		// has SellAt 0, so Liquidity reads 0 and it would lead the table as
+		// the worst offender in the hoard — an absent offer is not a lowball
+		// one. Profit() <= 0 is left out as redundant: under half of the
+		// sales price the card cannot also be paying over it.
+		keep = func(o Opportunity) bool {
+			return o.HasBuy && o.HasMarket && o.Liquidity() < lowballCeiling
+		}
+		order = func(a, b Opportunity) int { return cmp.Compare(a.Liquidity(), b.Liquidity()) }
 	case KindBelowMarket:
 		keep = func(o Opportunity) bool {
 			return o.HasRetail && o.HasMarket && o.BelowMarket() >= belowMarketFloor

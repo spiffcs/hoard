@@ -2285,6 +2285,187 @@ func TestArbitrageLiquidRowIsNotAGain(t *testing.T) {
 	}
 }
 
+// loadedMarket parks a model on a fully-loaded market view, the way the
+// runtime does: arrive, fetch, deliver the reply.
+func loadedMarket(t *testing.T, res market.Result) Model {
+	t.Helper()
+	m := marketModel(t, func(context.Context, progress.Fn, float64) (market.Result, error) { return res, nil })
+	for m.view != viewMarket {
+		m = key(m, "v")
+	}
+	m = key(m, "F")
+	next, _ := m.Update(marketMsg{gen: m.marketGen, res: res})
+	return next.(Model)
+}
+
+// bandRes carries one row for each band so a flip has something to swap in
+// either direction: 90% is the good guy, 20% the bad one. The arbitrage row
+// is what the cursor lands on first, so a test can say where it started.
+func bandRes() market.Result {
+	return market.Result{
+		Opportunities: []market.Opportunity{
+			opp("Profitable", 10.00, 28.00),       // pays over market: arbitrage
+			opp("Gilded Lotus", 10.00, 9.00),      // 90%: near market
+			opp("Fleeced Alchemist", 10.00, 2.00), // 20%: a lowball
+		},
+		Compared: 3,
+	}
+}
+
+// The buylist table's two bands are the same question asked from both
+// sides, so 'b' flips between them the way it flips the comps sides.
+func TestBuylistBandFlipsToTheLowballs(t *testing.T) {
+	m := loadedMarket(t, bandRes())
+	m = key(m, "]") // into the buylist table, where 'b' means the band
+
+	if sec, _ := m.marketCursorPos(); sec != int(market.KindLiquid) {
+		t.Fatalf("cursor section = %d, want the buylist table", sec)
+	}
+	out := m.View()
+	if !strings.Contains(out, "BUYLIST NEAR MARKET") || strings.Contains(out, "Fleeced Alchemist") {
+		t.Fatalf("near-market band should lead with the good guys:\n%s", out)
+	}
+
+	m = key(m, "b")
+	if !m.liquidLowball {
+		t.Fatal("'b' in the buylist table did not flip the band")
+	}
+	out = m.View()
+	for _, want := range []string{"BUYLIST LOWBALL", "under 50%", "Fleeced Alchemist", "20.0%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lowball band missing %q:\n%s", want, out)
+		}
+	}
+	// The bands are alternatives, never shown together.
+	if strings.Contains(out, "BUYLIST NEAR MARKET") || strings.Contains(out, "Gilded Lotus") {
+		t.Errorf("the good guys must leave when the bad guys arrive:\n%s", out)
+	}
+	// Read the row note directly: the flip's own status message is still on
+	// the status line at this point, and would mask it in the rendered view.
+	if note := m.selectedMarketNote(); !strings.Contains(note, "pays only $2.00 · tcg last sold for $10.00") {
+		t.Errorf("row note = %q, want the offer read as an insult", note)
+	}
+
+	// And back: the near-market band is the default question.
+	m = key(m, "b")
+	if m.liquidLowball {
+		t.Fatal("'b' did not flip the band back")
+	}
+	if out := m.View(); !strings.Contains(out, "BUYLIST NEAR MARKET") || !strings.Contains(out, "Gilded Lotus") {
+		t.Errorf("flipping back should restore the good guys:\n%s", out)
+	}
+}
+
+// The lowball band ranks worst-first — the opposite end of the same column
+// the near-market band leads with. No row clears the 70% floor here, so
+// this also covers the reach-in: an empty band holds no cursor, and 'b'
+// still has to get you to the other one.
+func TestLowballBandLeadsWithTheWorstOffer(t *testing.T) {
+	m := loadedMarket(t, market.Result{
+		Opportunities: []market.Opportunity{
+			opp("Mild Haircut", 10.00, 4.50),     // 45%
+			opp("Daylight Robbery", 10.00, 1.00), // 10%
+		},
+		Compared: 2,
+	})
+	if m.marketSectionTotals()[market.KindLiquid] != 0 {
+		t.Fatal("this test needs an empty near-market band")
+	}
+	// The empty table still has a heading to stand on, which is the whole
+	// reason the other band stays reachable.
+	for sec, _ := m.marketCursorPos(); sec != int(market.KindLiquid); sec, _ = m.marketCursorPos() {
+		m = key(m, "]")
+	}
+	m = key(m, "b")
+	if !m.liquidLowball {
+		t.Fatal("'b' on the empty band's heading did not reach the other band")
+	}
+
+	var got []string
+	for _, r := range m.marketRows {
+		if r.Kind == market.KindLiquid {
+			got = append(got, r.Card.Name)
+		}
+	}
+	if len(got) != 2 || got[0] != "Daylight Robbery" {
+		t.Errorf("lowball rows = %v, want the worst offer first", got)
+	}
+}
+
+// 'b' flips the table the cursor is in and nothing else: on a comp sheet
+// it is the side, and the band it is not.
+func TestBandKeyOnACompSheetFlipsTheSide(t *testing.T) {
+	res := bandRes()
+	res.Comps = []market.Comp{comp("Ancient Tomb", 60, 55, 44)}
+	m := loadedMarket(t, res)
+	for m.selectedComp() == nil {
+		m = key(m, "]")
+	}
+
+	m = key(m, "b")
+	if !m.compsBuySide {
+		t.Error("'b' on a comp sheet should flip the comps side")
+	}
+	if m.liquidLowball {
+		t.Error("'b' on a comp sheet must not touch the buylist band")
+	}
+}
+
+// An empty table keeps a cursor slot for its heading, so its own keys have
+// somewhere to land — and the cursor is never dropped there on arrival.
+func TestEmptyMarketTableHeadingIsSelectable(t *testing.T) {
+	res := bandRes()
+	res.Comps = []market.Comp{comp("Ancient Tomb", 60, 55, 44)}
+	m := loadedMarket(t, res)
+
+	// Three tables, one of which (BELOW MARKET's slot, taken by comps) has
+	// rows; the cursor lands on the first table that does, not on a heading.
+	if sec, _ := m.marketCursorPos(); m.marketSections()[sec].count == 0 {
+		t.Fatalf("arrival parked the cursor on an empty heading (section %d)", sec)
+	}
+	// Empty both Kind tables, leaving only the comps with rows.
+	m.marketAllRows = nil
+	m.marketRows = nil
+	m.applyMarketComps(res.Comps)
+	if got, want := m.marketCursorSlots(), m.marketTotalRows(); got != want+2 {
+		t.Errorf("cursor slots = %d, rows = %d: each empty table should add a slot", got, want)
+	}
+
+	// Walk to an empty table and confirm it holds the cursor and reports
+	// itself rather than borrowing a neighbour's row.
+	for sec, _ := m.marketCursorPos(); sec != int(market.KindLiquid); sec, _ = m.marketCursorPos() {
+		m = key(m, "]")
+	}
+	if m.selectedComp() != nil || m.selectedMarketRow() != nil {
+		t.Error("an empty heading must address no row")
+	}
+	if got := m.marketStatus(); !strings.Contains(got, "BUYLIST NEAR MARKET · empty") {
+		t.Errorf("status = %q, want the empty table naming itself", got)
+	}
+	// enter has nothing to open here.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if next.(Model).detail != nil {
+		t.Error("enter on an empty heading must not open a detail")
+	}
+}
+
+// The arbitrage table has no second face, so 'b' there is a no-op rather
+// than a reach into whichever table happens to own the key.
+func TestBandKeyDoesNothingOnTheArbitrageTable(t *testing.T) {
+	res := bandRes()
+	res.Comps = []market.Comp{comp("Ancient Tomb", 60, 55, 44)}
+	m := loadedMarket(t, res)
+	if sec, _ := m.marketCursorPos(); sec != int(market.KindProfit) {
+		t.Fatalf("cursor section = %d, want the arbitrage table", sec)
+	}
+
+	m = key(m, "b")
+	if m.compsBuySide || m.liquidLowball {
+		t.Errorf("'b' on the arbitrage table flipped something: comps=%v band=%v",
+			m.compsBuySide, m.liquidLowball)
+	}
+}
+
 // The collection view's empty palette leads with its own verbs.
 func TestHoldingsPaletteRanksCollectionVerbs(t *testing.T) {
 	m, err := New(testStore(),
@@ -2826,7 +3007,7 @@ func TestCompsSectionCursorDetailAndWatch(t *testing.T) {
 	if got := m.marketTotalRows(); got != 2 {
 		t.Fatalf("total rows = %d, want the opportunity and the comp", got)
 	}
-	m.cursor[paneCards] = 1
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 	if c := m.selectedComp(); c == nil || c.Card.Name != "Sheeted" {
 		t.Fatalf("selectedComp = %+v", c)
 	}
@@ -2876,7 +3057,7 @@ func TestCompsSortIsIndependent(t *testing.T) {
 	}
 	// The derived column is the default sort. Sell side: the sale prices'
 	// dispersion — most agreement first, no-second-figure last.
-	m.cursor[paneCards] = len(m.marketRows) // first comps row
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart // first comps row
 	if got := m.sortLabel(); got != "comps · price dispersion" {
 		t.Fatalf("default label = %q, want price dispersion", got)
 	}

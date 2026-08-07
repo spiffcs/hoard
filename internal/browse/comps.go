@@ -15,57 +15,110 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// marketTotalRows is every data row the market view's cursor can visit:
-// the three Kind sections, then the comps.
+// marketTotalRows is every data row on the market view: the three Kind
+// sections, then the comps. This is the count the header reports and the
+// emptiness the pane tests — not the cursor's range, which is wider.
 func (m Model) marketTotalRows() int {
 	return len(m.marketRows) + len(m.marketComps)
 }
 
-// selectedComp is the comp sheet under the cursor, nil when the cursor
-// sits in the Kind sections (or out of range).
-func (m Model) selectedComp() *market.Comp {
-	i := m.cursor[paneCards] - len(m.marketRows)
-	if i < 0 || i >= len(m.marketComps) {
-		return nil
+// marketCursorSlots is how far the cursor can travel, which exceeds the row
+// count by one slot for every empty table — see marketSection.
+func (m Model) marketCursorSlots() int {
+	var n int
+	for _, s := range m.marketSections() {
+		n += s.span
 	}
-	return &m.marketComps[i]
+	return n
 }
 
-// marketSection is one table's run of the flat cursor space.
-type marketSection struct{ start, count int }
+// selectedComp is the comp sheet under the cursor, nil when the cursor sits
+// in the Kind sections or on a heading with no rows under it.
+func (m Model) selectedComp() *market.Comp {
+	sec, idx := m.marketCursorPos()
+	if sec != compsSection || idx >= len(m.marketComps) {
+		return nil
+	}
+	return &m.marketComps[idx]
+}
+
+// marketSection is one table's place in the two spaces the market view
+// keeps at once. rowStart and count index the data — m.marketRows for the
+// Kind sections, m.marketComps for the last. curStart and span place the
+// table in the flat cursor space, and the two diverge because an empty
+// table still takes one cursor slot, for its heading.
+//
+// That slot is the point: each table owns keys of its own — 'b' flips a
+// side or a band, 's' sorts — and a table the cursor cannot reach is a
+// table whose keys have nowhere to land. It is also the only honest way to
+// reach the buylist table's other band when the band on show is empty,
+// which is exactly when the other one is worth a look.
+type marketSection struct {
+	rowStart, count int
+	curStart, span  int
+}
 
 // compsSection indexes the comps table in the three-section layout; the
 // two below it are KindProfit and KindLiquid (BELOW MARKET left the
 // browser — applyMarketRows guarantees its kind never reaches this file).
 const compsSection = 2
 
-// marketSections maps the three tables into flat cursor space: the Kind
-// runs in m.marketRows — always grouped in Kind order, sortArbRows keeps
-// that invariant — then the comps.
+// marketSections maps the three tables into both spaces: the Kind runs in
+// m.marketRows — always grouped in Kind order, sortArbRows keeps that
+// invariant — then the comps.
 func (m Model) marketSections() [3]marketSection {
 	var s [3]marketSection
 	for _, r := range m.marketRows {
 		s[r.Kind].count++
 	}
 	s[compsSection].count = len(m.marketComps)
-	start := 0
+	row, cur := 0, 0
 	for i := range s {
-		s[i].start = start
-		start += s[i].count
+		s[i].rowStart, s[i].curStart = row, cur
+		s[i].span = max(s[i].count, 1)
+		row += s[i].count
+		cur += s[i].span
 	}
 	return s
 }
 
-// marketCursorPos maps the flat cursor to (section, index within it).
+// marketCursorPos maps the flat cursor to (section, index within it). On an
+// empty table the index is 0 and addresses no row: callers that read data
+// must check the section's count, which is what selectedComp and
+// selectedMarketRow do.
 func (m Model) marketCursorPos() (sec, idx int) {
-	cur := min(max(m.cursor[paneCards], 0), max(m.marketTotalRows()-1, 0))
+	cur := min(max(m.cursor[paneCards], 0), max(m.marketCursorSlots()-1, 0))
 	secs := m.marketSections()
 	for i := len(secs) - 1; i >= 0; i-- {
-		if secs[i].count > 0 && cur >= secs[i].start {
-			return i, min(cur-secs[i].start, secs[i].count-1)
+		if cur >= secs[i].curStart {
+			return i, min(cur-secs[i].curStart, max(secs[i].count-1, 0))
 		}
 	}
 	return 0, 0
+}
+
+// firstMarketCursor is where the cursor belongs after the rows underneath
+// change: the first table that actually has something in it. Landing on an
+// empty heading is a place the user can choose to go, never one the view
+// drops them into.
+func (m Model) firstMarketCursor() int {
+	for _, s := range m.marketSections() {
+		if s.count > 0 {
+			return s.curStart
+		}
+	}
+	return 0
+}
+
+// selectedMarketRow is the Kind-section row under the cursor, nil on a comp
+// sheet or on a heading with no rows under it.
+func (m Model) selectedMarketRow() *market.Row {
+	sec, idx := m.marketCursorPos()
+	secs := m.marketSections()
+	if sec == compsSection || secs[sec].count == 0 {
+		return nil
+	}
+	return &m.marketRows[secs[sec].rowStart+idx]
 }
 
 // applyMarketComps derives the full comp ranking from the given (already

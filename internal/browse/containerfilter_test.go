@@ -261,8 +261,9 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 		t.Errorf("profit scrolled without disturbing comps:\n%s", view)
 	}
 
-	// Crossing into comps scrolls that region independently.
-	for range 6 {
+	// Crossing into comps scrolls that region independently. Seven steps,
+	// not six: the empty liquid table's heading is a stop of its own.
+	for range 7 {
 		m = key(m, "down")
 	}
 	if sec, idx := m.marketCursorPos(); sec != compsSection || idx != 4 {
@@ -293,6 +294,8 @@ func TestCompsSidesToggle(t *testing.T) {
 	m.deriveMarketPages()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	m = next.(Model)
+	// 'b' acts on the table the cursor is in, so put it on the comp sheet.
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 
 	// The assertions scope to the comps section: the liquid table's title
 	// above it says BUYLIST too.
@@ -357,7 +360,7 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	if got := m.marketStatus(); !strings.Contains(got, "2/3") {
 		t.Errorf("status = %q, want 2/3 within the profit table", got)
 	}
-	m.cursor[paneCards] = 3 // first comp
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart // first comp
 	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
 		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
@@ -373,8 +376,9 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	m.compsBuySide = false
 }
 
-// ]/[ jump between market tables: straight to the next non-empty
-// section's first row, skipping the empty ones, clamping at the ends.
+// ]/[ jump between market tables, stopping at every one — an empty table
+// keeps its heading, and its heading is where its own keys land — and
+// clamping at the ends.
 func TestMarketTableJumpKeys(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -387,14 +391,23 @@ func TestMarketTableJumpKeys(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 21})
 	m = next.(Model)
 
-	m = key(m, "down") // mid-table, so the jump has something to skip
-	m = key(m, "]")    // over the two empty sections straight to comps
-	if m.cursor[paneCards] != len(m.marketRows) {
+	secs := m.marketSections()
+	m = key(m, "down") // mid-table, so the jump has somewhere to come from
+	m = key(m, "]")    // onto the empty buylist table's heading
+	if m.cursor[paneCards] != secs[market.KindLiquid].curStart {
+		t.Fatalf("cursor = %d, want the empty buylist table's heading", m.cursor[paneCards])
+	}
+	m = key(m, "]") // and on into the comps
+	if m.cursor[paneCards] != secs[compsSection].curStart {
 		t.Fatalf("cursor = %d, want the comps section's first row", m.cursor[paneCards])
 	}
 	m = key(m, "]") // nothing beyond comps: the cursor stays
-	if m.cursor[paneCards] != len(m.marketRows) {
+	if m.cursor[paneCards] != secs[compsSection].curStart {
 		t.Errorf("cursor = %d, want to clamp at the last table", m.cursor[paneCards])
+	}
+	m = key(m, "[") // back onto the buylist heading
+	if m.cursor[paneCards] != secs[market.KindLiquid].curStart {
+		t.Fatalf("cursor = %d, want the empty buylist table's heading", m.cursor[paneCards])
 	}
 	m = key(m, "[") // back to the profit table's first row
 	if m.cursor[paneCards] != 0 {
@@ -835,13 +848,14 @@ func TestMarketTablesPage(t *testing.T) {
 		t.Fatalf("back to page 1 = %q status %q", m.marketRows[0].Card.Name, m.status)
 	}
 
-	m = key(m, "]") // into the comps (the empty liquid table is skipped)
+	m = key(m, "]") // onto the empty liquid table's heading
+	m = key(m, "]") // and into the comps
 	m = key(m, ">")
 	m = key(m, ">")
 	if len(m.marketComps) != 20 || m.marketComps[0].Card.Name != "C100" {
 		t.Fatalf("comps page 3 = %d rows starting %q, want the last twenty", len(m.marketComps), m.marketComps[0].Card.Name)
 	}
-	if m.cursor[paneCards] != len(m.marketRows) {
+	if m.cursor[paneCards] != m.marketSections()[compsSection].curStart {
 		t.Errorf("cursor = %d, want the comps section's first row", m.cursor[paneCards])
 	}
 
@@ -884,7 +898,7 @@ func TestStatusLineLeadsWithPosition(t *testing.T) {
 	m.focus = paneCards
 	m.marketAllComps = []market.Comp{comp("SolC", 50, 45, 40)}
 	m.deriveMarketPages()
-	m.cursor[paneCards] = 0
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 	if got := m.marketStatus(); !strings.Contains(got, "SolC · 1/1") {
 		t.Errorf("market status = %q, want the comp's card leading", got)
 	}
