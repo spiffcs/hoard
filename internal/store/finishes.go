@@ -75,7 +75,8 @@ func (s *Store) RepairFinishes(available map[string][]string) (fixed, ambiguous 
 	defer tx.Rollback()
 
 	rows, err := tx.Query(`
-SELECT e.container_id, ct.name, e.scryfall_id, e.finish, e.board, e.quantity,
+SELECT e.id, e.container_id, ct.name, e.scryfall_id, e.finish, e.condition,
+       e.board, e.quantity,
        c.name, c.set_code, c.collector_number
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
@@ -87,8 +88,10 @@ ORDER BY c.name`)
 	defer rows.Close()
 
 	type target struct {
+		id          int64
 		containerID int64
 		scryfallID  string
+		condition   string
 		board       string
 		from, to    string
 		quantity    int
@@ -97,8 +100,9 @@ ORDER BY c.name`)
 	for rows.Next() {
 		var t target
 		var f FinishFix
-		if err := rows.Scan(&t.containerID, &f.Container, &t.scryfallID, &t.from,
-			&t.board, &t.quantity, &f.Name, &f.SetCode, &f.CollectorNumber); err != nil {
+		if err := rows.Scan(&t.id, &t.containerID, &f.Container, &t.scryfallID, &t.from,
+			&t.condition, &t.board, &t.quantity,
+			&f.Name, &f.SetCode, &f.CollectorNumber); err != nil {
 			return nil, nil, err
 		}
 		finishes, known := available[t.scryfallID]
@@ -132,20 +136,24 @@ ORDER BY c.name`)
 
 	for _, t := range todo {
 		// Insert-then-delete rather than UPDATE: the corrected finish may
-		// already exist for this card in this container, and the primary key
+		// already exist for this card in this container, and the uniqueness
 		// includes finish. Merging the quantities is the only correct outcome.
+		//
+		// The condition rides along untouched — repairing a finish says nothing
+		// about a card's wear, and a row lands in its own condition's bucket.
 		if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`,
-			t.containerID, t.scryfallID, t.to, t.board, t.quantity); err != nil {
+			t.containerID, t.scryfallID, t.to, t.condition, t.board, t.quantity); err != nil {
 			return nil, nil, fmt.Errorf("moving entry to %s: %w", t.to, err)
 		}
-		if _, err := tx.Exec(`
-DELETE FROM card_entries
-WHERE container_id=? AND scryfall_id=? AND finish=? AND board=?`,
-			t.containerID, t.scryfallID, t.from, t.board); err != nil {
+		// By id, not by column list. The old form matched on
+		// (container, card, finish, board), which since v23 names every condition
+		// bucket of that card at once — repairing one row would have deleted
+		// the others.
+		if _, err := tx.Exec(`DELETE FROM card_entries WHERE id = ?`, t.id); err != nil {
 			return nil, nil, fmt.Errorf("removing old %s entry: %w", t.from, err)
 		}
 	}

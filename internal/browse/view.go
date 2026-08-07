@@ -466,6 +466,13 @@ func (m Model) cardLines(width int) []string {
 			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim(), Width: w.price},
 			{Title: "VALUE", Align: ui.Right, Width: w.value},
 		}
+		// COND is declared unconditionally and hides itself: the table drops a
+		// droppable column whose every cell is a dash, so it costs nothing
+		// until something is actually assessed. It has to be *declared*
+		// regardless, because since schema v23 a card held in two conditions is
+		// two rows, and without the column they read as one row printed twice.
+		cols = slices.Insert(cols, 4,
+			ui.Col{Title: "COND", Align: ui.Left, Priority: 3, Style: env.Dim()})
 		if inDeck {
 			// Board only means something inside a deck; against loose holdings
 			// it would be a column of blanks. It follows the name block (name
@@ -484,6 +491,9 @@ func (m Model) cardLines(width int) []string {
 				ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
 				ui.C(ui.Money(c.Value)),
 			}
+			// Inserted in the same order the columns were, so the two edits
+			// cannot drift: COND at 4 first, then BOARD at 2 shifts it along.
+			cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
 			if inDeck {
 				cells = slices.Insert(cells, 2, ui.C(c.Board))
 			}

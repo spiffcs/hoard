@@ -8,7 +8,7 @@ func TestSetHoldingQuantity(t *testing.T) {
 		t.Fatalf("AddCard: %v", err)
 	}
 
-	prev, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", 5)
+	prev, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", ConditionUnknown, 5)
 	if err != nil {
 		t.Fatalf("SetHoldingQuantity: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestSetHoldingQuantityZeroRemovesTheEntry(t *testing.T) {
 	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	if _, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", 0); err != nil {
+	if _, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", ConditionUnknown, 0); err != nil {
 		t.Fatalf("SetHoldingQuantity: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestSetHoldingQuantityHandlesEtched(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 
-	if _, err := s.SetHoldingQuantity("ulamog-id", "etched", 4); err != nil {
+	if _, err := s.SetHoldingQuantity("ulamog-id", "etched", ConditionUnknown, 4); err != nil {
 		t.Fatalf("SetHoldingQuantity etched: %v", err)
 	}
 	held := heldByFinish(t, s, "ulamog-id")
@@ -71,7 +71,7 @@ func TestSetHoldingQuantityHandlesEtched(t *testing.T) {
 
 func TestSetHoldingQuantityRejectsUnknownFinish(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", 1); err == nil {
+	if _, err := s.SetHoldingQuantity("ulamog-id", "nonfoil", ConditionUnknown, 1); err == nil {
 		t.Error("want an error for Scryfall's spelling of normal, got nil")
 	}
 }

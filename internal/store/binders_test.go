@@ -177,7 +177,7 @@ func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", "nonfoil", 5)
+	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", "nonfoil", ConditionUnknown, 5)
 	if err != nil {
 		t.Fatalf("SetHoldingQuantityIn: %v", err)
 	}

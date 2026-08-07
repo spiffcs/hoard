@@ -141,8 +141,10 @@ func storeAdder(st *store.Store) tui.Adder {
 		// read committed the nonfoil default, and a later look read it.
 		if res.ReplacesFinish != "" && res.ReplacesFinish != res.Finish {
 			if res.ContainerID != 0 {
+				// The scan only ever corrects what it just wrote, which is
+				// unassessed by construction: a camera cannot judge wear.
 				_, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
-					res.ReplacesFinish, res.Finish)
+					res.ReplacesFinish, res.Finish, store.ConditionUnknown)
 				return err
 			}
 			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)

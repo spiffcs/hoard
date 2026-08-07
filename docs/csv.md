@@ -90,6 +90,52 @@ guessing — a wrong guess silently mangles quantities and finishes.
 map to the three values hoard stores. Anything unrecognized becomes `nonfoil`
 deliberately: an invented foil would claim a price that may not exist.
 
+### Condition: what is accepted, and what it becomes
+
+hoard stores six values. Five are conditions — MTGJSON's, which are
+TCGplayer's — and the sixth means nobody has said:
+
+```
+unknown · nm · lp · mp · hp · dmg
+```
+
+Two different condition scales arrive in exports, and they are not the same scale.
+Everything below is translated on the way in:
+
+| your file says | hoard stores | |
+|---|---|---|
+| `Near Mint`, `NM`, `NM-Mint`, `Mint`, `MT`, `M` | `nm` | Mint folds down — neither MTGJSON nor TCGplayer has anything above near mint |
+| `Lightly Played`, `LP` | `lp` | |
+| `Good (Lightly Played)`, `Good/Lightly Played`, `SP` | `lp` | Moxfield's own long and short forms — it abbreviates this one `SP`, not `LP` |
+| `Slightly Played` | `lp` | Cardsphere's name for the same one |
+| `Excellent`, `EX`, `Good`, `GD`, `G` | `lp` | Cardmarket values, folded |
+| `Light Played` | `lp` | **see the ambiguity below** |
+| `Moderately Played`, `MP` | `mp` | |
+| `Played`, `PL` | `mp` | Cardmarket's bare "Played" |
+| `Heavily Played`, `HP` | `hp` | |
+| `Damaged`, `DMG`, `D` | `dmg` | |
+| `Poor`, `PO` | `dmg` | |
+| *(blank)* | `unknown` | the ordinary case, not a loss |
+| anything else — `Pristine`, `BGS 10`, `graded 9.5` | `unknown` | **not** a guess; see [graded-cards.md](graded-cards.md) |
+
+Case and underscores do not matter: `near_mint`, `Near Mint` and `NEAR MINT` are
+the same value. That is what makes ManaBox's `near_mint` and Moxfield's
+`Near Mint` land together.
+
+**The one real ambiguity.** Cardmarket's `Light Played` sits a step *below*
+TCGplayer's `Lightly Played`, and the two strings are nearly identical. Both fold
+to `lp` — the commoner reading. This is a deliberate choice, and a cheap one:
+condition does not affect value in hoard, so a value that lands one step generous
+mislabels a card but cannot misprice it.
+
+**Anything hoard cannot place becomes `unknown`, never a guess.** A professional
+grade (`BGS 10` — a different concept, see [graded-cards.md](graded-cards.md))
+or a vocabulary hoard does not know is not silently rounded to
+near mint — it is recorded as unsaid and reported, so you can see it happened.
+
+Folded and unplaceable rows are both counted and reported. Blank cells and near
+mint are not, since neither loses anything.
+
 ### What an import drops, and why it tells you
 
 Three columns carry real information hoard cannot store: **condition**,

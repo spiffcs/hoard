@@ -39,7 +39,7 @@ type Editor interface {
 	RenameBinder(id int64, name string) error
 	DeleteBinder(id int64) error
 
-	SetHoldingQuantityIn(containerID int64, scryfallID, finish string, qty int) (int, error)
+	SetHoldingQuantityIn(containerID int64, scryfallID, finish, condition string, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)
 	RestoreHoldings(scryfallID string, holdings []store.Holding) error
 	RemoveContainer(id int64) (int64, error)
@@ -48,8 +48,9 @@ type Editor interface {
 	// The detail's held-row editor: moving one row to another printing,
 	// binder, or finish (merging on collision), and storing the printing
 	// it moves to.
-	MoveEntry(fromContainer int64, scryfallID, finish string, toContainer int64, toScryfallID string) (int, error)
-	MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish string) (int, error)
+	MoveEntry(fromContainer int64, scryfallID, finish, condition string, toContainer int64, toScryfallID string) (int, error)
+	MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish, condition string) (int, error)
+	MoveEntryCondition(containerID int64, scryfallID, finish, fromCondition, toCondition string) (int, error)
 	UpsertPrintings(cards []scryfall.Card) error
 }
 

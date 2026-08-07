@@ -15,17 +15,26 @@ import (
 // Zero deletes the entry rather than storing a zero, so "held in no copies" and
 // "not held" stay one state. The previous quantity comes back so a caller can
 // offer undo without a second query.
-func (s *Store) SetHoldingQuantity(scryfallID, finish string, qty int) (previous int, err error) {
+func (s *Store) SetHoldingQuantity(scryfallID, finish, condition string, qty int) (previous int, err error) {
 	cid, err := s.collectionID()
 	if err != nil {
 		return 0, err
 	}
-	return s.SetHoldingQuantityIn(cid, scryfallID, finish, qty)
+	return s.SetHoldingQuantityIn(cid, scryfallID, finish, condition, qty)
 }
 
 // SetHoldingQuantityIn is SetHoldingQuantity against a chosen binder.
-func (s *Store) SetHoldingQuantityIn(containerID int64, scryfallID, finish string, qty int) (previous int, err error) {
+//
+// The condition is part of which row is addressed, not decoration: since schema
+// v23 a card held near mint and lightly played is two rows, and a statement that
+// named only the finish would land on whichever the query happened to return
+// first — and delete both on the way to zero.
+func (s *Store) SetHoldingQuantityIn(containerID int64, scryfallID, finish, condition string, qty int) (previous int, err error) {
 	if err := validFinish(finish); err != nil {
+		return 0, err
+	}
+	condition = orUnknown(condition)
+	if err := validCondition(condition); err != nil {
 		return 0, err
 	}
 	cid := containerID
@@ -38,8 +47,9 @@ func (s *Store) SetHoldingQuantityIn(containerID int64, scryfallID, finish strin
 
 	err = tx.QueryRow(`
 SELECT quantity FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		cid, scryfallID, finish).Scan(&previous)
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		cid, scryfallID, finish, condition).Scan(&previous)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
@@ -47,19 +57,20 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 	if qty <= 0 {
 		if _, err := tx.Exec(`
 DELETE FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-			cid, scryfallID, finish); err != nil {
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+			cid, scryfallID, finish, condition); err != nil {
 			return 0, err
 		}
 		return previous, tx.Commit()
 	}
 
 	if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = excluded.quantity`,
-		cid, scryfallID, finish, qty); err != nil {
+		cid, scryfallID, finish, condition, qty); err != nil {
 		return 0, err
 	}
 	return previous, tx.Commit()
@@ -70,7 +81,8 @@ DO UPDATE SET quantity = excluded.quantity`,
 // already exists — two listings of one physical pile must sum. Returns the
 // destination's previous quantity so the caller can offer an exact undo.
 // The destination printing must already be in cards.
-func (s *Store) MoveEntry(fromContainer int64, scryfallID, finish string, toContainer int64, toScryfallID string) (prevTarget int, err error) {
+func (s *Store) MoveEntry(fromContainer int64, scryfallID, finish, condition string, toContainer int64, toScryfallID string) (prevTarget int, err error) {
+	condition = orUnknown(condition)
 	if fromContainer == toContainer && scryfallID == toScryfallID {
 		return 0, nil
 	}
@@ -83,8 +95,9 @@ func (s *Store) MoveEntry(fromContainer int64, scryfallID, finish string, toCont
 	var qty int
 	err = tx.QueryRow(`
 SELECT quantity FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		fromContainer, scryfallID, finish).Scan(&qty)
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		fromContainer, scryfallID, finish, condition).Scan(&qty)
 	if err == sql.ErrNoRows {
 		return 0, fmt.Errorf("no such holding to move")
 	}
@@ -93,24 +106,26 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 	}
 	err = tx.QueryRow(`
 SELECT quantity FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		toContainer, toScryfallID, finish).Scan(&prevTarget)
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		toContainer, toScryfallID, finish, condition).Scan(&prevTarget)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
 
 	if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`,
-		toContainer, toScryfallID, finish, qty); err != nil {
+		toContainer, toScryfallID, finish, condition, qty); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(`
 DELETE FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		fromContainer, scryfallID, finish); err != nil {
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		fromContainer, scryfallID, finish, condition); err != nil {
 		return 0, err
 	}
 	return prevTarget, tx.Commit()
@@ -120,10 +135,14 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 // editor — merging with any copies already held in the target finish of the
 // same container. Returns the merged-into quantity before the move, so an
 // undo can put both sides back.
-func (s *Store) MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish string) (prevTarget int, err error) {
+func (s *Store) MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFinish, condition string) (prevTarget int, err error) {
 	if fromFinish == toFinish {
 		return 0, nil
 	}
+	// The condition rides across untouched. Correcting a finish says nothing
+	// about a card's wear, and resetting it would quietly discard an
+	// assessment the user made.
+	condition = orUnknown(condition)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -133,8 +152,9 @@ func (s *Store) MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFin
 	var qty int
 	err = tx.QueryRow(`
 SELECT quantity FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		containerID, scryfallID, fromFinish).Scan(&qty)
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, fromFinish, condition).Scan(&qty)
 	if err == sql.ErrNoRows {
 		return 0, fmt.Errorf("no such holding to move")
 	}
@@ -143,24 +163,26 @@ WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
 	}
 	err = tx.QueryRow(`
 SELECT quantity FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		containerID, scryfallID, toFinish).Scan(&prevTarget)
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, toFinish, condition).Scan(&prevTarget)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
 
 	if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`,
-		containerID, scryfallID, toFinish, qty); err != nil {
+		containerID, scryfallID, toFinish, condition, qty); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(`
 DELETE FROM card_entries
-WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND board = 'main'`,
-		containerID, scryfallID, fromFinish); err != nil {
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, fromFinish, condition); err != nil {
 		return 0, err
 	}
 	return prevTarget, tx.Commit()
@@ -173,7 +195,69 @@ func (s *Store) MoveCardFinish(scryfallID, fromFinish, toFinish string) (prevTar
 	if err != nil {
 		return 0, err
 	}
-	return s.MoveEntryFinish(cid, scryfallID, fromFinish, toFinish)
+	// The scan flow's correction only ever touches what it just added, which
+	// is unassessed by construction — a camera cannot judge wear.
+	return s.MoveEntryFinish(cid, scryfallID, fromFinish, toFinish, ConditionUnknown)
+}
+
+// MoveEntryCondition re-keys a holding's condition in place — the detail's
+// condition editor — merging with any copies already held in that condition of
+// the same container and finish. Returns the merged-into quantity before the
+// move, so an undo can put both sides back.
+//
+// The mirror of MoveEntryFinish, and deliberately so: the two answer the same
+// shape of question, and a reader who has understood one has understood both.
+func (s *Store) MoveEntryCondition(containerID int64, scryfallID, finish, fromCondition, toCondition string) (prevTarget int, err error) {
+	fromCondition, toCondition = orUnknown(fromCondition), orUnknown(toCondition)
+	if fromCondition == toCondition {
+		return 0, nil
+	}
+	if err := validCondition(toCondition); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var qty int
+	err = tx.QueryRow(`
+SELECT quantity FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, finish, fromCondition).Scan(&qty)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("no such holding to move")
+	}
+	if err != nil {
+		return 0, err
+	}
+	err = tx.QueryRow(`
+SELECT quantity FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, finish, toCondition).Scan(&prevTarget)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	if _, err := tx.Exec(`
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+DO UPDATE SET quantity = quantity + excluded.quantity`,
+		containerID, scryfallID, finish, toCondition, qty); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`
+DELETE FROM card_entries
+WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
+  AND board = 'main'`,
+		containerID, scryfallID, finish, fromCondition); err != nil {
+		return 0, err
+	}
+	return prevTarget, tx.Commit()
 }
 
 // RemoveFromCollection drops every entry for a printing from the loose
@@ -204,8 +288,11 @@ func (s *Store) RemoveFromBinder(containerID int64, scryfallID string) ([]Holdin
 	}
 	defer tx.Rollback()
 
+	// condition rides the payload: without it an undo restores every condition
+	// bucket of this card as one unassessed row, silently merging what the user
+	// had told hoard apart.
 	rows, err := tx.Query(`
-SELECT finish, board, quantity FROM card_entries
+SELECT finish, condition, board, quantity FROM card_entries
 WHERE container_id = ? AND scryfall_id = ?`, cid, scryfallID)
 	if err != nil {
 		return nil, fmt.Errorf("reading entries for %s: %w", scryfallID, err)
@@ -213,7 +300,7 @@ WHERE container_id = ? AND scryfall_id = ?`, cid, scryfallID)
 	var removed []Holding
 	for rows.Next() {
 		h := Holding{ContainerID: cid, ContainerKind: KindCollection}
-		if err := rows.Scan(&h.Finish, &h.Board, &h.Quantity); err != nil {
+		if err := rows.Scan(&h.Finish, &h.Condition, &h.Board, &h.Quantity); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -253,9 +340,9 @@ func (s *Store) RestoreHoldings(scryfallID string, holdings []Holding) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = excluded.quantity`)
 	if err != nil {
 		return err
@@ -263,7 +350,8 @@ DO UPDATE SET quantity = excluded.quantity`)
 	defer stmt.Close()
 
 	for _, h := range holdings {
-		if _, err := stmt.Exec(h.ContainerID, scryfallID, h.Finish, h.Board, h.Quantity); err != nil {
+		if _, err := stmt.Exec(h.ContainerID, scryfallID, h.Finish, h.Condition,
+			h.Board, h.Quantity); err != nil {
 			return fmt.Errorf("restoring %s (%s): %w", scryfallID, h.Finish, err)
 		}
 	}

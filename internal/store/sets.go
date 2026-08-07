@@ -57,14 +57,14 @@ ORDER BY MAX(c.released_at) DESC, c.set_code`)
 func (s *Store) SetByFinish(setCode string) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish,
+       e.finish, e.condition,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
 WHERE c.set_code = ?
-GROUP BY c.scryfall_id, e.finish
+GROUP BY c.scryfall_id, e.finish, e.condition
 ORDER BY value DESC, c.name`, setCode)
 	if err != nil {
 		return nil, fmt.Errorf("listing set %s: %w", setCode, err)

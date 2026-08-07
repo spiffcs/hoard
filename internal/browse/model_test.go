@@ -28,6 +28,10 @@ import (
 // fakeStore drives the model without a database, the way internal/tui's tests
 // drive the add cascade with a fake Searcher.
 type fakeStore struct {
+	// movedCondition records the last MoveEntryCondition as "from→to", so the
+	// editor test can assert the row's own condition reached the store.
+	movedCondition string
+
 	totals     store.CollectionTotals
 	decks      []store.DeckSummary
 	collection []store.CollectionRow
@@ -450,7 +454,9 @@ func (f *fakeStore) DeleteBinder(id int64) error {
 // database, so an edit followed by an undo is observable end to end. The
 // container is honored, so an edit aimed at one binder of several is
 // observable as such.
-func (f *fakeStore) SetHoldingQuantityIn(cid int64, id, finish string, qty int) (int, error) {
+// The fake ignores condition: every row it holds is unassessed, which is what
+// the browse tests exercise. The signature matches so the interface is honored.
+func (f *fakeStore) SetHoldingQuantityIn(cid int64, id, finish, _ string, qty int) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -481,9 +487,19 @@ func (f *fakeStore) SetHoldingQuantityIn(cid int64, id, finish string, qty int) 
 	return previous, nil
 }
 
+// MoveEntryCondition mirrors MoveEntryFinish: the fake's rows carry no
+// condition, so a move between conditions is a no-op it reports honestly.
+func (f *fakeStore) MoveEntryCondition(cid int64, id, finish, fromCondition, toCondition string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	f.movedCondition = fromCondition + "→" + toCondition
+	return 0, nil
+}
+
 // MoveEntry re-points one row the way the store does: remove from the
 // source slice, merge into the destination, previous target quantity back.
-func (f *fakeStore) MoveEntry(fromC int64, id, finish string, toC int64, toID string) (int, error) {
+func (f *fakeStore) MoveEntry(fromC int64, id, finish, _ string, toC int64, toID string) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -542,7 +558,7 @@ func (f *fakeStore) MoveEntry(fromC int64, id, finish string, toC int64, toID st
 // MoveEntryFinish mirrors the store's finish re-key against the fake's
 // row model: remove the source row, merge into (or create) the target
 // finish in the same container.
-func (f *fakeStore) MoveEntryFinish(cid int64, id, fromFinish, toFinish string) (int, error) {
+func (f *fakeStore) MoveEntryFinish(cid int64, id, fromFinish, toFinish, _ string) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}

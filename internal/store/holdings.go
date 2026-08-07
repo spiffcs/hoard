@@ -21,6 +21,61 @@ func validFinish(finish string) error {
 	return fmt.Errorf("invalid finish %q", finish)
 }
 
+// Conditions are the wear a holding can carry, worst-known to best.
+//
+// The vocabulary is MTGJSON's, which is TCGplayer's: TcgplayerSkus.json
+// publishes exactly these five across every SKU it lists (it also lists
+// UNOPENED, which describes sealed product rather than a card). Borrowing it
+// rather than inventing one means a condition hoard stores is a condition the
+// price feeds already speak.
+//
+// Condition is wear, self- or seller-assessed. It is not a professional grade —
+// a number a third party attests to and seals in a slab. That is a separate
+// concept hoard does not model yet; see docs/graded-cards.md. Nothing in this
+// package should use the two words interchangeably.
+const (
+	// ConditionUnknown means nobody has said, and is hoard's own: no source
+	// models it, because every one of them describes a product for sale and a
+	// product for sale always states one. A hoard is not a shop — a camera
+	// cannot assess wear, and most holdings arrive with nothing said.
+	//
+	// Storing 'nm' for those would throw away the difference between a copy
+	// someone checked and one nobody looked at, which is not recoverable
+	// afterwards. Spelling it as a word rather than '' is for whoever reads
+	// this column by hand: an empty string is indistinguishable from a NULL, a
+	// trimmed value, or a bug, and this is none of those.
+	ConditionUnknown = "unknown"
+	ConditionNM      = "nm"
+	ConditionLP      = "lp"
+	ConditionMP      = "mp"
+	ConditionHP      = "hp"
+	ConditionDamaged = "dmg"
+)
+
+// orUnknown fills in the condition for a caller that named none.
+//
+// Every writer binds condition explicitly rather than leaning on the column
+// default, so the value is visible at the call site — but a zero-valued struct
+// field is a Go idiom the schema should not have to interpret, and `”` is not
+// in the vocabulary. This is the one place the two meet.
+func orUnknown(condition string) string {
+	if condition == "" {
+		return ConditionUnknown
+	}
+	return condition
+}
+
+// validCondition rejects a condition card_entries cannot hold. One definition, for
+// the same reason validFinish has one: a writer added later cannot admit a
+// value the rest of the schema disagrees with.
+func validCondition(condition string) error {
+	switch condition {
+	case ConditionUnknown, ConditionNM, ConditionLP, ConditionMP, ConditionHP, ConditionDamaged:
+		return nil
+	}
+	return fmt.Errorf("invalid condition %q", condition)
+}
+
 // AddCardFinish ensures the card is in the catalog and adds qty copies of the
 // given finish ("nonfoil", "foil", or "etched") to the default binder.
 func (s *Store) AddCardFinish(c scryfall.Card, finish string, qty int) error {
@@ -48,9 +103,9 @@ func (s *Store) AddCardFinishTo(containerID int64, c scryfall.Card, finish strin
 		return err
 	}
 	if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, 'unknown', 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`,
 		cid, c.ID, finish, qty); err != nil {
 		return fmt.Errorf("adding %s to collection: %w", c.Name, err)
@@ -58,12 +113,19 @@ DO UPDATE SET quantity = quantity + excluded.quantity`,
 	return tx.Commit()
 }
 
-// CollectionRow is one loose-collection holding: a printing in one finish.
+// CollectionRow is one loose-collection holding: a printing in one finish, in
+// one condition.
 type CollectionRow struct {
 	Card
-	Finish   string
-	Quantity int
-	Value    float64
+	Finish string
+	// Condition is the card's wear, 'unknown' when nobody has said. It splits a
+	// row: two copies in different conditions are two holdings, the whole reason
+	// schema v23 widened the bucket. Views about what a card is *worth* — the
+	// comp sheet, the unpriced list — deliberately do not split on it, since no
+	// source hoard reads prices by condition.
+	Condition string
+	Quantity  int
+	Value     float64
 }
 
 // Price is the market price for this row's finish.
@@ -93,14 +155,14 @@ func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 func (s *Store) BinderByFinish(containerID int64) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish,
+       e.finish, e.condition,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
 WHERE e.container_id = ?
-GROUP BY c.scryfall_id, e.finish
+GROUP BY c.scryfall_id, e.finish, e.condition
 ORDER BY value DESC, c.name`, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("listing collection: %w", err)
@@ -114,13 +176,13 @@ ORDER BY value DESC, c.name`, containerID)
 func (s *Store) AllByFinish() ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT ` + cardCols(altSourceForEntry) + `,
-       e.finish,
+       e.finish, e.condition,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * ` + entryValue + `) AS value
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 ` + altJoinCards + `
-GROUP BY c.scryfall_id, e.finish
+GROUP BY c.scryfall_id, e.finish, e.condition
 ORDER BY value DESC, c.name`)
 	if err != nil {
 		return nil, fmt.Errorf("listing all holdings: %w", err)
@@ -137,7 +199,7 @@ func scanCollectionRows(rows *sql.Rows) ([]CollectionRow, error) {
 		var r CollectionRow
 		var aux cardAux
 		if err := rows.Scan(append(cardScanDest(&r.Card, &aux),
-			&r.Finish, &r.Quantity, &r.Value)...); err != nil {
+			&r.Finish, &r.Condition, &r.Quantity, &r.Value)...); err != nil {
 			return nil, err
 		}
 		aux.apply(&r.Card)
@@ -150,6 +212,11 @@ func scanCollectionRows(rows *sql.Rows) ([]CollectionRow, error) {
 //
 // Per finish rather than per card because vendor quotes are per finish: a shop
 // buying the non-foil says nothing about what it pays for the foil.
+//
+// Deliberately *not* per condition, unlike CollectionRow. This is a pricing
+// view — it feeds the comp sheet and the market sections — and no source hoard
+// reads prices by condition, so splitting would emit two rows carrying the same
+// numbers and invite a reader to think the conditions were priced apart.
 type OwnedFinish struct {
 	ScryfallID      string
 	MTGJSONUUID     string

@@ -75,11 +75,16 @@ type card struct {
 	SetCode         string
 	CollectorNumber string
 	Finish          string
-	Board           string
-	Quantity        int
-	Price           *float64
-	Value           float64
-	AltSource       string
+	// Condition is the card's wear, "unknown" when nobody has said. It is part
+	// of what makes this row distinct: since schema v23 a card held in two
+	// conditions is two holdings, and the COND column exists so they do not
+	// read as one row printed twice.
+	Condition string
+	Board     string
+	Quantity  int
+	Price     *float64
+	Value     float64
+	AltSource string
 	// ColorIdentity is the WUBRG identity, nil when unknown — same
 	// semantics as store.Card.ColorIdentity.
 	ColorIdentity []string
@@ -512,7 +517,8 @@ func (m *Model) loadCards() error {
 			out = append(out, card{
 				ScryfallID: r.ScryfallID, Name: r.Name, SetCode: r.SetCode,
 				CollectorNumber: r.CollectorNumber, Finish: r.Finish,
-				Quantity: r.Quantity, Price: r.Price(), Value: r.Value,
+				Condition: r.Condition,
+				Quantity:  r.Quantity, Price: r.Price(), Value: r.Value,
 				AltSource: r.AltSource, ColorIdentity: r.ColorIdentity,
 				Treatment: r.Treatment,
 			})
@@ -533,7 +539,8 @@ func (m *Model) loadCards() error {
 		for _, e := range store.EntriesByValue(entries) {
 			out = append(out, card{
 				ScryfallID: e.Card.ScryfallID, Name: e.Card.Name, SetCode: e.Card.SetCode,
-				CollectorNumber: e.Card.CollectorNumber, Finish: e.Finish, Board: e.Board,
+				CollectorNumber: e.Card.CollectorNumber, Finish: e.Finish,
+				Condition: e.Condition, Board: e.Board,
 				Quantity: e.Quantity, Price: e.Price(), Value: e.Value(),
 				AltSource: e.Card.AltSource, ColorIdentity: e.Card.ColorIdentity,
 				Treatment: e.Card.Treatment,

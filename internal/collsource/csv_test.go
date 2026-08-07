@@ -170,3 +170,83 @@ func TestBOMAndEmptyFilesAreHandled(t *testing.T) {
 		t.Error("header-only file parsed, want a no-cards error")
 	}
 }
+
+// normCondition is where two condition scales meet. Every value below was taken
+// from a real export or is the abbreviation apps write for one.
+func TestNormCondition(t *testing.T) {
+	for in, want := range map[string]string{
+		// TCGplayer's five — Moxfield, Delver, and hoard's own vocabulary.
+		"Near Mint":      "nm",
+		"NM":             "nm",
+		"Lightly Played": "lp",
+		"LP":             "lp",
+
+		// Moxfield spells this one three ways and abbreviates it SP, not LP;
+		// Cardsphere calls it Slightly Played. Every one of these appears in a
+		// real export and every one used to read as unknown.
+		"Good (Lightly Played)": "lp",
+		"Good/Lightly Played":   "lp",
+		"SP":                    "lp",
+		"Slightly Played":       "lp",
+
+		"Moderately Played": "mp",
+		"MP":                "mp",
+		"Heavily Played":    "hp",
+		"HP":                "hp",
+		"Damaged":           "dmg",
+		"DMG":               "dmg",
+
+		// Cardmarket's seven, as ManaBox writes them. Mint folds down because
+		// neither MTGJSON nor TCGplayer has anything above near mint.
+		"mint":         "nm",
+		"near_mint":    "nm",
+		"excellent":    "lp",
+		"good":         "lp",
+		"light_played": "lp",
+		"played":       "mp",
+		"poor":         "dmg",
+
+		// Nothing said, and something said that no scale uses. Both read as
+		// unknown: a condition hoard cannot place is not one it should invent.
+		"":           "unknown",
+		"   ":        "unknown",
+		"Pristine":   "unknown",
+		"graded 9.5": "unknown",
+		"BGS 10":     "unknown",
+	} {
+		if got := normCondition(in); got != want {
+			t.Errorf("normCondition(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The one genuine collision between the scales, called out so a future change
+// cannot quietly pick the other reading. Cardmarket's "light played" sits a
+// step below TCGplayer's "lightly played", and the strings are nearly the
+// same; both fold to lp, the commoner reading. It mislabels rather than
+// misprices, because condition does not affect value.
+func TestNormConditionFoldsTheAmbiguousLightPlayed(t *testing.T) {
+	if got := normCondition("lightly played"); got != "lp" {
+		t.Errorf("TCGplayer lightly played = %q, want lp", got)
+	}
+	if got := normCondition("light played"); got != "lp" {
+		t.Errorf("Cardmarket light played = %q, want lp (the commoner reading)", got)
+	}
+}
+
+// An import reports what it could not carry exactly, so a seven-value export
+// folded onto five says so rather than arriving quietly. A blank cell is the
+// ordinary case and is not a loss; near mint is what hoard would have assumed
+// anyway; anything else — folded or unplaceable — is worth a line.
+func TestInformativeConditionReportsWhatWasLost(t *testing.T) {
+	for _, quiet := range []string{"", "  ", "Near Mint", "near_mint", "NM", "mint"} {
+		if informativeCondition(quiet) {
+			t.Errorf("informativeCondition(%q) = true, want quiet", quiet)
+		}
+	}
+	for _, loud := range []string{"Lightly Played", "excellent", "good", "played", "poor", "Pristine"} {
+		if !informativeCondition(loud) {
+			t.Errorf("informativeCondition(%q) = false, want reported", loud)
+		}
+	}
+}

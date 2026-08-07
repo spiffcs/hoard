@@ -226,9 +226,84 @@ func normFinish(s string) string {
 	}
 }
 
+// normCondition maps each app's condition column onto the conditions hoard stores
+// (unknown|nm|lp|mp|hp|dmg — MTGJSON's, which are TCGplayer's; see
+// store.validCondition, which is the gate this must satisfy).
+//
+// Two scales arrive here and they are not the same scale.
+//
+//   - TCGplayer's five, which Moxfield and most Delver exports speak:
+//     Near Mint, Lightly Played, Moderately Played, Heavily Played, Damaged.
+//   - Cardmarket's seven, which ManaBox speaks in words: mint, near_mint,
+//     excellent, good, light_played, played, poor.
+//
+// They barely collide, because each scale's middle values are words the other
+// does not use — "excellent" and "good" are only ever Cardmarket, "moderately
+// played" only ever TCGplayer. The one genuine ambiguity is Cardmarket's "light
+// played" against TCGplayer's "lightly played": nearly the same string, a step
+// apart in severity. Both fold to lp, the commoner reading.
+//
+// Folding seven onto five loses precision, and that is acceptable here for a
+// reason worth stating: condition does not affect value in hoard, because no
+// source it reads publishes a per-condition price. A condition that lands one
+// step generous mislabels a card; it cannot misprice one. The import reports the
+// rows it folded rather than folding them silently.
+//
+// Anything unrecognized reads as unknown rather than as a guess — the same
+// instinct as absent-means-unknown everywhere else, and the opposite of
+// normFinish's nonfoil default, which can afford a guess because repair-finishes
+// exists to undo it.
+func normCondition(s string) string {
+	switch strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", " ") {
+	case "":
+		return "unknown"
+
+	// Both scales' top, plus Cardmarket's Mint — hoard has nothing above near
+	// mint because neither MTGJSON nor TCGplayer does.
+	case "near mint", "nm", "nm-mint", "mint", "mt", "m":
+		return "nm"
+
+	// TCGplayer's Lightly Played, and Cardmarket's Excellent and Good, which
+	// sit between it and Near Mint. Cardmarket's own "light played" lands here
+	// too — see the note above.
+	//
+	// Moxfield spells this one three ways and abbreviates it as SP, not LP:
+	// its own documentation gives "Good (Lightly Played)" long and "SP" short,
+	// with LP as an alias. Cardsphere calls it "Slightly Played". All of them
+	// were falling through to unknown, which reads a stated condition as
+	// "nobody said" — the one thing this function exists to prevent.
+	case "lightly played", "light played", "lp",
+		"good (lightly played)", "good/lightly played", "good lightly played",
+		"slightly played", "sp",
+		"excellent", "ex", "good", "gd", "g":
+		return "lp"
+
+	// TCGplayer's Moderately Played, and Cardmarket's bare Played.
+	case "moderately played", "moderate play", "mp", "played", "pl":
+		return "mp"
+
+	case "heavily played", "heavy play", "hp":
+		return "hp"
+
+	case "damaged", "dmg", "d", "poor", "po":
+		return "dmg"
+
+	default:
+		return "unknown"
+	}
+}
+
+// informativeCondition reports whether a cell said something hoard's five
+// five values cannot carry exactly — a condition other than near mint, or a word that
+// normCondition could not place at all. Those are counted and reported, so a
+// seven-value export folded onto five says so instead of arriving quietly.
 func informativeCondition(c string) bool {
-	switch strings.ReplaceAll(strings.ToLower(c), "_", " ") {
-	case "", "near mint", "nm", "mint", "m":
+	switch normCondition(c) {
+	case "unknown":
+		// Only a cell that said *something* is worth reporting: a blank one is
+		// the ordinary case, not a loss.
+		return strings.TrimSpace(c) != ""
+	case "nm":
 		return false
 	}
 	return true

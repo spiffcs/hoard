@@ -42,16 +42,17 @@ ON CONFLICT(source, source_id) DO UPDATE SET
 		return 0, err
 	}
 	stmt, err := tx.Prepare(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`)
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		if _, err := stmt.Exec(id, e.ScryfallID, e.Finish, e.Board, e.Quantity); err != nil {
+		if _, err := stmt.Exec(id, e.ScryfallID, e.Finish, orUnknown(e.Condition),
+			e.Board, e.Quantity); err != nil {
 			return 0, fmt.Errorf("inserting deck entry: %w", err)
 		}
 	}
@@ -69,7 +70,13 @@ FROM containers ct WHERE ct.kind=?`
 func (s *Store) ListDecks() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
-       COUNT(e.scryfall_id) AS distinct_cards,
+       -- COUNT(DISTINCT ...) rather than COUNT(...): the column means distinct
+       -- printings, which is what CollectionTotals has always reported and what
+       -- the JSON model documents. Counting rows instead made a card held in two
+       -- finishes count twice, so the same binder read 194 here and 190 in the
+       -- summary. Condition would have widened that gap again, since a card
+       -- held NM and LP is two rows and one printing.
+       COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
        COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM containers ct
@@ -206,7 +213,7 @@ func escapeLike(s string) string {
 func (s *Store) DeckEntries(containerID int64) ([]EntryView, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish, e.board, e.quantity
+       e.finish, e.condition, e.board, e.quantity
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
@@ -224,7 +231,7 @@ ORDER BY
 		var v EntryView
 		var aux cardAux
 		if err := rows.Scan(append(cardScanDest(&v.Card, &aux),
-			&v.Finish, &v.Board, &v.Quantity)...); err != nil {
+			&v.Finish, &v.Condition, &v.Board, &v.Quantity)...); err != nil {
 			return nil, err
 		}
 		aux.apply(&v.Card)

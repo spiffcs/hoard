@@ -144,16 +144,16 @@ func (m *Model) adjustSetQuantity(delta int) {
 	if want == h.Quantity {
 		return
 	}
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, c.ScryfallID, c.Finish, want)
+	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, c.ScryfallID, c.Finish, h.Condition, want)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	cid, id, finish, name := h.ContainerID, c.ScryfallID, c.Finish, c.Name
+	cid, id, finish, cond, name := h.ContainerID, c.ScryfallID, c.Finish, h.Condition, c.Name
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, previous)
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
 			return err
 		},
 	})
@@ -217,7 +217,7 @@ func (m *Model) removeSetRow(name, id, finish string, binders []store.Holding) {
 		})
 	}
 	for _, h := range binders {
-		previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, id, finish, 0)
+		previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, id, finish, h.Condition, 0)
 		if err != nil {
 			// Whatever was already removed stays undoable: a half-finished
 			// removal the reader cannot reverse is the worse failure.

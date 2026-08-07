@@ -11,7 +11,7 @@ Manage binders and decks all along current market prices in a terminal browser b
 Includes a companion iPhone app that scans cards with your phone's camera and enters them into the collection hands-free.
 
 <p align="center">
- &nbsp;<a href="https://github.com/spiffcs/hoard/actions/workflows/ci.yml" target="_blank"><img alt="CI" src="https://github.com/spiffcs/hoard/actions/workflows/ci.yml/badge.svg"></a>&nbsp;
+ &nbsp;<a href="https://github.com/spiffcs/hoard/actions/workflows/validations.yaml" target="_blank"><img alt="Validations" src="https://github.com/spiffcs/hoard/actions/workflows/validations.yaml/badge.svg"></a>&nbsp;
  &nbsp;<a href="https://goreportcard.com/report/github.com/spiffcs/hoard" target="_blank"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/spiffcs/hoard"></a>&nbsp;
  &nbsp;<a href="https://github.com/spiffcs/hoard" target="_blank"><img alt="GitHub go.mod Go version" src="https://img.shields.io/github/go-mod/go-version/spiffcs/hoard.svg"></a>&nbsp;
  &nbsp;<a href="https://github.com/spiffcs/hoard/blob/master/LICENSE" target="_blank"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>&nbsp;

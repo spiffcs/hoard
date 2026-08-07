@@ -23,8 +23,22 @@ func Bytes(n int64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
-// unknown is shown where a market price hasn't been fetched.
-const unknown = "—"
+// The two marks a column uses when a cell has no ordinary value, and the
+// difference between them. Both exist; conflating them loses information.
+//
+//   - unknown (em dash) says nobody knows: no price was fetched, no document was
+//     stored, nobody assessed the card. The value is genuinely absent.
+//   - suppressed (hyphen) says the value is known and dull. A non-foil card is
+//     definitely non-foil; printing the word down every row buries the handful
+//     of foils that are worth seeing.
+//
+// A reader can tell them apart, which is the point: an em-dash column is a gap
+// in hoard's knowledge and may be worth filling, a hyphen column is just the
+// ordinary case.
+const (
+	unknown    = "—"
+	suppressed = "-"
+)
 
 // Money formats a dollar amount with thousands separators and exactly two
 // decimals: 1901.7 renders as "$1,901.70".
@@ -97,11 +111,12 @@ func group(s string) string {
 
 // Finish labels a card's finish for a column.
 //
-// "nonfoil" renders as a dash: a column reading "nonfoil" down every row is noise,
-// and the foils are what want pointing out.
+// "nonfoil" renders as the suppressed mark, not the unknown one: the card is
+// definitely non-foil. A column reading "nonfoil" down every row is noise, and
+// the foils are what want pointing out.
 func Finish(finish string) string {
 	if finish == "nonfoil" {
-		return "-"
+		return suppressed
 	}
 	return finish
 }
@@ -115,6 +130,28 @@ func FinishTreated(finish, treatment string) string {
 		return treatment
 	}
 	return Finish(finish)
+}
+
+// Condition labels a holding's condition for a column.
+//
+// Condition is wear on a raw card — near mint through damaged — as assessed by
+// whoever owned it. Upper case, because these read as abbreviations, and
+// because it keeps the column visually distinct from the lower-case finish
+// beside it.
+//
+// An unassessed card renders as the *unknown* mark, not the suppressed one:
+// nobody has looked at it, which is a gap rather than a dull-but-known value.
+// That is exactly the distinction Finish's hyphen draws against — a non-foil
+// card is definitely non-foil, an unassessed one is not definitely near mint.
+//
+// The empty string is accepted alongside "unknown" because a zero-valued Go
+// struct field can reach here before the store's orUnknown has normalized it.
+// The column itself is NOT NULL and holds exactly one unknown value.
+func Condition(condition string) string {
+	if condition == "" || condition == "unknown" {
+		return unknown
+	}
+	return strings.ToUpper(condition)
 }
 
 // wubrgOrder is the canonical identity ordering: the color wheel as printed
@@ -165,9 +202,9 @@ func Estimated(s, altSource string) string {
 // Printing is the set/number label shown beside a card's name.
 func Printing(setCode, collectorNumber string) string {
 	// A merged row spanning printings has no one set to name; the unknown
-	// dash beats a bare "/".
+	// mark beats a bare "/".
 	if setCode == "" && collectorNumber == "" {
-		return "—"
+		return unknown
 	}
 	return setCode + "/" + collectorNumber
 }

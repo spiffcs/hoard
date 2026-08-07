@@ -607,6 +607,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// An error banner reports the last thing that went wrong, and the next
+	// keystroke is proof it has been read. The worst offender is the helper's
+	// "no iPhone running Hoardling was found on this network" guidance: three
+	// lines of it, sticky across states, still sitting above the prompt long
+	// after its reader gave up and went back to typing names.
+	//
+	// Cleared here, before dispatch, so it goes for every key in every state —
+	// esc, a hotkey from the help line, ':' opening the drawer, a character in
+	// the name field — while a handler below that sets its own banner still
+	// wins, because it runs after this.
+	//
+	// Errors only. A success receipt ("Added Sol Ring ×1") is a record of what
+	// happened rather than a complaint about it, and typing the next card's
+	// name is no reason to take it away.
+	if m.statusErr {
+		m.status, m.statusErr = "", false
+	}
 	// ctrl+s skips the review item whose cascade is running, wherever it is:
 	// one unwanted card should cost a keystroke, not the session. Gated on the
 	// list's filter, which must keep every printable.

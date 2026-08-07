@@ -86,6 +86,64 @@ func (t Table) gutter() int {
 	return t.Gutter
 }
 
+// blankColumns marks the columns whose every cell says nothing, so the fit can
+// leave them out.
+//
+// A column of dashes is width spent on the absence of information. The FINISH
+// column against a binder with no foils, or COND before anything has been
+// assessed, is a header and a rule of hyphens telling the reader what they
+// already know — and it is taken from the card names, which is the column
+// people are actually reading.
+//
+// Only droppable columns qualify. Priority > 0 is the table's existing way of
+// saying "this one is optional under pressure", so the same declaration serves
+// here: NAME, VALUE and anything else a table insists on are never dropped,
+// however empty they look. That is deliberate — a VALUE column of dashes still
+// says "these are worth nothing known", which is a fact about the hoard rather
+// than about the column.
+//
+// The mask is computed before the fit and seeds it, so the width a blank column
+// would have taken goes to the card names rather than being left as a gap.
+//
+// Scope is the whole table, not the visible page: an interactive list builds one
+// Table from every row and slices the rendered lines afterwards, so a column
+// cannot appear and vanish as the cursor moves.
+func (t Table) blankColumns() []bool {
+	drop := make([]bool, len(t.Cols))
+	for i, c := range t.Cols {
+		if c.Priority == 0 {
+			continue
+		}
+		blank := true
+		for _, r := range t.Rows {
+			if r.Spacer || i >= len(r.Cells) {
+				continue
+			}
+			if !saysNothing(r.Cells[i].Text) {
+				blank = false
+				break
+			}
+		}
+		drop[i] = blank
+	}
+	return drop
+}
+
+// saysNothing reports whether a cell carries information worth a column.
+//
+// Both marks count, for different reasons — see the constants in format.go.
+// A column of em dashes is entirely unknown; a column of hyphens is entirely
+// the dull default. Neither tells a reader anything they could act on, which is
+// the test here. The distinction between the two still matters everywhere else,
+// and is why they are separate characters rather than one.
+func saysNothing(text string) bool {
+	switch strings.TrimSpace(text) {
+	case "", suppressed, unknown:
+		return true
+	}
+	return false
+}
+
 // natural returns each column's unconstrained width: the widest of its title
 // and its cells, capped at Col.Max.
 func (t Table) natural() []int {
@@ -132,11 +190,17 @@ func (t Table) natural() []int {
 // returns natural widths rather than rendering unreadably narrow cells.
 //
 // keep[i] reports whether column i is rendered at all.
-func fitColumns(cols []Col, natural []int, gutter int, env Env) (widths []int, keep []bool) {
+//
+// drop marks columns already ruled out before any width is considered — the
+// blank ones. They are excluded from the fit rather than removed after it, so
+// the space they would have taken goes to the flexible column instead of being
+// left as a gap. Dropping afterwards truncated card names to make room for a
+// column of dashes that was then thrown away.
+func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (widths []int, keep []bool) {
 	widths = append([]int(nil), natural...)
 	keep = make([]bool, len(cols))
 	for i := range keep {
-		keep[i] = true
+		keep[i] = i >= len(drop) || !drop[i]
 	}
 
 	// Unlimited width, or a non-terminal: render everything at natural width.
@@ -257,7 +321,7 @@ func (t Table) Lines() []string {
 	if len(t.Cols) == 0 {
 		return nil
 	}
-	widths, keep := fitColumns(t.Cols, t.natural(), t.gutter(), t.Env)
+	widths, keep := fitColumns(t.Cols, t.natural(), t.gutter(), t.Env, t.blankColumns())
 
 	out := make([]string, 0, len(t.Rows)+1)
 	if t.Header {

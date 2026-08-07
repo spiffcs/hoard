@@ -50,6 +50,7 @@ var migrations = []migration{
 	{20, vendorProductIDs},
 	{21, etchedPrices},
 	{22, cardLanguage},
+	{23, holdingCondition},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -439,6 +440,67 @@ ALTER TABLE cards ADD COLUMN lang TEXT
     GENERATED ALWAYS AS (json_extract(raw_json,'$.lang')) VIRTUAL;
 ALTER TABLE cards ADD COLUMN printed_name TEXT
     GENERATED ALWAYS AS (json_extract(raw_json,'$.printed_name')) VIRTUAL;`
+
+// v23: a holding gets a condition, and its own identity.
+//
+// Two changes to one table, because it is the one table that cannot be
+// re-downloaded and rebuilding it twice is two chances to lose it.
+//
+// **Condition.** Wear is a fact about one copy, and a holding was a counted
+// bucket with nowhere to put one: four Sol Rings in a binder were a single row,
+// so "one of these is played" had no way to be said. Splitting the bucket means
+// condition has to distinguish rows, hence its place in the UNIQUE below.
+//
+// The vocabulary is MTGJSON's, which is TCGplayer's: nm, lp, mp, hp, dmg — the
+// five conditions TcgplayerSkus.json publishes. 'unknown' is hoard's own and means
+// nobody has said, which is the honest state for every row this migration
+// touches and for every card a scanner will ever read: a camera cannot assess
+// wear.
+//
+// It is deliberately not 'nm' — claiming near mint for an unassessed copy throws
+// away the difference between checked and unchecked, and that difference cannot
+// be recovered later. And deliberately not ”, which in a column somebody is
+// reading by hand is indistinguishable from a NULL, a trimmed value, or a bug.
+// A word says what it means.
+//
+// **The surrogate id.** Board says where a copy sits, not what it is, so it
+// stops being part of the key. A row now has its own identity, which makes a
+// deck edit an ordinary UPDATE of an ordinary column rather than a delete and a
+// re-insert under a new key. Board stays inside the UNIQUE all the same: a deck
+// can hold four of a card in the main and two in the side, and collapsing those
+// into one row would lose the split that Archidekt and the text importer both
+// produce.
+//
+// The rebuild runs with foreign keys enforced, which is safe here only because
+// nothing references card_entries — it points at containers and cards, and
+// neither points back. A table with dependents would need the pragma window that
+// apply's single transaction cannot give it.
+// The old table is renamed aside and the new one created under the real name,
+// rather than the other way round — SQLite rewrites a renamed table's stored DDL
+// and quotes the new name, which would leave `CREATE TABLE "card_entries"` in
+// the published schema for no reason. Same shape migrateLegacy uses.
+const holdingCondition = `
+ALTER TABLE card_entries RENAME TO card_entries_pre_v23;
+
+CREATE TABLE card_entries (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
+    finish       TEXT NOT NULL DEFAULT 'nonfoil',
+    condition    TEXT NOT NULL DEFAULT 'unknown',
+    board        TEXT NOT NULL DEFAULT 'main',
+    quantity     INTEGER NOT NULL,
+    UNIQUE (container_id, scryfall_id, finish, condition, board)
+);
+
+INSERT INTO card_entries
+    (container_id, scryfall_id, finish, condition, board, quantity)
+SELECT container_id, scryfall_id, finish, 'unknown', board, quantity
+FROM card_entries_pre_v23;
+
+DROP TABLE card_entries_pre_v23;
+
+CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

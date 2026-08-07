@@ -64,22 +64,26 @@ name. `mtgjson_uuid` is a cached secondary mapping, indexed and nullable.
 
 ```sql
 CREATE TABLE card_entries (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
     scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
-    finish       TEXT NOT NULL DEFAULT 'normal',
+    finish       TEXT NOT NULL DEFAULT 'nonfoil',
+    condition    TEXT NOT NULL DEFAULT 'unknown',
     board        TEXT NOT NULL DEFAULT 'main',
     quantity     INTEGER NOT NULL,
-    PRIMARY KEY (container_id, scryfall_id, finish, board)
+    UNIQUE (container_id, scryfall_id, finish, condition, board)
 );
 ```
 
-There is no row per physical card. A holding is *how many* of one printing, in
-one finish, in one container, on one board. Every write is an upsert that adds to
-the quantity, and moving a card between finishes or binders is insert-then-delete
-so the two buckets merge rather than collide.
+There is still no row per physical card. A holding is *how many* of one printing,
+in one finish, in one condition, in one container, on one board. Every write is an
+upsert that adds to the quantity.
 
-The consequence worth knowing: **there is nowhere to hang a fact about one
-individual copy.** See "What hoard does not model" below.
+**The row has its own id, and board is an ordinary column.** Board says where a
+copy sits, not what it is, so it is not part of the card's identity — a deck edit
+moves a row rather than deleting it and re-inserting it under a new key. It stays
+inside the `UNIQUE` all the same, because a deck can hold four of a card in the
+main and two in the side, and collapsing those would lose the split.
 
 ---
 
@@ -144,6 +148,7 @@ and it is why `cards` carries per-vendor product ids (`tcg_product_id`,
 | column | values |
 |---|---|
 | `card_entries.finish` | `nonfoil`, `foil`, `etched` |
+| `card_entries.condition` | `unknown`, `nm`, `lp`, `mp`, `hp`, `dmg` — MTGJSON's five, plus hoard's own `unknown` |
 | `cards.lang` | Scryfall's code — `en`, `ja`, `zhs`; NULL until the card's document is stored |
 | `card_entries.board` | `main`, `commander`, `side`, `maybe` |
 | `containers.kind` | `collection`, `deck` |
@@ -153,10 +158,9 @@ Two boundaries will surprise a reader querying the database directly.
 
 **`normal` vs `nonfoil`.** hoard said `normal` until schema v8 and now says
 `nonfoil`, matching Scryfall and MTGJSON. Migrations v8 and v12 renamed the
-existing rows. MTGJSON's *price files* still say `normal`, so the translation
-happens at that boundary and nowhere else. The `DEFAULT 'normal'` still visible
-on `card_entries.finish` is inert — every writer supplies the finish explicitly —
-and is left alone because migration text is frozen once released.
+existing rows, and v23's rebuild carried the corrected spelling into the column
+default. MTGJSON's *price files* still say `normal`, so the translation happens
+at that boundary and nowhere else.
 
 **`collection` vs `binder`.** `containers.kind` stores `collection`, but every
 user-facing surface — the CSV's `Container Kind`, the JSON's `containerKind`, the
@@ -227,11 +231,38 @@ summing it as zero silently understates a collection.
 
 Deliberate omissions, so you know they are choices rather than oversights.
 
-**Condition.** Every copy is treated as near mint. A holding is a count, not a
-row per card, so there is nowhere to record that one of your four is played.
-Imports that carry a condition column count what they discarded and tell you
-(`hoard import` reports it) rather than dropping it silently. The Moxfield export
-writes `Near Mint` because Moxfield requires the column.
+**Condition — the column exists, nothing fills it yet.** Schema v23 split the
+holding bucket so a condition has somewhere to live, but no import, export or editor
+writes one so far: every row reads `unknown`.
+
+That value is hoard's own. No source models an unknown condition — MTGJSON,
+TCGplayer, Moxfield and ManaBox all describe products for sale, and a product for
+sale always states one. A hoard is not a shop: a camera cannot assess wear, and
+most holdings arrive with nothing said. It is spelled as a word rather than an empty
+string so that a column read by hand cannot confuse it with a NULL, a trimmed
+value, or a bug.
+
+The five are MTGJSON's (`TcgplayerSkus.json`), which are TCGplayer's.
+Cardmarket's seven-value scale — which ManaBox exports — folds onto them on
+import; [csv.md](csv.md) lists every accepted spelling and what it becomes.
+
+Imports that carry a condition column still count what they discarded and tell
+you (`hoard import` reports it), and the Moxfield export still writes
+`Near Mint` because Moxfield requires the column. Those follow.
+
+**Professional grading is a separate concept, and is not modelled.** A grade is
+a number a third party attests to and seals in a slab — not the same thing as
+condition, which is wear on a raw card. A slab's grade reads as `unknown` here
+rather than being guessed at. No source hoard imports carries one, and
+no price feed it reads can price one. The design for when that changes is
+recorded in [graded-cards.md](graded-cards.md).
+
+**Condition never changes what a card is worth**, and that is a checked fact
+rather than a simplification. MTGJSON's prices are keyed
+`uuid → vendor → retail/buylist → normal/foil/etched → date` with no condition
+anywhere, and `TcgplayerSkus.json` publishes per-condition *ids* with no numbers
+behind them. No source hoard reads can price a played copy, so a discount would
+be invented. Revisit only if one starts publishing them.
 
 **Ordinary foreign-language printings.** Language *is* modelled — see below —
 but the catalog is built from Scryfall's `default_cards` bundle, one row per

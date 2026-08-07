@@ -43,7 +43,13 @@ func (s *Store) ListBinders() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
        ct.source_id = '`+collectionSourceID+`' AS is_default,
-       COUNT(e.scryfall_id) AS distinct_cards,
+       -- COUNT(DISTINCT ...) rather than COUNT(...): the column means distinct
+       -- printings, which is what CollectionTotals has always reported and what
+       -- the JSON model documents. Counting rows instead made a card held in two
+       -- finishes count twice, so the same binder read 194 here and 190 in the
+       -- summary. Condition would have widened that gap again, since a card
+       -- held NM and LP is two rows and one printing.
+       COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
        COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM containers ct

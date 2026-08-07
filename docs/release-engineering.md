@@ -563,10 +563,14 @@ Implementation notes:
 ## 9. Stage E — CI as a reusable workflow
 
 Triage names it `validations.yaml` and the release workflow calls it by path.
-hoard's `ci.yml` does the same job under a different name. Rename it to
-`.github/workflows/validations.yaml` so the two repos read alike, and update the
-CI badge in `README.md` — the badge URL contains the workflow filename, so a
-rename silently breaks it.
+hoard's `ci.yml` did the same job under a different name.
+
+**The rename is already done** (2026-08-06, uncommitted): the file is
+`.github/workflows/validations.yaml`, its `name:` is `Validations`, the README
+badge points at the new filename, and `scan.yml`'s header comment was updated to
+match. The badge is the part that breaks silently — its URL contains the
+workflow filename — so if a later rename ever happens, fix `README.md` in the
+same commit. The job contents were left alone; everything below is still to do.
 
 Changes beyond the rename:
 
@@ -755,7 +759,7 @@ Stage 0  licensing P0s + secret audit + go public       ← blocks everything
 Stage A  binny + Taskfile + Makefile shim (Go & Swift)  ← blocks B, C, E
 Stage B  internal/version + `hoard version` + tests     ← blocks C
 Stage C  .goreleaser.yaml (+ quill hook) + snapshot     ← blocks D
-Stage E  validations.yaml (rename ci.yml), bootstrap    ← blocks D
+Stage E  validations.yaml (renamed ✓), bootstrap        ← blocks D
          action, golangci, go-mod-tidy check
 Stage D  Apple secrets (§8.1, long lead — start early)
          + .github/workflows/release.yaml

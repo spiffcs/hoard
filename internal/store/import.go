@@ -18,7 +18,11 @@ type CardAdd struct {
 	Binder      string // consulted only when ContainerID is 0
 	Card        scryfall.Card
 	Finish      string
-	Quantity    int
+	// Condition is the wear the source stated, or ConditionUnknown when it said
+	// nothing hoard could place. Imports are the only input that carries one
+	// today — a scanner cannot assess wear.
+	Condition string
+	Quantity  int
 }
 
 // ImportReceipt records that one file's content has been imported, so a
@@ -118,9 +122,9 @@ func (s *Store) ApplyImport(receipt *ImportReceipt, newBinders []string, adds []
 	}
 
 	stmt, err := tx.Prepare(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, board, quantity)
-VALUES (?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, 'main', ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
 DO UPDATE SET quantity = quantity + excluded.quantity`)
 	if err != nil {
 		return nil, err
@@ -134,7 +138,8 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 				return nil, fmt.Errorf("add for %q names binder %q, which this import does not create", a.Card.Name, a.Binder)
 			}
 		}
-		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, a.Quantity); err != nil {
+		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, orUnknown(a.Condition),
+			a.Quantity); err != nil {
 			return nil, fmt.Errorf("adding %s: %w", a.Card.Name, err)
 		}
 	}

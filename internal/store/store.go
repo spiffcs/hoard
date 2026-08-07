@@ -115,10 +115,12 @@ type Card struct {
 	Treatment string
 }
 
-// Entry is a quantity of a card (finish + board) to place in a container.
+// Entry is a quantity of a card (finish + condition + board) to place in a
+// container.
 type Entry struct {
 	ScryfallID string
 	Finish     string // nonfoil|foil|etched
+	Condition  string // unknown|nm|lp|mp|hp|dmg
 	Board      string // main|commander|side|maybe
 	Quantity   int
 }
@@ -145,10 +147,11 @@ type DeckMeta struct {
 
 // EntryView is an entry joined to its catalog card, for display and valuation.
 type EntryView struct {
-	Card     Card
-	Finish   string
-	Board    string
-	Quantity int
+	Card      Card
+	Finish    string
+	Condition string
+	Board     string
+	Quantity  int
 }
 
 // Price returns the market price for this entry's finish.

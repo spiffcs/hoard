@@ -888,11 +888,15 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Error("set change recorded no undo")
 	}
 
-	// Location: → passes the finish slot, → again highlights the
-	// container; an unknown binder refuses, a real one takes the row.
+	// Location: → passes the finish and condition slots, → again highlights
+	// the container; an unknown binder refuses, a real one takes the row.
 	m = key(m, "right")
 	if m.detail.heldField != fieldFinish {
 		t.Fatalf("field = %d, want finish next", m.detail.heldField)
+	}
+	m = key(m, "right")
+	if m.detail.heldField != fieldCondition {
+		t.Fatalf("field = %d, want condition next", m.detail.heldField)
 	}
 	m = key(m, "right")
 	if m.detail.heldField != fieldWhere {
@@ -1512,11 +1516,14 @@ func TestDetailHeldFinishAlwaysRenders(t *testing.T) {
 	}}
 	out := strings.Join(m.hoardLines(d, 140), "\n")
 	// The finish slot pads to the list's widest word ("ripple"), so the
-	// dash row keeps the same columns as the treated one.
-	if !strings.Contains(out, "mh3/300 · -      · Binder") {
+	// dash row keeps the same columns as the treated one. The condition slot
+	// follows it and renders the unknown mark for rows nobody has assessed —
+	// it is an editable field, so it holds its place even when every row is
+	// unassessed.
+	if !strings.Contains(out, "mh3/300 · -      · — · Binder") {
 		t.Errorf("plain nonfoil should render a padded dash in its finish slot:\n%s", out)
 	}
-	if !strings.Contains(out, "mh3/301 · ripple · Binder") {
+	if !strings.Contains(out, "mh3/301 · ripple · — · Binder") {
 		t.Errorf("treated foil should keep its treatment word:\n%s", out)
 	}
 	// Qty right-aligns: ×1 pads to ×40's width.

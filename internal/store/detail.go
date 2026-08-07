@@ -92,8 +92,12 @@ type Holding struct {
 	ContainerName string
 	ContainerKind string // collection | deck
 	Finish        string
-	Board         string
-	Quantity      int
+	// Condition is the card's wear, 'unknown' when nobody has said. It is part
+	// of what identifies the holding, so an undo that dropped it would restore
+	// several distinct rows as one unassessed bucket.
+	Condition string
+	Board     string
+	Quantity  int
 
 	ScryfallID      string
 	SetCode         string
@@ -110,7 +114,7 @@ type Holding struct {
 // copies of a card are one loose and three spread across two decks.
 func (s *Store) HoldingsOf(scryfallID string) ([]Holding, error) {
 	rows, err := s.db.Query(`
-SELECT ct.id, ct.name, ct.kind, e.finish, e.board, e.quantity
+SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity
 FROM card_entries e
 JOIN containers ct ON ct.id = e.container_id
 WHERE e.scryfall_id = ?
@@ -118,7 +122,7 @@ WHERE e.scryfall_id = ?
 -- ranks above what is already committed to a list. Spelled as a CASE rather
 -- than leaning on 'collection' sorting before 'deck' by luck of the alphabet.
 ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
-         ct.name, e.finish, e.board`, scryfallID)
+         ct.name, e.finish, e.condition, e.board`, scryfallID)
 	if err != nil {
 		return nil, fmt.Errorf("reading holdings of %s: %w", scryfallID, err)
 	}
@@ -128,7 +132,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 	for rows.Next() {
 		var h Holding
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
-			&h.Finish, &h.Board, &h.Quantity); err != nil {
+			&h.Finish, &h.Condition, &h.Board, &h.Quantity); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
@@ -143,14 +147,14 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 // held list groups stably.
 func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
 	rows, err := s.db.Query(`
-SELECT ct.id, ct.name, ct.kind, e.finish, e.board, e.quantity,
+SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity,
        c.scryfall_id, c.set_code, c.collector_number, c.promo_types
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
 WHERE c.name = ?
 ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
-         ct.name, c.set_code, c.collector_number, e.finish, e.board`, name)
+         ct.name, c.set_code, c.collector_number, e.finish, e.condition, e.board`, name)
 	if err != nil {
 		return nil, fmt.Errorf("reading holdings of %q: %w", name, err)
 	}
@@ -161,7 +165,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 		var h Holding
 		var promos sql.NullString
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
-			&h.Finish, &h.Board, &h.Quantity,
+			&h.Finish, &h.Condition, &h.Board, &h.Quantity,
 			&h.ScryfallID, &h.SetCode, &h.CollectorNumber, &promos); err != nil {
 			return nil, err
 		}

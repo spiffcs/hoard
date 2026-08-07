@@ -156,7 +156,7 @@ func TestFitColumns(t *testing.T) {
 	}
 	for _, c := range cases {
 		env := Env{Width: c.width, Clamp: true, Bars: true}
-		widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
+		widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env, nil)
 
 		for i, want := range c.wantKeep {
 			if keep[i] != want {
@@ -188,7 +188,7 @@ func TestFitColumns(t *testing.T) {
 // A non-terminal must never truncate: full names, greppable.
 func TestFitColumnsNoClamp(t *testing.T) {
 	env := Env{Width: 80, Clamp: false}
-	widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env)
+	widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env, nil)
 	for i, w := range widths {
 		if w != summaryNatural[i] || !keep[i] {
 			t.Errorf("col %d: got width %d keep %v, want natural %d kept", i, w, keep[i], summaryNatural[i])
@@ -469,5 +469,101 @@ func TestFinishTreated(t *testing.T) {
 		if got := FinishTreated(tc.finish, tc.treatment); got != tc.want {
 			t.Errorf("FinishTreated(%q, %q) = %q, want %q", tc.finish, tc.treatment, got, tc.want)
 		}
+	}
+}
+
+// Condition renders wear for a column, and an unassessed card gets the *unknown*
+// mark rather than the suppressed one. The two are not interchangeable: a
+// non-foil card is definitely non-foil, while an unassessed one is not
+// definitely near mint, and a reader should be able to tell a gap in hoard's
+// knowledge from an ordinary value.
+func TestCondition(t *testing.T) {
+	for in, want := range map[string]string{
+		"unknown": unknown,
+		"":        unknown,
+		"nm":      "NM",
+		"lp":      "LP",
+		"mp":      "MP",
+		"hp":      "HP",
+		"dmg":     "DMG",
+	} {
+		if got := Condition(in); got != want {
+			t.Errorf("Condition(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A column whose every cell is a dash is width spent on the absence of
+// information — the FINISH column against a binder with no foils, or COND
+// before anything has been assessed. It is dropped, and its space goes to the
+// columns people are reading.
+func TestBlankColumnIsDropped(t *testing.T) {
+	tbl := Table{Header: true, Cols: []Col{
+		{Title: "NAME", Align: Left},
+		{Title: "FINISH", Align: Left, Priority: 5},
+		{Title: "COND", Align: Left, Priority: 3},
+		{Title: "QTY", Align: Right, Priority: 2},
+	}}
+	tbl.Add(C("Sol Ring"), C(Finish("nonfoil")), C(Condition("unknown")), C("×4"))
+	tbl.Add(C("Solitude"), C(Finish("nonfoil")), C(Condition("unknown")), C("×1"))
+
+	out := strings.Join(tbl.Lines(), "\n")
+	for _, gone := range []string{"FINISH", "COND"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("%s column survived with nothing but dashes:\n%s", gone, out)
+		}
+	}
+	for _, kept := range []string{"NAME", "QTY", "Sol Ring", "×4"} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("dropped %q, which carries information:\n%s", kept, out)
+		}
+	}
+}
+
+// One stated value is enough to earn the column: the dashes around it are what
+// give it meaning.
+func TestOneValueKeepsTheColumn(t *testing.T) {
+	tbl := Table{Header: true, Cols: []Col{
+		{Title: "NAME", Align: Left},
+		{Title: "COND", Align: Left, Priority: 3},
+	}}
+	tbl.Add(C("Sol Ring"), C(Condition("unknown")))
+	tbl.Add(C("Solitude"), C(Condition("lp")))
+
+	out := strings.Join(tbl.Lines(), "\n")
+	if !strings.Contains(out, "COND") || !strings.Contains(out, "LP") {
+		t.Errorf("COND dropped despite a stated value:\n%s", out)
+	}
+}
+
+// Both marks count as nothing for the purposes of dropping a column — the
+// hyphen Finish suppresses a dull value with, and the em dash an unknown
+// renders as. Neither tells a reader anything they could act on.
+func TestBothMarksCountAsBlank(t *testing.T) {
+	tbl := Table{Header: true, Cols: []Col{
+		{Title: "NAME", Align: Left},
+		{Title: "PRICE", Align: Right, Priority: 6},
+	}}
+	tbl.Add(C("Sol Ring"), C(MoneyPtr(nil)))
+	tbl.Add(C("Solitude"), C(MoneyPtr(nil)))
+
+	if out := strings.Join(tbl.Lines(), "\n"); strings.Contains(out, "PRICE") {
+		t.Errorf("PRICE survived with nothing but em dashes:\n%s", out)
+	}
+}
+
+// A column the table insists on is never dropped, however empty it looks.
+// Priority 0 is the existing way of saying "not optional", and a VALUE column
+// of dashes still states something true about the hoard.
+func TestUndroppableColumnSurvivesBlank(t *testing.T) {
+	tbl := Table{Header: true, Cols: []Col{
+		{Title: "NAME", Align: Left},
+		{Title: "VALUE", Align: Right},
+	}}
+	tbl.Add(C("Sol Ring"), C(unknown))
+	tbl.Add(C("Solitude"), C(unknown))
+
+	if out := strings.Join(tbl.Lines(), "\n"); !strings.Contains(out, "VALUE") {
+		t.Errorf("VALUE is not droppable and must survive:\n%s", out)
 	}
 }

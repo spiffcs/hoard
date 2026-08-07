@@ -97,6 +97,7 @@ const (
 	fieldQty = iota
 	fieldSet
 	fieldFinish
+	fieldCondition
 	fieldWhere
 	heldFieldCount
 )
@@ -538,11 +539,17 @@ func (m Model) hoardLines(d detail, width int) []string {
 	// rest left — so the rows line up as a table even though each renders
 	// as joined parts (mixed lengths skewed every column, observed live).
 	// The finish slot always renders, "-" for a plain nonfoil, so a list
-	// mixing ripple foils and plain copies keeps the same columns.
-	var qtyW, setW, finW int
+	// mixing ripple foils and plain copies keeps the same columns. The
+	// condition slot likewise: since schema v23 a card held in two conditions
+	// is two rows, and without the slot they would read as one row listed
+	// twice. It is a field of the editor, so it renders even when every row is
+	// unassessed — unlike the browse table's COND column, which can hide
+	// because nothing there is editable.
+	var qtyW, setW, finW, condW int
 	for _, h := range d.holdings {
 		qtyW = max(qtyW, ansi.StringWidth(ui.Qty(h.Quantity)))
 		setW = max(setW, ansi.StringWidth(ui.Printing(h.SetCode, h.CollectorNumber)))
+		condW = max(condW, ansi.StringWidth(ui.Condition(h.Condition)))
 		finW = max(finW, ansi.StringWidth(ui.FinishTreated(h.Finish, h.Treatment)))
 	}
 	pad := func(s string, w int, left bool) string {
@@ -560,6 +567,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		qty := pad(ui.Qty(h.Quantity), qtyW, true)
 		set := pad(ui.Printing(h.SetCode, h.CollectorNumber), setW, false)
 		fin := pad(ui.FinishTreated(h.Finish, h.Treatment), finW, false)
+		cond := pad(ui.Condition(h.Condition), condW, false)
 		// In the held zone the selected row shows its editable fields, the
 		// highlighted one wearing the cursor: ←/→ choose, enter edits.
 		if i == d.heldCursor && d.zone == zoneHeld {
@@ -570,11 +578,12 @@ func (m Model) hoardLines(d detail, width int) []string {
 				return s
 			}
 			parts := []string{mark(qty, fieldQty), mark(set, fieldSet),
-				mark(fin, fieldFinish), mark(where, fieldWhere)}
+				mark(fin, fieldFinish), mark(cond, fieldCondition),
+				mark(where, fieldWhere)}
 			out = append(out, ui.Truncate("▸ "+strings.Join(parts, " · "), width))
 			continue
 		}
-		line := ui.Truncate("  "+strings.Join([]string{qty, set, fin, where}, " · "), width)
+		line := ui.Truncate("  "+strings.Join([]string{qty, set, fin, cond, where}, " · "), width)
 		// A quiet mark on the pointed-at row: this path only sees the
 		// cursor row while the links zone has the arrows (the held zone's
 		// cursor row took the field branch above), and a full-strength bar

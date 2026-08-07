@@ -7,7 +7,7 @@
 #
 # macOS runners bill private-repo minutes at 10x, and this job needs one: the
 # helper links AppKit and Network.framework and the reader links Vision, so
-# neither builds on the ubuntu runner ci.yml uses. A run is only ~30s of work, but with image
+# neither builds on the ubuntu runner validations.yaml uses. A run is only ~30s of work, but with image
 # spin-up it lands around 2-3 wall-clock minutes — call it 20-30 billed
 # minutes each time, on every push and every PR update.
 #

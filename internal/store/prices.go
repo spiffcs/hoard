@@ -26,6 +26,11 @@ func (s *Store) PriceSources() ([]SourceCount, error) {
 	// entryValue prices it: the foil price for foil and etched, with Scryfall
 	// preferred over the fallback — so the counts and the totals they explain
 	// cannot disagree.
+	//
+	// Condition is not in the grouping, and must not be: this counts how many
+	// printings each price source covers, and a card held NM and LP is one
+	// printing priced once. Adding it would inflate every source's coverage by
+	// however many conditions the user happened to record.
 	rows, err := s.db.Query(`
 SELECT src, COUNT(*) AS printings, SUM(copies) AS copies FROM (
   SELECT CASE
@@ -193,6 +198,9 @@ type UnpricedRow struct {
 // shapes: the fill needs distinct cards to look up, this needs one row per
 // finish with its containers. They share unpricedPredicate so the two can never
 // disagree about what counts as unpriced.
+//
+// Not split by condition: an unpriced card is unpriced whatever condition it is
+// in, and listing it once per condition would report the same gap several times.
 func (s *Store) Unpriced() ([]UnpricedRow, error) {
 	// The labels are aggregated twice: once with DISTINCT for the display
 	// string, and once more on an unprintable separator (unit separator, 0x1f)

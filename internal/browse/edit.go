@@ -86,17 +86,17 @@ func (m *Model) adjustQuantity(delta int) {
 		return
 	}
 	binderID := m.selectedContainer().ID
-	previous, err := m.store.SetHoldingQuantityIn(binderID, c.ScryfallID, c.Finish, want)
+	previous, err := m.store.SetHoldingQuantityIn(binderID, c.ScryfallID, c.Finish, c.Condition, want)
 	if err != nil {
 		m.setError(err)
 		return
 	}
 
-	id, finish, name := c.ScryfallID, c.Finish, c.Name
+	id, finish, cond, name := c.ScryfallID, c.Finish, c.Condition, c.Name
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(binderID, id, finish, previous)
+			_, err := st.SetHoldingQuantityIn(binderID, id, finish, cond, previous)
 			return err
 		},
 	})
@@ -176,6 +176,8 @@ func (m *Model) editHeldField() {
 		m.promptHeldSet()
 	case fieldFinish:
 		m.promptHeldFinish()
+	case fieldCondition:
+		m.promptHeldCondition()
 	case fieldWhere:
 		m.promptHeldLocation()
 	default:
@@ -223,16 +225,16 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
 	if want == h.Quantity {
 		return
 	}
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, want)
+	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, want)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	cid, id, finish := h.ContainerID, h.ScryfallID, h.Finish
+	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, previous)
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
 			return err
 		},
 	})
@@ -299,19 +301,19 @@ func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
 		m.status, m.statusErr = "already "+ui.Finish(h.Finish), false
 		return
 	}
-	prevTarget, err := m.store.MoveEntryFinish(h.ContainerID, h.ScryfallID, h.Finish, want)
+	prevTarget, err := m.store.MoveEntryFinish(h.ContainerID, h.ScryfallID, h.Finish, want, h.Condition)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	cid, id, from, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
+	cid, id, from, qty, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s %s", name, ui.Finish(from)),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(cid, id, want, prevTarget); err != nil {
+			if _, err := st.SetHoldingQuantityIn(cid, id, want, cond, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(cid, id, from, qty)
+			_, err := st.SetHoldingQuantityIn(cid, id, from, cond, qty)
 			return err
 		},
 	})
@@ -327,6 +329,114 @@ func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
 			}
 		}
 		m.refreshLinks(d)
+	}
+}
+
+// promptHeldCondition asks what condition the held row's copies are in — the
+// one fact about a card that hoard cannot learn for itself. A camera cannot
+// judge wear, and no feed carries it, so this prompt is where an assessment
+// enters the hoard at all.
+func (m *Model) promptHeldCondition() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label:    fmt.Sprintf("%s in %s · condition", name, h.ContainerName),
+		text:     conditionInput(h.Condition),
+		help:     "nm · lp · mp · hp · dmg · - unknown · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parseCondition(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			want, err := parseCondition(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			m.moveHeldCondition(h, name, want)
+			return nil
+		},
+	}
+}
+
+// conditionInput prefills the prompt. An unassessed row starts empty rather
+// than with the word "unknown": the field is being asked to state something,
+// and the commonest answer is a grade, not a re-assertion that nobody knows.
+func conditionInput(condition string) string {
+	if condition == "" || condition == store.ConditionUnknown {
+		return ""
+	}
+	return condition
+}
+
+// parseCondition reads a condition: the stored vocabulary, the words the
+// marketplaces spell it with, and the display dash (or nothing) for unassessed.
+//
+// It deliberately accepts more than it stores. Somebody typing here has just
+// read "Lightly Played" off a Moxfield page or a seller's listing, and refusing
+// the words in favour of the two-letter code would be pedantry — the same
+// generosity normCondition shows a CSV.
+func parseCondition(text string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "-", "", "unknown", "?":
+		return store.ConditionUnknown, nil
+	case "nm", "near mint", "near-mint", "mint", "m":
+		return store.ConditionNM, nil
+	case "lp", "lightly played", "light played", "slightly played", "sp",
+		"excellent", "good":
+		return store.ConditionLP, nil
+	case "mp", "moderately played", "played":
+		return store.ConditionMP, nil
+	case "hp", "heavily played":
+		return store.ConditionHP, nil
+	case "dmg", "d", "damaged", "poor":
+		return store.ConditionDamaged, nil
+	}
+	return "", fmt.Errorf("a condition is nm, lp, mp, hp, dmg, or - for unknown")
+}
+
+// moveHeldCondition re-keys the held row's condition, merging with copies
+// already held in the target condition, undo included. The mirror of
+// moveHeldFinish, down to the two-step undo: the merge destroyed a quantity
+// that has to come back before the source row does.
+func (m *Model) moveHeldCondition(h store.Holding, name, want string) {
+	from := h.Condition
+	if from == "" {
+		from = store.ConditionUnknown
+	}
+	if want == from {
+		m.status, m.statusErr = "already "+ui.Condition(from), false
+		return
+	}
+	prevTarget, err := m.store.MoveEntryCondition(h.ContainerID, h.ScryfallID, h.Finish, from, want)
+	if err != nil {
+		m.setError(err)
+		return
+	}
+	cid, id, finish, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s %s", name, ui.Condition(from)),
+		undo: func(st Editor) error {
+			if _, err := st.SetHoldingQuantityIn(cid, id, finish, want, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, from, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("%s (%s → %s) in %s",
+		name, ui.Condition(from), ui.Condition(want), h.ContainerName)
+	m.statusErr = false
+	m.refresh()
+	m.reloadDetail()
+	if d := m.detail; d != nil {
+		for i, held := range d.holdings {
+			if held.ScryfallID == id && held.ContainerID == cid &&
+				held.Finish == finish && held.Condition == want {
+				d.heldCursor = i
+				break
+			}
+		}
 	}
 }
 
@@ -379,19 +489,19 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 		m.setError(err)
 		return nil
 	}
-	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.ContainerID, pick.ID)
+	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, h.ContainerID, pick.ID)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	cid, fromID, toID, finish, qty := h.ContainerID, h.ScryfallID, pick.ID, h.Finish, h.Quantity
+	cid, fromID, toID, finish, qty, cond := h.ContainerID, h.ScryfallID, pick.ID, h.Finish, h.Quantity, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s → %s", name, strings.ToUpper(code)),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(cid, toID, finish, prevTarget); err != nil {
+			if _, err := st.SetHoldingQuantityIn(cid, toID, finish, cond, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(cid, fromID, finish, qty)
+			_, err := st.SetHoldingQuantityIn(cid, fromID, finish, cond, qty)
 			return err
 		},
 	})
@@ -508,19 +618,19 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) {
 		m.status, m.statusErr = fmt.Sprintf("no binder named %q", want), true
 		return
 	}
-	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, target.ID, h.ScryfallID)
+	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, target.ID, h.ScryfallID)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	fromC, toC, sid, finish, qty := h.ContainerID, target.ID, h.ScryfallID, h.Finish, h.Quantity
+	fromC, toC, sid, finish, qty, cond := h.ContainerID, target.ID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s → %s", name, target.Name),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(toC, sid, finish, prevTarget); err != nil {
+			if _, err := st.SetHoldingQuantityIn(toC, sid, finish, cond, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(fromC, sid, finish, qty)
+			_, err := st.SetHoldingQuantityIn(fromC, sid, finish, cond, qty)
 			return err
 		},
 	})
@@ -548,16 +658,16 @@ func (m *Model) askHeldRemoval() {
 
 // removeHeld zeroes the confirmed held row and records the undo.
 func (m *Model) removeHeld(h store.Holding, name string) {
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, 0)
+	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, 0)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	cid, id, finish := h.ContainerID, h.ScryfallID, h.Finish
+	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, previous)
+			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
 			return err
 		},
 	})
@@ -587,7 +697,7 @@ func (m *Model) removeDeck() {
 	for _, v := range views {
 		entries = append(entries, store.Entry{
 			ScryfallID: v.Card.ScryfallID, Finish: v.Finish,
-			Board: v.Board, Quantity: v.Quantity,
+			Condition: v.Condition, Board: v.Board, Quantity: v.Quantity,
 		})
 	}
 	meta, name := sel.meta, sel.Name
