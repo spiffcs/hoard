@@ -7,7 +7,6 @@ import (
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
-	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -90,14 +89,33 @@ func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) 
 		return nil, true, nil
 	}
 
+	// The printing's own attributes, taken from any row that holds it in any
+	// finish. Treatment and VendorIDsKnown describe the printing rather than
+	// the copy, and AssessComp reads them to decide which vendors can be tied
+	// to the product: a bare row without them claims every vendor's quote,
+	// including the unverifiable one the comp sheet exists to suppress.
+	printing := store.OwnedFinish{ScryfallID: scryfallID}
+	for _, held := range owned {
+		if held.ScryfallID == scryfallID {
+			printing = held
+			printing.Copies, printing.Value = 0, 0
+			break
+		}
+	}
+
 	// One sheet per price finish the feed quotes, assessed from the owned
 	// row when the finish is held (real copies and value) or a bare one
-	// when it is not — the numbers are the card's either way.
+	// when it is not — the numbers are the card's either way. Etched is its
+	// own sheet, not folded into foil: vendors price the etched product
+	// separately, so folding it would label one card's price as another's.
+	// A finish the printing does not come in quotes nothing and drops out
+	// below on its own.
 	out := map[string]market.Comp{}
-	for _, finish := range []string{"nonfoil", "foil"} {
-		o := store.OwnedFinish{ScryfallID: scryfallID, Finish: finish}
+	for _, finish := range []string{"nonfoil", "foil", "etched"} {
+		o := printing
+		o.Finish = finish
 		for _, held := range owned {
-			if held.ScryfallID == scryfallID && priceFinish(held.Finish) == finish {
+			if held.ScryfallID == scryfallID && held.Finish == finish {
 				o = held
 				break
 			}
@@ -108,15 +126,6 @@ func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) 
 		}
 	}
 	return out, true, nil
-}
-
-// priceFinish folds the store's finish vocabulary onto the two the price
-// feeds quote.
-func priceFinish(finish string) string {
-	if scryfall.PricedAsFoil(finish) {
-		return "foil"
-	}
-	return "nonfoil"
 }
 
 // MarketCached is Arbitrage from today's quote cache alone: no network,

@@ -573,3 +573,108 @@ func TestAssessCompPrefersTheEtchedBucket(t *testing.T) {
 		t.Errorf("fallback = %+v, want the foil bucket when there is no etched one", fallback)
 	}
 }
+
+// The opportunity sections ran on unfiltered quotes long after the comp sheet
+// learned to drop what it could not tie to a product, so the artifact the comp
+// sheet refuses to draw still reached BELOW MARKET: a $26.69 Manapool ask on a
+// $4.61 ripple reads as "a marketplace is asking 82% under market". Both sides
+// answer questions about the same physical card and must see the same figures.
+func TestAssessDropsUnverifiableTreatedQuotes(t *testing.T) {
+	ripple := store.OwnedFinish{
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		Treatment: "ripple", VendorIDsKnown: true,
+	}
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 4.61),
+		q("manapool", mtgjson.Retail, "foil", 26.69),
+		q("cardkingdom", mtgjson.Retail, "foil", 3.99),
+	}
+	op, retail := Assess(ripple, qs)
+
+	if retail != 2 {
+		t.Errorf("retail count = %d, want 2: the unidentifiable quote is not a vendor that priced this product", retail)
+	}
+	if op.BuyAt != 3.99 || op.BuyFrom != "cardkingdom" {
+		t.Errorf("buy = %v from %q, want the unverified figure excluded", op.BuyAt, op.BuyFrom)
+	}
+	// The two sides must agree, which is the whole point of sharing the rule.
+	if c := AssessComp(ripple, qs); c.Low != op.BuyAt {
+		t.Errorf("comp low %v != opportunity buy %v: the sheet and the sections disagree", c.Low, op.BuyAt)
+	}
+}
+
+// An untreated printing has one product per finish at every vendor, so nothing
+// is suppressed and the sections keep every quote.
+func TestAssessKeepsManapoolOnPlainFoils(t *testing.T) {
+	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	op, retail := Assess(plain, []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
+		q("manapool", mtgjson.Retail, "foil", 2.10),
+	})
+	if retail != 2 || op.BuyAt != 2.10 || op.BuyFrom != "manapool" {
+		t.Errorf("op = %+v (retail %d), want manapool kept: an untreated printing is unambiguous", op, retail)
+	}
+}
+
+// An unread set file is a gap, not an answer, so nothing is claimed until the
+// ids are known — the same rule the comp sheet follows.
+func TestAssessWaitsForVendorIDs(t *testing.T) {
+	unasked := store.OwnedFinish{
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		Treatment: "ripple", VendorIDsKnown: false,
+	}
+	op, retail := Assess(unasked, []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 4.61),
+		q("cardkingdom", mtgjson.Retail, "foil", 3.99),
+	})
+	if retail != 0 || op.HasRetail || op.HasMarket {
+		t.Errorf("op = %+v (retail %d), want nothing claimed before the ids are known", op, retail)
+	}
+}
+
+// The treatment describes the printing's foil finish. A nonfoil copy of a
+// ripple-tagged printing is a plain card with one product per vendor, so
+// suppressing its quotes drops good figures for a question never asked.
+func TestTreatmentDoesNotSuppressNonfoilQuotes(t *testing.T) {
+	nonfoil := store.OwnedFinish{
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: "nonfoil",
+		Treatment: "ripple", VendorIDsKnown: false,
+	}
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "normal", 0.85),
+		q("manapool", mtgjson.Retail, "normal", 0.60),
+	}
+	op, retail := Assess(nonfoil, qs)
+	if retail != 2 || op.BuyAt != 0.60 {
+		t.Errorf("op = %+v (retail %d), want both nonfoil quotes kept", op, retail)
+	}
+	if c := AssessComp(nonfoil, qs); !c.HasManapool || !c.HasMarket {
+		t.Errorf("comp = %+v, want both nonfoil quotes kept", c)
+	}
+}
+
+// Assess read the foil bucket for an etched holding, so where a vendor prices
+// the etched product separately the sections quoted the wrong card — while the
+// comp sheet, on the same screen, quoted the right one.
+func TestAssessPrefersTheEtchedBucket(t *testing.T) {
+	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: "etched"}
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 9.99),
+		q("tcgplayer", mtgjson.Retail, "etched", 24.50),
+		q("cardkingdom", mtgjson.Retail, "etched", 27.99),
+	}
+	op, retail := Assess(owned, qs)
+	if !op.HasMarket || op.Market != 24.50 {
+		t.Errorf("market = %v, want the etched product's price", op.Market)
+	}
+	if retail != 2 || op.BuyAt != 24.50 {
+		t.Errorf("op = %+v (retail %d), want only etched quotes", op, retail)
+	}
+
+	// With no etched bucket the foil one is all there is, and a foil quote
+	// beats no quote.
+	fallback, _ := Assess(owned, []mtgjson.Quote{q("tcgplayer", mtgjson.Retail, "foil", 9.99)})
+	if !fallback.HasMarket || fallback.Market != 9.99 {
+		t.Errorf("fallback = %+v, want the foil bucket when there is no etched one", fallback)
+	}
+}

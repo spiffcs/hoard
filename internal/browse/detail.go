@@ -761,7 +761,7 @@ func (m Model) compLines(d detail, width int) []string {
 	// the CK PAYS and SPREAD columns already say (an artifact of the sheet
 	// pre-dating those columns), and the market view remains the surface
 	// that ranks opportunities.
-	for _, finish := range []string{"nonfoil", "foil"} {
+	for _, finish := range []string{"nonfoil", "foil", "etched"} {
 		c, ok := d.comps[finish]
 		if !ok {
 			continue

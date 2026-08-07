@@ -150,8 +150,12 @@ const (
 // an id present" — an absent id is a real answer (no split product), while an
 // unread set file is a gap. If MTGJSON ever adds a Manapool id, or Card
 // Kingdom starts splitting treated foils, this follows the data.
+// The treatment describes the printing's *foil* finish, so only a foil-priced
+// holding is ambiguous. The nonfoil copy of a ripple-tagged printing is a plain
+// card with one product per vendor, and suppressing its quotes would drop good
+// figures for a question that was never asked.
 func productVerified(provider string, o store.OwnedFinish) bool {
-	if o.Treatment == "" {
+	if o.Treatment == "" || !scryfall.PricedAsFoil(o.Finish) {
 		return true
 	}
 	switch provider {
@@ -172,15 +176,7 @@ func productVerified(provider string, o store.OwnedFinish) bool {
 // for the wrong product is worse than no price at all.
 func AssessComp(o store.OwnedFinish, qs []mtgjson.Quote) Comp {
 	c := Comp{Card: o}
-	finish := "normal"
-	if scryfall.PricedAsFoil(o.Finish) {
-		finish = "foil"
-	}
-	// An etched holding prefers the vendor's own etched series and falls back
-	// to its foil one, since not every vendor splits the product.
-	if o.Finish == "etched" && hasFinish(qs, "etched") {
-		finish = "etched"
-	}
+	finish := quoteFinish(o, qs)
 
 	for _, q := range qs {
 		if q.Finish != finish || q.Price <= 0 {

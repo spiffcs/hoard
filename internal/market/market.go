@@ -128,20 +128,45 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 	return res
 }
 
+// quoteFinish is the price-file bucket to read for a holding.
+//
+// The store speaks Scryfall's finish vocabulary (nonfoil|foil|etched); MTGJSON's
+// price files speak their own ("normal"/"foil"/"etched"). This is the one
+// translation point between them, shared by Assess and AssessComp so the
+// opportunities and the comp sheet can never read different buckets for the
+// same card and disagree about what it costs.
+//
+// An etched holding prefers the vendor's own etched series and falls back to
+// its foil one, since not every vendor splits the product.
+func quoteFinish(o store.OwnedFinish, qs []mtgjson.Quote) string {
+	if o.Finish == "etched" && hasFinish(qs, "etched") {
+		return "etched"
+	}
+	if scryfall.PricedAsFoil(o.Finish) {
+		return "foil"
+	}
+	return "normal"
+}
+
 // Assess reduces one card's quotes to the sales-price anchor, the cheapest
 // ask, and the best buylist offer, for the finish actually owned.
+//
+// Quotes whose product cannot be tied to the copy held are dropped, on the same
+// rule the comp sheet uses (see productVerified). Without that, the sections
+// below report a data defect as an opportunity: an unverifiable ask on a
+// treated foil becomes "a marketplace is asking 82% under market", which is the
+// artifact the comp sheet already refuses to draw. retailCount therefore counts
+// vendors that priced *this* product, which is what makes "two vendors
+// disagree" mean anything.
 func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCount int) {
 	op.Card = o
-	// The store speaks Scryfall's finish vocabulary (nonfoil|foil|etched);
-	// MTGJSON's price files speak their own ("normal"/"foil"). This is the
-	// one translation point between them.
-	finish := "normal"
-	if scryfall.PricedAsFoil(o.Finish) {
-		finish = "foil"
-	}
+	finish := quoteFinish(o, qs)
 
 	for _, q := range qs {
 		if q.Finish != finish || q.Price <= 0 {
+			continue
+		}
+		if !productVerified(q.Provider, o) {
 			continue
 		}
 		switch q.Kind {
