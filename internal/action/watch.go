@@ -10,6 +10,24 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
+// watchFinish is the price finish a watch stores for a resolved match.
+//
+// A watch tracks a price series, not a copy, so it names the series that
+// actually exists: etched only where the printing has an etched figure of its
+// own, since a finish the printing lacks has no price to ever cross. This is
+// the same rule ownedByPriceFinish applies to holdings, so a card's watch and
+// its movers row follow the same series.
+func watchFinish(finish string, c scryfall.Card) string {
+	switch {
+	case finish == "etched" && c.PriceUSDEtched != nil:
+		return "etched"
+	case scryfall.PricedAsFoil(finish):
+		return "foil"
+	default:
+		return "nonfoil"
+	}
+}
+
 // WatchAddOptions is one threshold to stand.
 type WatchAddOptions struct {
 	Name      string
@@ -45,13 +63,7 @@ func WatchAdd(ctx context.Context, d Deps, p progress.Fn, o WatchAddOptions) (Wa
 		return res, fmt.Errorf("no card matches %q", o.Name)
 	}
 	m := rr.Matches[0]
-	// The watch stores a price finish: an etched-only printing is priced as
-	// foil, and a finish the printing lacks has no price to ever cross.
-	if scryfall.PricedAsFoil(m.Finish) {
-		finish = "foil"
-	} else {
-		finish = "nonfoil"
-	}
+	finish = watchFinish(m.Finish, m.Card)
 	res.Card, res.Finish = m.Card, finish
 
 	if err := d.Store.UpsertPrintings(rr.Found); err != nil {

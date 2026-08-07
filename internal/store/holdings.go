@@ -69,7 +69,7 @@ type CollectionRow struct {
 // Price is the market price for this row's finish.
 func (r CollectionRow) Price() *float64 {
 	if scryfall.PricedAsFoil(r.Finish) {
-		return r.PriceUSDFoil
+		return scryfall.EffectiveFoilPrice(r.Finish, r.PriceUSDFoil, r.PriceUSDEtched)
 	}
 	return r.PriceUSD
 }

@@ -2812,10 +2812,7 @@ func (m model) sessionTally() string {
 // priceValue is priceForFinish's numeric sibling: what one copy is worth,
 // or 0 when the printing has no price for the finish.
 func priceValue(c scryfall.Card, finish string) float64 {
-	p := c.PriceUSD
-	if scryfall.PricedAsFoil(finish) {
-		p = c.PriceUSDFoil
-	}
+	p := finishPrice(c, finish)
 	if p == nil {
 		return 0
 	}
@@ -2823,14 +2820,20 @@ func priceValue(c scryfall.Card, finish string) float64 {
 }
 
 func priceForFinish(c scryfall.Card, finish string) string {
-	p := c.PriceUSD
-	if scryfall.PricedAsFoil(finish) {
-		p = c.PriceUSDFoil
-	}
+	p := finishPrice(c, finish)
 	if p == nil {
 		return "—"
 	}
 	return "$" + priceStr(p)
+}
+
+// finishPrice is one printing's price for a finish, on the same rule the store
+// values a holding by: etched reads its own figure and falls back to foil.
+func finishPrice(c scryfall.Card, finish string) *float64 {
+	if scryfall.PricedAsFoil(finish) {
+		return scryfall.EffectiveFoilPrice(finish, c.PriceUSDFoil, c.PriceUSDEtched)
+	}
+	return c.PriceUSD
 }
 
 func priceStr(p *float64) string {

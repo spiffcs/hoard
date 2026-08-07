@@ -1,15 +1,16 @@
 # Release engineering plan
 
 How hoard gets from "private repo with a CI job" to "public repo people can
-install a signed binary from." The reference implementation is
+install a signed, notarized binary from." The reference implementation is
 [spiffcs/triage](https://github.com/spiffcs/triage), the other Go TUI in this
-account: same owner, same language, same shape of release. This document says
-what to copy, what to adapt, and what to deliberately leave behind.
+account: same owner, same language, same shape of release. Where triage has
+made a call, hoard follows it — the point is one house style across the org's
+tools, not a bespoke setup per repo.
 
 It is written to be executed top to bottom by an agent. Every stage lists the
 files it touches, the exact content where that content is short enough to
 inline, and the command that proves the stage landed. Stages are ordered by
-dependency: Stage 0 blocks everything, A blocks B, B blocks C. D through G can
+dependency: Stage 0 blocks everything, A blocks B, B blocks C. E through G can
 interleave.
 
 ---
@@ -25,53 +26,58 @@ interleave.
 | CI | `validations.yaml` (static analysis + unit) via reusable workflow | `ci.yml` (gofmt, vet, test, build) |
 | Lint | golangci-lint v2 + gosimports + go-mod-tidy check | **gofmt + vet only** |
 | Actions pinning | every `uses:` pinned to a commit SHA | `@v7` floating tags |
+| macOS binaries | quill sign + Apple notarize | n/a |
 | Supply chain | cosign keyless signing, CodeQL, zizmor, dependabot | **none** |
-| Repo meta | `SECURITY.md`, `RELEASE.md`, `CHANGELOG.md`, `install.sh` | README + LICENSE + `docs/` |
-| Toolchain pinning | binny (`.binny.yaml`) + Taskfile, Makefile is a shim | hand-written Makefile (Go **and** Swift targets) |
+| Install path | `install.sh` on Cloudflare R2 | **none** — build from source |
+| Repo meta | `SECURITY.md`, `RELEASE.md`, `CHANGELOG.md` | README + LICENSE + `docs/` |
+| Toolchain | binny (`.binny.yaml`) + Taskfile, Makefile is a shim | hand-written Makefile (Go **and** Swift targets) |
 
 hoard's advantage over triage: `modernc.org/sqlite` is **pure Go**. There is no
 cgo anywhere in the module, so `CGO_ENABLED=0` cross-compiles to every target
 from one ubuntu runner. No zig, no cross toolchain, no per-arch runner matrix.
 
 hoard's complication: the repo also holds a Swift macOS helper and a SwiftUI
-iPhone app (`scan/`). Neither can ship in a Go release archive. See §3.
+iPhone app (`scan/`). Neither ships in a Go release archive — but both get
+first-class Taskfile targets so the build has one front door. See D1 and §5.
 
 ---
 
-## 2. Decisions already made
+## 2. Decisions
 
-These were weighed against triage's setup and settled. Do not re-litigate them
-mid-implementation; if one turns out wrong, change it here first.
+Settled with the owner. Do not re-litigate mid-implementation; if one turns out
+wrong, change it here first.
 
-**D1 — Adopt goreleaser + cosign. Skip binny and Taskfile.**
+**D1 — Adopt binny + Taskfile, with the Swift and iOS targets moved in too.**
 Triage's `Makefile` is a shim that bootstraps `binny`, which installs pinned
 tool binaries into `.tool/`, and delegates every target to `Taskfile.yaml`.
-That indirection pays for itself across a dozen Anchore repos with a shared
-toolchain. hoard has one repo and a Makefile that already carries Swift targets
-(`scan`, `cardkit`, `scan-ios-test`) which have nothing to do with the Go
-toolchain. Adopting binny would give hoard's build two homes and leave the Swift
-half outside both. Instead: keep the Makefile as the single entry point, and pin
-tool versions in the workflows that use them (goreleaser-action, golangci-lint
-action, both by SHA). If hoard ever grows a second repo sharing this toolchain,
-revisit.
+hoard takes the same structure. The reason to do this rather than keep the
+hand-written Makefile is pinning: today hoard's toolchain is "whatever golangci-lint
+and goreleaser happen to be on the machine," and a release pipeline whose tools
+float is a pipeline that breaks on someone else's laptop. `.binny.yaml` makes
+every tool a version-controlled line.
 
-**D2 — Sign checksums with cosign keyless. Do not notarize with quill yet.**
-Cosign keyless signing costs nothing and needs no secrets: it uses the workflow's
-OIDC identity, so `id-token: write` is the entire setup. Apple notarization
-(triage's `quill sign-and-notarize` hook) needs five repo secrets and a Developer
-ID certificate. hoard's Apple Developer account exists but the iOS sprint is
-still blocked on signing (`docs/ios-development.md`), so wiring notarization now
-would block the first release on an unrelated blocker. Consequence: macOS users
-who download the tarball hit Gatekeeper quarantine. Mitigate with an `xattr`
-line in the README install section (Stage F), and add quill in a later release
-once the Apple side is unblocked.
+The Swift side moves in with it. `scan`, `scan-test`, `scan-check`, `cardkit`,
+`cardkit-score`, `scan-ios`, `scan-ios-install`, `scan-ios-test` all become
+Taskfile tasks, so `task -l` lists the whole project — Go and native — rather
+than half of it. `make <anything>` still works: the Makefile catch-all forwards
+to task.
 
-**D3 — Ship `install.sh` from the repo, not from Cloudflare R2.**
-Triage's `release-install-script.yaml` uploads `install.sh` to an R2 bucket for a
-short vanity URL. The script itself only ever downloads from
-`github.com/OWNER/REPO/releases/download`, so it works fine served from
-`raw.githubusercontent.com`. Copy the script; skip the workflow and its three R2
-secrets entirely.
+**D2 — Sign *and* notarize. quill for macOS, cosign for the checksums.**
+Cosign keyless signing gives provenance (the artifact came from this workflow,
+recorded in Rekor). Apple notarization gives macOS users a binary that opens
+without a Gatekeeper fight. They solve different problems and hoard does both,
+same as triage. Cost: five repo secrets and a Developer ID Application
+certificate. See §8.1 for the exact secret setup — this is the one part of the
+plan that needs Apple Developer portal work, and it is a hard dependency for the
+release job, not a nice-to-have.
+
+**D3 — Publish `install.sh` to Cloudflare R2.**
+Same bucket and workflow shape as the org's other tools, so `hoard` installs
+the way its siblings do. `release-install-script.yaml` is a reusable workflow
+copied nearly verbatim; the three R2 secrets and the Cloudflare rewrite rule are
+the setup (§10.2). The script itself only ever downloads from
+`github.com/spiffcs/hoard/releases/download` — R2 hosts the script, not the
+binaries.
 
 **D4 — Branch is `master`, not `main`.**
 Every triage workflow says `branches: [main]`. hoard's default branch is
@@ -79,25 +85,23 @@ Every triage workflow says `branches: [main]`. hoard's default branch is
 likely silent mistake in this whole plan, because a workflow with the wrong
 branch filter simply never runs and reports nothing.
 
-**D5 — First tag is `v0.1.0`, prerelease semantics via `prerelease: auto`.**
+**D5 — First tag is `v0.1.0`; `prerelease: auto` handles the rest.**
 hoard has no tags. Pre-1.0 signals "the CLI surface can still move," which is
-true. `prerelease: auto` in goreleaser marks anything with a `-rc1`-style suffix
-as a prerelease automatically, so `v0.2.0-rc1` behaves correctly with no config
-change.
+true. `prerelease: auto` marks anything with a `-rc1`-style suffix as a
+prerelease with no config change.
 
 ---
 
 ## 3. What is explicitly out of scope
 
-- **The Swift scan helper and the iPhone app.** `bin/hoard-scan.app` and the iOS
-  head are built by `build-scan.sh` / `build-scan-ios.sh` on macOS with Xcode.
-  They are not in the goreleaser build matrix and not in the release archives.
-  The iPhone app has its own distribution path — `docs/app-store-release.md`.
-  The README must say plainly that the release binary is the CLI, and that
-  scanning needs a separate build from source on a Mac.
+- **Shipping the Swift helper or the iPhone app in the release archives.**
+  They get Taskfile targets (D1), not goreleaser build entries. The macOS helper
+  is an `.app` bundle built by `build-scan.sh`; the iOS head goes through the App
+  Store — `docs/app-store-release.md`. The README must say plainly that the
+  release binary is the CLI, and that scanning needs a separate build on a Mac.
 - **The macOS `scan.yml` workflow.** It stays manual-only for the reasons its own
   header comment gives (10× billing on macOS runners). Releasing does not change
-  that math. Do not re-enable it as part of this work.
+  that math. Going public does change it — revisit separately, not here.
 - **Homebrew tap / winget / Linux packages.** goreleaser can produce all of them.
   None on the first release; revisit once there is download traffic to justify
   the maintenance.
@@ -106,9 +110,9 @@ change.
 
 ## 4. Stage 0 — Blockers before the repo goes public
 
-Everything below assumes the repo will be public. These items must be true
-*before* flipping visibility, because a public repo is a permanent artifact —
-the licensing exposure and the first impression both start the moment it flips.
+Everything below assumes the repo will be public. These must be true *before*
+flipping visibility, because a public repo is a permanent artifact — the
+licensing exposure and the first impression both start the moment it flips.
 
 **0.1 — Close the data-licensing P0s.** `docs/data-licensing.md` §8 lists three,
 and they are release gates by that document's own framing:
@@ -122,9 +126,9 @@ and they are release gates by that document's own framing:
    `docs/data-licensing.md` §7) to `README.md`, and to `hoard version` output
    once Stage A exists.
 
-Verify the first two against the file before editing — line numbers drift.
-The P1 items in that same section (attribution/credits block, price disclaimer,
-extended User-Agent) are cheap and clearly right; fold them into Stage F.
+Verify the first two against the file before editing — line numbers drift. The
+P1 items in that section (credits block, price disclaimer, extended User-Agent)
+are cheap and clearly right; fold them into Stage F.
 
 **0.2 — Audit for anything that should not be public.** Run at minimum:
 
@@ -139,19 +143,110 @@ Also confirm the ignored-but-bulky corpora are actually ignored
 photographs the owner took.
 
 **0.3 — Flip visibility.** `gh repo edit spiffcs/hoard --visibility public
---accept-visibility-change-consequences`. Do this only when 0.1 and 0.2 are
-done, and only with the owner's explicit go-ahead in the same session. Once
-public, private-repo Actions minutes billing stops applying, which is also when
-re-enabling `scan.yml` becomes worth reconsidering (separately, not here).
+--accept-visibility-change-consequences`. Only when 0.1 and 0.2 are done, and
+only with the owner's explicit go-ahead in the same session.
 
 ---
 
-## 5. Stage A — Version plumbing
+## 5. Stage A — Toolchain migration (binny + Taskfile)
+
+Do this first among the build changes: every later stage's verification command
+(`make lint`, `make static-analysis`, `.tool/goreleaser`) assumes it.
+
+**A.1 — `.binny.yaml`** at the repo root. Triage's list is exactly hoard's
+needs; take it wholesale and bump to current versions with `.tool/binny update`
+after the first install:
+
+| tool | why hoard needs it |
+| --- | --- |
+| `binny` | manages itself; pinning the pinner |
+| `task` | runs everything |
+| `golangci-lint` | Stage D lint gate |
+| `gosimports` | import grouping in `task format` |
+| `goreleaser` | Stage B builds |
+| `cosign` | signs `checksums.txt` |
+| `quill` | signs + notarizes the macOS binaries (D2) |
+| `chronicle` | changelog generation |
+| `glow` | renders the changelog in the terminal |
+| `gh` | triggering releases from the CLI |
+
+**A.2 — `Taskfile.yaml`.** Start from triage's, then port every existing
+Makefile target. The Go half maps one-to-one; the native half is hoard-only and
+is the reason this migration is worth doing. Preserve the explanatory comments
+currently in the Makefile — they carry real knowledge (why `scan-check` depends
+on `cardkit` and not `scan`; why `cardkit-score` runs one process instead of
+231; why the simulator is discovered rather than named) and they must not be
+lost in the move.
+
+Task groups:
+
+- **High level** — `default`/`validations` → static-analysis; `static-analysis` →
+  `check-go-mod-tidy` + `lint`; `test` → `unit`; `unit` → `go test ./...`;
+  `build` → `go build -o hoard .`; `all` → `build` + `scan`.
+- **Bootstrap** — `binny`, `tools`/`bootstrap`, `update-tools`, `list-tools`,
+  `list-tool-updates`, `tmpdir`. Copy from triage unchanged.
+- **Static analysis** — `format`, `lint`, `lint-fix`, `check-go-mod-tidy`. Copy,
+  changing `gosimports -local github.com/anchore` to
+  `-local github.com/spiffcs`.
+- **Native / scan** (hoard-only) — `scan`, `scan-test`, `cardkit`, `scan-check`
+  (deps: `cardkit`), `cardkit-score` (deps: `cardkit`), `scan-ios`,
+  `scan-ios-install`, `scan-ios-test`.
+- **Schema** — `generate-json-schema`, `generate-sqlite-schema`.
+- **Changelog** — `unreleased`, `changelog`. Copy from triage.
+
+Two porting details that will bite otherwise:
+
+```yaml
+  # Makefile: `make cardkit-score ARGS=--misses`
+  # Taskfile: `task cardkit-score -- --misses`
+  cardkit-score:
+    desc: Score the labelled corpus in one process (~23s)
+    deps: [cardkit]
+    cmd: "./bin/cardkit-probe --score scan/corpus/manifest.tsv {{ .CLI_ARGS }}"
+
+  # Makefile used $(shell ...) at parse time; Taskfile uses a var with `sh:`,
+  # which is evaluated lazily — so this no longer runs xcrun on Linux.
+  scan-ios-test:
+    desc: Run ScanKit's unit tests on the iOS simulator
+    platforms: [darwin]
+    vars:
+      SIM_NAME:
+        sh: "xcrun simctl list devices available | grep -m1 -o 'iPhone [A-Za-z0-9 ]*' | sed 's/ *$$//'"
+    cmd: >
+      cd scan/hoard-scan && xcodebuild test -scheme hoard-scan-Package
+      -destination 'platform=iOS Simulator,name={{ .SIM_NAME }}' CODE_SIGNING_ALLOWED=NO
+```
+
+`platforms: [darwin]` on every native task means they are **skipped silently**
+on the Linux CI runner rather than failing. That is what makes a single
+`task all` safe everywhere — but it also means a green run on Linux proves
+nothing about the Swift half. Say so in a comment on each such task, and keep
+the real native gate where it already is: local `make scan scan-test scan-check`,
+plus the manual `scan.yml` workflow.
+
+**A.3 — Replace the `Makefile` with triage's shim.** `OWNER = spiffcs`,
+`PROJECT = hoard`. The catch-all `%:` target installs task on demand and
+forwards, so every command in every existing doc — `make build`, `make scan`,
+`make cardkit-score` — keeps working. Grep `docs/` and `README.md` for `make `
+afterwards and confirm each named target still resolves via `task -l`.
+
+Verify:
+
+```bash
+make tools && .tool/binny check
+make -s help                 # should list every task, native ones included
+make build && make test && make lint && make static-analysis
+make scan && make scan-test && make scan-check   # macOS only
+```
+
+---
+
+## 6. Stage B — Version plumbing
 
 goreleaser's ldflags need somewhere to write to, and hoard has no version
-symbol at all today. This is a code change, and it blocks Stage B.
+symbol at all today. This is a code change, and it blocks Stage C.
 
-**A.1 — Add `internal/version/version.go`:**
+**B.1 — Add `internal/version/version.go`:**
 
 ```go
 // Package version carries the build identity stamped in by the release
@@ -169,21 +264,21 @@ var (
 )
 ```
 
-**A.2 — Wire a `version` command into `main.go`'s dispatch switch** (the `case`
+**B.2 — Wire a `version` command into `main.go`'s dispatch switch** (the `case`
 ladder starting around line 121), beside `catalog` and `binder`. It prints the
 three values, the Go version and `runtime.GOOS/GOARCH`, and the Fan Content
 notice from Stage 0.1. Accept `--version` and `-v` as top-level flags mapping to
 the same code path, since that is what people type. Add the row to
 `usage.go`'s `usageSections` — the usage table is data, so it is one entry.
 
-**A.3 — Cover it in `main_test.go`.** One test that the command runs and its
-output contains the version string. The existing tests in that file show the
-house pattern for invoking `run()` with args and capturing output.
+**B.3 — Cover it in `main_test.go`.** One test that the command runs and its
+output contains the version string. The existing tests there show the house
+pattern for invoking `run()` with args and capturing output.
 
 Verify:
 
 ```bash
-go test ./... && go build -o hoard . && ./hoard version
+make test && make build && ./hoard version
 go build -ldflags "-X github.com/spiffcs/hoard/internal/version.Version=v0.0.1-test" -o /tmp/hoard-vt . && /tmp/hoard-vt version
 ```
 
@@ -192,11 +287,11 @@ build silently succeeds and still prints `dev`. Confirm it prints `v0.0.1-test`.
 
 ---
 
-## 6. Stage B — `.goreleaser.yaml`
+## 7. Stage C — `.goreleaser.yaml`
 
-New file at the repo root. This is triage's, adapted: one build entry instead of
-two (no per-OS split, because no notarization hook), Windows added, and the
-ldflags pointed at hoard's `internal/version`.
+New file at the repo root. Triage's, adapted: Windows added, ldflags pointed at
+hoard's `internal/version`, and the build split by OS because only the darwin
+entry carries the quill hook.
 
 ```yaml
 version: 2
@@ -204,34 +299,51 @@ version: 2
 project_name: hoard
 
 builds:
-  - id: hoard
+  # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
+  # target cross-compiles from the ubuntu runner with no toolchain wrangling.
+  - id: hoard-linux
     binary: hoard
     main: .
-    # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
-    # target cross-compiles from the ubuntu runner with no toolchain wrangling.
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: &ldflags
       - -s -w
       - -X github.com/spiffcs/hoard/internal/version.Version={{ .Version }}
       - -X github.com/spiffcs/hoard/internal/version.GitCommit={{ .Commit }}
       - -X github.com/spiffcs/hoard/internal/version.BuildDate={{ .Date }}
 
+  - id: hoard-windows
+    binary: hoard
+    main: .
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+
+  # Split out for the post hook: quill signs the Mach-O binary with the
+  # Developer ID cert and submits it to Apple's notary service. Snapshot builds
+  # pass --dry-run/--ad-hoc so a local `goreleaser --snapshot` needs no
+  # credentials and talks to nobody.
+  - id: hoard-darwin
+    binary: hoard
+    main: .
+    env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+    hooks:
+      post:
+        - cmd: .tool/quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+          env:
+            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+
 archives:
   - id: default
-    formats:
-      - tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        formats:
-          - zip
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -248,13 +360,9 @@ snapshot:
 # OIDC identity, and the signature lands in Rekor. Signing only checksums.txt
 # transitively covers every archive it hashes.
 signs:
-  - cmd: cosign
+  - cmd: .tool/cosign
     signature: "${artifact}.sigstore.json"
-    args:
-      - "sign-blob"
-      - "--bundle=${signature}"
-      - "--yes"
-      - "${artifact}"
+    args: ["sign-blob", "--bundle=${signature}", "--yes", "${artifact}"]
     artifacts: checksum
 
 release:
@@ -276,46 +384,86 @@ release:
     ```
 ```
 
-Note the difference from triage: `cmd: cosign` rather than `.tool/cosign`,
-because D1 drops binny. The release workflow installs cosign via
-`sigstore/cosign-installer` instead.
+`.tool/quill` and `.tool/cosign` are binny-installed (Stage A), which is why
+Stage A comes first. quill signs and notarizes Mach-O binaries **from Linux** —
+that is its reason to exist — so the release job stays on `ubuntu-latest`.
 
-Verify locally — this is the whole point of doing Stage B before Stage C:
+Verify locally:
 
 ```bash
-brew install goreleaser      # or: go install github.com/goreleaser/goreleaser/v2@latest
-goreleaser check
-goreleaser release --snapshot --clean --skip=sign
+make tools
+.tool/goreleaser check
+.tool/goreleaser release --snapshot --clean --skip=sign
 ls dist/
-./dist/hoard_darwin_arm64*/hoard version
+./dist/hoard-darwin_darwin_arm64*/hoard version
 ```
 
-A snapshot build produces every archive without touching GitHub. It must print
-a version like `v0.0.1-next+abc1234` — if it prints `dev`, the ldflag path in
-A.1/B is mismatched. `--skip=sign` because keyless cosign wants an OIDC token
-that only exists in Actions.
+A snapshot produces every archive without touching GitHub or Apple: quill runs
+ad-hoc/dry-run, and `--skip=sign` skips cosign, which wants an OIDC token that
+only exists in Actions. The binary must print a version like
+`v0.0.1-next+abc1234` — if it prints `dev`, the ldflag path is mismatched.
 
 ---
 
-## 7. Stage C — The release workflow
+## 8. Stage D — The release workflow
 
-New file `.github/workflows/release.yaml`. Adapted from triage: the quill
-notarization step is gone (D2), the R2 install-script job is gone (D3), and
-cosign is installed rather than bootstrapped by binny.
+### 8.1 Apple credentials (do this before writing the workflow)
+
+The release job hard-fails without these, so get them in place first. This needs
+Apple Developer portal access and is the longest-lead item in the plan.
+
+1. **Developer ID Application certificate.** Create it in the Apple Developer
+   portal, install to the login keychain, then export as `.p12` *with the full
+   chain* and a password.
+2. **App Store Connect API key** for the notary service: an Issuer ID, a Key ID,
+   and the `.p8` private key.
+3. **Five repository secrets:**
+
+   | secret | contents |
+   | --- | --- |
+   | `APPLE_DEVELOPER_ID_CERT_CHAIN` | base64 of the `.p12` |
+   | `APPLE_SIGNING_CERT_PASSWORD` | the `.p12` export password |
+   | `APPLE_NOTARY_ISSUER` | App Store Connect issuer UUID |
+   | `APPLE_NOTARY_KEY_ID` | the key's ID |
+   | `APPLE_NOTARY_KEY` | contents of the `.p8` |
+
+4. **Verify before you need them**, locally, with the same tool the workflow
+   uses: `.tool/quill submission list` with the three notary env vars set. It
+   round-trips against Apple's API and fails loudly on a bad key. The workflow
+   runs this same command as its own preflight step, for the same reason —
+   a credential failure should surface in seconds, not after a full build.
+
+This overlaps with the iPhone sprint's blocked signing work
+(`docs/ios-development.md`): both need the Apple Developer account wired up.
+Doing it here unblocks both.
+
+### 8.2 `.github/actions/bootstrap/action.yaml`
+
+Copy triage's composite action: `setup-go` (SHA-pinned), then `make tools` +
+`.tool/binny list` + `.tool/binny check`, then `make ci-bootstrap-go`. Every
+workflow below uses it, which is what keeps CI and local running the *same*
+pinned tools.
+
+### 8.3 `.github/workflows/release.yaml`
 
 ```yaml
 name: "Release"
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
         description: "Version to release (e.g., v0.1.0)"
         required: true
         type: string
+      phase:
+        description: "Release phase to run"
+        required: false
+        default: "full"
+        type: choice
+        options: [full, install-script-only]
 
 permissions:
   contents: read
@@ -325,25 +473,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The same quality gate PRs run. A tag that cannot pass CI must not produce
-  # a release, and tags are effectively immutable (see RELEASE.md), so this
-  # gate is the last chance to catch it.
+  # The same quality gate PRs run. Tags are effectively immutable (RELEASE.md),
+  # so this is the last chance to stop a bad one becoming a release.
   validations:
     name: "Validations"
-    uses: ./.github/workflows/ci.yml
+    if: ${{ github.event.inputs.phase != 'install-script-only' }}
+    uses: ./.github/workflows/validations.yaml
 
   release:
     name: "Release"
     needs: validations
+    if: ${{ github.event.inputs.phase != 'install-script-only' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub release
       id-token: write  # keyless cosign signing
+    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@<SHA>  # v7.0.0
         with:
-          fetch-depth: 0            # goreleaser needs full history for the changelog
+          fetch-depth: 0            # goreleaser needs full history
           persist-credentials: false
 
       - name: Validate tag format
@@ -355,11 +505,15 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-go@<SHA>  # v6.2.0
-        with:
-          go-version-file: go.mod
+      - name: Bootstrap environment
+        uses: ./.github/actions/bootstrap
 
-      - uses: sigstore/cosign-installer@<SHA>  # v3.x
+      - name: Validate Apple notarization credentials
+        run: .tool/quill submission list
+        env:
+          QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@<SHA>  # v7.2.3
@@ -369,38 +523,58 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUILL_SIGN_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERT_CHAIN }}
+          QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+          QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+
+  release-install-script:
+    name: "Release install script"
+    needs: [release]
+    if: ${{ always() && (needs.release.result == 'success' || github.event.inputs.phase == 'install-script-only') }}
+    uses: ./.github/workflows/release-install-script.yaml
+    with:
+      tag: ${{ github.event.inputs.version || github.ref_name }}
+    secrets:
+      R2_INSTALL_ACCESS_KEY_ID: ${{ secrets.R2_INSTALL_ACCESS_KEY_ID }}
+      R2_INSTALL_SECRET_ACCESS_KEY: ${{ secrets.R2_INSTALL_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
 ```
 
-Implementation notes for whoever writes this file:
+Implementation notes:
 
-- **`<SHA>` is not a placeholder to leave in.** Resolve each one before
-  committing: `gh api repos/actions/checkout/git/ref/tags/v7.0.0 --jq
-  '.object.sha'` (for a lightweight tag; for annotated tags dereference with
-  `--jq '.object.sha'` then fetch the tag object). Keep the `# v7.0.0` comment
+- **`<SHA>` is not a placeholder to leave in.** Resolve each before committing:
+  `gh api repos/actions/checkout/git/ref/tags/v7.0.0 --jq '.object.sha'`
+  (dereference the tag object if it is annotated). Keep the `# v7.0.0` comment
   beside it — that comment is what dependabot reads to offer bumps.
-- **`uses: ./.github/workflows/ci.yml` requires ci.yml to accept
-  `workflow_call`.** That is part of Stage D. Do Stage D first or this workflow
-  fails on its first run with a confusing "invalid workflow file" error.
-- **No `environment: production`.** Triage uses one to gate its Apple secrets.
-  hoard has no release secrets beyond the auto-provided `GITHUB_TOKEN`, so an
-  environment adds an approval prompt with nothing to protect. Add one later
-  alongside quill.
-- **`persist-credentials: false`** on every checkout. It is a zizmor finding
-  otherwise (Stage E), and there is no step here that needs the token in
-  `.git/config`.
+- **`uses: ./.github/workflows/validations.yaml` requires that file to exist
+  with `workflow_call:`** — Stage E. Build Stage E first or this fails on its
+  first run with an unhelpful "invalid workflow file."
+- **`environment: production`** gates the Apple secrets behind an environment,
+  matching triage. Create it in repo settings; leave it without required
+  reviewers unless the owner wants a manual approval on every release.
+- The `phase: install-script-only` input exists to re-push the install script
+  without re-cutting a release. Worth keeping — it costs one `if:` and saves a
+  bad afternoon.
 
 ---
 
-## 8. Stage D — Harden CI
+## 9. Stage E — CI as a reusable workflow
 
-`.github/workflows/ci.yml` exists and is sound in shape. Four changes:
+Triage names it `validations.yaml` and the release workflow calls it by path.
+hoard's `ci.yml` does the same job under a different name. Rename it to
+`.github/workflows/validations.yaml` so the two repos read alike, and update the
+CI badge in `README.md` — the badge URL contains the workflow filename, so a
+rename silently breaks it.
 
-**D.1 — Make it callable.** Add `workflow_call:` to the `on:` block so the
-release workflow can reuse it. Keep `push: branches: [master]` and
-`pull_request:` as they are.
+Changes beyond the rename:
 
-**D.2 — Add a concurrency group.** Three pushes to a PR currently mean three
-full runs. Copy the triage pattern:
+**E.1 — Add `workflow_call:` and `workflow_dispatch:`** to the `on:` block,
+keeping `push: branches: [master]` and `pull_request:`.
+
+**E.2 — Add a concurrency group.** Three pushes to a PR currently mean three
+full runs:
 
 ```yaml
 concurrency:
@@ -408,170 +582,190 @@ concurrency:
   cancel-in-progress: true
 ```
 
-**D.3 — Pin actions by SHA and stop persisting credentials.** `actions/checkout@v7`
-and `actions/setup-go@v7` become SHAs with a version comment, and checkout gets
-`persist-credentials: false`. A floating tag is a mutable reference to code that
-runs with repository write scope in the release job.
+**E.3 — Two jobs, both bootstrapped.** `Static-Analysis` running
+`make static-analysis`, and `Unit-Test` running `make test` — each using
+`./.github/actions/bootstrap`. This replaces the current inline gofmt/vet/test/build
+steps with the same commands a developer runs locally, which is the whole
+argument for Stage A.
 
-**D.4 — Add lint and a tidy check.** The current job is gofmt + vet, which misses
-the whole `staticcheck`/`errcheck` class. Add:
+**E.4 — Pin actions by SHA, and `persist-credentials: false`** on every
+checkout. A floating tag is a mutable reference to code that runs with
+repository write scope in the release job.
 
-- `.golangci.yaml` at the root — triage's is a good starting point (errcheck,
-  govet, ineffassign, staticcheck, unused; `check-type-assertions: true`).
-  Expect a first run with real findings; fix them in a separate commit from
-  the config so review can see each half.
-- `.github/scripts/go-mod-tidy-check.sh` — copy triage's verbatim, `chmod +x`.
-  It proves `go.mod`/`go.sum` are what `go mod tidy` would write.
-- A `lint` step using `golangci/golangci-lint-action` pinned by SHA, plus a
-  `go mod tidy check` step running the script.
-- Matching `make lint` / `make tidy-check` targets, so the local loop and CI
-  run the same thing. That is the existing Makefile's convention already.
+**E.5 — `.golangci.yaml`.** Triage's is a good starting point: errcheck, govet,
+ineffassign, staticcheck, unused, with `check-type-assertions: true`. Expect the
+first run to surface real findings — fix them in a commit separate from the
+config, so review can see each half.
 
-Verify: `make test && make vet && make lint && .github/scripts/go-mod-tidy-check.sh`,
-then push a branch and confirm the PR checks go green.
+**E.6 — `.github/scripts/go-mod-tidy-check.sh`.** Copy verbatim, `chmod +x`.
+Proves `go.mod`/`go.sum` are what `go mod tidy` would write.
 
----
-
-## 9. Stage E — Supply chain and security
-
-All four are copy-with-substitution from triage. None require secrets.
-
-**E.1 — `.github/dependabot.yaml`.** Triage's verbatim: gomod + github-actions,
-weekly, 7-day cooldown, `chore(deps)` commit prefix. The github-actions
-ecosystem is what turns SHA pinning from a maintenance burden into a PR queue.
-
-**E.2 — `.github/workflows/codeql.yaml`.** Triage's, with `main` → `master`.
-Weekly cron plus push/PR. `security-events: write` is required for the SARIF
-upload; on a public repo Code Scanning is free.
-
-**E.3 — `.github/workflows/validate-github-actions.yaml` + `.github/zizmor.yml`.**
-zizmor lints the workflows themselves — unpinned `uses`, credential
-persistence, template injection. Runs only on `.github/**` changes. The
-`zizmor.yml` policy needs `spiffcs/*: any` swapped to whatever hoard's own local
-actions are (hoard has none today, so the file can start empty or keep the
-policy for future use).
-
-**E.4 — `SECURITY.md`.** Triage's, with the project name and contact swapped.
-GitHub surfaces it in the Security tab and in the "Report a vulnerability" flow.
+Verify: `make static-analysis && make test`, then push a branch and confirm the
+PR checks go green.
 
 ---
 
-## 10. Stage F — Repo polish
+## 10. Stage F — Supply chain, security, and the install path
 
-This is the "looks like a real project, not slop" stage. Everything here is
-prose, and prose is the part an agent should draft and a human should read.
+### 10.1 Copy-with-substitution from triage
 
-**F.1 — README install section.** The README currently has no install path at
+- **`.github/dependabot.yaml`** — gomod + github-actions, weekly, 7-day
+  cooldown, `chore(deps)` prefix. The github-actions ecosystem is what turns SHA
+  pinning from a maintenance burden into a PR queue.
+- **`.github/workflows/codeql.yaml`** — `main` → `master`. Weekly cron plus
+  push/PR. Free on public repos.
+- **`.github/workflows/validate-github-actions.yaml` + `.github/zizmor.yml`** —
+  zizmor lints the workflows themselves (unpinned `uses`, credential
+  persistence, template injection). Runs only on `.github/**` changes.
+- **`SECURITY.md`** — project name and contact swapped. GitHub surfaces it in
+  the Security tab and the "Report a vulnerability" flow.
+- **`.chronicle.yaml`** — the two-comment defaults file.
+
+### 10.2 `install.sh` and R2
+
+**F.1 — `install.sh` at the repo root.** Copy triage's 229-line script;
+substitute `PROJECT_NAME="hoard"` and `OWNER="spiffcs"`. It detects OS/arch,
+downloads the archive and `checksums.txt` from the GitHub releases API, verifies
+the SHA256, and verifies the cosign bundle when `cosign` is on PATH. Note it
+handles darwin and linux only — Windows users take the release page, which is
+what the README should say.
+
+**F.2 — `.github/workflows/release-install-script.yaml`.** Copy triage's
+reusable workflow unchanged. It is already project-agnostic: the R2 key is
+`${{ github.event.repository.name }}/...`, so it writes to `hoard/<tag>/install.sh`
+and `hoard/install.sh` with no edits.
+
+**F.3 — R2 setup** (needs org access, not just repo access):
+
+1. Confirm which bucket hoard belongs in. The workflow's default is
+   `oss-prod-install`, shared with the org's other tools — if hoard goes
+   somewhere else, pass `r2-bucket:` from the caller in `release.yaml`.
+2. Add the three secrets: `R2_INSTALL_ACCESS_KEY_ID`,
+   `R2_INSTALL_SECRET_ACCESS_KEY`, `R2_ENDPOINT`.
+3. Add the Cloudflare rewrite rule for `/hoard` → `/hoard/install.sh`, matching
+   the existing per-project rules. Without it the short URL 404s while the
+   versioned path works — a confusing failure worth pre-empting.
+
+Until step 3 is confirmed, the README should quote the full path, not the short
+one. Fix it after the first release verifies which URL actually resolves.
+
+---
+
+## 11. Stage G — Repo polish
+
+Everything here is prose, and prose is the part an agent drafts and a human
+reads before it ships.
+
+**G.1 — README install section.** The README currently has no install path at
 all — it goes from the screenshot straight into usage. Add, right after the
-badges:
+badges: the `install.sh` one-liner, `go install github.com/spiffcs/hoard@latest`,
+manual download from the releases page with the `cosign verify-blob`
+incantation, and one sentence saying the release binary is the CLI — the card
+scanner needs the Swift helper and the iPhone app built from source on a Mac
+(link `docs/ios-development.md`).
 
-- `curl -sSfL https://raw.githubusercontent.com/spiffcs/hoard/master/install.sh | sh -s -- -b /usr/local/bin`
-- `go install github.com/spiffcs/hoard@latest`
-- Manual download from the releases page, with the `cosign verify-blob`
-  incantation from §6's footer.
-- The macOS Gatekeeper note (D2): `xattr -d com.apple.quarantine ./hoard` after
-  extracting a downloaded archive, with one sentence saying why (the binary is
-  signed for provenance but not Apple-notarized yet).
-- One sentence: the release binary is the CLI. The card scanner needs the Swift
-  helper and the iPhone app built from source on a Mac — link
-  `docs/ios-development.md`.
+Because of D2 there is **no** Gatekeeper workaround to document: the macOS
+binaries are signed and notarized, so they open on a double-click. That is the
+payoff for §8.1, and it is worth one sentence in the README.
 
-**F.2 — `install.sh`.** Copy triage's 229-line script; substitute
-`PROJECT_NAME`/`OWNER`. It detects OS/arch, downloads the archive and
-`checksums.txt` from the GitHub releases API, verifies the SHA256, and
-optionally verifies the cosign bundle when `cosign` is on PATH. Test it against
-the first real release in Stage G — not before, since it needs a release to
-download.
-
-**F.3 — Licensing prose (P0.3 and the P1s from Stage 0).** The Fan Content
+**G.2 — Licensing prose** (P0.3 and the P1s from Stage 0): the Fan Content
 notice, a credits section naming Scryfall / MTGJSON (with Zach Halpern's MIT
 line) / tcgcsv and disclaiming affiliation, and the price disclaimer — one line
 in the README and one in `docs/pricing.md`.
 
-**F.4 — `CONTRIBUTING.md`.** Short. How to build (`make build`), how to test
-(`make test`), what CI gates on, the fact that the Swift half needs macOS +
-Xcode and is not gated in CI, and that commits are conventional-ish
-(`feat:`/`fix:`) — which the existing git history already follows and which
-chronicle-style changelog tooling keys off.
+**G.3 — `CONTRIBUTING.md`.** Short. How to bootstrap (`make tools`), build
+(`make build`), test (`make test`), what CI gates on, the fact that the Swift
+half needs macOS + Xcode and is **not** gated in CI (see the `platforms:` caveat
+in A.2), and that commits are conventional-ish (`feat:`/`fix:`) — which the
+existing history already follows and which chronicle keys off.
 
-**F.5 — `RELEASE.md`.** Triage's is genuinely good and mostly project-agnostic:
-tag format, the "never retag, always patch-release" rule with the Go checksum-db
-reasoning, and the Sigstore verification model. Copy it, substitute the
-project name, and cut the sections that describe things hoard does not do.
+**G.4 — `RELEASE.md`.** Triage's is genuinely good and mostly project-agnostic:
+tag format, the "never retag, always patch-release" rule with the Go
+checksum-db reasoning, the Sigstore verification model, and what each release
+artifact is. Copy it and substitute the project name.
 
-**F.6 — Issue and PR templates.** `.github/ISSUE_TEMPLATE/bug_report.yml`,
-`feature_request.yml`, and `config.yml`. Triage has none — this is hoard going a
+**G.5 — Issue and PR templates.** `.github/ISSUE_TEMPLATE/bug_report.yml`,
+`feature_request.yml`, `config.yml`. Triage has none — this is hoard going a
 step further, and it is cheap. The bug template should ask for `hoard version`
-output, which is exactly why Stage A exists.
+output, which is exactly why Stage B exists.
 
 ---
 
-## 11. Stage G — Cut the first release
+## 12. Stage H — Cut the first release
 
 In order, stopping at the first failure:
 
-1. **Dry run.** `goreleaser release --snapshot --clean --skip=sign` on a clean
-   tree. Inspect `dist/`: six archives (3 OS × 2 arch, Windows as `.zip`),
+1. **Dry run.** `.tool/goreleaser release --snapshot --clean --skip=sign` on a
+   clean tree. Inspect `dist/`: six archives (3 OS × 2 arch, Windows as `.zip`),
    `checksums.txt`, and a binary that prints a real version.
-2. **Confirm CI is green on `master`** — all of Stage D and E, not just the
+2. **Confirm CI is green on `master`** — all of Stage E and F, not just the
    build job.
-3. **Tag and push.**
+3. **Confirm the Apple preflight passes**: `.tool/quill submission list` with
+   the notary env vars.
+4. **Tag and push.**
    ```bash
    git tag -a v0.1.0 -m "Release v0.1.0"
    git push origin v0.1.0
    ```
    *(Committing and pushing is the owner's to run, not an agent's.)*
-4. **Watch it.** `gh run watch` on the release workflow. The two steps most
-   likely to fail first time: the tag-format regex (fails fast, harmless) and
-   the cosign signing step (needs `id-token: write` — if it is missing, the error
-   is an opaque OIDC token fetch failure, not a permissions message).
-5. **Verify what shipped**, as a user would:
+5. **Watch it.** `gh run watch`. The four likely first-time failures, in the
+   order they'd hit: tag-format regex (fails fast, harmless); quill preflight
+   (bad base64 on the `.p12` is the usual cause); notarization submit (Apple can
+   take minutes — it is slow, not hung); cosign (needs `id-token: write`, and
+   the error when it is missing is an opaque OIDC fetch failure rather than a
+   permissions message).
+6. **Verify what shipped, as a user would:**
    ```bash
    gh release view v0.1.0
    cosign verify-blob --bundle checksums.txt.sigstore.json \
      --certificate-identity-regexp "^https://github.com/spiffcs/hoard/.*" \
      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
      checksums.txt
-   curl -sSfL https://raw.githubusercontent.com/spiffcs/hoard/master/install.sh | sh -s -- -b /tmp/hoard-install
+   # on a Mac, the notarization payoff — must print "accepted", with no prompt:
+   spctl -a -vvv -t install ./hoard
+   curl -sSfL https://<r2-host>/hoard/install.sh | sh -s -- -b /tmp/hoard-install
    /tmp/hoard-install/hoard version
    ```
-6. **If it fails after the tag is pushed: do not delete and retag.** Fix
-   forward and cut `v0.1.1`. `RELEASE.md` explains why — once the Go checksum
-   database has seen a version, changing what it points at produces `SECURITY
-   ERROR: sum mismatch` for anyone who fetched it.
+7. **If it fails after the tag is pushed: do not delete and retag.** Fix forward
+   and cut `v0.1.1`. `RELEASE.md` explains why — once the Go checksum database
+   has seen a version, changing what it points at produces `SECURITY ERROR: sum
+   mismatch` for anyone who fetched it.
 
 ---
 
-## 12. Deferred, on purpose
+## 13. Deferred, on purpose
 
-Written down so they read as decisions rather than oversights:
-
-- **Apple notarization via quill** (D2) — needs Developer ID cert + notary API
-  key as repo secrets; blocked behind the same Apple account work as the iOS
-  sprint.
 - **Homebrew tap** — worth it at real download volume, not before.
-- **Changelog automation** (triage uses `chronicle` + `glow`) — goreleaser's
-  built-in commit-based changelog is adequate for v0.1.x. Revisit when releases
-  get frequent enough that hand-reading commits stops scaling.
+- **Chronicle in the release pipeline** — triage generates changelogs with
+  chronicle *locally* (`make changelog`, `make unreleased`) and lets goreleaser
+  build the release notes. hoard matches that. Wire chronicle into the workflow
+  only if the commit-derived notes prove inadequate.
 - **Re-enabling `scan.yml` on push/PR** — the macOS billing math changes once
   the repo is public, but that is a separate decision with its own tradeoffs;
   see the header comment in that file.
-- **`install.sh` hosting on a vanity domain** (D3) — raw.githubusercontent.com
-  works and costs nothing.
+- **Windows in `install.sh`** — triage's script is POSIX sh and handles
+  darwin/linux. Windows users take the releases page.
 
 ---
 
-## 13. Order of execution, condensed
+## 14. Order of execution, condensed
 
 ```
-Stage 0  licensing P0s + secret audit + go public      ← blocks everything
-Stage A  internal/version + `hoard version` + tests    ← blocks B
-Stage B  .goreleaser.yaml + local snapshot dry run     ← blocks C
-Stage D  ci.yml: workflow_call, concurrency, SHA pins, ← blocks C (workflow_call)
-         golangci-lint, go-mod-tidy check
-Stage C  .github/workflows/release.yaml
-Stage E  dependabot, codeql, zizmor, SECURITY.md       ← independent
-Stage F  README install + install.sh + credits +       ← independent
-         CONTRIBUTING + RELEASE.md + issue templates
-Stage G  tag v0.1.0, verify as a user would
+Stage 0  licensing P0s + secret audit + go public       ← blocks everything
+Stage A  binny + Taskfile + Makefile shim (Go & Swift)  ← blocks B, C, E
+Stage B  internal/version + `hoard version` + tests     ← blocks C
+Stage C  .goreleaser.yaml (+ quill hook) + snapshot     ← blocks D
+Stage E  validations.yaml (rename ci.yml), bootstrap    ← blocks D
+         action, golangci, go-mod-tidy check
+Stage D  Apple secrets (§8.1, long lead — start early)
+         + .github/workflows/release.yaml
+Stage F  dependabot, codeql, zizmor, SECURITY.md,       ← R2 setup needs org access
+         install.sh, R2 workflow + bucket + rewrite
+Stage G  README install + credits + CONTRIBUTING +
+         RELEASE.md + issue templates
+Stage H  tag v0.1.0, verify as a user would
 ```
+
+§8.1 (Apple credentials) and §10.2 (R2 access) are the two items that depend on
+people and portals rather than code. Start both on day one; everything else can
+proceed in parallel while they land.

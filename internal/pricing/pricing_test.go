@@ -290,7 +290,7 @@ func TestPricesOverlayTreatedFoil(t *testing.T) {
 	}
 
 	// The learned product id is stamped, like uuids and vendor links.
-	ids, stamped, err := s.TCGAltProducts()
+	ids, _, stamped, err := s.TCGAltProducts()
 	if err != nil {
 		t.Fatalf("TCGAltProducts: %v", err)
 	}

@@ -48,6 +48,7 @@ var migrations = []migration{
 	{18, settingsTable},
 	{19, defaultBinderRealName},
 	{20, vendorProductIDs},
+	{21, etchedPrices},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -393,6 +394,33 @@ const vendorProductIDs = `
 ALTER TABLE cards ADD COLUMN ck_foil_id TEXT;
 ALTER TABLE cards ADD COLUMN ck_etched_id TEXT;
 ALTER TABLE cards ADD COLUMN tcg_product_id TEXT;`
+
+// v21: etched stops borrowing the foil price.
+//
+// hoard has valued an etched copy at the foil price since v1, because the
+// catalog had one foil column and Scryfall's etched figure was folded into it
+// on the way in. That was a simplification, and the rest of the tool has since
+// outgrown it: the comps sheet reads the vendors' own etched bucket, and
+// docs/pricing.md says plainly that etched is a real bucket in the feed and not
+// a synonym for foil. The portfolio was the last place still saying otherwise,
+// so a card whose etched printing trades well away from its foil one was
+// carried at the wrong number in every total hoard reports.
+//
+// The column is nullable and reads fall back to foil, so a printing the feed
+// prices only as a foil is valued exactly as before. Nothing is backfilled: the
+// next update-prices fills it from the response it was already fetching.
+//
+// tcg_etched_product_id lands here too, because it is the same mistake one
+// layer down. tcg_alt_product_id (v17) held whichever id the set file offered —
+// the alternative-foil one, or the etched one when there was no alt-foil — and
+// the overlay wrote every series it fetched into the foil bucket. So for a
+// printing with an etched product and no alt-foil product, the etched product's
+// price filled holes in the foil series. Splitting the ids lets each series
+// land in the bucket its id actually names. Same tri-state as v20: NULL is
+// never asked, empty is asked and the feed had none.
+const etchedPrices = `
+ALTER TABLE cards ADD COLUMN price_usd_etched REAL;
+ALTER TABLE cards ADD COLUMN tcg_etched_product_id TEXT;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

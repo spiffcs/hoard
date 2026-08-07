@@ -64,9 +64,5 @@ func tierFor(price *float64, win, jackpot float64) string {
 // price, or nil when the printing has no price for it — so tierFor can tell
 // unpriced from worthless.
 func priceValuePtr(c scryfall.Card, finish string) *float64 {
-	p := c.PriceUSD
-	if scryfall.PricedAsFoil(finish) {
-		p = c.PriceUSDFoil
-	}
-	return p
+	return finishPrice(c, finish)
 }

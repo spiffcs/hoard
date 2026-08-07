@@ -6,7 +6,6 @@ import (
 
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/resolve"
-	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/watchsource"
 )
@@ -56,15 +55,9 @@ func WatchImport(ctx context.Context, d Deps, p progress.Fn, o WatchImportOption
 		if !m.OK {
 			continue
 		}
-		// The watch stores a price finish: an etched-only printing is priced
-		// as foil, and a finish the printing lacks has no price to ever cross.
-		finish := "nonfoil"
-		if scryfall.PricedAsFoil(m.Finish) {
-			finish = "foil"
-		}
 		ins = append(ins, store.WatchInput{
 			ScryfallID: m.Card.ID, Display: m.Card.Name,
-			Finish: finish, Op: r.Op, Threshold: r.Threshold,
+			Finish: watchFinish(m.Finish, m.Card), Op: r.Op, Threshold: r.Threshold,
 		})
 	}
 	if res.Created, res.Updated, err = d.Store.AddWatches(ins); err != nil {

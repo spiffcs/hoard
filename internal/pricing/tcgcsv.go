@@ -52,17 +52,16 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 	if err != nil {
 		return nil
 	}
-	ids, _, err := f.st.TCGAltProducts()
-	if err != nil || len(ids) == 0 {
+	foilIDs, etchedIDs, _, err := f.st.TCGAltProducts()
+	if err != nil || (len(foilIDs) == 0 && len(etchedIDs) == 0) {
 		return nil
 	}
-	type need struct{ uuid, product string }
+	// One need per product, carrying the bucket its id names: a printing can
+	// have both a treated foil and an etched product, and their prices are not
+	// interchangeable.
+	type need struct{ uuid, product, finish string }
 	bySet := map[string][]need{}
 	for _, r := range refs {
-		pid := ids[r.ScryfallID]
-		if pid == "" {
-			continue
-		}
 		uuid := r.MTGJSONUUID
 		if uuid == "" {
 			uuid = uuids[r.ScryfallID]
@@ -71,7 +70,14 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 			continue
 		}
 		code := strings.ToUpper(r.SetCode)
-		bySet[code] = append(bySet[code], need{uuid, pid})
+		for finish, pid := range map[string]string{
+			"foil":   foilIDs[r.ScryfallID],
+			"etched": etchedIDs[r.ScryfallID],
+		} {
+			if pid != "" {
+				bySet[code] = append(bySet[code], need{uuid, pid, finish})
+			}
+		}
 	}
 	if len(bySet) == 0 {
 		return nil
@@ -84,14 +90,20 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 	}
 
 	extra := mtgjson.ExtraSeries{}
-	add := func(uuid, date string, price float64) {
+	add := func(n need, date string, price float64) {
 		if price <= 0 {
 			return
 		}
-		if extra[uuid] == nil {
-			extra[uuid] = map[string]float64{}
+		e := extra[n.uuid]
+		dst := &e.Foil
+		if n.finish == "etched" {
+			dst = &e.Etched
 		}
-		extra[uuid][date] = price
+		if *dst == nil {
+			*dst = map[string]float64{}
+		}
+		(*dst)[date] = price
+		extra[n.uuid] = e
 	}
 	var gids []int
 	byGroup := map[int][]need{}
@@ -112,7 +124,7 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 			continue
 		}
 		for _, n := range needs {
-			add(n.uuid, todayDate(), prices[n.product])
+			add(n, todayDate(), prices[n.product])
 		}
 	}
 	if days <= 1 || len(gids) == 0 {
@@ -157,7 +169,7 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjso
 					continue
 				}
 				for _, n := range needs {
-					add(n.uuid, date, prices[n.product])
+					add(n, date, prices[n.product])
 				}
 			}
 		}()

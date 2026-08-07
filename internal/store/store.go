@@ -85,8 +85,13 @@ type Card struct {
 	Name            string
 	PriceUSD        *float64
 	PriceUSDFoil    *float64
-	ScryfallURL     string
-	UpdatedAt       string
+	// PriceUSDEtched is the etched product's own price, nil for a printing with
+	// no etched product. Etched copies read it and fall back to PriceUSDFoil,
+	// since not every source splits the two — see scryfall.EffectiveFoilPrice,
+	// which is the Go mirror of the entryValue SQL.
+	PriceUSDEtched *float64
+	ScryfallURL    string
+	UpdatedAt      string
 	// AltSource names the vendor a fallback price came from, and is empty when
 	// Scryfall priced the card. Set only by the queries that read prices for
 	// display, so callers can mark an estimate as such.
@@ -142,10 +147,10 @@ type EntryView struct {
 	Quantity int
 }
 
-// Price returns the market price for this entry's finish (foil vs. normal).
+// Price returns the market price for this entry's finish.
 func (e EntryView) Price() *float64 {
 	if scryfall.PricedAsFoil(e.Finish) {
-		return e.Card.PriceUSDFoil
+		return scryfall.EffectiveFoilPrice(e.Finish, e.Card.PriceUSDFoil, e.Card.PriceUSDEtched)
 	}
 	return e.Card.PriceUSD
 }
@@ -180,10 +185,16 @@ const (
 	altJoinCards   = `LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id`
 	altJoinEntries = `LEFT JOIN card_prices_alt a ON a.scryfall_id = e.scryfall_id`
 
-	// effPriceUSD and effPriceFoil are the price to use for each finish: the
-	// Scryfall figure when there is one, else the fallback.
-	effPriceUSD  = `COALESCE(c.price_usd, a.price_usd)`
-	effPriceFoil = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
+	// effPriceUSD, effPriceFoil and effPriceEtched are the price to use for
+	// each finish: the Scryfall figure when there is one, else the fallback.
+	//
+	// Etched reads its own column first and falls back to the foil one, since
+	// not every source splits the product — a printing the feed knows only as a
+	// foil is valued exactly as it was before etched had a column of its own.
+	// card_prices_alt has no etched column, so its foil fallback serves both.
+	effPriceUSD    = `COALESCE(c.price_usd, a.price_usd)`
+	effPriceFoil   = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
+	effPriceEtched = `COALESCE(c.price_usd_etched, c.price_usd_foil, a.price_usd_foil)`
 
 	// altSourceExpr names the vendor behind a fallback price, and is empty when
 	// Scryfall priced the card. Display code uses it to mark estimates.
@@ -200,20 +211,35 @@ const (
 	// names the vendor that supplied *that* finish. A card's two finishes can
 	// come from different shops, and crediting the wrong one beside a price is
 	// worse than saying nothing.
-	altSourceForEntry = `COALESCE(CASE WHEN e.finish IN ('foil','etched')
-        THEN CASE WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
+	altSourceForEntry = `COALESCE(CASE
+        WHEN e.finish = 'etched' THEN
+            CASE WHEN c.price_usd_etched IS NULL AND c.price_usd_foil IS NULL
+                 THEN a.source_usd_foil END
+        WHEN e.finish = 'foil' THEN
+            CASE WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
         ELSE CASE WHEN c.price_usd IS NULL THEN a.source_usd END
     END, '')`
 
-	// entryValue values one card_entries row by its finish.
-	entryValue = `COALESCE(CASE WHEN e.finish IN ('foil','etched')
-        THEN ` + effPriceFoil + ` ELSE ` + effPriceUSD + ` END, 0)`
+	// entryValue values one card_entries row by its finish. Every total hoard
+	// reports is built from this, so it is the one place the finish-to-column
+	// rule lives; scryfall.EffectiveFoilPrice mirrors it in Go.
+	entryValue = `COALESCE(CASE
+        WHEN e.finish = 'etched' THEN ` + effPriceEtched + `
+        WHEN e.finish = 'foil'   THEN ` + effPriceFoil + `
+        ELSE ` + effPriceUSD + ` END, 0)`
 
 	// unpricedPredicate matches an entry no source can price for the finish it
 	// is actually held in. The finish matters: a card owned only in non-foil
 	// needs no foil price, and treating that as a gap would send every price
 	// run chasing numbers that would never be used.
-	unpricedPredicate = `(e.finish IN ('foil','etched')
+	//
+	// Etched is unpriced only when its own column, the foil column and the
+	// fallback are all empty — mirroring effPriceEtched, so a card this
+	// predicate calls unpriced is exactly one entryValue scores at zero.
+	unpricedPredicate = `(e.finish = 'etched'
+         AND c.price_usd_etched IS NULL
+         AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
+   OR (e.finish = 'foil'
          AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
    OR (e.finish = 'nonfoil'
          AND c.price_usd IS NULL AND a.price_usd IS NULL)`
@@ -226,7 +252,8 @@ const (
 // only as a runtime scan error.
 func cardCols(altSource string) string {
 	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
-       ` + effPriceUSD + `, ` + effPriceFoil + `, c.scryfall_url, c.updated_at,
+       ` + effPriceUSD + `, ` + effPriceFoil + `, ` + effPriceEtched + `,
+       c.scryfall_url, c.updated_at,
        ` + altSource + `, c.color_identity, c.mana_cost, c.promo_types`
 }
 
@@ -249,8 +276,8 @@ func (a cardAux) apply(c *Card) {
 // shimmed fields.
 func cardScanDest(c *Card, aux *cardAux) []any {
 	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
-		&c.PriceUSD, &c.PriceUSDFoil, &c.ScryfallURL, &c.UpdatedAt, &c.AltSource,
-		&aux.colorIdentity, &c.ManaCost, &aux.promoTypes}
+		&c.PriceUSD, &c.PriceUSDFoil, &c.PriceUSDEtched, &c.ScryfallURL, &c.UpdatedAt,
+		&c.AltSource, &aux.colorIdentity, &c.ManaCost, &aux.promoTypes}
 }
 
 // parseColorIdentity turns the stored JSON array into a slice: nil for NULL

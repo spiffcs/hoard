@@ -30,14 +30,16 @@ func upsertPrintingsTx(tx *sql.Tx, cards []scryfall.Card) error {
 	// it and silently emptying every generated column that depends on it.
 	stmt, err := tx.Prepare(`
 INSERT INTO cards (scryfall_id, set_code, collector_number, name,
-                   price_usd, price_usd_foil, scryfall_url, updated_at, raw_json)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   price_usd, price_usd_foil, price_usd_etched,
+                   scryfall_url, updated_at, raw_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scryfall_id) DO UPDATE SET
     set_code         = excluded.set_code,
     collector_number = excluded.collector_number,
     name             = excluded.name,
     price_usd        = excluded.price_usd,
     price_usd_foil   = excluded.price_usd_foil,
+    price_usd_etched = excluded.price_usd_etched,
     scryfall_url     = excluded.scryfall_url,
     updated_at       = excluded.updated_at,
     raw_json         = COALESCE(excluded.raw_json, cards.raw_json)`)
@@ -53,7 +55,7 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 			raw = string(c.Raw)
 		}
 		if _, err := stmt.Exec(c.ID, c.Set, c.CollectorNumber, c.Name,
-			c.PriceUSD, c.PriceUSDFoil, c.ScryfallURL, ts, raw); err != nil {
+			c.PriceUSD, c.PriceUSDFoil, c.PriceUSDEtched, c.ScryfallURL, ts, raw); err != nil {
 			return fmt.Errorf("upserting catalog card %s: %w", c.Name, err)
 		}
 	}
@@ -193,36 +195,50 @@ SELECT scryfall_id FROM cards WHERE ck_url IS NOT NULL`)
 	return out, rows.Err()
 }
 
-// TCGAltProducts returns the treated-product mapping: ids holds each
-// printing's split TCGplayer product where one exists, stamped every
-// printing that has been asked about at all — the resolve gate, so a card
-// with no split product is not re-asked forever.
-func (s *Store) TCGAltProducts() (ids map[string]string, stamped map[string]bool, err error) {
+// TCGAltProducts returns the split-product mapping: foil and etched hold each
+// printing's split TCGplayer product where one exists, stamped every printing
+// that has been asked about at all — the resolve gate, so a card with no split
+// product is not re-asked forever.
+//
+// The two are separate maps because they are separate products with separate
+// prices. They were once one, and the overlay put both into the foil bucket, so
+// a printing with an etched product and no treated foil carried the etched
+// price as its foil price.
+//
+// stamped keys off tcg_alt_product_id alone: v17 wrote it and v21 added the
+// etched column beside it, so a printing stamped before v21 has a NULL etched
+// id that means "not asked yet" rather than "none". Reading the pair as stamped
+// would freeze those printings with no etched id forever.
+func (s *Store) TCGAltProducts() (foil, etched map[string]string, stamped map[string]bool, err error) {
 	rows, err := s.db.Query(`
-SELECT scryfall_id, tcg_alt_product_id FROM cards WHERE tcg_alt_product_id IS NOT NULL`)
+SELECT scryfall_id, tcg_alt_product_id, COALESCE(tcg_etched_product_id, '')
+FROM cards WHERE tcg_alt_product_id IS NOT NULL`)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer rows.Close()
-	ids, stamped = map[string]string{}, map[string]bool{}
+	foil, etched, stamped = map[string]string{}, map[string]string{}, map[string]bool{}
 	for rows.Next() {
-		var sid, pid string
-		if err := rows.Scan(&sid, &pid); err != nil {
-			return nil, nil, err
+		var sid, pid, eid string
+		if err := rows.Scan(&sid, &pid, &eid); err != nil {
+			return nil, nil, nil, err
 		}
 		stamped[sid] = true
 		if pid != "" {
-			ids[sid] = pid
+			foil[sid] = pid
+		}
+		if eid != "" {
+			etched[sid] = eid
 		}
 	}
-	return ids, stamped, rows.Err()
+	return foil, etched, stamped, rows.Err()
 }
 
-// SaveTCGAltProducts records the treated-product ids a set-file read
-// produced, including the empty ones — asked-and-none must be
-// distinguishable from never-asked.
-func (s *Store) SaveTCGAltProducts(ids map[string]string) error {
-	if len(ids) == 0 {
+// SaveTCGAltProducts records the split-product ids a set-file read produced,
+// including the empty ones — asked-and-none must be distinguishable from
+// never-asked. etched may be nil, in which case only the foil ids are written.
+func (s *Store) SaveTCGAltProducts(foil, etched map[string]string) error {
+	if len(foil) == 0 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -230,13 +246,18 @@ func (s *Store) SaveTCGAltProducts(ids map[string]string) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`UPDATE cards SET tcg_alt_product_id = ? WHERE scryfall_id = ?`)
+	// Both columns in one statement so a printing is never left stamped for
+	// one product and unasked for the other, which would read as a gap the
+	// resolver keeps trying to fill.
+	stmt, err := tx.Prepare(`
+UPDATE cards SET tcg_alt_product_id = ?, tcg_etched_product_id = ?
+WHERE scryfall_id = ?`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	for sid, pid := range ids {
-		if _, err := stmt.Exec(pid, sid); err != nil {
+	for sid, pid := range foil {
+		if _, err := stmt.Exec(pid, etched[sid], sid); err != nil {
 			return fmt.Errorf("caching tcg product id for %s: %w", sid, err)
 		}
 	}

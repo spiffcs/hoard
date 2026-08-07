@@ -28,7 +28,13 @@ func (s *Store) PriceSources() ([]SourceCount, error) {
 	// cannot disagree.
 	rows, err := s.db.Query(`
 SELECT src, COUNT(*) AS printings, SUM(copies) AS copies FROM (
-  SELECT CASE WHEN e.finish IN ('foil','etched') THEN
+  SELECT CASE
+         WHEN e.finish = 'etched' THEN
+           CASE WHEN c.price_usd_etched IS NOT NULL THEN 'scryfall'
+                WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
+                WHEN a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
+                ELSE '' END
+         WHEN e.finish = 'foil' THEN
            CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                 WHEN a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
                 ELSE '' END

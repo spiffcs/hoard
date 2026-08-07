@@ -86,7 +86,7 @@ func TestMarketRecordsBidQuotes(t *testing.T) {
 	if err := st.SaveCardKingdomLinks(map[string]store.CKLinks{"sol": {}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SaveTCGAltProducts(map[string]string{"sol": ""}); err != nil {
+	if err := st.SaveTCGAltProducts(map[string]string{"sol": ""}, nil); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

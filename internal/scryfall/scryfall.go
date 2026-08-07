@@ -30,10 +30,16 @@ type Card struct {
 	Set             string
 	CollectorNumber string
 	ScryfallURL     string
-	// PriceUSD and PriceUSDFoil are nil when Scryfall has no price for that
-	// finish (e.g. a card that was never printed in foil).
-	PriceUSD     *float64
-	PriceUSDFoil *float64
+	// PriceUSD, PriceUSDFoil and PriceUSDEtched are nil when Scryfall has no
+	// price for that finish (e.g. a card that was never printed in foil).
+	//
+	// PriceUSDFoil keeps FoilPrice's etched fallback, so a printing sold only
+	// as etched still reports a foil price rather than reading as unpriced.
+	// PriceUSDEtched is the etched figure alone, unfolded, so a holding can be
+	// valued as the product it actually is.
+	PriceUSD       *float64
+	PriceUSDFoil   *float64
+	PriceUSDEtched *float64
 
 	// Display fields, populated by search results and used to disambiguate
 	// printings interactively. They are ignored by the store, which reads the
@@ -403,7 +409,8 @@ func decodeCards(raws []json.RawMessage) ([]Card, error) {
 // toCard converts a decoded Scryfall JSON card into the exported Card type,
 // carrying the bytes it was decoded from so the store can keep them.
 func (ac apiCard) toCard(raw json.RawMessage) Card {
-	foil := FoilPrice(parsePrice(ac.Prices.USDFoil), parsePrice(ac.Prices.USDEtched))
+	etched := parsePrice(ac.Prices.USDEtched)
+	foil := FoilPrice(parsePrice(ac.Prices.USDFoil), etched)
 	return Card{
 		ID:              ac.ID,
 		Name:            ac.Name,
@@ -420,6 +427,7 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 		ColorIdentity:   ac.ColorIdentity,
 		PriceUSD:        parsePrice(ac.Prices.USD),
 		PriceUSDFoil:    foil,
+		PriceUSDEtched:  etched,
 		Raw:             raw,
 	}
 }

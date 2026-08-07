@@ -211,7 +211,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	if err != nil {
 		return nil, err
 	}
-	_, altStamped, err := f.st.TCGAltProducts()
+	_, _, altStamped, err := f.st.TCGAltProducts()
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +245,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	learned := make(map[string]string)
 	links := make(map[string]store.CKLinks)
 	altIDs := make(map[string]string)
+	etchedIDs := make(map[string]string)
 	vendorIDs := make(map[string]store.VendorProductIDs)
 	n := 0
 	for setCode, sids := range bySet {
@@ -274,6 +275,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 				// product id.
 				links[sid] = store.CKLinks{URL: sc.CKURL, FoilURL: sc.CKFoilURL}
 				altIDs[sid] = sc.AltProductID
+				etchedIDs[sid] = sc.EtchedProductID
 				vendorIDs[sid] = store.VendorProductIDs{
 					TCGProduct: sc.TCGProductID,
 					CKFoil:     sc.CKFoilID,
@@ -288,7 +290,7 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	if err := f.st.SaveCardKingdomLinks(links); err != nil {
 		return nil, err
 	}
-	if err := f.st.SaveTCGAltProducts(altIDs); err != nil {
+	if err := f.st.SaveTCGAltProducts(altIDs, etchedIDs); err != nil {
 		return nil, err
 	}
 	if err := f.st.SaveVendorProductIDs(vendorIDs); err != nil {

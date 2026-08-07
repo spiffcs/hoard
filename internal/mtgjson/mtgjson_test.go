@@ -268,13 +268,20 @@ func TestSetIdentifiers(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("map has %d entries, want 2", len(got))
 	}
-	// The treated-product ids ride the same read: the alternative-foil id
-	// when TCGplayer splits one off, the etched id as the fallback.
+	// The split-product ids ride the same read, and stay apart: the
+	// alternative-foil id and the etched id name different products with
+	// different prices. AltProductID once fell back to the etched id, which
+	// let an etched product's price be merged into the foil series.
 	if got["scry-1"].AltProductID != "553005" {
 		t.Errorf("alt product = %q, want the ripple product id", got["scry-1"].AltProductID)
 	}
-	if got["scry-2"].AltProductID != "600100" {
-		t.Errorf("alt product = %q, want the etched id fallback", got["scry-2"].AltProductID)
+	if got["scry-2"].AltProductID != "" {
+		t.Errorf("alt product = %q, want empty: this card has no treated foil, only an etched product",
+			got["scry-2"].AltProductID)
+	}
+	if got["scry-2"].EtchedProductID != "600100" {
+		t.Errorf("etched product = %q, want the etched id in its own field",
+			got["scry-2"].EtchedProductID)
 	}
 }
 
@@ -611,7 +618,7 @@ func TestExtraSeriesOverlay(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
 	// A figure inside the outlier guard's tolerance of the other vendors —
 	// the guard treats a merged series exactly like a native one.
-	extra := ExtraSeries{"uuid-ripple": {"2026-07-28": 5.55}}
+	extra := ExtraSeries{"uuid-ripple": {Foil: map[string]float64{"2026-07-28": 5.55}}}
 
 	got, err := TodayPricesWith(extra)(context.Background(), Options{},
 		map[string]bool{"uuid-ripple": true})
@@ -656,7 +663,7 @@ func TestExtraSeriesOverlay(t *testing.T) {
 // TCGplayer's own numbers instead of a marketplace stand-in.
 func TestExtraSeriesOverlayHistory(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
-	extra := ExtraSeries{"uuid-no-tcg": {"2026-07-27": 16.90, "2026-07-28": 17.56}}
+	extra := ExtraSeries{"uuid-no-tcg": {Foil: map[string]float64{"2026-07-27": 16.90, "2026-07-28": 17.56}}}
 
 	got, err := PriceHistoryWith(extra)(context.Background(), Options{},
 		map[string]bool{"uuid-no-tcg": true})
@@ -720,5 +727,58 @@ func TestRequestPacing(t *testing.T) {
 	}
 	if len(slept) != n {
 		t.Errorf("a cache hit slept — the pacer must only guard real downloads")
+	}
+}
+
+// The overlay's two series are different products and must land in different
+// buckets. AltProductID used to fall back to the etched id and mergeExtra wrote
+// everything into Retail.Foil, so a printing with an etched product and no
+// treated foil had the etched product's price filling holes in its foil series
+// — one card's price quoted under another's name.
+func TestMergeExtraKeepsFoilAndEtchedApart(t *testing.T) {
+	var rec priceRecord
+	mergeExtra(&rec, ExtraPrices{
+		Foil:   map[string]float64{"2026-07-28": 5.55},
+		Etched: map[string]float64{"2026-07-28": 24.50},
+	})
+	v := rec.Paper["tcgplayer"]
+	if got := v.Retail.Foil["2026-07-28"]; got != 5.55 {
+		t.Errorf("foil = %v, want the treated foil's own price", got)
+	}
+	if got := v.Retail.Etched["2026-07-28"]; got != 24.50 {
+		t.Errorf("etched = %v, want the etched product's own price", got)
+	}
+}
+
+// An etched-only overlay must not invent a foil price, which is exactly what
+// the old single-bucket merge did.
+func TestMergeExtraEtchedOnlyLeavesFoilAlone(t *testing.T) {
+	var rec priceRecord
+	mergeExtra(&rec, ExtraPrices{Etched: map[string]float64{"2026-07-28": 24.50}})
+	v := rec.Paper["tcgplayer"]
+	if len(v.Retail.Foil) != 0 {
+		t.Errorf("foil = %+v, want untouched: this printing has no treated foil", v.Retail.Foil)
+	}
+	if got := v.Retail.Etched["2026-07-28"]; got != 24.50 {
+		t.Errorf("etched = %v, want the etched series", got)
+	}
+}
+
+// The feed still wins on dates both know; the overlay only fills holes.
+func TestMergeExtraDoesNotOverwriteTheFeed(t *testing.T) {
+	rec := priceRecord{Paper: map[string]vendor{"tcgplayer": {
+		Currency: "USD",
+		Retail:   byFinish{Foil: map[string]float64{"2026-07-28": 9.99}},
+	}}}
+	mergeExtra(&rec, ExtraPrices{Foil: map[string]float64{
+		"2026-07-28": 5.55, // the feed already answers this day
+		"2026-07-27": 5.40, // this one is a hole
+	}})
+	v := rec.Paper["tcgplayer"]
+	if got := v.Retail.Foil["2026-07-28"]; got != 9.99 {
+		t.Errorf("foil = %v, want the feed's own figure to stand", got)
+	}
+	if got := v.Retail.Foil["2026-07-27"]; got != 5.40 {
+		t.Errorf("foil = %v, want the overlay to fill the hole", got)
 	}
 }

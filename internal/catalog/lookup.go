@@ -96,9 +96,12 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.Colors = decodeArray(colors)
 	c.ColorIdentity = decodeArray(identity)
 	c.PriceUSD = usd
-	// The catalog has a real etched column; folding it matches what the API
-	// client does, so a local answer and a remote one price identically.
+	// Both columns carry through, exactly as the API client fills them: the
+	// foil column keeps FoilPrice's etched fallback so an etched-only printing
+	// still reports a foil price, and the etched figure also stands on its own
+	// so a card resolved locally and one resolved remotely price identically.
 	c.PriceUSDFoil = scryfall.FoilPrice(foil, etched)
+	c.PriceUSDEtched = etched
 	return c, nil
 }
 

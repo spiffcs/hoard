@@ -355,11 +355,21 @@ type SetCard struct {
 	UUID      string
 	CKURL     string
 	CKFoilURL string
-	// AltProductID is the TCGplayer product id of the treated (or etched)
-	// version of this printing, empty when TCGplayer sells no such split
-	// product. The MTGJSON price feed never carries these products'
-	// prices, so this id is the key to fetching them elsewhere.
+	// AltProductID is the TCGplayer product id of the treated *foil* version
+	// of this printing — ripple, surge, textured — empty when TCGplayer sells
+	// no such split product. The MTGJSON price feed never carries these
+	// products' prices, so this id is the key to fetching them elsewhere.
+	//
+	// It used to fall back to the etched id when there was no alternative-foil
+	// one, and the overlay wrote every series it fetched into the foil bucket,
+	// so a printing with an etched product and no treated foil had the etched
+	// product's price filling holes in its *foil* series. They are different
+	// products with different prices; they get different fields.
 	AltProductID string
+	// EtchedProductID is the TCGplayer product id of the etched version, empty
+	// when there is none. Kept apart from AltProductID so the overlay can put
+	// each series in the bucket its id actually names.
+	EtchedProductID string
 	// TCGProductID is the base product — the listing the feed's own
 	// tcgplayer prices describe. Stored beside AltProductID so the pair
 	// shows plainly whether a printing is split at TCGplayer at all.
@@ -407,18 +417,15 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	out := make(map[string]SetCard, len(sf.Data.Cards))
 	for _, c := range sf.Data.Cards {
 		if c.Identifiers.ScryfallID != "" && c.UUID != "" {
-			alt := c.Identifiers.TCGAltFoilID
-			if alt == "" {
-				alt = c.Identifiers.TCGEtchedID
-			}
 			out[c.Identifiers.ScryfallID] = SetCard{
-				UUID:         c.UUID,
-				CKURL:        c.PurchaseUrls.CardKingdom,
-				CKFoilURL:    c.PurchaseUrls.CardKingdomFoil,
-				AltProductID: alt,
-				TCGProductID: c.Identifiers.TCGProductID,
-				CKFoilID:     c.Identifiers.CKFoilID,
-				CKEtchedID:   c.Identifiers.CKEtchedID,
+				UUID:            c.UUID,
+				CKURL:           c.PurchaseUrls.CardKingdom,
+				CKFoilURL:       c.PurchaseUrls.CardKingdomFoil,
+				AltProductID:    c.Identifiers.TCGAltFoilID,
+				EtchedProductID: c.Identifiers.TCGEtchedID,
+				TCGProductID:    c.Identifiers.TCGProductID,
+				CKFoilID:        c.Identifiers.CKFoilID,
+				CKEtchedID:      c.Identifiers.CKEtchedID,
 			}
 		}
 	}
@@ -483,21 +490,33 @@ const (
 	Buylist = "buylist"
 )
 
-// ExtraSeries is dated TCGplayer foil prices learned outside the MTGJSON
-// feed, keyed by uuid then ISO date. The feed's tcgplayer prices cover
-// only the base product of each printing, and TCGplayer sells treated
-// foils (ripple, textured, etched…) as separate products it never
-// ingests — these series are those products' prices, fetched by the
-// pricing layer from TCGplayer's public catalog. Merged into each record
-// before any vendor selection, so bestUSD, the quote list, and the
-// history fallback all see them as if the feed carried them.
-type ExtraSeries map[string]map[string]float64
+// ExtraPrices is one card's prices learned outside the MTGJSON feed, split by
+// the bucket they belong in and keyed by ISO date within each.
+//
+// Foil holds a treated foil's series (ripple, textured, surge); Etched holds
+// the etched product's. They are separate because they are separate products
+// TCGplayer prices separately — merging both into the foil bucket, as this
+// once did, quoted one card's price under the other's name.
+type ExtraPrices struct {
+	Foil   map[string]float64
+	Etched map[string]float64
+}
 
-// mergeExtra folds one card's extra series into its record's tcgplayer
-// foil retail. The feed wins on dates both know: extra fills the holes —
-// which, for the treated foils this exists for, is the whole series.
-func mergeExtra(rec *priceRecord, series map[string]float64) {
-	if len(series) == 0 {
+// ExtraSeries is those prices for every card, keyed by uuid. The feed's
+// tcgplayer prices cover only the base product of each printing, and TCGplayer
+// sells treated foils and etched cards as separate products it never ingests —
+// these series are those products' prices, fetched by the pricing layer from
+// TCGplayer's public catalog. Merged into each record before any vendor
+// selection, so bestUSD, the quote list, and the history fallback all see them
+// as if the feed carried them.
+type ExtraSeries map[string]ExtraPrices
+
+// mergeExtra folds one card's extra series into its record's tcgplayer retail,
+// each series into the bucket its product id named. The feed wins on dates both
+// know: extra fills the holes — which, for the split products this exists for,
+// is the whole series.
+func mergeExtra(rec *priceRecord, extra ExtraPrices) {
+	if len(extra.Foil) == 0 && len(extra.Etched) == 0 {
 		return
 	}
 	if rec.Paper == nil {
@@ -510,14 +529,21 @@ func mergeExtra(rec *priceRecord, series map[string]float64) {
 	if v.Currency != "USD" {
 		return
 	}
-	if v.Retail.Foil == nil {
-		v.Retail.Foil = map[string]float64{}
-	}
-	for date, price := range series {
-		if _, taken := v.Retail.Foil[date]; !taken && price > 0 {
-			v.Retail.Foil[date] = price
+	fill := func(dst *map[string]float64, series map[string]float64) {
+		if len(series) == 0 {
+			return
+		}
+		if *dst == nil {
+			*dst = map[string]float64{}
+		}
+		for date, price := range series {
+			if _, taken := (*dst)[date]; !taken && price > 0 {
+				(*dst)[date] = price
+			}
 		}
 	}
+	fill(&v.Retail.Foil, extra.Foil)
+	fill(&v.Retail.Etched, extra.Etched)
 	rec.Paper["tcgplayer"] = v
 }
 

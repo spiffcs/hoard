@@ -142,7 +142,9 @@ SELECT w.id, w.scryfall_id, w.display, w.finish, w.op, w.threshold,
        w.created_at, w.last_state,
        c.name, c.set_code, c.collector_number, COALESCE(c.mtgjson_uuid, ''),
        c.promo_types,
-       CASE WHEN w.finish = 'foil' THEN ` + effPriceFoil + ` ELSE ` + effPriceUSD + ` END
+       CASE WHEN w.finish = 'etched' THEN ` + effPriceEtched + `
+            WHEN w.finish = 'foil'   THEN ` + effPriceFoil + `
+            ELSE ` + effPriceUSD + ` END
 FROM watches w
 JOIN cards c ON c.scryfall_id = w.scryfall_id
 ` + altJoinCards + `

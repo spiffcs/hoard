@@ -56,7 +56,7 @@ func TestTCGAltProductsRoundTrip(t *testing.T) {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 
-	ids, stamped, err := s.TCGAltProducts()
+	ids, _, stamped, err := s.TCGAltProducts()
 	if err != nil {
 		t.Fatalf("TCGAltProducts: %v", err)
 	}
@@ -64,10 +64,10 @@ func TestTCGAltProductsRoundTrip(t *testing.T) {
 		t.Fatalf("fresh card = ids %v stamped %v, want never-asked", ids, stamped)
 	}
 
-	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": "553005"}); err != nil {
+	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": "553005"}, nil); err != nil {
 		t.Fatalf("SaveTCGAltProducts: %v", err)
 	}
-	ids, stamped, err = s.TCGAltProducts()
+	ids, _, stamped, err = s.TCGAltProducts()
 	if err != nil {
 		t.Fatalf("TCGAltProducts: %v", err)
 	}
@@ -76,10 +76,10 @@ func TestTCGAltProductsRoundTrip(t *testing.T) {
 	}
 
 	// Recorded absence: stamped, but no id.
-	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": ""}); err != nil {
+	if err := s.SaveTCGAltProducts(map[string]string{"ulamog-id": ""}, nil); err != nil {
 		t.Fatalf("SaveTCGAltProducts(empty): %v", err)
 	}
-	ids, stamped, err = s.TCGAltProducts()
+	ids, _, stamped, err = s.TCGAltProducts()
 	if err != nil {
 		t.Fatalf("TCGAltProducts: %v", err)
 	}

@@ -66,12 +66,18 @@ func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
 }
 
 // effectivePrices is every card's current price per finish, with the MTGJSON
-// fallback applied, as two rows per card.
+// fallback applied, as one row per finish per card.
 //
 // It is the read side of the same COALESCE the valuation queries use, unpivoted
 // so history can store one row per finish. Recording the raw Scryfall column
 // instead would report a huge fake swing every time a card moved between a
 // vendor fallback and a real Scryfall price.
+//
+// Etched is emitted only where the card actually has an etched figure. Before
+// v21 it shared the foil series, so an etched holding's history was the foil
+// product's history; now it gets its own. Emitting it unconditionally would
+// instead duplicate the foil series under a second name for the tens of
+// thousands of printings that have no etched product at all.
 const effectivePrices = `
     SELECT c.scryfall_id AS sid, 'nonfoil' AS pfinish, ` + effPriceUSD + ` AS price,
            CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
@@ -81,16 +87,28 @@ const effectivePrices = `
     SELECT c.scryfall_id, 'foil', ` + effPriceFoil + `,
            CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                 ELSE COALESCE(a.source_usd_foil, 'fallback') END
-    FROM cards c ` + altJoinCards
+    FROM cards c ` + altJoinCards + `
+    UNION ALL
+    SELECT c.scryfall_id, 'etched', c.price_usd_etched, 'scryfall'
+    FROM cards c WHERE c.price_usd_etched IS NOT NULL`
 
-// ownedByPriceFinish is how many copies of each printing are held, in the two
+// ownedByPriceFinish is how many copies of each printing are held, in the
 // finishes prices come in. It spans the loose collection and every deck, because
 // a card's worth does not depend on which box it sits in.
+//
+// An etched holding counts as etched only where that printing has an etched
+// price to count against; otherwise it falls in with foil, matching
+// effPriceEtched's fallback. Without that check an etched copy of a printing
+// priced only as a foil would join a series nothing ever writes, and its copies
+// would vanish from movers entirely.
 const ownedByPriceFinish = `
-    SELECT scryfall_id AS sid,
-           CASE WHEN finish IN ('foil','etched') THEN 'foil' ELSE 'nonfoil' END AS pfinish,
-           SUM(quantity) AS copies
-    FROM card_entries
+    SELECT e.scryfall_id AS sid,
+           CASE WHEN e.finish = 'etched' AND c.price_usd_etched IS NOT NULL
+                     THEN 'etched'
+                WHEN e.finish IN ('foil','etched') THEN 'foil'
+                ELSE 'nonfoil' END AS pfinish,
+           SUM(e.quantity) AS copies
+    FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
     GROUP BY sid, pfinish`
 
 // latestPrices is the newest observation per card and finish. The %s takes an
