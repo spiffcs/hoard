@@ -57,10 +57,10 @@ func TestCmdExportWritesEverythingByDefault(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	want := strings.Join([]string{
-		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
-		"2,Sol Ring,c21,125,nonfoil,sol,Binder,binder,main,2.00",
-		"1,Mystic Remora,ice,78,nonfoil,rem,Fish,deck,main,",
-		"1,Sol Ring,c21,125,foil,sol,Trade,binder,main,12.50",
+		"Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD",
+		"2,Sol Ring,c21,125,nonfoil,,sol,Binder,binder,main,2.00",
+		"1,Mystic Remora,ice,78,nonfoil,,rem,Fish,deck,main,",
+		"1,Sol Ring,c21,125,foil,,sol,Trade,binder,main,12.50",
 		"",
 	}, "\n")
 	if string(got) != want {
@@ -78,7 +78,7 @@ func TestCmdExportScopesToOneBinder(t *testing.T) {
 	if strings.Contains(string(got), "Fish") || strings.Contains(string(got), "Binder,binder,main") {
 		t.Errorf("--binder Trade leaked other containers:\n%s", got)
 	}
-	if !strings.Contains(string(got), "1,Sol Ring,c21,125,foil,sol,Trade,binder,main,12.50") {
+	if !strings.Contains(string(got), "1,Sol Ring,c21,125,foil,,sol,Trade,binder,main,12.50") {
 		t.Errorf("--binder Trade is missing its own card:\n%s", got)
 	}
 }
@@ -109,7 +109,7 @@ func TestCmdExportJSON(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "holdings",
   "holdings": {
     "rows": [

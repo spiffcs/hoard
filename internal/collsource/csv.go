@@ -40,7 +40,7 @@ var specs = []spec{
 		sniff: []string{"Scryfall ID", "Container", "Board"},
 		qty:   "Count", cardName: "Name", set: "Set", number: "Collector Number",
 		finish: "Finish", scryfall: "Scryfall ID", binder: "Container",
-		kind: "Container Kind",
+		kind: "Container Kind", condition: "Condition",
 	},
 	{
 		name:  "manabox",
@@ -136,15 +136,16 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 		}
 
 		out.Rows = append(out.Rows, Row{
-			Quantity: qty,
-			Name:     name,
-			Finish:   normFinish(get(rec, sp.finish)),
-			Binder:   get(rec, sp.binder),
-			Kind:     strings.ToLower(get(rec, sp.kind)),
-			Ident:    identFor(get(rec, sp.scryfall), get(rec, sp.set), get(rec, sp.number), name),
+			Quantity:  qty,
+			Name:      name,
+			Finish:    normFinish(get(rec, sp.finish)),
+			Condition: normCondition(get(rec, sp.condition)),
+			Binder:    get(rec, sp.binder),
+			Kind:      strings.ToLower(get(rec, sp.kind)),
+			Ident:     identFor(get(rec, sp.scryfall), get(rec, sp.set), get(rec, sp.number), name),
 		})
 
-		if informativeCondition(get(rec, sp.condition)) {
+		if unplaceableCondition(get(rec, sp.condition)) {
 			out.Dropped["condition"]++
 		}
 		if informativeLanguage(get(rec, sp.language)) {
@@ -293,20 +294,15 @@ func normCondition(s string) string {
 	}
 }
 
-// informativeCondition reports whether a cell said something hoard's five
-// five values cannot carry exactly — a condition other than near mint, or a word that
-// normCondition could not place at all. Those are counted and reported, so a
-// seven-value export folded onto five says so instead of arriving quietly.
-func informativeCondition(c string) bool {
-	switch normCondition(c) {
-	case "unknown":
-		// Only a cell that said *something* is worth reporting: a blank one is
-		// the ordinary case, not a loss.
-		return strings.TrimSpace(c) != ""
-	case "nm":
-		return false
-	}
-	return true
+// unplaceableCondition reports whether a cell said something normCondition
+// could not place — a professional grade, or a vocabulary hoard does not know.
+//
+// Only those count as dropped now that the condition is stored. A value hoard
+// *can* place is carried onto the holding, even where the seven-value scale
+// folds onto five: the card keeps a condition, which is what was at risk of
+// being lost. A blank cell is the ordinary case and no loss at all.
+func unplaceableCondition(c string) bool {
+	return strings.TrimSpace(c) != "" && normCondition(c) == "unknown"
 }
 
 func informativeLanguage(l string) bool {

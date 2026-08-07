@@ -76,7 +76,7 @@ func cmdImport(ctx context.Context, st *store.Store, args []string) error {
 			res.Refinished)
 	}
 	for _, field := range sortedKeys(res.Dropped) {
-		r.Detail("Dropped %s on %d rows: hoard does not track it.", field, res.Dropped[field])
+		r.Detail("Dropped %s on %d rows: hoard could not carry it.", field, res.Dropped[field])
 	}
 	if len(res.Unresolved) > 0 {
 		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))

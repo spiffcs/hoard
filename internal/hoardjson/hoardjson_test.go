@@ -33,7 +33,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -79,7 +79,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -127,7 +127,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -167,7 +167,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -213,7 +213,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -247,7 +247,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -341,7 +341,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -425,7 +425,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -455,7 +455,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -503,5 +503,25 @@ func TestMarketDocumentCarriesComps(t *testing.T) {
 	}
 	if b.LowUsd != 1.99 || b.LowFrom != "manapool" {
 		t.Errorf("low = %v from %q", b.LowUsd, b.LowFrom)
+	}
+}
+
+// A condition rides the holdings document, and an unassessed one is absent
+// rather than spelled "unknown": the document's rule is that absent means
+// unknown, and almost every holding is unassessed.
+func TestHoldingsDocumentCarriesCondition(t *testing.T) {
+	out := write(t, FromExportRows([]export.Row{
+		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
+			Finish: "nonfoil", Condition: "lp", ScryfallID: "sol",
+			Container: "Binder", Kind: "binder", Board: "main"},
+		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
+			Finish: "nonfoil", Condition: "unknown", ScryfallID: "sol",
+			Container: "Binder", Kind: "binder", Board: "main"},
+	}))
+	if !strings.Contains(out, `"condition": "lp"`) {
+		t.Errorf("assessed row lost its condition:\n%s", out)
+	}
+	if strings.Contains(out, `"unknown"`) {
+		t.Errorf("unassessed row emitted the word rather than omitting the field:\n%s", out)
 	}
 }

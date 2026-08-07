@@ -37,7 +37,7 @@ copy `hoard.db` — it is a plain SQLite file
 ## The canonical format
 
 ```
-Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD
+Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD
 ```
 
 These column names are a compatibility promise. The importer recognizes hoard's
@@ -50,17 +50,20 @@ own files by them, so renaming one breaks files already on disk.
 | `Set` | Scryfall set code |
 | `Collector Number` | as printed, including any `★`/`†`/`Φ` variation marker |
 | `Finish` | `nonfoil`, `foil` or `etched` |
+| `Condition` | `nm`, `lp`, `mp`, `hp`, `dmg` — **empty when unassessed** |
 | `Scryfall ID` | the identity. Everything else is a convenience |
 | `Container` | binder or deck name |
 | `Container Kind` | `binder` or `deck` |
 | `Board` | `main`, `commander`, `side` or `maybe` |
 | `Price USD` | the value at export time, **empty when unpriced** — never `0.00` |
 
-Rows are ordered container → name → set → number → finish, deterministically, so
-two exports of the same collection diff cleanly.
+Rows are ordered container → name → set → number → finish → condition,
+deterministically, so two exports of the same collection diff cleanly.
 
 `Container Kind` arrived after the first release. A file without it is read as
-all-binder rows, which is what those older files were.
+all-binder rows, which is what those older files were. `Condition` arrived with
+schema v23 on the same terms: the sniff does not key on it, cells are read by
+name, and a file written before it imports as unassessed.
 
 ---
 
@@ -133,19 +136,30 @@ grade (`BGS 10` — a different concept, see [graded-cards.md](graded-cards.md))
 or a vocabulary hoard does not know is not silently rounded to
 near mint — it is recorded as unsaid and reported, so you can see it happened.
 
-Folded and unplaceable rows are both counted and reported. Blank cells and near
-mint are not, since neither loses anything.
+A folded value is **stored, not reported**: the card keeps a condition, which is
+what was at risk. Only an unplaceable one is counted as dropped — see below.
 
 ### What an import drops, and why it tells you
 
-Three columns carry real information hoard cannot store: **condition**,
-**language** and **purchase price**. Rather than discard them silently, the
-importer counts every cell that actually says something — a condition other than
-near mint, a language other than English, a nonzero price — and reports the
-totals when the import finishes.
+**Condition is stored**, including where a seven-value scale folds onto hoard's
+five: the card keeps a condition, which is the thing that was at risk of being
+lost. Only a value hoard could not place at all — a professional grade, or a
+vocabulary it does not know — is counted and reported:
 
-The canonical hoard format has none of these columns, which is what makes it
-lossless. A test asserts that: importing hoard's own export drops nothing.
+```
+Imported 4 cards (manabox format): 3 rows resolved.
+  4 into Trade (new binder)
+  Dropped condition on 1 rows: hoard could not carry it.
+```
+
+Two columns still carry information hoard has nowhere to put: **language** on a
+non-English row, and **purchase price**. Rather than discard them silently, the
+importer counts every cell that actually says something and reports the totals
+when the import finishes.
+
+The canonical hoard format round-trips its conditions exactly — `hoard export`
+then `hoard import` reproduces every bucket — and a test asserts it drops
+nothing.
 
 Imports are recorded in `import_ledger` by content hash, so importing the same
 content twice is refused rather than silently doubling every quantity:
@@ -164,8 +178,11 @@ it. `--again` is the override when you really do mean to add a second copy.
 ## Exporting to other tools
 
 **Moxfield** — `Count, Name, Edition, Condition, Language, Foil, Collector Number`.
-`Condition` is written as `Near Mint` because hoard does not track it and
-Moxfield requires the column. `Language` is the printing's own, falling back to
+`Condition` is the holding's own, in Moxfield's vocabulary (`Good (Lightly
+Played)` for `lp`, `Played` for `mp`), so the file re-imports into hoard
+cleanly. An unassessed row sends `Near Mint`: the column is required, and that
+is what this export claimed for every row before conditions were stored.
+`Language` is the printing's own, falling back to
 English where hoard has not stored the card's document. The `Foil` column is
 empty for nonfoil, else the finish name.
 

@@ -24,6 +24,17 @@ func envelope(kind Kind) Document {
 // a money field is cent-denominated by nature — the noise is an artifact, not
 // information, and it would churn diffs of otherwise-unchanged documents.
 // Ratios (spread, liquidity) are not money and stay unrounded.
+// jsonCondition omits an unassessed condition rather than emitting the word.
+// The document's rule is that absent means unknown — a consumer that sees no
+// condition knows nobody has said, which is exactly what "unknown" would have
+// told it at the cost of a field on almost every row.
+func jsonCondition(c string) string {
+	if c == "unknown" {
+		return ""
+	}
+	return c
+}
+
 func cents(v float64) float64 { return math.Round(v*100) / 100 }
 
 func centsPtr(v *float64) *float64 {
@@ -76,6 +87,7 @@ func FromExportRows(rows []export.Row) Document {
 				SetCode:       r.Set,
 				Number:        r.CollectorNumber,
 				Finish:        r.Finish,
+				Condition:     jsonCondition(r.Condition),
 				Lang:          r.Lang,
 				ColorIdentity: r.ColorIdentity,
 			},

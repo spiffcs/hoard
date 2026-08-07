@@ -23,6 +23,10 @@ type Row struct {
 	Ident    scryfall.Identifier
 	Name     string
 	Finish   string // nonfoil|foil|etched — Scryfall's spelling, hoard's too
+	// Condition is the card's wear, normalized onto hoard's five values, or
+	// ConditionUnknown when the file said nothing or said something hoard
+	// cannot place. See normCondition for the two scales that arrive here.
+	Condition string
 	// Binder is the source's own container label (ManaBox's "Binder Name",
 	// hoard's Container), empty for formats that have none. Only honored when
 	// the import asks to preserve binders.
@@ -44,9 +48,13 @@ func (r Row) Request() resolve.Request {
 type Collection struct {
 	Rows   []Row
 	Format string // which parser handled the file
-	// Dropped counts rows whose value in a column hoard cannot store carried
-	// real information — a condition other than near-mint, a language other
-	// than English, a purchase price. The import reports these so the loss is
-	// visible instead of silent.
+	// Dropped counts rows whose value in a column hoard could not carry — a
+	// language other than English, a purchase price, or a condition written in
+	// a vocabulary hoard cannot place (a professional grade, say). The import
+	// reports these so the loss is visible instead of silent.
+	//
+	// A condition hoard *can* place is stored rather than counted here, even
+	// when the seven-value scale folds onto five: the card keeps a condition,
+	// which is the thing that was at risk of being lost.
 	Dropped map[string]int
 }

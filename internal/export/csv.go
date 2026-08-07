@@ -36,6 +36,10 @@ type Row struct {
 	// ColorIdentity likewise rides along for the JSON emission only — nil
 	// when unknown, empty for colorless (store.Card's semantics).
 	ColorIdentity []string
+	// Condition is the card's wear — unknown|nm|lp|mp|hp|dmg. The canonical
+	// CSV carries it; the foreign shapes have their own vocabulary and map it
+	// on the way out.
+	Condition string
 	// Lang is the printing's language code ("en", "ja"), empty when hoard has
 	// not stored the card's document. Carried for the JSON emission and for
 	// the Moxfield writer, which requires a Language column and had no choice
@@ -57,6 +61,7 @@ func WriteCanonical(w io.Writer, rows []Row) error {
 	for _, r := range rows {
 		cw.Write([]string{
 			strconv.Itoa(r.Count), r.Name, r.Set, r.CollectorNumber, r.Finish,
+			condition(r.Condition),
 			r.ScryfallID, r.Container, r.Kind, r.Board, price(r.PriceUSD),
 		})
 	}
@@ -67,9 +72,11 @@ func WriteCanonical(w io.Writer, rows []Row) error {
 // canonicalHeader is shared with the import sniffer, which recognizes hoard's
 // own files by these columns. Container Kind arrived after the first release;
 // the importer treats a file without it as all binder rows, which is what
-// those older files were.
+// those older files were. Condition arrived with schema v23 on the same terms:
+// the sniff does not key on it, cells are read by name, and a file without it
+// imports as unassessed — which is what those rows were.
 var canonicalHeader = []string{
-	"Count", "Name", "Set", "Collector Number", "Finish",
+	"Count", "Name", "Set", "Collector Number", "Finish", "Condition",
 	"Scryfall ID", "Container", "Container Kind", "Board", "Price USD",
 }
 
@@ -78,10 +85,10 @@ func CanonicalHeader() []string {
 	return append([]string(nil), canonicalHeader...)
 }
 
-// WriteMoxfield writes Moxfield's collection-import columns. Condition is
-// hardcoded because hoard does not track it and Moxfield requires the column;
-// Language is the printing's own, falling back to English where hoard has not
-// stored the card's document.
+// WriteMoxfield writes Moxfield's collection-import columns, in Moxfield's own
+// vocabulary for both Condition and Language. Unassessed rows send Near Mint —
+// Moxfield requires a value, and that is what this column claimed for every row
+// before hoard stored one.
 func WriteMoxfield(w io.Writer, rows []Row) error {
 	rows = Sorted(aggregated(rows))
 	cw := csv.NewWriter(w)
@@ -93,12 +100,38 @@ func WriteMoxfield(w io.Writer, rows []Row) error {
 			foil = ""
 		}
 		cw.Write([]string{
-			strconv.Itoa(r.Count), r.Name, r.Set, "Near Mint", moxfieldLanguage(r.Lang),
+			strconv.Itoa(r.Count), r.Name, r.Set,
+			moxfieldCondition(r.Condition), moxfieldLanguage(r.Lang),
 			foil, r.CollectorNumber,
 		})
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// moxfieldCondition renders a condition as the words Moxfield spells them with.
+//
+// Their scale is TCGplayer's, named differently: what TCGplayer calls Lightly
+// Played, Moxfield writes "Good (Lightly Played)" and abbreviates SP. Sending
+// their words back means the file round-trips — hoard's own normCondition reads
+// every one of these.
+//
+// Unassessed sends Near Mint because the column is required and a blank is
+// rejected. That is a claim hoard cannot support, and it is the same claim this
+// writer made for every row before conditions were stored.
+func moxfieldCondition(c string) string {
+	switch c {
+	case "lp":
+		return "Good (Lightly Played)"
+	case "mp":
+		return "Played"
+	case "hp":
+		return "Heavily Played"
+	case "dmg":
+		return "Damaged"
+	default: // nm, unknown, and anything unexpected
+		return "Near Mint"
+	}
 }
 
 // moxfieldLanguage renders a Scryfall language code as the word Moxfield's
@@ -165,11 +198,14 @@ func WriteArchidekt(w io.Writer, rows []Row) error {
 // counts. The Moxfield and Archidekt shapes have no container column, so
 // without this a card held in two binders would export as duplicate lines.
 func aggregated(rows []Row) []Row {
-	type key struct{ id, finish string }
+	// Condition is part of the key: two rows of one printing that differ only
+	// by wear are different things to sell, and merging them would export a
+	// near-mint count that includes played copies.
+	type key struct{ id, finish, condition string }
 	idx := make(map[key]int, len(rows))
 	var out []Row
 	for _, r := range rows {
-		k := key{r.ScryfallID, r.Finish}
+		k := key{r.ScryfallID, r.Finish, r.Condition}
 		if i, ok := idx[k]; ok {
 			out[i].Count += r.Count
 			continue
@@ -199,11 +235,26 @@ func Sorted(rows []Row) []Row {
 			return a.Set < b.Set
 		case a.CollectorNumber != b.CollectorNumber:
 			return a.CollectorNumber < b.CollectorNumber
-		default:
+		case a.Finish != b.Finish:
 			return a.Finish < b.Finish
+		default:
+			// The last tiebreak, so two rows differing only by condition keep
+			// a stable order and an export stays diffable.
+			return a.Condition < b.Condition
 		}
 	})
 	return out
+}
+
+// condition renders a holding's condition for the canonical CSV. Unassessed
+// writes an empty cell rather than the word: a spreadsheet reads a blank as
+// "nothing said", which is the meaning, and an importer that predates the
+// column sees exactly what it saw before.
+func condition(c string) string {
+	if c == "" || c == "unknown" {
+		return ""
+	}
+	return c
 }
 
 // price renders a nullable price, keeping "unknown" distinct from "$0.00".

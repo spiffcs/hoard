@@ -119,7 +119,11 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		binder string // destination binder; "" = the --binder/default target
 		card   scryfall.Card
 		finish string
-		qty    int
+		// condition comes from the file rather than the resolver: the
+		// resolver corrects a finish against what the printing comes in, and
+		// no printing has a canonical condition to correct against.
+		condition string
+		qty       int
 	}
 	var adds []addition
 	for i, r := range coll.Rows {
@@ -131,7 +135,8 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		if o.Preserve {
 			binder = r.Binder
 		}
-		adds = append(adds, addition{binder: binder, card: m.Card, finish: m.Finish, qty: r.Quantity})
+		adds = append(adds, addition{binder: binder, card: m.Card, finish: m.Finish,
+			condition: r.Condition, qty: r.Quantity})
 	}
 	res.Resolved = len(adds)
 
@@ -196,7 +201,7 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		}
 		cardAdds = append(cardAdds, store.CardAdd{
 			ContainerID: dest, Binder: newBinder,
-			Card: a.card, Finish: a.finish, Quantity: a.qty,
+			Card: a.card, Finish: a.finish, Condition: a.condition, Quantity: a.qty,
 		})
 		res.Copies += a.qty
 		res.PerBinder[name] += a.qty

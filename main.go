@@ -432,7 +432,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 					res.Refinished))
 			}
 			for _, field := range sortedKeys(res.Dropped) {
-				lines = append(lines, fmt.Sprintf("dropped %s on %d rows: hoard does not track it",
+				lines = append(lines, fmt.Sprintf("dropped %s on %d rows: hoard could not carry it",
 					field, res.Dropped[field]))
 			}
 			if len(res.Unresolved) > 0 {

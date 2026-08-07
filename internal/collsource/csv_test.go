@@ -44,8 +44,12 @@ func TestManaBoxIsSniffedAndKeepsBinders(t *testing.T) {
 	if c.Rows[2].Binder != "" {
 		t.Errorf("remora binder = %q, want empty (default)", c.Rows[2].Binder)
 	}
-	// One excellent-condition row, one Japanese row, one purchase price.
-	if c.Dropped["condition"] != 1 || c.Dropped["language"] != 1 || c.Dropped["purchase price"] != 1 {
+	// The excellent-condition row is no longer dropped: it folds onto lp and
+	// is stored. One Japanese row and one purchase price still are.
+	if c.Rows[1].Condition != "lp" {
+		t.Errorf("bolt condition = %q, want excellent folded onto lp", c.Rows[1].Condition)
+	}
+	if c.Dropped["condition"] != 0 || c.Dropped["language"] != 1 || c.Dropped["purchase price"] != 1 {
 		t.Errorf("dropped = %v", c.Dropped)
 	}
 }
@@ -67,7 +71,8 @@ func TestMoxfieldFallsBackToSetAndNumber(t *testing.T) {
 	if got := c.Rows[2].Name; got != "Borrowing 100,000 Arrows" {
 		t.Errorf("quoted name = %q", got)
 	}
-	if c.Dropped["condition"] != 1 || c.Dropped["purchase price"] != 1 || c.Dropped["language"] != 0 {
+	// The Lightly Played row is stored rather than dropped.
+	if c.Dropped["condition"] != 0 || c.Dropped["purchase price"] != 1 || c.Dropped["language"] != 0 {
 		t.Errorf("dropped = %v", c.Dropped)
 	}
 }
@@ -234,19 +239,86 @@ func TestNormConditionFoldsTheAmbiguousLightPlayed(t *testing.T) {
 	}
 }
 
-// An import reports what it could not carry exactly, so a seven-value export
-// folded onto five says so rather than arriving quietly. A blank cell is the
-// ordinary case and is not a loss; near mint is what hoard would have assumed
-// anyway; anything else — folded or unplaceable — is worth a line.
-func TestInformativeConditionReportsWhatWasLost(t *testing.T) {
-	for _, quiet := range []string{"", "  ", "Near Mint", "near_mint", "NM", "mint"} {
-		if informativeCondition(quiet) {
-			t.Errorf("informativeCondition(%q) = true, want quiet", quiet)
+// Now that the condition is stored, only what could not be placed counts as
+// dropped. A value that folded onto a coarser one is still carried, and the
+// card keeps a condition — which is the thing that was at risk of being lost.
+func TestUnplaceableConditionReportsOnlyWhatWasLost(t *testing.T) {
+	for _, carried := range []string{
+		"", "  ", "Near Mint", "near_mint", "NM", "mint",
+		"Lightly Played", "excellent", "good", "played", "poor",
+	} {
+		if unplaceableCondition(carried) {
+			t.Errorf("unplaceableCondition(%q) = true, but it is stored", carried)
 		}
 	}
-	for _, loud := range []string{"Lightly Played", "excellent", "good", "played", "poor", "Pristine"} {
-		if !informativeCondition(loud) {
-			t.Errorf("informativeCondition(%q) = false, want reported", loud)
+	// A professional grade and a vocabulary hoard does not know are genuinely
+	// lost, and are reported so the loss is visible.
+	for _, lost := range []string{"Pristine", "BGS 10", "PSA 9", "graded 9.5"} {
+		if !unplaceableCondition(lost) {
+			t.Errorf("unplaceableCondition(%q) = false, want it reported", lost)
 		}
+	}
+}
+
+// The import finally keeps what normCondition works out. Before this the value
+// was computed, used to answer "was that cell informative?", and thrown away.
+func TestParseCarriesTheCondition(t *testing.T) {
+	const manabox = "Binder Name,Name,Set code,Collector number,Foil,Quantity,Scryfall ID,Condition,Language\n" +
+		"Trade,Sol Ring,C21,125,normal,2,sol-id,near_mint,en\n" +
+		"Trade,Lightning Bolt,2X2,117,foil,1,bolt-id,excellent,en\n" +
+		"Trade,Mox Pearl,LEA,265,normal,1,mox-id,,en\n" +
+		"Trade,Black Lotus,LEA,232,normal,1,lotus-id,BGS 10,en\n"
+
+	c, err := Parse(strings.NewReader(manabox), "auto")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"nm", "lp", "unknown", "unknown"}
+	for i, w := range want {
+		if c.Rows[i].Condition != w {
+			t.Errorf("row %d condition = %q, want %q", i, c.Rows[i].Condition, w)
+		}
+	}
+	// Only the unplaceable one is reported. near_mint and excellent were both
+	// carried — excellent folded onto lp, but the card kept a condition, which
+	// is the thing that was at risk of being lost.
+	if c.Dropped["condition"] != 1 {
+		t.Errorf("dropped %d conditions, want 1 (the BGS grade alone): %v",
+			c.Dropped["condition"], c.Dropped)
+	}
+}
+
+// hoard's own export round-trips its conditions: the canonical format gained a
+// Condition column so it stays lossless, and the sniff does not key on it, so a
+// file written before the column still imports.
+func TestCanonicalRoundTripsCondition(t *testing.T) {
+	const withCond = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD\n" +
+		"2,Sol Ring,c21,125,nonfoil,lp,sol-id,Binder,binder,main,2.00\n" +
+		"1,Sol Ring,c21,125,nonfoil,,sol-id,Binder,binder,main,2.00\n"
+	c, err := Parse(strings.NewReader(withCond), "auto")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if c.Format != "hoard" {
+		t.Fatalf("format = %q, want the canonical sniff to still match", c.Format)
+	}
+	if c.Rows[0].Condition != "lp" || c.Rows[1].Condition != "unknown" {
+		t.Errorf("conditions = %q/%q, want lp and unknown",
+			c.Rows[0].Condition, c.Rows[1].Condition)
+	}
+	if len(c.Dropped) != 0 {
+		t.Errorf("dropped %v, want nothing: the canonical format is lossless", c.Dropped)
+	}
+
+	// A file from before the column imports as unassessed, which is what those
+	// rows were.
+	const noCond = "Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD\n" +
+		"2,Sol Ring,c21,125,nonfoil,sol-id,Binder,binder,main,2.00\n"
+	old, err := Parse(strings.NewReader(noCond), "auto")
+	if err != nil {
+		t.Fatalf("Parse (pre-column): %v", err)
+	}
+	if old.Rows[0].Condition != "unknown" {
+		t.Errorf("pre-column row = %q, want unknown", old.Rows[0].Condition)
 	}
 }

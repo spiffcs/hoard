@@ -38,6 +38,7 @@ are standard:
 | `card.number` | Scryfall `collector_number`; MTGJSON `number` |
 | `card.finish` | Scryfall `finishes` vocabulary: `nonfoil` \| `foil` \| `etched` |
 | `card.lang` | Scryfall `lang`; MTGJSON `language` (spelled out there) |
+| `card.condition` | MTGJSON `TcgplayerSkus[].condition` (spelled out there: `NEAR MINT`) |
 
 Everything the ecosystem does not model — containers, boards, counts, movers,
 opportunities — is hoard's own, documented in the schema descriptions
@@ -49,6 +50,11 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.1.4** — ADDITION: `card.condition` on the holdings document — the copies'
+  wear (`nm`, `lp`, `mp`, `hp`, `dmg`), absent when nobody has assessed them.
+  It describes the copies rather than the printing, so two holdings entries of
+  one printing can differ by it, and it never affects a value: no source hoard
+  reads publishes a per-condition price.
 - **1.1.3** — ADDITION: `card.lang` (Scryfall's language code — `en`, `ja`,
   `zhs`; absent when hoard has not stored the card's document). Language is
   part of a printing's identity, since Scryfall mints a distinct id per

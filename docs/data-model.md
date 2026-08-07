@@ -231,9 +231,10 @@ summing it as zero silently understates a collection.
 
 Deliberate omissions, so you know they are choices rather than oversights.
 
-**Condition — the column exists, nothing fills it yet.** Schema v23 split the
-holding bucket so a condition has somewhere to live, but no import, export or editor
-writes one so far: every row reads `unknown`.
+**Condition** is stored per holding. Schema v23 split the bucket so it has
+somewhere to live; imports carry it, the detail overlay edits it, and the
+canonical CSV round-trips it. A holding nobody has assessed reads `unknown`,
+which is what every row migrated from before v23 says.
 
 That value is hoard's own. No source models an unknown condition — MTGJSON,
 TCGplayer, Moxfield and ManaBox all describe products for sale, and a product for
@@ -246,9 +247,9 @@ The five are MTGJSON's (`TcgplayerSkus.json`), which are TCGplayer's.
 Cardmarket's seven-value scale — which ManaBox exports — folds onto them on
 import; [csv.md](csv.md) lists every accepted spelling and what it becomes.
 
-Imports that carry a condition column still count what they discarded and tell
-you (`hoard import` reports it), and the Moxfield export still writes
-`Near Mint` because Moxfield requires the column. Those follow.
+An import reports only what it could not place — a professional grade, or a
+vocabulary hoard does not know. A value that folds onto a coarser one is stored
+rather than reported: the card keeps a condition, which is what was at risk.
 
 **Professional grading is a separate concept, and is not modelled.** A grade is
 a number a third party attests to and seals in a slab — not the same thing as

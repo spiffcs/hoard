@@ -93,7 +93,8 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol",
 				Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
 			{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
-				Finish: "etched", ScryfallID: "rem", Container: "Fish", Kind: "deck", Board: "side"},
+				Finish: "etched", Condition: "lp", ScryfallID: "rem",
+				Container: "Fish", Kind: "deck", Board: "side"},
 		}),
 		"unpriced": hoardjson.FromUnpriced([]store.UnpricedRow{{
 			ScryfallID: "rem", Name: "Mystic Remora", SetCode: "ice",

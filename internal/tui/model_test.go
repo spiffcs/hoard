@@ -3837,3 +3837,55 @@ func TestCaptureViewRendersTenRows(t *testing.T) {
 		t.Errorf("want the oldest window; got:\n%s", m.View())
 	}
 }
+
+func TestErrorBannerClearsOnAnyKey(t *testing.T) {
+	// The helper's "no phone found" guidance is three lines long and used to
+	// outlive its usefulness: sticky across states, still above the prompt long
+	// after its reader gave up and went back to typing names. Any key at all is
+	// proof it has been read.
+	const guidance = "no iPhone running Hoardling was found on this network"
+
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{"a typed character", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")}},
+		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"ctrl+o", tea.KeyMsg{Type: tea.KeyCtrlO}},
+		{"ctrl+p", tea.KeyMsg{Type: tea.KeyCtrlP}},
+		{"the command drawer", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
+			m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
+
+			// The helper's own wording reaches the prompt unprefixed.
+			mm, _ := m.onCameras(camerasMsg{err: errors.New(guidance)})
+			got := mm.(model)
+			if got.status != guidance || !got.statusErr {
+				t.Fatalf("setup: banner = %q (err=%v), want the guidance", got.status, got.statusErr)
+			}
+
+			mm, _ = got.handleKey(tc.key)
+			if s := mm.(model).status; s == guidance {
+				t.Errorf("%s left the stale error banner up", tc.name)
+			}
+			if mm.(model).statusErr && mm.(model).status == "" {
+				t.Error("an empty banner should not still be flagged as an error")
+			}
+		})
+	}
+}
+
+func TestSuccessBannerSurvivesTyping(t *testing.T) {
+	// The other half of the rule: a receipt is a record of what happened, not a
+	// complaint about it, and typing the next card's name is no reason to take
+	// it away.
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	m.status, m.statusErr = "Added Sol Ring ×1", false
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if got := mm.(model).status; got != "Added Sol Ring ×1" {
+		t.Errorf("receipt = %q, want it kept while the next name is typed", got)
+	}
+}

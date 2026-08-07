@@ -31,12 +31,12 @@ func TestWriteCanonicalIsSortedAndKeepsContainers(t *testing.T) {
 		t.Fatalf("WriteCanonical: %v", err)
 	}
 	want := strings.Join([]string{
-		"Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD",
-		"1,Mystic Remora,ice,78,nonfoil,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
-		"2,Sol Ring,c21,125,nonfoil,sol-1,Binder,binder,main,2.00",
-		"1,Sol Ring,c21,125,foil,sol-1,Trade,binder,main,12.50",
-		"1,Sol Ring,c21,125,nonfoil,sol-1,Trade,binder,main,2.00",
-		"1,Aether Vial,dst,91,etched,vial-1,Vintage,deck,main,30.00",
+		"Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD",
+		"1,Mystic Remora,ice,78,nonfoil,,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
+		"2,Sol Ring,c21,125,nonfoil,,sol-1,Binder,binder,main,2.00",
+		"1,Sol Ring,c21,125,foil,,sol-1,Trade,binder,main,12.50",
+		"1,Sol Ring,c21,125,nonfoil,,sol-1,Trade,binder,main,2.00",
+		"1,Aether Vial,dst,91,etched,,vial-1,Vintage,deck,main,30.00",
 		"",
 	}, "\n")
 	if b.String() != want {
