@@ -200,6 +200,15 @@ type model struct {
 	chosen *scryfall.Card
 	finish string
 
+	// printsAll is every printing the search returned, kept when `prints` has
+	// been narrowed to those answering the scanned collector number. nil when
+	// no narrowing happened, which is also how the toggle knows there is
+	// nothing to toggle. The full list stays reachable because the narrowing is
+	// the scanner's belief and not a fact: the digits can be misread, and a
+	// picker that has hidden the right row with no way back is worse than one
+	// showing nineteen.
+	printsAll []scryfall.Card
+
 	// destinations the caller offered, and the current pick. dest doubles as
 	// the session memory: it survives resetForNext, so the picker opens on
 	// wherever the last card went and a bulk add answers with one enter.
@@ -303,6 +312,22 @@ type model struct {
 	// can overrule them. Nil when there is nothing to promote.
 	pending    *pendingDup
 	nudgeDrops int
+	// secondLookFor is the canonical name of the card the last unverified-
+	// printing queue asked another look at, and it is what bounds that retry to
+	// one attempt: a card queueing under a name already sitting here has had its
+	// second look and queues at the normal cadence. Cleared by any commit, so
+	// the same card met again later in the pile gets a fresh chance.
+	secondLookFor string
+	// secondLookPending is a retry waiting for the phone to say it is listening.
+	// Consumed by the next "armed" the trigger reports — see onSessionEvent.
+	secondLookPending bool
+	// deferredFlashFor is a card sitting in review whose *phone* signal has not
+	// been sent, because a second look is still out on it. Held rather than
+	// dropped: the flash still owes the operator an answer, it just owes it
+	// after the retry rather than before. Resolved by flushDeferredFlash or
+	// cleared by clearDeferredFlash — never left dangling, or a queued card
+	// goes unannounced.
+	deferredFlashFor string
 	// ignored counts captures that identified nothing and were dropped rather
 	// than queued. Reported once at the end of the session: dropping them is
 	// right, but doing it invisibly would make a scanner that is quietly
@@ -904,6 +929,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return next, cmd
 		}
 	case statePrintPick:
+		// The way back to the full list, when the scanned number narrowed it.
+		// One-way on purpose: re-narrowing would need the user to remember what
+		// was hidden, and the whole reason to reach for this key is that the
+		// number is wrong.
+		if msg.Type == tea.KeyCtrlA && m.printsAll != nil {
+			all := m.printsAll
+			m.printsAll, m.prints = nil, all
+			// Still ranked, and the match still marked. Restoring the hidden
+			// rows is not the same as forgetting what was read — the reason to
+			// reach for this key is to look past the number, not to lose it.
+			showPicker(&m, "Select a printing", all, statePrintPick,
+				func(i int, c scryfall.Card) list.Item {
+					return printItem{card: c, scanned: i == 0}
+				})
+			m.status = fmt.Sprintf("showing all %d printings", len(all))
+			m.statusErr = false
+			return m, nil
+		}
 		if next, cmd, ok := m.pickerKey(msg, func(it list.Item) (tea.Model, tea.Cmd, bool) {
 			pi, ok := it.(printItem)
 			if !ok {
@@ -1026,9 +1069,8 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// A collector number read off the card promotes its printing to the top and
-	// marks it, but never selects it outright: a misread digit has to be visible
-	// before it is committed. Heavily reprinted cards make this worth doing —
-	// Sol Ring has well over a hundred printings.
+	// marks it. Heavily reprinted cards make this worth doing — Sol Ring has
+	// well over a hundred printings.
 	cards, matched := rankByScan(msg.cards, m.scannedSet, m.scannedNumber)
 	// rankByScan only knows collector numbers. A card from before they were
 	// printed has none, so it returns "no match" even when the background
@@ -1037,11 +1079,55 @@ func (m model) onPrints(msg printsMsg) (tea.Model, tea.Cmd) {
 	if !matched && m.scannedPromoted {
 		matched = true
 	}
+
+	// A number that pinned some of these printings answers the question the
+	// picker is asking, so the picker should stop asking it about the rest.
+	// Live: Victimize read a clean 413 and offered nineteen rows to choose
+	// between, of which one could be it. Promoting the right row to the top was
+	// never the same as removing the eighteen that the card itself rules out.
+	//
+	// Fails open, twice over. An empty match set means the digits are a misread
+	// or the name landed on the wrong card — that is the `Card #N isn't among
+	// these` path below, and hiding everything there would leave a picker with
+	// nothing in it. A full match set narrows nothing and is left alone.
+	//
+	// And when it narrows to exactly one, that is the answer and the picker is
+	// skipped. This function used to hold the opposite rule — a number promotes
+	// a printing and never picks it, so a misread digit stays visible — and the
+	// rule is now scoped to where it earns its keep. Showing a one-row list is
+	// not review: nobody reads a list of one, they press enter. What it costs is
+	// a keystroke on every scanned card, which across a bulk session is the
+	// difference the hands-free flow exists to make.
+	//
+	// The risk this accepts, stated plainly: a misread digit that happens to
+	// name a *different real printing of the same card* now commits silently.
+	// That is one row to correct, and it is the same trade the ambiguous-number
+	// branch of `verdict` already makes for the same stated reason.
+	m.printsAll = nil
+	if idxs := numberMatches(cards, m.scannedSet, m.scannedNumber, ""); len(idxs) > 0 &&
+		len(idxs) < len(cards) {
+		kept := make([]scryfall.Card, 0, len(idxs))
+		for _, i := range idxs {
+			kept = append(kept, cards[i])
+		}
+		m.printsAll, cards, matched = cards, kept, true
+		if len(cards) == 1 {
+			m.printsAll, m.prints = nil, cards
+			card := cards[0]
+			m.chosen = &card
+			return m.advanceAfterPrint()
+		}
+	}
 	m.prints = cards
 
 	showPicker(&m, "Select a printing", cards, statePrintPick, func(i int, c scryfall.Card) list.Item {
 		return printItem{card: c, scanned: matched && i == 0}
 	})
+	if m.printsAll != nil {
+		m.status = fmt.Sprintf("showing the %d printings matching #%s · ctrl+a for all %d",
+			len(cards), m.scannedNumber, len(m.printsAll))
+		m.statusErr = false
+	}
 	if m.scannedNumber != "" && !matched {
 		// Either the digits were misread or the name match is wrong. Saying so
 		// beats silently showing an unranked list as though nothing was scanned.
@@ -1418,6 +1504,26 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 
 	case scan.EventAuto:
 		m.autoState = msg.ev.State
+		// A pending retry waits for this rather than for a timer. The trigger
+		// will not re-fire on a card it has already read — it fires on
+		// placement — so the retry is a Rearm, and a Rearm only lands once the
+		// phone is listening for one.
+		//
+		// Timing it instead was the first attempt, and it cannot be tuned into
+		// this. Measured over one session's 18 captures, the phone's own
+		// held→armed gap is bimodal: four at ~130ms and fourteen at 760-855ms.
+		// Any single constant is either late for the fast half or fired into
+		// `held` for the slow half, and a Rearm sent into `held` is a retry that
+		// silently never happens. The phone already says when it is ready, so
+		// asking it is both quicker than the safe constant and safer than the
+		// quick one.
+		if m.secondLookPending && msg.ev.State == "armed" {
+			m.secondLookPending = false
+			if m.session != nil && m.autoCapable {
+				_ = m.session.Rearm()
+				m.nudgeSentAt = m.now()
+			}
+		}
 		return m, again
 
 	case scan.EventTorch:
@@ -1494,11 +1600,11 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	if resolved == "" {
 		resolved = "miss:" + it.ocrLine
 	}
-	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s%s",
+	m.note("resolve %q line=%d name=%dms prints=%dms rank=%s match=%s set=%s num=%s%s prints=%d%s%s%s",
 		resolved, it.lineIdx, msg.nameDur.Milliseconds(), msg.printsDur.Milliseconds(),
 		it.rank, matchDesc(it.match), orDash(it.raw.SetCode), orDash(it.raw.CollectorNumber),
 		numberSourceSuffix(it.raw.NumberSource), len(it.prints), borderSuffix(it),
-		siblingSuffix(it))
+		finishSuffix(it), siblingSuffix(it))
 
 	// A nudge-fired re-read of any recently processed card is the trigger
 	// seeing what we already know — swallow it, and stop nudging: one echo is
@@ -1640,9 +1746,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 
 	auto, finish, note := verdict(it)
 	if auto {
-		if seq, since, dup := dupCapture(m.recent, it.prints[0].ID, finish, now); dup {
+		if prior, since, dup := dupCapture(m.recent, it.prints[0].ID, now); dup {
 			switch {
-			case seq == it.captureSeq:
+			case prior.captureSeq == it.captureSeq:
 				// Two copies in one frame — a fanned playset. Two cards visible
 				// is two cards, so both commit. This used to queue for a
 				// deliberate confirm, which cost a stop on exactly the pile a
@@ -1653,14 +1759,14 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// in frame beside the new one. An un-swapped pile is not a
 				// playset signal — drop it silently (observed live: one card
 				// queued five re-sightings of itself this way).
-				return m.suppressRepeat(it, finish, now,
+				return m.suppressRepeat(it, finish, prior, now,
 					"lingering neighbour of a just-added card", true)
 			case it.fromMoved:
 				// The source's own answer, and the one measure that beats
 				// everything: a box held the watched spot and still looked like
 				// the card already read, so it declined to claim a placement.
 				// Honoured however long ago the last sighting was.
-				return m.suppressRepeat(it, finish, now,
+				return m.suppressRepeat(it, finish, prior, now,
 					"same card, the source says it only moved", false)
 			case it.placedDecisively():
 				// The same machinery answering the other way, and answering
@@ -1692,7 +1798,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// too marginal to trust. On a repeat under three seconds none
 				// of those is credible, because nobody swaps a card in under
 				// 3856ms. See sameCardFloor.
-				return m.suppressRepeat(it, finish, now,
+				return m.suppressRepeat(it, finish, prior, now,
 					fmt.Sprintf("same card, re-read %dms after the last sighting",
 						since.Milliseconds()), false)
 			default:
@@ -1717,7 +1823,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 
 	if auto {
 		card := it.prints[0]
-		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID}
+		_, evidenced := finishFromEvidence(card, it.finishHint)
+		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID,
+			FinishGuessed: !evidenced}
 		if err := m.adder(res); err != nil {
 			// The write failed, so the card is review-bound, not celebrated.
 			m.note("outcome %q queued: add failed: %v", it.canonical, err)
@@ -1728,12 +1836,35 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			next, cmd := m.reviewChanged()
 			return next, tea.Batch(cmd, nudge)
 		}
-		m.note("outcome %q committed: %s/%s %s", card.Name,
-			strings.ToUpper(card.Set), card.CollectorNumber, finish)
-		_, evidenced := finishFromEvidence(card, it.finishHint)
+		// The chosen row's own set/number, which is not always what was read
+		// off the card — and when they differ the log must say so, because
+		// that divergence is exactly how a border shuffle once committed
+		// SLD/604 off a clean M15/223 read with nothing in the session log to
+		// show for it.
+		chosen := ""
+		if read := it.raw.SetCode; read != "" && !strings.EqualFold(read, card.Set) {
+			chosen = fmt.Sprintf(" (read %s/%s)", strings.ToUpper(it.raw.SetCode),
+				orDash(it.raw.CollectorNumber))
+		}
+		guessed := ""
+		if !evidenced {
+			guessed = " (finish guessed)"
+		}
+		m.note("outcome %q committed: %s/%s %s%s%s", card.Name,
+			strings.ToUpper(card.Set), card.CollectorNumber, finish, chosen, guessed)
 		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now, !evidenced)
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.nudgeDrops = 0
+		// The retry bound is about one card's run of bad reads, not about the
+		// session. Once anything commits, a later copy of the same card that
+		// reads badly deserves its own second look — and a retry still waiting
+		// to be sent is moot, because the card it was for is written.
+		m.secondLookFor, m.secondLookPending = "", false
+		// This is the case the held flash was held for: the retry read the card
+		// properly, upgradeQueued took its entry back out of review, and the
+		// review the phone was never told about turned out not to be one.
+		// Only for *this* card — another card's held signal is still owed.
+		m.clearDeferredFlash(it.canonical)
 		// A new card landed, so "was that a second copy" no longer refers to
 		// anything the operator is looking at.
 		m.pending = nil
@@ -1811,10 +1942,30 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	m.note("outcome %q queued: %s", orDash(it.canonical), note)
 	m.nudgeDrops = 0
 	m.pending = nil
-	m.reviewFlash()
+	// The phone's review signal waits on the retry. A card we are about to
+	// photograph again is not yet a review — it is a card we have not finished
+	// reading — and telling the phone otherwise flashes a stop the operator did
+	// not need to see, on a card that the second look usually rescues. The
+	// entry still goes into the queue immediately, because if the retry never
+	// answers the card must already be there.
+	secondLook := m.wantsSecondLook(it)
+	if !secondLook {
+		m.reviewFlash()
+		m.clearDeferredFlash(it.canonical)
+	}
 	it.note = note
 	m.review = append(m.review, it)
+	// The ordinary quiet-period timer is still armed, and stays armed, as the
+	// backstop: a helper too old to report its trigger state, or one whose
+	// "armed" goes missing, still gets its retry — just at the swap cadence
+	// instead of immediately. Whichever arrives first wins, and a real capture
+	// voids the loser.
 	nudge := m.scheduleNudge()
+	if secondLook {
+		m.secondLookFor, m.secondLookPending = it.canonical, true
+		m.deferredFlashFor = it.canonical
+		m.note("outcome %q: looking again", it.canonical)
+	}
 	next, cmd := m.reviewChanged()
 	return next, tea.Batch(cmd, nudge)
 }
@@ -1832,10 +1983,45 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 //
 // What is new is that the sighting survives the drop. The status line says so,
 // and `+` writes it. See pendingDup for why the silence needed an exit.
-func (m model) suppressRepeat(it queueItem, finish string, now time.Time,
-	why string, besideNew bool) (tea.Model, tea.Cmd) {
+func (m model) suppressRepeat(it queueItem, finish string, prior recentCommit,
+	now time.Time, why string, besideNew bool) (tea.Model, tea.Cmd) {
+	// The duplicate rules just said this is physically the card already
+	// written. If that row's finish was the nonfoil default — nothing on the
+	// card chose it — and this look carries a real marker, the re-read is not
+	// noise to drop but the evidence the first look was missing: re-key the
+	// row instead of leaving a silently wrong one. Observed live: Brainsurge
+	// committed nonfoil off silence, read foil(sparkle-luma) 800ms later.
+	//
+	// Only ever guess → evidence. An evidenced row is never reopened (a
+	// contradicting later read of the same card is OCR noise, see the echo
+	// gate in onResolveDone), and a guess cannot replace a guess because two
+	// defaults cannot differ.
+	if card := it.prints[0]; finish != prior.finish && prior.finishGuessed {
+		if _, evidenced := finishFromEvidence(card, it.finishHint); evidenced {
+			res := Result{Card: card, Finish: finish, Qty: 1,
+				ContainerID: m.dest.ID, ReplacesFinish: prior.finish}
+			if err := m.adder(res); err != nil {
+				m.note("outcome %q dropped: %s (finish correction failed: %v)",
+					it.canonical, why, err)
+			} else {
+				m.note("outcome %q corrected: %s/%s %s → %s, %s", it.canonical,
+					strings.ToUpper(card.Set), card.CollectorNumber,
+					prior.finish, finish, why)
+				m.recent = rekeyCommit(m.recent, card.ID, prior.finish, finish, now)
+				m.recentNames = recordName(m.recentNames, it.canonical, now)
+				m.addedValue += priceValue(card, finish) - priceValue(card, prior.finish)
+				line := fmt.Sprintf("%s (%s/%s) %s · corrected from %s", card.Name,
+					strings.ToUpper(card.Set), card.CollectorNumber, finish, prior.finish)
+				m.recordTally(line)
+				m.summary.add("auto", line)
+				m.status = fmt.Sprintf("Corrected %s to %s", it.canonical, finish)
+				m.statusErr = false
+				return m, m.scheduleNudge()
+			}
+		}
+	}
 	m.note("outcome %q dropped: %s", it.canonical, why)
-	m.recent = touchCommit(m.recent, it.prints[0].ID, finish, now)
+	m.recent = touchCommit(m.recent, it.prints[0].ID, now)
 	m.recentNames = recordName(m.recentNames, it.canonical, now)
 	m.pending = &pendingDup{it: it, finish: finish, at: now}
 	seeing := fmt.Sprintf("Still seeing %s", it.canonical)
@@ -1873,7 +2059,9 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 	m.pending = nil
 	now := m.now()
 	card := p.it.prints[0]
-	res := Result{Card: card, Finish: p.finish, Qty: 1, ContainerID: m.dest.ID}
+	_, evidenced := finishFromEvidence(card, p.it.finishHint)
+	res := Result{Card: card, Finish: p.finish, Qty: 1, ContainerID: m.dest.ID,
+		FinishGuessed: !evidenced}
 	if err := m.adder(res); err != nil {
 		m.note("outcome %q queued: promote failed: %v", p.it.canonical, err)
 		m.reviewFlash()
@@ -1885,7 +2073,6 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 	}
 	m.note("outcome %q committed: %s/%s %s (promoted by hand)", card.Name,
 		strings.ToUpper(card.Set), card.CollectorNumber, p.finish)
-	_, evidenced := finishFromEvidence(card, p.it.finishHint)
 	// Banked under a fresh captureSeq so the copy just written cannot itself be
 	// read as the fanned-playset case by whatever the next capture brings.
 	m.captureSeq++
@@ -1953,6 +2140,33 @@ func (m model) reviewFlash() {
 		return
 	}
 	_ = m.session.Result(scan.HUDResult{Tier: tierReview})
+}
+
+// clearDeferredFlash drops a held review signal because the question it was
+// waiting on has been answered — the card committed, or it has just flashed for
+// real. Name-matched, so one card's retry cannot swallow another's signal.
+func (m *model) clearDeferredFlash(name string) {
+	if name != "" && m.deferredFlashFor == name {
+		m.deferredFlashFor = ""
+	}
+}
+
+// flushDeferredFlash sends a review signal that was held for a retry which never
+// answered, and reports whether it sent one.
+//
+// The catch-all, and the reason holding the flash is safe at all. Every path
+// that could resolve a retry clears the hold explicitly; this covers the path
+// where nothing resolves it — the operator pockets the card, the phone stops
+// reporting, the retry photograph never happens. Without it a queued card would
+// sit in the list having never made a sound, which is worse than the early flash
+// this whole mechanism exists to avoid.
+func (m *model) flushDeferredFlash() bool {
+	if m.deferredFlashFor == "" {
+		return false
+	}
+	m.deferredFlashFor = ""
+	m.reviewFlash()
+	return true
 }
 
 // hudTotal silently syncs the camera HUD's session counter after a commit
@@ -2749,8 +2963,11 @@ func (m model) viewContent() string {
 		return m.scanHeader() + fmt.Sprintf("%s searching Scryfall…\n\n%s",
 			m.spinner.View(), m.help("ctrl+c to force quit"))
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick:
-		return m.scanHeader() + m.list.View() + "\n" +
-			m.help(m.batchHelp("↑/↓ move · / filter · enter select · esc cancel · ctrl+c force quit"))
+		keys := "↑/↓ move · / filter · enter select · esc cancel · ctrl+c force quit"
+		if m.state == statePrintPick && m.printsAll != nil {
+			keys = "↑/↓ move · / filter · enter select · ctrl+a all printings · esc cancel"
+		}
+		return m.scanHeader() + m.list.View() + "\n" + m.help(m.batchHelp(keys))
 	case stateQty:
 		out := m.scanHeader() + m.theme.Prompt.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {

@@ -82,9 +82,45 @@ func squashed(_ s: some StringProtocol) -> String {
 /// on a couple of durable fragments does not. `coast` survives nearly every
 /// mangling seen so far; `wizard` survives most; the year is the strongest
 /// signal of all and is checked separately.
+/// The substring tests carry nearly everything, and the fuzzy one exists for
+/// what they miss: `IM & O 2024 Wizanis ot the Cst` (live) mangles both durable
+/// fragments at once — `wizards` loses two letters to `wizanis` and `coast`
+/// collapses to `cst` — so the row went unrecognised and took its 2024 with it.
 func looksLikeCompanyRow(_ line: String) -> Bool {
     let s = squashed(line)
-    return s.contains("coast") || s.contains("wizard") || s.contains("wizard5")
+    if s.contains("coast") || s.contains("wizard") || s.contains("wizard5") {
+        return true
+    }
+    // One substantive token close to "wizards" is enough. Only that word, and
+    // only at close range: "coast" is five letters and collides with ordinary
+    // English at distance 2 ("boast", "roast", "coats"), while nothing in a
+    // card's footer band lands within two edits of "wizards" by accident. The
+    // length band is what keeps the distance meaningful — an edit distance of 2
+    // says much less about a four-letter token than a seven-letter one.
+    return line.split(whereSeparator: { !$0.isLetter }).contains { tok in
+        let t = tok.lowercased()
+        return (6...8).contains(t.count) && editDistance(t, "wizards") <= 2
+    }
+}
+
+/// editDistance is Levenshtein, on the two short strings this file compares.
+/// Rows-at-a-time so it allocates one buffer rather than a matrix.
+func editDistance(_ a: some StringProtocol, _ b: some StringProtocol) -> Int {
+    let x = Array(a), y = Array(b)
+    if x.isEmpty { return y.count }
+    if y.isEmpty { return x.count }
+    var prev = Array(0...y.count)
+    var cur = [Int](repeating: 0, count: y.count + 1)
+    for i in 1...x.count {
+        cur[0] = i
+        for j in 1...y.count {
+            cur[j] = x[i - 1] == y[j - 1]
+                ? prev[j - 1]
+                : 1 + min(prev[j - 1], prev[j], cur[j - 1])
+        }
+        swap(&prev, &cur)
+    }
+    return prev[y.count]
 }
 
 /// looksLikeIllustratorRow spots the artist credit. "Illus." is the durable part

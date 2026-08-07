@@ -36,6 +36,7 @@ type scanMatch int
 const (
 	scanMatchNone             scanMatch = iota
 	scanMatchNumberAmbiguous            // number matched, but several printings share it
+	scanMatchNumberTail                 // number matched nothing, but is the tail of exactly one printing's
 	scanMatchYearOnly                   // no number, but the copyright year names one printing
 	scanMatchYearAndMarks               // year narrowed to a few, the card's printed markings picked one
 	scanMatchNumberOnly                 // number matched exactly one printing
@@ -68,11 +69,20 @@ func corroboratedPrinting(r scanMatch) bool {
 		r == scanMatchNumberAndYear
 }
 
+// printingPinned reports whether the rank already chose one specific printing
+// by its number — the ranks whose head row is a claim about *which* row, not
+// merely a preferred ordering. Border evidence must leave that head alone.
+func printingPinned(r scanMatch) bool {
+	return numberVerified(r) || r == scanMatchNumberTail
+}
+
 // String names the match for the telemetry log.
 func (m scanMatch) String() string {
 	switch m {
 	case scanMatchNumberAmbiguous:
 		return "number-ambiguous"
+	case scanMatchNumberTail:
+		return "number-tail"
 	case scanMatchYearAndMarks:
 		return "year+marks"
 	case scanMatchYearOnly:
@@ -139,6 +149,60 @@ func borderSuffix(it queueItem) string {
 		// apart from a read that reordered, since only the latter can be wrong
 		// in a way the user would ever see.
 		s += " unused"
+	}
+	return s
+}
+
+// finishSuffix records what the card said about its finish, and — when the
+// sparkle reader was the one asked — the number behind the answer.
+//
+// The provenance was put on the wire so a session log could show which signal
+// was carrying the finish, and then never printed, which left the log exactly
+// as silent as before. The score comes with it because a verdict alone cannot
+// be debugged: the four foils that read nonfoil live scored 0.020, 0.339, 0.425
+// and 0.496 against a bar of 0.52, and only the last of those is a threshold
+// problem. The offset says which — a match found at the edge of the search
+// window means the marker is outside it.
+func finishSuffix(it queueItem) string {
+	c := it.raw
+	if it.finishHint == "" && c.FinishHint == "" && c.SparkleScore == nil {
+		return ""
+	}
+	// The hint the verdict will actually use, which the candidate loop may
+	// have adopted from a winning collector block. The raw hint used to be
+	// printed here, so the log could show `nonfoil(separator)` for a commit
+	// the alt block decided differently — a log that disagrees with the write
+	// it is narrating.
+	s := " finish=" + orDash(it.finishHint)
+	if c.FinishSource != "" {
+		s += "(" + c.FinishSource + ")"
+	}
+	if it.finishHint != c.FinishHint {
+		s += fmt.Sprintf(" read=%s", orDash(c.FinishHint))
+	}
+	if c.SparkleScore != nil {
+		s += fmt.Sprintf(" sparkle=%.3f", *c.SparkleScore)
+		if c.SparkleOffsetU != nil && c.SparkleOffsetV != nil {
+			s += fmt.Sprintf("@%+.4f,%+.4f", *c.SparkleOffsetU, *c.SparkleOffsetV)
+		}
+		// The luma patch spread — the number that tells a sub-threshold miss
+		// (real structure, faint) from an abstention scored as 0.000 (nothing
+		// there at all). It crossed the wire from the start and was the one
+		// field never printed, which made those two failures look identical
+		// in every session log this far.
+		if c.SparkleContrast != nil {
+			s += fmt.Sprintf("/%.4f", *c.SparkleContrast)
+		}
+	}
+	// The colour channel, logged beside the one that decided. A bare number
+	// rather than a verdict, because it has no vote — the session log is
+	// currently the only place its live behaviour can be observed at all, and
+	// the question it has to answer is how often it would have been right.
+	if c.SparkleChromaScore != nil {
+		s += fmt.Sprintf(" chroma=%.3f", *c.SparkleChromaScore)
+		if c.SparkleChromaContrast != nil {
+			s += fmt.Sprintf("/%.4f", *c.SparkleChromaContrast)
+		}
 	}
 	return s
 }
@@ -649,8 +713,18 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 			// Border last, and only over the ordering the ranking settled on.
 			// It never revisits the rank: an old frame that verified nothing
 			// still queues, it just queues with the right printing on top.
-			it.prints, it.borderFiltered = applyBorderEvidence(
-				it.prints, c.BorderColor, c.CopyrightYear)
+			//
+			// And only when the rank did not already name a printing. A
+			// number match put one specific row at the head, and the head is
+			// what commits — a border+year shuffle after that can replace a
+			// set+number+lang exact with a sibling printing that happens to
+			// share the read border, which is how an M15 Ornithopter read as
+			// M15/223 nonfoil committed as SLD/604 foil on 2026-08-06. Border
+			// evidence is for orderings the number never settled.
+			if !printingPinned(it.rank) {
+				it.prints, it.borderFiltered = applyBorderEvidence(
+					it.prints, c.BorderColor, c.CopyrightYear)
+			}
 		}
 		return resolveDoneMsg{gen: gen, item: it, nameDur: nameDur, printsDur: printsDur}
 	}
@@ -671,22 +745,31 @@ const autoCommitOCRConfidence = 0.8
 // reported, clears the floor. The headline never-rule: a name-only match with
 // several printings and no collector verification never commits — the
 // newest-first default would silently pick the wrong set.
-func verdict(it queueItem) (auto bool, finish string, note string) {
-	if it.errText != "" {
-		return false, "", "lookup failed: " + it.errText
-	}
-	if it.canonical == "" {
-		if it.ocrLine == "" {
-			return false, "", "nothing readable"
-		}
-		return false, "", fmt.Sprintf("couldn't identify %q", it.ocrLine)
-	}
+// printingUnverified reports whether the collector evidence failed to pin a
+// printing, and the queue note to show when it did.
+//
+// Split out of verdict rather than inlined there because two callers need the
+// same answer: verdict, to refuse the commit, and the queue path in model.go,
+// to decide whether the card is worth one more look. The alternative was
+// matching on the prose of the note, which would make this file's wording
+// load-bearing in a way it should never be.
+//
+// Requires the caller to have already established a name and some printings —
+// verdict checks both above, and "no printings found" is a different answer
+// from "several, and nothing chose between them".
+func printingUnverified(it queueItem) (short bool, note string) {
 	if len(it.prints) == 0 {
-		return false, "", "no printings found"
+		return false, ""
 	}
 	switch it.rank {
 	case scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
-		scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks:
+		scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks,
+		// A tail match is a repaired number, not a verified one, so it commits
+		// on the same terms as the year strata: numberVerified() still says no,
+		// which keeps verdict's fallback-OCR-line veto and confidence floor
+		// standing over it.
+		scanMatchNumberTail:
+		return false, ""
 	case scanMatchNumberAmbiguous:
 		// A number that matched several printings commits the one the ranking
 		// put in front, rather than queuing.
@@ -709,12 +792,31 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 		// the card rather than guessing without it.
 		if y := it.raw.CopyrightYear; y > 0 &&
 			!strings.HasPrefix(it.prints[0].ReleasedAt, fmt.Sprintf("%d", y)) {
-			return false, "", fmt.Sprintf(
+			return true, fmt.Sprintf(
 				"printing unverified: %d printings, and the front one is not from %d",
 				len(it.prints), y)
 		}
+		return false, ""
 	default:
-		return false, "", fmt.Sprintf("printing unverified: %d printings", len(it.prints))
+		return true, fmt.Sprintf("printing unverified: %d printings", len(it.prints))
+	}
+}
+
+func verdict(it queueItem) (auto bool, finish string, note string) {
+	if it.errText != "" {
+		return false, "", "lookup failed: " + it.errText
+	}
+	if it.canonical == "" {
+		if it.ocrLine == "" {
+			return false, "", "nothing readable"
+		}
+		return false, "", fmt.Sprintf("couldn't identify %q", it.ocrLine)
+	}
+	if len(it.prints) == 0 {
+		return false, "", "no printings found"
+	}
+	if short, note := printingUnverified(it); short {
+		return false, "", note
 	}
 	// A fallback line is a weak place to find a name — it is not the helper's
 	// own title guess — so it queues unless the printing evidence stands on its
@@ -747,6 +849,24 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 			return false, "", fmt.Sprintf("low OCR confidence (%d%%)", int(c*100))
 		}
 	}
+	// An unread finish takes the nonfoil default and commits anyway. The
+	// `evidenced` flag is dropped here on purpose, and it is the one place in
+	// this file that deliberately discards a piece of evidence.
+	//
+	// Queuing on it was built and reversed the same day. The gate is right in
+	// the abstract — Glowrider, Trap Digger and Hard Evidence all committed
+	// `nonfoil` off silence on 2026-08-06 and all three were foil — but it
+	// treats the wrong thing as the defect. The defect is that the sparkle
+	// reader missed them. A stop in the session does not fix that; it moves the
+	// cost of the miss onto the operator, on every retro card in every pile,
+	// forever. The standing preference holds here as everywhere else in this
+	// function: a wrong row is one row to correct, a queued card is a stop in a
+	// session whose whole point is not stopping.
+	//
+	// So this is a deliberate bet on the foil reader, and it is why the number
+	// that matters about that reader is its false *negative* rate — every miss
+	// is now a silently underpriced row rather than a question. See
+	// docs/scanner-foil-registration.md.
 	finish, _ = finishFromEvidence(it.prints[0], it.finishHint)
 	return true, finish, ""
 }
@@ -1044,6 +1164,77 @@ func numberMatches(cards []scryfall.Card, set, number, lang string) []int {
 	return out
 }
 
+// numberTailMatchMinDigits is how short a read number may be and still be
+// offered to numberTailMatches.
+//
+// Two, because one digit against a three-digit number is barely a claim: every
+// printing numbered 1-9, 11, 21, 31 … answers to "1", so the "exactly one
+// match" guard would be carrying the entire argument. Two digits against the
+// live misreads (14 for 414, 18 for 418) already leaves the guard something to
+// stand on. A one-digit number that matches *exactly* is untouched by this and
+// still commits — Abiding Grace reads a bare 1 off H2R and always has.
+const numberTailMatchMinDigits = 2
+
+// numberTailMatches are the printings whose collector number ends with the
+// digits read off the card.
+//
+// This repairs exactly one failure — a *lost leading digit* — and it is worth
+// being precise about how narrow that is, because the neighbouring failures look
+// identical in the log and none of them is fixable this way. Checked against the
+// catalog, on the four numbers two live sessions of one pile read wrongly:
+//
+//	Meltdown         18  → mh3/418   a digit lost      · repaired here
+//	Dress Down       14  → h2r/4     a digit *gained*  · no tail, still queues
+//	Unstable Amulet  431 → mh3/421   3 for 2           · no tail, still queues
+//	Lion Umbra       420 → mh3/426   0 for 6           · no tail, still queues
+//
+// So three of the four are substitutions or insertions, and the tempting
+// generalisation — match within one edit — would have to guess *which* digit
+// lied. Against Lion Umbra's two printings, `420` sits one edit from `426` and
+// nothing else, and it would commit on that; against a card with a dozen
+// printings it would collide constantly. A tail is the one repair where the
+// digits that were read are all still true, which is why it is the only one
+// here.
+//
+// It is deliberately not part of numberMatches. A tail is not a match; it is a
+// guess about which digits went missing, and it is only safe as a last resort
+// after the honest comparison has already come back empty — see the call site.
+//
+// Digits only on both sides. Scryfall numbers a promo `123★` and a variant
+// `123a`, and "the tail of" is a question about the printed run of digits, not
+// about a suffix the card does not print in that position at all.
+func numberTailMatches(cards []scryfall.Card, number string) []int {
+	if len(number) < numberTailMatchMinDigits || !isDigits(number) {
+		return nil
+	}
+	var out []int
+	for i, c := range cards {
+		base := scryfall.BaseNumber(c.CollectorNumber)
+		// Strictly longer: an equal-length "tail" is the exact match, which by
+		// construction has already been tried and failed.
+		if len(base) <= len(number) || !isDigits(base) {
+			continue
+		}
+		if strings.HasSuffix(base, number) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// isDigits reports whether every byte is an ASCII digit. Empty is not.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // langSaysSo reports whether the card's printed language agrees with this
 // printing's. Unknown on either side is not agreement: a catalog built before
 // the language column stores none, and silence must not read as a match.
@@ -1058,71 +1249,7 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 		return cards, scanMatchNone
 	}
 	if number == "" {
-		if len(cards) == 1 {
-			return cards, scanMatchSinglePrint
-		}
-		if ranked, ok := collapseVariants(cards); ok {
-			return ranked, scanMatchSinglePrint
-		}
-		// Old frames print no collector number the band can reach, so most of
-		// what queues here queues for want of *any* printing evidence — and
-		// the copyright line has been carrying some all along. Its range end
-		// is the printing's release year, which on a card reprinted years
-		// apart names exactly one printing on its own.
-		//
-		// Weaker than a number, and deliberately ranked below one: the year is
-		// four small italic digits, the same glyphs that turn "30" into "80",
-		// so it only ever picks between printings rather than confirming a
-		// card. Ambiguity fails closed — zero or several printings in that
-		// year leave the card queued exactly as before.
-		if year > 0 {
-			if i := soleIndexInYear(cards, allIndexes(len(cards)), year); i >= 0 {
-				return moveToFront(cards, i), scanMatchYearOnly
-			}
-			// The year found several, so ask the border which of those it is.
-			//
-			// This is the case the whole stratum turns on. A 1995 copyright
-			// line narrows Prodigal Sorcerer's 23 printings to `4ed/94` and
-			// `4bb/94` — same set, same collector number, same year, differing
-			// only in that one is white-bordered and the other black. Nothing
-			// else printed on the card can separate them, so before this the
-			// year did all the work it could and the card still queued.
-			//
-			// Deliberately reached only *after* the year has already narrowed
-			// the field. The border is one bit and would settle almost nothing
-			// on its own; it is decisive here precisely because the year has
-			// left a handful of candidates for it to choose between.
-			//
-			// And the survivor must *match* the read, not merely survive it.
-			// That distinction was missing and it committed a wrong card live:
-			// Mana Leak's 1998 line is `sth/36` black and `wc98/rb36` gold, the
-			// reader said white, black was ruled out, and gold — which the
-			// reader cannot read and so never excludes — was left standing
-			// alone and committed as a World Championship printing. Survival is
-			// not agreement. A card picked purely by eliminating its siblings
-			// has no positive evidence behind it, and the one printing that can
-			// never be eliminated is exactly the one to distrust.
-			if border != "" || finish != "" {
-				kept := make([]int, 0, len(cards))
-				for i, c := range cards {
-					if borderRulesOut(c, border) || finishRulesOut(c, finish) {
-						continue
-					}
-					kept = append(kept, i)
-				}
-				// Fails closed twice over: if the markings ruled nothing out
-				// they added no information, and if they ruled everything out
-				// they disagree with every printing the catalog has, which is a
-				// reason to distrust the read rather than to pick from nothing.
-				if len(kept) > 0 && len(kept) < len(cards) {
-					if i := soleIndexInYear(cards, kept, year); i >= 0 &&
-						markingsAgree(cards[i], border, finish) {
-						return moveToFront(cards, i), scanMatchYearAndMarks
-					}
-				}
-			}
-		}
-		return cards, scanMatchNone
+		return rankWithoutNumber(cards, year, border, finish, true)
 	}
 	matchIdxs := numberMatches(cards, set, number, lang)
 	best, exactSet, langAgrees := -1, false, false
@@ -1145,10 +1272,124 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 		}
 	}
 	if best < 0 {
-		// A number was read but matches nothing — even a lone printing is
-		// suspect then: the name match may have landed on the wrong card.
-		return cards, scanMatchNone
+		// A number was read but matches nothing. That is a reason to distrust
+		// the number — the name match may have landed on the wrong card, or the
+		// digits are a misread — but it is not a reason to throw away the rest
+		// of the capture, which is what returning here used to do. The year on
+		// the copyright line and the markings printed on the card are still
+		// true, and they are exactly the evidence the no-number stratum below
+		// was built to weigh. Live: Lion Umbra read a clean 2024 and a foil
+		// sparkle against two printings and queued as "printing unverified"
+		// holding both, because a collector number that agreed with neither
+		// silenced them.
+		//
+		// Before falling through, one last reading of the digits themselves: a
+		// number that matched nothing may simply be missing its leading digit.
+		// Live, Meltdown's mh3/418 read as `18` and queued as "printing
+		// unverified" against four printings, of which only 418 ends in 18.
+		//
+		// Only when it names exactly one printing, and only when the year has
+		// nothing to say against it. Ambiguity and contradiction both fall
+		// through to the strata below, which is where they were already going.
+		if tails := numberTailMatches(cards, number); len(tails) == 1 {
+			if c := cards[tails[0]]; year <= 0 ||
+				strings.HasPrefix(c.ReleasedAt, fmt.Sprintf("%d", year)) {
+				return moveToFront(cards, tails[0]), scanMatchNumberTail
+			}
+		}
+		// Everything except the sole-printing floor. That one is pure absence
+		// of evidence — "no number was read, and there is only one candidate" —
+		// and a number that matched nothing is a positive reason for suspicion
+		// standing against it. The strata that rest on something the card
+		// actually said still apply.
+		return rankWithoutNumber(cards, year, border, finish, false)
 	}
+	return rankMatchedNumber(cards, matchIdxs, best, exactSet, langAgrees, year, border, finish)
+}
+
+// rankWithoutNumber weighs a capture that has no usable collector number: the
+// copyright year, and the markings the card prints, against the candidate
+// printings.
+//
+// solePrintCounts is false when a number *was* read and matched nothing. The
+// difference is not cosmetic — see the call site.
+func rankWithoutNumber(cards []scryfall.Card, year int, border, finish string,
+	solePrintCounts bool,
+) ([]scryfall.Card, scanMatch) {
+	if solePrintCounts {
+		if len(cards) == 1 {
+			return cards, scanMatchSinglePrint
+		}
+		if ranked, ok := collapseVariants(cards); ok {
+			return ranked, scanMatchSinglePrint
+		}
+	}
+	// Old frames print no collector number the band can reach, so most of
+	// what queues here queues for want of *any* printing evidence — and
+	// the copyright line has been carrying some all along. Its range end
+	// is the printing's release year, which on a card reprinted years
+	// apart names exactly one printing on its own.
+	//
+	// Weaker than a number, and deliberately ranked below one: the year is
+	// four small italic digits, the same glyphs that turn "30" into "80",
+	// so it only ever picks between printings rather than confirming a
+	// card. Ambiguity fails closed — zero or several printings in that
+	// year leave the card queued exactly as before.
+	if year > 0 {
+		if i := soleIndexInYear(cards, allIndexes(len(cards)), year); i >= 0 {
+			return moveToFront(cards, i), scanMatchYearOnly
+		}
+		// The year found several, so ask the border which of those it is.
+		//
+		// This is the case the whole stratum turns on. A 1995 copyright
+		// line narrows Prodigal Sorcerer's 23 printings to `4ed/94` and
+		// `4bb/94` — same set, same collector number, same year, differing
+		// only in that one is white-bordered and the other black. Nothing
+		// else printed on the card can separate them, so before this the
+		// year did all the work it could and the card still queued.
+		//
+		// Deliberately reached only *after* the year has already narrowed
+		// the field. The border is one bit and would settle almost nothing
+		// on its own; it is decisive here precisely because the year has
+		// left a handful of candidates for it to choose between.
+		//
+		// And the survivor must *match* the read, not merely survive it.
+		// That distinction was missing and it committed a wrong card live:
+		// Mana Leak's 1998 line is `sth/36` black and `wc98/rb36` gold, the
+		// reader said white, black was ruled out, and gold — which the
+		// reader cannot read and so never excludes — was left standing
+		// alone and committed as a World Championship printing. Survival is
+		// not agreement. A card picked purely by eliminating its siblings
+		// has no positive evidence behind it, and the one printing that can
+		// never be eliminated is exactly the one to distrust.
+		if border != "" || finish != "" {
+			kept := make([]int, 0, len(cards))
+			for i, c := range cards {
+				if borderRulesOut(c, border) || finishRulesOut(c, finish) {
+					continue
+				}
+				kept = append(kept, i)
+			}
+			// Fails closed twice over: if the markings ruled nothing out
+			// they added no information, and if they ruled everything out
+			// they disagree with every printing the catalog has, which is a
+			// reason to distrust the read rather than to pick from nothing.
+			if len(kept) > 0 && len(kept) < len(cards) {
+				if i := soleIndexInYear(cards, kept, year); i >= 0 &&
+					markingsAgree(cards[i], border, finish) {
+					return moveToFront(cards, i), scanMatchYearAndMarks
+				}
+			}
+		}
+	}
+	return cards, scanMatchNone
+}
+
+// rankMatchedNumber weighs a capture whose collector number matched at least
+// one printing: which of them it is, and how much the agreement is worth.
+func rankMatchedNumber(cards []scryfall.Card, matchIdxs []int, best int,
+	exactSet, langAgrees bool, year int, border, finish string,
+) ([]scryfall.Card, scanMatch) {
 	yearPinned := false
 	if !exactSet && len(matchIdxs) > 1 && year > 0 {
 		if inYear := soleIndexInYear(cards, matchIdxs, year); inYear >= 0 {
@@ -1321,23 +1562,32 @@ type recentCommit struct {
 	finishGuessed bool
 }
 
-// dupCapture reports whether the same printing-and-finish was seen within the
-// time window, by which capture, and how long ago — the discriminators between
-// a fanned playset, a lingering neighbour, and a card that only moved.
+// dupCapture reports whether the same printing was seen within the time
+// window, by which capture, and how long ago — the discriminators between a
+// fanned playset, a lingering neighbour, and a card that only moved.
 //
 // It answers with the *most recent* match. It used to answer with the first one
 // in the slice, which is the oldest: with five sightings of one card banked, the
 // age it reported was the age of the first, so any question about "how long
 // since I last saw this" got an answer several seconds too large. That is a bug
 // on its own and became load-bearing the moment sameCardFloor existed.
-func dupCapture(recent []recentCommit, id, finish string, now time.Time) (captureSeq int, since time.Duration, dup bool) {
+//
+// The printing alone, not printing-and-finish. Keyed on the finish too, a
+// re-read whose finish verdict merely *changed* skipped every duplicate rule —
+// including the source's own "it only moved" — and committed a second row.
+// Observed live twice in one session: Brainsurge committed nonfoil, then foil
+// 800ms later off a capture the source flagged as moved. Whether the finish
+// difference means a correction or a second copy is a judgement for the
+// caller, made *after* the physical-identity rules have run, which is why the
+// whole sighting is returned rather than its capture number.
+func dupCapture(recent []recentCommit, id string, now time.Time) (prior recentCommit, since time.Duration, dup bool) {
 	for i := len(recent) - 1; i >= 0; i-- {
 		rc := recent[i]
-		if rc.scryfallID == id && rc.finish == finish && now.Sub(rc.at) <= dupWindow {
-			return rc.captureSeq, now.Sub(rc.at), true
+		if rc.scryfallID == id && now.Sub(rc.at) <= dupWindow {
+			return rc, now.Sub(rc.at), true
 		}
 	}
-	return 0, 0, false
+	return recentCommit{}, 0, false
 }
 
 // recordCommit appends to the window, pruning it to a fixed size.
@@ -1361,9 +1611,23 @@ func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now 
 // stop (five commits of one card at 0.93s, 1.60s, 0.93s and 2.60s apart: two
 // suppressed, two through). Rolling the anchor forward suppresses all of them
 // for as long as the card keeps announcing itself.
-func touchCommit(recent []recentCommit, id, finish string, now time.Time) []recentCommit {
+func touchCommit(recent []recentCommit, id string, now time.Time) []recentCommit {
 	for i := len(recent) - 1; i >= 0; i-- {
-		if recent[i].scryfallID == id && recent[i].finish == finish {
+		if recent[i].scryfallID == id {
+			recent[i].at = now
+			return recent
+		}
+	}
+	return recent
+}
+
+// rekeyCommit restates a banked sighting under the finish a later look proved,
+// so the duplicate window keeps agreeing with the row the adder now holds.
+func rekeyCommit(recent []recentCommit, id, from, to string, now time.Time) []recentCommit {
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].scryfallID == id && recent[i].finish == from {
+			recent[i].finish = to
+			recent[i].finishGuessed = false
 			recent[i].at = now
 			return recent
 		}
@@ -1499,10 +1763,41 @@ func (m *model) scheduleNudge() tea.Cmd {
 	}
 }
 
+// wantsSecondLook reports whether this queue-bound card should be photographed
+// again promptly rather than waiting out the operator's swap window.
+//
+// Only for an unverified printing: that is the failure a second photograph
+// actually fixes, because the collector number lives in four small glyphs at the
+// bottom edge and whether they survive is a property of the capture rather than
+// of the card. The other queue reasons — an unreadable name, a failed lookup —
+// are not improved by looking again at the same rate, and asking would only
+// spend captures.
+//
+// Bounded by name, to one look. A card that will never read must not hold the
+// session open re-photographing itself, and the retry that already happened is
+// exactly what m.secondLookFor remembers.
+func (m model) wantsSecondLook(it queueItem) bool {
+	if it.canonical == "" || m.secondLookFor == it.canonical {
+		return false
+	}
+	short, _ := printingUnverified(it)
+	return short
+}
+
 // onNudge sends the rearm if the session is still quiet and capable.
+//
+// It is also where a held review signal runs out of patience. Reaching here at
+// all means the quiet period elapsed with no capture in it — any real one bumps
+// nudgeGen and voids this timer — so a retry that was going to answer has not,
+// and the card in the queue is owed the flash it did not get. Every other exit
+// from a held flash is an event; this is the one that is a timeout.
 func (m model) onNudge(msg nudgeMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.nudgeGen || m.session == nil || !m.autoCapable {
 		return m, nil
+	}
+	if m.flushDeferredFlash() {
+		m.note("outcome %q: the second look never came, queued after all",
+			m.secondLookFor)
 	}
 	_ = m.session.Rearm()
 	m.nudgeSentAt = m.now()

@@ -51,6 +51,7 @@ var migrations = []migration{
 	{21, etchedPrices},
 	{22, cardLanguage},
 	{23, holdingCondition},
+	{24, finishGuesses},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -501,6 +502,32 @@ FROM card_entries_pre_v23;
 DROP TABLE card_entries_pre_v23;
 
 CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);`
+
+// v24: the scanner's finish guesses, one row per commit nothing on the card
+// chose.
+//
+// The scanner writes the nonfoil default when no finish marker reads, which
+// keeps a session hands-free at the price of a silently wrong row for every
+// foil it missed — 7 of one 25-card session, measured 2026-08-06. The row
+// itself cannot say it was a guess: card_entries buckets copies by (printing,
+// finish, condition), so a guessed copy merging into a bucket of verified ones
+// has no cell to carry the doubt. The doubt is a fact about one commit, so it
+// gets its own table: one row per guessed commit, deleted when evidence
+// arrives — a later read that corrects the finish, or a human who checked the
+// card.
+//
+// Not a column on card_entries, deliberately: a flag on a quantity bucket
+// would claim every copy in the bucket, and clearing it on the next verified
+// add of the same printing would lose the one guess it existed to remember.
+const finishGuesses = `
+CREATE TABLE finish_guesses (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_id INTEGER NOT NULL,
+    scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
+    finish       TEXT NOT NULL,
+    guessed_at   TEXT NOT NULL
+);
+CREATE INDEX finish_guesses_card ON finish_guesses(scryfall_id, finish);`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

@@ -110,6 +110,11 @@ type Result struct {
 	// an ordinary add — the result is a duplicate rather than a correction,
 	// which is the safer way to be wrong.
 	ReplacesFinish string
+	// FinishGuessed marks a finish nothing on the card chose — the nonfoil
+	// default written because no marker read. Adders that keep an audit trail
+	// record it so the row can be checked against the physical card later;
+	// adders that do not may ignore it.
+	FinishGuessed bool
 }
 
 // Adder persists a confirmed selection. It is called once per card the user

@@ -28,7 +28,11 @@ enum CorpusCrop {
     static let v1: CGFloat = 1.0
 }
 
-/// A grayscale copy of a corpus crop, sampled in card space.
+/// An RGBA copy of a corpus crop, sampled in card space.
+///
+/// RGBA rather than the grayscale it used to be, because the reader now judges
+/// two channels and the corpus is where the second one's threshold is argued
+/// from. A grayscale harness could not score the channel it exists to validate.
 struct CorpusCard {
     let width: Int, height: Int
     private let data: [UInt8]
@@ -38,12 +42,12 @@ struct CorpusCard {
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         let w = cg.width, h = cg.height
         guard w > 0, h > 0 else { return nil }
-        var buf = [UInt8](repeating: 0, count: w * h)
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
         let ok = buf.withUnsafeMutableBytes { raw -> Bool in
             guard let ctx = CGContext(
                 data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
-                bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
-                bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
             ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
             return true
         }
@@ -51,14 +55,31 @@ struct CorpusCard {
         width = w; height = h; data = buf
     }
 
-    /// The card-space sampler. Nearest neighbour, matching how the reader
-    /// samples the live frame.
+    /// Pixel at a card-space position, or nil outside the crop. Nearest
+    /// neighbour, matching how the reader samples the live frame.
+    private func rgb(_ u: CGFloat, _ v: CGFloat) -> (CGFloat, CGFloat, CGFloat)? {
+        let x = Int((u - CorpusCrop.u0) / (CorpusCrop.u1 - CorpusCrop.u0) * CGFloat(width))
+        let y = Int((v - CorpusCrop.v0) / (CorpusCrop.v1 - CorpusCrop.v0) * CGFloat(height))
+        guard x >= 0, x < width, y >= 0, y < height else { return nil }
+        let o = (y * width + x) * 4
+        return (CGFloat(data[o]) / 255, CGFloat(data[o + 1]) / 255, CGFloat(data[o + 2]) / 255)
+    }
+
+    /// The luma sampler, matching `PixelReader.luma`'s weights exactly — a
+    /// harness that weighted its channels differently would fit the template to
+    /// a slightly different image than the one the reader sees.
     var sampler: CardSampler {
         { u, v in
-            let x = Int((u - CorpusCrop.u0) / (CorpusCrop.u1 - CorpusCrop.u0) * CGFloat(width))
-            let y = Int((v - CorpusCrop.v0) / (CorpusCrop.v1 - CorpusCrop.v0) * CGFloat(height))
-            guard x >= 0, x < width, y >= 0, y < height else { return nil }
-            return CGFloat(data[y * width + x]) / 255
+            guard let c = rgb(u, v) else { return nil }
+            return 0.2126 * c.0 + 0.7152 * c.1 + 0.0722 * c.2
+        }
+    }
+
+    /// The warm-cool sampler, matching `PixelReader.warmCool`.
+    var chromaSampler: CardSampler {
+        { u, v in
+            guard let c = rgb(u, v) else { return nil }
+            return c.2 - c.0
         }
     }
 }
@@ -119,7 +140,7 @@ func alignedPatch(_ card: CorpusCard, _ template: [CGFloat]) -> [CGFloat]? {
 /// `--only-session` exists because a template fitted on the cards it is then
 /// scored against reports a number that will not survive a third session. The
 /// honest measurement is fit on one, score on the other.
-func sparkleFit(dir: String, out: String, onlySession: String?) -> Never {
+func sparkleFit(dir: String, out: String, onlySession: String?, chroma: Bool = false) -> Never {
     let labels = readLabels("\(dir)/labels.tsv")
     let foils = labels.filter {
         $0.frame == "retro" && $0.finish == "foil"
@@ -140,7 +161,8 @@ func sparkleFit(dir: String, out: String, onlySession: String?) -> Never {
     var acc = [CGFloat](repeating: 0, count: cells)
     var used = 0
     for card in cards {
-        guard let p = sparklePatch(du: 0, dv: 0, step: 1, card.sampler),
+        let sample = chroma ? card.chromaSampler : card.sampler
+        guard let p = sparklePatch(du: 0, dv: 0, step: 1, sample),
               let n = sparkleNormalise(p) else { continue }
         for i in 0..<cells { acc[i] += n[i] }
         used += 1
@@ -154,7 +176,8 @@ func sparkleFit(dir: String, out: String, onlySession: String?) -> Never {
         acc = [CGFloat](repeating: 0, count: cells)
         used = 0
         for card in cards {
-            guard let p = alignedPatch(card, template), let n = sparkleNormalise(p) else { continue }
+            let p0 = chroma ? alignedChromaPatch(card, template) : alignedPatch(card, template)
+            guard let p = p0, let n = sparkleNormalise(p) else { continue }
             for i in 0..<cells { acc[i] += n[i] }
             used += 1
         }
@@ -169,11 +192,11 @@ func sparkleFit(dir: String, out: String, onlySession: String?) -> Never {
     }
 
     var swift = """
-    // The foil sparkle's template. GENERATED — do not hand-edit.
+    // The foil sparkle's \(chroma ? "warm-cool" : "luma") template. GENERATED — do not hand-edit.
     //
     //     make cardkit
     //     ./bin/cardkit-probe --sparkle-fit scan/foil-corpus \\
-    //         scan/hoard-scan/Sources/BorderKit/SparkleTemplateData.swift
+    //         scan/hoard-scan/Sources/BorderKit/Sparkle\(chroma ? "Chroma" : "")TemplateData.swift\(chroma ? " --chroma" : "")
     //
     // \(SparkleTemplate.cols)x\(SparkleTemplate.rows) cells spanning
     // SparkleTemplate.spanU x spanV of the card, zero-mean and unit-norm, so
@@ -184,9 +207,9 @@ func sparkleFit(dir: String, out: String, onlySession: String?) -> Never {
 
     /// How many foil captures were averaged into this. Recorded because the
     /// threshold beside it is only as good as the corpus behind both.
-    public let sparkleTemplateFittedFrom = \(used)
+    public let \(chroma ? "sparkleChromaTemplateFittedFrom" : "sparkleTemplateFittedFrom") = \(used)
 
-    public let sparkleTemplate: [CGFloat] = [\n
+    public let \(chroma ? "sparkleChromaTemplate" : "sparkleTemplate"): [CGFloat] = [\n
     """
     for j in 0..<SparkleTemplate.rows {
         let row = (0..<SparkleTemplate.cols)
@@ -210,20 +233,24 @@ func sparkleScoreCorpus(dir: String, verbose: Bool, onlySession: String?) -> Nev
     var byClass: [String: [(CGFloat, CorpusRow)]] = [:]
     var maxSamples = 0
 
+    var chromaByClass: [String: [(CGFloat, CorpusRow)]] = [:]
     for row in labels {
         guard let card = CorpusCard(URL(fileURLWithPath: "\(dir)/cards/\(row.id).png")),
               let r = sparkleScan(card.sampler) else {
             print("\(row.id)\tNO READING")
             continue
         }
+        let c = sparkleScan(card.chromaSampler, template: sparkleChromaTemplate)
         maxSamples = max(maxSamples, r.samples)
         let key = row.frame == "modern" ? "modern" : "retro \(row.finish)"
         byClass[key, default: []].append((r.score, row))
+        chromaByClass[key, default: []].append((c?.score ?? 0, row))
         if verbose {
-            print(String(format: "%-7@ %-14@ %-8@ %7.3f  du %+.4f dv %+.4f  mad %.3f",
+            print(String(format: "%-7@ %-14@ %-8@ %7.3f  du %+.4f dv %+.4f  mad %.3f  chroma %7.3f  cmad %.3f",
                          row.id as NSString, row.name.prefix(14) as NSString,
                          row.finish as NSString, Double(r.score),
-                         Double(r.offsetU), Double(r.offsetV), Double(r.contrast)))
+                         Double(r.offsetU), Double(r.offsetV), Double(r.contrast),
+                         Double(c?.score ?? 0), Double(c?.contrast ?? 0)))
         }
     }
 
@@ -240,16 +267,46 @@ func sparkleScoreCorpus(dir: String, verbose: Bool, onlySession: String?) -> Nev
                      Double(v[v.count / 2]), Double(v[v.count - 1]), accepted))
     }
 
+    // The warm-cool channel, scored the same way. Printed beside luma rather
+    // than merged into it: the two channels are kept because they fail on
+    // different cards, and a single combined row would hide exactly that.
+    print("\nwarm-cool channel, threshold \(SparkleGate.acceptChroma)")
+    for key in ["retro foil", "retro nonfoil", "modern"] {
+        guard let rows = chromaByClass[key], !rows.isEmpty else { continue }
+        let v = rows.map(\.0).sorted()
+        let accepted = v.filter { $0 >= SparkleGate.acceptChroma }.count
+        print(String(format: "%-16@ %4d %8.3f %8.3f %8.3f %10d",
+                     key as NSString, v.count, Double(v[0]),
+                     Double(v[v.count / 2]), Double(v[v.count - 1]), accepted))
+    }
+
+    // What the pair *would* do together. Not the shipping rule: the colour
+    // channel does not vote — see SparkleVerdict.isFoil, and the fixture-set
+    // measurement that stopped it. Printed because this is the number that
+    // would justify letting it, once a second rig's corpus agrees.
+    print("\neither channel (measured only — chroma does not vote)")
+    for key in ["retro foil", "retro nonfoil", "modern"] {
+        guard let lum = byClass[key], let chr = chromaByClass[key], !lum.isEmpty else { continue }
+        let accepted = zip(lum, chr).filter {
+            $0.0 >= SparkleGate.accept || $1.0 >= SparkleGate.acceptChroma
+        }.count
+        print(String(format: "%-16@ %4d %30@ %10d",
+                     key as NSString, lum.count, "" as NSString, accepted))
+    }
+
     // Every card that came out on the wrong side, named. A rate without the
     // names is not diagnosable.
     for (key, rows) in byClass.sorted(by: { $0.key < $1.key }) {
+        guard let chr = chromaByClass[key] else { continue }
+        let paired = Array(zip(rows, chr))
         let wrong = key == "retro foil"
-            ? rows.filter { $0.0 < SparkleGate.accept }
-            : rows.filter { $0.0 >= SparkleGate.accept }
-        for (score, row) in wrong.sorted(by: { $0.0 > $1.0 }) {
+            ? paired.filter { $0.0.0 < SparkleGate.accept && $0.1.0 < SparkleGate.acceptChroma }
+            : paired.filter { $0.0.0 >= SparkleGate.accept || $0.1.0 >= SparkleGate.acceptChroma }
+        for (l, c) in wrong.sorted(by: { max($0.0.0, $0.1.0) > max($1.0.0, $1.1.0) }) {
             let what = key == "retro foil" ? "MISSED foil" : "FALSE POSITIVE"
-            print(String(format: "  %@: %@ %@ (%.3f)", what as NSString,
-                         row.id as NSString, row.name as NSString, Double(score)))
+            print(String(format: "  %@: %@ %@ (luma %.3f, chroma %.3f)", what as NSString,
+                         l.1.id as NSString, l.1.name as NSString,
+                         Double(l.0), Double(c.0)))
         }
     }
 
@@ -293,6 +350,248 @@ func anchorFit(manifest: String) async -> Never {
         print("\(era)\t\(fit.year)\t\(m.kind)\t\(m.prefix)"
             + "\t\(String(format: "%.4f", Double(m.leftU)))"
             + "\t\(fit.setCode.isEmpty ? "-" : fit.setCode)\t\(fit.numberSource)\t\(name)")
+    }
+    exit(0)
+}
+
+/// sparkleWhere answers the one question the shipping reader cannot: is a low
+/// score a faint marker, or a marker outside the window?
+///
+/// It runs the same search twice — once at `SparkleGate`'s fitted window, once
+/// over a window wide enough to contain any plausible registration error — and
+/// prints both peaks. A wide peak that is much stronger and sits well outside
+/// the fitted window says the search never reached the marker, which is a
+/// registration problem; a wide peak in the same place at the same height says
+/// the marker really is faint, which is a threshold or a capture problem.
+///
+/// The wide window is a *measuring instrument* and must never become the
+/// shipping one: at ±0.037/±0.042 the corpus's highest nonfoil goes 0.470 to
+/// 0.676 and two false positives appear. See docs/scanner-foil-registration.md.
+func sparkleWhere(path: String) async -> Never {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
+    else { die("could not read image: \(path)") }
+    let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
+        .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
+        .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+    let upright = uprighted(cg, orientation)
+    guard let located = locateCard(upright) else {
+        die("no card located in \(path)")
+    }
+    // The same pixels `readCard` gives the sparkle reader: the perspective-
+    // corrected card, where card space and image space are the same thing.
+    let flat = located.image
+
+    // Four times the fitted half-width in each axis, at the same cell size, so
+    // one cell still means one pixel of a 630x880 card.
+    let wide = SparkleWindow(
+        u: SparkleGate.searchU * 4, v: SparkleGate.searchV * 4,
+        cellsU: SparkleGate.searchCellsU * 4, cellsV: SparkleGate.searchCellsV * 4)
+
+    let fitted = sparkleInCard(flat)
+    let found = sparkleInCard(flat, window: wide)
+    // Luma only here. This mode answers "could a wider search have reached the
+    // marker", which is a question about registration; the colour channel
+    // searches the same window and would not change the answer.
+    let fittedScore: Double = fitted?.luma.map { Double($0.score) } ?? -9
+    let fittedU: Double = fitted?.luma.map { Double($0.offsetU) } ?? 0
+    let fittedV: Double = fitted?.luma.map { Double($0.offsetV) } ?? 0
+    let wideScore: Double = found?.luma.map { Double($0.score) } ?? -9
+    let wideU: Double = found?.luma.map { Double($0.offsetU) } ?? 0
+    let wideV: Double = found?.luma.map { Double($0.offsetV) } ?? 0
+    // True when the wide search found its peak outside the shipping window —
+    // the marker was never reachable.
+    let outside: Bool = abs(wideU) > Double(SparkleGate.searchU)
+        || abs(wideV) > Double(SparkleGate.searchV)
+    var out: [String: Any] = [:]
+    out["file"] = (path as NSString).lastPathComponent
+    out["fittedScore"] = fittedScore
+    out["fittedU"] = fittedU
+    out["fittedV"] = fittedV
+    out["wideScore"] = wideScore
+    out["wideU"] = wideU
+    out["wideV"] = wideV
+    out["outside"] = outside
+    // The structure gate, on both patches. `sparkleScan` reports a score of
+    // exactly 0 when the patch it settled on has no structure to judge, so a
+    // 0.000 is an abstention and not a correlation — telling the two apart is
+    // the difference between "wrong place" and "blown highlight".
+    out["fittedContrast"] = fitted?.luma.map { Double($0.contrast) } ?? -9
+    out["wideContrast"] = found?.luma.map { Double($0.contrast) } ?? -9
+    out["fittedChroma"] = fitted?.chroma.map { Double($0.score) } ?? -9
+    out["fittedChromaContrast"] = fitted?.chroma.map { Double($0.contrast) } ?? -9
+    if let d = try? JSONSerialization.data(withJSONObject: out),
+       let s = String(data: d, encoding: .utf8) {
+        print(s)
+    }
+    exit(0)
+}
+
+// MARK: - Is the colour channel worth a template of its own?
+
+/// sparkleChromaTrial fits a template on the warm-cool channel and scores it
+/// held out, which is the fair test of the second channel.
+///
+/// It exists because the first, cheaper version of that idea failed for a reason
+/// that did not rule the idea out: the *luma* template was correlated against
+/// colour pixels, and a template of the wrong channel's marker is not a test of
+/// whether the channel carries one. This fits on one session and scores the
+/// other, the same discipline `--sparkle-fit --only-session` imposes on luma.
+///
+/// Reports both classes' spread, because the number that matters is separation
+/// and not the foils' scores alone — the warm-cool axis is full of card
+/// furniture (the text box's edge, the border) that every card has, foil or not,
+/// and a template can score high on all of it while telling the two apart not at
+/// all.
+func sparkleChromaTrial(dir: String) -> Never {
+    let labels = readLabels("\(dir)/labels.tsv").filter { $0.frame == "retro" }
+    func load(_ row: CorpusRow) -> CorpusCard? {
+        CorpusCard(URL(fileURLWithPath: "\(dir)/cards/\(row.id).png"))
+    }
+    let cells = SparkleTemplate.cols * SparkleTemplate.rows
+
+    for (fitOn, scoreOn) in [("s1", "s2"), ("s2", "s1")] {
+        let fitRows = labels.filter { $0.session == fitOn && $0.finish == "foil" }
+        let cards = fitRows.compactMap(load)
+        guard !cards.isEmpty else { continue }
+
+        // Same four passes the luma fit uses: an unaligned mean, then three
+        // re-align-and-rebuild rounds.
+        var acc = [CGFloat](repeating: 0, count: cells)
+        var used = 0
+        for c in cards {
+            guard let p = sparklePatch(du: 0, dv: 0, step: 1, c.chromaSampler),
+                  let n = sparkleNormalise(p) else { continue }
+            for i in 0..<cells { acc[i] += n[i] }
+            used += 1
+        }
+        guard used > 0, var template = sparkleNormalise(acc.map { $0 / CGFloat(used) })
+        else { continue }
+        for _ in 1...3 {
+            acc = [CGFloat](repeating: 0, count: cells)
+            used = 0
+            for c in cards {
+                guard let p = alignedChromaPatch(c, template),
+                      let n = sparkleNormalise(p) else { continue }
+                for i in 0..<cells { acc[i] += n[i] }
+                used += 1
+            }
+            guard used > 0, let next = sparkleNormalise(acc.map { $0 / CGFloat(used) })
+            else { break }
+            template = next
+        }
+
+        var byClass: [String: [CGFloat]] = [:]
+        var perCard: [(CorpusRow, CGFloat, CGFloat)] = []
+        for row in labels where row.session == scoreOn {
+            guard let c = load(row),
+                  let r = sparkleScanTemplate(c.chromaSampler, template: template) else { continue }
+            byClass[row.finish, default: []].append(r.score)
+            let l = sparkleScan(c.sampler)?.score ?? -9
+            perCard.append((row, l, r.score))
+        }
+        for (row, l, ch) in perCard.sorted(by: { $0.0.finish + $0.0.name < $1.0.finish + $1.0.name }) {
+            print(String(format: "    %-8@ %-22@ luma %6.3f  chroma %6.3f",
+                         row.finish as NSString, row.name.prefix(22) as NSString,
+                         Double(l), Double(ch)))
+        }
+        print("\nchroma template fitted on \(fitOn) (\(cards.count) foils), scored on \(scoreOn):")
+        for k in ["foil", "nonfoil"] {
+            guard let v = byClass[k]?.sorted(), !v.isEmpty else { continue }
+            print(String(format: "  %-8@ n=%2d  min %6.3f  median %6.3f  max %6.3f",
+                         k as NSString, v.count, Double(v[0]),
+                         Double(v[v.count / 2]), Double(v[v.count - 1])))
+        }
+        if let f = byClass["foil"]?.sorted(), let n = byClass["nonfoil"]?.sorted(),
+           !f.isEmpty, !n.isEmpty {
+            // The only figure that decides anything: how many foils sit above
+            // every nonfoil. Zero means no threshold exists.
+            let clean = f.filter { $0 > n[n.count - 1] }.count
+            print("  foils above the highest nonfoil (\(String(format: "%.3f", Double(n[n.count - 1])))): \(clean) of \(f.count)")
+        }
+    }
+    exit(0)
+}
+
+/// alignedChromaPatch is alignedPatch over the warm-cool sampler.
+func alignedChromaPatch(_ card: CorpusCard, _ template: [CGFloat]) -> [CGFloat]? {
+    let sample = card.chromaSampler
+    let cellU = SparkleGate.searchU / CGFloat(SparkleGate.searchCellsU)
+    let cellV = SparkleGate.searchV / CGFloat(SparkleGate.searchCellsV)
+    var best = -CGFloat.infinity
+    var bestI = 0, bestJ = 0
+    for i in -SparkleGate.searchCellsU...SparkleGate.searchCellsU {
+        for j in -SparkleGate.searchCellsV...SparkleGate.searchCellsV {
+            guard let p = sparklePatch(du: CGFloat(i) * cellU, dv: CGFloat(j) * cellV,
+                                       step: 1, sample),
+                  let n = sparkleNormalise(p) else { continue }
+            let s = sparkleCorrelate(n, template)
+            if s > best { best = s; bestI = i; bestJ = j }
+        }
+    }
+    guard best > -CGFloat.infinity else { return nil }
+    return sparklePatch(du: CGFloat(bestI) * cellU, dv: CGFloat(bestJ) * cellV, step: 1, sample)
+}
+
+/// sparkleScanTemplate is the brute-force score against an arbitrary template.
+/// Corpus-time only; the shipping reader searches coarse-to-fine against the
+/// one template it ships with.
+func sparkleScanTemplate(_ sample: @escaping CardSampler,
+                         template: [CGFloat]) -> (score: CGFloat, contrast: CGFloat)? {
+    let cellU = SparkleGate.searchU / CGFloat(SparkleGate.searchCellsU)
+    let cellV = SparkleGate.searchV / CGFloat(SparkleGate.searchCellsV)
+    var best = -CGFloat.infinity
+    var bestPatch: [CGFloat]? = nil
+    for i in -SparkleGate.searchCellsU...SparkleGate.searchCellsU {
+        for j in -SparkleGate.searchCellsV...SparkleGate.searchCellsV {
+            guard let p = sparklePatch(du: CGFloat(i) * cellU, dv: CGFloat(j) * cellV,
+                                       step: 1, sample),
+                  let n = sparkleNormalise(p) else { continue }
+            let s = sparkleCorrelate(n, template)
+            if s > best { best = s; bestPatch = p }
+        }
+    }
+    guard best > -CGFloat.infinity, let p = bestPatch else { return nil }
+    // Spread as mean absolute deviation about the mean: BorderKit's median
+    // version is internal, and the trial only needs a rough structure figure.
+    let mean = p.reduce(0, +) / CGFloat(p.count)
+    let spread = p.reduce(0) { $0 + abs($1 - mean) } / CGFloat(p.count)
+    return (best, spread)
+}
+
+/// sparkleControl scores the marker patch and two control patches — the same
+/// machinery, the same window, anchored ±0.10 card-widths along the same row —
+/// so a capture's target score can be read against what this exposure gives a
+/// patch with no marker in it. The question it exists to answer, per rig: is
+/// (target − control) separable where the raw score measurably is not?
+@available(macOS 15, *)
+func sparkleControl(path: String) async -> Never {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
+    else { die("could not read image: \(path)") }
+    let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
+        .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
+        .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+    let upright = uprighted(cg, orientation)
+    guard let located = locateCard(upright) else {
+        die("no card located in \(path)")
+    }
+    let flat = located.image
+
+    func fields(_ v: SparkleVerdict?, into out: inout [String: Any], prefix: String) {
+        out[prefix + "Score"] = v?.luma.map { Double($0.score) } ?? -9
+        out[prefix + "Contrast"] = v?.luma.map { Double($0.contrast) } ?? -9
+        out[prefix + "Chroma"] = v?.chroma.map { Double($0.score) } ?? -9
+        out[prefix + "ChromaContrast"] = v?.chroma.map { Double($0.contrast) } ?? -9
+    }
+
+    var out: [String: Any] = ["file": (path as NSString).lastPathComponent]
+    fields(sparkleInCard(flat), into: &out, prefix: "target")
+    fields(sparkleInCard(flat, anchorShiftU: 0.10), into: &out, prefix: "controlR")
+    fields(sparkleInCard(flat, anchorShiftU: -0.10), into: &out, prefix: "controlL")
+    if let d = try? JSONSerialization.data(withJSONObject: out),
+       let s = String(data: d, encoding: .utf8) {
+        print(s)
     }
     exit(0)
 }

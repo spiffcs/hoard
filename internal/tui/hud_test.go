@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -97,12 +98,20 @@ func TestAutoCommitCelebratesWithTotal(t *testing.T) {
 	}
 }
 
-// A queue-bound resolve is not a celebration: the HUD shows "Needs Review"
-// with the muted bulk knock and no price or total — the queued printing is
-// unverified, and the money lands only when the review confirms the card.
-func TestQueuedFlashesNeedsReview(t *testing.T) {
+// An unverified printing holds the phone's review flash until the second look
+// has had its turn.
+//
+// The card goes into the queue immediately — if the retry never answers it must
+// already be there — but the *phone* is told nothing yet. A "Needs Review" flash
+// is a stop, and flashing one on a card we are about to photograph again showed
+// the operator a stop that the retry usually removes. Live: every card that
+// queued this way in one session read correctly in another.
+//
+// Here the retry never comes, so the quiet period expires and the flash lands
+// after all. That timeout is the guarantee that holding it is safe.
+func TestHeldReviewFlashLandsWhenTheRetryNeverComes(t *testing.T) {
 	ev := confidentEvent()
-	ev.SetCode, ev.CollectorNumber = "", "" // unpinned printing: queue-bound
+	ev.SetCode, ev.CollectorNumber = "", ""
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Sol Ring": "Sol Ring"},
 		prints: map[string][]scryfall.Card{"Sol Ring": {
@@ -117,15 +126,67 @@ func TestQueuedFlashesNeedsReview(t *testing.T) {
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	m = resolve(t, mm.(model), ev.CardList()[0])
 
-	if len(m.review) != 1 || m.addedCount != 0 {
-		t.Fatalf("setup: want a queued card, got review=%d added=%d", len(m.review), m.addedCount)
+	if len(m.review) != 1 {
+		t.Fatalf("setup: want the card queued, got review=%d", len(m.review))
 	}
-	if sess.chimes != 0 || len(sess.results) != 1 {
-		t.Fatalf("chimes=%d results=%+v, want one result", sess.chimes, sess.results)
+	if m.deferredFlashFor != "Sol Ring" {
+		t.Fatalf("deferredFlashFor = %q, want the flash held for the card", m.deferredFlashFor)
 	}
-	r := sess.results[0]
-	if r.Tier != tierReview || r.Amount != nil || r.Total != nil {
+	if sess.chimes != 0 || len(sess.results) != 0 {
+		t.Fatalf("chimes=%d results=%+v, want the phone told nothing yet",
+			sess.chimes, sess.results)
+	}
+
+	// The quiet period elapses with no capture in it, which is what "the retry
+	// never came" looks like from here.
+	m.autoCapable = true
+	mm, _ = m.onNudge(nudgeMsg{gen: m.nudgeGen})
+	m = mm.(model)
+
+	if len(sess.results) != 1 {
+		t.Fatalf("results=%+v, want the held flash sent once the retry lapsed", sess.results)
+	}
+	if r := sess.results[0]; r.Tier != tierReview || r.Amount != nil || r.Total != nil {
 		t.Errorf("result = %+v, want a bare needs-review flash", r)
+	}
+	if m.deferredFlashFor != "" {
+		t.Error("the held flash was sent and must not still be held")
+	}
+}
+
+// A queue reason a second look cannot fix flashes at once, exactly as before.
+//
+// The hold is scoped to an unverified printing — the failure another photograph
+// repairs. Here the printing is pinned and it is the *name* that is shaky, so
+// there is nothing for a retry to improve on and delaying the flash would be
+// latency bought for nothing.
+func TestAShakyNameFlashesImmediately(t *testing.T) {
+	ev := confidentEvent()
+	ev.SetCode, ev.CollectorNumber = "", "123"
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Sol Ring": "Sol Ring"},
+		match: map[string]cardname.Match{"Sol Ring": {Similarity: 0.79}},
+		prints: map[string][]scryfall.Card{"Sol Ring": {
+			{ID: "a", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
+				Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+			{ID: "b", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
+				Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+		}},
+	}
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := hudSession(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	m = resolve(t, mm.(model), ev.CardList()[0])
+
+	if len(m.review) != 1 {
+		t.Fatalf("setup: want the card queued, got review=%d", len(m.review))
+	}
+	if m.deferredFlashFor != "" {
+		t.Errorf("deferredFlashFor = %q, want nothing held: the printing verified",
+			m.deferredFlashFor)
+	}
+	if len(sess.results) != 1 || sess.results[0].Tier != tierReview {
+		t.Errorf("results = %+v, want the review flash sent at once", sess.results)
 	}
 }
 
@@ -257,5 +318,56 @@ func TestConfirmAfterCameraClosedDoesNotPanic(t *testing.T) {
 	m.qtyInput.SetValue("1")
 	if mm, _ := m.confirmAdd(); mm.(model).addedValue != 2.00 {
 		t.Errorf("confirm with no session should still account the value")
+	}
+}
+
+// The payoff: the retry reads the card properly, and the phone never hears
+// about a review that turned out not to be one.
+//
+// This is the whole reason the flash is held. Before, a card whose footer
+// failed one photograph flashed "Needs Review" on the phone and then quietly
+// committed a second later — a stop the operator saw and reacted to, for a
+// question that had already answered itself.
+func TestARescuedCardNeverFlashesReview(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "a", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
+			Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+		{ID: "b", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
+			Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": prints},
+	}
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := hudSession(t, m)
+
+	// First look: no collector number survived, so the printing is unverified.
+	blind := confidentEvent()
+	blind.SetCode, blind.CollectorNumber = "", ""
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
+	m = resolve(t, mm.(model), blind.CardList()[0])
+	if len(m.review) != 1 || m.deferredFlashFor != "Sol Ring" {
+		t.Fatalf("setup: want a queued card with its flash held, review=%d held=%q",
+			len(m.review), m.deferredFlashFor)
+	}
+
+	// Second look: the number reads, the card commits, and upgradeQueued takes
+	// the queued entry back out.
+	good := confidentEvent()
+	good.SetCode, good.CollectorNumber = "", "123"
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: good})
+	m = resolve(t, mm.(model), good.CardList()[0])
+
+	if len(m.review) != 0 {
+		t.Fatalf("review = %+v, want the queued entry replaced by the commit", m.review)
+	}
+	if m.deferredFlashFor != "" {
+		t.Error("the held flash is moot once the card committed and must be cleared")
+	}
+	for _, r := range sess.results {
+		if r.Tier == tierReview {
+			t.Fatalf("a needs-review flash reached the phone: %+v", sess.results)
+		}
 	}
 }

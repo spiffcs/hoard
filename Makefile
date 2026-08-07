@@ -1,4 +1,4 @@
-.PHONY: build scan scan-check scan-test cardkit cardkit-score scan-ios scan-ios-install scan-ios-test \
+.PHONY: build scan scan-check scan-test cardkit cardkit-score foil-eval scan-ios scan-ios-install scan-ios-test \
         test vet all clean generate-json-schema
 
 # Build the hoard binary.
@@ -49,6 +49,11 @@ cardkit:
 #   make cardkit-score ARGS=--misses   # and every card that failed
 cardkit-score: cardkit
 	@./bin/cardkit-probe --score scan/corpus/manifest.tsv $(ARGS)
+
+#   make foil-eval                     # finish-accuracy scoreboard per rig
+#   make foil-eval ARGS=--misses       # and every capture that would commit wrong
+foil-eval: cardkit
+	@python3 scan/foil-corpus/eval-finish.py $(ARGS)
 
 # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
 # (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh

@@ -148,10 +148,110 @@ public func retroFrameFooter(_ lines: [String]) -> Bool {
 /// own terms, for the expansion-symbol reader that will need it. It is not this
 /// feature's to fix, and this feature does not need it.
 public func sparkleInCard(_ card: CGImage,
-                          window: SparkleWindow = .fitted) -> SparkleReading? {
+                          window: SparkleWindow = .fitted,
+                          anchorShiftU: CGFloat = 0) -> SparkleVerdict? {
     guard let px = PixelReader(card) else { return nil }
     let w = CGFloat(card.width), h = CGFloat(card.height)
-    return sparkleScan({ u, v in px.luma(u * w, v * h) }, window: window)
+    // anchorShiftU displaces the whole search in card space — measurement
+    // only, like the overridable window: a control patch scored at the same
+    // machinery but away from the marker is how "the marker is there" gets
+    // separated from "this exposure scores everything high".
+    return SparkleVerdict(
+        luma: sparkleScan({ u, v in px.luma((u + anchorShiftU) * w, v * h) },
+                          window: window),
+        chroma: sparkleScan({ u, v in px.warmCool((u + anchorShiftU) * w, v * h) },
+                            window: window, template: sparkleChromaTemplate))
+}
+
+/// SparkleVerdict is the marker read on both channels, and which one answered.
+///
+/// **Why there are two.** The reader correlated luma alone for its first three
+/// live sessions, and on a pile that was entirely foil it read foil on 37% of
+/// captures. The repeats are what showed why: one physical Glowrider, 24
+/// captures in one session, scored -0.231 to 0.820. A marker that swings a full
+/// point across one card on one desk is not being missed, it is being *lit*
+/// differently — the sparkle is diffractive, and how much brightness it throws
+/// back is a fact about the angle rather than about the card.
+///
+/// Its *colour* is far steadier. Measured inside the exact patch the reader
+/// judges, on captures where the luma reader scored zero:
+///
+///     Glowrider     luma MAD 0.0067   warm-cool MAD 0.0863    13x
+///     Trap Digger   luma MAD 0.0056   warm-cool MAD 0.0275     4.9x
+///
+/// The marker is there in both; on those frames it is simply written in colour
+/// and not in brightness — a cool silver starburst on a warm tan box, near
+/// identical in luminance. A 2024 retro reprint throws the marker back gold,
+/// which luma sees perfectly well, which is why the luma-only reader worked at
+/// all and why both channels are kept rather than one swapped for the other.
+///
+/// **This is not the chroma idea that was already refuted.** That one measured
+/// hue spread over whole regions — the text box, the art, the border — and
+/// found foil and nonfoil completely overlapped, because a regional colour
+/// statistic is dominated by the lamp's cast and the card's own ink. This
+/// correlates the *marker's shape* on a colour axis. Same template, same search,
+/// same normalisation; only the channel differs. A regional average and a
+/// template match are not the same measurement and do not share a result.
+public struct SparkleVerdict: Sendable {
+    /// The luma read. Nil when the patch ran off the card.
+    public let luma: SparkleReading?
+    /// The warm-cool read, over the same window with the same template.
+    public let chroma: SparkleReading?
+
+    /// Whether the marker was found. **Luma only — the colour channel is
+    /// measured and reported, and deliberately does not vote.**
+    ///
+    /// It was built to vote, and on `scan/foil-corpus` it looked like the answer:
+    /// with its own fitted template and a bar at 0.68, either-channel took 27 of
+    /// 27 retro foils against luma's 24, at 0 of 18 retro nonfoils and 0 of 5
+    /// modern frames. Held out — template fitted on session 1, scored on session
+    /// 2 — 13 of 13 against luma's 11. It rescued Charitable Levy, the one foil
+    /// that has never cleared the luma bar in any session or corpus.
+    ///
+    /// Then it was scored on `scan/fixtures`, which is a different rig, and the
+    /// ordering inverts:
+    ///
+    ///     Eternal Dragon    confirmed nonfoil   chroma 0.796
+    ///     Cephalid Looter   confirmed nonfoil   chroma 0.782
+    ///     Meltdown          confirmed foil      chroma 0.633
+    ///     ocr-mangle        confirmed foil      chroma 0.000
+    ///
+    /// The two highest-scoring cards in that set are both nonfoils, and they
+    /// outscore every foil in it. No threshold fixes that — it is not a bar in
+    /// the wrong place, it is the channel ranking the classes backwards on
+    /// photographs it was not fitted on.
+    ///
+    /// The likely reason, and the thing to test before trying again: the
+    /// warm-cool axis carries the text box's own boundary, which every retro
+    /// card has. `scan/foil-corpus` is one desk under one lamp, so a template
+    /// fitted on it can encode that rig's colour cast and score beautifully
+    /// in-corpus while having learned the furniture rather than the marker. The
+    /// luma channel survives the move between rigs; this one does not, yet.
+    ///
+    /// So it ships as a measurement. `sparkleChromaScore` is on the wire and in
+    /// `--sparkle-score`, which is what a second corpus — shot on another rig,
+    /// with nonfoils — would be judged against. Turning it on is one `||` away
+    /// once that corpus exists and says it generalises.
+    public var isFoil: Bool {
+        (luma?.score ?? -1) >= SparkleGate.accept
+    }
+
+    /// Which channel carried the verdict, for the log. Empty when none did.
+    ///
+    /// Reports "chroma" only for a card luma missed *and* the colour channel
+    /// would have caught — a verdict it is not currently allowed to make. That
+    /// costs nothing and is the whole point: a session's log then says how often
+    /// the second channel would have been right, which is the evidence needed to
+    /// let it vote.
+    public var channel: String {
+        if (luma?.score ?? -1) >= SparkleGate.accept { return "luma" }
+        if (chroma?.score ?? -1) >= SparkleGate.acceptChroma { return "chroma-only" }
+        return ""
+    }
+
+    /// The luma score, kept under its old name so the wire and every fixture
+    /// that already reads `sparkleScore` keep meaning what they meant.
+    public var score: CGFloat { luma?.score ?? 0 }
 }
 
 /// sparklePatch takes one template-shaped sample of the card, decimated by
@@ -225,7 +325,8 @@ public struct SparkleWindow: Sendable {
 
 /// sparkleScan is the reader itself, over any card-space sampler.
 public func sparkleScan(_ sample: CardSampler,
-                        window: SparkleWindow = .fitted) -> SparkleReading? {
+                        window: SparkleWindow = .fitted,
+                        template: [CGFloat] = sparkleTemplate) -> SparkleReading? {
     var reads = 0
 
     func patch(du: CGFloat, dv: CGFloat, step: Int) -> [CGFloat]? {
@@ -245,7 +346,7 @@ public func sparkleScan(_ sample: CardSampler,
 
     // Coarse: a 4x-decimated template over the whole window at stride 4.
     var coarse: [(score: CGFloat, i: Int, j: Int)] = []
-    let t4 = sparkleTemplateDecimated(4)
+    let t4 = sparkleTemplateDecimated(4, template)
     var i = -window.cellsU
     while i <= window.cellsU {
         var j = -window.cellsV
@@ -264,7 +365,7 @@ public func sparkleScan(_ sample: CardSampler,
     // Refine: a 2x-decimated template at stride 1 around the best two coarse
     // hits. Two rather than one because the coarse surface is noisy enough that
     // the true peak is sometimes its runner-up; three bought nothing measurable.
-    let t2 = sparkleTemplateDecimated(2)
+    let t2 = sparkleTemplateDecimated(2, template)
     var bestScore = -CGFloat.infinity
     var bestI = 0, bestJ = 0
     for candidate in coarse.prefix(SparkleGate.refineCandidates) {
@@ -293,7 +394,7 @@ public func sparkleScan(_ sample: CardSampler,
         return SparkleReading(score: 0, offsetU: bestDU, offsetV: bestDV,
                               contrast: spread, samples: reads)
     }
-    return SparkleReading(score: correlate(n, sparkleTemplate),
+    return SparkleReading(score: correlate(n, template),
                           offsetU: bestDU, offsetV: bestDV,
                           contrast: spread, samples: reads)
 }
@@ -301,13 +402,13 @@ public func sparkleScan(_ sample: CardSampler,
 /// sparkleTemplateDecimated samples the template on the same lattice a
 /// decimated patch uses, then re-normalises — correlation is only meaningful
 /// between two vectors normalised over the *same* cells.
-func sparkleTemplateDecimated(_ step: Int) -> [CGFloat] {
+func sparkleTemplateDecimated(_ step: Int, _ source: [CGFloat] = sparkleTemplate) -> [CGFloat] {
     var out: [CGFloat] = []
     var j = 0
     while j < SparkleTemplate.rows {
         var i = 0
         while i < SparkleTemplate.cols {
-            out.append(sparkleTemplate[j * SparkleTemplate.cols + i])
+            out.append(source[j * SparkleTemplate.cols + i])
             i += step
         }
         j += step

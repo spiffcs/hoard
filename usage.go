@@ -31,6 +31,7 @@ var usageSections = []struct {
 		{"movers [--since 30d] [--limit N]", "Biggest risers and sinkers you hold"},
 		{"backfill-prices", "Load 90 days of past prices from MTGJSON"},
 		{"unpriced", "Cards counting as $0.00, and why"},
+		{"guessed", "Scanned finishes nothing on the card chose — check these"},
 		{"repair-finishes", "Fix cards stored as a finish they lack"},
 		{"vacuum", "Delete orphaned printings nothing holds or watches"},
 		{"market [--min N] [--limit N]", "Vendor prices vs TCGplayer's last-sold prices"},

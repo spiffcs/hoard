@@ -322,3 +322,81 @@ func TestParseEventFinishProvenance(t *testing.T) {
 		t.Errorf("old helper should carry no provenance, got %q", c.FinishSource)
 	}
 }
+
+// The sparkle reader's measurement crosses whether or not a verdict followed.
+//
+// A score below the bar is the case this exists for. Live 2026-08-06, four
+// retro-frame foils came back with an empty finish and the session log held
+// nothing that could say whether the marker was nearly found or never found —
+// offline on the same stills they were 0.496 and 0.020, which are two different
+// bugs. The measurement has to travel with the silence, not only with the
+// verdict.
+func TestParseEventSparkleMeasurement(t *testing.T) {
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Glowrider","cards":[{"name":"Glowrider",` +
+			`"sparkleScore":0.0200,"sparkleOffsetU":-0.0238,"sparkleOffsetV":0.0159,` +
+			`"sparkleContrast":0.031}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c := ev.CardList()[0]
+	if c.FinishHint != "" {
+		t.Errorf("finish = %q, want empty: the reader found nothing", c.FinishHint)
+	}
+	if c.SparkleScore == nil || *c.SparkleScore != 0.02 {
+		t.Fatalf("SparkleScore = %v, want the measurement behind the silence", c.SparkleScore)
+	}
+	// The offset is the sharper half: -0.0238 is exactly the search window's
+	// edge, which says the marker is outside it rather than faint inside it.
+	if c.SparkleOffsetU == nil || *c.SparkleOffsetU != -0.0238 {
+		t.Errorf("SparkleOffsetU = %v, want -0.0238", c.SparkleOffsetU)
+	}
+
+	// Never asked is not the same as scored zero, and a pointer is how they
+	// stay different. A helper that predates the field sends neither.
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring"}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if c := ev.CardList()[0]; c.SparkleScore != nil {
+		t.Errorf("SparkleScore = %v, want nil from a helper that never measured", *c.SparkleScore)
+	}
+}
+
+// The colour channel arrives on the wire and is never mistaken for a verdict.
+//
+// It has no vote — see SparkleVerdict in BorderKit/Sparkle.swift — so the only
+// thing that must hold is that the numbers survive the trip and that a helper
+// too old to send them reads as "not measured" rather than as a zero score. A
+// zero would be indistinguishable from a patch the reader abstained on, which
+// is the exact confusion the luma pair was added to end.
+func TestParseEventSparkleChroma(t *testing.T) {
+	ev, err := parseEvent([]byte(
+		`{"event":"scan","name":"Charitable Levy","cards":[{"name":"Charitable Levy",` +
+			`"sparkleScore":0.381,"sparkleChromaScore":0.752,` +
+			`"sparkleChromaContrast":0.0642,"finishSource":"sparkle-luma"}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	c := ev.CardList()[0]
+	if c.SparkleChromaScore == nil || *c.SparkleChromaScore != 0.752 {
+		t.Errorf("chroma score = %v, want 0.752", c.SparkleChromaScore)
+	}
+	if c.SparkleChromaContrast == nil || *c.SparkleChromaContrast != 0.0642 {
+		t.Errorf("chroma contrast = %v, want 0.0642", c.SparkleChromaContrast)
+	}
+	// The finish is still luma's to give, and the source says so.
+	if c.FinishSource != "sparkle-luma" {
+		t.Errorf("finishSource = %q, want the channel spelled out", c.FinishSource)
+	}
+
+	ev, err = parseEvent([]byte(
+		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring","sparkleScore":0.7}]}`))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if c := ev.CardList()[0]; c.SparkleChromaScore != nil {
+		t.Errorf("chroma = %v from a helper that sends none, want nil", *c.SparkleChromaScore)
+	}
+}

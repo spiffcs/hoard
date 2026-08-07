@@ -143,6 +143,33 @@ public enum SparkleGate {
     /// scores, and the bar clears it comfortably.
     public static let accept: CGFloat = 0.52
 
+    /// The same bar on the warm-cool channel — see `SparkleVerdict`.
+    ///
+    /// Higher than luma's, and it has to be. The warm-cool axis carries the
+    /// card's furniture as well as its marker — the text box's edge and the
+    /// border are a warm-to-cool step on every card, foil or not — so the whole
+    /// nonfoil population scores higher here than it does on luma. Held out
+    /// (template fitted on session 1, scored on session 2) the nonfoils reach
+    /// **0.637** against luma's 0.455, and the bar sits above that.
+    ///
+    /// The first attempt at this channel used luma's 0.52 and produced **nine
+    /// false positives out of eighteen nonfoils**. That number is the reason
+    /// this constant is not simply `accept`.
+    ///
+    /// It also has to clear the *modern* frames, and that is what sets it. A
+    /// modern frame prints no marker at all, so the five in the corpus are the
+    /// reader's "nothing is there" control — and on this channel they reach
+    /// 0.672 where on luma they stop at 0.437. The comment in `readCard` that
+    /// justifies running the sparkle on every frame rests on that control, so
+    /// the bar has to stay above it or that reasoning stops being true.
+    ///
+    /// 0.68, which on the full corpus accepts 27 of 27 retro foils against
+    /// luma's 24, with 0 of 18 retro nonfoils and 0 of 5 modern frames. Held out
+    /// (fit on session 1, score on session 2) the same rule takes 13 of 13
+    /// against luma's 11. The two channels miss different cards — see
+    /// `SparkleVerdict` — which is what makes taking either of them safe.
+    public static let acceptChroma: CGFloat = 0.68
+
     /// Half-width of the search window, in card space, and how many cells that
     /// is divided into. One cell is a pixel of a 630x880 card.
     ///

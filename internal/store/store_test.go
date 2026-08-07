@@ -580,6 +580,7 @@ func TestLegacyMigration(t *testing.T) {
 		// since it predates the history table entirely.
 		`DROP TABLE card_bid_history`, `DROP TABLE card_price_history`,
 		`DROP TABLE value_snapshots`, `DROP TABLE watches`, `DROP TABLE settings`,
+		`DROP TABLE finish_guesses`,
 		`DROP TABLE card_entries`, `DROP TABLE containers`, `DROP TABLE cards`,
 		`CREATE TABLE cards (
             scryfall_id TEXT PRIMARY KEY, set_code TEXT NOT NULL, collector_number TEXT NOT NULL,

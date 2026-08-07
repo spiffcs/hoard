@@ -72,24 +72,57 @@ public struct Printing: Equatable, Sendable {
 /// readPrinting parses the band's lines, bottom-most first.
 public func readPrinting(bandLines lines: [String]) -> Printing {
     var out = Printing()
+    // Whether the current `.ownRow` number came from a bare form. Local rather
+    // than on `Printing`, because it is a fact about this parse and not about
+    // the printing — nothing downstream should be able to ask.
+    var ownRowIsBare = false
 
     for line in lines {
         // The copyright row carries the year, and on 1998-2003 frames the
-        // collector number too. It is found by content — a plausible year plus
-        // either the company name or a slash pair — because its exact spelling
-        // does not survive OCR.
-        if let (from, to) = years(in: line) {
-            // Keep the widest range seen; a card prints one copyright row, but
-            // the band pass sometimes splits it across two observations.
-            if out.year == nil || to > out.year! {
-                out.year = to
-                out.yearFrom = from
+        // collector number too. It is found by content — the company name, or
+        // the copyright glyph — because its exact spelling does not survive OCR.
+        //
+        // The year and the number are read from it *independently*, and that
+        // separation is the point. They used to share a gate: the number was
+        // read inside `if let years(in: line)`, so a row whose four small
+        // italic digits failed OCR dropped a collector number that was sitting
+        // in plain text at the end of the same line. Live, on one session, that
+        // cost four cards — `wards of the Coast 399`, `zards of the Coast 14`,
+        // `Wizards of the Coast 413`, `4 Wizards of the Coast 407` — every one
+        // of them queued as "printing unverified" holding no number at all.
+        //
+        // Nothing about `trailingNumber`'s safety came from the year. Its three
+        // guards are the tail position, the plausible-year refusal, and the
+        // four-digit ceiling; what makes a lone number at the end of this line
+        // safe to read is that the *company name* has already said what the
+        // line is. That guard is still here, unchanged. The year was never
+        // doing this job — it only happened to be standing in the doorway.
+        if looksLikeCompanyRow(line) || line.contains("©") {
+            var consumed = false
+            if let (from, to) = years(in: line) {
+                consumed = true
+                // Keep the widest range seen; a card prints one copyright row,
+                // but the band pass sometimes splits it across two observations.
+                if out.year == nil || to > out.year! {
+                    out.year = to
+                    out.yearFrom = from
+                }
             }
-            if out.numberSource != .ownRow, let pair = collectorPair(in: line) {
+            // A bare own-row number does not hold the floor against this line.
+            // Live: Brainsurge's footer read `T 89` on one line and
+            // `izards of the Coast 399` on the next; 89 claimed `.ownRow`, the
+            // real 399 was refused for want of a free slot, and the card queued
+            // against a number no printing of it has. The row identified by the
+            // company's own name outranks a row identified only by its shape.
+            let ownRowHolds = out.numberSource == .ownRow && !ownRowIsBare
+            if !ownRowHolds, let pair = collectorPair(in: line) {
                 out.number = pair.number
                 out.total = pair.total
                 out.numberSource = .copyrightRow
-            } else if out.numberSource == .none, let n = trailingNumber(in: line) {
+                ownRowIsBare = false
+                consumed = true
+            } else if out.numberSource == .none || ownRowIsBare,
+                      let n = trailingNumber(in: line) {
                 // A bare number at the tail of the copyright row, with no
                 // total beside it: "™M & © 2024 Wizards of the Coast 410".
                 //
@@ -100,8 +133,15 @@ public func readPrinting(bandLines lines: [String]) -> Printing {
                 // line; nothing but the missing slash made it invisible.
                 out.number = n
                 out.numberSource = .copyrightRow
+                ownRowIsBare = false
+                consumed = true
             }
-            continue
+            // Only a row this branch could actually use is consumed. The
+            // fingerprint is loose on purpose — a bare `©` passes it — and the
+            // modern set row prints its artist credit with one:
+            // `MH3*EN © ROB ALEXANDER` is a set row, not a copyright row, and
+            // swallowing it here cost the star that says the card is foil.
+            if consumed { continue }
         }
 
         // The modern set row: code, a separator of some kind, a language, then
@@ -110,17 +150,33 @@ public func readPrinting(bandLines lines: [String]) -> Printing {
         if let set = setRow(in: line) {
             out.setCode = set.code
             out.language = set.language
-            out.finish = set.finish
-            if !set.finish.isEmpty { out.finishSource = "separator" }
+            // First verdict wins. This used to assign unconditionally, which
+            // let a second set-row-shaped line later in the band clear an
+            // earlier foil to "" — leaving finishSource claiming a separator
+            // verdict that no longer existed — or flip it outright.
+            if out.finish.isEmpty, !set.finish.isEmpty {
+                out.finish = set.finish
+                out.finishSource = "separator"
+            }
             continue
         }
 
         // The modern number row, alone: "R 0338", "0338", "M 0087".
+        //
+        // The same precedence from the other direction — lines arrive
+        // bottom-most first, so the company row is as likely to have been seen
+        // already as not, and a bare hit must not overwrite what it found.
         if let n = ownNumberRow(line) {
+            if n.bare && out.numberSource == .copyrightRow {
+                // Still worth its rarity, which the copyright row never prints.
+                if out.rarity.isEmpty { out.rarity = n.rarity }
+                continue
+            }
             out.number = n.number
             out.rarity = n.rarity
             if let total = n.total { out.total = total }
             out.numberSource = .ownRow
+            ownRowIsBare = n.bare
         }
     }
     return out
@@ -219,10 +275,27 @@ func alphanumericTokens(_ line: String) -> [(text: String, start: String.Index, 
 ///   - and it must be short, because collector numbers are at most four digits
 ///     and a longer run is a misread of something else entirely.
 func trailingNumber(in line: String) -> String? {
-    guard let last = line.split(separator: " ").last, let digits = digitsOnly(last)
-    else { return nil }
+    let words = line.split(separator: " ")
+    guard let last = words.last, let digits = digitsOnly(last) else { return nil }
     guard (1...4).contains(digits.count) else { return nil }
     if let n = Int(digits), plausibleYears.contains(n) { return nil }
+    // Fourth guard, and the newest: the digits must sit *against* the company
+    // name. This used to be free — the row also had to carry a legible year, so
+    // rules text could never be offered here at all. Reading the number without
+    // the year gave that up, and `looksLikeCompanyRow` matches on substrings:
+    // `beasts of the coastal plain 12` holds "coast" and ends in a number, and
+    // read as printing 12 the moment the year stopped standing guard.
+    //
+    // What separates the credit line from a sentence that happens to mention
+    // the coast is where the number is. A copyright row prints it immediately
+    // after the company — "Wizards of the Coast 413", "of the Coast, Inc. 15" —
+    // and prose does not. Close range, because these are the very words the
+    // lamp mangles: "Coust", "Coasp" and "Coast:" are all this token, live.
+    guard words.count >= 2 else { return nil }
+    let prev = String(words[words.count - 2]).lowercased().filter { $0.isLetter }
+    guard editDistance(prev, "coast") <= 1 || editDistance(prev, "inc") <= 1
+            || editDistance(prev, "wizards") <= 2
+    else { return nil }
     let stripped = String(digits.drop(while: { $0 == "0" }))
     return stripped.isEmpty ? nil : stripped
 }
@@ -246,7 +319,20 @@ func setRow(in line: String) -> (code: String, language: String, finish: String)
           code.contains(where: { $0.isLetter })
     else { return nil }
     // The language sits next, possibly with the separator glued to it.
-    for tok in tokens.dropFirst().prefix(2) {
+    for (offset, tok) in tokens.dropFirst().prefix(2).enumerated() {
+        // The frame prints the language in capitals and prose does not, and
+        // that case difference is the whole defence against a sentence that
+        // happens to scan: "card, put it onto the battlefield" tokenises as
+        // code CARD, language IT, separator ", put " — and the comma then
+        // asserted a *nonfoil* separator verdict on a live foil (Charitable
+        // Levy, 2026-08-06, twice). "IT" printed on a card qualifies; "it" in
+        // rules text never does.
+        guard tok.text.filter({ $0.isLetter }).allSatisfy({ $0.isUppercase })
+        else { continue }
+        // A token standing between the code and the language can only be the
+        // separator misread as a glyph or two — a stray I for the bullet is
+        // observed live. A word there means this is prose, whatever follows.
+        if offset == 1, tokens[1].text.count > 2 { return nil }
         let lang = tok.text.uppercased().filter { $0.isLetter }
         if lang.count == 2, knownLanguages.contains(lang) {
             let sep = String(line[tokens[0].end..<tok.start])
@@ -305,7 +391,16 @@ let knownLanguages: Set<String> = [
 /// collector pair is printed with one, and a power/toughness box never is.
 /// `2/2` has no letter beside it and stays rejected; `130/287 M` does and is
 /// read.
-func ownNumberRow(_ line: String) -> (number: String, rarity: String, total: Int?)? {
+///
+/// `bare` separates the pair form from the other two, because they are not
+/// equally believable and `readPrinting` has to be able to tell. A pair carries
+/// its own corroboration — a number, a denominator, usually a rarity — and is
+/// the strongest printing evidence the footer holds. The bare forms are a shape
+/// and nothing more: any two-to-four digit run, or a single letter that happens
+/// to be a rarity followed by one. On a retro frame there is no own number row
+/// at all, so a bare hit on a card that also prints a company row is far more
+/// likely to be footer debris than a printing.
+func ownNumberRow(_ line: String) -> (number: String, rarity: String, total: Int?, bare: Bool)? {
     let tokens = line.split(separator: " ").map(String.init)
         .filter { !$0.isEmpty }
     guard let first = tokens.first else { return nil }
@@ -334,24 +429,43 @@ func ownNumberRow(_ line: String) -> (number: String, rarity: String, total: Int
         // reported it and this one silently did not, which left one field of
         // the footer populated or empty depending purely on which layout the
         // card happened to print.
-        return (stripLeadingZeros(n), hasRarity ? trailing : "", total)
+        return (stripLeadingZeros(n), hasRarity ? trailing : "", total, false)
     }
 
     switch tokens.count {
     case 1:
-        guard let d = digitsOnly(tokens[0]), (2...4).contains(d.count) else { return nil }
-        return (stripLeadingZeros(d), "", nil)
+        // A lone run of digits, which is also what a price sticker looks like.
+        // Live, a `$18` beside the card read as collector number 18, matched no
+        // printing of Meltdown, and took the card's perfectly good 2024 down
+        // with it — a number that matches nothing is not neutral, it outranks
+        // the copyright row and then fails the ranking outright.
+        guard !tokens[0].contains(where: { currencyGlyphs.contains($0) }),
+              let d = digitsOnly(tokens[0]), (2...4).contains(d.count)
+        else { return nil }
+        return (stripLeadingZeros(d), "", nil, true)
     case 2:
         // "R 0338" — the rarity, then the number.
+        //
+        // Believable in proportion to its width. This frame pads its number to
+        // the set's size, so a real one is `0338`, `0247`, `0087` — three or
+        // four characters, effectively always four. Two digits beside a single
+        // letter is a different thing wearing the same shape, and `knownRarities`
+        // holds eight of the commonest letters in English, so debris matches it
+        // often: live, `T 89` fell out of a mangled `Illus.` credit and took
+        // precedence over the `399` printed on the copyright row below it.
         let lead = tokens[0].uppercased().filter { $0.isLetter }
         guard lead.count == 1, knownRarities.contains(lead),
               let d = digitsOnly(tokens[1]), (2...4).contains(d.count)
         else { return nil }
-        return (stripLeadingZeros(d), lead, nil)
+        return (stripLeadingZeros(d), lead, nil, d.count < 3)
     default:
         return nil
     }
 }
+
+/// Glyphs that mean the digits beside them are a price and not a printing.
+/// A card photographed on a desk is often photographed beside its price tag.
+let currencyGlyphs: Set<Character> = ["$", "£", "€", "¥", "₹"]
 
 /// Rarity letters the modern frame prints beside the collector number.
 let knownRarities: Set<String> = ["C", "U", "R", "M", "S", "T", "L", "P"]

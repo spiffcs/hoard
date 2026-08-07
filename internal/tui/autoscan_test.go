@@ -121,6 +121,43 @@ func TestYearAndBorderPicksBetweenSameNumberPrintings(t *testing.T) {
 	}
 }
 
+// A collector number that matches nothing silences the number, not the card.
+//
+// Live 2026-08-06: Lion Umbra read 420 off its copyright row, a 2024 copyright
+// year and a foil sparkle, against two printings. 420 matched neither, and the
+// ranker returned scanMatchNone on the spot — so the year and the sparkle, both
+// read cleanly off the same card, never got weighed at all and the card queued
+// as "printing unverified: 2 printings".
+func TestAnUnmatchedNumberFallsBackToTheYear(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "retro", Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426",
+			ReleasedAt: "2024-06-14", BorderColor: "black", Finishes: []string{"nonfoil", "foil"}},
+		{ID: "old", Name: "Lion Umbra", Set: "arb", CollectorNumber: "12",
+			ReleasedAt: "2009-04-30", BorderColor: "black", Finishes: []string{"nonfoil", "foil"}},
+	}
+	ranked, rank := rankByScanStrength(prints, "", "420", 2024, "black", "foil", "")
+	if rank != scanMatchYearOnly {
+		t.Fatalf("rank = %v, want year-only: 420 matches nothing but 2024 names one printing", rank)
+	}
+	if ranked[0].Set != "mh3" {
+		t.Errorf("led with %s, want the 2024 printing", ranked[0].Set)
+	}
+
+	// The sole-printing floor stays out of reach, though. "Only one candidate
+	// and no number was read" is the absence of evidence; a number that agrees
+	// with nothing is a positive reason to doubt the name this list came from,
+	// and it must not be answered by shrugging.
+	lone := prints[:1]
+	if _, rank := rankByScanStrength(lone, "", "999", 0, "", "", ""); rank != scanMatchNone {
+		t.Errorf("rank = %v, want none: a lone printing does not rescue a number that matched nothing", rank)
+	}
+	// And with no number read at all, that same lone printing still commits —
+	// the difference between the two is the whole point.
+	if _, rank := rankByScanStrength(lone, "", "", 0, "", "", ""); rank != scanMatchSinglePrint {
+		t.Errorf("rank = %v, want single-print", rank)
+	}
+}
+
 // A black read is dark enough to exclude gold; a white read is not.
 //
 // Mana Leak's 1998 line is sth/36 (black) and wc98/rb36 (gold), and the two
@@ -729,9 +766,54 @@ func TestAmbiguousNumberCommitsTheFrontPrinting(t *testing.T) {
 		canonical: "Zahid", prints: prints, rank: scanMatchNumberAmbiguous,
 		match: cardname.Match{Exact: true},
 	}
-	auto, _, note := verdict(it)
+	auto, finish, note := verdict(it)
 	if !auto {
 		t.Errorf("an ambiguous number should commit the front printing, queued: %s", note)
+	}
+	// And with the nonfoil default, silence included. `dom/76` comes both ways,
+	// so nothing here says which — that is the foil reader's job, not a reason
+	// to stop the session. See verdict's comment at the finish.
+	if finish != "nonfoil" {
+		t.Errorf("finish = %q, want the nonfoil default", finish)
+	}
+}
+
+// An unread finish is written as nonfoil rather than stopping the session.
+//
+// Live 2026-08-06, on a pile where every card was a retro-frame foil: Glowrider
+// (LGN/15), Trap Digger (SCG/24) and Hard Evidence (H2R/5) each auto-committed
+// `nonfoil` because the sparkle reader missed them. Queuing instead was built
+// and reversed: the miss is the foil reader's to fix, and making the operator
+// answer for it on every retro card is a worse trade than three rows to
+// correct. This pins the decision so it is not re-litigated by accident.
+func TestUnreadFinishTakesTheNonfoilDefault(t *testing.T) {
+	both := scryfall.Card{ID: "h2r5", Name: "Hard Evidence", Set: "h2r",
+		CollectorNumber: "5", ReleasedAt: "2024-06-14",
+		Finishes: []string{"nonfoil", "foil"}}
+	base := queueItem{
+		canonical: "Hard Evidence", rank: scanMatchNumberAndYear,
+		match: cardname.Match{Exact: true},
+	}
+
+	it := base
+	it.prints = []scryfall.Card{both}
+	if auto, finish, note := verdict(it); !auto || finish != "nonfoil" {
+		t.Errorf("auto=%v finish=%q note=%q, want a nonfoil commit", auto, finish, note)
+	}
+
+	// And the sparkle, when it does fire, is what makes that default rare.
+	it.finishHint = "foil"
+	if auto, finish, note := verdict(it); !auto || finish != "foil" {
+		t.Errorf("auto=%v finish=%q note=%q, want a foil commit", auto, finish, note)
+	}
+
+	// A printing that only ever came one way is not a guess at all.
+	nonfoilOnly := both
+	nonfoilOnly.Finishes = []string{"nonfoil"}
+	it = base
+	it.prints = []scryfall.Card{nonfoilOnly}
+	if auto, finish, _ := verdict(it); !auto || finish != "nonfoil" {
+		t.Errorf("auto=%v finish=%q, want a nonfoil commit", auto, finish)
 	}
 }
 
@@ -890,15 +972,15 @@ func TestDupCaptureReportsTheMostRecentSighting(t *testing.T) {
 		at := now.Add(time.Duration(i-3) * time.Second)
 		recent = recordCommit(recent, "skirk", "nonfoil", i, at, false)
 	}
-	seq, since, dup := dupCapture(recent, "skirk", "nonfoil", now)
+	prior, since, dup := dupCapture(recent, "skirk", now)
 	if !dup {
 		t.Fatal("three sightings inside the window should read as a duplicate")
 	}
 	if since != time.Second {
 		t.Errorf("since = %v, want 1s — the newest sighting, not the oldest", since)
 	}
-	if seq != 2 {
-		t.Errorf("captureSeq = %d, want 2 — the newest sighting's capture", seq)
+	if prior.captureSeq != 2 {
+		t.Errorf("captureSeq = %d, want 2 — the newest sighting's capture", prior.captureSeq)
 	}
 }
 
@@ -914,7 +996,7 @@ func TestTouchCommitRollsTheAnchorForward(t *testing.T) {
 	at := start
 	for _, gap := range []time.Duration{931, 1604, 932, 2595} {
 		at = at.Add(gap * time.Millisecond)
-		_, since, dup := dupCapture(recent, "skirk", "nonfoil", at)
+		_, since, dup := dupCapture(recent, "skirk", at)
 		if !dup {
 			t.Fatalf("at +%v the card should still be inside the window", at.Sub(start))
 		}
@@ -922,7 +1004,7 @@ func TestTouchCommitRollsTheAnchorForward(t *testing.T) {
 			t.Errorf("since = %v at +%v, want under the %v floor",
 				since, at.Sub(start), sameCardFloor)
 		}
-		recent = touchCommit(recent, "skirk", "nonfoil", at)
+		recent = touchCommit(recent, "skirk", at)
 	}
 	// And it never banked a second commit while doing it.
 	if len(recent) != 1 {
@@ -1065,5 +1147,300 @@ func TestAMarkedSiblingNeedsTheSetCodeAsWell(t *testing.T) {
 	}
 	if _, r := rankByScanStrength(prints, "war", "97", 0, "", "", "ja"); r != scanMatchSetNumberAndLang {
 		t.Errorf("rank = %v, want set+number+lang once the set agrees", r)
+	}
+}
+
+// A number that matched nothing may simply be missing its leading digit.
+//
+// Live (scan/foil-corpus/session3-telemetry.log): Meltdown read `18`, matched
+// none of its four printings, and queued as "printing unverified" — the card is
+// mh3/418, and 418 is the only one of the four that ends in 18. The next
+// session read the same physical card as 418 and committed it.
+//
+// Meltdown's real printings, from the catalog, so the "exactly one" guard is
+// being exercised against the actual field rather than a convenient pair.
+func TestTruncatedNumberMatchesByItsTail(t *testing.T) {
+	meltdown := []scryfall.Card{
+		{Name: "Meltdown", Set: "sld", CollectorNumber: "2296", ReleasedAt: "2025-11-17"},
+		{Name: "Meltdown", Set: "mh3", CollectorNumber: "282", ReleasedAt: "2024-06-14"},
+		{Name: "Meltdown", Set: "mh3", CollectorNumber: "418", ReleasedAt: "2024-06-14"},
+		{Name: "Meltdown", Set: "usg", CollectorNumber: "203", ReleasedAt: "1998-10-12"},
+	}
+	ranked, r := rankByScanStrength(meltdown, "", "18", 0, "", "", "")
+	if r != scanMatchNumberTail {
+		t.Fatalf("rank = %v, want number-tail for 18 against 418", r)
+	}
+	if ranked[0].CollectorNumber != "418" {
+		t.Errorf("front printing = %s, want the tail match 418", ranked[0].CollectorNumber)
+	}
+
+	// It is a repaired number, not a verified one. The distinction is what keeps
+	// verdict's fallback-line veto and confidence floor standing over it.
+	if numberVerified(scanMatchNumberTail) {
+		t.Error("a tail match must not read as a verified number")
+	}
+	if corroboratedPrinting(scanMatchNumberTail) {
+		t.Error("a tail match alone is one signal, not two")
+	}
+
+	// And it commits, which is the whole point — this is the evidence Meltdown
+	// queued on.
+	auto, _, note := verdict(queueItem{
+		canonical: "Meltdown", prints: ranked, rank: r,
+		match: cardname.Match{Exact: true},
+	})
+	if !auto {
+		t.Errorf("a tail-matched printing should commit, queued with: %s", note)
+	}
+}
+
+// The three misreads the tail match deliberately does not repair.
+//
+// Kept as a test rather than a comment because the temptation here is a fuzzy
+// number match, and this is the measurement that says no: every one of these
+// sits one edit from the right answer, and against fields this small an
+// edit-distance rule would commit all three — two of them to the wrong printing.
+// A tail is the only repair where every digit that was read is still true.
+func TestNumberTailMatchLeavesSubstitutionsAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name, read string
+		prints     []scryfall.Card
+	}{{
+		// h2r/4, so OCR gained a digit rather than losing one.
+		name: "Dress Down", read: "14",
+		prints: []scryfall.Card{
+			{Name: "Dress Down", Set: "plst", CollectorNumber: "MH2-39"},
+			{Name: "Dress Down", Set: "h2r", CollectorNumber: "4"},
+			{Name: "Dress Down", Set: "mh2", CollectorNumber: "39"},
+			{Name: "Dress Down", Set: "mh2", CollectorNumber: "334"},
+			{Name: "Dress Down", Set: "pmh2", CollectorNumber: "39s"},
+		},
+	}, {
+		// mh3/421 — a 3 read for a 2, in the middle of the number.
+		name: "Unstable Amulet", read: "431",
+		prints: []scryfall.Card{
+			{Name: "Unstable Amulet", Set: "mh3", CollectorNumber: "421"},
+			{Name: "Unstable Amulet", Set: "mh3", CollectorNumber: "142"},
+			{Name: "Unstable Amulet", Set: "mh3", CollectorNumber: "514"},
+		},
+	}, {
+		// mh3/426 — a 0 read for a 6, and only two printings to choose between.
+		name: "Lion Umbra", read: "420",
+		prints: []scryfall.Card{
+			{Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426"},
+			{Name: "Lion Umbra", Set: "mh3", CollectorNumber: "160"},
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, r := rankByScanStrength(tc.prints, "", tc.read, 0, "", "", ""); r != scanMatchNone {
+				t.Errorf("rank = %v, want none: %s is not a tail of any printing", r, tc.read)
+			}
+		})
+	}
+}
+
+// Every guard on the tail match, each one the reason it is safe to run at all.
+func TestNumberTailMatchFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prints []scryfall.Card
+		number string
+		year   int
+		want   scanMatch
+	}{{
+		// Two printings end in 14, so which digits went missing is a guess with
+		// no answer. It queues, exactly as it does today.
+		name: "several tails match",
+		prints: []scryfall.Card{
+			{Name: "X", Set: "a", CollectorNumber: "414"},
+			{Name: "X", Set: "b", CollectorNumber: "514"},
+		},
+		number: "14", want: scanMatchNone,
+	}, {
+		// The exact match is found first and the fallback never runs, so the
+		// card numbered 14 wins over the card numbered 414. A number that
+		// matched must never be second-guessed.
+		name: "an exact match outranks its own tail",
+		prints: []scryfall.Card{
+			{Name: "X", Set: "a", CollectorNumber: "414"},
+			{Name: "X", Set: "b", CollectorNumber: "14"},
+		},
+		number: "14", want: scanMatchNumberOnly,
+	}, {
+		// One digit against three is barely a claim — 1, 11, 21, 31 and 41 all
+		// answer to it — so the "exactly one" guard would be doing all the work.
+		name:   "one digit is too little to repair",
+		prints: []scryfall.Card{{Name: "X", Set: "a", CollectorNumber: "418"}},
+		number: "8", want: scanMatchNone,
+	}, {
+		// A tail is a question about the printed run of digits. `123a` is a
+		// variant, not a card numbered 23 with something appended.
+		name:   "a variant suffix is not a tail",
+		prints: []scryfall.Card{{Name: "X", Set: "a", CollectorNumber: "123a"}},
+		number: "23", want: scanMatchNone,
+	}, {
+		// The year disagreeing is positive evidence against, not absence of it.
+		name: "the copyright year contradicts the repair",
+		prints: []scryfall.Card{
+			{Name: "X", Set: "a", CollectorNumber: "414", ReleasedAt: "2024-06-14"},
+		},
+		number: "14", year: 2003, want: scanMatchNone,
+	}, {
+		// And agreeing is the ordinary case, kept here so the year gate is shown
+		// to admit as well as refuse.
+		name: "the copyright year agrees",
+		prints: []scryfall.Card{
+			{Name: "X", Set: "a", CollectorNumber: "414", ReleasedAt: "2024-06-14"},
+		},
+		number: "14", year: 2024, want: scanMatchNumberTail,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, r := rankByScanStrength(tc.prints, "", tc.number, tc.year, "", "", ""); r != tc.want {
+				t.Errorf("rank = %v, want %v", r, tc.want)
+			}
+		})
+	}
+}
+
+// A short number that matches exactly is untouched by any of this.
+//
+// Abiding Grace reads a bare `1` off its H2R copyright row and commits, live,
+// every session. The two-digit floor is on the repair path only; putting it
+// anywhere else would break the cards the repair exists to help.
+func TestShortExactNumbersStillCommit(t *testing.T) {
+	prints := []scryfall.Card{
+		{Name: "Abiding Grace", Set: "h2r", CollectorNumber: "1", ReleasedAt: "2024-06-14"},
+		{Name: "Abiding Grace", Set: "mh2", CollectorNumber: "5", ReleasedAt: "2021-06-18"},
+	}
+	if _, r := rankByScanStrength(prints, "", "1", 0, "", "", ""); r != scanMatchNumberOnly {
+		t.Errorf("rank = %v, want number-only for a bare 1 that matches", r)
+	}
+}
+
+// A card queues because its footer did not read, and the card is still under
+// the camera at that moment. Look again before waiting out a swap.
+//
+// The failure this exists for is per-photograph, not per-card: measured across
+// two sessions of one pile, every card that queued as "printing unverified" in
+// one session read its collector number correctly in the other (Charitable Levy
+// 390 and Unholy Heat 13 in session 3; Victimize 413, Consuming Corruption 407
+// and Lion Umbra 426 in session 4 — each queued in the session it is not listed
+// under). One more look roughly squares the per-capture failure rate.
+func TestSecondLookOnlyForAnUnverifiedPrinting(t *testing.T) {
+	prints := []scryfall.Card{
+		{Name: "Unholy Heat", Set: "h2r", CollectorNumber: "13"},
+		{Name: "Unholy Heat", Set: "mh2", CollectorNumber: "145"},
+	}
+	for _, tc := range []struct {
+		name string
+		it   queueItem
+		want bool
+	}{{
+		name: "nothing pinned a printing",
+		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNone},
+		want: true,
+	}, {
+		// The read is fine and the printing is pinned; whatever queued it was
+		// not the footer, so another photograph of the same footer buys nothing.
+		name: "the printing verified",
+		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNumberOnly},
+		want: false,
+	}, {
+		// A repaired number is a pinned printing too.
+		name: "a tail match pinned it",
+		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNumberTail},
+		want: false,
+	}, {
+		// No name to bound the retry against, so there is no retry.
+		name: "nothing identified",
+		it:   queueItem{prints: prints, rank: scanMatchNone},
+		want: false,
+	}, {
+		// A lookup that found no printings is not a footer problem.
+		name: "no printings at all",
+		it:   queueItem{canonical: "Unholy Heat", rank: scanMatchNone},
+		want: false,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m model
+			if got := m.wantsSecondLook(tc.it); got != tc.want {
+				t.Errorf("wantsSecondLook = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// One look, then the card queues like anything else.
+//
+// The bound is what keeps a card that will never read from holding the session
+// open re-photographing itself — the very cards this retry is for are the ones
+// most likely to fail twice.
+func TestSecondLookIsBoundedToOneAttempt(t *testing.T) {
+	it := queueItem{
+		canonical: "Dress Down",
+		prints:    []scryfall.Card{{Name: "Dress Down", Set: "mh3", CollectorNumber: "414"}},
+		rank:      scanMatchNone,
+	}
+	var m model
+	if !m.wantsSecondLook(it) {
+		t.Fatal("the first unverified queue should ask for another look")
+	}
+	m.secondLookFor = it.canonical
+	if m.wantsSecondLook(it) {
+		t.Error("the same card queueing again has had its look")
+	}
+	// A different card is a different run of bad reads.
+	other := it
+	other.canonical = "Charitable Levy"
+	if !m.wantsSecondLook(other) {
+		t.Error("the bound is per card, not per session")
+	}
+}
+
+// The retry goes out the moment the phone says it is listening, and not before.
+//
+// There is no delay constant to test here and that is the point: the phone's own
+// held→armed gap is bimodal — measured over one session's 18 captures, four at
+// ~130ms and fourteen at 760-855ms — so any constant is either late for the fast
+// half or fired into `held` for the slow half. A Rearm sent into `held` is a
+// retry that silently never happens, which is the failure mode this shape rules
+// out rather than tunes around.
+func TestSecondLookWaitsForTheTriggerNotAClock(t *testing.T) {
+	sess := &fakeSession{events: make(chan scan.Event, 8)}
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	mm, _ := m.onSession(sessionMsg{session: sess})
+	got := mm.(model)
+	got.autoCapable = true
+	got.secondLookPending = true
+
+	// `held` is the phone still holding the frame it just read. Asking now is
+	// asking nobody.
+	before := sess.rearms
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventAuto, State: "held"}})
+	got = mm.(model)
+	if sess.rearms != before {
+		t.Errorf("rearms = %d, want none while the trigger is held", sess.rearms-before)
+	}
+	if !got.secondLookPending {
+		t.Error("the retry should still be pending after a held")
+	}
+
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventAuto, State: "armed"}})
+	got = mm.(model)
+	if sess.rearms != before+1 {
+		t.Fatalf("rearms = %d, want exactly one once the trigger armed", sess.rearms-before)
+	}
+	if got.secondLookPending {
+		t.Error("the retry was sent and must not be pending any more")
+	}
+
+	// One retry, not a standing order: every later `armed` is the ordinary
+	// rhythm of the session and must not re-fire it.
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+		ev: scan.Event{Kind: scan.EventAuto, State: "armed"}})
+	if sess.rearms != before+1 {
+		t.Errorf("rearms = %d, want the retry spent after one", sess.rearms-before)
 	}
 }

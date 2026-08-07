@@ -188,6 +188,33 @@ type Card struct {
 	// this exists to fix was a signal that was silently absent on every old
 	// frame and nobody could see it in the log.
 	FinishSource string `json:"finishSource,omitempty"`
+	// SparkleScore is the foil reader's correlation with its template, and
+	// SparkleOffsetU/V where in the search window it found its best match.
+	// Nil when the reader was never asked — which is not the same as a low
+	// score, and telling those apart is the whole reason these cross.
+	//
+	// Reported, never acted on: FinishHint already carries the verdict. What
+	// these add is the ability to read a session log afterwards. The feature
+	// shipped without them and the first live session could not distinguish a
+	// foil that missed the bar by 0.02 from one whose marker was never found —
+	// offline, the same four cards were 0.496 and 0.020. An offset sitting at
+	// the edge of the search window says the second, and says it in one number.
+	SparkleScore    *float64 `json:"sparkleScore,omitempty"`
+	SparkleOffsetU  *float64 `json:"sparkleOffsetU,omitempty"`
+	SparkleOffsetV  *float64 `json:"sparkleOffsetV,omitempty"`
+	SparkleContrast *float64 `json:"sparkleContrast,omitempty"`
+	// The same reading taken on a warm-cool colour axis instead of brightness.
+	//
+	// Reported for a sharper reason than the luma pair: this channel **does not
+	// decide anything**, on purpose. It reaches 27 of 27 retro foils on
+	// scan/foil-corpus where luma reaches 24, and then ranks two confirmed
+	// nonfoils above every foil on scan/fixtures — so it is carried live to find
+	// out which of those two results the real world resembles. Until a session's
+	// worth of these says it generalises, the number is the whole point of it.
+	//
+	// See SparkleVerdict in BorderKit/Sparkle.swift for the measurement.
+	SparkleChromaScore    *float64 `json:"sparkleChromaScore,omitempty"`
+	SparkleChromaContrast *float64 `json:"sparkleChromaContrast,omitempty"`
 	// NumberSource is where CollectorNumber was read from. "" is the collector
 	// band of a modern frame — self-consistent evidence, trusted enough that a
 	// number matching no printing vetoes an auto-commit. "copyright" is the

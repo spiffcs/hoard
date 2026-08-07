@@ -42,7 +42,7 @@ public struct CardReading: Sendable {
     /// about pixels: the border reconstructs the card from text anchors and this
     /// reads the flatten directly, so they share no geometry and coupling their
     /// reporting would imply otherwise.
-    public var sparkle: SparkleReading? = nil
+    public var sparkle: SparkleVerdict? = nil
     /// Whether the printing came from the fallback strip below the located
     /// card rather than from the band inside it.
     ///
@@ -267,9 +267,15 @@ public func readCard(_ image: CGImage) async -> CardReading {
         let sparkleStart = DispatchTime.now()
         out.sparkle = sparkleInCard(upright)
         out.timings.sparkle = millis(since: sparkleStart)
-        if let s = out.sparkle, s.score >= SparkleGate.accept {
+        if let s = out.sparkle, s.isFoil {
             printing.finish = "foil"
-            printing.finishSource = "sparkle"
+            // The channel rides along in the source, so a session's log says
+            // which one is carrying the answer rather than only that a sparkle
+            // did. The two were added at different times for different failures
+            // and their rates are worth being able to tell apart later.
+            // "sparkle-luma" today; the channel is spelled out because the
+            // colour channel is measured beside it and may one day answer.
+            printing.finishSource = "sparkle-" + s.channel
         }
     }
 

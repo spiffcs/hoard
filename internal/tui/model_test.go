@@ -430,7 +430,16 @@ func solRingPrints() []scryfall.Card {
 	}
 }
 
-func TestScannedNumberRanksAndMarksPrinting(t *testing.T) {
+// A number that names exactly one printing settles it, and the picker is
+// skipped.
+//
+// This function used to hold the opposite rule — promote the row, never select
+// it, so a misread digit stays visible. A one-row list is not review: nobody
+// reads it, they press enter. The keystroke it saved on every scanned card is
+// what the hands-free flow exists for, and the risk taken is a misread digit
+// that names a different real printing of the same card, which is one row to
+// correct.
+func TestScannedNumberNamingOnePrintingSkipsThePicker(t *testing.T) {
 	cards := solRingPrints()
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
@@ -441,38 +450,76 @@ func TestScannedNumberRanksAndMarksPrinting(t *testing.T) {
 	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
 
+	if got.state == statePrintPick {
+		t.Fatalf("still at the printing picker with one candidate")
+	}
+	if got.chosen == nil {
+		t.Fatal("nothing chosen")
+	}
+	if !strings.EqualFold(got.chosen.Set, "mh3") || got.chosen.CollectorNumber != "123" {
+		t.Errorf("chose %s #%s, want MH3 #123", got.chosen.Set, got.chosen.CollectorNumber)
+	}
+	// Nothing left hidden, so nothing offers to unhide it.
+	if got.printsAll != nil {
+		t.Errorf("printsAll = %v, want nil once the number settled it", got.printsAll)
+	}
+}
+
+// solRingSharedNumber is the case the picker still exists for: a number that
+// narrows the list without settling it, because two printings carry it.
+func solRingSharedNumber() []scryfall.Card {
+	return []scryfall.Card{
+		{ID: "a", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil"}},
+		{ID: "b", Name: "Sol Ring", Set: "c21", CollectorNumber: "263", Finishes: []string{"nonfoil"}},
+		{ID: "c", Name: "Sol Ring", Set: "cmm", CollectorNumber: "263", Finishes: []string{"nonfoil"}},
+	}
+}
+
+func TestScannedNumberNarrowsAndMarksPrintings(t *testing.T) {
+	cards := solRingSharedNumber()
+	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
+	m.scanned = "Sol Ring"
+	m.scannedNumber = "263" // no set read, so both 263s survive
+
+	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
+	got := mm.(model)
+
 	if got.state != statePrintPick {
-		t.Fatalf("state = %v, want statePrintPick", got.state)
+		t.Fatalf("state = %v, want statePrintPick: 263 names two printings", got.state)
 	}
-	// Every printing is still offered; only the order changed.
-	if len(got.list.Items()) != len(cards) {
-		t.Fatalf("list has %d items, want all %d printings", len(got.list.Items()), len(cards))
+	// Only the printings the number can be. Promoting the right row to the top
+	// was never the same as removing the ones the card rules out — live,
+	// Victimize read a clean 413 and still asked which of nineteen.
+	if len(got.list.Items()) != 2 {
+		t.Fatalf("list has %d items, want the two printings numbered 263",
+			len(got.list.Items()))
 	}
-	first, ok := got.list.Items()[0].(printItem)
-	if !ok {
-		t.Fatalf("first item is %T, want printItem", got.list.Items()[0])
+	for i, it := range got.list.Items() {
+		if n := it.(printItem).card.CollectorNumber; n != "263" {
+			t.Errorf("item %d is #%s, want only #263", i, n)
+		}
 	}
-	if first.card.CollectorNumber != "123" || !strings.EqualFold(first.card.Set, "mh3") {
-		t.Errorf("first printing = %s #%s, want MH3 #123",
-			first.card.Set, first.card.CollectorNumber)
+	if !got.list.Items()[0].(printItem).scanned {
+		t.Error("the leading printing should be marked as scanned")
 	}
-	if !first.scanned {
-		t.Error("the matched printing should be marked as scanned")
-	}
-	if !strings.Contains(first.Title(), "scanned") {
-		t.Errorf("Title() = %q, want a scanned marker", first.Title())
-	}
-	// Pre-selected, not auto-committed: the cursor is on it but nothing advanced.
-	if got.list.Index() != 0 {
-		t.Errorf("cursor at %d, want the scanned printing at 0", got.list.Index())
-	}
+	// Pre-selected, not auto-committed: two candidates is a real question.
 	if got.chosen != nil {
-		t.Error("a scanned number must not select a printing outright")
+		t.Error("a number matching two printings must not select one outright")
 	}
-	// The rest keep Scryfall's newest-first order.
-	rest := got.list.Items()[1:]
-	if rest[0].(printItem).card.Set != "ltc" || rest[1].(printItem).card.Set != "c21" {
-		t.Errorf("remaining order = %v, want ltc then c21", rest)
+	if got.printsAll == nil || len(got.printsAll) != len(cards) {
+		t.Errorf("printsAll = %v, want all %d kept for the toggle", got.printsAll, len(cards))
+	}
+
+	// ctrl+a brings the hidden printing back. The narrowing is the scanner's
+	// belief and the digits can be misread, so there has to be a way back.
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	all := mm.(model)
+	if len(all.list.Items()) != len(cards) {
+		t.Fatalf("after ctrl+a: %d items, want all %d", len(all.list.Items()), len(cards))
+	}
+	if all.printsAll != nil {
+		t.Error("nothing left to restore, so nothing should offer to")
 	}
 }
 
@@ -1853,6 +1900,55 @@ func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 	}
 }
 
+// A read number pins a printing, and a misread border must not replace it.
+// Live on 2026-08-06: Ornithopter read set=M15 num=223 lang=en — an exact
+// set+number+lang pin — with the border misread as white on a black-bordered
+// card. The border reorder then ruled the pinned M15 row out, promoted a
+// borderless SLD sibling to the head, and the head is what commits: the
+// session recorded SLD/604 foil from a card the phone had read correctly,
+// with the foil coming from the promoted row being foil-only.
+func TestPinnedPrintingSurvivesBorderMisread(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "sld", Name: "Ornithopter", Set: "sld", CollectorNumber: "604",
+			Lang: "en", BorderColor: "borderless", ReleasedAt: "2022-04-22",
+			Finishes: []string{"foil"}},
+		{ID: "m15", Name: "Ornithopter", Set: "m15", CollectorNumber: "223",
+			Lang: "en", BorderColor: "black", ReleasedAt: "2014-07-18",
+			Finishes: []string{"nonfoil", "foil"}},
+	}
+	// The displacement is real: left to run, the border reorder demotes the
+	// pinned row. This is what the guard is holding back.
+	displaced, changed := applyBorderEvidence(prints, "white", 2014)
+	if !changed || displaced[0].ID == "m15" {
+		t.Fatalf("premise broken: a white misread should displace the black "+
+			"M15 row (changed=%v head=%s)", changed, displaced[0].ID)
+	}
+
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Ornithopter": "Ornithopter"},
+		prints: map[string][]scryfall.Card{"Ornithopter": prints},
+	}
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
+	c := scan.Card{
+		Name: "Ornithopter", Candidates: []string{"Ornithopter"},
+		SetCode: "m15", CollectorNumber: "223", Language: "en",
+		BorderColor: "white", CopyrightYear: 2014, FinishHint: "nonfoil",
+	}
+	it := m.resolveCardCmd(1, c, 1)().(resolveDoneMsg).item
+	if it.rank != scanMatchSetNumberAndLang {
+		t.Fatalf("rank = %v, want set+number+lang", it.rank)
+	}
+	if len(it.prints) == 0 || it.prints[0].ID != "m15" {
+		t.Errorf("head = %q, want the pinned m15 row to survive the border misread",
+			it.prints[0].ID)
+	}
+	auto, finish, note := verdict(it)
+	if !auto || finish != "nonfoil" {
+		t.Errorf("verdict = auto=%v finish=%q note=%q, want an unattended "+
+			"nonfoil commit of the pinned printing", auto, finish, note)
+	}
+}
+
 func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 	// A card whose only "reprint" is its own theme-deck alternate — one set,
 	// one base number, rows differing only by the variation marker — is a
@@ -2696,22 +2792,17 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	got := mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
-	if got.state != statePrintPick {
-		t.Fatalf("state = %v, want statePrintPick — prints were already fetched", got.state)
+	// MH3/123 names exactly one Sol Ring printing, so the picker has nothing to
+	// ask and is skipped — the prints were already fetched by the background
+	// resolve, so re-entry lands straight on the quantity prompt.
+	if got.state != stateQty {
+		t.Fatalf("state = %v, want stateQty — one printing and one finish leave nothing to pick", got.state)
 	}
-	first := got.list.Items()[0].(printItem)
-	if !first.scanned || !strings.EqualFold(first.card.Set, "mh3") {
-		t.Errorf("first item = %+v, want the scanned MH3 printing marked", first)
+	if got.chosen == nil || !strings.EqualFold(got.chosen.Set, "mh3") {
+		t.Errorf("chosen = %+v, want the scanned MH3 printing", got.chosen)
 	}
 	if len(got.review) != 0 {
 		t.Errorf("the item under review should leave the queue, %d remain", len(got.review))
-	}
-
-	// Walk it through: printing → qty → confirm.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	got = mm.(model)
-	if got.state != stateQty {
-		t.Fatalf("state = %v, want stateQty (single finish auto-skips)", got.state)
 	}
 	mm, _ = got.submitQty()
 	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3321,7 +3412,8 @@ func inspiredFirePrints() []scryfall.Card {
 		CollectorNumber: "690", Finishes: []string{"nonfoil", "foil"}}}
 }
 
-// A nonfoil and then a foil of one card are two cards.
+// A nonfoil and then a foil of one card, swapped at human speed, are two
+// cards.
 //
 // This used to *correct* the first row instead of adding a second, which made
 // scanning a card and its foil impossible to express. The removed function's
@@ -3329,9 +3421,15 @@ func inspiredFirePrints() []scryfall.Card {
 // exactly like one misread copy, and rewriting the first row is as wrong as
 // dropping the second.
 //
-// The cost of choosing this way is real: on the case it was built for — a foil
-// Inspired Fire recorded nonfoil, its marker legible on the very next capture —
-// the collection now keeps one wrong row *and* one right one.
+// "At human speed" is what changed, and it is measured, not guessed: the
+// fastest observed card swap is 3856ms (see sameCardFloor). A finish flip
+// inside that floor used to bypass every duplicate rule — the dup window was
+// keyed on printing *and* finish — and committed a phantom second row.
+// Observed live twice in one session: Brainsurge, nonfoil then foil, 800ms
+// apart, off one physical card. Now the flip goes through the same duplicate
+// judgement as everything else, and a sub-floor re-read carrying real finish
+// evidence corrects the guessed row instead — see
+// TestFastFinishReReadCorrectsTheGuessedRow.
 func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
@@ -3339,6 +3437,8 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 6, 23, 50, 0, 0, time.UTC)
+	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
 	// First look: no marker anywhere, so the default is written.
@@ -3352,9 +3452,11 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 		t.Fatalf("first look = %+v, want one nonfoil commit", ra.got)
 	}
 
-	// The foil is laid down where the nonfoil was. The phone watched that
-	// happen and says so, which is what makes it a placement rather than
-	// another look — a nudge echo would be swallowed, and should be.
+	// The foil is laid down where the nonfoil was, five seconds later — a real
+	// swap's timing. The phone watched it happen and says so, which is what
+	// makes it a placement rather than another look — a nudge echo would be
+	// swallowed, and should be.
+	clock = clock.Add(5 * time.Second)
 	marked := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
 		FireReason: scan.FireReplaced,
 		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
@@ -3387,6 +3489,68 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	m = resolve(t, mm.(model), echo.CardList()[0])
 	if len(ra.got) != 2 {
 		t.Errorf("a nudge echo must add nothing, adder got %d", len(ra.got))
+	}
+}
+
+// A fast re-read carrying real finish evidence corrects the guessed row.
+//
+// Live on 2026-08-06: Brainsurge's first look read no marker and committed the
+// nonfoil default; 800ms later the source fired again on the same card — its
+// own reason said "moved", not "placed" — and the marker read foil. The finish
+// difference used to make the two looks different keys in the duplicate
+// window, so the duplicate rules never ran and a phantom second row committed.
+// The right outcome is one row, foil: the physical-identity rules decide it is
+// the same card, and evidence beats a guess.
+func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Brainsurge": "Brainsurge"},
+		prints: map[string][]scryfall.Card{"Brainsurge": {{ID: "mh3399",
+			Name: "Brainsurge", Set: "mh3", CollectorNumber: "399",
+			Finishes: []string{"nonfoil", "foil"}}}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 6, 23, 50, 58, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	blind := scan.Event{Kind: scan.EventScan, Name: "Brainsurge",
+		Cards: []scan.Card{{Name: "Brainsurge", Candidates: []string{"Brainsurge"},
+			Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
+	m = resolve(t, mm.(model), blind.CardList()[0])
+	if len(ra.got) != 1 || ra.got[0].Finish != "nonfoil" {
+		t.Fatalf("first look = %+v, want the nonfoil default committed", ra.got)
+	}
+
+	clock = clock.Add(800 * time.Millisecond)
+	marked := scan.Event{Kind: scan.EventScan, Name: "Brainsurge",
+		FireReason: scan.FireMoved,
+		Cards: []scan.Card{{Name: "Brainsurge", Candidates: []string{"Brainsurge"},
+			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: marked})
+	m = resolve(t, mm.(model), marked.CardList()[0])
+
+	if len(ra.got) != 2 {
+		t.Fatalf("adder called %d times, want 2 — the commit and its correction", len(ra.got))
+	}
+	fix := ra.got[1]
+	if fix.Finish != "foil" || fix.ReplacesFinish != "nonfoil" {
+		t.Errorf("correction = %+v, want the nonfoil row re-keyed to foil", fix)
+	}
+	if m.addedCount != 1 {
+		t.Errorf("addedCount = %d, want 1 — a correction is not a card", m.addedCount)
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %+v, want nothing queued", m.review)
+	}
+
+	// A third sighting agreeing with the corrected row is back to being noise.
+	clock = clock.Add(800 * time.Millisecond)
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: marked})
+	m = resolve(t, mm.(model), marked.CardList()[0])
+	if len(ra.got) != 2 {
+		t.Errorf("a repeat of the corrected row must drop, adder got %d", len(ra.got))
 	}
 }
 
@@ -3887,5 +4051,40 @@ func TestSuccessBannerSurvivesTyping(t *testing.T) {
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	if got := mm.(model).status; got != "Added Sol Ring ×1" {
 		t.Errorf("receipt = %q, want it kept while the next name is typed", got)
+	}
+}
+
+// The retry state threads through the real queue path, and a commit clears it.
+//
+// Sol Ring with no collector info is the headline never-rule case: several
+// printings, nothing verified, so it queues — and queueing for that reason is
+// exactly what earns a second look.
+func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
+	ev, fs := confidentFixture()
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	bare := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
+		Candidates: []string{"Sol Ring"}, Confidence: 0.99}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: bare})
+	got := resolve(t, mm.(model), bare.CardList()[0])
+
+	if len(got.review) != 1 {
+		t.Fatalf("review = %d, want the card queued", len(got.review))
+	}
+	if got.secondLookFor != "Sol Ring" {
+		t.Fatalf("secondLookFor = %q, want the queued card's name", got.secondLookFor)
+	}
+
+	// A commit ends that card's run of bad reads, so a later copy reading badly
+	// is owed its own look rather than inheriting this one's spent attempt.
+	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
+	got = resolve(t, mm.(model), ev.CardList()[0])
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want the confident scan committed", len(ra.got))
+	}
+	if got.secondLookFor != "" {
+		t.Errorf("secondLookFor = %q, want cleared by the commit", got.secondLookFor)
 	}
 }

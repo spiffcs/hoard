@@ -314,8 +314,10 @@ cross-correlation against a fitted template. `SparkleGate` and
 | retro nonfoil | 17 | **0** | −0.427 … 0.443 |
 | modern foil | 0 | 0 | never asked — the separator already answered |
 
-`sparkleMS` median 1.04, max 1.18, on a 129 ms read. `make cardkit-score`
-holds at 87% / 78%.
+`sparkleMS` median 1.04, max 1.18, on a 129 ms read — **on the Mac bench**.
+That qualifier was missing and it matters: live on the iPhone the same code
+costs 16-23 ms inside a 214-348 ms read. Both are cheap; only one of them is
+the number a session will show you. `make cardkit-score` holds at 87% / 78%.
 
 **Constants, and what each one cost to learn.**
 
@@ -423,6 +425,67 @@ Also corrected while in there: the 1998–2002 `year` prefix from 0.271 to 0.260
 
 Still open: the `1998-2002` / `copyrightGlyph` combination spreads 0.214–0.274
 and stays `nil`, and the 8th Edition credit row is still unmeasured.
+
+### 2026-08-06 — session 3, and what the sparkle reader is actually limited by
+
+The first live session after the marker shipped, on a pile where **every card
+was a retro-frame foil**: 15 scans, 6 auto-committed, and 3 of those 6 recorded
+the wrong finish. Stills and log are `scan/foil-corpus/stills/s3-*.jpg` and
+`session3-telemetry.log`.
+
+**Nine of the fifteen queued, and not one of them was a foil problem.** Four
+causes, all in the footer read, all now fixed and regression-tested:
+
+- The collector number was read *inside* the copyright year's branch, so a row
+  whose four small italic digits failed OCR dropped a number sitting in plain
+  text at the end of the same line — `wards of the Coast 399`,
+  `zards of the Coast 14`, `Wizards of the Coast 413`,
+  `4 Wizards of the Coast 407`. Nothing about `trailingNumber`'s safety ever
+  came from the year; it only happened to be standing in the doorway. Splitting
+  the two gates needed a fourth guard in its place — the digits must sit against
+  the company name — because `looksLikeCompanyRow` matches substrings and
+  `beasts of the coastal plain 12` otherwise reads as printing 12.
+- A `$18` price tag in frame and a `T 89` fragment off a mangled `Illus.` credit
+  both became collector numbers, and `.ownRow` outranked the real number on the
+  copyright row below. A number that matches nothing is not neutral: it
+  outranked the year *and* then failed the ranking.
+- `rankByScanStrength` returned `scanMatchNone` the moment a number matched no
+  printing, throwing away the copyright year and the markings read off the same
+  card. Lion Umbra queued holding a clean 2024 and a foil sparkle.
+- An unevidenced finish committed silently. `finishFromEvidence` had always
+  reported whether the card told us and `verdict` was the one caller discarding
+  the answer, so Glowrider, Trap Digger and Hard Evidence each wrote `nonfoil`
+  off silence with nothing on the row saying it was a guess.
+
+**The four foils that read nonfoil have washed-out pixels, not a mislocated
+search.** Full working in `docs/scanner-foil-registration.md`; the short version
+and the two refuted explanations, because both were plausible:
+
+- *Not* the live sampler. `cardkit-probe --image --border` reproduces the live
+  verdict 15 of 15 on those stills, misses included.
+- *Not* the search window, though the evidence for it was good — Glowrider's
+  best match sits at `du = -0.0238`, exactly `-searchU`, and its sample count
+  drops to 34112 from 54444 because `sparkleScan` clips the refine neighbourhood
+  at the window edge. `--sparkle-where` re-runs the search at four times the
+  half-width in each axis and **rescues none of the four**: 0.020 → 0.000,
+  0.339 → 0.473, 0.425 → 0.446, 0.496 → 0.513.
+
+What separates them is `SparkleReading.contrast`. Every miss is in the bottom
+five of fifteen (0.0089-0.0380); nothing above 0.0549 missed. The marker is
+where the reader looks, there is just very little of it left in those pixels.
+`SparkleGate.minContrast = 0.005` sits 7-11× below where the misses live, so a
+patch with a tenth of a good one's structure is scored as though it were
+evidence.
+
+Corollary for the tuning rule above: "re-centre, never widen" is still right
+about *widening*, but re-centring is not the fix either, and there is an
+unexplained peak at `du ≈ +0.07` on four cards that must be understood before
+anything refits the template. See the design note.
+
+Read the score before touching the threshold. It is on the wire now
+(`sparkleScore`, `sparkleOffsetU/V`) and on the `resolve` line, which is the
+half of the finish-provenance argument that did not land the first time: a
+verdict without its measurement made this session unreadable.
 
 ### Knobs that do not do what they look like they do
 

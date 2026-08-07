@@ -190,6 +190,33 @@ public struct CardEntry: Encodable {
     /// noticing. Optional so a capture that reads no finish keeps the old wire
     /// shape byte-for-byte.
     public var finishSource: String? = nil
+    /// What the foil-sparkle reader measured, whatever verdict followed.
+    ///
+    /// The score is on the wire because the feature it belongs to shipped
+    /// without it, and one live session was enough to show the cost: four
+    /// retro-frame foils read as nonfoil and the log could not say whether they
+    /// were near misses or the marker was never found. Offline on the same
+    /// stills they were 0.020, 0.339, 0.425 and 0.496 against a bar of 0.52 —
+    /// two failure modes wearing one symptom, and no way to tell them apart
+    /// from a session log.
+    ///
+    /// The offsets are here for the same reason and are the sharper signal: a
+    /// score taken at the edge of the search window means the marker is
+    /// somewhere outside it, which is a registration problem and not a
+    /// threshold one. Nil when the reader was never asked.
+    public var sparkleScore: Double? = nil
+    public var sparkleOffsetU: Double? = nil
+    public var sparkleOffsetV: Double? = nil
+    public var sparkleContrast: Double? = nil
+    /// The same three, measured on the warm-cool channel — see SparkleVerdict.
+    ///
+    /// Reported alongside rather than instead of, and never merged into one
+    /// "best" number. The reason the second channel exists is that the two fail
+    /// on different cards; a session that could only see the winning score
+    /// could not tell whether the new channel was earning its place or whether
+    /// luma was still doing all the work.
+    public var sparkleChromaScore: Double? = nil
+    public var sparkleChromaContrast: Double? = nil
     /// Where collectorNumber came from: nil/"" is the trusted collector band,
     /// "copyright" the old-frame copyright-line tail (upgrade-only evidence —
     /// see CardRead.copyrightNumber). Optional so events keep their old wire
@@ -224,6 +251,12 @@ public struct CardEntry: Encodable {
         finishHint: String = "",
         language: String? = nil,
         finishSource: String? = nil,
+        sparkleScore: Double? = nil,
+        sparkleOffsetU: Double? = nil,
+        sparkleOffsetV: Double? = nil,
+        sparkleContrast: Double? = nil,
+        sparkleChromaScore: Double? = nil,
+        sparkleChromaContrast: Double? = nil,
         numberSource: String? = nil,
         copyrightYear: Int? = nil,
         borderColor: String? = nil,
@@ -239,6 +272,12 @@ public struct CardEntry: Encodable {
         self.finishHint = finishHint
         self.language = language
         self.finishSource = finishSource
+        self.sparkleScore = sparkleScore
+        self.sparkleOffsetU = sparkleOffsetU
+        self.sparkleOffsetV = sparkleOffsetV
+        self.sparkleContrast = sparkleContrast
+        self.sparkleChromaScore = sparkleChromaScore
+        self.sparkleChromaContrast = sparkleChromaContrast
         self.numberSource = numberSource
         self.copyrightYear = copyrightYear
         self.borderColor = borderColor

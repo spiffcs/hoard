@@ -150,6 +150,8 @@ func run(args []string) error {
 		return cmdBackfillPrices(ctx, st, cmdArgs)
 	case "repair-finishes":
 		return cmdRepairFinishes(ctx, st)
+	case "guessed":
+		return cmdGuessed(st)
 	case "vacuum":
 		return cmdVacuum(st)
 	case "catalog":

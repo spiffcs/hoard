@@ -50,7 +50,8 @@ func run() async -> Never {
         if let s = args.firstIndex(of: "--only-session"), s + 1 < args.count {
             only = args[s + 1]
         }
-        sparkleFit(dir: args[f + 1], out: args[f + 2], onlySession: only)
+        sparkleFit(dir: args[f + 1], out: args[f + 2], onlySession: only,
+                   chroma: args.contains("--chroma"))
     }
     if let a = args.firstIndex(of: "--anchor-fit"), a + 1 < args.count {
         await anchorFit(manifest: args[a + 1])
@@ -62,6 +63,23 @@ func run() async -> Never {
         }
         sparkleScoreCorpus(dir: args[s + 1], verbose: args.contains("--cards"),
                            onlySession: only)
+    }
+    // --sparkle-where re-runs the marker search over a deliberately wide window
+    // and reports where the peak actually is, against the shipping window's
+    // answer. Diagnosis only, never a verdict: `SparkleWindow` is overridable
+    // for exactly this, because a score taken at the edge of the fitted window
+    // cannot say whether the marker is faint or merely outside.
+    if let s = args.firstIndex(of: "--sparkle-chroma-trial"), s + 1 < args.count {
+        sparkleChromaTrial(dir: args[s + 1])
+    }
+    if let s = args.firstIndex(of: "--sparkle-where"), s + 1 < args.count {
+        await sparkleWhere(path: args[s + 1])
+    }
+    // --sparkle-control scores the marker patch against two markerless control
+    // patches on the same row — the exposure-invariance experiment. Diagnosis
+    // only, never a verdict.
+    if let s = args.firstIndex(of: "--sparkle-control"), s + 1 < args.count {
+        await sparkleControl(path: args[s + 1])
     }
     guard let i = args.firstIndex(of: "--image"), i + 1 < args.count else {
         die("usage: cardkit-probe --image <path> | --bench <dir>")
@@ -106,10 +124,12 @@ func run() async -> Never {
             // The sparkle rides along because diagnosing a finish means seeing
             // both: a card can read a perfect border and no marker, or the
             // reverse, and the two are measured off different pixels.
-            "sparkleScore": reading.sparkle.map { Double($0.score) } ?? -9,
-            "sparkleOffsetU": reading.sparkle.map { Double($0.offsetU) } ?? 0,
-            "sparkleOffsetV": reading.sparkle.map { Double($0.offsetV) } ?? 0,
-            "sparkleSamples": reading.sparkle?.samples ?? 0,
+            "sparkleScore": reading.sparkle?.luma.map { Double($0.score) } ?? -9,
+            "sparkleOffsetU": reading.sparkle?.luma.map { Double($0.offsetU) } ?? 0,
+            "sparkleOffsetV": reading.sparkle?.luma.map { Double($0.offsetV) } ?? 0,
+            "sparkleSamples": reading.sparkle?.luma.map(\.samples) ?? 0,
+            "sparkleChroma": reading.sparkle?.chroma.map { Double($0.score) } ?? -9,
+            "sparkleChannel": reading.sparkle?.channel ?? "",
             "symbolCoverage": b.symbolCoverage,
             "symbolContrast": b.symbolContrast,
             "sparkleMS": reading.timings.sparkle,

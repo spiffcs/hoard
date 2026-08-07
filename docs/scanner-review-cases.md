@@ -122,3 +122,133 @@ Worth saying, so a future session does not re-derive it:
   printing.
 - **Not resolution.** These read at the same 4032x3024 as their shelf-mates
   that committed.
+
+# The 6 August 2026 retro-foil pile
+
+A second session, a year of work later, and the residue has moved. Telemetry in
+`scan/foil-corpus/session4-telemetry.log`; the same pile a day earlier is
+`session3-telemetry.log`, and comparing the two is what this section is for.
+
+Fourteen distinct cards, every one a retro-frame foil. Ten committed unattended,
+four queued, and **card identification was 10/10 correct on everything that
+committed**. So the name gate and the border work above are done arguing; what
+is left is the collector number.
+
+The four that queued, and all four read `finish=foil(sparkle)` correctly — none
+of this is a foil problem:
+
+| card | copyright row, as read | number | printings |
+|---|---|---|---|
+| Dress Down | `bards of the Coast 14` | `14` | 5 |
+| Unstable Amulet | `IN&O2024 Wizaids of the Coast 431-` | `431` | 3 |
+| Unholy Heat | `2024 Wizards of the Coast` | none | 6 |
+| Charitable Levy | `TM & 0 200` | none | 2 |
+
+## The read is a coin flip per photograph
+
+This is the finding, and it is the one that says what to build. Against session
+3, on the same physical pile:
+
+| card | session 3 | session 4 |
+|---|---|---|
+| Charitable Levy | **390, committed** | none, queued |
+| Unholy Heat | **13, committed** | none, queued |
+| Victimize | none, queued | **413, committed** |
+| Consuming Corruption | none, queued | **407, committed** |
+| Lion Umbra | 420, matched nothing | **426, committed** |
+| Meltdown | 18, matched nothing | **418, committed** |
+
+Every card that queued in one session read its number correctly in the other.
+Nothing about these cards is unreadable; the four small glyphs at the bottom
+edge either survive a given photograph or they do not. That is why the fix is
+another photograph — `wantsSecondLook` in `internal/tui/autoscan.go`, one retry
+when a card queues for an unverified printing, bounded to one so a card that
+will never read cannot hold the session open.
+
+**The retry is event-driven, and that is not a detail.** The trigger does not
+re-fire on a card it has already read — it fires on placement — so the retry is
+a `Rearm`, and a `Rearm` only lands once the phone is listening for one. Timing
+it was the first attempt. The phone's own `held → armed` gap, over this
+session's 18 captures, is bimodal:
+
+    ~130ms   ····                    (4 captures)
+    760-855ms ··············         (14 captures)
+
+Any single constant is either late for the fast half or fired into `held` for
+the slow half, and a `Rearm` sent into `held` is a retry that silently never
+happens. So the retry is parked as `secondLookPending` and spent by the next
+`armed` the trigger reports — quicker than the safe constant and safer than the
+quick one. The 5500ms `nudgeDelay` timer stays armed underneath as the backstop
+for a helper that never reports its state.
+
+None of this can make a session feel slower. A pending retry is not a gate on
+anything: if the operator places the next card, the trigger fires on that
+placement and the real capture voids the armed timer (`m.nudgeGen++` in
+`onSessionEvent`). The retry only ever occupies time the operator was not using.
+
+## The phone is not told about a review it might not be getting
+
+`reviewFlash` is the one thing a queue sends over the wire — a `tierReview`
+HUD result, or a chime on a helper without a HUD. It is a **stop**: the operator
+looks up. Sending it on a card the retry is about to rescue showed a stop that
+un-happened a second later, which was worse than the queue it was announcing.
+
+So the flash is held while a second look is out (`deferredFlashFor`), and
+resolved exactly three ways. The queue entry itself is *not* held — it goes into
+`m.review` immediately, so a retry that never answers cannot lose the card:
+
+| what happens | the phone |
+| --- | --- |
+| the retry reads the card and it commits | never hears anything — `clearDeferredFlash` |
+| the retry reads no better and it queues again | flashes then |
+| no retry capture arrives at all | flashes when the quiet period lapses, in `onNudge` |
+
+The third row is what makes the first two safe. Reaching `onNudge` means the
+quiet period elapsed with no capture in it — any real one bumps `nudgeGen` and
+voids that timer — so a retry that was going to answer has not, and the card is
+owed the flash it did not get. Every other exit from a held flash is an event;
+that one is a timeout, and without it a queued card could sit in the list having
+never made a sound.
+
+The hold is scoped to an unverified printing. A card queued for a shaky *name*
+flashes at once: a retry cannot improve on it, so delaying would be latency
+bought for nothing.
+
+## What the misreads actually are
+
+Worth writing down precisely, because they look alike in the log and are not
+alike at all. Checked against the catalog:
+
+| card | read | truth | what happened |
+|---|---|---|---|
+| Meltdown | `18` | mh3/**418** | a digit **lost** |
+| Dress Down | `14` | h2r/**4** | a digit **gained** |
+| Unstable Amulet | `431` | mh3/**421** | 3 for 2 |
+| Lion Umbra | `420` | mh3/**426** | 0 for 6 |
+
+Only the first is repairable from the digits alone, and `numberTailMatches`
+repairs it: 418 is the only one of Meltdown's four printings ending in 18.
+
+**The generalisation is a trap and this is the measurement that says so.** Three
+of the four are substitutions or insertions, all one edit from the truth, and a
+match-within-one-edit rule would commit every one of them — Lion Umbra has two
+printings and `420` sits one edit from `426` and nothing else, so it would look
+like a clean win and be one only by luck. A tail is the sole repair where every
+digit that was read is still true. See
+`TestNumberTailMatchLeavesSubstitutionsAlone`.
+
+## Still open: the finish on genuine 2003 foils
+
+Out of scope for the above and not fixed by it. Glowrider and Trap Digger both
+committed the right card with the **wrong finish** — the sparkle patch had no
+structure left to correlate against (contrast 0.0039 and 0.0086, against
+0.027–0.093 on every card that did read foil). Glowrider's fell below
+`SparkleGate.minContrast`, so the reader returned its abstention and `verdict`
+wrote `nonfoil` from it anyway.
+
+Both are the only genuine 2003 Legions/Scourge printings in the pile; every card
+that read cleanly is a 2024 retro reprint. Session 4 is also the reshoot
+`docs/scanner-foil-registration.md` asks for at its end, and the answer is
+**half**: two of session 3's four misses recovered, these two did not, and
+Glowrider got worse (0.0241 → 0.0039). Whatever is happening to those two is not
+the lamp angle.

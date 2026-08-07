@@ -52,6 +52,19 @@ final class PixelReader {
         guard let c = rgb(x, y) else { return nil }
         return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
     }
+
+    /// warmCool is blue minus red: negative on the retro text box's tan, positive
+    /// on the cool silver a foil's diffraction throws back. Range -1…1.
+    ///
+    /// One subtraction rather than a colour space, and that is the whole idea —
+    /// the sparkle reader needs an axis on which the marker and the box differ,
+    /// not a perceptually uniform one. Measured on live captures where the luma
+    /// reader scored zero, this axis carries 5-13x the structure luma does; see
+    /// `sparkleWarmCool`.
+    func warmCool(_ x: CGFloat, _ y: CGFloat) -> CGFloat? {
+        guard let c = rgb(x, y) else { return nil }
+        return c.b - c.r
+    }
 }
 
 func medianOf(_ xs: [CGFloat]) -> CGFloat {

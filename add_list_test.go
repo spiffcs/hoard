@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/tui"
 )
 
 // The paste path end to end: lines resolve through the shared pipeline, land
@@ -86,4 +88,49 @@ func mustBinder(t *testing.T, st *store.Store, name string) int64 {
 		t.Fatalf("BinderByRef(%s): %v", name, err)
 	}
 	return b.ID
+}
+
+// The scanner's guessed finishes leave an audit trail through the adder: a
+// guessed commit banks a row, and a finish correction — the re-key
+// ReplacesFinish asks for — spends the matching one.
+func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
+	st := exportStore(t)
+	add := storeAdder(st)
+	card := scryfall.Card{ID: "brainsurge-id", Set: "mh3", CollectorNumber: "399",
+		Name: "Brainsurge", ScryfallURL: "http://x"}
+
+	// A blind commit: nonfoil by default, flagged as a guess.
+	if err := add(tui.Result{Card: card, Finish: "nonfoil", Qty: 1,
+		FinishGuessed: true}); err != nil {
+		t.Fatalf("guessed add: %v", err)
+	}
+	rows, err := st.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Name != "Brainsurge" {
+		t.Fatalf("guesses = %+v, want the blind commit banked", rows)
+	}
+
+	// The correction: same card, evidence arrived, row re-keyed to foil. The
+	// guess is answered and the audit row goes with it.
+	if err := add(tui.Result{Card: card, Finish: "foil", Qty: 1,
+		ReplacesFinish: "nonfoil"}); err != nil {
+		t.Fatalf("correction: %v", err)
+	}
+	rows, err = st.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("guesses after correction = %+v, want none", rows)
+	}
+
+	// An evidence-backed add never banks an audit row.
+	if err := add(tui.Result{Card: card, Finish: "foil", Qty: 1}); err != nil {
+		t.Fatalf("evidenced add: %v", err)
+	}
+	if rows, _ := st.GuessedFinishes(); len(rows) != 0 {
+		t.Errorf("guesses after evidenced add = %+v, want none", rows)
+	}
 }

@@ -138,6 +138,19 @@ extension CardReading {
             // as agreement.
             language: scryfallLanguage(printing.language),
             finishSource: printing.finishSource.isEmpty ? nil : printing.finishSource,
+            // What the sparkle reader measured, sent whether or not it decided
+            // anything. A verdict without its measurement is exactly what made
+            // the first live session of this feature unreadable: four foils came
+            // back nonfoil and the log held no number that could say why.
+            sparkleScore: sparkle?.luma.map { Double($0.score) },
+            sparkleOffsetU: sparkle?.luma.map { Double($0.offsetU) },
+            sparkleOffsetV: sparkle?.luma.map { Double($0.offsetV) },
+            sparkleContrast: sparkle?.luma.map { Double($0.contrast) },
+            // Both channels on the wire, always, whichever one decided. A
+            // session that could only see the winner could not tell whether the
+            // colour channel is earning its place.
+            sparkleChromaScore: sparkle?.chroma.map { Double($0.score) },
+            sparkleChromaContrast: sparkle?.chroma.map { Double($0.contrast) },
             // A number lifted out of a copyright row is upgrade-only evidence
             // on the Go side, and mislabelling it as a band read is how a
             // guessed printing gets treated as a confirmed one.

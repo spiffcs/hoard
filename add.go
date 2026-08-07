@@ -130,6 +130,34 @@ func addList(ctx context.Context, st *store.Store, data []byte, display, binderR
 	return err
 }
 
+// cmdGuessed lists every scanned holding still standing on a guessed finish —
+// the audit queue the hands-free default creates. A scan with no legible
+// marker commits nonfoil rather than stopping the session; this is where
+// those rows wait for a human to look at the physical card.
+func cmdGuessed(st *store.Store) error {
+	rows, err := st.GuessedFinishes()
+	if err != nil {
+		return err
+	}
+	env := ui.Detect(os.Stdout)
+	if len(rows) == 0 {
+		fmt.Println(env.Dim()("No guessed finishes — every scanned row was evidence-backed or has been checked."))
+		return nil
+	}
+	noun := "rows"
+	if len(rows) == 1 {
+		noun = "row"
+	}
+	fmt.Printf("%d scanned %s committed without finish evidence:\n\n", len(rows), noun)
+	for _, r := range rows {
+		fmt.Printf("  %s (%s/%s) %s · guessed %s\n", r.Name,
+			strings.ToUpper(r.Set), r.Number, r.Finish, r.GuessedAt)
+	}
+	fmt.Println()
+	fmt.Println(env.Dim()("Check the card; fix a wrong one in browse (enter → finish), which clears it here."))
+	return nil
+}
+
 // storeAdder persists one cascade result: each confirmed card lands
 // immediately, in the container the cascade asked about — the default
 // binder when it never had to ask. Shared by the standalone `hoard add`
@@ -138,22 +166,38 @@ func storeAdder(st *store.Store) tui.Adder {
 	return func(res tui.Result) error {
 		// A finish correction re-keys the row the scan just wrote instead of
 		// adding beside it: the first look at a foil whose marker would not
-		// read committed the nonfoil default, and a later look read it.
+		// read committed the nonfoil default, and a later look read it. The
+		// guess it corrects is answered, so its audit row goes too.
 		if res.ReplacesFinish != "" && res.ReplacesFinish != res.Finish {
 			if res.ContainerID != 0 {
 				// The scan only ever corrects what it just wrote, which is
 				// unassessed by construction: a camera cannot judge wear.
-				_, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
-					res.ReplacesFinish, res.Finish, store.ConditionUnknown)
+				if _, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
+					res.ReplacesFinish, res.Finish, store.ConditionUnknown); err != nil {
+					return err
+				}
+				return st.ClearFinishGuess(res.ContainerID, res.Card.ID, res.ReplacesFinish)
+			}
+			if _, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish); err != nil {
 				return err
 			}
-			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)
+			return st.ClearFinishGuess(res.ContainerID, res.Card.ID, res.ReplacesFinish)
+		}
+		add := func() error {
+			if res.ContainerID != 0 {
+				return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+			}
+			return st.AddCardFinish(res.Card, res.Finish, res.Qty)
+		}
+		if err := add(); err != nil {
 			return err
 		}
-		if res.ContainerID != 0 {
-			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+		// After the add, so a failed write never banks an audit row for a
+		// card the collection does not hold.
+		if res.FinishGuessed {
+			return st.RecordFinishGuess(res.ContainerID, res.Card.ID, res.Finish)
 		}
-		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
+		return nil
 	}
 }
 
