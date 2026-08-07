@@ -13,8 +13,10 @@ import (
 // PriceChange is one printing-and-finish whose price moved between two
 // observations, alongside how much of it is held.
 //
-// Finish is the price's finish, 'nonfoil' or 'foil'; etched copies are counted
-// against the foil price, matching how entryValue values them.
+// Finish is the price's finish — 'nonfoil', 'foil', or 'etched' where the
+// printing has an etched figure of its own; an etched copy of a printing priced
+// only as a foil is counted against the foil price, matching how entryValue
+// values it.
 type PriceChange struct {
 	ScryfallID      string
 	Name            string
@@ -33,6 +35,9 @@ type PriceChange struct {
 	// Treatment is the foil treatment's display word, empty for plain —
 	// same semantics as Card.Treatment.
 	Treatment string
+	// Lang is the printing's language code ("en", "ja"), empty when the card's
+	// document has not been stored — same semantics as Card.Lang.
+	Lang string
 }
 
 // Delta is the movement in one copy's price.
@@ -287,7 +292,8 @@ WITH owned AS (`+ownedByPriceFinish+`),
      cur AS (`+fmt.Sprintf(latestPrices, "")+`),
      base AS (`+fmt.Sprintf(latestPrices, "WHERE as_of <= ?")+`)
 SELECT c.scryfall_id, cur.pfinish, c.name, c.set_code, c.collector_number,
-       o.copies, base.price, cur.price, cur.source, c.color_identity, c.promo_types
+       o.copies, base.price, cur.price, cur.source, c.color_identity, c.promo_types,
+       COALESCE(c.lang, '')
 FROM owned o
 JOIN cur ON cur.sid = o.sid AND cur.pfinish = o.pfinish
 JOIN base ON base.sid = o.sid AND base.pfinish = o.pfinish
@@ -303,7 +309,8 @@ WHERE cur.price <> base.price`, since)
 		var p PriceChange
 		var colors, promos sql.NullString
 		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.Name, &p.SetCode,
-			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors, &promos); err != nil {
+			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors, &promos,
+			&p.Lang); err != nil {
 			return nil, err
 		}
 		p.ColorIdentity = parseColorIdentity(colors)

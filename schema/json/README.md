@@ -37,6 +37,7 @@ are standard:
 | `card.setCode` | Scryfall `set`; MTGJSON `setCode` |
 | `card.number` | Scryfall `collector_number`; MTGJSON `number` |
 | `card.finish` | Scryfall `finishes` vocabulary: `nonfoil` \| `foil` \| `etched` |
+| `card.lang` | Scryfall `lang`; MTGJSON `language` (spelled out there) |
 
 Everything the ecosystem does not model — containers, boards, counts, movers,
 opportunities — is hoard's own, documented in the schema descriptions
@@ -48,6 +49,11 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.1.3** — ADDITION: `card.lang` (Scryfall's language code — `en`, `ja`,
+  `zhs`; absent when hoard has not stored the card's document). Language is
+  part of a printing's identity, since Scryfall mints a distinct id per
+  language, so this names which one `scryfallId` refers to rather than adding
+  a dimension to it.
 - **1.1.2** — ADDITION: `market.comps` — every compared printing's
   per-vendor comp sheet (tcgplayer market, cardkingdom, manapool, the low
   ask, the buylist bid, and the spread as a fraction), ordered by value.

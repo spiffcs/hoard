@@ -11,6 +11,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // Row is one exported holding: a printing in one finish, in one container.
@@ -35,10 +36,15 @@ type Row struct {
 	// ColorIdentity likewise rides along for the JSON emission only — nil
 	// when unknown, empty for colorless (store.Card's semantics).
 	ColorIdentity []string
-	Container     string
-	Kind          string
-	Board         string
-	PriceUSD      *float64
+	// Lang is the printing's language code ("en", "ja"), empty when hoard has
+	// not stored the card's document. Carried for the JSON emission and for
+	// the Moxfield writer, which requires a Language column and had no choice
+	// but to claim English for every row.
+	Lang      string
+	Container string
+	Kind      string
+	Board     string
+	PriceUSD  *float64
 }
 
 // WriteCanonical writes hoard's own CSV: lossless (Scryfall ID makes re-import
@@ -72,9 +78,10 @@ func CanonicalHeader() []string {
 	return append([]string(nil), canonicalHeader...)
 }
 
-// WriteMoxfield writes Moxfield's collection-import columns. Condition and
-// Language are hardcoded to their commonest values because hoard does not
-// track either; Moxfield requires the columns.
+// WriteMoxfield writes Moxfield's collection-import columns. Condition is
+// hardcoded because hoard does not track it and Moxfield requires the column;
+// Language is the printing's own, falling back to English where hoard has not
+// stored the card's document.
 func WriteMoxfield(w io.Writer, rows []Row) error {
 	rows = Sorted(aggregated(rows))
 	cw := csv.NewWriter(w)
@@ -86,12 +93,53 @@ func WriteMoxfield(w io.Writer, rows []Row) error {
 			foil = ""
 		}
 		cw.Write([]string{
-			strconv.Itoa(r.Count), r.Name, r.Set, "Near Mint", "English",
+			strconv.Itoa(r.Count), r.Name, r.Set, "Near Mint", moxfieldLanguage(r.Lang),
 			foil, r.CollectorNumber,
 		})
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// moxfieldLanguage renders a Scryfall language code as the word Moxfield's
+// importer expects.
+//
+// Unknown means English, which is what this column always said before the
+// language was stored: almost every printing is English, and Moxfield rejects
+// an empty cell. A code hoard does not have a word for goes through as-is
+// rather than being silently relabelled English — a wrong word is easier to
+// notice and fix than a wrong assumption.
+func moxfieldLanguage(lang string) string {
+	switch strings.ToLower(lang) {
+	case "", "en":
+		return "English"
+	case "es":
+		return "Spanish"
+	case "fr":
+		return "French"
+	case "de":
+		return "German"
+	case "it":
+		return "Italian"
+	case "pt":
+		return "Portuguese"
+	case "ja":
+		return "Japanese"
+	case "ko":
+		return "Korean"
+	case "ru":
+		return "Russian"
+	case "zhs":
+		return "Chinese Simplified"
+	case "zht":
+		return "Chinese Traditional"
+	case "he", "la", "grc", "ar", "sa", "ph":
+		// The novelty languages Scryfall carries for a handful of promos.
+		// Moxfield has no word for them; sending the code is honest.
+		return lang
+	default:
+		return lang
+	}
 }
 
 // WriteArchidekt writes Archidekt's collection-import columns; their importer

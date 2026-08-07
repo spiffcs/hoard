@@ -1707,28 +1707,28 @@ func TestVerdict(t *testing.T) {
 
 func TestRankByScanStrength(t *testing.T) {
 	cards := solRingPrints()
-	if _, s := rankByScanStrength(cards, "MH3", "123", 0, "", ""); s != scanMatchSetAndNumber {
+	if _, s := rankByScanStrength(cards, "MH3", "123", 0, "", "", ""); s != scanMatchSetAndNumber {
 		t.Errorf("set+number strength = %v, want scanMatchSetAndNumber", s)
 	}
-	if _, s := rankByScanStrength(cards, "", "263", 0, "", ""); s != scanMatchNumberOnly {
+	if _, s := rankByScanStrength(cards, "", "263", 0, "", "", ""); s != scanMatchNumberOnly {
 		t.Errorf("unique number strength = %v, want scanMatchNumberOnly", s)
 	}
 	dupes := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
 	}
-	if _, s := rankByScanStrength(dupes, "", "7", 0, "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(dupes, "", "7", 0, "", "", ""); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared number strength = %v, want scanMatchNumberAmbiguous", s)
 	}
-	if _, s := rankByScanStrength(cards[:1], "", "", 0, "", ""); s != scanMatchSinglePrint {
+	if _, s := rankByScanStrength(cards[:1], "", "", 0, "", "", ""); s != scanMatchSinglePrint {
 		t.Errorf("single printing strength = %v, want scanMatchSinglePrint", s)
 	}
 	// A number that matches nothing makes even a lone printing suspect: the
 	// name match may have landed on the wrong card entirely.
-	if _, s := rankByScanStrength(cards[:1], "", "999", 0, "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards[:1], "", "999", 0, "", "", ""); s != scanMatchNone {
 		t.Errorf("conflicting number strength = %v, want scanMatchNone", s)
 	}
-	if _, s := rankByScanStrength(cards, "", "", 0, "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards, "", "", 0, "", "", ""); s != scanMatchNone {
 		t.Errorf("no signal strength = %v, want scanMatchNone", s)
 	}
 }
@@ -1840,9 +1840,9 @@ func TestApplyBorderEvidence(t *testing.T) {
 // the whole catalog — it is the single remaining difference between them.
 func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 	prints := controlMagicPrints()
-	_, before := rankByScanStrength(prints, "", "", 1995, "", "")
+	_, before := rankByScanStrength(prints, "", "", 1995, "", "", "")
 	reordered, _ := applyBorderEvidence(prints, "white", 1995)
-	_, after := rankByScanStrength(reordered, "", "", 1995, "", "")
+	_, after := rankByScanStrength(reordered, "", "", 1995, "", "", "")
 	if before != after {
 		t.Errorf("rank moved from %v to %v after a border reorder", before, after)
 	}
@@ -1864,7 +1864,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "alt", Name: "X", Set: "ody", CollectorNumber: "72†"},
 		{ID: "plain", Name: "X", Set: "ody", CollectorNumber: "72"},
 	}
-	ranked, s := rankByScanStrength(variants, "", "", 0, "", "")
+	ranked, s := rankByScanStrength(variants, "", "", 0, "", "", "")
 	if s != scanMatchSinglePrint {
 		t.Errorf("variant pair strength = %v, want scanMatchSinglePrint", s)
 	}
@@ -1876,7 +1876,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "plain", Name: "X", Set: "8ed", CollectorNumber: "95"},
 		{ID: "star", Name: "X", Set: "8ed", CollectorNumber: "95★"},
 	}
-	if _, s := rankByScanStrength(stars, "", "", 0, "", ""); s != scanMatchSinglePrint {
+	if _, s := rankByScanStrength(stars, "", "", 0, "", "", ""); s != scanMatchSinglePrint {
 		t.Errorf("star pair strength = %v, want scanMatchSinglePrint", s)
 	}
 	// Variants across different sets are genuinely different printings.
@@ -1884,7 +1884,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "a", Name: "X", Set: "7ed", CollectorNumber: "95"},
 		{ID: "b", Name: "X", Set: "8ed", CollectorNumber: "95★"},
 	}
-	if _, s := rankByScanStrength(spread, "", "", 0, "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(spread, "", "", 0, "", "", ""); s != scanMatchNone {
 		t.Errorf("cross-set variants strength = %v, want scanMatchNone", s)
 	}
 }
@@ -1899,7 +1899,7 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 	// The year did not merely break the tie, it agreed with the winner — two
 	// signals, so the name gate is waived downstream.
-	ranked, s := rankByScanStrength(prints, "", "95", 2003, "", "")
+	ranked, s := rankByScanStrength(prints, "", "95", 2003, "", "", "")
 	if s != scanMatchNumberAndYear {
 		t.Errorf("year-pinned strength = %v, want scanMatchNumberAndYear", s)
 	}
@@ -1908,7 +1908,7 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 	// A misread year matches no printing and must leave the tie as it found
 	// it — ambiguous queues, never a guessed commit.
-	if _, s := rankByScanStrength(prints, "", "95", 2013, "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(prints, "", "95", 2013, "", "", ""); s != scanMatchNumberAmbiguous {
 		t.Errorf("misread year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
 	// A year shared by both matches decides nothing either.
@@ -1916,11 +1916,11 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7", ReleasedAt: "2003-01-01"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7", ReleasedAt: "2003-06-01"},
 	}
-	if _, s := rankByScanStrength(same, "", "7", 2003, "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(same, "", "7", 2003, "", "", ""); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
 	// The year never overrides a full set+number verification.
-	if _, s := rankByScanStrength(prints, "7ed", "95", 2003, "", ""); s != scanMatchSetAndNumber {
+	if _, s := rankByScanStrength(prints, "7ed", "95", 2003, "", "", ""); s != scanMatchSetAndNumber {
 		t.Errorf("set+number with year = %v, want scanMatchSetAndNumber", s)
 	}
 }
@@ -2687,7 +2687,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "")
 	m.review = []queueItem{{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		raw:    scan.Card{SetCode: "MH3", CollectorNumber: "123", Confidence: 0.5},
 		match:  cardname.Match{Exact: true, Similarity: 1},
@@ -2734,7 +2734,7 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "")
 	item := queueItem{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		match:  cardname.Match{Exact: true, Similarity: 1},
 		prints: ranked, rank: rank, note: "queued"}
@@ -3240,7 +3240,7 @@ func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
 		{ID: "10e", Name: "Keeper of the Nine Gales", Set: "10e", CollectorNumber: "88",
 			ReleasedAt: "2007-07-13", Finishes: []string{"nonfoil"}},
 	}
-	ranked, rank := rankByScanStrength(prints, "", "", 2003, "", "")
+	ranked, rank := rankByScanStrength(prints, "", "", 2003, "", "", "")
 	if rank != scanMatchYearOnly {
 		t.Fatalf("rank = %v, want scanMatchYearOnly", rank)
 	}
@@ -3255,15 +3255,15 @@ func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
 // Two printings from the same year settle nothing, so the card must queue
 // rather than pick whichever the catalog happened to list first.
 func TestCopyrightYearAmbiguousLeavesUnverified(t *testing.T) {
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003, "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003, "", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone — both printings are 2003", rank)
 	}
 	// A year matching no printing is the misread case: unchanged behavior.
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997, "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997, "", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone for a year no printing shares", rank)
 	}
 	// And with no year read at all, nothing changes either.
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0, "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0, "", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone without a year", rank)
 	}
 }
@@ -3442,8 +3442,11 @@ type blockFakeSearcher struct {
 	asked   []string
 }
 
-func (s *blockFakeSearcher) PrintBySetNumber(_ context.Context, set, number string) (*scryfall.Card, error) {
+func (s *blockFakeSearcher) PrintBySetNumberLang(_ context.Context, set, number, lang string) (*scryfall.Card, error) {
 	key := strings.ToLower(set) + "/" + number
+	if lang != "" && !strings.EqualFold(lang, "en") {
+		key += "/" + strings.ToLower(lang)
+	}
 	s.asked = append(s.asked, key)
 	if c, ok := s.byBlock[key]; ok {
 		return &c, nil
@@ -3560,7 +3563,7 @@ func eternalDragonPrints() []scryfall.Card {
 // at 76% and queued while the band read a clean 12/143 and "1993-2003".
 func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 	prints := eternalDragonPrints()
-	ranked, rank := rankByScanStrength(prints, "", "12", 2003, "", "")
+	ranked, rank := rankByScanStrength(prints, "", "12", 2003, "", "", "")
 	if rank != scanMatchNumberAndYear {
 		t.Fatalf("rank = %v, want scanMatchNumberAndYear", rank)
 	}
@@ -3583,7 +3586,7 @@ func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 // collector number 12 is common enough that a fuzzy match onto the wrong card
 // could collide with it, which is the luck the second signal removes.
 func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
-	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0, "", "")
+	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0, "", "", "")
 	if rank != scanMatchNumberOnly {
 		t.Fatalf("rank = %v, want scanMatchNumberOnly without a year", rank)
 	}
@@ -3599,7 +3602,7 @@ func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
 
 // A year that agrees with no printing is a misread and must add nothing.
 func TestDisagreeingYearDoesNotEarnTheRank(t *testing.T) {
-	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999, "", ""); rank != scanMatchNumberOnly {
+	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999, "", "", ""); rank != scanMatchNumberOnly {
 		t.Errorf("rank = %v, want scanMatchNumberOnly when the year matches nothing", rank)
 	}
 }

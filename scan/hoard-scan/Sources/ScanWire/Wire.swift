@@ -102,6 +102,8 @@ public struct Event: Encodable {
     public var collectorAlts: [CollectorRead]? = nil
     /// The primary block's printed finish marker; see CollectorRead.finish.
     public var finishHint: String? = nil
+    /// The primary block's printed language code; see CollectorRead.language.
+    public var language: String? = nil
 
     /// Spelled out rather than left to the compiler because making these types
     /// public to share them costs the implicit memberwise init. Argument order
@@ -128,7 +130,8 @@ public struct Event: Encodable {
         features: [String]? = nil,
         state: String? = nil,
         collectorAlts: [CollectorRead]? = nil,
-        finishHint: String? = nil
+        finishHint: String? = nil,
+        language: String? = nil
     ) {
         self.event = event
         self.name = name
@@ -150,6 +153,7 @@ public struct Event: Encodable {
         self.state = state
         self.collectorAlts = collectorAlts
         self.finishHint = finishHint
+        self.language = language
     }
 }
 
@@ -172,6 +176,9 @@ public struct CardEntry: Encodable {
     public var collectorAlts: [CollectorRead]? = nil
     /// The primary block's printed finish marker; see CollectorRead.finish.
     public var finishHint: String = ""
+    /// The printed language code; see CollectorRead.language. Optional so a
+    /// capture on a frame that prints none keeps the old wire shape.
+    public var language: String? = nil
     /// Which signal produced finishHint: "separator" is the modern set row's
     /// glyph, "sparkle" the starburst a retro-frame foil prints at the text
     /// box's corner. Absent when no finish was read.
@@ -215,6 +222,7 @@ public struct CardEntry: Encodable {
         source: String = "",
         collectorAlts: [CollectorRead]? = nil,
         finishHint: String = "",
+        language: String? = nil,
         finishSource: String? = nil,
         numberSource: String? = nil,
         copyrightYear: Int? = nil,
@@ -229,6 +237,7 @@ public struct CardEntry: Encodable {
         self.source = source
         self.collectorAlts = collectorAlts
         self.finishHint = finishHint
+        self.language = language
         self.finishSource = finishSource
         self.numberSource = numberSource
         self.copyrightYear = copyrightYear
@@ -242,6 +251,14 @@ public struct CollectorRead: Encodable {
     public var number = ""
     public var set = ""
     public var finish = ""
+    /// The language code printed beside the set code ("en", "ja"), lower-cased
+    /// to Scryfall's spelling. Empty on frames that print none.
+    ///
+    /// It crosses because the Go side has a use for it that nothing else can
+    /// serve: a printing published only in another language shares a set and a
+    /// collector number with its English namesake, separated by a marker the
+    /// card does not print, so the number alone always picks the English one.
+    public var language = ""
     /// Whether the number was read in "n/total" form. A bare number shares its
     /// shape with a mana cost and a power box; a pair with a plausible total
     /// does not, so the crop channel can trust one and not the other. Local
@@ -249,13 +266,17 @@ public struct CollectorRead: Encodable {
     public var pair = false
 
     enum CodingKeys: String, CodingKey {
-        case number, set, finish
+        case number, set, finish, language
     }
 
-    public init(number: String = "", set: String = "", finish: String = "", pair: Bool = false) {
+    public init(
+        number: String = "", set: String = "", finish: String = "",
+        language: String = "", pair: Bool = false
+    ) {
         self.number = number
         self.set = set
         self.finish = finish
+        self.language = language
         self.pair = pair
     }
 }

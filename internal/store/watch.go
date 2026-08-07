@@ -23,7 +23,7 @@ type Watch struct {
 	// Display is the card's name as resolved at creation; the set, number
 	// and price are joined from the catalog at read time.
 	Display   string
-	Finish    string // nonfoil|foil — the two finishes prices come in
+	Finish    string // nonfoil|foil|etched — the finishes prices come in
 	Op        string // under|over
 	Threshold float64
 	CreatedAt string
@@ -42,7 +42,10 @@ type WatchStatus struct {
 	// Treatment is the foil treatment's display word, empty for plain —
 	// same semantics as Card.Treatment.
 	Treatment string
-	PriceUSD  *float64
+	// Lang is the printing's language code ("en", "ja"), empty when the card's
+	// document has not been stored — same semantics as Card.Lang.
+	Lang     string
+	PriceUSD *float64
 }
 
 // Met reports whether the watch's condition currently holds.
@@ -70,8 +73,8 @@ func validateWatch(op, finish string) error {
 	if op != "under" && op != "over" {
 		return fmt.Errorf("watch op must be under or over, not %q", op)
 	}
-	if finish != "nonfoil" && finish != "foil" {
-		return fmt.Errorf("watch finish must be nonfoil or foil, not %q", finish)
+	if err := validFinish(finish); err != nil {
+		return fmt.Errorf("watch %v", err)
 	}
 	return nil
 }
@@ -94,7 +97,7 @@ func (s *Store) AddWatch(scryfallID, display, finish, op string, threshold float
 type WatchInput struct {
 	ScryfallID string
 	Display    string
-	Finish     string // nonfoil|foil
+	Finish     string // nonfoil|foil|etched
 	Op         string // under|over
 	Threshold  float64
 }
@@ -141,7 +144,7 @@ const watchStatusQuery = `
 SELECT w.id, w.scryfall_id, w.display, w.finish, w.op, w.threshold,
        w.created_at, w.last_state,
        c.name, c.set_code, c.collector_number, COALESCE(c.mtgjson_uuid, ''),
-       c.promo_types,
+       c.promo_types, COALESCE(c.lang, ''),
        CASE WHEN w.finish = 'etched' THEN ` + effPriceEtched + `
             WHEN w.finish = 'foil'   THEN ` + effPriceFoil + `
             ELSE ` + effPriceUSD + ` END
@@ -164,7 +167,7 @@ func (s *Store) ListWatches() ([]WatchStatus, error) {
 		if err := rows.Scan(&w.ID, &w.ScryfallID, &w.Display, &w.Finish, &w.Op,
 			&w.Threshold, &w.CreatedAt, &w.LastState,
 			&w.Name, &w.SetCode, &w.CollectorNumber, &w.MTGJSONUUID,
-			&promos, &w.PriceUSD); err != nil {
+			&promos, &w.Lang, &w.PriceUSD); err != nil {
 			return nil, err
 		}
 		w.Treatment = FoilTreatment(promos)

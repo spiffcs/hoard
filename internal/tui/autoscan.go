@@ -9,6 +9,7 @@ package tui
 // The model wiring lives in model.go.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
@@ -33,14 +34,15 @@ type scanMatch int
 // that card's printings — and must outrank the no-number sentinel, which is
 // only ever a floor.
 const (
-	scanMatchNone            scanMatch = iota
-	scanMatchNumberAmbiguous           // number matched, but several printings share it
-	scanMatchYearOnly                  // no number, but the copyright year names one printing
-	scanMatchYearAndMarks              // year narrowed to a few, the card's printed markings picked one
-	scanMatchNumberOnly                // number matched exactly one printing
-	scanMatchSinglePrint               // no number read, but only one printing exists
-	scanMatchNumberAndYear             // number named a printing and its release year agrees
-	scanMatchSetAndNumber              // set and number both matched
+	scanMatchNone             scanMatch = iota
+	scanMatchNumberAmbiguous            // number matched, but several printings share it
+	scanMatchYearOnly                   // no number, but the copyright year names one printing
+	scanMatchYearAndMarks               // year narrowed to a few, the card's printed markings picked one
+	scanMatchNumberOnly                 // number matched exactly one printing
+	scanMatchSinglePrint                // no number read, but only one printing exists
+	scanMatchNumberAndYear              // number named a printing and its release year agrees
+	scanMatchSetAndNumber               // set and number both matched
+	scanMatchSetNumberAndLang           // set, number and the printed language all matched
 )
 
 // numberVerified reports whether a collector number actually matched a
@@ -49,8 +51,8 @@ const (
 // The no-number ranks are excluded — single-print and year-only never had a
 // number to check.
 func numberVerified(r scanMatch) bool {
-	return r == scanMatchSetAndNumber || r == scanMatchNumberAndYear ||
-		r == scanMatchNumberOnly
+	return r == scanMatchSetNumberAndLang || r == scanMatchSetAndNumber ||
+		r == scanMatchNumberAndYear || r == scanMatchNumberOnly
 }
 
 // corroboratedPrinting reports whether *two* independent pieces of printing
@@ -62,7 +64,8 @@ func numberVerified(r scanMatch) bool {
 // fuzzy match onto the wrong card could collide with it by luck — pairing it
 // with the set code or the release year is what removes the luck.
 func corroboratedPrinting(r scanMatch) bool {
-	return r == scanMatchSetAndNumber || r == scanMatchNumberAndYear
+	return r == scanMatchSetNumberAndLang || r == scanMatchSetAndNumber ||
+		r == scanMatchNumberAndYear
 }
 
 // String names the match for the telemetry log.
@@ -82,6 +85,8 @@ func (m scanMatch) String() string {
 		return "single-print"
 	case scanMatchSetAndNumber:
 		return "set+number"
+	case scanMatchSetNumberAndLang:
+		return "set+number+lang"
 	default:
 		return "none"
 	}
@@ -366,7 +371,7 @@ func hasPrintingEvidence(c scan.Card) bool {
 // blockSearcher is implemented by searchers that can resolve a printing from
 // its collector block alone.
 type blockSearcher interface {
-	PrintBySetNumber(ctx context.Context, set, number string) (*scryfall.Card, error)
+	PrintBySetNumberLang(ctx context.Context, set, number, lang string) (*scryfall.Card, error)
 }
 
 // resolveByBlock identifies a card from a collector block when no line of text
@@ -383,13 +388,14 @@ func resolveByBlock(ctx context.Context, s Searcher, c scan.Card) (*scryfall.Car
 		return nil, scan.CollectorAlt{}
 	}
 	blocks := append([]scan.CollectorAlt{
-		{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint, Source: c.NumberSource}},
+		{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint,
+			Source: c.NumberSource, Language: c.Language}},
 		c.CollectorAlts...)
 	for _, b := range blocks {
 		if b.Set == "" || b.Number == "" || b.Source == "copyright" {
 			continue
 		}
-		card, err := byBlock.PrintBySetNumber(ctx, b.Set, b.Number)
+		card, err := byBlock.PrintBySetNumberLang(ctx, b.Set, b.Number, b.Language)
 		if err == nil && card != nil {
 			return card, b
 		}
@@ -620,7 +626,8 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
 				for _, cd := range cands {
 					ranked, r := rankByScanStrength(
-						prints, cd.Set, cd.Number, cd.Year, c.BorderColor, c.FinishHint)
+						prints, cd.Set, cd.Number, cd.Year, c.BorderColor, c.FinishHint,
+						cmp.Or(cd.Language, c.Language))
 					if r > it.rank {
 						it.prints, it.rank = ranked, r
 						// The winning candidate becomes the item's collector
@@ -678,8 +685,8 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 		return false, "", "no printings found"
 	}
 	switch it.rank {
-	case scanMatchSetAndNumber, scanMatchNumberAndYear, scanMatchNumberOnly,
-		scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks:
+	case scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
+		scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks:
 	case scanMatchNumberAmbiguous:
 		// A number that matched several printings commits the one the ranking
 		// put in front, rather than queuing.
@@ -764,11 +771,6 @@ func finishFromEvidence(card scryfall.Card, hint string) (finish string, evidenc
 	return "nonfoil", false
 }
 
-// variationMarkers are the suffixes Scryfall appends to a collector number for
-// a same-set variation — † (theme-deck alternates), ★ (foil-only rows),
-// Φ (Phyrexian-text printings).
-const variationMarkers = "†★Φ"
-
 // collapseVariants reports whether every printing is the same logical printing
 // — one set, one base collector number, the rows differing only by a variation
 // marker — returning the unmarked row first when so. Without this, a card
@@ -777,7 +779,7 @@ const variationMarkers = "†★Φ"
 // every scan.
 func collapseVariants(cards []scryfall.Card) ([]scryfall.Card, bool) {
 	base := func(c scryfall.Card) string {
-		return strings.ToLower(c.Set) + "/" + strings.TrimRight(c.CollectorNumber, variationMarkers)
+		return strings.ToLower(c.Set) + "/" + scryfall.BaseNumber(c.CollectorNumber)
 	}
 	for _, c := range cards[1:] {
 		if base(c) != base(cards[0]) {
@@ -786,12 +788,12 @@ func collapseVariants(cards []scryfall.Card) ([]scryfall.Card, bool) {
 	}
 	ranked := make([]scryfall.Card, 0, len(cards))
 	for _, c := range cards {
-		if c.CollectorNumber == strings.TrimRight(c.CollectorNumber, variationMarkers) {
+		if c.CollectorNumber == scryfall.BaseNumber(c.CollectorNumber) {
 			ranked = append(ranked, c)
 		}
 	}
 	for _, c := range cards {
-		if c.CollectorNumber != strings.TrimRight(c.CollectorNumber, variationMarkers) {
+		if c.CollectorNumber != scryfall.BaseNumber(c.CollectorNumber) {
 			ranked = append(ranked, c)
 		}
 	}
@@ -1009,8 +1011,48 @@ func moveToFront(cards []scryfall.Card, i int) []scryfall.Card {
 // release year, so it can break a number tie ("95" is both 7th and 8th
 // Edition; only one was printed in 2003). A misread year simply matches no
 // printing and leaves the tie ambiguous, exactly as if it were never read.
+// numberMatches are the printings that answer to the number read off the card.
+//
+// Exact is the ordinary case. A marker-trimmed sibling also answers — `war/97★`
+// beside `war/97`, where Scryfall keeps two rows apart under one number using a
+// glyph the card does not print, so OCR reads the bare number and can only ever
+// reach the unmarked row — but only when the card's own set row vouches for it
+// with *both* its set code and its language.
+//
+// Requiring the set code is what makes an unreliable language safe to act on.
+// Measured over scan/corpus the language read answers on a fifth of cards and
+// is right four in five, and its errors are systematic: a line of rules text
+// parses as a set row and donates a language, so "…put it into your hand"
+// yields Italian on a plainly English card (docs/scanner-tuning.md, "Prose
+// fabricates set codes"). But that same fabrication invents the set code beside
+// it, and an invented set code matches no printing — so the bogus language
+// arrives attached to a set that rules it out, and the sibling never enters the
+// running. A language is only ever trusted in the company of a set code that
+// checks out.
+func numberMatches(cards []scryfall.Card, set, number, lang string) []int {
+	var out []int
+	for i, c := range cards {
+		switch {
+		case strings.EqualFold(c.CollectorNumber, number):
+			out = append(out, i)
+		case set != "" && lang != "" &&
+			strings.EqualFold(c.Set, set) && strings.EqualFold(c.Lang, lang) &&
+			strings.EqualFold(scryfall.BaseNumber(c.CollectorNumber), number):
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// langSaysSo reports whether the card's printed language agrees with this
+// printing's. Unknown on either side is not agreement: a catalog built before
+// the language column stores none, and silence must not read as a match.
+func langSaysSo(c scryfall.Card, lang string) bool {
+	return lang != "" && c.Lang != "" && strings.EqualFold(c.Lang, lang)
+}
+
 func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
-	border, finish string,
+	border, finish, lang string,
 ) ([]scryfall.Card, scanMatch) {
 	if len(cards) == 0 {
 		return cards, scanMatchNone
@@ -1082,13 +1124,19 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 		}
 		return cards, scanMatchNone
 	}
-	best, matchIdxs, exactSet := -1, []int(nil), false
-	for i, c := range cards {
-		if !strings.EqualFold(c.CollectorNumber, number) {
-			continue
+	matchIdxs := numberMatches(cards, set, number, lang)
+	best, exactSet, langAgrees := -1, false, false
+	for _, i := range matchIdxs {
+		c := cards[i]
+		setMatches := set != "" && strings.EqualFold(c.Set, set)
+		// Among rows that all answer to the number, the language breaks the tie:
+		// `war/97` and `war/97★` share a set and a number, and the marked one is
+		// the Japanese alternate art at fourteen times the price.
+		if setMatches && langSaysSo(c, lang) {
+			best, exactSet, langAgrees = i, true, true
+			break
 		}
-		matchIdxs = append(matchIdxs, i)
-		if set != "" && strings.EqualFold(c.Set, set) && !exactSet {
+		if setMatches && !exactSet {
 			best, exactSet = i, true
 			continue
 		}
@@ -1142,6 +1190,8 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 	yearAgrees := year > 0 && strings.HasPrefix(cards[best].ReleasedAt, fmt.Sprintf("%d", year))
 	ranked := moveToFront(cards, best)
 	switch {
+	case exactSet && langAgrees:
+		return ranked, scanMatchSetNumberAndLang
 	case exactSet:
 		return ranked, scanMatchSetAndNumber
 	case (len(matchIdxs) == 1 || yearPinned || markPinned) && yearAgrees:

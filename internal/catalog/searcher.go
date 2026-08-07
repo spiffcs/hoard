@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/cardname"
@@ -90,18 +91,80 @@ ORDER BY released_at DESC, set_code, collector_number`, norm)
 // Both halves are required. A bare number is shared by every set ever printed,
 // so a number without a set is not evidence of anything. Returns nil when the
 // block matches no printing, which is the honest answer for a misread.
-func (c *Catalog) PrintBySetNumber(_ context.Context, set, number string) (*scryfall.Card, error) {
-	set, number = strings.TrimSpace(set), strings.TrimSpace(number)
+func (c *Catalog) PrintBySetNumber(ctx context.Context, set, number string) (*scryfall.Card, error) {
+	return c.PrintBySetNumberLang(ctx, set, number, "")
+}
+
+// PrintBySetNumberLang resolves a printing from its collector block, using the
+// language printed on the card to choose between same-numbered siblings.
+//
+// A printing published only in another language sits beside its English
+// namesake under the same set and number, told apart only by a marker the card
+// does not print. `war/97` is Liliana, Dreadhorde General at $8.06 and
+// `war/97★` is the Japanese alternate art at $113.45 — one scan, fourteen times
+// the money, and the number alone always picked the cheap one.
+//
+// lang is Scryfall's code ("ja"), empty when the frame printed none or the read
+// did not clear the helper's vocabulary. It is only ever consulted alongside a
+// set code that matches, because a line of rules text can parse as a set row
+// and donate a language the card never printed — and the same fabrication
+// invents the set code beside it, which matches nothing. See numberMatches in
+// internal/tui/autoscan.go, which applies the same rule to the ranked list.
+//
+// Ambiguity fails closed: if the language does not name exactly one row, the
+// caller is better served by the ordinary path than by a guess.
+func (c *Catalog) PrintBySetNumberLang(_ context.Context, set, number, lang string) (*scryfall.Card, error) {
+	set, number, lang = strings.TrimSpace(set), strings.TrimSpace(number), strings.TrimSpace(lang)
 	if set == "" || number == "" {
 		return nil, nil
 	}
-	rows, err := c.db.Query(`
-SELECT `+cardColumns+`
-FROM cards WHERE set_code = ? COLLATE NOCASE AND collector_number = ? COLLATE NOCASE
-ORDER BY released_at DESC
-LIMIT 2`, set, number)
+	// Rows that answer to the number: the exact one, plus a marker-trimmed
+	// sibling when the card's own set row vouches for it with its language.
+	//
+	// Both are gathered in one pass rather than exact-first, because
+	// exact-first cannot see the case this exists for: `war/97` answers
+	// exactly, so `war/97★` — the row the card actually is — would never be
+	// reached. The language decides between them below.
+	found, err := c.printsMatching(4,
+		`set_code = ? COLLATE NOCASE
+		   AND (collector_number = ? COLLATE NOCASE
+		        OR (? <> ''
+		            AND lang = ? COLLATE NOCASE
+		            AND rtrim(collector_number, ?) = ? COLLATE NOCASE))`,
+		set, number, lang, lang, scryfall.VariationMarkers, number)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: looking up %s %s: %w", set, number, err)
+	}
+	if len(found) == 1 {
+		return &found[0], nil
+	}
+	// Several answered. The language is the only thing that separates a
+	// foreign-only printing from its English namesake, so it decides — and if
+	// it does not name exactly one, this fails closed as it always has.
+	if lang != "" {
+		var agreed []scryfall.Card
+		for _, card := range found {
+			if strings.EqualFold(card.Lang, lang) {
+				agreed = append(agreed, card)
+			}
+		}
+		if len(agreed) == 1 {
+			return &agreed[0], nil
+		}
+	}
+	return nil, nil
+}
+
+// printsMatching runs one printing lookup, newest first, stopping at limit rows
+// — enough to tell "one answer" from "ambiguous", which is all any caller asks.
+func (c *Catalog) printsMatching(limit int, where string, args ...any) ([]scryfall.Card, error) {
+	rows, err := c.db.Query(`
+SELECT `+cardColumns+`
+FROM cards WHERE `+where+`
+ORDER BY released_at DESC
+LIMIT `+strconv.Itoa(limit), args...)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -113,16 +176,7 @@ LIMIT 2`, set, number)
 		}
 		found = append(found, card)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	// A set and number should name one row. More than one means the catalog
-	// holds variants under the same key, and picking between them without a
-	// name is a guess — the caller is better served by the ordinary path.
-	if len(found) != 1 {
-		return nil, nil
-	}
-	return &found[0], nil
+	return found, rows.Err()
 }
 
 // fuzzyCandidates is how many trigram-ranked names are scored properly.

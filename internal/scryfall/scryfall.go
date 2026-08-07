@@ -44,8 +44,17 @@ type Card struct {
 	// Display fields, populated by search results and used to disambiguate
 	// printings interactively. They are ignored by the store, which reads the
 	// equivalents out of Raw instead.
-	SetName      string
-	ReleasedAt   string
+	SetName    string
+	ReleasedAt string
+	// Lang is Scryfall's language code ("en", "ja", "zhs"). Empty when the
+	// source did not say.
+	//
+	// Language is already part of a printing's identity — Scryfall mints a
+	// distinct id per language — so this is not a key, it is how a scan picks
+	// between two ids that share a set and a collector number. Only the
+	// marked-number siblings do: `war/97` is the English Liliana and `war/97★`
+	// the Japanese alternate art, at fourteen times the price.
+	Lang         string
 	Finishes     []string // e.g. ["nonfoil","foil","etched"]
 	PromoTypes   []string
 	FrameEffects []string
@@ -105,6 +114,7 @@ type apiCard struct {
 	CollectorNumber string   `json:"collector_number"`
 	ScryfallURI     string   `json:"scryfall_uri"`
 	ReleasedAt      string   `json:"released_at"`
+	Lang            string   `json:"lang"`
 	Finishes        []string `json:"finishes"`
 	PromoTypes      []string `json:"promo_types"`
 	FrameEffects    []string `json:"frame_effects"`
@@ -419,6 +429,7 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 		CollectorNumber: ac.CollectorNumber,
 		ScryfallURL:     ac.ScryfallURI,
 		ReleasedAt:      ac.ReleasedAt,
+		Lang:            ac.Lang,
 		Finishes:        ac.Finishes,
 		PromoTypes:      ac.PromoTypes,
 		FrameEffects:    ac.FrameEffects,

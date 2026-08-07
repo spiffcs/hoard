@@ -28,7 +28,11 @@ import (
 //
 // v2 added colors and color_identity, so the add-flow picker can show
 // identity pips for cards not yet owned.
-const schemaVersion = 2
+//
+// v3 added lang, so a scan that reads a card's language can tell a
+// foreign-only printing from its English namesake — they share a set and a
+// collector number, differing only by a marker the OCR cannot see.
+const schemaVersion = 3
 
 // fileName is the catalog's name inside the cache directory.
 const fileName = "catalog.db"
@@ -50,6 +54,16 @@ CREATE TABLE cards (
     set_name         TEXT,
     released_at      TEXT,
     rarity           TEXT,
+    -- Scryfall's two- or three-letter language code ("en", "ja", "zhs").
+    --
+    -- The bundle is default_cards, so this is "en" for almost everything: one
+    -- row per printing, English where an English printing exists. It earns its
+    -- place on the rows where it is not — a printing published only in another
+    -- language, like the War of the Spark Japanese alternate-art planeswalkers,
+    -- which sit beside their English namesake under a marked collector number
+    -- and trade for many times as much. The scanner reads the language off the
+    -- card's set row, and this is what it matches against.
+    lang             TEXT,
     finishes         TEXT,
     promo_types      TEXT,
     frame_effects    TEXT,

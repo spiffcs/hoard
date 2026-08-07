@@ -1,5 +1,7 @@
 package scryfall
 
+import "strings"
+
 // The finish-to-price-column rules. They live here, beside the Card type both
 // the API client and the catalog produce, so every consumer values a finish
 // the same way.
@@ -60,4 +62,21 @@ func Finishes(c Card) []string {
 		}
 	}
 	return out
+}
+
+// VariationMarkers are the suffixes Scryfall appends to a collector number to
+// keep two printings apart under one number — † for theme-deck alternates, ★
+// for foil-only rows and for a printing published in another language beside
+// its English namesake, Φ for Phyrexian text.
+//
+// A card does not print them: they are Scryfall's bookkeeping, so OCR reads the
+// bare number and lands on the unmarked row. That is right until the marked
+// sibling is the expensive one — `war/97` is Liliana, Dreadhorde General at
+// $7.95 and `war/97★` the Japanese alternate art at $112.73.
+const VariationMarkers = "★†Φ"
+
+// BaseNumber is a collector number with any variation marker removed, which is
+// what OCR reads off the card.
+func BaseNumber(number string) string {
+	return strings.TrimRight(number, VariationMarkers)
 }

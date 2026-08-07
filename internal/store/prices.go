@@ -181,6 +181,9 @@ type UnpricedRow struct {
 	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
 	// same semantics as Card.ColorIdentity.
 	ColorIdentity []string
+	// Lang is the printing's language code ("en", "ja"), empty when the card's
+	// document has not been stored — same semantics as Card.Lang.
+	Lang string
 }
 
 // Unpriced lists the same gaps as UnpricedByOwnedFinish, broken out per finish
@@ -202,7 +205,7 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
        SUM(e.quantity) AS copies,
        GROUP_CONCAT(DISTINCT ct.name) AS held_in,
        GROUP_CONCAT(ct.name, char(31)) AS held_in_raw,
-       c.color_identity, c.promo_types
+       c.color_identity, c.promo_types, COALESCE(c.lang, '')
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -220,7 +223,8 @@ ORDER BY c.name, e.finish`)
 		var raw string
 		var colors, promos sql.NullString
 		if err := rows.Scan(&u.ScryfallID, &u.MTGJSONUUID, &u.Name, &u.SetCode,
-			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw, &colors, &promos); err != nil {
+			&u.CollectorNumber, &u.Finish, &u.Copies, &u.HeldIn, &raw, &colors, &promos,
+			&u.Lang); err != nil {
 			return nil, err
 		}
 		u.ColorIdentity = parseColorIdentity(colors)

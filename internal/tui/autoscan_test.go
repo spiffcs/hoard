@@ -110,7 +110,7 @@ func TestYearAndBorderPicksBetweenSameNumberPrintings(t *testing.T) {
 		{"no border settles nothing", "", "", scanMatchNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ranked, rank := rankByScanStrength(controlMagicPrints(), "", "", 1995, tc.border, "")
+			ranked, rank := rankByScanStrength(controlMagicPrints(), "", "", 1995, tc.border, "", "")
 			if rank != tc.wantRank {
 				t.Fatalf("rank = %v, want %v", rank, tc.wantRank)
 			}
@@ -136,7 +136,7 @@ func TestBlackExcludesGoldButWhiteDoesNot(t *testing.T) {
 		{ID: "black", Name: "Mana Leak", Set: "sth", CollectorNumber: "36",
 			ReleasedAt: "1998-03-02", BorderColor: "black"},
 	}
-	ranked, rank := rankByScanStrength(manaLeak, "", "", 1998, "black", "")
+	ranked, rank := rankByScanStrength(manaLeak, "", "", 1998, "black", "", "")
 	if rank != scanMatchYearAndMarks {
 		t.Fatalf("rank = %v, want year+border: black rules out the gold printing", rank)
 	}
@@ -145,7 +145,7 @@ func TestBlackExcludesGoldButWhiteDoesNot(t *testing.T) {
 	}
 	// And the reverse still fails closed: white leaves the gold standing, and a
 	// winner chosen by elimination is not confirmed by anything.
-	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone: white cannot exclude gold", rank)
 	}
 	// The asymmetry, stated directly.
@@ -185,7 +185,7 @@ func TestBorderNeverRulesOutAColourItCannotRead(t *testing.T) {
 	}
 	// White is the answer that cannot separate them: gold survives it, and a
 	// survivor chosen purely by eliminating its sibling confirms nothing.
-	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone: white cannot exclude gold", rank)
 	}
 	if borderRulesOut(manaLeak[1], "white") {
@@ -202,17 +202,17 @@ func TestYearAndBorderFailsClosed(t *testing.T) {
 		{ID: "b", Name: "X", Set: "p2", CollectorNumber: "2",
 			ReleasedAt: "1995-01-01", BorderColor: "white"},
 	}
-	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "white", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "white", "", ""); rank != scanMatchNone {
 		t.Error("a border matching every printing must settle nothing")
 	}
 	// A border that rules *everything* out disagrees with the whole catalog,
 	// which is a reason to distrust the read rather than to pick from nothing.
-	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "black", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "black", "", ""); rank != scanMatchNone {
 		t.Error("a border contradicting every printing must not commit")
 	}
 	// And the border is never consulted without a year to narrow the field
 	// first, because one bit against a whole catalog settles nothing.
-	if _, rank := rankByScanStrength(controlMagicPrints(), "", "", 0, "white", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(controlMagicPrints(), "", "", 0, "white", "", ""); rank != scanMatchNone {
 		t.Error("a border with no year must settle nothing")
 	}
 }
@@ -482,7 +482,7 @@ func TestBorderWinnerMustMatchNotMerelySurvive(t *testing.T) {
 	}
 	// A white read eliminates the black printing and leaves only the gold one.
 	// Elimination is not evidence: nothing here says the card is gold.
-	if ranked, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", ""); rank != scanMatchNone {
+	if ranked, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", ""); rank != scanMatchNone {
 		t.Errorf("rank = %v leading %s/%s, want scanMatchNone: the survivor is a "+
 			"colour the reader cannot read, so nothing confirmed it",
 			rank, ranked[0].Set, ranked[0].CollectorNumber)
@@ -496,7 +496,7 @@ func TestBorderWinnerMustMatchNotMerelySurvive(t *testing.T) {
 // The case the feature exists for still commits: the survivor is the colour
 // that was read.
 func TestBorderWinnerMatchingStillCommits(t *testing.T) {
-	ranked, rank := rankByScanStrength(controlMagicPrints(), "", "", 1995, "white", "")
+	ranked, rank := rankByScanStrength(controlMagicPrints(), "", "", 1995, "white", "", "")
 	if rank != scanMatchYearAndMarks {
 		t.Fatalf("rank = %v, want year+border", rank)
 	}
@@ -521,7 +521,7 @@ func TestNonfoilRulesOutTheFoilOnlySetPromo(t *testing.T) {
 			CollectorNumber: "59", ReleasedAt: "2016-04-08",
 			Finishes: []string{"nonfoil", "foil"}},
 	}
-	ranked, rank := rankByScanStrength(epiphany, "", "", 2016, "", "nonfoil")
+	ranked, rank := rankByScanStrength(epiphany, "", "", 2016, "", "nonfoil", "")
 	if rank != scanMatchYearAndMarks {
 		t.Fatalf("rank = %v, want year+marks: a nonfoil bullet cannot be a "+
 			"foil-only promo", rank)
@@ -544,7 +544,7 @@ func TestNonfoilPicksTheRegularPrintingAmongFour(t *testing.T) {
 		{ID: "paer", Name: "Baral's Expertise", Set: "paer", CollectorNumber: "29s",
 			ReleasedAt: "2017-01-20", Finishes: []string{"foil"}},
 	}
-	ranked, rank := rankByScanStrength(baral, "", "", 2017, "", "nonfoil")
+	ranked, rank := rankByScanStrength(baral, "", "", 2017, "", "nonfoil", "")
 	if rank != scanMatchYearAndMarks {
 		t.Fatalf("rank = %v, want year+marks", rank)
 	}
@@ -561,7 +561,7 @@ func TestFoilRulesOutNonfoilOnlyPrintings(t *testing.T) {
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "2",
 			ReleasedAt: "2017-01-20", Finishes: []string{"nonfoil", "foil"}},
 	}
-	ranked, rank := rankByScanStrength(cards, "", "", 2017, "", "foil")
+	ranked, rank := rankByScanStrength(cards, "", "", 2017, "", "foil", "")
 	if rank != scanMatchYearAndMarks || ranked[0].Set != "bbb" {
 		t.Errorf("rank = %v leading %s, want year+marks on bbb", rank, ranked[0].Set)
 	}
@@ -576,16 +576,16 @@ func TestFinishNarrowingFailsClosed(t *testing.T) {
 			ReleasedAt: "2016-04-08", Finishes: []string{"nonfoil", "foil"}},
 	}
 	// An unread marker — an old frame, or a glyph too small — excludes nothing.
-	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "", ""); rank != scanMatchNone {
 		t.Error("an unread finish must settle nothing")
 	}
 	// A foil read fits both printings, so it separates neither.
-	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "foil"); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "foil", ""); rank != scanMatchNone {
 		t.Error("a marker both printings share must settle nothing")
 	}
 	// And a finish no printing offers is a read to distrust, not a licence to
 	// pick from an empty field.
-	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "etched"); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "etched", ""); rank != scanMatchNone {
 		t.Error("a finish no printing has must not commit")
 	}
 }
@@ -601,7 +601,7 @@ func TestBorderAndFinishNarrowTogether(t *testing.T) {
 			BorderColor: "white", Finishes: []string{"foil"}},
 	}
 	// White rules out a; nonfoil rules out c. One printing satisfies both.
-	ranked, rank := rankByScanStrength(cards, "", "", 2003, "white", "nonfoil")
+	ranked, rank := rankByScanStrength(cards, "", "", 2003, "white", "nonfoil", "")
 	if rank != scanMatchYearAndMarks || ranked[0].Set != "bbb" {
 		t.Errorf("rank = %v leading %s, want year+marks on bbb", rank, ranked[0].Set)
 	}
@@ -622,7 +622,7 @@ func TestFoilNamesThePromoWhenItIsTheOnlyFoil(t *testing.T) {
 			ReleasedAt: "2011-01-01", Finishes: []string{"foil"},
 			PromoTypes: []string{"fnm"}},
 	}
-	ranked, rank := rankByScanStrength(cultivate, "", "", 2011, "", "foil")
+	ranked, rank := rankByScanStrength(cultivate, "", "", 2011, "", "foil", "")
 	if rank != scanMatchYearAndMarks {
 		t.Fatalf("rank = %v, want year+marks: a star cannot be a printing that "+
 			"never came in foil", rank)
@@ -648,11 +648,11 @@ func TestFoilCannotSeparateTwoFoilablePrintings(t *testing.T) {
 			CollectorNumber: "59", ReleasedAt: "2016-04-08",
 			Finishes: []string{"nonfoil", "foil"}},
 	}
-	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "foil"); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "foil", ""); rank != scanMatchNone {
 		t.Error("both printings come in foil, so a star settles nothing")
 	}
 	// And the bullet still does the work it can.
-	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "nonfoil"); rank != scanMatchYearAndMarks {
+	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "nonfoil", ""); rank != scanMatchYearAndMarks {
 		t.Error("a bullet must still rule out the foil-only promo")
 	}
 }
@@ -677,11 +677,11 @@ func TestNonfoilBreaksACollectorNumberTie(t *testing.T) {
 			ReleasedAt: "2018-04-27", Finishes: []string{"foil"}},
 	}
 	// Without the marker the number is genuinely ambiguous, and queuing is right.
-	if _, rank := rankByScanStrength(zahid, "", "76", 2018, "", ""); rank != scanMatchNumberAmbiguous {
+	if _, rank := rankByScanStrength(zahid, "", "76", 2018, "", "", ""); rank != scanMatchNumberAmbiguous {
 		t.Errorf("rank = %v, want number-ambiguous with no marker to break the tie", rank)
 	}
 	// With it, the foil-only promo is excluded and the year corroborates.
-	ranked, rank := rankByScanStrength(zahid, "", "76", 2018, "", "nonfoil")
+	ranked, rank := rankByScanStrength(zahid, "", "76", 2018, "", "nonfoil", "")
 	if rank != scanMatchNumberAndYear {
 		t.Fatalf("rank = %v, want number+year: a bullet cannot be a foil-only promo", rank)
 	}
@@ -699,11 +699,11 @@ func TestNumberTieNarrowingFailsClosed(t *testing.T) {
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "5",
 			ReleasedAt: "2018-01-01", Finishes: []string{"nonfoil", "foil"}},
 	}
-	if _, rank := rankByScanStrength(shared, "", "5", 2018, "", "nonfoil"); rank != scanMatchNumberAmbiguous {
+	if _, rank := rankByScanStrength(shared, "", "5", 2018, "", "nonfoil", ""); rank != scanMatchNumberAmbiguous {
 		t.Error("a marker both printings share must not settle a number tie")
 	}
 	// An exact set match still wins outright; the markings never override it.
-	if _, rank := rankByScanStrength(shared, "bbb", "5", 2018, "", "nonfoil"); rank != scanMatchSetAndNumber {
+	if _, rank := rankByScanStrength(shared, "bbb", "5", 2018, "", "nonfoil", ""); rank != scanMatchSetAndNumber {
 		t.Error("set+number must remain the strongest evidence")
 	}
 }
@@ -951,5 +951,119 @@ func TestFireReasonsMatchTheWireValues(t *testing.T) {
 		if tc.constant != tc.wire {
 			t.Errorf("constant %q does not match the phone's %q", tc.constant, tc.wire)
 		}
+	}
+}
+
+// The case the language read exists for, and the money it is worth.
+//
+// Scryfall keeps a foreign-only printing beside its English namesake under one
+// collector number, separated by a marker the card does not print: `war/97` is
+// Liliana, Dreadhorde General at $7.95 and `war/97★` the Japanese alternate art
+// at $112.73. OCR reads "97" either way, so the number alone always picked the
+// cheap one and wrote it to the collection without stopping.
+func TestLanguagePicksTheForeignOnlySibling(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
+		{ID: "ja", Set: "war", CollectorNumber: "97★", Lang: "ja", ReleasedAt: "2019-05-03"},
+	}
+
+	ranked, r := rankByScanStrength(prints, "war", "97", 0, "", "", "ja")
+	if ranked[0].ID != "ja" {
+		t.Errorf("picked %q, want the Japanese alternate art the card's own set row names", ranked[0].ID)
+	}
+	if r != scanMatchSetNumberAndLang {
+		t.Errorf("rank = %v, want set+number+lang", r)
+	}
+	// It is corroborated evidence, so it commits like any other pinned match
+	// rather than stopping the session.
+	if !corroboratedPrinting(r) || !numberVerified(r) {
+		t.Errorf("rank %v must count as corroborated and number-verified", r)
+	}
+
+	// An English read takes the unmarked row, as it always did.
+	ranked, r = rankByScanStrength(prints, "war", "97", 0, "", "", "en")
+	if ranked[0].ID != "en" || r != scanMatchSetNumberAndLang {
+		t.Errorf("english: picked %q rank %v, want the unmarked row", ranked[0].ID, r)
+	}
+}
+
+// A card whose language never read must behave exactly as before: the marked
+// sibling is unreachable and the unmarked row wins. Silence is not evidence.
+func TestNoLanguageReadKeepsTheOldAnswer(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
+		{ID: "ja", Set: "war", CollectorNumber: "97★", Lang: "ja", ReleasedAt: "2019-05-03"},
+	}
+	ranked, r := rankByScanStrength(prints, "war", "97", 0, "", "", "")
+	if ranked[0].ID != "en" {
+		t.Errorf("picked %q, want the unmarked row when nothing said otherwise", ranked[0].ID)
+	}
+	if r != scanMatchSetAndNumber {
+		t.Errorf("rank = %v, want plain set+number: no language agreed", r)
+	}
+}
+
+// A catalog built before the language column stores none. Unknown on the
+// catalog's side must not read as agreement, or every scan would claim a
+// corroboration it never had.
+func TestUnknownCatalogLanguageIsNotAgreement(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "en", Set: "war", CollectorNumber: "97", ReleasedAt: "2019-05-03"},
+	}
+	_, r := rankByScanStrength(prints, "war", "97", 0, "", "", "ja")
+	if r != scanMatchSetAndNumber {
+		t.Errorf("rank = %v, want plain set+number when the catalog has no language", r)
+	}
+}
+
+// The marker trim must not let a foreign read reach a row of another number.
+func TestLanguageDoesNotWidenTheNumberMatch(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "other", Set: "war", CollectorNumber: "98★", Lang: "ja", ReleasedAt: "2019-05-03"},
+	}
+	_, r := rankByScanStrength(prints, "war", "97", 0, "", "", "ja")
+	if r != scanMatchNone {
+		t.Errorf("rank = %v, want none: 98★ is not 97 in any language", r)
+	}
+}
+
+// The measurement that shaped the rule above.
+//
+// Scored over scan/corpus the language read answers on a fifth of cards and is
+// right four times in five, and its errors are systematic rather than random:
+// a line of rules text parses as a set row and donates a language, so a plainly
+// English card reads as Italian ("Balance of Power: said it, is en", live).
+//
+// What makes that safe to act on is the company it keeps. The same fabrication
+// invents a set code beside the language, and an invented set code matches no
+// printing — so the bogus language arrives attached to a set that rules it out,
+// and the marked sibling never enters the running.
+func TestAFabricatedLanguageCannotStealAnExactMatch(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
+		{ID: "it", Set: "war", CollectorNumber: "97★", Lang: "it", ReleasedAt: "2019-05-03"},
+	}
+	// Prose donated "it" and the set code it came with ("PUT") matches nothing.
+	ranked, r := rankByScanStrength(prints, "PUT", "97", 0, "", "", "it")
+	if ranked[0].ID != "en" {
+		t.Errorf("picked %q, want the exact match: the language came with a set code that checks out against nothing",
+			ranked[0].ID)
+	}
+	if r != scanMatchNumberOnly {
+		t.Errorf("rank = %v, want number-only: the set never agreed", r)
+	}
+}
+
+// A marked sibling is claimed only when the set code agrees too, so a language
+// alone can never reach one.
+func TestAMarkedSiblingNeedsTheSetCodeAsWell(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "ja", Set: "war", CollectorNumber: "97★", Lang: "ja", ReleasedAt: "2019-05-03"},
+	}
+	if _, r := rankByScanStrength(prints, "", "97", 0, "", "", "ja"); r != scanMatchNone {
+		t.Errorf("rank = %v, want none: no set code vouched for the language", r)
+	}
+	if _, r := rankByScanStrength(prints, "war", "97", 0, "", "", "ja"); r != scanMatchSetNumberAndLang {
+		t.Errorf("rank = %v, want set+number+lang once the set agrees", r)
 	}
 }

@@ -164,6 +164,9 @@ type OwnedFinish struct {
 	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
 	// same semantics as Card.ColorIdentity.
 	ColorIdentity []string
+	// Lang is the printing's language code ("en", "ja"), empty when the card's
+	// document has not been stored — same semantics as Card.Lang.
+	Lang string
 	// Treatment is the foil treatment's display word, empty for plain —
 	// same semantics as Card.Treatment.
 	Treatment string
@@ -190,7 +193,7 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
        SUM(e.quantity * ` + entryValue + `) AS value,
        c.color_identity, c.promo_types,
        COALESCE(c.tcg_alt_product_id, ''), COALESCE(c.ck_foil_id, ''),
-       c.ck_foil_id IS NOT NULL
+       c.ck_foil_id IS NOT NULL, COALESCE(c.lang, '')
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 ` + altJoinCards + `
@@ -206,7 +209,7 @@ ORDER BY value DESC, c.name`)
 		var colors, promos sql.NullString
 		if err := rows.Scan(&o.ScryfallID, &o.MTGJSONUUID, &o.Name, &o.SetCode,
 			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &colors, &promos,
-			&o.TCGAltProductID, &o.CKFoilID, &o.VendorIDsKnown); err != nil {
+			&o.TCGAltProductID, &o.CKFoilID, &o.VendorIDsKnown, &o.Lang); err != nil {
 			return nil, err
 		}
 		o.ColorIdentity = parseColorIdentity(colors)

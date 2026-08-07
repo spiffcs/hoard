@@ -118,9 +118,10 @@ it. `--again` is the override when you really do mean to add a second copy.
 ## Exporting to other tools
 
 **Moxfield** — `Count, Name, Edition, Condition, Language, Foil, Collector Number`.
-Moxfield requires `Condition` and `Language`; hoard tracks neither, so they are
-written as `Near Mint` and `English`. The `Foil` column is empty for nonfoil,
-else the finish name.
+`Condition` is written as `Near Mint` because hoard does not track it and
+Moxfield requires the column. `Language` is the printing's own, falling back to
+English where hoard has not stored the card's document. The `Foil` column is
+empty for nonfoil, else the finish name.
 
 **Archidekt** — `Quantity, Name, Finish, Edition Code, Collector Number, Scryfall ID`.
 Their importer tolerates missing optionals, so this is the minimal exact set.

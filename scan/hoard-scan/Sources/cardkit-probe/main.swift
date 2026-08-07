@@ -151,6 +151,11 @@ func score(manifest: String, misses: Bool) async -> Never {
     }
 
     var foreignTotal = 0, foreignNameOK = 0, foreignNumOK = 0
+    // The language read, scored against the manifest's own lang column across
+    // every card — English included, since claiming a foreign language for an
+    // English card is the failure that would send a scan to the wrong printing.
+    var langAsked = 0, langAnswered = 0, langRight = 0
+    var langWrong: [String] = []
     var borderAsked = 0, borderAnswered = 0, borderRight = 0
     var borderWrong: [String] = [], borderFalse: [String] = []
     var coverRight: [Double] = [], coverWrong: [Double] = []
@@ -209,6 +214,17 @@ func score(manifest: String, misses: Bool) async -> Never {
         let numOK = r.printing.number == wantNum
             || (era == "pre1998" && r.printing.number.isEmpty)
 
+        // Language, scored on every card. It is the signal that separates a
+        // foreign-only printing from its English namesake — war/97 and war/97★
+        // share a set and a number — so a wrong answer costs a whole printing,
+        // and silence is the safe failure the parent already treats as such.
+        langAsked += 1
+        if let read = scryfallLanguage(r.printing.language) {
+            langAnswered += 1
+            if read == lang { langRight += 1 }
+            else { langWrong.append("  \(wantName): said \(read), is \(lang)") }
+        }
+
         // Non-English printings are scored apart, not counted as failures.
         //
         // Their images are Italian, Spanish, Japanese cards; the manifest holds
@@ -255,6 +271,14 @@ func score(manifest: String, misses: Bool) async -> Never {
     }
     print(String(repeating: "-", count: 46))
     let med = times.isEmpty ? 0 : times.sorted()[times.count / 2]
+    print("")
+    print(pad("LANGUAGE", 24) + pad("n", 6) + pad("read", 8) + "correct")
+    print(pad("", 24) + pad("\(langAsked)", 6)
+        + pad(pct(langAnswered, langAsked), 8) + pct(langRight, langAnswered))
+    if !langWrong.isEmpty {
+        print("wrong language:")
+        for l in langWrong.sorted() { print(l) }
+    }
     if foreignTotal > 0 {
         print(pad("(non-English)", 24) + pad("\(foreignTotal)", 6)
             + pad(pct(foreignNameOK, foreignTotal), 8) + pct(foreignNumOK, foreignTotal)

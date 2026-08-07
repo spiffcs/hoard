@@ -103,6 +103,10 @@ type Card struct {
 	ColorIdentity []string
 	// ManaCost is the printed cost ("{2}{W}{U}"), nil when unknown.
 	ManaCost *string
+	// Lang is the printing's language code ("en", "ja"), empty when the card's
+	// document has not been stored. Language is already part of identity via
+	// the Scryfall id; this is what lets a reader see which one they hold.
+	Lang string
 	// Treatment is the foil treatment's display word ("ripple", "surge"),
 	// derived from the printing's promo_types tags — empty for an
 	// ordinary printing or one with no stored document. The treatment
@@ -254,7 +258,8 @@ func cardCols(altSource string) string {
 	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
        ` + effPriceUSD + `, ` + effPriceFoil + `, ` + effPriceEtched + `,
        c.scryfall_url, c.updated_at,
-       ` + altSource + `, c.color_identity, c.mana_cost, c.promo_types`
+       ` + altSource + `, c.color_identity, c.mana_cost, c.promo_types,
+       COALESCE(c.lang, '')`
 }
 
 // cardAux holds the scan shims for Card fields SQLite cannot fill directly:
@@ -277,7 +282,7 @@ func (a cardAux) apply(c *Card) {
 func cardScanDest(c *Card, aux *cardAux) []any {
 	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
 		&c.PriceUSD, &c.PriceUSDFoil, &c.PriceUSDEtched, &c.ScryfallURL, &c.UpdatedAt,
-		&c.AltSource, &aux.colorIdentity, &c.ManaCost, &aux.promoTypes}
+		&c.AltSource, &aux.colorIdentity, &c.ManaCost, &aux.promoTypes, &c.Lang}
 }
 
 // parseColorIdentity turns the stored JSON array into a slice: nil for NULL

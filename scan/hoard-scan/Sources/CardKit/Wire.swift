@@ -59,7 +59,8 @@ extension CardReading {
             // finishFromEvidence tells a read finish from a defaulted one, and
             // flattening that distinction is how a foil records silently as
             // nonfoil.
-            finishHint: printing.finish.isEmpty ? nil : printing.finish)
+            finishHint: printing.finish.isEmpty ? nil : printing.finish,
+            language: scryfallLanguage(printing.language))
     }
 
     /// The single-card entry, or nothing when the capture found nothing.
@@ -118,6 +119,24 @@ extension CardReading {
             // one place and has it read from the other — which is exactly how a
             // foil Deserted Temple committed as nonfoil twice.
             finishHint: printing.finish,
+            // The set row's language code, crossing for the first time.
+            //
+            // It has been read, validated against a closed vocabulary and
+            // unit-tested since the row was first parsed, and then dropped
+            // right here — the rule being that a field crosses only when the Go
+            // side has a use for it. It has one now, and it is one nothing else
+            // can serve: Scryfall keeps a foreign-only printing beside its
+            // English namesake under the same set and collector number,
+            // separated by a marker the card does not print, so the number
+            // alone always picks the English row. `war/97` is Liliana,
+            // Dreadhorde General at $7.95 and `war/97★` the Japanese alternate
+            // art at $112.73.
+            //
+            // Nil rather than "" when nothing was read, for the reason
+            // finishHint is: the Go side must tell a read language from a
+            // defaulted one, and the parent's rule is that unknown never counts
+            // as agreement.
+            language: scryfallLanguage(printing.language),
             finishSource: printing.finishSource.isEmpty ? nil : printing.finishSource,
             // A number lifted out of a copyright row is upgrade-only evidence
             // on the Go side, and mislabelling it as a band read is how a
@@ -131,5 +150,22 @@ extension CardReading {
             // queues exactly as it does today.
             borderColor: border.color,
             borderSource: border.source)
+    }
+}
+
+/// scryfallLanguage maps the code printed on a card to Scryfall's spelling.
+///
+/// The frame prints a two-letter code and Scryfall mostly agrees, lower-cased.
+/// Chinese is the exception: the card says CS or CT for simplified and
+/// traditional, Scryfall says zhs and zht. Returning nil for an unread code
+/// keeps "not read" distinct from "read as English", which is the distinction
+/// the parent's agreement check turns on.
+public func scryfallLanguage(_ printed: String) -> String? {
+    let code = printed.uppercased()
+    if code.isEmpty { return nil }
+    switch code {
+    case "CS": return "zhs"
+    case "CT": return "zht"
+    default: return code.lowercased()
     }
 }

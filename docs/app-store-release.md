@@ -1,50 +1,10 @@
 # Shipping Hoardling on the App Store
 
-**Status: audited 2026-08-06, nothing attempted.** Every claim below was read
-out of the tree rather than remembered. The app installs to a registered device
+**Status: audited 2026-08-06, nothing attempted.**
+The app installs to a registered device
 via `make scan-ios-install` and has never been through TestFlight, App Store
 Connect, or review. See [ios-development.md](ios-development.md) for building
 and running it.
-
-Since 2026-08-05 it is also the *only* scanner: the macOS Continuity Camera path
-was removed. There is no longer a fallback if the app is unavailable to someone.
-
-## The one that decides everything else
-
-**The app is useful only to someone running hoard on a Mac.**
-
-That is true, and it shapes the product. But the version of this worry recorded
-before the audit — *"open it cold and it says 'Waiting for hoard…' forever,
-there is no camera preview until a Mac pairs, a reviewer sees a dead app"* — is
-**not** what the code does. Verified in `SessionView.swift`:
-
-- The camera preview starts from `.task { await camera.start() }`, unconditionally.
-- The hands-free trigger arms itself on the same path (`camera.startTrigger()`),
-  unconditionally, and its brackets track cards on screen.
-- `shoot()` runs the **entire read on the phone** — segment, flatten, two Vision
-  text passes, border read — and only *then* hands the parsed result to the
-  link. The comment says why: "the read happens here rather than on the Mac
-  because the pixels are here."
-- The parsed result is already rendered, in the footer, as `lastRead`
-  (`"Sol Ring  LEA 270"`).
-
-So the app is not dead without a Mac. It sees cards, reads them, and knows what
-they are. The only things a Mac supplies are the price and the ledger.
-
-**What is actually missing is one gate.** `lastRead` is wrapped in
-`if developerMode`, and `developerMode` defaults off. A reviewer sees a live
-camera with brackets that track a card and no statement of what was read.
-
-**Recommendation: show `lastRead` whenever the link is not connected.** Not a
-new demo mode — the read, the view, and the string all exist. It is an edit to
-one condition in `SessionView.footer`, and it turns "camera app that does
-nothing" into "card scanner that names the card you point it at." Do this
-before anything else on this page; it is the cheapest item here and it removes
-the single largest rejection risk.
-
-Pair it with review notes and a short video of the pairing flow. Companion-app
-arrangements are accepted — Watch apps, camera remotes, DSLR tethers all work
-this way — but the notes have to say so explicitly.
 
 ## Blockers
 
@@ -209,13 +169,6 @@ Worth recording so nobody re-solves it:
 - **The read runs entirely on-device.** `CardKit` imports no networking of any
   kind — Vision and Core Graphics only.
 
-## The name
-
-**Hoardling**, decided 2026-08-05. It was "hoard scan", which reads as a
-feature of hoard rather than a thing you install — wrong for the one piece of
-the system that lives on another device and has to be found by name. Hoardling
-keeps the brand root, so nobody has to be told what it belongs to.
-
 | Where | Spelling |
 | --- | --- |
 | App Store name | `Hoardling`, subtitle `Card scanner for hoard` |
@@ -235,7 +188,7 @@ device's description. They move together or pairing breaks.
 ## Open questions
 
 1. **Is the App Store even the right channel?** The app is only useful to people
-   already running hoard on a Mac. TestFlight alone — 10,000 testers, a public
+   already running hoard on a Mac. TestFlight alone. 10,000 testers, a public
    link, no review beyond the first build — might serve the actual audience with
    a fraction of the overhead. Worth deciding before step 4, not after step 12.
 2. **Does the read pipeline's accuracy matter for review?** No. But it matters

@@ -225,6 +225,33 @@ a genuine gap and a real product decision — it is just not an OCR one, and
 defect. It also distorts the corpus scores badly enough to need its own
 handling; see [the headline](#headline).
 
+### The language code, and what it is trusted for
+
+The set row's language code crosses the wire and is scored on every card. Over
+the 231-card corpus it **answers on 20% and is right on 80% of those** — nine
+wrong out of forty-six.
+
+The errors are systematic, not random. Eight of the nine are on frames that print
+no set row at all (pre-1998, 1998–2002, 2003–2014), where a line of rules text
+parses as one and donates a language the card never printed — "Balance of Power:
+said it, is en". This is the same failure `scanner-tuning.md` records under
+"Prose fabricates set codes".
+
+That accuracy is far too low to resolve a printing on. It is acted on anyway, and
+safely, because of the company it keeps: the same fabrication invents the set
+code beside the language, and **an invented set code matches no printing**. So
+the language is consulted only alongside a set code that checks out, and only to
+choose between rows that already answer to the number. A bogus language then
+costs exactly nothing — it arrives attached to a set that rules it out.
+
+What it buys, when it is right: Scryfall keeps a foreign-only printing beside its
+English namesake under one collector number, separated by a marker the card does
+not print. `war/97` is Liliana, Dreadhorde General at $8.06 and `war/97★` the
+Japanese alternate art at $113.45. OCR reads `97` off either, so before this the
+number alone always committed the cheap one. Across a live catalog there are
+2,048 marker-suffixed rows and 83 marker/base pairs where both are priced, 20 of
+them differing by more than 2×.
+
 ---
 
 # Part 2 — What the corpus measures

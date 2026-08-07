@@ -110,6 +110,26 @@ for the ones that do not (`textured`, `embossed`, `gilded`, `neonink`, …).
 different printing with a different Scryfall id, which is why it needs no axis at
 all.
 
+**Language** is the same: Scryfall mints a distinct id per language, so a
+Japanese printing and an English one were never the same row. `cards.lang` and
+`cards.printed_name` exist to *read that back*, not to key on it.
+
+There is one place where the ids alone are not enough, and it is worth knowing
+about because it is where the money is. Scryfall keeps a foreign-only printing
+beside its English namesake under one collector number, separated by a marker
+the card does not print:
+
+| | collector number | language | price |
+|---|---|---|---|
+| Liliana, Dreadhorde General | `war/97` | en | $7.95 |
+| Liliana, Dreadhorde General | `war/97★` | ja | $112.73 |
+
+OCR reads `97` off either card, so the number alone always names the cheap one.
+The scanner reads the language off the card's set row and uses it to pick — but
+only in the company of a set code that checks out, because a line of rules text
+can parse as a set row and donate a language it never printed. See
+[scanner-limits.md](scanner-limits.md).
+
 Why the distinction earns its keep: a treated foil is *one* Scryfall id, so every
 vendor files a price under the same key while not necessarily selling the same
 product under it. That is the one case where the Scryfall id alone is too coarse,
@@ -124,6 +144,7 @@ and it is why `cards` carries per-vendor product ids (`tcg_product_id`,
 | column | values |
 |---|---|
 | `card_entries.finish` | `nonfoil`, `foil`, `etched` |
+| `cards.lang` | Scryfall's code — `en`, `ja`, `zhs`; NULL until the card's document is stored |
 | `card_entries.board` | `main`, `commander`, `side`, `maybe` |
 | `containers.kind` | `collection`, `deck` |
 | `containers.source` | `manual`, or the importing provider |
@@ -212,13 +233,16 @@ Imports that carry a condition column count what they discarded and tell you
 (`hoard import` reports it) rather than dropping it silently. The Moxfield export
 writes `Near Mint` because Moxfield requires the column.
 
-**Language.** Not stored. The catalog is built from Scryfall's `default_cards`
-bundle — one row per printing, English where an English printing exists — so a
-non-English printing of a card that also exists in English cannot currently be
-resolved. Foreign-*only* printings, such as the War of the Spark Japanese
-alternate-art planeswalkers, do have their own Scryfall id and collector number
-and are handled normally. As with condition, an import counts non-English rows as
-dropped rather than discarding them quietly.
+**Ordinary foreign-language printings.** Language *is* modelled — see below —
+but the catalog is built from Scryfall's `default_cards` bundle, one row per
+printing in English where an English printing exists. So a Japanese Sol Ring,
+which also exists in English, is not in the catalog and cannot be resolved. An
+import counts non-English rows as dropped rather than discarding them quietly.
+
+Reaching those would mean the `all_cards` bundle — 390 MB against 77 MB, a five
+times larger catalog — and a price fallback, since Scryfall prices none of them
+(`war/97 ja`, `neo/155 ja` and every other ordinary foreign printing return
+`usd: null`). Storing their true ids without one would book real cards at $0.00.
 
 **Purchase price and acquisition date.** Counted as dropped on import. hoard
 values a collection at market, and has no cost-basis or P&L model.

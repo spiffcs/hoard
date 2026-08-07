@@ -106,6 +106,15 @@ type Event struct {
 	// star the set/language separator on foil printings and bullet it on
 	// nonfoil ones. Empty means no marker was read — never a guess.
 	FinishHint string `json:"finishHint"`
+	// Language is the two-letter code printed beside the set code on M15 and
+	// later frames ("EN", "JA"), lower-cased to Scryfall's spelling. Empty on
+	// older frames, which print none, and on a read that did not clear the
+	// helper's closed vocabulary — never a guess.
+	//
+	// It resolves the one case a set and number cannot: a printing published
+	// only in another language shares both with its English namesake and is
+	// told apart by a marker the card does not print.
+	Language string `json:"language,omitempty"`
 }
 
 // HUDResult reports a resolved card's price outcome to the camera window's
@@ -140,6 +149,8 @@ type CollectorAlt struct {
 	// block; see those fields for the trust semantics.
 	Source string `json:"source"`
 	Year   int    `json:"year"`
+	// Language mirrors Card.Language for this block.
+	Language string `json:"language,omitempty"`
 }
 
 // Card is one card of a capture. Name and Candidates mirror the event's flat
@@ -165,6 +176,8 @@ type Card struct {
 	CollectorAlts []CollectorAlt `json:"collectorAlts"`
 	// FinishHint is the printed finish marker; see Event.FinishHint.
 	FinishHint string `json:"finishHint"`
+	// Language is the printed language code; see Event.Language.
+	Language string `json:"language,omitempty"`
 	// FinishSource is which signal produced FinishHint: "separator" for the
 	// modern set row's glyph, "sparkle" for the starburst a retro-frame foil
 	// prints at the corner of its text box. Empty from helpers that predate it.
@@ -259,6 +272,7 @@ func (e Event) CardList() []Card {
 		Source:          source,
 		CollectorAlts:   e.CollectorAlts,
 		FinishHint:      e.FinishHint,
+		Language:        e.Language,
 	}}
 }
 

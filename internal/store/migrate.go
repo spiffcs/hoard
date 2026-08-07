@@ -49,6 +49,7 @@ var migrations = []migration{
 	{19, defaultBinderRealName},
 	{20, vendorProductIDs},
 	{21, etchedPrices},
+	{22, cardLanguage},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -421,6 +422,23 @@ ALTER TABLE cards ADD COLUMN tcg_product_id TEXT;`
 const etchedPrices = `
 ALTER TABLE cards ADD COLUMN price_usd_etched REAL;
 ALTER TABLE cards ADD COLUMN tcg_etched_product_id TEXT;`
+
+// v22: the printing's language, and the name as printed on it.
+//
+// Language has always been part of a hoard's identity without being visible in
+// it — Scryfall mints a distinct id per language, so a Japanese printing and an
+// English one were never the same row. What was missing was any way to read that
+// back: an export could not say which of the two a holding was, and a query
+// could not find one.
+//
+// Both are generated over the stored document, so they cost nothing and cannot
+// disagree with it. printed_name is the name in the card's own script (大峨頭の兜),
+// absent on an English printing where Scryfall omits it.
+const cardLanguage = `
+ALTER TABLE cards ADD COLUMN lang TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.lang')) VIRTUAL;
+ALTER TABLE cards ADD COLUMN printed_name TEXT
+    GENERATED ALWAYS AS (json_extract(raw_json,'$.printed_name')) VIRTUAL;`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the
