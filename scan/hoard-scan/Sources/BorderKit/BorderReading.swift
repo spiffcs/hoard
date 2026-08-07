@@ -170,6 +170,42 @@ public enum SparkleGate {
     /// `SparkleVerdict` — which is what makes taking either of them safe.
     public static let acceptChroma: CGFloat = 0.68
 
+    /// The warm-cool patch's *spread*, above which the marker region is
+    /// carrying real colour structure — and colour structure at that spot is
+    /// foil sheen, whatever shape it took.
+    ///
+    /// A different statistic from `acceptChroma`, and the difference is what
+    /// makes it safe where the score is not. The chroma *score* asks "does
+    /// the colour pattern match the fitted template", and on a rig the
+    /// template was not fitted on it ranks the classes backwards — see
+    /// `SparkleVerdict`. The *contrast* asks only "is there colour variation
+    /// here at all", which is the physics of the sheen rather than the look
+    /// of one rig: rules text is neutral ink, the text box is one tint, and
+    /// only a diffraction surface puts a warm-to-cool swing inside this patch.
+    /// That is why it survives the two failure modes that kill the
+    /// correlation — a stamp printed under rules text (Charitable Levy,
+    /// 0.09-0.14 on every capture across two rigs) and a stamp the window
+    /// caught misaligned (a flat-scoring Glowrider read carried 0.14).
+    ///
+    /// 0.08, measured against every labelled capture there is, 2026-08-07:
+    /// nonfoils reach 0.055 on the corpus rig (colourful art bleeding into
+    /// the window), 0.043 on the session-5 rig, and below 0.05 across
+    /// `scan/fixtures` — the rig that inverted the score channel — except one
+    /// card the luma bar already accepts. The floor sits 0.025 above the
+    /// highest nonfoil anywhere. On the live validation session it rescues
+    /// five true-foil misses and moves neither true nonfoil.
+    public static let acceptChromaContrast: CGFloat = 0.08
+
+    /// The luma spread the chroma vote also requires, and the reason is one
+    /// measured false positive: a modern-frame nonfoil whose window holds
+    /// printed colour art reads chroma contrast 0.090 — over the floor — with
+    /// a luma patch flat at 0.008 (Reap What Is Sown, session-5 scoreboard).
+    /// Sheen is not like that: a diffraction surface modulates brightness
+    /// along with hue, and every true rescue on the validation session
+    /// carried luma spread 0.015 or better. Flat luma plus loud colour is
+    /// ink, not foil.
+    public static let chromaVoteLumaFloor: CGFloat = 0.012
+
     /// Half-width of the search window, in card space, and how many cells that
     /// is divided into. One cell is a pixel of a 630x880 card.
     ///

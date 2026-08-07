@@ -3554,6 +3554,100 @@ func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 	}
 }
 
+// One review entry per card, however many times it re-announces itself.
+//
+// Live, 2026-08-07: Charitable Levy queued "printing unverified: 2 printings"
+// three times off one physical card — the re-reads taught nothing new (equal
+// rank), so upgradeQueued left the old entry standing, and each read then
+// appended another. Three stops for one decision.
+func TestRepeatQueueingIsOneReviewEntry(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Charitable Levy": "Charitable Levy"},
+		prints: map[string][]scryfall.Card{"Charitable Levy": {
+			{ID: "a", Name: "Charitable Levy", Set: "mh3", CollectorNumber: "390",
+				Finishes: []string{"nonfoil", "foil"}},
+			{ID: "b", Name: "Charitable Levy", Set: "mh3", CollectorNumber: "90",
+				Finishes: []string{"nonfoil", "foil"}},
+		}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	ev := scan.Event{Kind: scan.EventScan, Name: "Charitable Levy",
+		FireReason: scan.FireReplaced,
+		Cards: []scan.Card{{Name: "Charitable Levy",
+			Candidates: []string{"Charitable Levy"}, Confidence: 0.95, Source: "crop"}}}
+	for range 3 {
+		mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+		m = resolve(t, mm.(model), ev.CardList()[0])
+	}
+	if len(m.review) != 1 {
+		t.Errorf("review holds %d entries, want 1 — the card only has one problem", len(m.review))
+	}
+	if len(ra.got) != 0 {
+		t.Errorf("adder called %d times, want 0 — nothing verified", len(ra.got))
+	}
+}
+
+// A better printing read must not discard the finish the read it replaces
+// already carried.
+//
+// Live, 2026-08-07: Glowrider's first look read the marker at 0.814 — foil —
+// but its name matched at 88%, so it queued. The retry read the collector
+// number, replaced the queued entry, and committed nonfoil off its own flat
+// patch: a true foil written wrong while the evidence sat in the discarded
+// entry. Printing evidence and finish evidence come off different pixels and
+// degrade independently; silence in one read must not overwrite the other
+// read's answer.
+func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Glowrider": "Glowrider"},
+		prints: map[string][]scryfall.Card{"Glowrider": {
+			{ID: "lgn15", Name: "Glowrider", Set: "lgn", CollectorNumber: "15",
+				ReleasedAt: "2003-02-03", Finishes: []string{"nonfoil", "foil"}},
+			{ID: "promo", Name: "Glowrider", Set: "plgn", CollectorNumber: "15p",
+				ReleasedAt: "2003-06-01", Finishes: []string{"foil"}},
+		}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// First look: the marker read foil, but with no number and two printings
+	// the ranking settles nothing — it queues exactly as the live read did
+	// (rank=none, prints=2, finish=foil).
+	first := scan.Event{Kind: scan.EventScan, Name: "Glowrider",
+		Cards: []scan.Card{{Name: "Glowrider", Candidates: []string{"Glowrider"},
+			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+	m = resolve(t, mm.(model), first.CardList()[0])
+	if len(m.review) != 1 {
+		t.Fatalf("setup: want the mangled read queued, got review=%d adds=%d",
+			len(m.review), len(ra.got))
+	}
+
+	// The retry reads the number cleanly but its own marker patch is flat.
+	second := scan.Event{Kind: scan.EventScan, Name: "Glowrider",
+		FireReason: scan.FireReplaced,
+		Cards: []scan.Card{{Name: "Glowrider", Candidates: []string{"Glowrider"},
+			CollectorNumber: "15", NumberSource: "copyright", CopyrightYear: 2003,
+			Confidence: 0.95, Source: "crop"}}}
+	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: second})
+	m = resolve(t, mm.(model), second.CardList()[0])
+
+	if len(ra.got) != 1 {
+		t.Fatalf("adder called %d times, want the upgraded read committed once", len(ra.got))
+	}
+	if got := ra.got[0]; got.Finish != "foil" || got.FinishGuessed {
+		t.Errorf("committed %s guessed=%v, want the queued look's foil carried "+
+			"through the upgrade", got.Finish, got.FinishGuessed)
+	}
+	if len(m.review) != 0 {
+		t.Errorf("review = %d entries, want the queued entry spent by the upgrade", len(m.review))
+	}
+}
+
 // A nudge echo of a committed foil is still an echo.
 //
 // The finish correction is gone, so the risk this pins has changed shape: a

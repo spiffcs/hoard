@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 
 @testable import CardKit
@@ -100,4 +101,45 @@ func silenceCarriesNoProvenance() {
     r.printing = p
     #expect(r.scanEvent(rotation: 0).cards?.first?.finishSource == nil,
             "an absent finish must not ship an empty provenance string")
+}
+
+// MARK: - The copyright-row vertical anchor
+
+@Test("the copyright row re-centres the marker search vertically")
+func companyRowAnchorsV() {
+    // A company row at its nominal position: vMid lands where the fitted
+    // constant expects, so the shift is ~0. Box coords are in the band crop
+    // (v 0.82-1.0 of the card), bottom-left origin: the row's card-space vMid
+    // of 0.9561 maps back to a crop midY of (1 - (0.9561-0.82)/0.18).
+    func lineAt(vMid: CGFloat, _ text: String) -> Line {
+        let midY = 1 - (vMid - 0.82) / 0.18
+        return Line(text: text, box: CGRect(x: 0.1, y: midY - 0.02,
+                                            width: 0.8, height: 0.04),
+                    confidence: 1, quad: nil)
+    }
+    let nominal = lineAt(vMid: 0.889 + 0.0671,
+                         "TM & © 2024 Wizards of the Coast")
+    #expect(abs(companyAnchorShiftV([nominal])) < 0.001)
+
+    // A quad that cut the card short moves every band line down in card
+    // space; the shift follows the row.
+    let low = lineAt(vMid: 0.889 + 0.0671 + 0.015,
+                     "TM & © 2024 Wizards of the Coast")
+    #expect(abs(companyAnchorShiftV([low]) - 0.015) < 0.001)
+}
+
+@Test("no copyright row, or an implausible one, leaves the anchor alone")
+func companyRowAnchorRefusals() {
+    #expect(companyAnchorShiftV([]) == 0)
+    // Rules text is not a landmark.
+    let prose = Line(text: "whenever it attacks, draw a card.",
+                     box: CGRect(x: 0.1, y: 0.5, width: 0.8, height: 0.04),
+                     confidence: 1, quad: nil)
+    #expect(companyAnchorShiftV([prose]) == 0)
+    // A "company row" a third of the band away from where one can be is some
+    // other line wearing the fingerprint — refused, not followed.
+    let absurd = Line(text: "TM & © 2024 Wizards of the Coast",
+                      box: CGRect(x: 0.1, y: 0.9, width: 0.8, height: 0.04),
+                      confidence: 1, quad: nil)
+    #expect(companyAnchorShiftV([absurd]) == 0)
 }

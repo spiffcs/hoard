@@ -391,7 +391,7 @@ func TestBetterReReadReplacesTheQueuedEntry(t *testing.T) {
 
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m.review = []queueItem{weak}
-	displaced, ok := m.upgradeQueued(strong)
+	displaced, ok := m.upgradeQueued(&strong)
 	if !ok {
 		t.Fatal("a year+border read should displace an unranked queued entry")
 	}
@@ -419,7 +419,7 @@ func TestEchoSwallowStillDropsEqualAndWorseReads(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 			m.review = []queueItem{queued}
-			if _, ok := m.upgradeQueued(queueItem{
+			if _, ok := m.upgradeQueued(&queueItem{
 				canonical: "Prodigal Sorcerer", rank: tc.rank, fromNudge: true,
 			}); ok {
 				t.Error("should not have displaced the queued entry")
@@ -435,13 +435,13 @@ func TestEchoSwallowStillDropsEqualAndWorseReads(t *testing.T) {
 func TestUpgradeOnlyMatchesTheSameCard(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m.review = []queueItem{{id: 1, canonical: "Prodigal Sorcerer", rank: scanMatchNone}}
-	if _, ok := m.upgradeQueued(queueItem{
+	if _, ok := m.upgradeQueued(&queueItem{
 		canonical: "Control Magic", rank: scanMatchSetAndNumber, fromNudge: true,
 	}); ok {
 		t.Error("a different card must not displace a queued entry")
 	}
 	// And an unresolved read has no name to match on.
-	if _, ok := m.upgradeQueued(queueItem{rank: scanMatchSetAndNumber, fromNudge: true}); ok {
+	if _, ok := m.upgradeQueued(&queueItem{rank: scanMatchSetAndNumber, fromNudge: true}); ok {
 		t.Error("an unnamed read must not displace anything")
 	}
 }
@@ -454,7 +454,7 @@ func TestUpgradeLeavesTheItemBeingReviewedAlone(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m.current = &cur
 	m.review = nil
-	if _, ok := m.upgradeQueued(queueItem{
+	if _, ok := m.upgradeQueued(&queueItem{
 		canonical: "Prodigal Sorcerer", rank: scanMatchYearAndMarks, fromNudge: true,
 	}); ok {
 		t.Error("the item on screen must not be replaced underneath the operator")
@@ -818,6 +818,38 @@ func TestUnreadFinishTakesTheNonfoilDefault(t *testing.T) {
 }
 
 // But never against a year the card actually printed.
+// The year strata get the same contradiction check, and they need it more:
+// the year is their whole evidence. Live, 2026-08-07: Ornithopter ranked
+// year-only on a 2014 read, a misread white border exiled every black row,
+// and the head that committed was a 2022 borderless printing whose foil-only
+// finish became "evidence" — SLD/604 foil written off a card the phone had
+// read as 2014 nonfoil.
+func TestYearRankQueuesWhenTheHeadContradictsTheYear(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "sld", Name: "Ornithopter", Set: "sld", CollectorNumber: "604",
+			ReleasedAt: "2022-04-22", Finishes: []string{"foil"}},
+		{ID: "m15", Name: "Ornithopter", Set: "m15", CollectorNumber: "223",
+			ReleasedAt: "2014-07-18", Finishes: []string{"nonfoil", "foil"}},
+	}
+	for _, rank := range []scanMatch{scanMatchYearOnly, scanMatchYearAndMarks} {
+		it := queueItem{
+			canonical: "Ornithopter", prints: prints, rank: rank,
+			match: cardname.Match{Exact: true},
+			raw:   scan.Card{CopyrightYear: 2014},
+		}
+		if auto, _, note := verdict(it); auto {
+			t.Errorf("rank %v: a 2022 head against the 2014 year the rank stands on must queue", rank)
+		} else if !strings.Contains(note, "2014") {
+			t.Errorf("rank %v: note = %q, should say which year contradicted it", rank, note)
+		}
+		// The same rank with the year-matching row in front commits as ever.
+		it.prints = []scryfall.Card{prints[1], prints[0]}
+		if auto, _, _ := verdict(it); !auto {
+			t.Errorf("rank %v: a head that agrees with its own year must still commit", rank)
+		}
+	}
+}
+
 func TestAmbiguousNumberQueuesWhenTheYearDisagrees(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "new", Name: "X", Set: "new", CollectorNumber: "76",

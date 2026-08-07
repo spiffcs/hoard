@@ -10,7 +10,7 @@ let cardAspect: CGFloat = 63.0 / 88.0
 /// Where the card's furniture sits in card space, with v running 0…1 down from
 /// the card's top edge. Fitted on scan/corpus, where the card *is* the image so
 /// the card rect is known exactly — see scan/corpus/border.sh.
-enum CardLayout {
+public enum CardLayout {
     /// Centre of the copyright row, the lowest text on the card.
     static let footerV: CGFloat = 0.9375
     /// Centre of the illustrator credit, one row above it — or of the two rows
@@ -150,8 +150,8 @@ enum CardLayout {
     /// corpus are all nonfoils, so no foil between the two fitted points has
     /// ever been measured; frames in that gap rely on the search window
     /// absorbing the difference rather than on a constant that describes them.
-    static let sparkleU: CGFloat = 0.205
-    static let sparkleV: CGFloat = 0.889
+    public static let sparkleU: CGFloat = 0.205
+    public static let sparkleV: CGFloat = 0.889
 }
 
 /// AnchorMeasurement is where a footer anchor actually sat, reported so

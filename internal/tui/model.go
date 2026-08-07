@@ -618,6 +618,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case nudgeMsg:
 		return m.onNudge(msg)
 
+	case flashDeadlineMsg:
+		// The ceiling on a held review flash: the second look had its window,
+		// and a stop the operator has not been told about is not yet a stop.
+		// A flash already cleared or re-owed to a different card voids this.
+		if m.deferredFlashFor == msg.name {
+			m.flushDeferredFlash()
+			m.note("outcome %q: no better read within %dms, review it",
+				msg.name, decisionCeiling.Milliseconds())
+		}
+		return m, nil
+
 	case errMsg:
 		return m.failToName(msg.err.Error())
 
@@ -1666,7 +1677,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	//
 	// Only ever a queued entry, never the one under the cursor: swapping a card
 	// out from under someone mid-cascade is worse than a stale rank.
-	upgraded, replacedQueued := m.upgradeQueued(it)
+	upgraded, replacedQueued := m.upgradeQueued(&it)
 	if replacedQueued {
 		m.note("outcome %q re-read: %s beats the queued %s, replacing it",
 			it.canonical, it.rank, upgraded)
@@ -1936,6 +1947,23 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// One review entry per card. upgradeQueued above already swapped this read
+	// in if it taught anything; a read that reaches here with its name still
+	// sitting in the queue is the same card re-announcing the same problem,
+	// and each announcement used to append — observed live, 2026-08-07:
+	// Charitable Levy held three identical "printing unverified" entries from
+	// one physical card, each a stop the operator had already been told about.
+	if it.canonical != "" {
+		for _, q := range m.review {
+			if q.canonical == it.canonical {
+				m.note("outcome %q dropped: already awaiting review", it.canonical)
+				m.recentNames = recordName(m.recentNames, it.canonical, now)
+				m.status = fmt.Sprintf("%s is already in the review queue", it.canonical)
+				m.statusErr = false
+				return m, m.scheduleNudge()
+			}
+		}
+	}
 	if it.canonical != "" {
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 	}
@@ -1961,13 +1989,20 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// instead of immediately. Whichever arrives first wins, and a real capture
 	// voids the loser.
 	nudge := m.scheduleNudge()
+	var deadline tea.Cmd
 	if secondLook {
 		m.secondLookFor, m.secondLookPending = it.canonical, true
 		m.deferredFlashFor = it.canonical
 		m.note("outcome %q: looking again", it.canonical)
+		// The flash is held, but not indefinitely: see decisionCeiling.
+		name := it.canonical
+		deadline = func() tea.Msg {
+			time.Sleep(decisionCeiling)
+			return flashDeadlineMsg{name: name}
+		}
 	}
 	next, cmd := m.reviewChanged()
-	return next, tea.Batch(cmd, nudge)
+	return next, tea.Batch(cmd, nudge, deadline)
 }
 
 // suppressRepeat drops a repeat sighting of a card already handled, and keeps
@@ -2209,12 +2244,23 @@ func (m model) reviewing() bool { return m.current != nil }
 // The item being reviewed right now (m.current) is deliberately out of scope.
 // It is on screen with a cascade open against it, and replacing it underneath
 // the operator would be a worse bug than the one this fixes.
-func (m *model) upgradeQueued(it queueItem) (scanMatch, bool) {
+func (m *model) upgradeQueued(it *queueItem) (scanMatch, bool) {
 	if it.canonical == "" {
 		return 0, false
 	}
 	for i, q := range m.review {
 		if q.canonical == it.canonical && it.rank > q.rank {
+			// The replacing read wins on printing evidence, but the replaced
+			// one may still hold the better *finish* read — the two are
+			// measured off different pixels and degrade independently.
+			// Observed live, 2026-08-07: Glowrider's first look read the
+			// marker at 0.814 and queued on an 88% name; the retry read the
+			// number, replaced the entry, and committed nonfoil off its own
+			// flat patch — a true foil written wrong while the evidence sat
+			// in the entry being discarded. Silence never overwrites a read.
+			if it.finishHint == "" && q.finishHint != "" {
+				it.finishHint = q.finishHint
+			}
 			m.review = append(m.review[:i], m.review[i+1:]...)
 			return q.rank, true
 		}

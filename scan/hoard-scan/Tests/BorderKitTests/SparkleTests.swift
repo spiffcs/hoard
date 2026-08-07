@@ -194,3 +194,62 @@ private func syntheticCard(du: CGFloat = 0, dv: CGFloat = 0,
     #expect(CardLayout.leftU(kind: .credit, prefix: .trademark,
                              frame: FrameEvidence(year: 2024, hasSetCode: true)) == nil)
 }
+
+// MARK: - The chroma-contrast vote
+
+@Test func chromaContrastVotesFoilOnItsOwn() {
+    // The sheen is colour variation whatever shape it takes: a reading whose
+    // luma correlation failed outright still answers foil when the warm-cool
+    // patch carries real spread. Measured live: a Glowrider read at luma
+    // -0.13 carried chroma contrast 0.14 on a genuine foil, and Charitable
+    // Levy — whose stamp prints under its rules text — never clears the luma
+    // bar and always carries 0.09-0.14.
+    let flatLuma = SparkleReading(score: -0.13, offsetU: 0, offsetV: 0,
+                                  contrast: 0.015, samples: 1)
+    let sheen = SparkleReading(score: 0.16, offsetU: 0, offsetV: 0,
+                               contrast: 0.14, samples: 1)
+    let v = SparkleVerdict(luma: flatLuma, chroma: sheen)
+    #expect(v.isFoil)
+    #expect(v.channel == "chroma")
+}
+
+@Test func neutralChromaDoesNotVote() {
+    // The floor sits 0.025 above the highest nonfoil on any rig (0.055,
+    // colourful art bleeding into the window). A patch at that level is a
+    // nonfoil's furniture, not a sheen.
+    let flatLuma = SparkleReading(score: 0.40, offsetU: 0, offsetV: 0,
+                                  contrast: 0.03, samples: 1)
+    let furniture = SparkleReading(score: 0.63, offsetU: 0, offsetV: 0,
+                                   contrast: 0.055, samples: 1)
+    let v = SparkleVerdict(luma: flatLuma, chroma: furniture)
+    #expect(!v.isFoil)
+    #expect(v.channel.isEmpty)
+}
+
+@Test func lumaStillOutranksChromaInTheLog() {
+    // Both channels clearing their bars is a luma verdict: the correlation is
+    // the stronger claim and the log should attribute accordingly.
+    let star = SparkleReading(score: 0.75, offsetU: 0, offsetV: 0,
+                              contrast: 0.06, samples: 1)
+    let sheen = SparkleReading(score: 0.7, offsetU: 0, offsetV: 0,
+                               contrast: 0.12, samples: 1)
+    let v = SparkleVerdict(luma: star, chroma: sheen)
+    #expect(v.isFoil)
+    #expect(v.channel == "luma")
+}
+
+@Test func flatLumaBlocksTheChromaVote() {
+    // Printed colour art is loud on the warm-cool axis and silent on luma —
+    // the one combination sheen cannot produce. The measured case: a modern
+    // nonfoil at chroma contrast 0.090 with luma spread 0.008.
+    let flat = SparkleReading(score: 0.18, offsetU: 0, offsetV: 0,
+                              contrast: 0.008, samples: 1)
+    let art = SparkleReading(score: 0.69, offsetU: 0, offsetV: 0,
+                             contrast: 0.09, samples: 1)
+    let v = SparkleVerdict(luma: flat, chroma: art)
+    #expect(!v.isFoil)
+    // The observer string may still note the chroma score would have voted —
+    // that is reporting, not a verdict. What must not appear is the voting
+    // channel's own name.
+    #expect(v.channel != "chroma")
+}

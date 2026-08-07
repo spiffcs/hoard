@@ -487,6 +487,22 @@ Read the score before touching the threshold. It is on the wire now
 half of the finish-provenance argument that did not land the first time: a
 verdict without its measurement made this session unreadable.
 
+### 2026-08-07 — the decision ceiling, and where it should end up
+
+`decisionCeiling` (internal/tui/autoscan.go) caps how long a queued card holds
+its review flash while a second look is out: 1300ms, against the nudge clock's
+5.5s-doubling-to-44s. The measurement it stands on: across four live sessions,
+every second look that ever rescued a card landed 0.70-0.90s after its queue,
+and no retry that missed that window ever answered — the late reads arrive
+mangled off a nudge and drop.
+
+**1300 starts tight by choice, to be raised on evidence.** The tell in a
+session log is a rescue — a "re-read … beats the queued …" or a second-look
+commit — landing *after* its card's "no better read within" line: that is the
+ceiling cutting into real rescues, and the answer is a step up
+(1300 → 1800 → 2500), not doubting the rescue. The 0.9s cap was measured on
+one operator and one rig; the tight start spends that unknown deliberately.
+
 ### Knobs that do not do what they look like they do
 
 - **`AUTO_STABLE` is not the latency knob.** Cutting it 6 → 4 moved settle 8%

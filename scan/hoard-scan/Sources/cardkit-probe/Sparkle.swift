@@ -595,3 +595,209 @@ func sparkleControl(path: String) async -> Never {
     }
     exit(0)
 }
+
+/// creditAnchor measures, for one still, where the band's credit and copyright
+/// rows sit against where the sparkle search finds its peak — the fitting data
+/// for anchoring the marker search on the card's own text rather than on the
+/// quad. Matchers are deliberately looser than CardKit's: this mode wants to
+/// know whether a mangled credit row is still *locatable*, which is a different
+/// question from whether it is trustworthy.
+@available(macOS 15, *)
+func creditAnchor(path: String) async -> Never {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
+    else { die("could not read image: \(path)") }
+    let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
+        .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
+        .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+    let upright = uprighted(cg, orientation)
+    guard let located = locateCard(upright) else { die("no card located in \(path)") }
+    let flat = located.image
+
+    var out: [String: Any] = ["file": (path as NSString).lastPathComponent,
+                              "aspect": Double(flat.width) / Double(flat.height)]
+
+    if let band = cropCard(flat, CardGeometry.band) {
+        let lines = await recognizeLines(band, correctLanguage: false)
+        func squash(_ s: String) -> String {
+            String(s.lowercased().filter { $0.isLetter })
+        }
+        // Card space is top-down; Vision's box is bottom-up inside the band
+        // crop, which spans v 0.82-1.0 of the card.
+        func cardBox(_ b: CGRect) -> [String: Double] {
+            ["u0": Double(b.minX), "u1": Double(b.maxX),
+             "vMid": Double(0.82 + (1 - b.midY) * 0.18),
+             "vTop": Double(0.82 + (1 - b.maxY) * 0.18)]
+        }
+        if let credit = lines.first(where: { squash($0.text).contains("llu")
+            || squash($0.text).hasPrefix("lus") || squash($0.text).hasPrefix("flu") }) {
+            out["credit"] = cardBox(credit.box)
+            out["creditText"] = credit.text
+        }
+        if let company = lines.first(where: {
+            let s = squash($0.text)
+            return s.contains("wizard") || s.contains("coast") || $0.text.contains("©")
+        }) {
+            out["company"] = cardBox(company.box)
+            out["companyText"] = company.text
+        }
+    }
+
+    let wide = SparkleWindow(
+        u: SparkleGate.searchU * 4, v: SparkleGate.searchV * 4,
+        cellsU: SparkleGate.searchCellsU * 4, cellsV: SparkleGate.searchCellsV * 4)
+    if let fitted = sparkleInCard(flat)?.luma {
+        out["fittedScore"] = Double(fitted.score)
+        out["fittedU"] = Double(fitted.offsetU); out["fittedV"] = Double(fitted.offsetV)
+        out["fittedContrast"] = Double(fitted.contrast)
+    }
+    if let wideR = sparkleInCard(flat, window: wide)?.luma {
+        out["wideScore"] = Double(wideR.score)
+        out["wideU"] = Double(wideR.offsetU); out["wideV"] = Double(wideR.offsetV)
+    }
+    // The A/B: the same fitted window with V re-centred on the copyright
+    // row's own middle, offset by the fitted constant. U stays the quad's.
+    if let company = out["company"] as? [String: Double], let vMid = company["vMid"] {
+        let shiftV = CGFloat(vMid - 0.0671) - CardLayout.sparkleV
+        if let anchored = sparkleInCard(flat, anchorShiftV: shiftV)?.luma {
+            out["anchoredScore"] = Double(anchored.score)
+            out["anchoredU"] = Double(anchored.offsetU)
+            out["anchoredV"] = Double(anchored.offsetV)
+            out["anchoredContrast"] = Double(anchored.contrast)
+            out["anchorShiftV"] = Double(shiftV)
+        }
+    }
+    if let d = try? JSONSerialization.data(withJSONObject: out),
+       let s = String(data: d, encoding: .utf8) {
+        print(s)
+    }
+    exit(0)
+}
+
+/// FlatCard samples a flattened card image in full-card coordinates — the
+/// probe-side twin of the corpus crop sampler, for experiments that run on
+/// whole stills rather than pre-cut crops.
+struct FlatCard {
+    let width: Int, height: Int
+    private let data: [UInt8]
+
+    init?(_ cg: CGImage) {
+        let w = cg.width, h = cg.height
+        guard w > 0, h > 0 else { return nil }
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
+        let ok = buf.withUnsafeMutableBytes { raw -> Bool in
+            guard let ctx = CGContext(
+                data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return nil }
+        width = w; height = h; data = buf
+    }
+
+    // The same 709 luma the live PixelReader uses, so scores compare.
+    func luma(_ u: CGFloat, _ v: CGFloat) -> CGFloat? {
+        let x = Int((u * CGFloat(width)).rounded(.down))
+        let y = Int((v * CGFloat(height)).rounded(.down))
+        guard x >= 0, x < width, y >= 0, y < height else { return nil }
+        let o = (y * width + x) * 4
+        let r = CGFloat(data[o]) / 255, g = CGFloat(data[o + 1]) / 255,
+            b = CGFloat(data[o + 2]) / 255
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+}
+
+/// sparkleShape scores the binarised marker patch against the binarised
+/// template — the shape channel experiment. Correlation dies when washout
+/// compresses the patch's dynamic range; a median split only asks *which*
+/// cells are the brighter ones, which survives any monotone lighting change
+/// by construction. Whether it survives the real captures is what this mode
+/// measures.
+@available(macOS 15, *)
+func sparkleShape(path: String) async -> Never {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
+    else { die("could not read image: \(path)") }
+    let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
+        .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
+        .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+    let upright = uprighted(cg, orientation)
+    guard let located = locateCard(upright) else { die("no card located in \(path)") }
+    guard let flat = FlatCard(located.image) else { die("no pixels in \(path)") }
+    let sample: CardSampler = { u, v in flat.luma(u, v) }
+
+    // Locate exactly the way the shipping reader would, then judge the shape
+    // at the same spot the correlation judged.
+    let cellU = SparkleGate.searchU / CGFloat(SparkleGate.searchCellsU)
+    let cellV = SparkleGate.searchV / CGFloat(SparkleGate.searchCellsV)
+    var best = -CGFloat.infinity
+    var bestP: [CGFloat]? = nil
+    for i in -SparkleGate.searchCellsU...SparkleGate.searchCellsU {
+        for j in -SparkleGate.searchCellsV...SparkleGate.searchCellsV {
+            guard let p = sparklePatch(du: CGFloat(i) * cellU, dv: CGFloat(j) * cellV,
+                                       step: 1, sample),
+                  let n = sparkleNormalise(p) else { continue }
+            let s = sparkleCorrelate(n, sparkleTemplate)
+            if s > best { best = s; bestP = p }
+        }
+    }
+    var out: [String: Any] = ["file": (path as NSString).lastPathComponent]
+    if let p = bestP {
+        out["score"] = Double(best)
+        let sorted = p.sorted()
+        let median = sorted[p.count / 2]
+        out["contrast"] = Double(medianAbsDev(p))
+        let binP = p.map { $0 > median }
+        let binT = sparkleTemplate.map { $0 > 0 }
+        var agree = 0, interB = 0, unionB = 0
+        for (a, b) in zip(binP, binT) {
+            if a == b { agree += 1 }
+            if a && b { interB += 1 }
+            if a || b { unionB += 1 }
+        }
+        out["shapeAgree"] = Double(agree) / Double(p.count)
+        out["shapeIoU"] = unionB > 0 ? Double(interB) / Double(unionB) : 0
+        // Row profile: a marker patch is brightest in its middle rows (the
+        // star core and tail run through the centre); a patch straddling the
+        // text box's bottom edge is a monotone ramp, bright rows on one side
+        // and dark on the other. rowRamp is the correlation of row means with
+        // row index — near ±1 for an edge, near 0 for a star.
+        let cols = SparkleTemplate.cols, rowsN = SparkleTemplate.rows
+        var rowMeans = [CGFloat](repeating: 0, count: rowsN)
+        for j in 0..<rowsN {
+            var sum: CGFloat = 0
+            for i in 0..<cols { sum += p[j * cols + i] }
+            rowMeans[j] = sum / CGFloat(cols)
+        }
+        let mean = rowMeans.reduce(0, +) / CGFloat(rowsN)
+        let idxMean = CGFloat(rowsN - 1) / 2
+        var num: CGFloat = 0, dR: CGFloat = 0, dI: CGFloat = 0
+        for j in 0..<rowsN {
+            let a = rowMeans[j] - mean, b = CGFloat(j) - idxMean
+            num += a * b; dR += a * a; dI += b * b
+        }
+        let denom = (dR * dI).squareRoot()
+        out["rowRamp"] = denom > 0 ? Double(num / denom) : 0
+        let mid = rowsN / 3
+        let midMean = rowMeans[mid..<(rowsN - mid)].reduce(0, +) / CGFloat(rowsN - 2 * mid)
+        out["centerBump"] = Double(midMean - mean)
+    }
+    if let d = try? JSONSerialization.data(withJSONObject: out),
+       let s = String(data: d, encoding: .utf8) {
+        print(s)
+    }
+    exit(0)
+}
+
+/// Median absolute deviation, probe-local: BorderKit's is internal and the
+/// experiment only needs the same number, not the same symbol.
+func medianAbsDev(_ xs: [CGFloat]) -> CGFloat {
+    func median(_ v: [CGFloat]) -> CGFloat {
+        let s = v.sorted()
+        return s.isEmpty ? 0 : s[s.count / 2]
+    }
+    let m = median(xs)
+    return median(xs.map { abs($0 - m) })
+}

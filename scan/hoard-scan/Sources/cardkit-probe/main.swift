@@ -75,6 +75,16 @@ func run() async -> Never {
     if let s = args.firstIndex(of: "--sparkle-where"), s + 1 < args.count {
         await sparkleWhere(path: args[s + 1])
     }
+    // --credit-anchor measures the band's text-row boxes against the sparkle
+    // peak, per still — the fitting data for text-anchored marker search.
+    if let s = args.firstIndex(of: "--credit-anchor"), s + 1 < args.count {
+        await creditAnchor(path: args[s + 1])
+    }
+    // --sparkle-shape scores the binarised patch against the binarised
+    // template — the shape-channel experiment. Diagnosis only.
+    if let s = args.firstIndex(of: "--sparkle-shape"), s + 1 < args.count {
+        await sparkleShape(path: args[s + 1])
+    }
     // --sparkle-control scores the marker patch against two markerless control
     // patches on the same row — the exposure-invariance experiment. Diagnosis
     // only, never a verdict.

@@ -763,12 +763,29 @@ func printingUnverified(it queueItem) (short bool, note string) {
 	}
 	switch it.rank {
 	case scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
-		scanMatchNumberOnly, scanMatchSinglePrint, scanMatchYearOnly, scanMatchYearAndMarks,
+		scanMatchNumberOnly, scanMatchSinglePrint,
 		// A tail match is a repaired number, not a verified one, so it commits
 		// on the same terms as the year strata: numberVerified() still says no,
 		// which keeps verdict's fallback-OCR-line veto and confidence floor
 		// standing over it.
 		scanMatchNumberTail:
+		return false, ""
+	case scanMatchYearOnly, scanMatchYearAndMarks:
+		// The same contradiction check the ambiguous-number case carries, and
+		// these ranks need it more: the year is their *whole* evidence, so a
+		// head row from a different year means something after the ranking —
+		// the border reorder — displaced the row the rank was about. Observed
+		// live, 2026-08-07: Ornithopter ranked year-only on a 2014 read, a
+		// misread white border then exiled every black row, and the head that
+		// committed was a 2022 borderless printing whose foil-only finish
+		// became "evidence" — a wrong printing *and* a wrong finish off one
+		// commit the rank's own year refutes.
+		if y := it.raw.CopyrightYear; y > 0 && len(it.prints) > 0 &&
+			!strings.HasPrefix(it.prints[0].ReleasedAt, fmt.Sprintf("%d", y)) {
+			return true, fmt.Sprintf(
+				"printing unverified: %d printings, and the front one is not from %d",
+				len(it.prints), y)
+		}
 		return false, ""
 	case scanMatchNumberAmbiguous:
 		// A number that matched several printings commits the one the ranking
@@ -1709,6 +1726,34 @@ func similarRecent(recent []recentName, text string, now time.Time) (string, boo
 // nudgeMsg fires when the post-processing quiet period elapses. gen ties it
 // to the scheduling generation; any newer scan or schedule voids it.
 type nudgeMsg struct{ gen int }
+
+// flashDeadlineMsg is the decision ceiling lapsing on a held review flash.
+// Scoped by the card's name rather than a generation: the deadline is void
+// exactly when the flash it guards is no longer held for that card, and
+// clearDeferredFlash already encodes every way that happens.
+type flashDeadlineMsg struct{ name string }
+
+// decisionCeiling is how long a queued card may hold its review flash while a
+// second look is out, before the operator is told regardless.
+//
+// The nudge timer already flushes the held flash, but it answers a different
+// question — "has the scene gone quiet" — at a swap-cadence 5.5s that echo
+// backoff can double. As a *decision* deadline that is the wrong clock:
+// measured across four live sessions, every second look that ever rescued a
+// card landed within 0.9s of the queue (0.70-0.90s), and no retry that missed
+// that window ever answered — the late reads that did arrive came mangled off
+// a nudge and were dropped. 1.3s keeps every observed rescue with ~40%
+// margin; the nudge stays armed behind it as the capture backstop it always
+// was.
+//
+// 1300 starts tight by choice — the operator's call, against the measured
+// 0.9s rescue cap. The number to watch in the session log is a rescue
+// ("re-read ... beats the queued ..." or a second-look commit) landing
+// *after* its card's "no better read within" line: that is the ceiling
+// cutting into real rescues, and the answer is to raise this a step
+// (1300 → 1800 → 2500), not to doubt the rescue. The four sessions behind
+// the 0.9s figure share one operator and one rig.
+const decisionCeiling = 1300 * time.Millisecond
 
 // nudgeEchoWindow is how long after a sent nudge a scan counts as possibly
 // nudge-originated. A window rather than a consumed flag, because a real scan

@@ -265,7 +265,8 @@ public func readCard(_ image: CGImage) async -> CardReading {
     // want recapturing, not a gate built around them.
     if printing.finish != "foil", (printing.year ?? 9999) >= SparkleGate.firstFoilYear {
         let sparkleStart = DispatchTime.now()
-        out.sparkle = sparkleInCard(upright)
+        out.sparkle = sparkleInCard(
+            upright, anchorShiftV: companyAnchorShiftV(bandRead))
         out.timings.sparkle = millis(since: sparkleStart)
         if let s = out.sparkle, s.isFoil {
             printing.finish = "foil"
@@ -284,6 +285,39 @@ public func readCard(_ image: CGImage) async -> CardReading {
     out.title = chooseTitle(from: out.lines)
     out.timings.total = millis(since: began)
     return out
+}
+
+/// companyAnchorShiftV re-centres the marker search vertically on the
+/// copyright row the band just read, when one read.
+///
+/// The quad the flatten stands on varies capture to capture — Vision cuts the
+/// card at its printed frame on some frames and its cut edge on others, and
+/// the observed flatten aspect ranges 0.66-0.76 against the card's true 0.716.
+/// The copyright row does not: it is ink at a fixed distance from the marker.
+/// Measured over 20 strong-peak foils across both rigs (2026-08-07), the
+/// row's vertical centre predicts the marker's V at SD 0.0049 against the
+/// fixed anchor's 0.0095 — and the same measurement is why only V is
+/// re-anchored: both text rows' *horizontal* extents are set per artist and
+/// per footer text, and their left edges spread three times wider than the
+/// quad's own error.
+///
+/// Returns 0 — the fitted anchor unchanged — when no copyright row read, or
+/// when the row implies a shift too large to be a real quad error: a shift
+/// beyond `maxShift` says the "copyright row" is some other line wearing its
+/// fingerprint, and a wrong landmark is worse than none.
+func companyAnchorShiftV(_ bandRead: [Line]) -> CGFloat {
+    // Fitted beside the SD above: marker V minus company-row vMid, median
+    // over the same 20 foils.
+    let companyRowToMarkerV: CGFloat = -0.0671
+    let maxShift: CGFloat = 0.03
+    guard let company = bandRead.first(where: { looksLikeCompanyRow($0.text) })
+    else { return 0 }
+    // The band crop spans v 0.82-1.0 of the card, and Vision's box lives in
+    // the crop with a bottom-left origin.
+    let vMid = 0.82 + (1 - company.box.midY) * 0.18
+    let shift = vMid + companyRowToMarkerV - CardLayout.sparkleV
+    guard abs(shift) <= maxShift else { return 0 }
+    return shift
 }
 
 /// recoverFooter reads the strip just below a located card.
@@ -439,7 +473,7 @@ func recognizeText(_ cg: CGImage, correctLanguage: Bool) async -> [String] {
 /// geometry on lines whose identity is proven by their *content*, and needs to
 /// know where those lines are. Vision hands the box over with the string, so
 /// this costs nothing — it is the same request, read more completely.
-func recognizeLines(_ cg: CGImage, correctLanguage: Bool) async -> [Line] {
+public func recognizeLines(_ cg: CGImage, correctLanguage: Bool) async -> [Line] {
     var request = RecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = correctLanguage

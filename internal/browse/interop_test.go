@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/progress"
-	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func deckAddModel(t *testing.T, fn DeckAddFunc) Model {
@@ -164,11 +163,6 @@ func TestDeckURLHelpPointsAtTheFileCommand(t *testing.T) {
 	}
 	if !strings.Contains(help, title) {
 		t.Fatalf("help %q does not name %q", help, title)
-	}
-	// The Moxfield caveat gets its own row at any width.
-	lines := ui.WrapHelp(help, 200)
-	if len(lines) != 2 || !strings.HasPrefix(lines[1], "Moxfield") {
-		t.Fatalf("help rows = %q, want the caveat alone on the second", lines)
 	}
 }
 

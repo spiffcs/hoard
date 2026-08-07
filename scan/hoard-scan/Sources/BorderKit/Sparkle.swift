@@ -149,17 +149,21 @@ public func retroFrameFooter(_ lines: [String]) -> Bool {
 /// feature's to fix, and this feature does not need it.
 public func sparkleInCard(_ card: CGImage,
                           window: SparkleWindow = .fitted,
-                          anchorShiftU: CGFloat = 0) -> SparkleVerdict? {
+                          anchorShiftU: CGFloat = 0,
+                          anchorShiftV: CGFloat = 0) -> SparkleVerdict? {
     guard let px = PixelReader(card) else { return nil }
     let w = CGFloat(card.width), h = CGFloat(card.height)
-    // anchorShiftU displaces the whole search in card space — measurement
-    // only, like the overridable window: a control patch scored at the same
-    // machinery but away from the marker is how "the marker is there" gets
-    // separated from "this exposure scores everything high".
+    // The anchor shifts displace the whole search in card space. U is
+    // measurement-only (control patches). V is also the production correction
+    // for a quad that cut the card short: the copyright row's own vertical
+    // centre predicts the marker's V at half the quad's spread — measured
+    // SD 0.0049 vs 0.0095 over 20 strong-peak foils, 2026-08-07 — so the
+    // caller may re-centre V on it and leave U alone, where the same
+    // measurement showed text anchoring is three times worse than the quad.
     return SparkleVerdict(
-        luma: sparkleScan({ u, v in px.luma((u + anchorShiftU) * w, v * h) },
+        luma: sparkleScan({ u, v in px.luma((u + anchorShiftU) * w, (v + anchorShiftV) * h) },
                           window: window),
-        chroma: sparkleScan({ u, v in px.warmCool((u + anchorShiftU) * w, v * h) },
+        chroma: sparkleScan({ u, v in px.warmCool((u + anchorShiftU) * w, (v + anchorShiftV) * h) },
                             window: window, template: sparkleChromaTemplate))
 }
 
@@ -198,8 +202,9 @@ public struct SparkleVerdict: Sendable {
     /// The warm-cool read, over the same window with the same template.
     public let chroma: SparkleReading?
 
-    /// Whether the marker was found. **Luma only — the colour channel is
-    /// measured and reported, and deliberately does not vote.**
+    /// Whether the marker was found: the luma correlation, or the warm-cool
+    /// patch carrying real colour spread. **The chroma *score* still does not
+    /// vote** — the history below is about that score, and it stands.
     ///
     /// It was built to vote, and on `scan/foil-corpus` it looked like the answer:
     /// with its own fitted template and a bar at 0.68, either-channel took 27 of
@@ -228,23 +233,32 @@ public struct SparkleVerdict: Sendable {
     /// in-corpus while having learned the furniture rather than the marker. The
     /// luma channel survives the move between rigs; this one does not, yet.
     ///
-    /// So it ships as a measurement. `sparkleChromaScore` is on the wire and in
-    /// `--sparkle-score`, which is what a second corpus — shot on another rig,
-    /// with nonfoils — would be judged against. Turning it on is one `||` away
-    /// once that corpus exists and says it generalises.
+    /// So the chroma *score* ships as a measurement. `sparkleChromaScore` is
+    /// on the wire and in `--sparkle-score`, which is what a second corpus —
+    /// shot on another rig, with nonfoils — would be judged against.
+    ///
+    /// The chroma *contrast* is a different question with a different answer,
+    /// and it votes: colour variation inside the marker patch is foil sheen
+    /// regardless of whether its pattern matches any template, which is
+    /// exactly the evidence that survives a stamp printed under rules text or
+    /// caught misaligned. See `SparkleGate.acceptChromaContrast` for the
+    /// cross-rig measurement that separates it from the score's failure.
     public var isFoil: Bool {
-        (luma?.score ?? -1) >= SparkleGate.accept
+        if (luma?.score ?? -1) >= SparkleGate.accept { return true }
+        return (chroma?.contrast ?? -1) >= SparkleGate.acceptChromaContrast
+            && (luma?.contrast ?? -1) >= SparkleGate.chromaVoteLumaFloor
     }
 
     /// Which channel carried the verdict, for the log. Empty when none did.
     ///
-    /// Reports "chroma" only for a card luma missed *and* the colour channel
-    /// would have caught — a verdict it is not currently allowed to make. That
-    /// costs nothing and is the whole point: a session's log then says how often
-    /// the second channel would have been right, which is the evidence needed to
-    /// let it vote.
+    /// "chroma-only" survives as the observer it always was: the score
+    /// channel would have voted here and is not allowed to. Its rate in
+    /// session logs is the evidence a second-rig corpus would be judged
+    /// against.
     public var channel: String {
         if (luma?.score ?? -1) >= SparkleGate.accept { return "luma" }
+        if (chroma?.contrast ?? -1) >= SparkleGate.acceptChromaContrast,
+           (luma?.contrast ?? -1) >= SparkleGate.chromaVoteLumaFloor { return "chroma" }
         if (chroma?.score ?? -1) >= SparkleGate.acceptChroma { return "chroma-only" }
         return ""
     }

@@ -64,6 +64,52 @@ func hudSession(t *testing.T, m model) (model, *fakeSession) {
 	return got, sess
 }
 
+// The decision ceiling flushes a held flash without waiting for the nudge.
+//
+// The nudge clock answers "has the scene gone quiet" at swap cadence — 5.5s,
+// doubled by echo backoff — and a held review flash was riding it. Measured
+// across four sessions, every second look that ever rescued a card landed
+// within 0.9s of its queue, so a stop still unanswered at 2.5s is a stop the
+// operator should be told about.
+func TestDecisionCeilingFlushesTheHeldFlash(t *testing.T) {
+	ev := confidentEvent()
+	ev.SetCode, ev.CollectorNumber = "", ""
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Sol Ring": "Sol Ring"},
+		prints: map[string][]scryfall.Card{"Sol Ring": {
+			{ID: "a", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
+				Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+			{ID: "b", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
+				Finishes: []string{"nonfoil"}, PriceUSD: price(25)},
+		}},
+	}
+	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
+	m, sess := hudSession(t, m)
+	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
+	m = resolve(t, mm.(model), ev.CardList()[0])
+	if m.deferredFlashFor != "Sol Ring" || len(sess.results) != 0 {
+		t.Fatalf("setup: want the flash held, got deferred=%q results=%+v",
+			m.deferredFlashFor, sess.results)
+	}
+
+	// The ceiling lapses: the flash lands now, not at the nudge.
+	mm, _ = m.Update(flashDeadlineMsg{name: "Sol Ring"})
+	m = mm.(model)
+	if len(sess.results) != 1 || sess.results[0].Tier != tierReview {
+		t.Fatalf("results = %+v, want the review flash at the ceiling", sess.results)
+	}
+	if m.deferredFlashFor != "" {
+		t.Error("the flash was sent and must not still be held")
+	}
+
+	// A stale deadline — the flash long since resolved — is a no-op.
+	mm, _ = m.Update(flashDeadlineMsg{name: "Sol Ring"})
+	m = mm.(model)
+	if len(sess.results) != 1 {
+		t.Errorf("results = %+v, want no second flash from a stale deadline", sess.results)
+	}
+}
+
 // An auto-commit celebrates once — amount, tier, and the post-commit total in
 // one result — and never also chimes.
 func TestAutoCommitCelebratesWithTotal(t *testing.T) {
