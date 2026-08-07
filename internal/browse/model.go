@@ -213,6 +213,7 @@ type Model struct {
 	opWatchAdd       WatchAddFunc
 	opWatchImport    WatchImportFunc
 	opDeckAdd        DeckAddFunc
+	opDeckAddFile    DeckAddFileFunc
 	opImport         ImportFunc
 	op               *opState
 	opGen            int

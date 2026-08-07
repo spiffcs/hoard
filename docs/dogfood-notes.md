@@ -29,8 +29,11 @@ with why).
    states what is saved (confirmed cards) and what leaving drops
    (anything mid-pick or queued), and requires `y` then `enter`.
 3. **Deck-URL prompt lacked provider help** — ✅ done. The prompt's help
-   names archidekt.com as the supported link and points Moxfield users at
-   `deck add --file`.
+   shows an archidekt.com link worth copying and, on its own row, points
+   Moxfield users at `AddDeckFromFile`. Revised after a second look: the
+   original advice named the CLI's `deck add --file`, which the browser
+   had no equivalent of — so the palette grew one rather than the help
+   line telling the reader to quit.
 4. **"Watch this card" offered from the container pane** — ✅ fixed.
    `subjectCard` returns nothing on holdings unless the cursor is in the
    card pane.

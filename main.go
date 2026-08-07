@@ -304,6 +304,28 @@ func isTTY(f *os.File) bool { return ui.IsTerminal(f) }
 // stdinIsTTY reports whether stdin is interactive, which the TUI requires.
 func stdinIsTTY() bool { return isTTY(os.Stdin) }
 
+// browseDeckAdd imports an acquired deck and shapes the browser's report.
+// Both deck-import seams — a pasted link, an exported file — differ only in
+// how they get the list, so everything after that is written once.
+func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *decksource.Deck) (browse.OpReport, error) {
+	res, err := action.DeckAdd(ctx, deps, p, deck)
+	if err != nil && !errors.Is(err, errPartial) {
+		return browse.OpReport{}, err
+	}
+	r := browse.OpReport{Summary: fmt.Sprintf("imported deck %q (%s) · %d cards resolved",
+		res.Name, res.Source, res.Resolved)}
+	if res.Refinished > 0 {
+		r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
+	}
+	if len(res.Unresolved) > 0 {
+		r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
+		r.Report = append([]string{
+			fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "",
+		}, res.Unresolved...)
+	}
+	return r, nil
+}
+
 // cmdBrowse is what `hoard` with no arguments does: the browser at a terminal,
 // the summary table when piped, so `hoard | grep` keeps working.
 //
@@ -357,22 +379,17 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if ferr != nil {
 				return browse.OpReport{}, ferr
 			}
-			res, aerr := action.DeckAdd(ctx, deps, p, deck)
-			if aerr != nil && !errors.Is(aerr, errPartial) {
-				return browse.OpReport{}, aerr
+			return browseDeckAdd(ctx, deps, p, deck)
+		}),
+		// The same capability from a file: providers that block fetching
+		// still export, so the browser takes the export directly rather
+		// than sending the reader to the CLI's 'deck add --file'.
+		browse.WithDeckAddByFile(func(ctx context.Context, p progress.Fn, path string) (browse.OpReport, error) {
+			deck, perr := importTextDeck(path, "", "")
+			if perr != nil {
+				return browse.OpReport{}, perr
 			}
-			r := browse.OpReport{Summary: fmt.Sprintf("imported deck %q (%s) · %d cards resolved",
-				res.Name, res.Source, res.Resolved)}
-			if res.Refinished > 0 {
-				r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
-			}
-			if len(res.Unresolved) > 0 {
-				r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
-				r.Report = append([]string{
-					fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "",
-				}, res.Unresolved...)
-			}
-			return r, nil
+			return browseDeckAdd(ctx, deps, p, deck)
 		}),
 		browse.WithImportFile(func(ctx context.Context, p progress.Fn, path string, again bool) (browse.OpReport, error) {
 			data, rerr := os.ReadFile(path)

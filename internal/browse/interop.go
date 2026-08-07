@@ -34,10 +34,16 @@ func expandPath(s string) string {
 // provider errors (including the Moxfield-blocked message) are better than
 // anything a prompt could pre-empt, and they surface through the op's
 // error path.
+//
+// The help spends two rows because the second is the way out: the reader who
+// pasted a Moxfield link needs a next step, and AddDeckFromFile is one esc
+// away rather than a trip back to the shell.
 func (m *Model) promptDeckURL() {
 	m.prompt = &prompt{
 		label: "deck URL",
-		help:  "archidekt.com deck links work · Moxfield blocks fetches; export the list and use 'deck add --file' · enter accept · esc cancel",
+		help: "archidekt links work, like https://archidekt.com/decks/123456\n" +
+			"Moxfield blocks fetching. Export the deck, then use AddDeckFromFile\n" +
+			"enter accept · esc cancel",
 		validate: func(text string) error {
 			u, err := url.Parse(strings.TrimSpace(text))
 			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -64,6 +70,55 @@ func (m *Model) startDeckAdd(deckURL string) tea.Cmd {
 	})
 }
 
+// promptDeckFile asks for an exported decklist and runs the import as an
+// operation. This is the other half of deck import: the providers that block
+// fetching still export, and a file is the only thing they hand over.
+//
+// The deck's name and provider are the closure's business — it takes them
+// from the file — so the prompt stays one answer, like every other.
+func (m *Model) promptDeckFile() {
+	m.prompt = &prompt{
+		label: "deck file",
+		help:  "a decklist you exported, one card per line · enter accept · esc cancel",
+		validate: func(text string) error {
+			return existingFile(expandPath(strings.TrimSpace(text)))
+		},
+		commit: func(m *Model, text string) tea.Cmd {
+			return m.startDeckAddFile(expandPath(strings.TrimSpace(text)))
+		},
+	}
+}
+
+// startDeckAddFile runs the injected file import: parsing and resolving both
+// happen inside the op, off the UI thread.
+func (m *Model) startDeckAddFile(path string) tea.Cmd {
+	fn := m.opDeckAddFile
+	return m.startOpReport("importing deck", func(ctx context.Context, p progress.Fn) (opOutcome, error) {
+		r, err := fn(ctx, p, path)
+		if err != nil {
+			return opOutcome{}, err
+		}
+		return opOutcome{summary: r.Summary, report: r.Report}, nil
+	})
+}
+
+// existingFile is the validation every file prompt shares: named, present,
+// and not a directory. The prompts differ in what they do with the path, not
+// in what makes one answerable.
+func existingFile(path string) error {
+	if path == "" {
+		return fmt.Errorf("name a file")
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("no such file")
+	}
+	if fi.IsDir() {
+		return fmt.Errorf("that is a directory")
+	}
+	return nil
+}
+
 // promptImportPath asks for a collection file and runs the import as an
 // operation. The prompt validates existence; format sniffing and the ledger
 // check live in the injected closure.
@@ -71,18 +126,7 @@ func (m *Model) promptImportPath() {
 	m.prompt = &prompt{
 		label: "import which file (CSV)",
 		validate: func(text string) error {
-			p := expandPath(strings.TrimSpace(text))
-			if p == "" {
-				return fmt.Errorf("name a file")
-			}
-			fi, err := os.Stat(p)
-			if err != nil {
-				return fmt.Errorf("no such file")
-			}
-			if fi.IsDir() {
-				return fmt.Errorf("that is a directory")
-			}
-			return nil
+			return existingFile(expandPath(strings.TrimSpace(text)))
 		},
 		commit: func(m *Model, text string) tea.Cmd {
 			return m.startImport(expandPath(strings.TrimSpace(text)), false)
@@ -98,18 +142,7 @@ func (m *Model) promptWatchImportPath() {
 	m.prompt = &prompt{
 		label: "import watches from (CSV or JSON)",
 		validate: func(text string) error {
-			p := expandPath(strings.TrimSpace(text))
-			if p == "" {
-				return fmt.Errorf("name a file")
-			}
-			fi, err := os.Stat(p)
-			if err != nil {
-				return fmt.Errorf("no such file")
-			}
-			if fi.IsDir() {
-				return fmt.Errorf("that is a directory")
-			}
-			return nil
+			return existingFile(expandPath(strings.TrimSpace(text)))
 		},
 		commit: func(m *Model, text string) tea.Cmd {
 			return m.startWatchImport(expandPath(strings.TrimSpace(text)))

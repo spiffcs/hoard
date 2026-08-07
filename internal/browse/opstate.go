@@ -68,6 +68,14 @@ type DeckAddFunc func(ctx context.Context, p progress.Fn, url string) (OpReport,
 // WithDeckAddByURL supplies URL-based deck import for the palette.
 func WithDeckAddByURL(f DeckAddFunc) Option { return func(m *Model) { m.opDeckAdd = f } }
 
+// DeckAddFileFunc imports a deck from an exported decklist on disk — the
+// escape hatch for the providers whose links cannot be fetched. Reading and
+// resolving both happen inside the op; the deck's name comes from the file.
+type DeckAddFileFunc func(ctx context.Context, p progress.Fn, path string) (OpReport, error)
+
+// WithDeckAddByFile supplies file-based deck import for the palette.
+func WithDeckAddByFile(f DeckAddFileFunc) Option { return func(m *Model) { m.opDeckAddFile = f } }
+
 // ImportFunc imports a collection file: reading the file and resolving its
 // rows both happen inside the op, off the UI thread. again acknowledges the
 // ledger's already-imported refusal.

@@ -119,6 +119,16 @@ unpriced and watches the pane greys out containers with nothing to show
 and the cursor skips them; arriving at one of those views with an empty
 selection snaps back to All Cards and says so.
 
+**Decks come in two ways**: `AddDeckByURL` fetches an Archidekt link
+(`https://archidekt.com/decks/123456`), and `AddDeckFromFile` reads a
+decklist you exported to disk — one card per line, the same text formats
+`hoard deck add --file` accepts. The second exists because the first
+cannot cover everything: Moxfield's API is Cloudflare-blocked, so a
+Moxfield deck has to be exported (Moxfield → ⋯ → Export) and then read
+from the file. The URL prompt's help says so and names the command, so
+that detour never leaves the browser. A file-imported deck takes its name
+from the file name.
+
 **The watches view grows watches three ways**: `AddWatchFromCollection`
 picks a card from your holdings, `AddWatchForAnyCard` resolves a name you
 don't own yet, and `ImportWatchList` stands many at once from a CSV or

@@ -10,7 +10,21 @@ import (
 // visible on a narrow terminal and no hint is split mid-phrase — a hint that
 // would be cut moves whole to the next line. A single entry longer than the
 // width stands alone.
+//
+// A "\n" in the line is an author-forced break: a caveat that belongs on its
+// own row ("Moxfield blocks fetching …") stays there at every width, rather
+// than riding along with whatever entry the greedy fit happens to leave room
+// for. Each segment then wraps on its own.
 func WrapHelp(s string, width int) []string {
+	var lines []string
+	for seg := range strings.SplitSeq(s, "\n") {
+		lines = append(lines, wrapHelpSegment(seg, width)...)
+	}
+	return lines
+}
+
+// wrapHelpSegment wraps one forced-break-free run of entries.
+func wrapHelpSegment(s string, width int) []string {
 	if width <= 0 {
 		return []string{s}
 	}

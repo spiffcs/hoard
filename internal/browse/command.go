@@ -217,6 +217,13 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.promptDeckURL(); return nil },
 		},
 		{
+			id: "deck.add-file", title: "AddDeckFromFile", aliases: "import moxfield decklist text export file",
+			desc:  "Import a decklist you exported to a file as a deck.",
+			where: func(m *Model) bool { return m.opDeckAddFile != nil },
+			rank:  onView(viewHoldings, 2),
+			run:   func(m *Model) tea.Cmd { m.promptDeckFile(); return nil },
+		},
+		{
 			id: "export.container", title: "ExportThisContainer", aliases: "csv save backup moxfield archidekt",
 			desc: "Write the selected binder or deck to a CSV or JSON file.",
 			where: func(m *Model) bool {

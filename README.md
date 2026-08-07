@@ -104,12 +104,15 @@ true to it (re-importing the same link updates in place, and deck cards are
 read-only in the browser). New cards land in the default binder; create more
 with `hoard binder new` to catalog and separate as you like.
 
-Moxfield's API is Cloudflare-blocked, so to get decks from there you mus export 
+Moxfield's API is Cloudflare-blocked, so to get decks from there you must export
 the deck to text (Moxfield → ⋯ → Export) and import the file:
 
 ```sh
 hoard deck add --file my-deck.txt --name "My Edgar EDH" --source moxfield
 ```
+
+The browser has the same thing as `AddDeckFromFile` in the palette, if you'd
+rather not leave it — the deck takes its name from the file.
 
 The text importer understands common formats — `2 Sol Ring`, `1x Lightning
 Bolt`, `1 Ulamog, the Infinite Gyre (UMA) 7 *F*` — plus `Commander`/`Sideboard`

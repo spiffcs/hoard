@@ -3,12 +3,14 @@ package browse
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func deckAddModel(t *testing.T, fn DeckAddFunc) Model {
@@ -81,6 +83,92 @@ func TestDeckURLCommitStartsOpWithURL(t *testing.T) {
 	}
 	if m.text != nil {
 		t.Fatal("no report lines → no takeover")
+	}
+}
+
+func deckFileModel(t *testing.T, fn DeckAddFileFunc) Model {
+	t.Helper()
+	m, err := New(testStore(), WithDeckAddByFile(fn))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ctx = context.Background()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	return next.(Model)
+}
+
+func TestDeckFilePromptValidates(t *testing.T) {
+	m := deckFileModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
+		return OpReport{}, nil
+	})
+	m, _ = runPaletteCommand(t, m, "deck.add-file")
+	if m.prompt == nil {
+		t.Fatal("command did not open the file prompt")
+	}
+	for _, bad := range []string{"/no/such/decklist.txt", t.TempDir()} {
+		mm, cmd := typePrompt(t, m, bad)
+		if cmd != nil || mm.prompt == nil || mm.prompt.err == "" {
+			t.Fatalf("%q: want a validation refusal, got err=%q", bad, mm.prompt.err)
+		}
+		next, _ := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+		m = next.(Model)
+	}
+}
+
+// The escape hatch the deck-URL help points at: a decklist exported from a
+// provider that blocks fetching imports without leaving the browser.
+func TestDeckFileCommitStartsOpWithPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "my-edgar-edh.txt")
+	if err := os.WriteFile(path, []byte("1 Sol Ring\n1 Arcane Signet\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotPath string
+	m := deckFileModel(t, func(_ context.Context, _ progress.Fn, p string) (OpReport, error) {
+		gotPath = p
+		return OpReport{Summary: `imported deck "my-edgar-edh" (text) · 2 cards resolved`}, nil
+	})
+	m, _ = runPaletteCommand(t, m, "deck.add-file")
+	m, cmd := typePrompt(t, m, path)
+	if m.prompt != nil {
+		t.Fatal("prompt should close on commit")
+	}
+	if m.op == nil {
+		t.Fatal("commit did not start the op")
+	}
+	done := findOpDone(t, cmd)
+	if gotPath != path {
+		t.Fatalf("path = %q, want %q", gotPath, path)
+	}
+	next, _ := m.Update(done)
+	if m := next.(Model); !strings.Contains(m.status, "imported deck") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+// The prompt names the file command, so the two must not drift apart: a
+// renamed command with a stale help line is advice that goes nowhere.
+func TestDeckURLHelpPointsAtTheFileCommand(t *testing.T) {
+	m := deckAddModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
+		return OpReport{}, nil
+	})
+	m, _ = runPaletteCommand(t, m, "deck.add-url")
+	help := m.prompt.help
+	var title string
+	for i := range m.commands {
+		if m.commands[i].id == "deck.add-file" {
+			title = m.commands[i].title
+		}
+	}
+	if title == "" {
+		t.Fatal("no deck.add-file command to point at")
+	}
+	if !strings.Contains(help, title) {
+		t.Fatalf("help %q does not name %q", help, title)
+	}
+	// The Moxfield caveat gets its own row at any width.
+	lines := ui.WrapHelp(help, 200)
+	if len(lines) != 2 || !strings.HasPrefix(lines[1], "Moxfield") {
+		t.Fatalf("help rows = %q, want the caveat alone on the second", lines)
 	}
 }
 
