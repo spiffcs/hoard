@@ -5,8 +5,11 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // parseCondition accepts more than it stores, on purpose. Somebody typing here
@@ -117,5 +120,53 @@ func TestDetailHeldConditionEdit(t *testing.T) {
 	}
 	if m.undoStack == nil {
 		t.Error("a condition change recorded no undo")
+	}
+}
+
+// A first run has no cards, and the header still has to name the pane.
+//
+// The totals hug the table's right edge rather than the pane's, which reads
+// well until the table is narrower than the header itself: an empty
+// collection's table is nothing but its column titles, eleven columns of
+// "NAME  VALUE". Anchoring to that left one column for a seventeen-character
+// title, so the very first thing a new user saw was "… 0 · $0.00".
+func TestEmptyCollectionHeaderNamesThePane(t *testing.T) {
+	st := &fakeStore{
+		binders:    map[int64]string{},
+		binderRows: map[int64][]store.CollectionRow{},
+	}
+	m, err := New(st, WithEnv(ui.Env{Color: true}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := m.loadCards(); err != nil {
+		t.Fatalf("loadCards: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(Model)
+
+	header := strings.Split(m.View(), "\n")[0]
+	if !strings.Contains(header, "CARDS · ALL CARDS") {
+		t.Errorf("header = %q, want the pane named in full", header)
+	}
+	if strings.Contains(header, "…") {
+		t.Errorf("header truncated the title away: %q", header)
+	}
+	// The totals still ride alongside rather than being pushed off.
+	if !strings.Contains(header, "0 · $0.00") {
+		t.Errorf("header = %q, want the totals kept", header)
+	}
+}
+
+// The totals still hug the table's edge when the table is wide enough to
+// deserve it — the behaviour the anchor exists for, which the fix must not
+// trade away for the empty case.
+func TestHeaderTotalsStillHugAWideTable(t *testing.T) {
+	m := newTestModel(t, testStore())
+	header := strings.Split(m.View(), "\n")[0]
+	_, right := m.paneWidths()
+	if got := lipgloss.Width(strings.TrimRight(ansi.Strip(header), " ")); got >= right+containerPaneWidth+paneGap {
+		t.Errorf("header spans %d columns, want the totals short of the pane's far edge:\n%q",
+			got, header)
 	}
 }

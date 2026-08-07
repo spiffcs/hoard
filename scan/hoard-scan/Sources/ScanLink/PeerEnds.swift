@@ -19,6 +19,25 @@ import ScanWire
 public final class PeerListener {
     /// Called once both connections of a session have arrived and said hello.
     public var onSession: ((PeerSession) -> Void)?
+    /// Called the moment a connection proves it knows the pairing code, before
+    /// its partner has arrived.
+    ///
+    /// A session needs both connections, but the *fact of a paired Mac* is
+    /// settled by the first hello that verifies — everything after it is a
+    /// second TCP connect and a second round trip, which over peer-to-peer can
+    /// take long enough to see. Waiting for `onSession` to say "connected" tells
+    /// the operator something the phone already knew, late. The role comes with
+    /// it so the consumer can decide what counts as usable: control carries
+    /// every verb, event and price, and preview carries only the mirror window
+    /// and fixture stills.
+    ///
+    /// May fire twice per session, once per connection. Consumers should be
+    /// idempotent. Pair it with `onPeerLost` — anything acting on this is
+    /// claiming a session that has not been assembled yet.
+    public var onPeerVerified: ((PeerRole) -> Void)?
+    /// Called when a verified connection's partner never arrived and the
+    /// half-session was dropped. The counterpart to `onPeerVerified`.
+    public var onPeerLost: (() -> Void)?
     public var onError: ((String) -> Void)?
 
     private let code: PairingCode
@@ -30,6 +49,12 @@ public final class PeerListener {
     /// default service name is the name the user actually gave the device.
     private let name: String
     private let queue = DispatchQueue(label: "hoard-scan.listener")
+    /// How long a verified connection waits for its partner before the
+    /// half-session is dropped. Generous: the two connections are opened
+    /// together, so the gap is one TCP handshake, and the only thing that makes
+    /// it long is a peer-to-peer link still coming up. Settable so a test does
+    /// not have to sit through it.
+    var halfSessionTimeout: TimeInterval = 5
     private var listener: NWListener?
     /// Connections that have said hello but whose partner has not arrived yet.
     private var pending: [String: PeerLink] = [:]
@@ -106,6 +131,11 @@ public final class PeerListener {
             link.onFrame = nil
             self.accepting.removeValue(forKey: ObjectIdentifier(link))
             link.assign(role: hello.role)
+            // Announced here rather than after `pair`, which is the whole point:
+            // this is the earliest moment the phone can prove a paired Mac is on
+            // the wire, and `pair` may park the connection for as long as the
+            // partner takes to arrive.
+            self.onPeerVerified?(hello.role)
             self.pair(link, session: hello.session)
         }
         link.onState = { [weak self, weak link] state in
@@ -127,6 +157,22 @@ public final class PeerListener {
     private func pair(_ link: PeerLink, session: String) {
         guard let partner = pending.removeValue(forKey: session) else {
             pending[session] = link
+            // A parked connection needs an end. Before `onPeerVerified` existed
+            // a partner that never came was merely a leak — the entry sat in
+            // `pending` until `stop()`, holding a live connection open for the
+            // life of the app. Now it is also a lie: something has already been
+            // told a paired Mac is here, and nothing would ever correct it.
+            queue.asyncAfter(deadline: .now() + halfSessionTimeout) { [weak self, weak link] in
+                guard let self, let link else { return }
+                // By identity, not by key. The partner may have arrived and
+                // taken this entry, and a new session could since have parked
+                // under a fresh id — removing by key alone would tear down a
+                // live connection to clean up a dead one.
+                guard self.pending[session] === link else { return }
+                self.pending.removeValue(forKey: session)
+                link.cancel()
+                self.onPeerLost?()
+            }
             return
         }
         let control = link.role == .control ? link : partner

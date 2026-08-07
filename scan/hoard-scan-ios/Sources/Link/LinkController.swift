@@ -78,9 +78,51 @@ final class LinkController: ObservableObject {
         listener.onSession = { [weak self] session in
             Task { @MainActor in self?.adopt(session) }
         }
+        // Control only. A session is two connections and the preview one
+        // carries the mirror window and fixture stills — nothing the person
+        // holding a card is waiting on. Control carries every verb, every scan
+        // event and every price, so a verified control connection is the point
+        // at which "hoard connected" is true.
+        listener.onPeerVerified = { [weak self] role in
+            guard role == .control else { return }
+            Task { @MainActor in self?.markVerified() }
+        }
+        listener.onPeerLost = { [weak self] in
+            Task { @MainActor in self?.markLost() }
+        }
         listener.onError = { [weak self] message in
             Task { @MainActor in self?.status = message }
         }
+    }
+
+    /// markVerified says connected as soon as the code has been proved, without
+    /// waiting for the preview connection to finish arriving.
+    ///
+    /// Guarded on `session` rather than on `connected`: a live session has
+    /// already said everything this would say, and re-announcing over it is how
+    /// a reconnect mid-box would flicker.
+    private func markVerified() {
+        guard session == nil else { return }
+        // The log's session boundary moved here with the status. A session now
+        // begins when a Mac proves the code, not when its second connection
+        // lands — and truncating in `adopt` would wipe the line below, which is
+        // half of the measurement the boundary exists to preserve.
+        SessionLog.startSession()
+        connected = true
+        status = "Connected"
+        trace("peer verified")
+    }
+
+    /// markLost undoes markVerified when the partner connection never arrived.
+    ///
+    /// The cost of claiming a session early is having to give it back. Without
+    /// this the header sits green over a link that was never assembled, which is
+    /// worse than the delay this whole change removes.
+    private func markLost() {
+        guard session == nil else { return }
+        connected = false
+        status = "hoard started connecting but did not finish. Try again"
+        trace("peer lost before the session was assembled")
     }
 
     /// setAutoAvailable records whether a video tap attached, and re-announces
@@ -134,22 +176,47 @@ final class LinkController: ObservableObject {
     }
 
     private func adopt(_ session: PeerSession) {
-        SessionLog.startSession()
+        // No SessionLog.startSession() here: markVerified already opened the
+        // log for this session, and it always runs first — adopt cannot be
+        // reached without the control connection having verified.
         self.session = session
         connected = true
         status = "Connected"
+        // Both halves are timestamped so the gap this change closes stays
+        // measurable. `peer verified` lands in the log first and is what the
+        // screen now follows; this line is the moment the session was actually
+        // assembled. They should be close, and a pairing where they are not is
+        // the peer-to-peer link taking its time — which is the whole reason the
+        // screen no longer waits for it.
+        trace("session adopted")
         session.control.onFrame = { [weak self] frame in
             Task { @MainActor in self?.handle(frame) }
         }
-        session.control.onState = { [weak self] state in
+        // `control` weakly, and never the whole PeerSession: this closure is
+        // stored *on* session.control, so capturing the struct that holds it
+        // would be a link retaining itself through its own state handler.
+        session.control.onState = { [weak self, weak control = session.control] state in
             Task { @MainActor in
                 if case .failed(let failure) = state {
-                    self?.connected = false
+                    guard let self else { return }
+                    self.connected = false
                     // The phone's own screen gets the plain reason too; the
                     // framework's wording goes to the session log, which is
                     // where a diagnosis starts.
-                    self?.status = failure.reason
-                    self?.trace("link failed: \(failure.detail)")
+                    self.status = failure.reason
+                    self.trace("link failed: \(failure.detail)")
+                    // Released, not just marked disconnected. A dropped link is
+                    // expected to recover, and the Mac recovers it by pairing
+                    // again — which markVerified refuses to report while a
+                    // session is still held, so the reconnect would sit on
+                    // "Not connected" for exactly as long as this change exists
+                    // to avoid. Dropping it also stops `send` and `trace` from
+                    // writing into a dead connection.
+                    //
+                    // By identity, and only if this is still the live session: a
+                    // late failure from the connection that was just replaced
+                    // would otherwise tear down the reconnect that replaced it.
+                    if self.session?.control === control { self.session = nil }
                 }
             }
         }

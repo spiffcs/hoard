@@ -28,6 +28,33 @@ private func waitFor(_ seconds: Double = 5, _ check: () -> Bool) -> Bool {
     return check()
 }
 
+/// Opens one half of a session, correctly proved.
+///
+/// `PeerBrowser.connect` always opens both, which is right for the Mac and
+/// useless for testing the interval between them — the whole point here is a
+/// listener holding a verified connection whose partner has not come. Same body
+/// as `connect`'s inner `open`, one role at a time.
+private func openHalf(
+    to service: PeerService, role: PeerRole, code: PairingCode, session: String
+) -> PeerLink {
+    let conn = NWConnection(to: service.endpoint, using: parameters(role: role))
+    let link = PeerLink(
+        connection: conn, role: role, queue: DispatchQueue(label: "hoard-scan.test.half"))
+    link.start()
+    let hello = PeerHello(
+        role: role, session: session, proof: proof(session: session, code: code))
+    if let frame = Frame.json(hello) { link.send(frame) }
+    return link
+}
+
+/// Finds a listener that has just started advertising, by name prefix.
+private func resolve(prefix: String) throws -> PeerService {
+    let services = PeerBrowser().browse(seconds: 4)
+    return try #require(
+        services.first { $0.name.hasPrefix(prefix) },
+        "the listener never appeared on the network; saw \(services.map(\.name))")
+}
+
 @Test("a pairing code is six digits, and anything else is refused")
 func codeShape() {
     #expect(PairingCode("123456")?.digits == "123456")
@@ -155,6 +182,70 @@ func wrongCodeRejected() throws {
     _ = waitFor(3) { accepted != nil }
     #expect(accepted == nil, "a peer with the wrong code was given a session")
     #expect(rejected != nil, "the wrong code was not reported as a failed pairing")
+}
+
+@Test("a control connection is reported the moment it proves the code",
+      .timeLimit(.minutes(1)))
+func verifiedBeforePartner() throws {
+    let code = PairingCode.random()
+    let listener = PeerListener(name: "hoard-early-\(UUID().uuidString.prefix(8))", code: code)
+
+    var verified: [PeerRole] = []
+    var accepted: PeerSession?
+    var lost = false
+    listener.onPeerVerified = { verified.append($0) }
+    listener.onPeerLost = { lost = true }
+    listener.onSession = { accepted = $0 }
+    try listener.start()
+    defer { listener.stop() }
+
+    let service = try resolve(prefix: "hoard-early-")
+    let control = openHalf(to: service, role: .control, code: code, session: UUID().uuidString)
+    defer { control.cancel() }
+
+    // The point of the whole change: this fires without the preview connection
+    // ever existing. If it needed both, the phone's screen would go on saying
+    // "Not connected" for a second TCP connect and round trip.
+    #expect(waitFor { verified == [.control] },
+            "a verified control connection was not reported; saw \(verified)")
+    // And it is genuinely early — the session is still half-assembled.
+    #expect(accepted == nil, "a session was handed over with only one connection")
+    #expect(!lost, "the half-session was dropped before its timeout")
+}
+
+@Test("a verified connection whose partner never arrives is dropped",
+      .timeLimit(.minutes(1)))
+func halfSessionTimesOut() throws {
+    let code = PairingCode.random()
+    let listener = PeerListener(name: "hoard-half-\(UUID().uuidString.prefix(8))", code: code)
+    // Short enough to test, long enough not to race the hello it is waiting on.
+    listener.halfSessionTimeout = 0.5
+
+    var lost = false
+    var accepted: PeerSession?
+    listener.onPeerLost = { lost = true }
+    listener.onSession = { accepted = $0 }
+    try listener.start()
+    defer { listener.stop() }
+
+    let service = try resolve(prefix: "hoard-half-")
+    let control = openHalf(to: service, role: .control, code: code, session: UUID().uuidString)
+    defer { control.cancel() }
+
+    // Claiming a session on one connection means being able to give it back.
+    // Without this the phone shows a green "hoard connected" over a link that
+    // was never assembled, which is worse than the delay this all removes.
+    #expect(waitFor { lost }, "a half-session was never dropped")
+    #expect(accepted == nil)
+    // Dropped means dropped: the parked connection is cancelled, not merely
+    // forgotten. Forgetting it is the leak that was already here.
+    #expect(waitFor { control.state == .cancelled || isFailed(control.state) },
+            "the parked connection was left open; it is \(control.state)")
+}
+
+private func isFailed(_ state: PeerState) -> Bool {
+    if case .failed = state { return true }
+    return false
 }
 
 @Test("a proof is only valid for the session it was made for")

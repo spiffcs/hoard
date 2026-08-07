@@ -356,7 +356,15 @@ func (m Model) header(left, right, tableW int) string {
 	// (observed live: the page phrase floating an armspan from its rows).
 	anchor := right
 	if tableW > 0 {
-		anchor = min(tableW, right)
+		// Never narrower than the header's own two parts. A table can be
+		// narrower than its title — an empty collection's is just the column
+		// names, eleven columns of "NAME  VALUE" — and anchoring to that left
+		// one column for a fourteen-character title, so a first run read
+		// "… 0 · $0.00" where it should have said "CARDS · BINDER". The pane's
+		// width still caps it: the totals hug the table's edge where there is
+		// room and the pane's where there is not.
+		need := lipgloss.Width(name) + 1 + lipgloss.Width(totals)
+		anchor = min(max(tableW, need), right)
 	}
 	title := ui.Truncate(name, max(anchor-lipgloss.Width(totals)-1, 0))
 	gap := max(anchor-lipgloss.Width(title)-lipgloss.Width(totals), 0)
