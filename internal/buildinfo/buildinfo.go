@@ -10,6 +10,17 @@ import "runtime/debug"
 // system knows about the build.
 var Version = ""
 
+// GitCommit and BuildDate complete the release identity Version starts:
+// stamped by the same goreleaser ldflags block. Source builds keep "unknown" —
+// Resolve's VCS fallback already folds the revision into the version string,
+// so these stay dumb rather than duplicating that logic.
+var (
+	// GitCommit is the commit the binary was built from.
+	GitCommit = "unknown"
+	// BuildDate is an RFC3339 timestamp of the release build.
+	BuildDate = "unknown"
+)
+
 // Resolve reports the best version string this binary can know about itself:
 // the stamped release version, else the module version `go install` recorded,
 // else the VCS revision of a source build.

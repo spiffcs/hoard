@@ -29,12 +29,16 @@ on:
     paths:
       - "scan/**"
       - "build-scan.sh"
+      # The scan recipes live in the Taskfile; the Makefile is only the shim
+      # that forwards to it, but both stay listed since either can move them.
+      - "Taskfile.yaml"
       - "Makefile"
       - ".github/workflows/scan.yml"
   pull_request:
     paths:
       - "scan/**"
       - "build-scan.sh"
+      - "Taskfile.yaml"
       - "Makefile"
       - ".github/workflows/scan.yml"
 
@@ -55,7 +59,9 @@ jobs:
   scan:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The helper's Package.swift declares swift-tools-version 6.0, so a runner
       # image that regressed to an older Xcode fails the build with a manifest

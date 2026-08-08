@@ -1,0 +1,320 @@
+version: "3"
+
+vars:
+  OWNER: spiffcs
+  PROJECT: hoard
+
+  # static file dirs
+  TOOL_DIR: .tool
+  TMP_DIR: .tmp
+
+  # TOOLS
+  TASK: "{{ .TOOL_DIR }}/task"
+
+  # used for changelog generation
+  CHANGELOG: CHANGELOG.md
+  NEXT_VERSION: VERSION
+
+  # used for snapshot builds
+  PROJECT_ROOT:
+    sh: echo $PWD
+
+  VERSION:
+    sh: git describe --dirty --always --tags
+
+env:
+  GNUMAKEFLAGS: "--no-print-directory"
+
+tasks:
+  ## High-level tasks #################################
+
+  default:
+    desc: Run all validation tasks
+    aliases:
+      - pr-validations
+      - validations
+    cmds:
+      - task: static-analysis
+
+  static-analysis:
+    desc: Run all static analysis tasks
+    cmds:
+      - task: check-go-mod-tidy
+      - task: lint
+
+  test:
+    desc: Run all levels of test
+    cmds:
+      - task: unit
+
+  unit:
+    desc: Run unit tests
+    cmds:
+      # No network needed: every HTTP client is pointed at an httptest server,
+      # and the database is a temp-dir SQLite file.
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  build:
+    desc: Build the hoard binary
+    cmds:
+      - go build -o hoard .
+
+  # Build everything needed for the full experience (binary + scan helper).
+  all:
+    desc: Build the hoard binary and the macOS scan helper
+    cmds:
+      - task: build
+      - task: scan
+
+  clean:
+    desc: Remove build output (binary, scan helper, release artifacts)
+    cmds:
+      - rm -rf hoard bin dist
+
+  ## Bootstrap tasks #################################
+
+  binny:
+    internal: true
+    # desc: Get the binny tool
+    generates:
+      - "{{ .TOOL_DIR }}/binny"
+    status:
+      - "test -f {{ .TOOL_DIR }}/binny"
+    cmd: "curl -sSfL https://get.anchore.io/binny | sh -s -- -b .tool"
+    silent: true
+
+  tools:
+    desc: Install all tools needed for CI and local development
+    deps: [binny]
+    aliases:
+      - bootstrap
+    generates:
+      - ".binny.yaml"
+      - "{{ .TOOL_DIR }}/*"
+    status:
+      - "{{ .TOOL_DIR }}/binny check -v"
+    cmd: "{{ .TOOL_DIR }}/binny install -v"
+    silent: true
+
+  update-tools:
+    desc: Update pinned versions of all tools to their latest available versions
+    deps: [binny]
+    generates:
+      - ".binny.yaml"
+      - "{{ .TOOL_DIR }}/*"
+    cmd: "{{ .TOOL_DIR }}/binny update -v"
+    silent: true
+
+  list-tools:
+    desc: List all tools needed for CI and local development
+    deps: [binny]
+    cmd: "{{ .TOOL_DIR }}/binny list"
+    silent: true
+
+  list-tool-updates:
+    desc: List all tools that are not up to date relative to the binny config
+    deps: [binny]
+    cmd: "{{ .TOOL_DIR }}/binny list --updates"
+    silent: true
+
+  tmpdir:
+    silent: true
+    generates:
+      - "{{ .TMP_DIR }}"
+    cmd: "mkdir -p {{ .TMP_DIR }}"
+
+  ## Static analysis tasks #################################
+
+  format:
+    desc: Auto-format all source code
+    deps: [tools]
+    cmds:
+      - gofmt -w -s .
+      - "{{ .TOOL_DIR }}/gosimports -local github.com/spiffcs -w ."
+      - go mod tidy
+
+  lint-fix:
+    desc: Auto-format all source code + run golangci lint fixers
+    deps: [tools]
+    cmds:
+      - task: format
+      - "{{ .TOOL_DIR }}/golangci-lint run --tests=false --fix"
+
+  lint:
+    desc: Run gofmt + golangci lint checks
+    vars:
+      BAD_FMT_FILES:
+        sh: gofmt -l -s .
+      BAD_FILE_NAMES:
+        sh: "find . | grep -e ':' || true"
+    deps: [tools]
+    cmds:
+      # ensure there are no go fmt differences
+      - cmd: 'test -z "{{ .BAD_FMT_FILES }}" || (echo "files with gofmt issues: [{{ .BAD_FMT_FILES }}]"; exit 1)'
+        silent: true
+      # ensure there are no files with ":" in it (a known back case in the go ecosystem)
+      - cmd: 'test -z "{{ .BAD_FILE_NAMES }}" || (echo "files with bad names: [{{ .BAD_FILE_NAMES }}]"; exit 1)'
+        silent: true
+      # run linting
+      - "{{ .TOOL_DIR }}/golangci-lint run --tests=false"
+
+  check-go-mod-tidy:
+    # desc: Ensure go.mod and go.sum are up to date
+    cmds:
+      - cmd: .github/scripts/go-mod-tidy-check.sh && echo "go.mod and go.sum are tidy!"
+        silent: true
+
+  ## Native / scan tasks (hoard-only) #################################
+  #
+  # Every task in this group carries `platforms: [darwin]`: on the Linux CI
+  # runner it is SKIPPED SILENTLY rather than failing, which is what makes a
+  # single `task all` safe everywhere. The flip side: a green run on Linux
+  # proves nothing about the Swift half. The real native gate is local
+  # `make scan scan-test scan-check` plus the manual scan.yml workflow.
+
+  # Build the macOS scan helper (bin/hoard-scan.app). macOS + Xcode only.
+  #
+  # The helper owns no camera: it is the Mac end of the link to the iPhone app,
+  # which is what actually captures and reads. See docs/ios-development.md for
+  # building that side.
+  scan:
+    desc: Build the macOS scan helper (bin/hoard-scan.app)
+    platforms: [darwin]
+    cmd: ./build-scan.sh
+
+  # Replay the checked-in scan fixtures through the reader and diff the
+  # extracted card lists against their goldens (macOS only). The reader is
+  # cardkit-probe, so this depends on `cardkit` rather than `scan`.
+  scan-check:
+    desc: Replay scan fixtures against their goldens
+    platforms: [darwin]
+    deps: [cardkit]
+    cmd: ./scan/fixtures/sweep.sh
+
+  # Unit-test the Swift side's pure logic — the trigger state machine, the text
+  # heuristics, the border reader's arithmetic, the wire contract. Complements
+  # scan-check rather than replacing it: the sweep proves what the reader gets
+  # off real frames, these prove the rules in isolation and run in milliseconds.
+  scan-test:
+    desc: Unit-test the Swift scan logic
+    platforms: [darwin]
+    cmd: swift test --package-path scan/hoard-scan
+
+  # Build the iPhone head's read pipeline as a macOS binary, so it can be run
+  # over an image file: it scores scan/corpus's labelled images and replays
+  # scan/fixtures' frames against their goldens.
+  cardkit:
+    desc: Build cardkit-probe (bin/cardkit-probe)
+    platforms: [darwin]
+    cmds:
+      - swift build -c release --package-path scan/hoard-scan --product cardkit-probe
+      - mkdir -p bin
+      - cp scan/hoard-scan/.build/release/cardkit-probe bin/cardkit-probe
+      - cmd: echo "Built bin/cardkit-probe"
+        silent: true
+
+  # Score the corpus in one process: ~23s.
+  #
+  # There used to be a scan/corpus/sweep.sh beside this that scored the macOS
+  # helper's own reader by launching one process per image. That reader belonged
+  # to the Continuity Camera path and went with it; the script went too, and this
+  # is now the only corpus scorer. Launching 231 processes rather than reading 231
+  # cards had made the one loop guarding against accuracy regressions the slowest
+  # loop in the project — slow enough to be skipped, which is the same as not
+  # having it.
+  #
+  #   task cardkit-score                   # the table
+  #   task cardkit-score -- --misses       # and every card that failed
+  #
+  # `make cardkit-score ARGS=--misses` still works: make exports command-line
+  # variables into the recipe environment, and ${ARGS:-} picks them up there.
+  cardkit-score:
+    desc: Score the labelled corpus in one process (~23s)
+    platforms: [darwin]
+    deps: [cardkit]
+    cmd: ./bin/cardkit-probe --score scan/corpus/manifest.tsv {{ .CLI_ARGS }} ${ARGS:-}
+
+  #   task foil-eval                       # finish-accuracy scoreboard per rig
+  #   task foil-eval -- --misses           # and every capture that would commit wrong
+  foil-eval:
+    desc: Score foil/nonfoil accuracy against the foil corpus
+    platforms: [darwin]
+    deps: [cardkit]
+    cmd: python3 scan/foil-corpus/eval-finish.py {{ .CLI_ARGS }} ${ARGS:-}
+
+  # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
+  # (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
+  # reports whichever is missing. See docs/ios-development.md.
+  scan-ios:
+    desc: Build the iPhone capture head
+    platforms: [darwin]
+    cmd: ./build-scan-ios.sh
+
+  # Same, then install onto an attached, unlocked iPhone with Developer Mode on.
+  scan-ios-install:
+    desc: Build and install the iPhone capture head onto an attached iPhone
+    platforms: [darwin]
+    cmd: ./build-scan-ios.sh --install
+
+  # Run ScanKit's unit tests on the iOS simulator. They are Vision-free and
+  # CoreGraphics-only, so they prove Core/ still compiles and behaves for iOS
+  # without needing a device or a signing identity. This is the cheap gate; the
+  # expensive one is the on-device fixture replay in the app itself, because
+  # simulator Vision is not device Vision and goldens must never come from it.
+  #
+  # hoard-scan-Package is SwiftPM's generated all-targets scheme — the ScanKit
+  # scheme is the library alone and carries no test action. The simulator is
+  # discovered rather than named, because the installed runtime's device list
+  # changes with every Xcode update and a hardcoded model goes stale silently.
+  # The Makefile used $(shell ...) at parse time; this var uses `sh:`, which is
+  # evaluated lazily — so xcrun never runs on Linux.
+  scan-ios-test:
+    desc: Run ScanKit's unit tests on the iOS simulator
+    platforms: [darwin]
+    vars:
+      SIM_NAME:
+        sh: "xcrun simctl list devices available | grep -m1 -o 'iPhone [A-Za-z0-9 ]*' | sed 's/ *$$//'"
+    cmd: >
+      cd scan/hoard-scan && xcodebuild test -scheme hoard-scan-Package
+      -destination 'platform=iOS Simulator,name={{ .SIM_NAME }}' CODE_SIGNING_ALLOWED=NO
+
+  ## Schema tasks #################################
+
+  # Regenerate schema/json/ from the internal/hoardjson model. If the current
+  # schema version has been released, bump hoardjson.SchemaVersion first.
+  generate-json-schema:
+    desc: Regenerate schema/json/ from the internal/hoardjson model
+    cmd: go run ./schema/json/generate
+
+  # Regenerate schema/sqlite/ from the migrations in internal/store/migrate.go.
+  # Run after adding a migration; released schema files are immutable, so a new
+  # migration writes a new file rather than editing an old one.
+  generate-sqlite-schema:
+    desc: Regenerate schema/sqlite/ from the store migrations
+    cmd: go run ./schema/sqlite/generate
+
+  ## Changelog tasks #################################
+
+  unreleased:
+    desc: Show unreleased changes since the latest tag
+    deps: [tools]
+    cmds:
+      - "{{ .TOOL_DIR }}/chronicle -n --since-tag {{ .LATEST_TAG }} | {{ .TOOL_DIR }}/glow -w 0"
+    vars:
+      LATEST_TAG:
+        sh: git describe --tags --abbrev=0
+
+  changelog:
+    desc: Generate a changelog
+    deps: [tools]
+    generates:
+      - "{{ .CHANGELOG }}"
+      - "{{ .NEXT_VERSION }}"
+    cmds:
+      - "{{ .TOOL_DIR }}/chronicle -vv -n --version-file {{ .NEXT_VERSION }} > {{ .CHANGELOG }}"
+      - "{{ .TOOL_DIR }}/glow -w 0 {{ .CHANGELOG }}"

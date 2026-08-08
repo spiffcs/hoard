@@ -83,10 +83,10 @@ func (p archidektProvider) Fetch(ctx context.Context, u *url.URL) (*Deck, error)
 func parseArchidektID(u *url.URL) (string, error) {
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "decks" {
-		return "", fmt.Errorf("unexpected Archidekt URL path %q; expected /decks/{id}/...", u.Path)
+		return "", fmt.Errorf("unexpected Archidekt URL path %q; expected a /decks/{id}/ prefix", u.Path)
 	}
 	if _, err := strconv.Atoi(parts[1]); err != nil {
-		return "", fmt.Errorf("Archidekt deck id %q is not numeric", parts[1])
+		return "", fmt.Errorf("deck id %q in the Archidekt URL is not numeric", parts[1])
 	}
 	return parts[1], nil
 }

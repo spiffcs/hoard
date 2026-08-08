@@ -1,41 +1,62 @@
 name: Validations
 
+# Superseded runs are cancelled rather than queued: without this, three pushes
+# to a PR meant three full runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
+  workflow_dispatch:
+  # workflow_call is what lets release.yaml run this same gate before a tag
+  # becomes a release.
+  workflow_call:
+  pull_request:
   push:
     branches: [master]
-  pull_request:
 
 permissions:
   contents: read
 
+# Both jobs go through ./.github/actions/bootstrap and run make targets, so CI
+# executes the same binny-pinned tools a developer runs locally — the whole
+# argument for the toolchain migration (docs/release-engineering.md §5).
+#
+# Everything here is the Go half only: the Swift scanner needs a macOS runner
+# and is gated separately by scan.yml (manual + path-filtered, for the 10x
+# billing reasons in its header).
 jobs:
-  build:
+  Static-Analysis:
+    # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline
+    name: "Static analysis"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      # go-version-file keeps the toolchain in step with go.mod, so bumping the
-      # module's floor does not silently leave CI on an older compiler.
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          persist-credentials: false
 
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt'd:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: Bootstrap environment
+        uses: ./.github/actions/bootstrap
 
-      - name: vet
-        run: go vet ./...
+      - name: Run static analysis
+        run: make static-analysis
+
+  Unit-Test:
+    # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline
+    name: "Unit tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bootstrap environment
+        uses: ./.github/actions/bootstrap
 
       # No network needed: every HTTP client is pointed at an httptest server,
       # and the database is a temp-dir SQLite file.
-      - name: test
-        run: go test ./...
+      - name: Run unit tests
+        run: make test
 
-      - name: build
-        run: go build ./...
+      - name: Build
+        run: make build

@@ -105,7 +105,7 @@ func ParseCardURL(raw string) (set, number string, err error) {
 	// Path looks like /card/{set}/{number}[/{slug}].
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 3 || parts[0] != "card" {
-		return "", "", fmt.Errorf("unexpected Scryfall URL path %q; expected /card/{set}/{number}/...", u.Path)
+		return "", "", fmt.Errorf("unexpected Scryfall URL path %q; expected a /card/{set}/{number}/ prefix", u.Path)
 	}
 	set, number = parts[1], parts[2]
 	if set == "" || number == "" {

@@ -6,6 +6,7 @@
 *.dll
 *.so
 *.dylib
+*.p12
 
 # Test binary, built with `go test -c`
 *.test
@@ -24,6 +25,18 @@ go.work.sum
 .env
 
 # --- Project-specific ---
+
+# binny-managed tool binaries (`make tools`); .binny.yaml is the tracked pin list
+.tool/
+.tmp/
+
+# goreleaser output (`.tool/goreleaser release --snapshot`)
+/dist/
+
+# chronicle's changelog outputs (`make changelog`); release notes are generated,
+# not tracked
+/CHANGELOG.md
+/VERSION
 
 # Compiled binary (produced by `go build -o hoard .`)
 /hoard

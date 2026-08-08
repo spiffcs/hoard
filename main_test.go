@@ -2,16 +2,54 @@ package main
 
 import (
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
+
+// The version command must answer before any database is opened — it is what
+// bug reports quote — and it must carry both the resolved version and the Fan
+// Content notice the product is legally required to show. All three spellings
+// route to the same code path, because `--version` and `-v` are what people
+// actually type. The ldflag path itself is proven by the goreleaser snapshot
+// (docs/release-engineering.md §7), not here.
+func TestVersionCommand(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		os.Stdout = w
+		runErr := run(args)
+		w.Close()
+		os.Stdout = oldStdout
+		out, readErr := io.ReadAll(r)
+		if readErr != nil {
+			t.Fatalf("reading captured stdout: %v", readErr)
+		}
+		if runErr != nil {
+			t.Errorf("run(%v) = %v, want nil", args, runErr)
+			continue
+		}
+		got := string(out)
+		if !strings.Contains(got, "hoard "+buildinfo.Resolve()) {
+			t.Errorf("run(%v) output %q does not contain the resolved version %q", args, got, buildinfo.Resolve())
+		}
+		if !strings.Contains(got, "Fan Content") {
+			t.Errorf("run(%v) output %q does not carry the Fan Content notice", args, got)
+		}
+	}
+}
 
 // f is a float pointer, for the price fields the store takes as nullable.
 func f(v float64) *float64 { return &v }

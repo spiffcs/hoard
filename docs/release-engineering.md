@@ -114,8 +114,11 @@ Everything below assumes the repo will be public. These must be true *before*
 flipping visibility, because a public repo is a permanent artifact — the
 licensing exposure and the first impression both start the moment it flips.
 
-**0.1 — Close the data-licensing P0s.** `docs/data-licensing.md` §8 lists three,
-and they are release gates by that document's own framing:
+**0.1 — Close the data-licensing P0s.** ✅ **DONE 2026-08-07** — all three
+closed by a shared per-endpoint pacer in `internal/scryfall` and the Fan
+Content notice in `README.md`, `LICENSE` and `hoard version`; see
+`docs/data-licensing.md` §8 for the closure notes. The original gates, for the
+record:
 
 1. Raise `chunkPause` to ≥500 ms in `internal/scryfall/scryfall.go` (around line
    249) and fix the stale comment — `/cards/collection` is 2/second, not
@@ -130,7 +133,11 @@ Verify the first two against the file before editing — line numbers drift. The
 P1 items in that section (credits block, price disclaimer, extended User-Agent)
 are cheap and clearly right; fold them into Stage F.
 
-**0.2 — Audit for anything that should not be public.** Run at minimum:
+**0.2 — Audit for anything that should not be public.** ✅ Ran 2026-08-08,
+clean: no tracked databases, env files, secrets or signing configs; the only
+`git log -S 'APPLE_'` hits are this document's own secret-name tables; the
+bulky corpora are ignored and `scan/foil-corpus/cards/` tracks exactly the 50
+owner-shot PNGs it means to. The commands, for re-runs:
 
 ```bash
 git ls-files | grep -iE '\.db$|\.env|secret|token|credential|Signing\.xcconfig'
@@ -243,55 +250,52 @@ make scan && make scan-test && make scan-check   # macOS only
 
 ## 6. Stage B — Version plumbing
 
-goreleaser's ldflags need somewhere to write to, and hoard has no version
-symbol at all today. This is a code change, and it blocks Stage C.
+**DONE 2026-08-08, differently than first drafted.** By the time this stage
+ran, hoard already had a build-identity package — `internal/buildinfo`, grown
+out of the licensing work (User-Agent, Fan Content notice) — so the version
+symbols live there. There is **no `internal/version` package**; do not create
+one. What exists:
 
-**B.1 — Add `internal/version/version.go`:**
+**B.1 — `internal/buildinfo`** carries the whole identity:
 
-```go
-// Package version carries the build identity stamped in by the release
-// pipeline. The zero values are what a `go build` from a working tree gets;
-// goreleaser overwrites them with -X ldflags at release time.
-package version
+- `Version` — empty by default, stamped by goreleaser's `-X` ldflags. Wrapped
+  by `Resolve()`, which falls back to the module version `go install` recorded,
+  else the VCS revision of a source build — so even an unstamped build prints
+  something true rather than a bare "dev".
+- `GitCommit` and `BuildDate` — "unknown" by default, stamped by the same
+  ldflags block. They stay dumb: Resolve's VCS fallback already folds the
+  revision into the version string for source builds.
+- `UserAgent` — derived from `Resolve()`, with the contact URL Scryfall wants.
+- `FanContentNotice` and `DataCredit` — the legal text from Stage 0.1.
 
-var (
-	// Version is the release tag, e.g. "v0.1.0". "dev" for local builds.
-	Version = "dev"
-	// GitCommit is the commit the binary was built from.
-	GitCommit = "unknown"
-	// BuildDate is an RFC3339 timestamp.
-	BuildDate = "unknown"
-)
-```
+**B.2 — `version.go` at the repo root** implements `printVersion`: the
+resolved version, commit, build date, Go version and `GOOS/GOARCH`, then the
+Fan Content notice and data credit. `run()` in `main.go` routes `version`,
+`--version` and `-v` to it before any database is opened, and `usage.go`
+carries the row in its usage table.
 
-**B.2 — Wire a `version` command into `main.go`'s dispatch switch** (the `case`
-ladder starting around line 121), beside `catalog` and `binder`. It prints the
-three values, the Go version and `runtime.GOOS/GOARCH`, and the Fan Content
-notice from Stage 0.1. Accept `--version` and `-v` as top-level flags mapping to
-the same code path, since that is what people type. Add the row to
-`usage.go`'s `usageSections` — the usage table is data, so it is one entry.
-
-**B.3 — Cover it in `main_test.go`.** One test that the command runs and its
-output contains the version string. The existing tests there show the house
-pattern for invoking `run()` with args and capturing output.
+**B.3 — `TestVersionCommand` in `main_test.go`** runs all three spellings
+through `run()` (capturing stdout via an `os.Pipe` swap) and asserts the
+output carries the resolved version and the Fan Content notice.
 
 Verify:
 
 ```bash
 make test && make build && ./hoard version
-go build -ldflags "-X github.com/spiffcs/hoard/internal/version.Version=v0.0.1-test" -o /tmp/hoard-vt . && /tmp/hoard-vt version
+go build -ldflags "-X github.com/spiffcs/hoard/internal/buildinfo.Version=v0.0.1-test" -o /tmp/hoard-vt . && /tmp/hoard-vt version
 ```
 
 The second command is the one that matters: if the ldflag path is wrong, the
-build silently succeeds and still prints `dev`. Confirm it prints `v0.0.1-test`.
+build silently succeeds and Resolve falls back to the module pseudo-version.
+Confirm it prints `v0.0.1-test`.
 
 ---
 
 ## 7. Stage C — `.goreleaser.yaml`
 
 New file at the repo root. Triage's, adapted: Windows added, ldflags pointed at
-hoard's `internal/version`, and the build split by OS because only the darwin
-entry carries the quill hook.
+hoard's `internal/buildinfo` (see Stage B), and the build split by OS because
+only the darwin entry carries the quill hook.
 
 ```yaml
 version: 2
@@ -309,9 +313,9 @@ builds:
     goarch: [amd64, arm64]
     ldflags: &ldflags
       - -s -w
-      - -X github.com/spiffcs/hoard/internal/version.Version={{ .Version }}
-      - -X github.com/spiffcs/hoard/internal/version.GitCommit={{ .Commit }}
-      - -X github.com/spiffcs/hoard/internal/version.BuildDate={{ .Date }}
+      - -X github.com/spiffcs/hoard/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/spiffcs/hoard/internal/buildinfo.GitCommit={{ .Commit }}
+      - -X github.com/spiffcs/hoard/internal/buildinfo.BuildDate={{ .Date }}
 
   - id: hoard-windows
     binary: hoard
@@ -491,7 +495,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout
-        uses: actions/checkout@<SHA>  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0            # goreleaser needs full history
           persist-credentials: false
@@ -516,7 +520,7 @@ jobs:
           QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@<SHA>  # v7.2.3
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -544,10 +548,11 @@ jobs:
 
 Implementation notes:
 
-- **`<SHA>` is not a placeholder to leave in.** Resolve each before committing:
-  `gh api repos/actions/checkout/git/ref/tags/v7.0.0 --jq '.object.sha'`
-  (dereference the tag object if it is annotated). Keep the `# v7.0.0` comment
-  beside it — that comment is what dependabot reads to offer bumps.
+- **Every `uses:` is pinned to a verified commit SHA.** Resolved 2026-08-08 via
+  `gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'`
+  (dereferencing the tag object where annotated — codeql-action is); each SHA
+  matches the version comment beside it, and matches triage's pins. Keep the
+  `# vX.Y.Z` comment — it is what dependabot reads to offer bumps.
 - **`uses: ./.github/workflows/validations.yaml` requires that file to exist
   with `workflow_call:`** — Stage E. Build Stage E first or this fails on its
   first run with an unhelpful "invalid workflow file."
@@ -566,11 +571,12 @@ Triage names it `validations.yaml` and the release workflow calls it by path.
 hoard's `ci.yml` did the same job under a different name.
 
 **The rename is already done** (2026-08-06, uncommitted): the file is
-`.github/workflows/validations.yaml`, its `name:` is `Validations`, the README
-badge points at the new filename, and `scan.yml`'s header comment was updated to
-match. The badge is the part that breaks silently — its URL contains the
-workflow filename — so if a later rename ever happens, fix `README.md` in the
-same commit. The job contents were left alone; everything below is still to do.
+`.github/workflows/validations.yaml`, its `name:` is `Validations`, and
+`scan.yml`'s header comment was updated to match. The README had no badge at
+that point — one was added in Stage G (2026-08-08), pointing at
+`validations.yaml`. The badge is the part that breaks silently — its URL
+contains the workflow filename — so if a later rename ever happens, fix
+`README.md` in the same commit.
 
 Changes beyond the rename:
 
@@ -596,10 +602,16 @@ argument for Stage A.
 checkout. A floating tag is a mutable reference to code that runs with
 repository write scope in the release job.
 
-**E.5 — `.golangci.yaml`.** Triage's is a good starting point: errcheck, govet,
-ineffassign, staticcheck, unused, with `check-type-assertions: true`. Expect the
-first run to surface real findings — fix them in a commit separate from the
-config, so review can see each half.
+**E.5 — `.golangci.yaml`.** Triage's linter set: errcheck, govet, ineffassign,
+staticcheck, unused, with `check-type-assertions: true`. One trap found in
+practice: triage's own file still uses v1 config keys (`linters-settings`,
+`issues.exclude-use-default`) that golangci-lint v2.10's schema rejects —
+hoard's file is the v2 translation of the same set. The first run surfaced 23
+findings; the mechanical ones (error-string style, a De Morgan rewrite, two
+truly dead symbols) were fixed in code, and the intentional idioms (sticky
+csv.Writer errors, `defer tx.Rollback()`, panic-on-type-assertion at init,
+test-only helpers under `--tests=false`) are excluded in the config with a
+WHY comment each.
 
 **E.6 — `.github/scripts/go-mod-tidy-check.sh`.** Copy verbatim, `chmod +x`.
 Proves `go.mod`/`go.sum` are what `go mod tidy` would write.
@@ -674,8 +686,10 @@ payoff for §8.1, and it is worth one sentence in the README.
 
 **G.2 — Licensing prose** (P0.3 and the P1s from Stage 0): the Fan Content
 notice, a credits section naming Scryfall / MTGJSON (with Zach Halpern's MIT
-line) / tcgcsv and disclaiming affiliation, and the price disclaimer — one line
-in the README and one in `docs/pricing.md`.
+line) / tcgcsv and disclaiming affiliation, and the price disclaimer. All live
+in the README's "License and legal" section and in `hoard version` output;
+there is no `docs/pricing.md` in the repo (earlier drafts assumed one), so the
+README line is the single documentation home.
 
 **G.3 — `CONTRIBUTING.md`.** Short. How to bootstrap (`make tools`), build
 (`make build`), test (`make test`), what CI gates on, the fact that the Swift

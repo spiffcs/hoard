@@ -80,7 +80,6 @@ type detail struct {
 	// to embed it again. Both idle on the halfblock tier.
 	imageTransmit string
 	transmitSent  bool
-	err           error
 	// image is the rendered card image block (halfblock cells or kitty
 	// placeholders), nil until the async fetch lands — or forever, when
 	// the terminal can't draw one. The overlay never waits for it.

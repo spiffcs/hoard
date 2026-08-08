@@ -200,7 +200,7 @@ func (m Model) marketLines(width int) []string {
 	if width <= 0 {
 		return nil
 	}
-	if m.marketTotalRows() == 0 && !(m.marketLoaded && filtered) {
+	if m.marketTotalRows() == 0 && (!m.marketLoaded || !filtered) {
 		// Not loaded (the status line explains the fetch states), or loaded
 		// and genuinely empty hoard-wide.
 		return nil

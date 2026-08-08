@@ -1,0 +1,101 @@
+# release-install-script
+# Description:
+#   Uploads install scripts to Cloudflare R2
+#   Creates versioned paths ({project}/{tag}/install.sh) and optionally updates
+#   the "latest" path when releasing the most recent version.
+#
+# Permissions:
+#   contents: read  # to checkout the repository at the specified tag
+#
+# Required Secrets:
+#   R2_INSTALL_ACCESS_KEY_ID:      Cloudflare R2 access key ID
+#   R2_INSTALL_SECRET_ACCESS_KEY:  Cloudflare R2 secret access key
+#   R2_ENDPOINT:                   Cloudflare R2 endpoint URL
+
+name: "Release install script"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        description: release tag to upload install script for (prefixed with v)
+        required: true
+      latest:
+        description: whether this is the latest release
+        required: false
+        default: true
+        type: boolean
+      r2-bucket:
+        type: string
+        description: the R2 bucket to upload the install script to
+        required: false
+        default: "oss-prod-install"
+
+    secrets:
+      # cloudflare R2 credentials
+      R2_INSTALL_ACCESS_KEY_ID:
+        required: true
+      R2_INSTALL_SECRET_ACCESS_KEY:
+        required: true
+      R2_ENDPOINT:
+        required: true
+
+jobs:
+  upload:
+    name: "Upload"
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      # configure AWS CLI to work with Cloudflare R2
+      - name: Configure AWS CLI for R2
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_INSTALL_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_INSTALL_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
+          aws configure set region auto
+
+      # always upload install script to versioned path for historical access
+      # upload to versioned path: {project}/{tag}/install.sh
+      - name: Upload versioned install.sh
+        env:
+          TAG: ${{ inputs.tag }}
+          PROJECT_NAME: ${{ github.event.repository.name }}
+          BUCKET: ${{ inputs.r2-bucket }}
+          ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          aws s3 cp install.sh s3://${BUCKET}/${PROJECT_NAME}/${TAG}/install.sh \
+            --region auto \
+            --endpoint-url=${ENDPOINT} \
+            --content-type "text/plain"
+
+      # upload install script to "latest" path only when this is the latest release
+      # upload to latest path: {project}/install.sh
+      # note: we have a cloudflare rewrite rule to transform any requests like "/grype" or similar to "/grype/install.sh"
+      - name: Upload latest install.sh
+        if: ${{ inputs.latest == true }}
+        env:
+          TAG: ${{ inputs.tag }}
+          PROJECT_NAME: ${{ github.event.repository.name }}
+          BUCKET: ${{ inputs.r2-bucket }}
+          ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          aws s3 cp install.sh s3://${BUCKET}/${PROJECT_NAME}/install.sh \
+            --region auto \
+            --endpoint-url=${ENDPOINT} \
+            --content-type "text/plain"
+

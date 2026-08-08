@@ -1,0 +1,88 @@
+version: 2
+
+project_name: hoard
+
+builds:
+  # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
+  # target cross-compiles from the ubuntu runner with no toolchain wrangling.
+  - id: hoard-linux
+    binary: hoard
+    main: .
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: &ldflags
+      - -s -w
+      - -X github.com/spiffcs/hoard/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/spiffcs/hoard/internal/buildinfo.GitCommit={{ .Commit }}
+      - -X github.com/spiffcs/hoard/internal/buildinfo.BuildDate={{ .Date }}
+
+  - id: hoard-windows
+    binary: hoard
+    main: .
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+
+  # Split out for the post hook: quill signs the Mach-O binary with the
+  # Developer ID cert and submits it to Apple's notary service. Snapshot builds
+  # pass --dry-run/--ad-hoc so a local `goreleaser --snapshot` needs no
+  # credentials and talks to nobody.
+  - id: hoard-darwin
+    binary: hoard
+    main: .
+    env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+    hooks:
+      post:
+        - cmd: .tool/quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+          env:
+            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next+{{ .ShortCommit }}"
+
+# Keyless signing: cosign gets a short-lived Fulcio cert bound to the workflow's
+# OIDC identity, and the signature lands in Rekor. Signing only checksums.txt
+# transitively covers every archive it hashes.
+signs:
+  - cmd: .tool/cosign
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "--yes", "${artifact}"]
+    artifacts: checksum
+
+release:
+  github:
+    owner: spiffcs
+    name: hoard
+  draft: false
+  prerelease: auto
+  make_latest: true
+  footer: |
+    ---
+    **Verification:**
+    ```bash
+    cosign verify-blob \
+        --bundle checksums.txt.sigstore.json \
+        --certificate-identity-regexp "^https://github.com/spiffcs/hoard/.*" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        checksums.txt
+    ```

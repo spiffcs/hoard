@@ -1,105 +1,51 @@
-.PHONY: build scan scan-check scan-test cardkit cardkit-score foil-eval scan-ios scan-ios-install scan-ios-test \
-        test vet all clean generate-json-schema
+# A shim over the Taskfile: `make <anything>` bootstraps binny + task into
+# .tool/ and forwards, so every `make ...` command in the docs keeps working.
+# The real targets — Go and Swift both — live in Taskfile.yaml; `make help`
+# (or `task -l`) lists them.
 
-# Build the hoard binary.
-build:
-	go build -o hoard .
+OWNER = spiffcs
+PROJECT = hoard
 
-# Build the macOS scan helper (bin/hoard-scan.app). macOS + Xcode only.
-#
-# The helper owns no camera: it is the Mac end of the link to the iPhone app,
-# which is what actually captures and reads. See docs/ios-development.md for
-# building that side.
-scan:
-	./build-scan.sh
+TOOL_DIR = .tool
+BINNY = $(TOOL_DIR)/binny
+TASK = $(TOOL_DIR)/task
 
-# Replay the checked-in scan fixtures through the reader and diff the extracted
-# card lists against their goldens (macOS only). The reader is cardkit-probe,
-# so this needs `make cardkit` rather than `make scan`.
-scan-check: cardkit
-	./scan/fixtures/sweep.sh
+.DEFAULT_GOAL := make-default
 
-# Unit-test the Swift side's pure logic — the trigger state machine, the text
-# heuristics, the border reader's arithmetic, the wire contract. Complements
-# scan-check rather than replacing it: the sweep proves what the reader gets
-# off real frames, these prove the rules in isolation and run in milliseconds.
-scan-test:
-	swift test --package-path scan/hoard-scan
+## Bootstrapping targets #################################
 
-# Build the iPhone head's read pipeline as a macOS binary, so it can be run over
-# an image file: it scores scan/corpus's labelled images and replays
-# scan/fixtures' frames against their goldens.
-cardkit:
-	swift build -c release --package-path scan/hoard-scan --product cardkit-probe
-	@mkdir -p bin
-	@cp scan/hoard-scan/.build/release/cardkit-probe bin/cardkit-probe
-	@echo "Built bin/cardkit-probe"
+# note: we need to assume that binny and task have not already been installed
+$(BINNY):
+	@mkdir -p $(TOOL_DIR)
+	@curl -sSfL https://get.anchore.io/binny | sh -s -- -b $(TOOL_DIR)
 
-# Score the corpus in one process: ~23s.
-#
-# There used to be a scan/corpus/sweep.sh beside this that scored the macOS
-# helper's own reader by launching one process per image. That reader belonged
-# to the Continuity Camera path and went with it; the script went too, and this
-# is now the only corpus scorer. Launching 231 processes rather than reading 231
-# cards had made the one loop guarding against accuracy regressions the slowest
-# loop in the project — slow enough to be skipped, which is the same as not
-# having it.
-#
-#   make cardkit-score                 # the table
-#   make cardkit-score ARGS=--misses   # and every card that failed
-cardkit-score: cardkit
-	@./bin/cardkit-probe --score scan/corpus/manifest.tsv $(ARGS)
+# note: we need to assume that binny and task have not already been installed
+.PHONY: task
+$(TASK) task: $(BINNY)
+	@$(BINNY) install task -q
 
-#   make foil-eval                     # finish-accuracy scoreboard per rig
-#   make foil-eval ARGS=--misses       # and every capture that would commit wrong
-foil-eval: cardkit
-	@python3 scan/foil-corpus/eval-finish.py $(ARGS)
+.PHONY: ci-bootstrap-go
+ci-bootstrap-go:
+	go mod download
 
-# Build the iPhone capture head. Needs xcodegen, the iOS platform payload
-# (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
-# reports whichever is missing. See docs/ios-development.md.
-scan-ios:
-	./build-scan-ios.sh
+# this is a bootstrapping catch-all, where if the target doesn't exist, we'll ensure the tools are installed and then try again
+%:
+	@make --silent $(TASK)
+	@$(TASK) $@
 
-# Same, then install onto an attached, unlocked iPhone with Developer Mode on.
-scan-ios-install:
-	./build-scan-ios.sh --install
+## Shim targets #################################
 
-# Run ScanKit's unit tests on the iOS simulator. They are Vision-free and
-# CoreGraphics-only, so they prove Core/ still compiles and behaves for iOS
-# without needing a device or a signing identity. This is the cheap gate; the
-# expensive one is the on-device fixture replay in the app itself, because
-# simulator Vision is not device Vision and goldens must never come from it.
-#
-# hoard-scan-Package is SwiftPM's generated all-targets scheme — the ScanKit
-# scheme is the library alone and carries no test action. The simulator is
-# discovered rather than named, because the installed runtime's device list
-# changes with every Xcode update and a hardcoded model goes stale silently.
-SIM_NAME := $(shell xcrun simctl list devices available 2>/dev/null | \
-	grep -m1 -o 'iPhone [A-Za-z0-9 ]*' | sed 's/ *$$//')
-scan-ios-test:
-	cd scan/hoard-scan && xcodebuild test -scheme hoard-scan-Package \
-		-destination 'platform=iOS Simulator,name=$(SIM_NAME)' CODE_SIGNING_ALLOWED=NO
+.PHONY: make-default
+make-default: $(TASK)
+	@# run the default task in the taskfile
+	@$(TASK)
 
-# Build everything needed for the full experience (binary + scan helper).
-all: build scan
+# for those of us that can't seem to kick the habit of typing `make ...` lets wrap the superior `task` tool
+TASKS := $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' | tr '\n' ' '" ) $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep 'aliases:' | cut -d ':' -f 3 | tr '\n' ' ' | tr -d ','")
 
-# Regenerate schema/json/ from the internal/hoardjson model. If the current
-# schema version has been released, bump hoardjson.SchemaVersion first.
-generate-json-schema:
-	go run ./schema/json/generate
+.PHONY: $(TASKS)
+$(TASKS): $(TASK)
+	@$(TASK) $@
 
-# Regenerate schema/sqlite/ from the migrations in internal/store/migrate.go.
-# Run after adding a migration; released schema files are immutable, so a new
-# migration writes a new file rather than editing an old one.
-generate-sqlite-schema:
-	go run ./schema/sqlite/generate
-
-test:
-	go test ./...
-
-vet:
-	go vet ./...
-
-clean:
-	rm -rf hoard bin
+help: $(TASK)
+	@$(TASK) -l

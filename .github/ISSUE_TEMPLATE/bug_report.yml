@@ -1,0 +1,43 @@
+name: Bug report
+description: Something hoard did wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what did hoard do instead?
+      placeholder: |
+        1. Ran `hoard ...`
+        2. Expected ...
+        3. Got ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Output of `hoard version`
+      description: Paste the whole thing — it carries the build identity a fix needs.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and terminal
+      placeholder: "macOS 15.5, iTerm2 / Ubuntu 24.04, gnome-terminal / Windows 11, Windows Terminal"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: |
+        Logs, screenshots, the CSV that failed to import. If the bug involves
+        the card scanner, say which iPhone model and whether the helper and
+        the app were built from the same commit.
+    validations:
+      required: false

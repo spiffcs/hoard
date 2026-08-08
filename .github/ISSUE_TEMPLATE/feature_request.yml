@@ -1,0 +1,26 @@
+name: Feature request
+description: Something hoard should do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The workflow, data viz, or use case you're using hoard for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like hoard to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you're using today
+      description: What would you like to happen native to the app?
+    validations:
+      required: false

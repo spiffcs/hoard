@@ -1,0 +1,36 @@
+name: "Bootstrap"
+
+description: "Bootstrap all tools and dependencies"
+inputs:
+  go-version:
+    description: "Go version to install"
+    required: true
+    default: ">= 1.26"
+  go-dependencies:
+    description: "Download go dependencies"
+    required: true
+    default: "true"
+  tools:
+    description: "whether to install tools"
+    default: "true"
+runs:
+  using: "composite"
+  steps:
+    # note: go mod and build is automatically cached on default with v4+
+    - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      if: inputs.go-version != ''
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Install project tools
+      shell: bash
+      if: inputs.tools == 'true'
+      run: |
+        make tools
+        .tool/binny list
+        .tool/binny check
+
+    - name: Install go dependencies
+      if: inputs.go-dependencies == 'true'
+      shell: bash
+      run: make ci-bootstrap-go

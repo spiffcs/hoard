@@ -25,10 +25,6 @@ func commandRank(m *Model, c *command) int {
 	return c.rank(m)
 }
 
-// paletteMaxRows is the most matches the drawer shows at once; the query
-// narrows the rest into view.
-const paletteMaxRows = ui.PaletteMaxRows
-
 // palette is the drawer's state plus the mapping back into the registry.
 // ui.Palette matches over a flat item list and knows nothing about which
 // commands apply; `backing` carries each item's index in m.commands so a

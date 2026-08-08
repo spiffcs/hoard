@@ -1,0 +1,73 @@
+# Triage's linter set (errcheck, govet, ineffassign, staticcheck, unused with
+# check-type-assertions), expressed in golangci-lint v2 config shape — triage's
+# own file still uses the v1 keys (`linters-settings`, `issues.exclude-use-default`),
+# which v2.10's schema rejects outright. The exclusion presets are v2's spelling
+# of v1's `exclude-use-default: true`.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      check-type-assertions: true
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    rules:
+      # csv.Writer's errors are sticky: every writer here (export/csv.go,
+      # report/valuation.go) checks cw.Error() after Flush, which is the API's
+      # documented contract. Checking each Write would triple the code to learn
+      # the same thing later. `cw` is this codebase's one name for a csv.Writer.
+      - linters: [errcheck]
+        text: "Error return value of `cw\\.Write` is not checked"
+      # `defer tx.Rollback()` after a successful Commit returns ErrTxDone by
+      # design; that error is the mechanism, not a failure.
+      - linters: [errcheck]
+        source: "defer tx\\.Rollback\\(\\)"
+      # http.DefaultTransport is a *http.Transport unless a test or an import
+      # replaced it, and a panic at package init is the loudest possible report
+      # of that programming error — a checked assertion would have to invent a
+      # fallback transport nobody wants.
+      - linters: [errcheck]
+        source: "http\\.DefaultTransport\\.\\(\\*http\\.Transport\\)"
+      # A bubbletea model's Update returns tea.Model by interface; this package
+      # only ever feeds its own concrete model through, so a failed assertion is
+      # a programming error and the panic is the report.
+      - path: internal/tui/child\.go
+        linters: [errcheck]
+        source: "next\\.\\(model\\)"
+      # Best-effort day-cache write: a failure costs a re-download, not
+      # correctness, and it is guarded by the MkdirAll that just succeeded.
+      - path: internal/tcgcsv/tcgcsv\.go
+        linters: [errcheck]
+        text: "Error return value of `os\\.WriteFile` is not checked"
+      # The list delegate renders into the writer bubbles hands it; the
+      # interface offers nowhere to report a write error to.
+      - path: internal/tui/delegate\.go
+        linters: [errcheck]
+        text: "Error return value of `io\\.WriteString` is not checked"
+      # Lint runs --tests=false (triage's flag), so helpers exercised only by
+      # tests read as dead. These two are load-bearing test subjects.
+      - path: internal/browse/image\.go
+        linters: [unused]
+        text: "artOverflows is unused"
+      - path: internal/tui/autoscan\.go
+        linters: [unused]
+        text: "hasCollectorBlock is unused"
+      # Scaffolding its own comment declares: the interim shim for the planned
+      # cmdUpdatePrices migration into the action layer. Deleting it would undo
+      # prepared work; it leaves when the migration lands.
+      - path: catalog\.go
+        linters: [unused]
+        text: "ensureCatalog is unused"
