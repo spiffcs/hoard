@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"os"
-	"strconv"
-
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
@@ -25,35 +22,28 @@ const (
 	tierReview   = "review"
 )
 
-// Default tier thresholds in dollars, overridable per run via the
-// HOARD_SCAN_WIN / HOARD_SCAN_JACKPOT environment variables — the same
-// knob-style the helper's own tunables use.
+// The tier lines, in dollars — fixed. The knobs that once moved them (the
+// HOARD_SCAN_WIN / HOARD_SCAN_JACKPOT environment variables and the capture
+// step's `win 5` command line) are gone: sound configuration lives on the
+// phone now, in hoardling's Settings tab, which re-tiers every priced card
+// from the amount this side already sends. What is decided here only feeds
+// the wire's three-tier verdict — kept for the macOS helper's HUD and for
+// older phone builds that still take the wire's word.
 const (
-	defaultWinThreshold     = 1.0
-	defaultJackpotThreshold = 20.0
+	winThreshold     = 1.0
+	jackpotThreshold = 20.0
 )
-
-// envFloat reads a float tunable from the environment, falling back on
-// absence or garbage — a mistyped threshold should degrade to the default,
-// not break scanning.
-func envFloat(name string, fallback float64) float64 {
-	v, err := strconv.ParseFloat(os.Getenv(name), 64)
-	if err != nil {
-		return fallback
-	}
-	return v
-}
 
 // tierFor maps a price to its celebration tier. It takes the price as a
 // pointer, not a collapsed zero: an unpriced card is "unpriced" (a shrug, the
 // plain chime), never bulk-with-$0.00.
-func tierFor(price *float64, win, jackpot float64) string {
+func tierFor(price *float64) string {
 	switch {
 	case price == nil:
 		return tierUnpriced
-	case *price >= jackpot:
+	case *price >= jackpotThreshold:
 		return tierJackpot
-	case *price >= win:
+	case *price >= winThreshold:
 		return tierWin
 	default:
 		return tierBulk

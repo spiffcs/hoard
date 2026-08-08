@@ -274,7 +274,7 @@ final class LinkController: ObservableObject {
             onResult?()
         case .chime:
             // The fallback voice for a parent that does not know about tiers.
-            sounds.play(tier: "bulk")
+            sounds.play(voice: TierSettings.shared.bulkVoice)
         case .tune(let stable, let interval):
             onTune?(stable, interval)
             trace("trigger tuned stable=\(stable) interval=\(interval)")
@@ -313,7 +313,12 @@ final class LinkController: ObservableObject {
         guard let data = payload.data(using: .utf8),
               let cmd = try? JSONDecoder().decode(HUDCommand.self, from: data)
         else { return }
-        guard let tier = cmd.tier else { return }
+        guard cmd.tier != nil else { return }
+        // The phone's own tier lines, not the Mac's. The wire carries the
+        // amount alongside its three-tier verdict, and the Settings tab owns
+        // the thresholds here — so a priced card is re-tiered locally and
+        // review/unpriced pass through untouched.
+        let tier = TierSettings.shared.tier(wire: cmd.tier, amount: cmd.amount)
         // The number that actually describes the experience: shutter to sound.
         // Everything else is a component of it, and components can all look
         // fine while the total feels slow.
@@ -325,10 +330,12 @@ final class LinkController: ObservableObject {
             // 8ms median over a 61-capture session, so a net that starts
             // showing tens of milliseconds is the network, not the parser.
             let loop = Int(Date().timeIntervalSince(sent) * 1000)
-            trace("timing loop=\(loop)ms net=\(max(0, loop - captureLocalMS))ms tier=\(tier)")
+            trace("timing loop=\(loop)ms net=\(max(0, loop - captureLocalMS))ms tier=\(tier ?? "none")")
             captureSentAt = nil
         }
-        sounds.play(tier: tier)
+        if let voice = TierSettings.shared.voice(forTier: tier) {
+            sounds.play(voice: voice)
+        }
         price = PriceResult(amount: cmd.amount, name: cmd.name, tier: tier,
                             finish: cmd.finish)
         priceSequence += 1

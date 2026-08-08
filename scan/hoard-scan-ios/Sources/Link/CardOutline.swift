@@ -184,7 +184,9 @@ struct CardOutline: View {
     private var color: Color {
         if flashing {
             switch cue.tier {
-            case "jackpot": return Color(red: 1.0, green: 0.84, blue: 0.0)
+            // Big wins wear the gold too; only jackpots breathe. That keeps
+            // one glance-distinction per rung: green → gold → pulsing gold.
+            case "jackpot", "big": return Color(red: 1.0, green: 0.84, blue: 0.0)
             case "review": return Color(white: 0.72)
             default: return .green
             }

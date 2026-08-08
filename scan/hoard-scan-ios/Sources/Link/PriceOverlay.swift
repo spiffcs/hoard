@@ -24,9 +24,11 @@ struct PriceResult: Equatable {
     /// operator reads what registered without glancing at the terminal.
     /// Empty on review results — nothing settled to show.
     var name: String?
-    /// bulk | win | jackpot | unpriced | review — decided Go-side, where the
-    /// prices already are and where a table test can pin the boundaries. The
-    /// phone renders what it is told and never re-derives a tier from a number.
+    /// bulk | win | big | jackpot | unpriced | review. The Go side sends its
+    /// own three-tier verdict, but a priced card is re-tiered here from its
+    /// amount against the Settings tab's thresholds (TierSettings) — which is
+    /// also where "big" comes from, a tier the wire does not know. Review and
+    /// unpriced arrive without an amount and pass through as sent.
     var tier: String?
     /// The finish that was actually written, from the same side and for the
     /// same reason. "foil" is what lights the sheen.
@@ -42,7 +44,7 @@ struct PriceResult: Equatable {
 
     var color: Color {
         switch tier {
-        case "jackpot", "win": return Color(red: 0.30, green: 1.0, blue: 0.35)
+        case "jackpot", "big", "win": return Color(red: 0.30, green: 1.0, blue: 0.35)
         case "review": return .white
         case "unpriced": return .white.opacity(0.85)
         default: return Color(red: 1.0, green: 0.87, blue: 0.20)
@@ -64,6 +66,7 @@ struct PriceResult: Equatable {
     var size: CGFloat {
         switch tier {
         case "jackpot": return 34
+        case "big": return 30
         case "review": return 19
         default: return 27
         }

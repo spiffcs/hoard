@@ -66,9 +66,6 @@ const (
 	// that much on a single keystroke without asking (discarding from the
 	// close prompt is its own deliberate `d`).
 	stateAbandonConfirm
-	// statePalette is the capture step's command line (:), for the scanner
-	// knobs that take a value — currently the sound tiers' dollar lines.
-	statePalette
 )
 
 // --- messages ---
@@ -190,12 +187,8 @@ type model struct {
 	nameInput textinput.Model
 	qtyInput  textinput.Model
 	codeInput textinput.Model
-	// The capture command line (:): its input and the last parse error.
-	paletteInput textinput.Model
-	paletteErr   string
 	// addPalette is the name step's command drawer (see addpalette.go), open
-	// when non-nil. Distinct from paletteInput above, which is the capture
-	// step's older value-taking command line.
+	// when non-nil.
 	addPalette *addPalette
 	list       list.Model
 	spinner    spinner.Model
@@ -287,11 +280,8 @@ type model struct {
 	torchCapable bool
 	torchOn      bool
 	// hudCapable marks a helper whose camera window renders price results
-	// (the "hud" feature); hudWin/hudJackpot are the celebration-tier
-	// thresholds, read from the environment once at construction.
+	// (the "hud" feature).
 	hudCapable     bool
-	hudWin         float64
-	hudJackpot     float64
 	nudgeGen       int
 	nudgeSentAt    time.Time
 	lastScanNudged bool
@@ -417,14 +407,10 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	ci.CharLimit = 7
 	ci.Width = 12
 
-	pi := textinput.New()
-	pi.Placeholder = "win 5"
-	pi.CharLimit = 40
-	pi.Width = 30
 
 	// One theme for the model, its inputs and its list delegate.
 	th := ui.DefaultTheme()
-	for _, in := range []*textinput.Model{&ni, &qi, &pi} {
+	for _, in := range []*textinput.Model{&ni, &qi} {
 		in.PromptStyle = th.Prompt
 		in.Cursor.Style = th.Accent
 	}
@@ -451,11 +437,8 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		nameInput:    ni,
 		qtyInput:     qi,
 		codeInput:    ci,
-		paletteInput: pi,
 		spinner:      sp,
 		list:         l,
-		hudWin:       envFloat("HOARD_SCAN_WIN", defaultWinThreshold),
-		hudJackpot:   envFloat("HOARD_SCAN_JACKPOT", defaultJackpotThreshold),
 		width:        80,
 		height:       22,
 		now:          time.Now,
@@ -836,8 +819,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// the scanner is exactly the kind of stop this flow exists to
 				// avoid.
 				return m.promotePending()
-			case string(msg.Runes) == ":":
-				return m.openPalette()
 			case strings.EqualFold(string(msg.Runes), "c"):
 				// Closing the camera with unprocessed cards — queued or still
 				// resolving — deserves a decision, not a silent drop. The
@@ -1056,14 +1037,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEnter {
 			return m.submitQty()
 		}
-	case statePalette:
-		if msg.Type == tea.KeyEsc {
-			m.state = stateCapture
-			return m, nil
-		}
-		if msg.Type == tea.KeyEnter {
-			return m.runPaletteCommand()
-		}
 	case stateConfirm:
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -1085,8 +1058,6 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
 	case statePairCode:
 		m.codeInput, cmd = m.codeInput.Update(msg)
-	case statePalette:
-		m.paletteInput, cmd = m.paletteInput.Update(msg)
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick, stateQueueReview:
 		m.list, cmd = m.list.Update(msg)
 	case stateLoading, stateCapturing, stateCameraBusy:
@@ -1317,60 +1288,6 @@ func (m model) requestCapture() (tea.Model, tea.Cmd) {
 	m.status = ""
 	m.state = stateCapturing
 	return m, m.spinner.Tick
-}
-
-// openPalette opens the capture step's command line — the add view's palette
-// for the scanner knobs that take a value. Capture-only, because everywhere
-// else the keyboard already belongs to a text input or a list.
-func (m model) openPalette() (tea.Model, tea.Cmd) {
-	m.paletteInput.SetValue("")
-	m.paletteErr = ""
-	m.paletteInput.Focus()
-	m.state = statePalette
-	return m, textinput.Blink
-}
-
-// runPaletteCommand parses and applies one command line. The commands move
-// the sound tiers' dollar lines for this session; the HOARD_SCAN_WIN /
-// HOARD_SCAN_JACKPOT environment variables stay the persistent knobs, so a
-// bad live tweak never outlives the run. A parse problem stays on the line
-// with the error shown; an empty line just closes it.
-func (m model) runPaletteCommand() (tea.Model, tea.Cmd) {
-	fields := strings.Fields(strings.ToLower(m.paletteInput.Value()))
-	if len(fields) == 0 {
-		m.state = stateCapture
-		return m, nil
-	}
-	if len(fields) != 2 {
-		m.paletteErr = "commands take one dollar amount, like: win 5"
-		return m, nil
-	}
-	amount, err := strconv.ParseFloat(strings.TrimPrefix(fields[1], "$"), 64)
-	if err != nil || amount <= 0 {
-		m.paletteErr = fmt.Sprintf("%q isn't a dollar amount", fields[1])
-		return m, nil
-	}
-	switch fields[0] {
-	case "win":
-		if amount >= m.hudJackpot {
-			m.paletteErr = fmt.Sprintf("the win line must sit below the jackpot line ($%.2f)", m.hudJackpot)
-			return m, nil
-		}
-		m.hudWin = amount
-	case "jackpot":
-		if amount <= m.hudWin {
-			m.paletteErr = fmt.Sprintf("the jackpot line must sit above the win line ($%.2f)", m.hudWin)
-			return m, nil
-		}
-		m.hudJackpot = amount
-	default:
-		m.paletteErr = fmt.Sprintf("unknown command %q · win <dollars> or jackpot <dollars>", fields[0])
-		return m, nil
-	}
-	m.status, m.statusErr = fmt.Sprintf(
-		"sound tiers this session · win at $%.2f · jackpot at $%.2f", m.hudWin, m.hudJackpot), false
-	m.state = stateCapture
-	return m, nil
 }
 
 // toggleTorch flips the phone's flashlight from the terminal, for the desk
@@ -2283,7 +2200,7 @@ func (m model) celebrate(name string, price *float64, finish string) {
 		return
 	}
 	r := scan.HUDResult{
-		Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot), Finish: finish,
+		Amount: price, Tier: tierFor(price), Finish: finish,
 		Name: name,
 	}
 	// An unpriced commit moves nothing, so no total rides along — sending one
@@ -3073,13 +2990,14 @@ func (m model) viewContent() string {
 		default:
 			b.WriteString("Frame the next card, then press space.\n\n")
 		}
-		// The same line the name prompt shows, in the same order, plus this
-		// view's own keys — every add view opens with `: commands · ctrl+p
-		// pair · ctrl+o camera`, so the recovery keys are where the reader
-		// learned to find them when the camera drops. The session tally and
-		// the review count live in the counter line above, not here: this
-		// line is for keys.
-		e := []ui.HelpEntry{ui.HelpCommands,
+		// The same recovery keys the name prompt shows, in the same order,
+		// plus this view's own — so ctrl+p and ctrl+o are where the reader
+		// learned to find them when the camera drops. No `: commands` here:
+		// the capture palette held only the sound-tier lines, and those
+		// moved to the phone's Settings tab. The session tally and the
+		// review count live in the counter line above, not here: this line
+		// is for keys.
+		e := []ui.HelpEntry{
 			ui.K("ctrl+p", "pair"), ui.K("ctrl+o", "camera"),
 			ui.K("space", "capture")}
 		if len(m.tally) > tallyShown {
@@ -3117,20 +3035,6 @@ func (m model) viewContent() string {
 		return m.theme.Err.Render(fmt.Sprintf(
 			"abandon review? %d scanned cards will be dropped unsaved", n)) +
 			m.theme.Help.Render("  y/n")
-	case statePalette:
-		var b strings.Builder
-		b.WriteString(m.theme.Title.Render("Scanner commands") + "\n\n")
-		fmt.Fprintf(&b, "Sound tiers · bulk under $%.2f · win at $%.2f · jackpot at $%.2f\n\n",
-			m.hudWin, m.hudWin, m.hudJackpot)
-		b.WriteString("  win <dollars>      the gold flash and bell start here\n")
-		b.WriteString("  jackpot <dollars>  the coin shower starts here\n\n")
-		b.WriteString(m.paletteInput.View())
-		if m.paletteErr != "" {
-			b.WriteString("\n" + m.theme.Err.Render(m.paletteErr))
-		}
-		b.WriteString("\n\n" + m.help(
-			"enter run · esc back to camera · lasts this session (HOARD_SCAN_WIN/_JACKPOT persist)"))
-		return b.String()
 	case stateCapturing:
 		return fmt.Sprintf("%s reading the card…\n\n%s",
 			m.spinner.View(), m.help("esc close camera · ctrl+c force quit"))

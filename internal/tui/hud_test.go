@@ -10,44 +10,24 @@ import (
 )
 
 func TestTierFor(t *testing.T) {
+	// The lines are fixed Go-side ($1 / $20); the phone re-tiers priced cards
+	// against its own Settings, so this table only pins the wire's verdict.
 	cases := []struct {
-		price        *float64
-		win, jackpot float64
-		want         string
+		price *float64
+		want  string
 	}{
-		{nil, 1, 20, tierUnpriced},
-		{price(0), 1, 20, tierBulk},
-		{price(0.99), 1, 20, tierBulk},
-		{price(1.00), 1, 20, tierWin},
-		{price(19.99), 1, 20, tierWin},
-		{price(20.00), 1, 20, tierJackpot},
-		{price(500), 1, 20, tierJackpot},
-		// Custom thresholds move the boundaries with them.
-		{price(3), 5, 50, tierBulk},
-		{price(5), 5, 50, tierWin},
-		{price(50), 5, 50, tierJackpot},
+		{nil, tierUnpriced},
+		{price(0), tierBulk},
+		{price(0.99), tierBulk},
+		{price(1.00), tierWin},
+		{price(19.99), tierWin},
+		{price(20.00), tierJackpot},
+		{price(500), tierJackpot},
 	}
 	for _, c := range cases {
-		if got := tierFor(c.price, c.win, c.jackpot); got != c.want {
-			t.Errorf("tierFor(%v, %v, %v) = %q, want %q",
-				priceStr(c.price), c.win, c.jackpot, got, c.want)
+		if got := tierFor(c.price); got != c.want {
+			t.Errorf("tierFor(%v) = %q, want %q", priceStr(c.price), got, c.want)
 		}
-	}
-}
-
-func TestHudThresholdsFromEnv(t *testing.T) {
-	t.Setenv("HOARD_SCAN_WIN", "5")
-	t.Setenv("HOARD_SCAN_JACKPOT", "50")
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	if m.hudWin != 5 || m.hudJackpot != 50 {
-		t.Errorf("thresholds = %v/%v, want 5/50", m.hudWin, m.hudJackpot)
-	}
-	// Garbage degrades to the defaults rather than breaking scanning.
-	t.Setenv("HOARD_SCAN_WIN", "cheap")
-	t.Setenv("HOARD_SCAN_JACKPOT", "")
-	m = newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	if m.hudWin != defaultWinThreshold || m.hudJackpot != defaultJackpotThreshold {
-		t.Errorf("thresholds = %v/%v, want the defaults", m.hudWin, m.hudJackpot)
 	}
 }
 

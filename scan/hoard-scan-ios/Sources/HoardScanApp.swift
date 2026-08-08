@@ -8,14 +8,16 @@
 //
 // At this stage the app is still an instrument, and each tab is a question:
 //
-// Two screens, and no more than two. The instruments that answered the earlier
-// questions — does a 24 MP frame read a collector number, what will this
-// hardware let me do, does iOS Vision read the fixtures differently — have all
-// been answered and removed. What is left is what someone scanning a box of
-// cards needs: the camera, and the one-time pairing.
+// Three screens, and no more than three. The instruments that answered the
+// earlier questions — does a 24 MP frame read a collector number, what will
+// this hardware let me do, does iOS Vision read the fixtures differently —
+// have all been answered and removed. What is left is what someone scanning a
+// box of cards needs: the camera, the one-time pairing, and the knobs for the
+// sounds they will spend a session listening to.
 //
-//   Scan   the camera, the price, and the trigger
-//   Pair   the six digits, once per Mac
+//   Scan       the camera, the price, and the trigger
+//   Pair       the six digits, once per Mac
+//   Settings   the tier lines and their voices
 
 import SwiftUI
 
@@ -36,7 +38,7 @@ struct HoardScanApp: App {
     /// camera runs somewhere you cannot see.
     @State private var tab = Tab.scan
 
-    private enum Tab: Hashable { case scan, pair }
+    private enum Tab: Hashable { case scan, pair, settings }
 
     var body: some Scene {
         WindowGroup {
@@ -47,6 +49,9 @@ struct HoardScanApp: App {
                 PairingView(link: link)
                     .tabItem { Label("Pair", systemImage: "link") }
                     .tag(Tab.pair)
+                SettingsView(sounds: link.sounds)
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(Tab.settings)
             }
             // Only on connect, never on disconnect. Being thrown out of the
             // scanning screen because the link blipped mid-box would be worse

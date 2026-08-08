@@ -1061,65 +1061,6 @@ func TestTTogglesTheTorchWhenTheHelperOffersIt(t *testing.T) {
 	}
 }
 
-func TestPaletteMovesTheSoundTierLines(t *testing.T) {
-	// Deterministic thresholds regardless of the developer's environment.
-	t.Setenv("HOARD_SCAN_WIN", "")
-	t.Setenv("HOARD_SCAN_JACKPOT", "")
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
-	got, _ := openCapture(t, m)
-
-	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
-	got = mm.(model)
-	if got.state != statePalette {
-		t.Fatalf(": should open the command line, got state %v", got.state)
-	}
-
-	// Garbage stays on the line with the error shown, thresholds untouched.
-	got.paletteInput.SetValue("win lots")
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	got = mm.(model)
-	if got.state != statePalette || got.paletteErr == "" {
-		t.Fatalf("a bad amount should stay on the line with an error, got state %v err %q", got.state, got.paletteErr)
-	}
-	if got.hudWin != 1 {
-		t.Fatalf("hudWin = %v, want the untouched default 1", got.hudWin)
-	}
-
-	// A win above the jackpot line is refused — the tiers must stay ordered.
-	got.paletteInput.SetValue("win 25")
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	got = mm.(model)
-	if got.state != statePalette || got.hudWin != 1 {
-		t.Fatalf("win above jackpot must be refused, got state %v hudWin %v", got.state, got.hudWin)
-	}
-
-	got.paletteInput.SetValue("win $5")
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	got = mm.(model)
-	if got.state != stateCapture || got.hudWin != 5 {
-		t.Fatalf("win $5: state %v hudWin %v, want capture and 5", got.state, got.hudWin)
-	}
-
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
-	got = mm.(model)
-	got.paletteInput.SetValue("jackpot 50")
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	got = mm.(model)
-	if got.state != stateCapture || got.hudJackpot != 50 {
-		t.Fatalf("jackpot 50: state %v hudJackpot %v, want capture and 50", got.state, got.hudJackpot)
-	}
-
-	// esc abandons the line without touching anything.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
-	got = mm.(model)
-	got.paletteInput.SetValue("jackpot 9999")
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	got = mm.(model)
-	if got.state != stateCapture || got.hudJackpot != 50 {
-		t.Fatalf("esc: state %v hudJackpot %v, want capture and the unchanged 50", got.state, got.hudJackpot)
-	}
-}
-
 func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
 	// The whole point of the persistent window: after a card lands in the DB the
 	// user is back at framing, not at the prompt having to press ctrl+o again.

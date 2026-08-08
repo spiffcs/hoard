@@ -1,10 +1,16 @@
 // The price tiers' voices, on the phone.
 //
-// Synthesis parameters are copied deliberately and exactly from the macOS
-// helper's SoundBank, because the sound *is* the feature — the whole point of
-// one sound per card is that a person stops looking at the screen and works by
-// ear, and a voice that differs between the two scan sources retrains them for
-// nothing. Same frequencies, same durations, same decay, same soft clip.
+// Synthesis parameters for the original four voices are copied deliberately and
+// exactly from the macOS helper's SoundBank, because the sound *is* the feature
+// — the whole point of one sound per card is that a person stops looking at the
+// screen and works by ear, and a voice that differs between the two scan
+// sources retrains them for nothing. Same frequencies, same durations, same
+// decay, same soft clip.
+//
+// Which voice speaks for which tier is no longer fixed here: the Settings tab
+// assigns voices to tiers (TierSettings), and this file only knows how to say
+// each one. Two voices exist beyond the macOS four — a double bell and a rising
+// arpeggio — so four price tiers can each sound distinct.
 //
 // Everything is synthesized into PCM buffers once at init — additive sine bursts
 // with exponential decay — so the app bundles no audio files and owes no one a
@@ -28,20 +34,44 @@ private struct Strike {
     let amp: Double
 }
 
-/// The four voices, at the macOS helper's measured parameters.
+/// One assignable voice, as the Settings picker sees it.
+struct SoundVoice: Identifiable, Equatable {
+    let id: String
+    let label: String
+}
+
+/// The voices, at the macOS helper's measured parameters where a macOS
+/// counterpart exists.
 private enum Voice {
     /// A low woody knock, gone in 50 ms.
-    static let bulk = ([Strike(at: 0, freqs: [420, 840, 1260], dur: 0.05, amp: 0.55)], 0.12)
+    static let knock = ([Strike(at: 0, freqs: [420, 840, 1260], dur: 0.05, amp: 0.55)], 0.12)
 
     /// A single bright service bell — fundamental plus an inharmonic 2.76x
     /// partial, which is what reads as "bell" rather than "tone".
-    static let win = ([Strike(at: 0, freqs: [2093, 5777], dur: 0.4, amp: 0.42)], 0.55)
+    static let bell = ([Strike(at: 0, freqs: [2093, 5777], dur: 0.4, amp: 0.42)], 0.55)
+
+    /// Two bells rising — the same inharmonic 2.76x recipe as the single bell,
+    /// struck a fourth apart, so it reads as the bell's bigger sibling rather
+    /// than a new instrument.
+    static let bells = (
+        [Strike(at: 0.00, freqs: [1568, 4329], dur: 0.3, amp: 0.38),
+         Strike(at: 0.17, freqs: [2093, 5777], dur: 0.45, amp: 0.42)],
+        0.75)
+
+    /// A quick major arpeggio landing on a held octave — smaller than the harp
+    /// run, but unmistakably a fanfare.
+    static let arpeggio = (
+        [Strike(at: 0.00, freqs: [1046.5], dur: 0.14, amp: 0.34),
+         Strike(at: 0.09, freqs: [1318.5], dur: 0.14, amp: 0.34),
+         Strike(at: 0.18, freqs: [1568.0], dur: 0.14, amp: 0.34),
+         Strike(at: 0.27, freqs: [2093.0, 1046.5], dur: 0.5, amp: 0.42)],
+        0.9)
 
     /// A pentatonic sweep, two octaves in under a second, landing on a held
     /// octave chord — a harp run up to the top of the machine. The offsets are
     /// fixed, never random: the sound being identical every time is what makes
     /// it recognizable.
-    static let jackpot: ([Strike], Double) = (
+    static let harp: ([Strike], Double) = (
         [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.7, 1318.5, 1568.0, 1760.0]
             .enumerated()
             .map { Strike(at: Double($0.offset) * 0.055, freqs: [$0.element], dur: 0.12, amp: 0.32) }
@@ -50,15 +80,31 @@ private enum Voice {
 
     /// Two soft notes rising a fourth — "hm-hmm?" — the upward inflection of a
     /// question. A queued card is a request, not a price outcome.
-    static let review = (
+    static let question = (
         [Strike(at: 0.00, freqs: [440, 880], dur: 0.12, amp: 0.34),
          Strike(at: 0.16, freqs: [587.33, 1174.7], dur: 0.28, amp: 0.38)],
         0.6)
+
+    static let specs: [String: ([Strike], Double)] = [
+        "knock": knock, "bell": bell, "bells": bells,
+        "arpeggio": arpeggio, "harp": harp, "question": question,
+    ]
 }
 
 /// Sounds plays one voice per resolved card.
 @MainActor
 final class Sounds {
+    /// What the Settings picker offers, in the order the shelf reads best:
+    /// quietest to loudest.
+    static let voices: [SoundVoice] = [
+        SoundVoice(id: "knock", label: "Knock"),
+        SoundVoice(id: "bell", label: "Bell"),
+        SoundVoice(id: "bells", label: "Double Bell"),
+        SoundVoice(id: "arpeggio", label: "Fanfare"),
+        SoundVoice(id: "harp", label: "Harp Run"),
+        SoundVoice(id: "question", label: "Question"),
+    ]
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var buffers: [String: AVAudioPCMBuffer] = [:]
@@ -69,12 +115,9 @@ final class Sounds {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
 
-        for (tier, spec) in [
-            ("bulk", Voice.bulk), ("win", Voice.win),
-            ("jackpot", Voice.jackpot), ("review", Voice.review),
-        ] {
+        for (voice, spec) in Voice.specs {
             if let buf = render(spec.0, seconds: spec.1, format: format) {
-                buffers[tier] = buf
+                buffers[voice] = buf
             }
         }
 
@@ -110,10 +153,10 @@ final class Sounds {
 
     var isWorking: Bool { working }
 
-    /// play cuts whatever tail is still ringing and starts the tier's sound.
+    /// play cuts whatever tail is still ringing and starts the voice.
     /// A rapid next card should clip the last fanfare, not queue behind it.
-    func play(tier: String) {
-        guard working, let buffer = buffers[tier] else { return }
+    func play(voice: String) {
+        guard working, let buffer = buffers[voice] else { return }
         // Schedule first, then play. Doing it the other way round races: `stop()`
         // resets the node's render state, and a buffer handed to a node that has
         // not been restarted yet can be dropped on the floor.
