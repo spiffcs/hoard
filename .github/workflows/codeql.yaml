@@ -21,6 +21,12 @@ concurrency:
 jobs:
   analyze:
     name: Analyze
+    # Off while the repo is private: code scanning needs GitHub Advanced
+    # Security, which private repos don't get for free, so the SARIF upload
+    # fails with "Resource not accessible by integration". CodeQL is free on
+    # public repos — this gate turns the whole job back on automatically the
+    # moment visibility flips, with no file to remember to re-add.
+    if: ${{ github.event.repository.visibility == 'public' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

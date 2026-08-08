@@ -160,8 +160,16 @@ tasks:
       # ensure there are no files with ":" in it (a known back case in the go ecosystem)
       - cmd: 'test -z "{{ .BAD_FILE_NAMES }}" || (echo "files with bad names: [{{ .BAD_FILE_NAMES }}]"; exit 1)'
         silent: true
-      # run linting
-      - "{{ .TOOL_DIR }}/golangci-lint run --tests=false"
+      # Lint BOTH platform views, not just the host's. golangci-lint only
+      # analyzes the current GOOS, so a Mac never sees the linux build and
+      # vice-versa — which is how three darwin-used symbols read as `unused`
+      # on the linux CI runner while `make lint` on a Mac reported clean, and
+      # rode through to a failed release. Running both here makes the target
+      # match what CI (linux) enforces AND keep the darwin-only scanner code
+      # linted, on whichever platform a developer runs it. windows shares the
+      # !darwin view with linux, so the two GOOS below cover the build matrix.
+      - "GOOS=darwin {{ .TOOL_DIR }}/golangci-lint run --tests=false"
+      - "GOOS=linux {{ .TOOL_DIR }}/golangci-lint run --tests=false"
 
   check-go-mod-tidy:
     # desc: Ensure go.mod and go.sum are up to date

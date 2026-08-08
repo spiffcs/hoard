@@ -2,8 +2,14 @@ name: Validations
 
 # Superseded runs are cancelled rather than queued: without this, three pushes
 # to a PR meant three full runs.
+# Static "validations-" prefix, deliberately not ${{ github.workflow }}: when
+# release.yaml calls this as a reusable workflow, github.workflow resolves to
+# the CALLER ("Release"), so a github.workflow-based group collapses onto the
+# release group and parent and child deadlock waiting on each other (GitHub
+# cancels the run). A fixed prefix keeps this gate's group distinct in both
+# the standalone and the called case.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: validations-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 on:

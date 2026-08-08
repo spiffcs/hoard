@@ -71,3 +71,19 @@ linters:
       - path: catalog\.go
         linters: [unused]
         text: "ensureCatalog is unused"
+      # Darwin-only runtime code the Linux CI linter cannot see it use:
+      # parseEvent is called by session_darwin.go, parseDevices (and the
+      # deviceList it fills) by scan_darwin.go — both //go:build darwin, so
+      # they compile out on the ubuntu runner. scan_test.go exercises all
+      # three, but --tests=false hides that too. Used, not dead; a build tag
+      # cannot move them because scan_test.go also tests platform-neutral
+      # symbols in the same package.
+      - path: internal/scan/scan\.go
+        linters: [unused]
+        text: "func parseEvent is unused"
+      - path: internal/scan/scan\.go
+        linters: [unused]
+        text: "func parseDevices is unused"
+      - path: internal/scan/scan\.go
+        linters: [unused]
+        text: "type deviceList is unused"
