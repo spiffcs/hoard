@@ -913,24 +913,21 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 		t.Errorf("opened device %q, want %q", sc.usedDevice, "spare")
 	}
 
-	// With the window already open, ctrl+o goes straight back to framing rather
-	// than reopening the camera.
+	// From the live camera, ctrl+o means reselect: the window closes and the
+	// picker is offered again — the recovery key when a camera drops, the
+	// same "choose a source" it means at the prompt.
 	mm, _ = got.cancelToName()
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
-	if s := mm.(model).state; s != stateCapture {
-		t.Errorf("ctrl+o with a live session should return to capture, got %v", s)
+	if s := mm.(model).state; s != stateCameraBusy {
+		t.Errorf("ctrl+o at the camera should reselect, got %v", s)
 	}
-	if sc.opened != 1 {
-		t.Errorf("opened the camera %d times, want 1", sc.opened)
+	if mm.(model).session != nil {
+		t.Error("reselecting should close the live window")
 	}
 
-	// Closing the camera and pressing ctrl+o again re-offers the picker. There
-	// is no separate "change camera" key: with more than one phone on the list,
-	// choosing is what ctrl+o is for. Close first, then return to the prompt:
-	// with a live session resetForNext deliberately keeps you at the camera
-	// step, which is where ctrl+o means "back to framing" rather than "choose
-	// a source".
+	// From the prompt with no session, ctrl+o re-offers the picker too —
+	// choosing a source is what the key means everywhere.
 	back := mm.(model)
 	back.closeSession()
 	mm, _ = back.cancelToName()

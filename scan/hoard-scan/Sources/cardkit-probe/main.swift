@@ -26,6 +26,19 @@ func die(_ message: String) -> Never {
     exit(2)
 }
 
+func flagValue(_ args: [String], _ name: String) -> String? {
+    guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+    return args[i + 1]
+}
+
+func writePNG(_ image: CGImage, to path: String) {
+    let url = URL(fileURLWithPath: path) as CFURL
+    guard let dest = CGImageDestinationCreateWithURL(url, "public.png" as CFString, 1, nil)
+    else { die("could not create \(path)") }
+    CGImageDestinationAddImage(dest, image, nil)
+    guard CGImageDestinationFinalize(dest) else { die("could not write \(path)") }
+}
+
 /// The whole program, in a function so its availability can be annotated. Top
 /// level code cannot be, and a `guard #available` there does not narrow what
 /// follows it.
@@ -110,6 +123,36 @@ func run() async -> Never {
     let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
         .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
         .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+
+    // --emit-card writes the located, perspective-flattened card to a PNG and
+    // says where the card sat. The art-identification channel hashes card
+    // images, not raw frames, and the Go side has no flatten of its own — this
+    // flag is how it borrows this one. Exit 4, distinct from 3's "nothing
+    // readable", means no card was located to emit.
+    //
+    // --emit-sparkle writes the foil marker's neighbourhood from the same
+    // flatten: the sparkle search window plus a context margin wide enough to
+    // absorb the V drift the live reader corrects for. It is the classifier
+    // training set's raw material — the crop is what the reader itself would
+    // judge, extracted by the same geometry, so the model trains on exactly
+    // the reader's view and nothing flattering.
+    let emitCard = flagValue(args, "--emit-card")
+    let emitSparkle = flagValue(args, "--emit-sparkle")
+    if emitCard != nil || emitSparkle != nil {
+        guard let card = locateCard(uprighted(cg, orientation)) else { exit(4) }
+        if let path = emitCard { writePNG(card.image, to: path) }
+        if let path = emitSparkle {
+            let w = CGFloat(card.image.width), h = CGFloat(card.image.height)
+            let du = SparkleGate.searchU + SparkleTemplate.spanU / 2 + 0.012
+            let dv = SparkleGate.searchV + SparkleTemplate.spanV / 2 + 0.030
+            let rect = CGRect(x: (CardLayout.sparkleU - du) * w,
+                              y: (CardLayout.sparkleV - dv) * h,
+                              width: 2 * du * w, height: 2 * dv * h)
+                .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+            guard let patch = card.image.cropping(to: rect) else { exit(4) }
+            writePNG(patch, to: path)
+        }
+    }
 
     let reading = await readCard(uprighted(cg, orientation))
     // --border prints what the border reader saw, verdict or not.

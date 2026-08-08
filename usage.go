@@ -41,6 +41,7 @@ var usageSections = []struct {
 		{"watch import <file>", "Import price watches in bulk (CSV or JSON)"},
 		{"watch list | watch rm <id|name>", "Your watches, and removing one"},
 		{"catalog [status|update]", "The local copy of Scryfall's card data"},
+		{"artindex [status|build]", "The scanner's art-identification hash index"},
 	}},
 	{"Binder commands:", []usageRow{
 		{"binder list", "Your binders, with counts and value"},

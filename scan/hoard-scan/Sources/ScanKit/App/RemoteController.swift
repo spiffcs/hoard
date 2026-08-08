@@ -159,6 +159,12 @@ final class RemoteController: NSObject {
             // known to be listening. Asking earlier would talk to a link that
             // has not finished coming up.
             if let text = frame.text, text.contains("\"event\":\"ready\"") {
+                // The helper's own build stamp, beside the phone's (which
+                // rides inside the ready event itself) — so one session log
+                // names every build in the chain.
+                let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion")
+                    as? String ?? "unstamped"
+                FileHandle.standardError.write(Data("scan: helper build \(build)\n".utf8))
                 requestStillsIfWanted()
                 sendTuningIfSet()
             }

@@ -485,6 +485,29 @@ Read the score before touching the threshold. It is on the wire now
 half of the finish-provenance argument that did not land the first time: a
 verdict without its measurement made this session unreadable.
 
+### 2026-08-07 — the CoreML marker classifier: eval-only, and why
+
+A CreateML transfer-learning classifier over the sparkle-patch crops
+(`scan/foil-corpus/extract-crops.py` → `dataset/<rig>/<finish>/`, trained and
+scored by `train-foil.swift <held-out-rig>`), measured with each rig held out
+in turn:
+
+    s9 held out      34/35   0 foils missed   1 FALSE-FOIL  (s9-16, Ornithopter)
+    s5 held out      36/38   0 foils missed   2 FALSE-FOILS (s5-01, s5-03)
+    corpus held out  37/49  11 foils missed   1 FALSE-FOIL  (s2-51)
+
+Recall on the rigs the template collapses on is transformative — s9's foils
+went 12/35 committed under the template gates to 35/35 recognised — but the
+ship-gate is zero false-foils on every held-out rig, and 4/33 nonfoils across
+the folds read foil. The standing preference makes a false-foil the expensive
+error (a silently overpriced row), so the model does NOT drive the verdict.
+It stays as tooling: rerun the folds whenever a rig is added, and the next
+step worth measuring before any promotion is a probability threshold — the
+folds above use the argmax label; a high p(foil) bar may buy the recall
+without the false-foils, or show the same cross-rig fragility the chroma
+score had. `train-foil.swift all <out.mlmodel>` builds a shipping artifact
+only if that study ever passes the gate.
+
 ### 2026-08-07 — the decision ceiling, and where it should end up
 
 `decisionCeiling` (internal/tui/autoscan.go) caps how long a queued card holds

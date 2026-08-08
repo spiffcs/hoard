@@ -54,7 +54,7 @@ public struct LinkFailure: Equatable, Sendable {
             // telling someone what they should have done does not get them
             // scanning again. The Pair tab's troubleshooting section carries
             // the standing advice, which is where a rule belongs.
-            reason = "iPhone disconnected. Check to make sure Hoardling is still open"
+            reason = "iPhone disconnected. Check to make sure the hoard app is still running"
         case .posix(.ENETDOWN), .posix(.ENETUNREACH), .posix(.EHOSTUNREACH),
              .posix(.EHOSTDOWN), .posix(.ENETRESET):
             reason = "Lost the network to the iPhone. Both devices need the same Wi-Fi, or a cable"

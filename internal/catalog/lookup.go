@@ -55,6 +55,39 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 	return out, nil
 }
 
+// ImageSource is one printing's art-index input: its id, its small-image
+// URL, and — when the printing comes in exactly one finish — that finish, so
+// an art match can settle foil without a second lookup.
+type ImageSource struct {
+	ScryfallID string
+	ImageURI   string
+	SoleFinish string
+}
+
+// ImageSources lists every printing that has an image, for the art-index
+// build.
+func (c *Catalog) ImageSources() ([]ImageSource, error) {
+	rows, err := c.db.Query(
+		`SELECT scryfall_id, image_uri, finishes FROM cards WHERE image_uri IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImageSource
+	for rows.Next() {
+		var s ImageSource
+		var finishes *string
+		if err := rows.Scan(&s.ScryfallID, &s.ImageURI, &finishes); err != nil {
+			return nil, err
+		}
+		if f := decodeArray(finishes); len(f) == 1 {
+			s.SoleFinish = f[0]
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // rowScanner is what both Query and QueryRow results satisfy.
 type rowScanner interface{ Scan(...any) error }
 
@@ -63,6 +96,7 @@ type rowScanner interface{ Scan(...any) error }
 // column order is decided once, beside the code that depends on it.
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
        released_at, lang, finishes, promo_types, frame_effects, frame, border_color,
+       image_uri,
        colors, color_identity,
        price_usd, price_usd_foil, price_usd_etched, scryfall_url`
 
@@ -75,15 +109,18 @@ const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
 	var setName, released, lang, finishes, promos, frames, frame, border *string
+	var image *string
 	var colors, identity *string
 	var usd, foil, etched *float64
 
 	if err := r.Scan(&c.ID, &c.Name, &c.Set, &c.CollectorNumber, &setName,
 		&released, &lang, &finishes, &promos, &frames, &frame, &border,
+		&image,
 		&colors, &identity,
 		&usd, &foil, &etched, &c.ScryfallURL); err != nil {
 		return scryfall.Card{}, fmt.Errorf("catalog: scanning a card: %w", err)
 	}
+	c.ImageURI = deref(image)
 
 	c.SetName = deref(setName)
 	c.ReleasedAt = deref(released)

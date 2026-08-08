@@ -36,6 +36,12 @@ public struct Event: Encodable {
     public var rotation: Int = 0
     public var message: String = ""
     public var device: String = ""
+    /// The sending app's build stamp, carried on the ready event so a session
+    /// log proves which build produced it. One live session was spent tuning
+    /// against a phone silently running a stale install; this is the field
+    /// that makes that impossible to miss. Optional so old helpers keep their
+    /// wire shape.
+    public var appVersion: String? = nil
     /// Read off the card's bottom border when present. Cards printed before
     /// Exodus (1998) carry no collector number at all, and the set code only
     /// became reliably printed with the M15 frame, so both are routinely empty
@@ -117,6 +123,7 @@ public struct Event: Encodable {
         rotation: Int = 0,
         message: String = "",
         device: String = "",
+        appVersion: String? = nil,
         collectorNumber: String = "",
         setCode: String = "",
         bottomLines: [String] = [],
@@ -139,6 +146,7 @@ public struct Event: Encodable {
         self.rotation = rotation
         self.message = message
         self.device = device
+        self.appVersion = appVersion
         self.collectorNumber = collectorNumber
         self.setCode = setCode
         self.bottomLines = bottomLines

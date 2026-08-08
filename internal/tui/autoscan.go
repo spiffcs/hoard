@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ const (
 	scanMatchNumberAndYear              // number named a printing and its release year agrees
 	scanMatchSetAndNumber               // set and number both matched
 	scanMatchSetNumberAndLang           // set, number and the printed language all matched
+	scanMatchArt                        // the card's own picture matched one printing's image hash
 )
 
 // numberVerified reports whether a collector number actually matched a
@@ -67,8 +69,12 @@ func numberVerified(r scanMatch) bool {
 // fuzzy match onto the wrong card could collide with it by luck — pairing it
 // with the set code or the release year is what removes the luck.
 func corroboratedPrinting(r scanMatch) bool {
+	// An art match earns the waiver on different grounds: the picture chose
+	// the printing without the name's help at all, decisively (see the
+	// distance gates in artmatch.go), so a mangled title has nothing to
+	// poison. The name on an art-matched item *came from* the match.
 	return r == scanMatchSetNumberAndLang || r == scanMatchSetAndNumber ||
-		r == scanMatchNumberAndYear
+		r == scanMatchNumberAndYear || r == scanMatchArt
 }
 
 // printingPinned reports whether the rank already chose one specific printing
@@ -80,7 +86,8 @@ func printingPinned(r scanMatch) bool {
 	// still stand over it. It is here because a frame-picked head is a named
 	// printing, and the border reorder displacing a named head is the SLD/604
 	// bug shape.
-	return numberVerified(r) || r == scanMatchNumberTail || r == scanMatchYearAndFrame
+	return numberVerified(r) || r == scanMatchNumberTail ||
+		r == scanMatchYearAndFrame || r == scanMatchArt
 }
 
 // String names the match for the telemetry log.
@@ -106,6 +113,8 @@ func (m scanMatch) String() string {
 		return "set+number"
 	case scanMatchSetNumberAndLang:
 		return "set+number+lang"
+	case scanMatchArt:
+		return "art-match"
 	default:
 		return "none"
 	}
@@ -235,10 +244,10 @@ func siblingSuffix(it queueItem) string {
 		s += " replaced"
 	}
 	// The measurement behind moved/replaced, on the line that records the
-	// outcome it decided. The phone traces it too, but on a different line and
-	// only to stderr — and this is the number placementFaceFloor has to be
-	// re-fitted from, so it belongs next to the verdict it produced rather
-	// than one grep away from it.
+	// outcome it decided. The phone traces it too, but on a different line
+	// and only to stderr. It no longer decides anything — the face-floor
+	// override was refuted on hand-held piles — but it stays logged, because
+	// the refutation itself came from these numbers.
 	if it.faceDelta != nil {
 		s += fmt.Sprintf(" face=%.1f", *it.faceDelta)
 	}
@@ -264,10 +273,9 @@ type queueItem struct {
 	// fromReplaced marks a capture the source fired because a box held the
 	// watched spot wearing a face it did not recognize: its positive claim
 	// that this is a different physical card. faceDelta is the measurement
-	// behind that claim, nil when the source never made one.
-	//
-	// Together they are the only evidence allowed to outrank sameCardFloor —
-	// see placedDecisively.
+	// behind that claim, nil when the source never made one. Kept for the
+	// telemetry line — as identity evidence the face was refuted (see the
+	// placementFaceFloor note above pendingDup).
 	fromReplaced bool
 	faceDelta    *float64
 	canonical    string // "" when the name never resolved
@@ -790,7 +798,8 @@ func printingUnverified(it queueItem) (short bool, note string) {
 		return false, ""
 	}
 	switch it.rank {
-	case scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
+	case scanMatchArt,
+		scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
 		scanMatchNumberOnly, scanMatchSinglePrint,
 		// A tail match is a repaired number, not a verified one, so it commits
 		// on the same terms as the year strata: numberVerified() still says no,
@@ -1639,47 +1648,26 @@ const (
 // never subject to this — see the captureSeq branch in onResolveDone.
 const sameCardFloor = 3 * time.Second
 
-// placementFaceFloor is how far a card's face must sit from the one already
-// read before the source's `replaced` claim counts as decisive.
-//
-// It used to outrank sameCardFloor on the commit path, on the reasoning that
-// the phone had looked at both cards and the clock had only counted. Hand-held
-// pile scanning refuted that: a foil's face is not stable — the same Trap
-// Digger measured 30.4, 32.5 and 26.5 across three fires as the hand shifted
-// and the sparkle moved, every reading over this floor, and one card
-// committed three rows in 2.5s (live, 2026-08-07). Against a resolve that
-// names the very printing the session just wrote, this one-bit threshold now
-// loses; see the sameCardFloor case in onResolveDone.
-//
-// It still gates the queue path: a badly-read sighting the source decisively
-// calls a placement queues for the cascade instead of vanishing, because
-// there identity is exactly what is in doubt.
-//
-// Observed over 19 fires in one mat-swap session: the sole `moved` reading
-// was 15.8; real placements ran 20.1 through 44.1, eight of nine at 26.4 or
-// above. In-hand same-card re-reads run 26.5-32.5 — overlapping the real
-// placements entirely, which is why it cannot decide identity. Re-fit from
-// live `face=` traces before trusting it further; see docs/scanner-tuning.md.
-const placementFaceFloor = 25.0
-
-// placedDecisively reports whether the source watched a different card arrive
-// and measured the difference convincingly.
-//
-// Only `replaced` qualifies. `removed` says the captured card left the watched
-// rect, which is equally what picking a card up to look at it and setting it
-// back down does — it is evidence of motion, not of identity. And on
-// `removed` there is by construction no face to have measured, since the
-// comparison only runs when a box is sitting on the spot.
-func (it queueItem) placedDecisively() bool {
-	return it.fromReplaced && it.faceDelta != nil && *it.faceDelta >= placementFaceFloor
-}
+// There is no placementFaceFloor any more, and the absence is a finding. A
+// `replaced` fire whose face delta cleared a fitted floor (25.0) used to
+// count as the phone's decisive word that a different card had arrived,
+// outranking sameCardFloor on the commit path and exempting re-reads on the
+// queue path. Hand-held pile scanning refuted the measurement itself: a
+// foil's face is not stable — the same Trap Digger read 30.4/32.5/26.5
+// across three fires as the hand shifted, every one over the floor, and one
+// card committed three rows in 2.5s; in-hand same-card re-reads (26.5-49.7)
+// overlap the fitted real-placement range (20.1-44.1) entirely. A threshold
+// whose two classes share a range decides nothing. Identity — the resolve
+// naming the printing just handled — outranks the face everywhere now, and
+// the fast-stacked-copy case the floor once served is the pendingDup key's.
+// History: docs/scanner-tuning.md.
 
 // pendingDup is the last repeat sighting the duplicate rules suppressed, held
 // so the operator can overrule them with one key.
 //
 // Every rule above is a judgement about a physical act nobody in this process
 // witnessed, and each is calibrated on a handful of live sessions —
-// placementFaceFloor on a single negative sample. They will be wrong
+// the retired face floor on a single negative sample. They will be wrong
 // sometimes, and a wrong drop today costs a card: no write, no sound, no
 // review entry, nothing to act on. That asymmetry is the problem, not the
 // error rate. Holding the item turns being wrong into a keystroke.
@@ -1906,6 +1894,36 @@ func seenWithin(recent []recentName, name string, now time.Time) (time.Duration,
 // similarRecent finds a recently processed name the text plausibly is — the
 // same shape-tolerant match resolution itself uses, so "Doc Gal's Hanchmen"
 // recognizes the "Doc Ock's Henchmen" added seconds ago.
+// hoardBuildVersion is this binary's own build identity, from the VCS stamp
+// the Go toolchain embeds: short revision, a -dirty marker, and the commit
+// time. "devel" when built outside a git checkout (go test binaries, some
+// IDE builds) — absence of a stamp is reported, never invented.
+func hoardBuildVersion() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "devel"
+	}
+	rev, dirty, when := "", "", ""
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 9 {
+				rev = s.Value[:9]
+			}
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		case "vcs.time":
+			when = s.Value
+		}
+	}
+	if rev == "" {
+		return "devel"
+	}
+	return rev + dirty + " " + when
+}
+
 // mangledEcho reports whether an unidentifiable OCR line is a mid-slide
 // mangle of a recently processed name — the pile flow's signature junk.
 //

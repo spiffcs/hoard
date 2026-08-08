@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -168,6 +169,10 @@ type model struct {
 	searcher Searcher
 	adder    Adder
 	scanner  Scanner
+	// art is the picture-identification channel, nil when any of its pieces
+	// (built index, by-id searcher, stills dir, probe) is missing — see
+	// newArtMatcher. Nil is the pre-art scanner, exactly.
+	art *artMatcher
 
 	// theme is the shared ui palette — no styles are defined in this package.
 	theme ui.Theme
@@ -436,6 +441,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	m := model{
 		ctx:          ctx,
 		searcher:     s,
+		art:          newArtMatcher(s),
 		adder:        add,
 		scanner:      sc,
 		theme:        th,
@@ -612,6 +618,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resolveDoneMsg:
 		return m.onResolveDone(msg)
 
+	case artMatchMsg:
+		// A decisive picture match re-enters as an ordinary better read: the
+		// same gen check, upgradeQueued, dup rules and verdict as any other
+		// resolution — art evidence gets no private path to the collection.
+		if msg.gen != m.resolveGen {
+			return m, nil
+		}
+		return m.onResolveDone(resolveDoneMsg{gen: msg.gen, item: msg.item})
+
 	case nudgeMsg:
 		return m.onNudge(msg)
 
@@ -766,6 +781,22 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case stateCapture:
 		switch msg.Type {
+		case tea.KeyCtrlP:
+			// Re-pair without leaving through the name prompt first — the
+			// key means the same thing here as it does there. Pairing opens
+			// its own window, so the live one closes now; queued and
+			// resolving cards ride along in the model either way.
+			m.closeSession()
+			m.pairing = true
+			m.state = statePairIntro
+			return m, nil
+		case tea.KeyCtrlO:
+			// Reselect the camera. With a session live, beginScan would just
+			// bounce back here, so the session closes first — this key is
+			// for swapping sources, not returning to one.
+			m.closeSession()
+			cmd := m.beginScan()
+			return m, cmd
 		case tea.KeySpace:
 			// Space is the shutter, and only space: an undocumented enter
 			// alias here would train a habit that misfires on every other
@@ -1493,6 +1524,12 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		if msg.ev.Device != "" {
 			m.cameraName = msg.ev.Device
 		}
+		// Every build in the chain, in one log line, so no tuning session is
+		// ever again spent against a stale install ("your phone is running
+		// the old app" was diagnosed from a missing wire field once — this is
+		// the field that says so outright).
+		m.note("versions phone=%s hoard=%s",
+			cmp.Or(msg.ev.AppVersion, "unstamped"), hoardBuildVersion())
 		// A helper that can fire itself is asked to: hands-free is the point.
 		// Feature-gated, so an old helper is never sent a command it would
 		// answer with an error event.
@@ -1896,20 +1933,23 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// printings". The first read had already answered the question the queue
 	// entry was asking.
 	//
-	// Same tests as the commit path, and the same exception: a sighting the
-	// source decisively calls a placement is a second card however badly it
-	// read, so it queues for the cascade instead of vanishing. It cannot
-	// auto-commit — the read is the reason it got here — but "the operator
-	// confirms it" and "nobody ever sees it" are very different answers.
-	//
-	// Otherwise: the source calling it a move, or a repeat too fast to be a
-	// swap. A worse read is not new evidence.
+	// Same tests as the commit path — including, now, the same refusal to let
+	// a "decisive" face override identity. A placedDecisively exemption sat
+	// in this guard on the argument that a decisively-placed second copy read
+	// badly should queue for the cascade rather than vanish. Hand-held pile
+	// scanning showed what it actually admits: the same card's face swings
+	// past the floor as the hand shifts a foil, and Charitable Levy — read
+	// worse 947ms after its own commit, face=49.7 — re-queued as "printing
+	// unverified" for a card already written (live, 2026-08-07). A same-name
+	// repeat under the floor is the card still in frame; a real second copy
+	// arriving that fast is the pendingDup key's case, on the commit path,
+	// off a read good enough to commit.
 	//
 	// !replacedQueued for the invariant at upgradeQueued: a read that took the
 	// queued entry out is that card's only representation now, however it
 	// arrived — dropping it here erased cards live (the entry gone, a review
 	// flash promised for nothing).
-	if !it.dup && !replacedQueued && it.canonical != "" && !it.placedDecisively() {
+	if !it.dup && !replacedQueued && it.canonical != "" {
 		if since, seen := seenWithin(m.recentNames, it.canonical, now); seen &&
 			(it.fromMoved || since < sameCardFloor) {
 			why := fmt.Sprintf("re-read %dms later", since.Milliseconds())
@@ -2054,8 +2094,14 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			return flashDeadlineMsg{name: name}
 		}
 	}
+	// The picture channel runs beside the retry, not instead of it: whichever
+	// answers first wins through upgradeQueued, and both losing leaves the
+	// card queued exactly as before. notBefore excludes the previous
+	// capture's still — this capture's own still lands after its event, and
+	// at pile pace the predecessor's is already older than this margin.
+	art := m.artMatchCmd(it, m.now().Add(-400*time.Millisecond))
 	next, cmd := m.reviewChanged()
-	return next, tea.Batch(cmd, nudge, deadline)
+	return next, tea.Batch(cmd, nudge, deadline, art)
 }
 
 // suppressRepeat drops a repeat sighting of a card already handled, and keeps
@@ -2786,14 +2832,6 @@ func (m model) listHeight() int {
 
 // --- view ---
 
-// escHelp names what esc does at the name prompt: standalone it ends the
-// program, embedded it returns to the browser — the same key, two honest
-// labels, worded like every other esc hint (the confirm gate speaks for
-// itself when it appears).
-func (m model) escHelp() string {
-	return "ctrl+d done · " + m.escLabel()
-}
-
 // help renders a help line wrapped between its " · " entries, so a hint that
 // would be cut mid-phrase by the view-wide word wrap moves whole to the next
 // line instead — "esc close camera" never splits after "esc".
@@ -2801,12 +2839,8 @@ func (m model) help(s string) string {
 	return m.theme.Help.Render(strings.Join(ui.WrapHelp(s, m.width), "\n"))
 }
 
-// escLabel is the esc hint alone, shared by every step where esc opens the
-// leave gate.
-func (m model) escLabel() string { return "esc " + m.escWord() }
-
-// escWord is escLabel without its key, for lines composed from ui.HelpEntry
-// rather than spliced from strings.
+// escWord is the word esc earns on this run — for lines composed from
+// ui.HelpEntry rather than spliced from strings.
 func (m model) escWord() string {
 	if m.embedded {
 		return "back"
@@ -2981,7 +3015,14 @@ func (m model) viewContent() string {
 			}
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
-			counter := fmt.Sprintf("%d auto-added · %d need review", len(m.tally), len(m.review))
+			counter := fmt.Sprintf("%d auto-added", len(m.tally))
+			// The session's running value sits beside the count it narrates,
+			// not in the key help — money is a fact about the session, not a
+			// hint about a key.
+			if m.addedValue > 0 {
+				counter += fmt.Sprintf(" ($%.2f)", m.addedValue)
+			}
+			counter += fmt.Sprintf(" · %d need review", len(m.review))
 			if m.resolving > 0 {
 				counter += fmt.Sprintf(" · %d resolving", m.resolving)
 			}
@@ -2998,21 +3039,21 @@ func (m model) viewContent() string {
 		default:
 			b.WriteString("Frame the next card, then press space.\n\n")
 		}
-		keys := []string{": commands", "space capture"}
+		// The same line the name prompt shows, in the same order, plus this
+		// view's own keys — every add view opens with `: commands · ctrl+p
+		// pair · ctrl+o camera`, so the recovery keys are where the reader
+		// learned to find them when the camera drops. The session tally and
+		// the review count live in the counter line above, not here: this
+		// line is for keys.
+		e := []ui.HelpEntry{ui.HelpCommands,
+			ui.K("ctrl+p", "pair"), ui.K("ctrl+o", "camera"),
+			ui.K("space", "capture")}
 		if len(m.tally) > tallyShown {
-			keys = append(keys, "↑/↓ history")
+			e = append(e, ui.K("↑/↓", "history"))
 		}
-		if m.torchCapable {
-			keys = append(keys, "t torch")
-		}
-		help := strings.Join(keys, " · ") + " · c close camera · " + m.escLabel() + " · ctrl+c force quit"
-		if len(m.review) > 0 {
-			help = fmt.Sprintf("Press tab to review (%d) · %s", len(m.review), help)
-		}
-		if m.addedCount > 0 {
-			help = m.sessionTally() + " · " + help
-		}
-		b.WriteString(m.help(help))
+		e = append(e, ui.K("c", "close camera"),
+			ui.K("esc", m.escWord()), ui.K("ctrl+c", "force quit"))
+		b.WriteString(m.help(ui.Help(e...)))
 		return b.String()
 	case stateQueueReview:
 		return m.list.View() + "\n" +

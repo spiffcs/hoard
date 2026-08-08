@@ -79,12 +79,19 @@ echo "Generating the Xcode project…"
 (cd "$proj_dir" && xcodegen generate --quiet)
 
 echo "Building HoardScan…"
+# A fresh CFBundleVersion every build, so the ready event's appVersion in the
+# session log proves which build the phone is running. Numeric-dotted to stay
+# a valid bundle version; the git rev is echoed here for the human running
+# the build.
+stamp="$(date +%y%m%d.%H%M.%S)"
+echo "Build stamp: $stamp (git $(git rev-parse --short HEAD 2>/dev/null || echo '?')$(git diff --quiet 2>/dev/null || echo '-dirty'))"
 build_args=(
     -project "$proj_dir/HoardScan.xcodeproj"
     -scheme HoardScan
     -configuration Debug
     -allowProvisioningUpdates
     -derivedDataPath "$proj_dir/.build"
+    CURRENT_PROJECT_VERSION="$stamp"
 )
 # Naming the actual device rather than 'generic/platform=iOS' is worth the extra
 # lookup: a generic destination has no device to check, so an unregistered phone

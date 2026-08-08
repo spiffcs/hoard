@@ -237,7 +237,15 @@ final class LinkController: ObservableObject {
     private func announceReady() {
         var features = ["torch", "hud", "border"]
         if autoAvailable { features += ["auto", "rearm"] }
-        send(Event(event: "ready", device: UIDevice.current.name, features: features))
+        // The build stamp rides on ready so the session log proves which
+        // build is running — build-scan-ios.sh overrides
+        // CURRENT_PROJECT_VERSION with a per-build timestamp, and a phone
+        // never reinstalled says so right here instead of via a tuning
+        // session spent on stale code.
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion")
+            as? String ?? "unstamped"
+        send(Event(event: "ready", device: UIDevice.current.name,
+                   appVersion: build, features: features))
     }
 
     // MARK: - Inbound

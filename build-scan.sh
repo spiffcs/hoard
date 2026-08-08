@@ -31,6 +31,10 @@ RESOURCES="$APP/Contents/Resources"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$PLIST" "$APP/Contents/Info.plist"
+# A fresh CFBundleVersion every build — the helper logs it at startup, so the
+# session log proves which helper build ran (see the matching stamp in
+# build-scan-ios.sh).
+plutil -replace CFBundleVersion -string "$(date +%y%m%d.%H%M.%S)" "$APP/Contents/Info.plist"
 
 # The Dock icon. Optional: without it the app still runs, just with the generic
 # executable icon (CFBundleIconFile simply finds nothing).

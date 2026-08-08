@@ -6,27 +6,6 @@
 
 **CLI for managing a Magic: The Gathering collection**.
 
-Manage binders and decks all along current market prices in a terminal browser backed by a SQLite file you own.
-
-Includes a companion iPhone app that scans cards with your phone's camera and enters them into the collection hands-free.
-
-<p align="center">
- &nbsp;<a href="https://github.com/spiffcs/hoard/actions/workflows/validations.yaml" target="_blank"><img alt="Validations" src="https://github.com/spiffcs/hoard/actions/workflows/validations.yaml/badge.svg"></a>&nbsp;
- &nbsp;<a href="https://goreportcard.com/report/github.com/spiffcs/hoard" target="_blank"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/spiffcs/hoard"></a>&nbsp;
- &nbsp;<a href="https://github.com/spiffcs/hoard" target="_blank"><img alt="GitHub go.mod Go version" src="https://img.shields.io/github/go-mod/go-version/spiffcs/hoard.svg"></a>&nbsp;
- &nbsp;<a href="https://github.com/spiffcs/hoard/blob/master/LICENSE" target="_blank"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>&nbsp;
-</p>
-
-```
-COLLECTION                      CARDS · BINDER                          335 · $2,893.87
-NAME                     VALUE  NAME                SET/NUM  FINISH  QTY    PRICE    VALUE
-Binder               $2,893.87  Solitude            mh2/32   -        ×4   $34.28  $137.12
-Eldrazi Incursion …    $545.18  Bitterblossom       uma/85   -        ×4   $34.11  $136.44
-Tricky Terrain Col…    $459.56  Ancient Tomb        uma/236  foil     ×1  $134.90  $134.90
-Graveyard Overdriv…    $359.01  Stoneforge Mystic   2xm/31   -        ×4   $31.34  $125.36
-──────────────────────────────────────────────────────────────────────────────────────────
-1/23 · sorted by value
-tab cards · ↑/↓ move · / filter · s sort · v views · d remove deck · u undo · q quit
 ```
 
 ## Install
@@ -40,117 +19,14 @@ make build          # → ./hoard
 
 Or, without cloning: `go install github.com/spiffcs/hoard@latest`.
 
-On macOS with Xcode's Swift toolchain, `make all` also builds the Mac half of
-the [card scanner](docs/scanning.md). The other half is an iPhone app you build
-and install yourself — see [docs/ios-development.md](docs/ios-development.md).
-Everything else works without either.
-
-## First five minutes
-
-```sh
-# 1. Get some cards in — import a deck you already have online...
-./hoard deck add https://archidekt.com/decks/7319967/high_power_aristocrats
-
-#    ...or add loose cards interactively (searches as you type)
-./hoard add
-
-# 2. Fetch prices. The first run offers to build a local card catalog —
-#    say yes; it makes almost everything instant and offline.
-./hoard update-prices
-
-# 3. Optional, once: import 90 days of price history from MTGJSON,
-#    so "what moved this month?" has an answer on day one.
-./hoard backfill-prices
-
-# 4. Browse: filter, sort, drill into any card's printings and price history.
-./hoard
-```
-
-`hoard help` lists every command.
-
-## Commands
-
-| Command | |
-|---|---|
-| `hoard` | browse everything — filter, sort, edit quantities, card detail |
-| `hoard add [name]` | add cards interactively; also takes a Scryfall URL with `--qty`/`--foil` |
-| `hoard deck add <url>` | import or refresh a deck from an Archidekt link |
-| `hoard deck add --file x.txt` | import an exported decklist (Moxfield et al.) |
-| `hoard deck remove <name>` | delete a deck — any unambiguous part of the name works |
-| `hoard binder new <name>` | create a named binder; also `list`, `rename`, `rm` |
-| `hoard export` | everything as CSV — hoard's own format, or `--format moxfield`/`archidekt` |
-| `hoard import file.csv` | add a ManaBox/Moxfield/Delver Lens/hoard export; `--dry-run` to preview |
-| `hoard update-prices` | refresh prices (Scryfall updates daily) and report movers |
-| `hoard movers --since 30d` | biggest risers and sinkers over a window |
-| `hoard unpriced` | cards counting as $0.00, and where they're held |
-| `hoard repair-finishes` | fix cards stored as a finish their printing doesn't have |
-| `hoard catalog` | status of the local card catalog; `update` rebuilds it |
-
-The browser ([full guide](docs/browsing.md)) replaces separate list/summary
-commands: the left pane holds your binders and decks, the right pane their
-cards. `/` filters by name or trait (`rarity:mythic finish:foil qty>1`),
-`enter` opens a card's printings, holdings, and price-history sparklines, and
-`v` cycles views: holdings → movers → unpriced → arbitrage. Piped or
-redirected, `hoard` prints a plain summary table instead, so `hoard | grep`
-works.
-
-Pricing details, how history accumulates, MTGJSON gap-filling, the local
-catalog, and vendor arbitrage are covered in [docs/pricing.md](docs/pricing.md).
-
 ## Scripting and your data
 
-Every read command takes `--json` and emits one versioned document on stdout, so
-`hoard | jq` works without screen-scraping a table:
-
-```sh
-hoard --json | jq '.summary.total.valueUsd'
-hoard export --binder Trade --json | jq -r '.holdings.rows[].card.scryfallId'
-```
-
-The documents validate against a published JSON Schema and every card carries a
-Scryfall id and an MTGJSON uuid, so a document joins straight against either
-ecosystem's bulk data — see [docs/json.md](docs/json.md).
-
-Your collection lives in a plain SQLite file with a published schema, readable by
-anything that speaks SQLite. What hoard stores, and how a printing is identified
-— including how borderless, showcase and foil-treatment variants are kept apart —
-is in [docs/data-model.md](docs/data-model.md). The CSV formats hoard reads and
-writes are in [docs/csv.md](docs/csv.md).
+Every card carries a Scryfall id and an MTGJSON uuid, so a document joins straight against either
+ecosystem's bulk data.
 
 ## Decks and binders
 
-A **binder** holds loose cards; a **deck** is imported from a source and stays
-true to it (re-importing the same link updates in place, and deck cards are
-read-only in the browser). New cards land in the default binder; create more
-with `hoard binder new` to catalog and separate as you like.
-
-Moxfield's API is Cloudflare-blocked, so to get decks from there you must export
-the deck to text (Moxfield → ⋯ → Export) and import the file:
-
-```sh
-hoard deck add --file my-deck.txt --name "My Edgar EDH" --source moxfield
-```
-
-The browser has the same thing as `AddDeckFromFile` in the palette, if you'd
-rather not leave it — the deck takes its name from the file.
-
-The text importer understands common formats — `2 Sol Ring`, `1x Lightning
-Bolt`, `1 Ulamog, the Infinite Gyre (UMA) 7 *F*` — plus `Commander`/`Sideboard`
-headers. 
-
 ## Scanning cards (macOS + iPhone)
-
-Your phone is the scanner. With **Hoardling**, the companion app, installed and
-the Mac
-helper built (`make all`), pair once with <kbd>ctrl+p</kbd> in an `add` session,
-then press <kbd>ctrl+o</kbd> to open the camera. The phone fires its own shutter
-when a card settles, so working through a box is: set a card down, wait for the
-chime, swap in the next. It reads the title *and* the collector number, so most
-cards add themselves at the right printing without a keystroke; anything less
-than certain lands in a review queue instead.
-
-Building and installing the app: [docs/ios-development.md](docs/ios-development.md).
-Using it, and troubleshooting: [docs/scanning.md](docs/scanning.md).
 
 ## Database
 
@@ -161,8 +37,9 @@ Using it, and troubleshooting: [docs/scanning.md](docs/scanning.md).
 | Windows | `%AppData%\hoard\hoard.db` |
 
 Override with `--db PATH` (anywhere on the command line) or an environment variable `$HOARD_DB`.
-Schema upgrades back up the old file alongside first (`hoard.db.bak-v1-20260729`), so
-nothing is ever lost. The card catalog and price downloads live separately in
+Schema upgrades back up the old file alongside first (`hoard.db.bak-v1-20260729`). 
+
+The card catalog and price downloads live separately in
 your cache directory and are always safe to delete.
 
 ## Development
@@ -171,21 +48,7 @@ your cache directory and are always safe to delete.
 make build     # go build -o hoard .
 make test      # go test ./...   (no network needed)
 make vet       # go vet ./...
-make scan      # the Mac half of the scanner (bin/hoard-scan.app)
-make scan-ios  # the iPhone app — see docs/ios-development.md
-make clean     # remove ./hoard and ./bin
 ```
-
-CI runs `gofmt`, `go vet`, `go test`, and `go build` on every push. The Swift
-scanner has its own manual-only macOS workflow (`make scan-test scan-check`
-locally). Before changing how prices are stored, read
-[docs/mtgjson-storage.md](docs/mtgjson-storage.md); before touching the
-scanner's trigger, read [docs/scanner-tuning.md](docs/scanner-tuning.md).
-
-Both published schemas are generated from the code and guarded by drift tests —
-`make generate-json-schema` after changing `internal/hoardjson`, and
-`make generate-sqlite-schema` after adding a migration to
-`internal/store/migrate.go`.
 
 ## License
 

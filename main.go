@@ -156,6 +156,8 @@ func run(args []string) error {
 		return cmdVacuum(st)
 	case "catalog":
 		return cmdCatalog(ctx, cmdArgs)
+	case "artindex":
+		return cmdArtindex(ctx, cmdArgs)
 	case "binder":
 		return cmdBinder(st, cmdArgs)
 	case "import":

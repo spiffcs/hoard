@@ -114,7 +114,7 @@ func (m *model) refreshAddPalette() {
 		}
 		if c.Title == "Done" {
 			// Where "done" lands depends on how the cascade was started, and
-			// the row says which — the same honesty escLabel gives esc.
+			// the row says which — the same honesty escWord gives esc.
 			c.Desc = "Finish adding and go back to your collection."
 			if !m.embedded {
 				c.Desc = "Finish adding and close the program."

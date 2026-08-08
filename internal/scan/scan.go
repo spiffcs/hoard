@@ -94,6 +94,11 @@ type Event struct {
 	// Features lists source capabilities, advertised on EventReady ("auto"
 	// means the phone understands auto-on/auto-off).
 	Features []string `json:"features"`
+	// AppVersion is the phone app's build stamp, carried on EventReady. Empty
+	// means a build too old to send one — which after 2026-08-07 is itself
+	// the finding: a tuning session was once spent against a phone silently
+	// running a stale install.
+	AppVersion string `json:"appVersion"`
 	// State is the auto-trigger state carried by EventAuto, or the "on"/"off"
 	// carried by EventTorch.
 	State string `json:"state"`
