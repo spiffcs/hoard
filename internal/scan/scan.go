@@ -132,6 +132,10 @@ type HUDResult struct {
 	Amount *float64 `json:"amount,omitempty"`
 	Tier   string   `json:"tier,omitempty"` // bulk | win | jackpot | unpriced | review
 	Total  *float64 `json:"total,omitempty"`
+	// Name is the committed card's name, so the phone's screen can say what
+	// registered and the operator never has to glance at the terminal
+	// mid-pile. Empty on review results — there is no settled name to show.
+	Name string `json:"name,omitempty"`
 	// Finish is what actually got written — "foil" or "nonfoil" — so a source
 	// with a screen can say so.
 	//

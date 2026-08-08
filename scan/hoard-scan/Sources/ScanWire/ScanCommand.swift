@@ -39,6 +39,12 @@ public enum ScanCommand: Equatable {
     /// had neither a motion sensor nor locked metering; whether it holds on a
     /// phone is an empirical question and this is how it gets asked.
     case tune(stable: Int, interval: Double)
+    /// One-shot exposure bias, in EV, applied to the next auto capture and
+    /// then restored. The finish rescue's verb: a glare-blown foil marker is
+    /// clipped at metered exposure, and a -2EV retake un-clips exactly the
+    /// patch the sparkle reader needs — the correlation is normalized, so the
+    /// existing gates read the darker frame unchanged.
+    case evBias(Double)
     case chime
     /// The `result` verb is the only one carrying a payload — scan.HUDResult as
     /// compact JSON, decoded as HUDCommand.
@@ -64,6 +70,9 @@ public enum ScanCommand: Equatable {
             guard f.count == 3, let n = Int(f[1]), let i = Double(f[2]),
                   n > 0, i > 0 else { return nil }
             self = .tune(stable: n, interval: i)
+        case _ where line.hasPrefix("evbias "):
+            guard let v = Double(payload), v >= -8, v <= 8 else { return nil }
+            self = .evBias(v)
         case "stills-on": self = .stills(true)
         case "stills-off": self = .stills(false)
         case "chime": self = .chime

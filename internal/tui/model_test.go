@@ -109,6 +109,7 @@ type fakeSession struct {
 	torchOn  int
 	torchOff int
 	rearms   int
+	evBiases []float64
 	closed   bool
 }
 
@@ -119,6 +120,11 @@ func (s *fakeSession) Result(r scan.HUDResult) error {
 
 func (s *fakeSession) Rearm() error {
 	s.rearms++
+	return nil
+}
+
+func (s *fakeSession) EVBias(ev float64) error {
+	s.evBiases = append(s.evBiases, ev)
 	return nil
 }
 
@@ -1964,6 +1970,54 @@ func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
 	}
 }
 
+// The frame stratum runs behind a near-certain fuzzy name, not only an exact
+// one. Live, 18:58 pile run: Consuming Corruption read at 95% similarity on
+// both its capture and its rescue, the exact-only gate kept the frame
+// evidence idle, and the card took the session's only review stop. The
+// operator set the floor at 0.92; below it the bet still refuses.
+func TestFramePickRunsBehindANearCertainName(t *testing.T) {
+	twins := []scryfall.Card{
+		{ID: "reg", Name: "Consuming Corruption", Set: "mh3", CollectorNumber: "102",
+			ReleasedAt: "2024-06-14", Frame: "2015", Finishes: []string{"nonfoil", "foil"}},
+		{ID: "retro", Name: "Consuming Corruption", Set: "mh3", CollectorNumber: "407",
+			ReleasedAt: "2024-06-14", Frame: "1997", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Consuming Corrupticr": "Consuming Corruption"},
+		prints: map[string][]scryfall.Card{"Consuming Corruption": twins},
+		match: map[string]cardname.Match{
+			"Consuming Corrupticr": {Similarity: 0.95}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	c := scan.Card{Name: "Consuming Corrupticr", Candidates: []string{"Consuming Corrupticr"},
+		CopyrightYear: 2024, FrameStyle: "retro", Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, c, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 || ra.got[0].Card.ID != "retro" {
+		t.Fatalf("adds = %+v, want the retro row committed off a 95%% name", ra.got)
+	}
+	if !ra.got[0].PrintingGuessed {
+		t.Error("a fuzzy-name frame pick must still carry the guess flag")
+	}
+
+	// Below the floor the bet refuses, whatever the frame read said.
+	fs.match["Consuming Corrupticr"] = cardname.Match{Similarity: 0.90}
+	m2 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m2, _ = openCapture(t, m2)
+	before := len(ra.got)
+	mm, _ = m2.Update(m2.resolveCardCmd(1, c, 1)())
+	got = mm.(model)
+	if len(ra.got) != before {
+		t.Errorf("adds grew to %d, want a 90%% name refused", len(ra.got))
+	}
+	if len(got.review) != 1 {
+		t.Errorf("review = %d, want the sub-floor read queued", len(got.review))
+	}
+}
+
 // A frame-picked printing commits, and commits flagged: no digits confirmed
 // it, so the row must be auditable against the physical card later.
 func TestFramePickedPrintingCommitsFlagged(t *testing.T) {
@@ -2285,6 +2339,68 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 	got = resolve(t, mm.(model), placed.CardList()[0])
 	if len(ra.got) != 2 {
 		t.Errorf("adder called %d times, want a witnessed placement to commit", len(ra.got))
+	}
+}
+
+// The 19:33 pile run's two phantom reviews, pinned.
+//
+// "Gliding" — half of Glowrider mid-slide — fuzzy-matched a different card
+// at 71% and queued "uncertain name match"; a nameless numberless read with
+// only a year queued "nothing readable" 2.5s behind the same commit. A wrong
+// canonical walks past every name-keyed rule, and a year alone failed the
+// old digits-required footer echo.
+func TestSlideDebrisAfterACommitIsDropped(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "lgn15", Name: "Glowrider", Set: "lgn", CollectorNumber: "15",
+			ReleasedAt: "2003-01-31", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy: map[string]string{"Glowrider": "Glowrider", "Gliding": "Gliding Sprite"},
+		prints: map[string][]scryfall.Card{
+			"Glowrider": prints,
+			"Gliding Sprite": {{ID: "x", Name: "Gliding Sprite", Set: "abc",
+				CollectorNumber: "9", ReleasedAt: "1999-01-01",
+				Finishes: []string{"nonfoil"}}},
+		},
+		match: map[string]cardname.Match{"Gliding": {Similarity: 0.71}},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 7, 19, 33, 18, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	good := scan.Card{Name: "Glowrider", Candidates: []string{"Glowrider"},
+		CollectorNumber: "15", NumberSource: "copyright", CopyrightYear: 2003,
+		Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, good, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: Glowrider should commit, adds = %d", len(ra.got))
+	}
+
+	// 1.8s later: the wrong-card mangle.
+	clock = clock.Add(1798 * time.Millisecond)
+	got.captureSeq++
+	mangle := scan.Card{Name: "Gliding", Candidates: []string{"Gliding"},
+		Confidence: 0.6, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(2, mangle, 1)())
+	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the wrong-card slide mangle dropped", got.review)
+	}
+
+	// 2.5s after the commit: nameless, numberless, year-only.
+	clock = clock.Add(719 * time.Millisecond)
+	got.captureSeq++
+	ghost := scan.Card{CopyrightYear: 2003, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(3, ghost, 1)())
+	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the year-only ghost dropped as a footer echo", got.review)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want nothing beyond Glowrider", len(ra.got))
 	}
 }
 

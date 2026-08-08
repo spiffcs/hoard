@@ -150,6 +150,10 @@ final class CameraSession: NSObject, ObservableObject {
         triggerRunner.stop()
     }
     func nudgeTrigger() { triggerRunner.nudge() }
+    /// Recognition-time rearm: the box goes yellow with the chime instead of
+    /// waiting for the card to be dragged out of frame. Cause `.none` so the
+    /// next fire reads as the placement it is, never as a nudge echo.
+    func rearmForResult() { triggerRunner.rearmForResult() }
     /// Why the trigger armed for the capture now in flight, for the wire.
     var fireCause: String? {
         let c = triggerRunner.lastFireCause
@@ -166,7 +170,41 @@ final class CameraSession: NSObject, ObservableObject {
         triggerRunner.tune(stable: stable, interval: interval)
     }
     func triggerCaptureBegan() { triggerRunner.captureBegan() }
-    func triggerCaptureFinished() { triggerRunner.captureFinished() }
+    func triggerCaptureFinished() {
+        triggerRunner.captureFinished()
+        restoreEVBiasIfNeeded()
+    }
+
+    /// Whether a one-shot bias is in force — the finish rescue's darker
+    /// retake. Set by setOneShotEVBias, cleared when the capture it was for
+    /// completes.
+    private var evBiased = false
+
+    /// setOneShotEVBias darkens the next auto capture, clamped to what the
+    /// hardware offers. The rescue's premise: a glare-blown marker is clipped
+    /// at metered exposure, and the sparkle correlation is normalized, so an
+    /// unclipped darker frame reads through the existing gates unchanged.
+    func setOneShotEVBias(_ ev: Double) {
+        guard let device else { return }
+        do {
+            try device.lockForConfiguration()
+            let v = max(device.minExposureTargetBias,
+                        min(device.maxExposureTargetBias, Float(ev)))
+            device.setExposureTargetBias(v)
+            device.unlockForConfiguration()
+            evBiased = true
+        } catch {}
+    }
+
+    private func restoreEVBiasIfNeeded() {
+        guard evBiased, let device else { return }
+        evBiased = false
+        do {
+            try device.lockForConfiguration()
+            device.setExposureTargetBias(0)
+            device.unlockForConfiguration()
+        } catch {}
+    }
 
     // MARK: - Lifecycle
 

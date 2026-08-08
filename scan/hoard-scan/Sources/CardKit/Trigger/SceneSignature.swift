@@ -128,25 +128,42 @@ public func sceneSignature(
         win = (0, 0, width, height)
     }
 
+    let read: (Int, Int) -> Int
+    if planar {
+        read = { x, y in Int(bytes[y * bytesPerRow + x]) }
+    } else {
+        // BGRA. Green-weighted rather than a true luma: it is within a few
+        // percent and this number is only ever compared with itself.
+        read = { x, y in Int(bytes[y * bytesPerRow + x * 4 + 1]) }
+    }
+    return SceneSignature(cells: sampleGrid(
+        read: read, win: win, width: width, height: height))
+}
+
+/// sampleGrid fills the cell grid, one point sample per cell.
+///
+/// The aliasing this produces — a card that moved a pixel reads as changed —
+/// is load-bearing for the trigger. (An area-averaged variant and a chroma
+/// twin lived here briefly for the temporal-shimmer experiment; three
+/// labelled runs showed the channel does not separate in-hand, and
+/// docs/sprint-foil-recognition.md Stage B holds the record.)
+func sampleGrid(
+    read: (Int, Int) -> Int, win: (x: Int, y: Int, w: Int, h: Int),
+    width: Int, height: Int
+) -> [UInt8] {
     var cells = [UInt8](repeating: 0, count: SceneSignature.columns * SceneSignature.rows)
     for r in 0..<SceneSignature.rows {
-        let y = min(height - 1,
-                    win.y + (r * win.h) / SceneSignature.rows + win.h / (SceneSignature.rows * 2))
         for c in 0..<SceneSignature.columns {
+            let y = min(height - 1,
+                        win.y + (r * win.h) / SceneSignature.rows
+                            + win.h / (SceneSignature.rows * 2))
             let x = min(width - 1,
                         win.x + (c * win.w) / SceneSignature.columns
                             + win.w / (SceneSignature.columns * 2))
-            let value: UInt8
-            if planar {
-                value = bytes[y * bytesPerRow + x]
-            } else {
-                // BGRA. Green-weighted rather than a true luma: it is within a
-                // few percent and this number is only ever compared with itself.
-                let p = y * bytesPerRow + x * 4
-                value = bytes[p + 1]
-            }
-            cells[r * SceneSignature.columns + c] = value
+            cells[r * SceneSignature.columns + c] =
+                UInt8(max(0, min(255, read(x, y))))
         }
     }
-    return SceneSignature(cells: cells)
+    return cells
 }
+

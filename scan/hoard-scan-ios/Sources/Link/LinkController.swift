@@ -40,6 +40,11 @@ final class LinkController: ObservableObject {
     /// stacked squarely on the pile from the card just shot; the terminal knows
     /// what it already processed.
     var onRearm: (() -> Void)?
+    /// Fired when a result lands: the recognition-time rearm — see `.result`.
+    var onResult: (() -> Void)?
+    /// One-shot exposure bias for the next auto capture — the finish
+    /// rescue's darker retake. Restored camera-side after that capture.
+    var onEVBias: ((Double) -> Void)?
     /// Set the trigger's stillness knobs, for a tuning session.
     var onTune: ((Int, Double) -> Void)?
     /// Raised for torch-on/torch-off. Advertised in the feature list, so it has
@@ -261,6 +266,12 @@ final class LinkController: ObservableObject {
             onAuto?(on)
         case .result(let payload):
             showResult(payload)
+            // The card is recognized — the operator's next act is a
+            // placement, so the trigger re-arms now and the box goes yellow
+            // with the chime, instead of green lingering until the card is
+            // physically dragged away. Safe early: the scene gate refuses to
+            // re-fire on the unmoved card.
+            onResult?()
         case .chime:
             // The fallback voice for a parent that does not know about tiers.
             sounds.play(tier: "bulk")
@@ -275,6 +286,9 @@ final class LinkController: ObservableObject {
             trace("stills \(on ? "on" : "off")")
         case .rearm:
             onRearm?()
+        case .evBias(let ev):
+            onEVBias?(ev)
+            trace("evbias \(ev) applied for the next capture")
         case .torch(let on):
             onTorch?(on)
             // Mirrored back so the terminal's indicator reflects the hardware
@@ -315,7 +329,8 @@ final class LinkController: ObservableObject {
             captureSentAt = nil
         }
         sounds.play(tier: tier)
-        price = PriceResult(amount: cmd.amount, tier: tier, finish: cmd.finish)
+        price = PriceResult(amount: cmd.amount, name: cmd.name, tier: tier,
+                            finish: cmd.finish)
         priceSequence += 1
     }
 

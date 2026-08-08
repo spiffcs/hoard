@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+
+	"github.com/spiffcs/hoard/internal/cardname"
 	"strconv"
 	"strings"
 	"time"
@@ -1914,11 +1916,19 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
 		// After the increment, so the HUD total is the post-commit number.
-		m.celebrate(priceValuePtr(card, finish), finish)
+		m.celebrate(card.Name, priceValuePtr(card, finish), finish)
 		line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, priceForFinish(card, finish))
 		m.recordTally(line)
 		m.summary.add("auto", line)
+		// No dark-retake finish rescue here any more. It ran live (20:09
+		// session, 16/16 retakes, zero corrections): -2EV frames scored
+		// LOWER, refuting the clipped-highlight hypothesis — the glare wash
+		// is light geometry, not sensor saturation, and no exposure recovers
+		// a signal that never reaches the lens. The `evbias` verb and
+		// Session.EVBias stay for future exposure experiments;
+		// docs/sprint-foil-recognition.md holds the record and the remaining
+		// levers.
 		return m, m.scheduleNudge()
 	}
 
@@ -1981,6 +1991,29 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			// the same-card floor rolls; see touchCommit.
 			m.recent = touchCommit(m.recent, prior.scryfallID, now)
 			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", prior.name)
+			m.statusErr = false
+			return m, m.scheduleNudge()
+		}
+	}
+
+	// A slide mangle that fuzzy-landed on the WRONG card's name entirely.
+	// Live, 19:33 pile run: "Gliding" — half of Glowrider passing the lens —
+	// matched some other card at 71% and queued "uncertain name match" 1.8s
+	// after Glowrider committed. A wrong canonical walks past every
+	// name-keyed echo rule, so the guards here are everything else about it:
+	// the name is below the auto-commit floor (a read this soft never
+	// commits anyway), it carries no digits of its own, and a card was
+	// committed moments ago — the slide it is debris of. A genuinely new
+	// card this unreadable gets re-read the moment it settles; the pile flow
+	// guarantees the next fire.
+	if !replacedQueued && it.canonical != "" && !it.match.Exact &&
+		it.match.Similarity < cardname.AutoCommitSimilarity &&
+		it.raw.CollectorNumber == "" {
+		if len(m.recent) > 0 && now.Sub(m.recent[len(m.recent)-1].at) < sameCardFloor {
+			m.note("outcome %q dropped: sub-floor name in %q's slide window",
+				it.canonical, m.recent[len(m.recent)-1].name)
+			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card",
+				m.recent[len(m.recent)-1].name)
 			m.statusErr = false
 			return m, m.scheduleNudge()
 		}
@@ -2215,7 +2248,7 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 	m.recentNames = recordName(m.recentNames, p.it.canonical, now)
 	m.addedCount++
 	m.addedValue += priceValue(card, p.finish)
-	m.celebrate(priceValuePtr(card, p.finish), p.finish)
+	m.celebrate(card.Name, priceValuePtr(card, p.finish), p.finish)
 	line := fmt.Sprintf("%s (%s/%s) %s · %s", card.Name,
 		strings.ToUpper(card.Set), card.CollectorNumber, p.finish,
 		priceForFinish(card, p.finish))
@@ -2241,7 +2274,7 @@ func (m model) chime() {
 // rides along. Fired at auto-commit and at review confirm (where it answers
 // the queue-time question sound). Helpers without the hud feature get the
 // plain chime instead.
-func (m model) celebrate(price *float64, finish string) {
+func (m model) celebrate(name string, price *float64, finish string) {
 	if m.session == nil {
 		return
 	}
@@ -2251,6 +2284,7 @@ func (m model) celebrate(price *float64, finish string) {
 	}
 	r := scan.HUDResult{
 		Amount: price, Tier: tierFor(price, m.hudWin, m.hudJackpot), Finish: finish,
+		Name: name,
 	}
 	// An unpriced commit moves nothing, so no total rides along — sending one
 	// would only surface the counter to announce an unchanged number.
@@ -2565,7 +2599,7 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 			v := *p * float64(res.Qty)
 			amt = &v
 		}
-		m.celebrate(amt, res.Finish)
+		m.celebrate(res.Card.Name, amt, res.Finish)
 	} else {
 		// A manual add never asked a question; only the HUD's session
 		// counter moves, silently.

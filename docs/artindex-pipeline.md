@@ -1,5 +1,8 @@
 # The art-index pipeline: keeping the picture channel current
 
+Current status and the measured results live in `docs/artindex-results.md` —
+as of 2026-08-07 the channel is built but inert pending the v2 hash.
+
 The scanner's art-identification channel (`internal/artindex`) matches a
 scanned card's picture against a perceptual hash of every printing's Scryfall
 image. New sets arrive every month or two, so the index is a dataset with a

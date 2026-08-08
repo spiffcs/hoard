@@ -347,6 +347,9 @@ public struct HUDCommand: Decodable {
     public var amount: Double?
     public var tier: String?  // bulk | win | jackpot | unpriced | review
     public var total: Double?
+    /// The committed card's name, so the phone can say what registered and
+    /// the operator's eyes never leave the pile for the terminal.
+    public var name: String?
     /// What was actually written: "foil" or "nonfoil", absent on older parents.
     ///
     /// The committed finish rather than what the camera thought it saw. A

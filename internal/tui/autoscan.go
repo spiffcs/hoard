@@ -710,11 +710,18 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 				}
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
 				// The frame stratum commits a printing off no digits at all,
-				// so it only runs behind an exact name — the same scope the
-				// number-overridden gate above draws. A fuzzy name plus a
-				// frame guess would compound two soft reads into a commit.
+				// so it runs only behind a near-certain name. It began
+				// exact-only; the operator relaxed it to 0.92 after the
+				// 18:58 pile run, where Consuming Corruption read at 95%
+				// twice — once per rescue — and took the session's only
+				// review stop for a card the frame evidence had already
+				// separated. 0.92 sits above the general auto-commit floor
+				// (0.88, fitted on old-frame serif slips) on purpose: a
+				// fuzzy name plus a frame guess is still two soft reads
+				// compounding, so this bet keeps a stricter bar than
+				// evidence-corroborated commits get.
 				frame, priors := c.FrameStyle, priorSets
-				if !match.Exact {
+				if !match.Exact && match.Similarity < frameNameFloor {
 					frame, priors = "", nil
 				}
 				for _, cd := range cands {
@@ -1798,8 +1805,20 @@ func footerEcho(recent []recentCommit, c scan.Card, now time.Time) (recentCommit
 			continue
 		}
 		for _, b := range blocks {
-			if b.number == "" ||
-				scryfall.BaseNumber(b.number) != scryfall.BaseNumber(rc.collectorNumber) {
+			if b.number == "" {
+				// No digits at all — the weaker echo shape, added after the
+				// 19:33 pile run queued a nameless, numberless "nothing
+				// readable" 2.5s behind Glowrider's commit. A year alone is
+				// thin, which is why it must MATCH the commit's release year
+				// (not merely fail to contradict) and why a set code, when
+				// one read, must agree too.
+				if b.year != 0 && b.year == rc.releaseYear &&
+					(b.set == "" || strings.EqualFold(b.set, rc.set)) {
+					return rc, true
+				}
+				continue
+			}
+			if scryfall.BaseNumber(b.number) != scryfall.BaseNumber(rc.collectorNumber) {
 				continue
 			}
 			if b.set != "" && !strings.EqualFold(b.set, rc.set) {
@@ -1894,6 +1913,11 @@ func seenWithin(recent []recentName, name string, now time.Time) (time.Duration,
 // similarRecent finds a recently processed name the text plausibly is — the
 // same shape-tolerant match resolution itself uses, so "Doc Gal's Hanchmen"
 // recognizes the "Doc Ock's Henchmen" added seconds ago.
+// frameNameFloor is the name similarity below which the year+frame stratum
+// refuses to run — see the gate in resolveCardCmd for the reasoning and the
+// live case that set it.
+const frameNameFloor = 0.92
+
 // hoardBuildVersion is this binary's own build identity, from the VCS stamp
 // the Go toolchain embeds: short revision, a -dirty marker, and the commit
 // time. "devel" when built outside a git checkout (go test binaries, some

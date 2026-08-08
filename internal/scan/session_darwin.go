@@ -190,6 +190,13 @@ func (s *Session) Auto(on bool) error {
 // be the card it already processed.
 func (s *Session) Rearm() error { return s.send("rearm") }
 
+// EVBias asks the phone to apply a one-shot exposure bias (in EV) to its next
+// auto capture — the finish rescue's darker retake, which un-clips a
+// glare-blown foil marker. Restored phone-side after that capture completes.
+func (s *Session) EVBias(ev float64) error {
+	return s.send(fmt.Sprintf("evbias %.1f", ev))
+}
+
 // Chime plays the card-processed sound. Fired by the parent when a scan
 // resolves — auto-added or queued for review — unlike the shutter pop,
 // which marks a capture and deliberately stays quiet on nudge rechecks.

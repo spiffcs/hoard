@@ -440,12 +440,18 @@ public final class Trigger {
     /// Geometry cannot tell a card stacked squarely on the pile from the card
     /// just shot; the parent knows what it already processed. It re-arms, the
     /// scene fires, and an identical read is the parent's to discard.
-    public func forceRearm() {
+    public func forceRearm(cause: RearmCause = .nudged) {
         guard phase == .hold else { return }
-        // No physical evidence whatsoever: a timer on the parent expired. This
-        // is exactly the case the parent must be able to tell apart, and until
-        // now it could only guess.
-        rearmCause = .nudged
+        // The default is the parent's timer — no physical evidence, and the
+        // parent must be able to tell. A result-driven rearm passes `.none`
+        // instead: the card was *recognized*, the operator's next act is a
+        // placement, and labelling that fire "nudged" would hand it to the
+        // echo rules. Re-arming at result time is safe for the same reason
+        // the rescue rearm is: sceneChangedSinceCapture refuses to re-fire
+        // on the unmoved card, so going yellow early costs nothing — it only
+        // moves the "bring the next card" signal from card-departure to
+        // recognition, which is the rhythm the operator actually scans at.
+        rearmCause = cause
         resetPass()
         disruptCount = 0
         watched = nil

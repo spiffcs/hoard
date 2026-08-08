@@ -107,6 +107,8 @@ struct SessionView: View {
                 if on { camera.startTrigger() } else { camera.stopTrigger() }
             }
             link.onRearm = { camera.nudgeTrigger() }
+            link.onResult = { camera.rearmForResult() }
+            link.onEVBias = { camera.setOneShotEVBias($0) }
             link.onTorch = { on in camera.setTorch(on ? 1 : 0) }
             camera.onFire = { shoot(auto: true) }
             camera.onTriggerTrace = { link.trace($0) }
@@ -207,6 +209,18 @@ struct SessionView: View {
             if !link.sounds.isWorking {
                 Label(link.sounds.status, systemImage: "speaker.slash.fill")
                     .font(.caption2).foregroundStyle(.orange)
+            }
+            // The registered card's name, pinned just above the controls so
+            // the operator reads what committed without leaving the pile for
+            // the terminal. Keyed to the same result the chime answers; blank
+            // until the first commit and across review results.
+            if let name = link.price.name, !name.isEmpty {
+                Text(name)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(.black.opacity(0.55), in: Capsule())
+                    .foregroundStyle(.white)
             }
             // Hands-free, by hand. The terminal arms this on connect, but a
             // toggle on the phone is the difference between "it is not working"

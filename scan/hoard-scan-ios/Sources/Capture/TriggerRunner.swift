@@ -208,6 +208,11 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         }
     }
 
+    func rearmForResult() {
+        trigger.forceRearm(cause: .none)
+        Task { @MainActor in self.onPhase?(self.trigger.phase) }
+    }
+
     func nudge() {
         trigger.forceRearm()
         Task { @MainActor in self.onPhase?(self.trigger.phase) }

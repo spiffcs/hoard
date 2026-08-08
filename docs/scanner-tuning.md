@@ -508,6 +508,23 @@ without the false-foils, or show the same cross-rig fragility the chroma
 score had. `train-foil.swift all <out.mlmodel>` builds a shipping artifact
 only if that study ever passes the gate.
 
+**The probability study ran, same day, and closed the question.**
+`train-foil.swift` now scores each held-out rig through the compiled model
+(`PROB` lines: rig, truth, p(foil) per crop) and
+`sweep-threshold.py` swept the bar over all 122 held-out reads:
+
+    no bar from 0.50 to 0.98 reaches 0 false-foils on every rig
+    highest held-out nonfoil p(foil):  corpus 0.42   s5 0.9967   s9 1.0000
+
+The model is not under-confident on its errors — it is *certain* and wrong
+on one nonfoil per hand-held rig, the same confidently-inverted cross-rig
+shape the chroma score showed. No threshold excludes a 1.0000-confidence
+mistake, so Phase C closes as measured: the classifier stays eval-only, the
+training/sweep harness stays for future rigs, and the recall it demonstrated
+(79/89 at any usable bar) remains the number to beat by whatever approach
+next attacks foil recognition — currently the deferred temporal-shimmer
+idea, which measures physics the single-frame crop cannot contain.
+
 ### 2026-08-07 — the decision ceiling, and where it should end up
 
 `decisionCeiling` (internal/tui/autoscan.go) caps how long a queued card holds

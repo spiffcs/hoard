@@ -8,6 +8,7 @@ package artindex
 
 import (
 	"image"
+	"image/color"
 	"math"
 	"math/bits"
 )
@@ -31,9 +32,38 @@ const (
 	phashKeep = 8
 )
 
-// FromImage hashes an image. The caller decides what region to hash — the
-// index hashes Scryfall's full-card small images, so live captures must be
-// hashed on the same footprint (the full flattened card), not the art box.
+// FromCard hashes a full-card image by its central region — the art and the
+// upper text, u 0.08-0.92 × v 0.10-0.58 of the card.
+//
+// Not the whole card, and the crop is the finding: whole-card hashes
+// saturate, because every card shares its global structure — border, art
+// box, text box, all at the same positions — so the low-frequency DCT signs
+// mostly agree across the entire catalog and 124 labelled captures matched
+// at distances 4-16 with margins of 0-2, right or wrong alike (offline eval,
+// 2026-08-07). The art region is where printings actually differ. Both sides
+// of a comparison must use this same footprint: the index build and the
+// scanner's flatten both come through here.
+func FromCard(img image.Image) Hash {
+	b := img.Bounds()
+	crop := image.Rect(
+		b.Min.X+b.Dx()*8/100, b.Min.Y+b.Dy()*10/100,
+		b.Min.X+b.Dx()*92/100, b.Min.Y+b.Dy()*58/100)
+	return FromImage(&cropped{img, crop})
+}
+
+// cropped is a zero-copy sub-image view; image.Image only, no SubImage
+// interface needed on the source.
+type cropped struct {
+	src image.Image
+	r   image.Rectangle
+}
+
+func (c *cropped) ColorModel() color.Model { return c.src.ColorModel() }
+func (c *cropped) Bounds() image.Rectangle { return c.r }
+func (c *cropped) At(x, y int) color.Color { return c.src.At(x, y) }
+
+// FromImage hashes an image over its full bounds. Prefer FromCard for
+// anything card-shaped — see its comment for why.
 func FromImage(img image.Image) Hash {
 	px := grayGrid(img)
 	d := dct2d(px)

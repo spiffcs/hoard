@@ -20,6 +20,10 @@ import SwiftUI
 /// What the Go side decided about a card, as it arrives on the wire.
 struct PriceResult: Equatable {
     var amount: Double?
+    /// The committed card's name, shown at the bottom of the camera so the
+    /// operator reads what registered without glancing at the terminal.
+    /// Empty on review results — nothing settled to show.
+    var name: String?
     /// bulk | win | jackpot | unpriced | review — decided Go-side, where the
     /// prices already are and where a table test can pin the boundaries. The
     /// phone renders what it is told and never re-derives a tier from a number.
