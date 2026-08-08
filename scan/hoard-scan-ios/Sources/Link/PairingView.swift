@@ -81,9 +81,12 @@ struct PairingView: View {
                     // The failure this actually causes, stated plainly: iOS
                     // suspends background apps, and a suspended app stops
                     // advertising, so a phone switched away from is
-                    // indistinguishable from a phone that is not there.
+                    // indistinguishable from a phone that is not there. The
+                    // app restarts its advertising on every return to the
+                    // foreground, so the second sentence is the fix.
                     Text("iOS stops background apps from being discovered, so a phone "
-                        + "you have switched away from looks the same as one that is off.")
+                        + "you have switched away from looks the same as one that is off. "
+                        + "Bringing Hoardling back on screen puts it back on the network.")
                 }
             }
             .navigationTitle("Pair")

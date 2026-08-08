@@ -65,6 +65,27 @@ const (
 type Match struct {
 	Exact      bool
 	Similarity float64
+	// PrefixOnly says the text was merely a truncated beginning of the name —
+	// a *nomination*, not an identity. Plausible refuses these outright (see
+	// its comment for the theft it stopped); a searcher may still surface one
+	// flagged, for a caller holding independent printing evidence — a
+	// collector number that matches the nominated card's own printings —
+	// that can confirm what the fragment alone cannot.
+	PrefixOnly bool
+}
+
+// PrefixCandidate reports whether text reads as a truncated beginning of
+// canonical: long enough to mean something (MinFuzzyLen) and a proper prefix
+// of the name. It deliberately does NOT mean "is that card" — "Gliding",
+// debris of Glowrider mid-slide, nominates Gliding Licid and is wrong. It is
+// the shape a caller may try to *confirm* against the frame's collector
+// number, which is evidence the fragment cannot fake.
+func PrefixCandidate(text, canonical string) bool {
+	o, c := Normalize(text), Normalize(canonical)
+	if len(o) < MinFuzzyLen {
+		return false
+	}
+	return len(c) > len(o) && strings.HasPrefix(c, o)
 }
 
 // Plausible reports whether canonical is a believable reading of some text.
@@ -86,16 +107,18 @@ func Plausible(text, canonical string) bool {
 	if len(o) < MinFuzzyLen {
 		return false
 	}
-	// A partial read of a longer name is fine ("elspeth" → "Elspeth,
-	// Knight-Errant"). The reverse is the bug: text that merely *contains* a
-	// short name must not resolve to it.
-	//
-	// This is checked before the length guard below, and has to be: a partial
-	// read is legitimately much shorter than its name, which is the one case
-	// where a large length difference means nothing is wrong.
-	if strings.HasPrefix(c, o) {
-		return true
-	}
+	// A partial read that is a clean prefix of a longer name ("elspeth" →
+	// "Elspeth, Knight-Errant") used to be accepted here, before the length
+	// and similarity guards. That rule was a title thief: any ≥4-character
+	// fragment that happens to begin a *different* real card's name became
+	// that card — "Gliding", debris of Glowrider sliding past the lens,
+	// resolved to Gliding Licid live (2026-08-07) and the stolen name then
+	// keyed every downstream dedupe. No property of the strings separates the
+	// legitimate truncation from the steal — in both, the read is a proper
+	// prefix of a real name — so the rule is gone rather than gated. The
+	// cost is that a truncated title now queues for review (or resolves by
+	// its collector block) instead of matching; the gain is that it can no
+	// longer silently become a card that was never in frame.
 	// The mirror case: OCR glues the title to the line below it ("Inspired
 	// Fire deals + tam", observed live), so the read *starts with* the whole
 	// name. Anchored at the start and floored on length, this stays clear of

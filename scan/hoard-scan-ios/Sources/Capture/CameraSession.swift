@@ -127,15 +127,31 @@ final class CameraSession: NSObject, ObservableObject {
     /// guard provides, and nothing downstream applies the rotation twice. It
     /// also means a fixture written by `sendStill` is upright on disk, which
     /// the corpus tooling previously had to guess at.
+    /// captureGrace bounds the wait for a tap frame. The tap delivers 30fps
+    /// when anything is flowing at all, so two seconds of silence means the
+    /// frames are not coming — the tap never attached, the trigger queue is
+    /// starved, or the OS took the camera (a call, Control Center). Without
+    /// this bound the continuation below waited forever, `busy` stuck true,
+    /// and the phone was dead for the session under a green header.
+    private static let captureGrace: TimeInterval = 2
+
     private func captureFromVideo() async -> CapturedFrame? {
         await withCheckedContinuation { (c: CheckedContinuation<CapturedFrame?, Never>) in
+            let resumed = Flag()
             triggerRunner.grabFrame { buffer in
+                guard !resumed.testAndSet() else { return }
                 let ci = CIImage(cvPixelBuffer: buffer).oriented(.right)
                 guard let cg = sharedContext.createCGImage(ci, from: ci.extent) else {
                     c.resume(returning: nil)
                     return
                 }
                 c.resume(returning: CapturedFrame(image: cg, orientation: .up))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.captureGrace) {
+                [weak triggerRunner] in
+                guard !resumed.testAndSet() else { return }
+                triggerRunner?.cancelGrab()
+                c.resume(returning: nil)
             }
         }
     }
@@ -193,7 +209,13 @@ final class CameraSession: NSObject, ObservableObject {
             device.setExposureTargetBias(v)
             device.unlockForConfiguration()
             evBiased = true
-        } catch {}
+        } catch {
+            // The rescue's darker retake simply does not happen; the retake
+            // still fires at metered exposure, so the failure is a wasted
+            // capture rather than a stall — but it must be findable when a
+            // rescue session's retakes all come back blown out anyway.
+            SessionLog.write("evbias skipped: \(error.localizedDescription)")
+        }
     }
 
     private func restoreEVBiasIfNeeded() {
@@ -203,7 +225,12 @@ final class CameraSession: NSObject, ObservableObject {
             try device.lockForConfiguration()
             device.setExposureTargetBias(0)
             device.unlockForConfiguration()
-        } catch {}
+        } catch {
+            // Worse than the set failing: a bias that could not be restored
+            // darkens every capture after the rescue, and nothing on screen
+            // says why the reads got worse.
+            SessionLog.write("evbias restore failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Lifecycle
@@ -215,6 +242,24 @@ final class CameraSession: NSObject, ObservableObject {
             return
         }
         configure()
+    }
+
+    /// stop is the Scan tab's teardown, the mirror of start. The camera is a
+    /// per-screen instrument (unlike the link, which is app-lifetime), and
+    /// the handlers the screen wires all capture the view — cleared here so
+    /// a departed view is not retained by its own camera, which was the
+    /// cycle CameraSession → closure → view → StateObject → CameraSession
+    /// that kept a torn-down session running forever. The screen re-wires
+    /// everything on its way back in.
+    func stop() {
+        stopTrigger()
+        onFire = nil
+        onPhase = nil
+        onCue = nil
+        onTriggerTrace = nil
+        Task.detached { [session] in
+            if session.isRunning { session.stopRunning() }
+        }
     }
 
     /// configure builds the session around one principle: the app owns the
@@ -283,6 +328,49 @@ final class CameraSession: NSObject, ObservableObject {
         Task.detached { [session] in session.startRunning() }
         status = "Settling…"
         Task { await settleAndLock() }
+        observeSessionLife()
+    }
+
+    /// Whether the lifecycle observers are already registered — configure()
+    /// re-runs on a lens switch, and each observer must exist exactly once.
+    private var lifeObserved = false
+
+    /// observeSessionLife keeps the session honest about not running.
+    ///
+    /// Nothing observed these before, so a phone call, a FaceTime pickup, or
+    /// Control Center taking the camera stopped frame delivery permanently
+    /// while the UI kept its green header: any pending capture hung (now
+    /// bounded by captureGrace), and nothing ever restarted the session. The
+    /// interruption is surfaced in the status line, and the session restarts
+    /// itself when the OS hands the camera back or after a runtime error.
+    private func observeSessionLife() {
+        guard !lifeObserved else { return }
+        lifeObserved = true
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: AVCaptureSession.wasInterruptedNotification,
+                       object: session, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.status = "Camera interrupted — another app or a call has it"
+            }
+        }
+        nc.addObserver(forName: AVCaptureSession.interruptionEndedNotification,
+                       object: session, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.resumeAfterInterruption() }
+        }
+        nc.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
+                       object: session, queue: .main) { [weak self] _ in
+            // A media-services reset is the classic cause; the documented
+            // recovery is simply to start the session again.
+            Task { @MainActor [weak self] in self?.resumeAfterInterruption() }
+        }
+    }
+
+    private func resumeAfterInterruption() {
+        status = "Resuming camera…"
+        Task.detached { [session] in
+            if !session.isRunning { session.startRunning() }
+        }
+        status = "Ready"
     }
 
     /// trackRotation keeps the preview level as the phone turns, and republishes
@@ -398,8 +486,16 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     private func lockFocus() {
-        guard let device, device.isFocusModeSupported(.locked),
-              (try? device.lockForConfiguration()) != nil else { return }
+        guard let device, device.isFocusModeSupported(.locked) else { return }
+        // Every control below keeps this shape: a device that refuses its
+        // configuration lock is busy, not broken, so the control quietly
+        // no-ops — but "quietly" must not mean invisibly, because a session
+        // where focus never locked and one where it locked wrong look
+        // identical from the cards. The log line is what tells them apart.
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("focus lock skipped: camera is busy")
+            return
+        }
         lensPosition = device.lensPosition
         device.focusMode = .locked
         device.unlockForConfiguration()
@@ -413,8 +509,11 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     private func thawFocus() {
-        guard let device, device.isFocusModeSupported(.continuousAutoFocus),
-              (try? device.lockForConfiguration()) != nil else { return }
+        guard let device, device.isFocusModeSupported(.continuousAutoFocus) else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("focus thaw skipped: camera is busy")
+            return
+        }
         device.focusMode = .continuousAutoFocus
         device.unlockForConfiguration()
         locked = false
@@ -424,7 +523,11 @@ final class CameraSession: NSObject, ObservableObject {
     /// lockMetering freezes exposure and white balance, which is what makes a
     /// border reader's thresholds mean the same thing twice.
     private func lockMetering() {
-        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        guard let device else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("metering lock skipped: camera is busy")
+            return
+        }
         defer { device.unlockForConfiguration() }
         if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
         if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
@@ -433,7 +536,11 @@ final class CameraSession: NSObject, ObservableObject {
 
     /// unlock hands the automatics back, for reframing the rig.
     func unlock() {
-        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        guard let device else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("unlock skipped: camera is busy")
+            return
+        }
         defer { device.unlockForConfiguration() }
         if device.isFocusModeSupported(.continuousAutoFocus) {
             device.focusMode = .continuousAutoFocus
@@ -458,7 +565,11 @@ final class CameraSession: NSObject, ObservableObject {
     /// `point` is normalized in device space, origin top-left, which is what
     /// the preview layer converts a tap into.
     func refocus(at point: CGPoint) {
-        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        guard let device else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("refocus skipped: camera is busy")
+            return
+        }
         defer { device.unlockForConfiguration() }
         if device.isFocusPointOfInterestSupported, device.isFocusModeSupported(.autoFocus) {
             device.focusPointOfInterest = point
@@ -489,8 +600,11 @@ final class CameraSession: NSObject, ObservableObject {
     /// freezing wherever autofocus happened to land, with no way to say where.
     func setLensPosition(_ p: Float) {
         guard let device, device.isFocusModeSupported(.locked),
-              device.isLockingFocusWithCustomLensPositionSupported,
-              (try? device.lockForConfiguration()) != nil else { return }
+              device.isLockingFocusWithCustomLensPositionSupported else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("lens position skipped: camera is busy")
+            return
+        }
         device.setFocusModeLocked(lensPosition: p) { _ in }
         device.unlockForConfiguration()
         lensPosition = p
@@ -504,15 +618,29 @@ final class CameraSession: NSObject, ObservableObject {
     /// glare generator, and glare across the title is already a documented
     /// failure mode. Hence a level rather than a switch.
     func setTorch(_ level: Float) {
-        guard let device, device.hasTorch,
-              (try? device.lockForConfiguration()) != nil else { return }
+        guard let device, device.hasTorch else { return }
+        guard (try? device.lockForConfiguration()) != nil else {
+            SessionLog.write("torch skipped: camera is busy")
+            return
+        }
         defer { device.unlockForConfiguration() }
         if level <= 0.01 {
             device.torchMode = .off
+            torchLevel = 0
         } else {
-            try? device.setTorchModeOn(level: min(level, AVCaptureDevice.maxAvailableTorchLevel))
+            do {
+                try device.setTorchModeOn(
+                    level: min(level, AVCaptureDevice.maxAvailableTorchLevel))
+                // Published only on success. setTorchModeOn throws when the
+                // hardware refuses — thermal shutoff is the common one — and
+                // publishing the ask anyway lit the screen's torch state over
+                // a dark card: it reported what was requested, not what
+                // happened.
+                torchLevel = level
+            } catch {
+                SessionLog.write("torch refused: \(error.localizedDescription)")
+            }
         }
-        torchLevel = level
     }
 
     var hasTorch: Bool { device?.hasTorch ?? false }

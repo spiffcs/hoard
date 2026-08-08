@@ -206,6 +206,29 @@ public enum SparkleGate {
     /// ink, not foil.
     public static let chromaVoteLumaFloor: CGFloat = 0.012
 
+    /// The luma spread a *luma-score* accept must also carry. A real marker
+    /// is a bright/dark structure — every corpus still whose score clears
+    /// `accept` shows luma contrast 0.0266 or better — while a flat patch
+    /// that happens to correlate is furniture wearing the template's shape.
+    ///
+    /// The card that forced this: Hunter Sliver, live 2026-08-08, a
+    /// confirmed nonfoil (no shimmer, no star) that scored 0.526-0.607
+    /// across five reads — through the accept bar, above several true foils,
+    /// unfixable by any score threshold — with luma contrast 0.0134-0.0172
+    /// on every one. Both copies committed as foil, and because the sparkle
+    /// counted as *evidence*, the rows were invisible to the guessed-finish
+    /// audit. Flat-but-correlated is exactly the failure the score cannot
+    /// see, and contrast is the axis on which it separates completely:
+    /// 0.0172 is the highest false accept anywhere, 0.0266 the lowest true
+    /// one. The same 0.02 line was found independently on the session-5 rig
+    /// as the capture-quality floor below which the patch is washed out.
+    ///
+    /// The margin is 0.009 and pinned by single cards on each side, like
+    /// everything else in this gate — widen the corpus before leaning on it.
+    /// A true foil refused here falls to the nonfoil *guess*, which the
+    /// audit surface can find; a false accept is a wrong row nothing flags.
+    public static let acceptLumaContrast: CGFloat = 0.02
+
     /// Half-width of the search window, in card space, and how many cells that
     /// is divided into. One cell is a pixel of a 630x880 card.
     ///

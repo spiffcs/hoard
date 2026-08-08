@@ -51,8 +51,8 @@ func borderRing(_ px: PixelReader, _ g: CardGeometry, edgeV: CGFloat, samples: I
 /// carries over from a scan to a desk lamp the way the border ratio does.
 /// SymbolInk is how much of the type line's right margin is covered by ink, and
 /// how hard that ink stands off the frame around it. Nothing consumes these yet
-/// — they are the groundwork the expansion-symbol reader needs, kept reachable
-/// on purpose (see docs/scanner-symbol-plan.md).
+/// — they are the groundwork the planned expansion-symbol reader needs, kept
+/// reachable on purpose.
 struct SymbolInk {
     let coverage: CGFloat
     let contrast: CGFloat

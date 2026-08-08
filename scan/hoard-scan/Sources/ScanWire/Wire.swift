@@ -357,6 +357,13 @@ public struct HUDCommand: Decodable {
     /// the language; the parent has the catalog, so it knows whether the
     /// printing comes in foil at all and what it therefore recorded.
     public var finish: String?
+    /// A short instruction for the screen, sent when the parent's duplicate
+    /// rules suppressed a sighting the operator may overrule. Carries no
+    /// tier and no sound: the suppression itself was deliberately silent.
+    public var note: String?
+    /// Marks the note as the second-copy offer — show a button that answers
+    /// it with a `promote` event, the parent's `+` key made tappable.
+    public var promote: Bool?
 }
 
 /// Device is one camera the helper can capture from, as listed by --list-devices.

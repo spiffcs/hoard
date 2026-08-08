@@ -4,7 +4,7 @@
 //
 // This is the parity layer. The CLI's cmd* functions and the browse TUI are
 // both thin frontends over these calls — a capability that exists only in
-// one of them is a bug tracked in docs/parity.md, not an architecture. The
+// one of them is a bug, not an architecture. The
 // package sits above every domain package and nothing imports it except
 // frontends, so no import cycle is possible; browse in particular does NOT
 // import it (main injects closures, keeping browse's zero-network rule).

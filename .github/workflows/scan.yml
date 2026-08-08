@@ -3,53 +3,46 @@
 # against their golden card lists.
 #
 # ---------------------------------------------------------------------------
-# THIS WORKFLOW IS MANUAL-ONLY ON PURPOSE.
+# This job needs a macOS runner: the helper links AppKit and Network.framework
+# and the reader links Vision, so neither builds on the ubuntu runner
+# validations.yaml uses. macOS bills private-repo minutes at 10x — a run is
+# ~30s of work but 2-3 wall-clock minutes with image spin-up — which is why
+# the triggers are path-filtered to the scanner's own inputs: Go-only changes
+# never pay for one.
 #
-# macOS runners bill private-repo minutes at 10x, and this job needs one: the
-# helper links AppKit and Network.framework and the reader links Vision, so
-# neither builds on the ubuntu runner validations.yaml uses. A run is only ~30s of work, but with image
-# spin-up it lands around 2-3 wall-clock minutes — call it 20-30 billed
-# minutes each time, on every push and every PR update.
-#
-# So it runs from the Actions tab (or `gh workflow run scan.yml`) when someone
-# asks for it, and not otherwise.
-#
-# WHAT THIS COSTS YOU: nothing checks the goldens automatically any more. A
-# change that alters what the scanner reads will reach master unnoticed unless
-# somebody runs the sweep. Until this is re-enabled, the real gate is local and
-# it is on you:
-#
-#     make scan && make scan-test && make scan-check
-#
-# TO TURN IT BACK ON: delete the `workflow_dispatch:` line below and uncomment
-# the push/pull_request block under it. The path filters are already written —
-# they keep it off Go-only changes, which is what made it affordable before.
+# The workflow was manual-only for a while on cost grounds, and the price of
+# that was written into this header at the time: "nothing checks the goldens
+# automatically any more" — a change altering what the scanner reads could
+# reach master unnoticed unless somebody remembered the local sweep
+# (`make scan && make scan-test && make scan-check`). The feature with the
+# most surface area and the least test automation had no gate; the filtered
+# triggers below are the compromise that pays only for scanner changes.
+# workflow_dispatch stays for ad-hoc runs (`gh workflow run scan.yml`).
 # ---------------------------------------------------------------------------
 name: Scan helper
 
 on:
   workflow_dispatch:
 
-  # push:
-  #   branches: [master]
-  #   paths:
-  #     - "scan/**"
-  #     - "build-scan.sh"
-  #     - "Makefile"
-  #     - ".github/workflows/scan.yml"
-  # pull_request:
-  #   paths:
-  #     - "scan/**"
-  #     - "build-scan.sh"
-  #     - "Makefile"
-  #     - ".github/workflows/scan.yml"
+  push:
+    branches: [master]
+    paths:
+      - "scan/**"
+      - "build-scan.sh"
+      - "Makefile"
+      - ".github/workflows/scan.yml"
+  pull_request:
+    paths:
+      - "scan/**"
+      - "build-scan.sh"
+      - "Makefile"
+      - ".github/workflows/scan.yml"
 
 permissions:
   contents: read
 
-# Superseded runs are cancelled rather than queued. Costs nothing while this is
-# manual, and matters the moment the triggers above come back: three pushes to
-# a PR used to mean three full macOS runs.
+# Superseded runs are cancelled rather than queued: without this, three pushes
+# to a PR meant three full macOS runs.
 concurrency:
   group: scan-${{ github.ref }}
   cancel-in-progress: true

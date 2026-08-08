@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/buildinfo"
@@ -62,7 +63,7 @@ type Card struct {
 	// "future"). It is what separates a modern set's retro-frame reprint from
 	// its regular twin — same set, same year, both black-bordered — which the
 	// scanner needs when the collector digits never read.
-	Frame       string
+	Frame string
 	// ImageURI is Scryfall's small-size card image (~30KB), the input to the
 	// art-identification index. Front face on multi-faced cards. Empty when
 	// the printing has no image.
@@ -153,6 +154,69 @@ type apiCard struct {
 // call site built its own, the timeout policy was five copies of one decision.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+// Scryfall publishes per-endpoint rate limits (docs/data-licensing.md §2.3):
+// /cards/search, /cards/named, /cards/random and /cards/collection allow 2
+// requests a second, everything else 10 a second, and ignoring them risks an
+// IP/UA block that takes out every shipped binary at once. The limit is
+// enforced here in the transport, not at call sites — pacing at call sites was
+// tried and produced three sites with three different gaps, two of them over
+// the limit, and nothing at all covering concurrent goroutines.
+
+// slowGap and defaultGap are vars so tests against a local server need not
+// spend half a second per request.
+var (
+	slowGap    = 500 * time.Millisecond
+	defaultGap = 100 * time.Millisecond
+)
+
+// slowEndpoints are the API paths Scryfall limits to 2 requests a second.
+var slowEndpoints = []string{"/cards/search", "/cards/named", "/cards/random", "/cards/collection"}
+
+// endpointClass buckets a request URL into the endpoint class Scryfall's
+// limits are keyed on, with that class's minimum gap. Pagination hands back
+// absolute next-page URLs, so classification reads the parsed path rather
+// than assuming the apiBase prefix.
+func endpointClass(endpoint string) (string, time.Duration) {
+	path := endpoint
+	if u, err := url.Parse(endpoint); err == nil {
+		path = u.Path
+	}
+	for _, s := range slowEndpoints {
+		if strings.HasPrefix(path, s) {
+			return s, slowGap
+		}
+	}
+	return "", defaultGap
+}
+
+// pacer hands out send times per endpoint class, spacing them by the class's
+// published gap. A caller reserves its slot under the lock and sleeps outside
+// it, which is what makes the limit hold across concurrent goroutines: each
+// reservation pushes the class's next slot back by one gap, however many
+// callers arrive at once.
+type pacer struct {
+	mu   sync.Mutex
+	next map[string]time.Time
+}
+
+var apiPacer = pacer{next: map[string]time.Time{}}
+
+func (p *pacer) wait(ctx context.Context, endpoint string) error {
+	class, gap := endpointClass(endpoint)
+	p.mu.Lock()
+	now := time.Now()
+	at := p.next[class]
+	if at.Before(now) {
+		at = now
+	}
+	p.next[class] = at.Add(gap)
+	p.mu.Unlock()
+	if d := at.Sub(now); d > 0 {
+		return sleepCtx(ctx, d)
+	}
+	return nil
+}
+
 // apiResponse is what apiDo hands back: enough to interpret the outcome
 // without re-reading the body.
 type apiResponse struct {
@@ -167,6 +231,9 @@ type apiResponse struct {
 // Retry-After worth honouring) — but the transport plumbing is one decision,
 // made here. what names the operation for error messages.
 func apiDo(ctx context.Context, method, endpoint string, reqBody []byte, what string) (apiResponse, error) {
+	if err := apiPacer.wait(ctx, endpoint); err != nil {
+		return apiResponse{}, err
+	}
 	var r io.Reader
 	if reqBody != nil {
 		r = bytes.NewReader(reqBody)
@@ -252,13 +319,9 @@ func FetchCollection(ctx context.Context, ids []Identifier) (found []Card, notFo
 // exactly like a hang.
 func FetchCollectionProgress(ctx context.Context, ids []Identifier,
 	onChunk func(done, total int, note string)) (found []Card, notFound []Identifier, err error) {
+	// Spacing between chunks is apiDo's job: the shared pacer holds
+	// /cards/collection to its published 2-requests-a-second limit.
 	for i := 0; i < len(ids); i += collectionMax {
-		if i > 0 {
-			// Stay well under Scryfall's rate limit between chunks.
-			if err := sleepCtx(ctx, chunkPause); err != nil {
-				return nil, nil, err
-			}
-		}
 		end := min(i+collectionMax, len(ids))
 		var onWait func(string)
 		if onChunk != nil {
@@ -276,11 +339,6 @@ func FetchCollectionProgress(ctx context.Context, ids []Identifier,
 	}
 	return found, notFound, nil
 }
-
-// chunkPause is the gap between collection requests. Scryfall asks for fewer
-// than 10 requests a second and suggests 50–100ms; 150 leaves margin, and on a
-// 1,500-card catalog it costs about three seconds across the whole run.
-const chunkPause = 150 * time.Millisecond
 
 // rateLimitRetries is how many times a chunk waits out a 429 or a transient
 // failure before giving up.
@@ -541,14 +599,9 @@ func SearchPrints(ctx context.Context, exactName string) ([]Card, error) {
 			return nil, nil
 		}
 		cards = append(cards, found...)
+		// Pagination pacing is apiDo's job: the shared pacer holds
+		// /cards/search to its published 2-requests-a-second limit.
 		endpoint = next
-		if next != "" {
-			// Rate-limit courtesy between pages — cancellable, since this can
-			// run under the TUI where the user may have moved on.
-			if err := sleepCtx(ctx, 100*time.Millisecond); err != nil {
-				return nil, err
-			}
-		}
 	}
 	return cards, nil
 }

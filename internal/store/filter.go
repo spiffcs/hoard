@@ -105,8 +105,18 @@ func (s *Store) MatchingCardIDs(f TraitFilter) (map[string]bool, error) {
 		args = append(args, c.Value)
 	}
 
+	// INDEXED BY, not planner's choice: every predicate column here is a
+	// VIRTUAL column over raw_json, so a table scan re-parses ~5.4 KB of JSON
+	// per row per keystroke — the browse filter's measured stutter. The v27
+	// index stores those computed values plus scryfall_id, but SQLite's cost
+	// model sees no range constraint to seek on (the LIKEs are substring
+	// matches) and picks the table scan anyway; naming the index makes the
+	// predicates read from index leaves instead (measured 9x on a 5k-card
+	// catalog). If the index is ever dropped this query fails loudly rather
+	// than quietly reverting to the parse-everything plan.
 	rows, err := s.db.Query(
-		`SELECT scryfall_id FROM cards WHERE `+strings.Join(where, " AND "), args...)
+		`SELECT scryfall_id FROM cards INDEXED BY cards_trait_filter WHERE `+
+			strings.Join(where, " AND "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("filtering cards: %w", err)
 	}

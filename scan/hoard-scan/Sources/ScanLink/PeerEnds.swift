@@ -66,6 +66,24 @@ public final class PeerListener {
     /// receive loop fires into a nil `self`. The connection stays open, the
     /// handshake completes, and nothing ever arrives: a hang, not an error.
     private var accepting: [ObjectIdentifier: PeerLink] = [:]
+    /// How many unverified connections may sit in `accepting` at once. A real
+    /// session opens two; the allowance beyond that is retries. Anything more
+    /// is not a Mac pairing, it is the local network being rude.
+    private let maxUnverified = 8
+    /// The frame ceiling for a connection that has not proved the code: a
+    /// hello is a few hundred bytes, so nothing legitimate is bigger than
+    /// this. Verified connections are restored to the full ceiling.
+    private let helloPayloadLimit = 4096
+    /// How long an accepted connection may sit silent before it is dropped.
+    /// The hello is sent before the handshake even completes, so a peer that
+    /// is quiet this long is not going to speak.
+    var helloTimeout: TimeInterval = 5
+    /// New connections are refused until this instant — pushed back on every
+    /// failed pairing proof, which converts a code-guessing loop from
+    /// wire-speed into one attempt a second. Success is never delayed: the
+    /// throttle arms on failure only, so a fat-fingered code costs its owner
+    /// one second, not a lockout.
+    private var refuseUntil = Date.distantPast
 
     public init(name: String, code: PairingCode) {
         self.name = name
@@ -73,6 +91,13 @@ public final class PeerListener {
     }
 
     public func start() throws {
+        // Restartable, deliberately: iOS tears an NWListener down when the
+        // app suspends and never brings it back, so the phone's foreground
+        // handler calls this again. The old listener is cancelled rather
+        // than reused — a listener that has been through a suspension is
+        // not reliably advertising even when its state claims otherwise.
+        // Established sessions ride their own connections and are untouched.
+        listener?.cancel()
         // The role only affects Nagle, and the listener accepts both kinds on
         // one port; control's parameters are the stricter of the two.
         let params = parameters(role: .control)
@@ -95,10 +120,15 @@ public final class PeerListener {
     public func stop() {
         listener?.cancel()
         listener = nil
-        pending.values.forEach { $0.cancel() }
-        pending.removeAll()
-        accepting.values.forEach { $0.cancel() }
-        accepting.removeAll()
+        // The dictionaries live on `queue` — accept and pair mutate them
+        // there — so the teardown hops rather than racing them from the main
+        // actor ("Generate a new code" mid-handshake was a Dictionary race).
+        queue.async {
+            self.pending.values.forEach { $0.cancel() }
+            self.pending.removeAll()
+            self.accepting.values.forEach { $0.cancel() }
+            self.accepting.removeAll()
+        }
     }
 
     /// accept reads the hello, then either parks the connection or completes a
@@ -109,8 +139,26 @@ public final class PeerListener {
     /// role only selects Nagle on the *parameters*, which the listener already
     /// fixed when it started.
     private func accept(_ conn: NWConnection) {
+        // The door itself is guarded: a failed proof arms a one-second
+        // refusal (see refuseUntil), and the unverified pool is capped —
+        // both against the same neighbor, one guessing codes at wire speed,
+        // the other opening connections it never speaks on.
+        guard Date() >= refuseUntil, accepting.count < maxUnverified else {
+            conn.cancel()
+            return
+        }
         let link = PeerLink(connection: conn, role: .control, queue: queue)
+        // Nothing bigger than a hello until the code is proved.
+        link.limitPayloads(helloPayloadLimit)
         accepting[ObjectIdentifier(link)] = link
+        // A connection that never says hello does not get to sit in the pool
+        // until stop(): by identity, like the half-session reaper below.
+        queue.asyncAfter(deadline: .now() + helloTimeout) { [weak self, weak link] in
+            guard let self, let link,
+                  self.accepting[ObjectIdentifier(link)] === link else { return }
+            self.accepting.removeValue(forKey: ObjectIdentifier(link))
+            link.cancel()
+        }
         link.onFrame = { [weak self, weak link] frame in
             guard let self, let link else { return }
             guard frame.kind == .ndjson,
@@ -123,6 +171,7 @@ public final class PeerListener {
             guard verifyProof(hello.proof, session: hello.session, code: self.code) else {
                 self.accepting.removeValue(forKey: ObjectIdentifier(link))
                 link.cancel()
+                self.refuseUntil = Date().addingTimeInterval(1)
                 self.onError?("a peer failed the pairing check")
                 return
             }
@@ -131,6 +180,7 @@ public final class PeerListener {
             link.onFrame = nil
             self.accepting.removeValue(forKey: ObjectIdentifier(link))
             link.assign(role: hello.role)
+            link.limitPayloads(maxFramePayload)
             // Announced here rather than after `pair`, which is the whole point:
             // this is the earliest moment the phone can prove a paired Mac is on
             // the wire, and `pair` may park the connection for as long as the
@@ -248,7 +298,11 @@ public final class PeerBrowser {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         browser.cancel()
-        return found.values.sorted { $0.name < $1.name }
+        // Through the queue, not directly: the results handler writes `found`
+        // on `queue`, and `cancel()` is asynchronous — a handler already
+        // running when the deadline lapsed can still be mid-write here. The
+        // sync hop serialises this read behind it.
+        return queue.sync { found.values.sorted { $0.name < $1.name } }
     }
 
     /// connect opens both connections of a session.

@@ -47,8 +47,11 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// property, so six samples is what transfers from the macOS rig, not its
     /// half-second wall clock.
     var onBox: (@MainActor (CGRect?) -> Void)?
-    /// Why the trigger armed for the capture now in flight.
-    private(set) var lastFireCause: Trigger.RearmCause = .none
+    /// Why the trigger armed for the capture now in flight. Written on the
+    /// capture queue at fire time, read on the main actor for the wire —
+    /// hence the lock, like every other value that crosses that line here.
+    private let fireCauseBox = Locked<Trigger.RearmCause>(.none)
+    var lastFireCause: Trigger.RearmCause { fireCauseBox.value }
     /// The two measurements behind `lastFireCause`, as they stood on the
     /// sample that fired.
     ///
@@ -57,8 +60,10 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// send time they would describe the shutter's aftermath rather than the
     /// decision, which is the mistake the `let fired = trigger.snapshot` below
     /// already exists to avoid.
-    private(set) var lastFireHoldDelta: Double?
-    private(set) var lastFireFaceDelta: Double?
+    private let fireHoldDeltaBox = Locked<Double?>(nil)
+    private let fireFaceDeltaBox = Locked<Double?>(nil)
+    var lastFireHoldDelta: Double? { fireHoldDeltaBox.value }
+    var lastFireFaceDelta: Double? { fireFaceDeltaBox.value }
     /// One diagnostic line, for the tuning log. Raised at the two moments that
     /// explain a session's waste: when the baseline is learned, and when the
     /// trigger decides to fire.
@@ -77,7 +82,10 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// the read cannot be mistaken for evidence about what happens next.
     private let busy = Flag()
     private var lastSample = Date.distantPast
-    private var armed = false
+    /// Whether the trigger is running: set on the main actor by start/stop,
+    /// consulted on the capture queue by every sample — a Flag, not a Bool,
+    /// for exactly that reason.
+    private let armed = Flag()
 
     /// How still the device has to be to count as parked, in g. Generous: a
     /// desk takes a knock when a card is put down, and treating that as "the
@@ -100,16 +108,28 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// If that is so, the trigger's constants are being fed something they were
     /// never fitted against, and a still could be taken from here instead of
     /// from the photo output.
-    private(set) var bufferSize = CGSize.zero
+    private let bufferSizeBox = Locked(CGSize.zero)
+    var bufferSize: CGSize { bufferSizeBox.value }
 
     /// Set to have the next sample handed over as a still, bypassing the photo
     /// output entirely. The whole reason this exists: a frame taken from the
     /// video stream plays no shutter sound, because there is no shutter.
+    ///
+    /// Confined to the trigger queue: it used to be written on the main actor
+    /// and read here, a torn closure read away from a crash, so grabFrame and
+    /// cancelGrab hop instead of touching it directly.
     private var frameRequest: ((CVPixelBuffer) -> Void)?
 
     /// grabFrame asks for the next video buffer as a still.
     func grabFrame(_ handler: @escaping (CVPixelBuffer) -> Void) {
-        frameRequest = handler
+        queue.async { self.frameRequest = handler }
+    }
+
+    /// cancelGrab withdraws a pending still request whose waiter gave up —
+    /// the capture timeout's half of the bargain that no continuation is
+    /// resumed twice and none waits forever.
+    func cancelGrab() {
+        queue.async { self.frameRequest = nil }
     }
 
     /// attach adds the video tap to a running session.
@@ -146,8 +166,8 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     func start() {
-        guard !armed else { return }
-        armed = true
+        guard !armed.isSet else { return }
+        armed.set()
         if motion.isDeviceMotionAvailable {
             motion.deviceMotionUpdateInterval = 0.05
             motion.startDeviceMotionUpdates()
@@ -159,9 +179,11 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     func stop() {
-        armed = false
+        armed.clear()
         motion.stopDeviceMotionUpdates()
-        trigger.disarm()
+        // The trigger's own state is queue-confined; every touch of it from
+        // the main actor hops, the way tune() always did.
+        queue.async { self.trigger.disarm() }
     }
 
     /// captureBegan parks the trigger for the duration of a shutter.
@@ -173,27 +195,36 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     var wantsFrame: Bool { frameRequest != nil }
 
     /// captureFinished parks the trigger on what was just shot.
+    ///
+    /// The whole body runs on the trigger queue: it reads the sampler's own
+    /// state (lastBoxes, lastFaces, lastScene) and mutates the unlocked
+    /// Trigger, both of which are queue-confined. It used to run on the main
+    /// actor, reading Swift arrays the queue was mutating at 30Hz — a COW
+    /// refcount race, i.e. heap corruption on a long enough session.
     func captureFinished() {
-        // The shot card's own picture goes with it, so `hold` can tell a card
-        // laid on the same spot from this one settling back. The card being
-        // watched is the one that fired, so its signature is the one whose box
-        // still overlaps.
-        let watched = trigger.snapshot.cue
-        let cardFace = watched.flatMap { box -> SceneSignature? in
-            guard let i = lastBoxes.indices.first(where: {
-                overlapFraction(lastBoxes[$0], box) > 0.5
-            }), i < lastFaces.count else { return nil }
-            return lastFaces[i]
+        queue.async {
+            // The shot card's own picture goes with it, so `hold` can tell a
+            // card laid on the same spot from this one settling back. The card
+            // being watched is the one that fired, so its signature is the one
+            // whose box still overlaps.
+            let watched = self.trigger.snapshot.cue
+            let cardFace = watched.flatMap { box -> SceneSignature? in
+                guard let i = self.lastBoxes.indices.first(where: {
+                    overlapFraction(self.lastBoxes[$0], box) > 0.5
+                }), i < self.lastFaces.count else { return nil }
+                return self.lastFaces[i]
+            }
+            let cardBox = watched.flatMap { box -> CGRect? in
+                self.lastBoxes.first(where: { overlapFraction($0, box) > 0.5 })
+            }
+            // The window travels with the picture. Every later comparison
+            // samples through this exact rect, which is what keeps a
+            // motionless card reading as motionless.
+            self.trigger.captureFinished(scene: self.lastScene, cardScene: cardFace, cardBox: cardBox)
+            self.busy.clear()
+            let phase = self.trigger.phase
+            Task { @MainActor in self.onPhase?(phase) }
         }
-        let cardBox = watched.flatMap { box -> CGRect? in
-            lastBoxes.first(where: { overlapFraction($0, box) > 0.5 })
-        }
-        // The window travels with the picture. Every later comparison samples
-        // through this exact rect, which is what keeps a motionless card
-        // reading as motionless.
-        trigger.captureFinished(scene: lastScene, cardScene: cardFace, cardBox: cardBox)
-        busy.clear()
-        Task { @MainActor in self.onPhase?(self.trigger.phase) }
     }
 
     /// nudge is the parent's content-aware re-arm.
@@ -209,13 +240,19 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     func rearmForResult() {
-        trigger.forceRearm(cause: .none)
-        Task { @MainActor in self.onPhase?(self.trigger.phase) }
+        queue.async {
+            self.trigger.forceRearm(cause: .none)
+            let phase = self.trigger.phase
+            Task { @MainActor in self.onPhase?(phase) }
+        }
     }
 
     func nudge() {
-        trigger.forceRearm()
-        Task { @MainActor in self.onPhase?(self.trigger.phase) }
+        queue.async {
+            self.trigger.forceRearm()
+            let phase = self.trigger.phase
+            Task { @MainActor in self.onPhase?(phase) }
+        }
     }
 
     private let pendingArm = Flag()
@@ -226,7 +263,20 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard armed, !busy.isSet || wantsFrame else { return }
+        // A pending still request is served before every trigger gate: it is
+        // the manual shutter, and it must fire with hands-free off. It used
+        // to sit below the `armed` guard, so toggling auto off and pressing
+        // capture parked the whole session on a frame this method was never
+        // going to hand over.
+        if frameRequest != nil, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            let request = frameRequest
+            frameRequest = nil
+            bufferSizeBox.value = CGSize(width: CVPixelBufferGetWidth(buffer),
+                                         height: CVPixelBufferGetHeight(buffer))
+            request?(buffer)
+            return
+        }
+        guard armed.isSet, !busy.isSet || wantsFrame else { return }
         // Throttle to the trigger's own interval rather than a constant.
         //
         // This was hardcoded at 0.1s "regardless of the camera's frame rate",
@@ -246,15 +296,8 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         lastSample = now
 
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        bufferSize = CGSize(width: CVPixelBufferGetWidth(buffer),
-                            height: CVPixelBufferGetHeight(buffer))
-        // A pending still request is served before anything else: it is the
-        // shutter, and everything below is about deciding when to press it.
-        if let request = frameRequest {
-            frameRequest = nil
-            request(buffer)
-            return
-        }
+        bufferSizeBox.value = CGSize(width: CVPixelBufferGetWidth(buffer),
+                                     height: CVPixelBufferGetHeight(buffer))
         let scene = sceneSignature(buffer)
         lastScene = scene
         let boxes = triggerRects(buffer)
@@ -321,9 +364,9 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             // watched happen, or a timer that expired on the parent. The parent
             // has been inferring this from a clock; now it is told.
             let cause = trigger.rearmCause
-            lastFireCause = cause
-            lastFireHoldDelta = fired.holdDelta
-            lastFireFaceDelta = fired.faceDelta
+            fireCauseBox.value = cause
+            fireHoldDeltaBox.value = fired.holdDelta
+            fireFaceDeltaBox.value = fired.faceDelta
             Task { @MainActor in
                 self.onTrace?(
                     "trigger fire \(fired.line) settleMS=\(settleMS) cause=\(cause.rawValue)")
@@ -370,10 +413,52 @@ final class Flag: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// testAndSet sets the flag and reports whether it was already set — the
+    /// one-shot guard where a timed-out capture and a late frame race to be
+    /// the single resumption of one continuation.
+    func testAndSet() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = value
+        value = true
+        return was
+    }
+
     var isSet: Bool {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+/// A value shared between the capture queue and the main actor, behind a
+/// lock — Flag's shape for payloads that are not a Bool (the tap's buffer
+/// size, the fire diagnostics). Reads and writes are individually atomic;
+/// counters that must check-and-increment as one transaction go through
+/// `update`, because a get-then-set from two threads is how an in-flight
+/// count drifts and sticks.
+final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: T
+    init(_ v: T) { self.v = v }
+    var value: T {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return v
+        }
+        set {
+            lock.lock()
+            v = newValue
+            lock.unlock()
+        }
+    }
+
+    /// update runs one compound read-modify-write under the lock.
+    func update<R>(_ body: (inout T) -> R) -> R {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&v)
     }
 }
 

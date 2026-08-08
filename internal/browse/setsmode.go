@@ -225,10 +225,13 @@ func (m *Model) removeSetRow(name, id, finish string, binders []store.Holding) {
 			m.setError(err)
 			return
 		}
+		// The condition rides on the restore record: RestoreHoldings keys on
+		// it, so dropping it here re-inserted an NM row as a new '' row —
+		// the grade silently lost to its own undo.
 		removed = append(removed, store.Holding{
 			ContainerID: h.ContainerID, ContainerName: h.ContainerName,
 			ContainerKind: store.KindCollection, Finish: finish,
-			Board: "main", Quantity: previous,
+			Condition: h.Condition, Board: "main", Quantity: previous,
 		})
 	}
 	record()

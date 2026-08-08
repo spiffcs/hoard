@@ -41,6 +41,7 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 	file := fs.String("file", "", "import from a text/exported decklist file instead of a URL")
 	name := fs.String("name", "", "deck name (defaults to the file name for --file imports)")
 	source := fs.String("source", "", "provider label for text imports (e.g. moxfield)")
+	refresh := fs.Bool("refresh", false, "replace an already-imported deck without asking (discards manual edits to its cards)")
 	pos, err := parsePositionals(fs, args)
 	if err != nil {
 		return err
@@ -60,8 +61,17 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
+	// The re-import gate: an existing deck's entries are replaced wholesale,
+	// so DeckAdd asks first. --refresh pre-answers for scripts; otherwise
+	// the terminal gets the same [y/N] every confirm in hoard speaks.
+	deps := addDeps(st)
+	if *refresh {
+		deps.Confirm = func(string) bool { return true }
+	} else {
+		deps.Confirm = confirm
+	}
 	pr := stderrPrinter()
-	res, err := action.DeckAdd(ctx, addDeps(st), pr.Fn(), deck)
+	res, err := action.DeckAdd(ctx, deps, pr.Fn(), deck)
 	pr.Close()
 	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
@@ -78,6 +88,12 @@ func cmdDeckAdd(ctx context.Context, st *store.Store, args []string) error {
 		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
 		for _, u := range res.Unresolved {
 			r.Item(u)
+		}
+	}
+	if len(deck.Skipped) > 0 {
+		r.Detail("%d lines could not be read and were skipped:", len(deck.Skipped))
+		for _, sk := range deck.Skipped {
+			r.Item(sk)
 		}
 	}
 	return err

@@ -837,8 +837,15 @@ func TestRecordPricesWritesValueSnapshot(t *testing.T) {
 	// A second observation at a distinct instant lands beside it, prices
 	// unchanged — written directly so the test does not sleep out a
 	// same-second collision.
-	if err := s.snapshotValue("2099-01-01T00:00:00Z"); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := snapshotValue(tx, "2099-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("snapshotValue: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
 	}
 	if snaps, _ = s.ValueSnapshots(); len(snaps) != 2 {
 		t.Errorf("snapshots = %d, want the unchanged value recorded again", len(snaps))

@@ -47,6 +47,10 @@ type Deck struct {
 	SourceURL string
 	Format    string
 	Entries   []Entry
+	// Skipped are the lines a text import could not read, with their line
+	// numbers, so the caller can say what was dropped instead of failing the
+	// whole file over one odd line. Provider imports leave it empty.
+	Skipped []string
 }
 
 // Provider imports decks from one kind of URL.

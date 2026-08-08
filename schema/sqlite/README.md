@@ -42,8 +42,7 @@ ORDER BY ct.name, c.name;
 
 `cards.scryfall_id` is a Scryfall UUID and `cards.mtgjson_uuid` an MTGJSON one,
 so a query joins directly against either ecosystem's bulk data without matching
-on names. See [docs/data-model.md](../../docs/data-model.md) for what the
-columns mean and which of them are identity.
+on names.
 
 ## Two databases, different promises
 
@@ -64,7 +63,4 @@ a version bump discards and rebuilds it. Do not build anything on it — read
 
 ## Related
 
-- [docs/data-model.md](../../docs/data-model.md) — what the tables mean, and how
-  a printing is identified.
 - [schema/json/README.md](../json/README.md) — the versioned `--json` output.
-- [docs/csv.md](../../docs/csv.md) — the CSV import and export formats.

@@ -92,11 +92,13 @@ func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 		t.Fatalf("SaveCardKingdomLinks: %v", err)
 	}
 	// Unreachable cache and no network; only the supplied id can satisfy this.
-	byUUID, _, err := New(s, filepath.Join(t.TempDir(), "nope")).want(context.Background(),
-		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "known-uuid"}})
+	f := New(s, filepath.Join(t.TempDir(), "nope"))
+	refs := []Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "known-uuid"}}
+	uuids, err := f.resolve(context.Background(), refs)
 	if err != nil {
-		t.Fatalf("want: %v", err)
+		t.Fatalf("resolve: %v", err)
 	}
+	byUUID, _ := f.want(refs, uuids)
 	if len(byUUID) != 1 {
 		t.Errorf("resolvable = %d, want the supplied id counted", len(byUUID))
 	}
@@ -129,9 +131,9 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	var byteEvents int
 	f := New(s, t.TempDir()).WithBaseURL(srv.URL).
 		WithBytes(func(done, total int64) { byteEvents++ })
-	if _, _, err := f.want(context.Background(),
+	if _, err := f.resolve(context.Background(),
 		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "uuid-ripple"}}); err != nil {
-		t.Fatalf("want: %v", err)
+		t.Fatalf("resolve: %v", err)
 	}
 	if hits != 1 {
 		t.Fatalf("set file fetched %d times, want once", hits)
@@ -151,9 +153,9 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	// Stamped means done: a second pass fetches nothing (the cache dir is
 	// fresh, so a fetch would hit the server again).
 	f2 := New(s, t.TempDir()).WithBaseURL(srv.URL)
-	if _, _, err := f2.want(context.Background(),
+	if _, err := f2.resolve(context.Background(),
 		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "uuid-ripple"}}); err != nil {
-		t.Fatalf("second want: %v", err)
+		t.Fatalf("second resolve: %v", err)
 	}
 	if hits != 1 {
 		t.Errorf("set file fetched %d times after stamping, want still 1", hits)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -84,6 +85,37 @@ func TestMatchingCardIDs(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The filter's predicate columns are VIRTUAL over raw_json, and the planner
+// left to itself scans the table — re-parsing kilobytes of JSON per row on
+// every filter keystroke. MatchingCardIDs pins the v27 trait index instead;
+// this asserts the pin holds, since losing it would not fail any correctness
+// test, only bring the stutter back.
+func TestMatchingCardIDsReadsFromTheTraitIndex(t *testing.T) {
+	s := newTestStore(t)
+	catalog(t, s)
+
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN
+SELECT scryfall_id FROM cards INDEXED BY cards_trait_filter
+WHERE type_line IS NOT NULL AND lower(type_line) LIKE ?`, "%creature%")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, aux int
+		var detail string
+		if err := rows.Scan(&id, &parent, &aux, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	joined := strings.Join(plan, "\n")
+	if !strings.Contains(joined, "cards_trait_filter") {
+		t.Errorf("plan does not read the trait index:\n%s", joined)
 	}
 }
 

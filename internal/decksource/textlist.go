@@ -15,10 +15,12 @@ import (
 // etc.:
 //
 //	"2 Sol Ring", "1x Lightning Bolt", "1 Ulamog, the Infinite Gyre (UMA) 7",
-//	"1 Sol Ring (C21) 1 *F*"
+//	"1 Sol Ring (C21) 1 *F*", "SB: 2 Duress" (MTGO .dek exports mark the
+//	sideboard per line, not with a section header)
 //
-// Groups: quantity, name, optional set code, optional collector number.
-var lineRE = regexp.MustCompile(`^(\d+)\s*[xX]?\s+(.+?)(?:\s+\(([A-Za-z0-9]+)\)(?:\s+(\S+))?)?\s*(\*[EFef]\*)?\s*$`)
+// Groups: optional SB marker, quantity, name, optional set code, optional
+// collector number.
+var lineRE = regexp.MustCompile(`^(?:([Ss][Bb]):\s*)?(\d+)\s*[xX]?\s+(.+?)(?:\s+\(([A-Za-z0-9]+)\)(?:\s+(\S+))?)?\s*(\*[EFef]\*)?\s*$`)
 
 // sectionHeaders maps a lowercased header line to a board.
 var sectionHeaders = map[string]string{
@@ -64,33 +66,50 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 
 		entry, ok := parseLine(line)
 		if !ok {
-			return nil, fmt.Errorf("line %d: cannot parse decklist entry %q", lineNo, line)
+			// Skip and report rather than abort: one odd line — a URL, a
+			// separator, an export quirk — used to refuse a whole 99-card
+			// file. The caller says what was dropped; the error below stands
+			// only when nothing at all parsed, where "no cards" is the truth.
+			d.Skipped = append(d.Skipped, fmt.Sprintf("line %d: %s", lineNo, line))
+			continue
 		}
-		entry.Board = board
+		// A per-line board marker (SB:) beats the section the line sits in.
+		if entry.Board == "" {
+			entry.Board = board
+		}
 		d.Entries = append(d.Entries, entry)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
 	if len(d.Entries) == 0 {
+		if len(d.Skipped) > 0 {
+			return nil, fmt.Errorf("no cards found in decklist; %d lines could not be read (e.g. %s)",
+				len(d.Skipped), d.Skipped[0])
+		}
 		return nil, fmt.Errorf("no cards found in decklist")
 	}
 	return d, nil
 }
 
 // parseLine reads one card line — "2 Sol Ring", "1x Bolt (2X2) 117 *F*" —
-// into an Entry with no board (the caller knows what section it is reading).
+// into an Entry whose board is empty unless the line names one itself (an
+// "SB:" prefix); the caller fills the section it is reading otherwise.
 func parseLine(line string) (Entry, bool) {
 	m := lineRE.FindStringSubmatch(line)
 	if m == nil {
 		return Entry{}, false
 	}
-	qty, _ := strconv.Atoi(m[1])
+	board := ""
+	if m[1] != "" {
+		board = BoardSide
+	}
+	qty, _ := strconv.Atoi(m[2])
 	if qty < 1 {
 		qty = 1
 	}
-	name := strings.TrimSpace(m[2])
-	set, number := m[3], m[4]
+	name := strings.TrimSpace(m[3])
+	set, number := m[4], m[5]
 
 	var ident scryfall.Identifier
 	switch {
@@ -100,13 +119,13 @@ func parseLine(line string) (Entry, bool) {
 		ident = scryfall.Identifier{Name: name}
 	}
 	finish := "nonfoil"
-	switch strings.ToUpper(m[5]) {
+	switch strings.ToUpper(m[6]) {
 	case "*F*":
 		finish = "foil"
 	case "*E*":
 		finish = "etched"
 	}
-	return Entry{Ident: ident, Name: name, Quantity: qty, Finish: finish}, true
+	return Entry{Ident: ident, Name: name, Quantity: qty, Finish: finish, Board: board}, true
 }
 
 // ParseLoose reads a pasted card list destined for a binder: every parseable

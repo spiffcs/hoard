@@ -169,19 +169,19 @@ func storeAdder(st *store.Store) tui.Adder {
 		// read committed the nonfoil default, and a later look read it. The
 		// guess it corrects is answered, so its audit row goes too.
 		if res.ReplacesFinish != "" && res.ReplacesFinish != res.Finish {
+			// The finish re-key clears the guess it corrects inside its own
+			// transaction (see store.MoveEntryFinish), so no separate
+			// ClearFinishGuess call — a second delete here would eat an
+			// unrelated guess row for the same printing.
 			if res.ContainerID != 0 {
 				// The scan only ever corrects what it just wrote, which is
 				// unassessed by construction: a camera cannot judge wear.
-				if _, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
-					res.ReplacesFinish, res.Finish, store.ConditionUnknown); err != nil {
-					return err
-				}
-				return st.ClearFinishGuess(res.ContainerID, res.Card.ID, res.ReplacesFinish)
-			}
-			if _, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish); err != nil {
+				_, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
+					res.ReplacesFinish, res.Finish, store.ConditionUnknown)
 				return err
 			}
-			return st.ClearFinishGuess(res.ContainerID, res.Card.ID, res.ReplacesFinish)
+			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)
+			return err
 		}
 		add := func() error {
 			if res.ContainerID != 0 {
@@ -236,12 +236,16 @@ func printScanSummary(sum tui.Summary) {
 	ok := r.OutEnv.OK()
 	auto, reviewed := sum.Count("auto"), sum.Count("reviewed")+sum.Count("duplicate-confirmed")
 	skipped, discarded := sum.Count("skipped"), sum.Count("discarded")
+	repeats := sum.Count("dropped-repeat")
 	line := fmt.Sprintf("Scan session: %d auto-added, %d reviewed", auto, reviewed)
 	if skipped > 0 {
 		line += fmt.Sprintf(", %d skipped", skipped)
 	}
 	if discarded > 0 {
 		line += fmt.Sprintf(", %d discarded", discarded)
+	}
+	if repeats > 0 {
+		line += fmt.Sprintf(", %d repeat sightings dropped", repeats)
 	}
 	// Captures that held no card at all. Not listed individually — there is
 	// nothing to name — but counted, so a run where the scanner was quietly
@@ -262,6 +266,8 @@ func printScanSummary(sum tui.Summary) {
 		case "skipped":
 			r.Detail("- skipped %s", e.Line)
 		case "discarded":
+			r.Detail("- %s", e.Line)
+		case "dropped-repeat":
 			r.Detail("- %s", e.Line)
 		}
 	}

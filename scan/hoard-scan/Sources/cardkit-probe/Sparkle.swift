@@ -366,7 +366,7 @@ func anchorFit(manifest: String) async -> Never {
 ///
 /// The wide window is a *measuring instrument* and must never become the
 /// shipping one: at ±0.037/±0.042 the corpus's highest nonfoil goes 0.470 to
-/// 0.676 and two false positives appear. See docs/scanner-foil-registration.md.
+/// 0.676 and two false positives appear.
 func sparkleWhere(path: String) async -> Never {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)

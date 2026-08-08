@@ -70,6 +70,9 @@ struct SessionView: View {
             VStack {
                 header
                 Spacer()
+                if let offer = link.dupOffer {
+                    dupOfferBanner(offer)
+                }
                 footer
             }
         }
@@ -147,6 +150,23 @@ struct SessionView: View {
             // mid-box would end the session silently.
             UIApplication.shared.isIdleTimerDisabled = true
         }
+        // The mirror of .task, which re-wires everything on the way back in.
+        // Every handler above captures this view; left standing after the
+        // screen goes they retain a dead view snapshot — and through its
+        // StateObject, the camera session itself, which kept running into
+        // nothing. Camera off, handlers cleared, and the screen may sleep
+        // again while the camera tab is not the one showing.
+        .onDisappear {
+            camera.stop()
+            link.onCapture = nil
+            link.onAuto = nil
+            link.onRearm = nil
+            link.onResult = nil
+            link.onEVBias = nil
+            link.onTorch = nil
+            link.onTune = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 
     /// Until the Mac connects, the code is the only thing on screen that
@@ -176,6 +196,31 @@ struct SessionView: View {
             .padding(.horizontal)
             .padding(.top, 8)
         }
+    }
+
+    /// The second-copy offer, made answerable where the operator is looking.
+    /// The terminal has always printed "press + if that's a second copy"; in
+    /// a hands-free session nobody reads the terminal, so every offer of one
+    /// live session expired unseen. Deliberately quiet — the suppression it
+    /// reports was silent by design, and a tone would turn every *correct*
+    /// suppression into a stop.
+    private func dupOfferBanner(_ text: String) -> some View {
+        HStack(spacing: 10) {
+            Text(text)
+                .font(.callout)
+                .lineLimit(2)
+            Button {
+                link.promote()
+            } label: {
+                Label("Second copy", systemImage: "plus.circle.fill")
+                    .font(.callout.bold())
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12)
     }
 
     private var footer: some View {

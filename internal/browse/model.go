@@ -371,6 +371,11 @@ type Model struct {
 	addChild    *tui.Child
 	addSummary  tui.Summary
 
+	// helpRowsMemo caches the gutter's tallest-view-help reservation; see
+	// tallestViewHelpRows. Shared across the Elm loop's value copies by
+	// being a map.
+	helpRowsMemo map[helpRowsKey]int
+
 	status    string
 	statusErr bool
 
@@ -390,7 +395,7 @@ func New(st Store, opts ...Option) (Model, error) {
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		cellAspect: ui.CellAspectOverride(),
 		commands:   commands(), moversPennyLimit: defaultPennyLimit,
-		marketFloor: defaultMarketFloor}
+		marketFloor: defaultMarketFloor, helpRowsMemo: map[helpRowsKey]int{}}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -1006,9 +1011,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The held list is where a wrong count gets noticed, so the count
 		// is editable right here — same keys, same rules as the holdings
 		// pane (deck rows refuse; the imported list owns them).
-		m.adjustHeldQuantity(1)
+		return m, m.adjustHeldQuantity(1)
 	case "-", "_":
-		m.adjustHeldQuantity(-1)
+		return m, m.adjustHeldQuantity(-1)
 	case "d":
 		m.askHeldRemoval()
 	case "pgup":
@@ -1247,6 +1252,9 @@ func (m *Model) stageQuit() {
 			prompt: title + " is still running. Quit anyway?",
 			help:   "y quit · any other key stays",
 			onYes: func(m *Model) tea.Cmd {
+				// A bridge question parked behind this confirm dies with the
+				// program — answer it, or its worker blocks past exit.
+				m.declineDeferredAsk()
 				m.cancelOp()
 				return tea.Quit
 			},
@@ -1256,18 +1264,23 @@ func (m *Model) stageQuit() {
 	m.confirm = &pendingConfirm{
 		prompt: "quit hoard?",
 		help:   "y quit · any other key stays",
-		onYes:  func(*Model) tea.Cmd { return tea.Quit },
+		onYes: func(m *Model) tea.Cmd {
+			m.declineDeferredAsk()
+			return tea.Quit
+		},
 	}
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		// Hard exit, but nobody gets left hanging: a bridge worker blocked
-		// on this question hears "no", and a running op is cancelled so it
-		// unwinds before the store closes underneath it.
+		// on this question hears "no", a parked follow-up question hears the
+		// same, and a running op is cancelled so it unwinds before the store
+		// closes underneath it.
 		if m.confirm.onNo != nil {
 			m.confirm.onNo(&m)
 		}
+		m.declineDeferredAsk()
 		m.cancelOp()
 		return m, tea.Quit
 	}

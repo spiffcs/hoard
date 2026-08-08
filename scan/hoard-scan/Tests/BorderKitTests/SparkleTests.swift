@@ -56,6 +56,16 @@ private func syntheticCard(du: CGFloat = 0, dv: CGFloat = 0,
     }
 }
 
+@Test func wrongLengthTemplateDecimatesToNothing() {
+    // The templates are generated source, so a wrong-length regeneration is a
+    // runtime hazard rather than a build error — decimation used to index
+    // rows*cols into whatever it was handed. It must refuse, not crash: an
+    // empty vector correlates to zero and the card goes to review.
+    #expect(sparkleTemplateDecimated(2, [0.1, 0.2, 0.3]).isEmpty)
+    #expect(sparkleTemplateDecimated(4, []).isEmpty)
+    #expect(!sparkleTemplateDecimated(2).isEmpty, "the shipped template must still decimate")
+}
+
 @Test func findsAPerfectMatch() throws {
     let r = try #require(sparkleScan(syntheticCard()))
     #expect(r.score > 0.99, "a card that is the template should score 1, got \(r.score)")
@@ -224,6 +234,28 @@ private func syntheticCard(du: CGFloat = 0, dv: CGFloat = 0,
     let v = SparkleVerdict(luma: flatLuma, chroma: furniture)
     #expect(!v.isFoil)
     #expect(v.channel.isEmpty)
+}
+
+@Test func flatLumaCorrelationIsNotAFoil() {
+    // Hunter Sliver, live 2026-08-08: a confirmed nonfoil scored 0.526-0.607
+    // on luma — through the accept bar, above true foils, unfixable by any
+    // score threshold — with luma contrast 0.0134-0.0172 on all five reads.
+    // A patch that flat is furniture correlating with the template's shape,
+    // not a marker: every true-foil accept in the corpus carries 0.0266+.
+    let flatEcho = SparkleReading(score: 0.607, offsetU: 0, offsetV: 0,
+                                  contrast: 0.017, samples: 1)
+    let neutral = SparkleReading(score: 0.3, offsetU: 0, offsetV: 0,
+                                 contrast: 0.02, samples: 1)
+    let v = SparkleVerdict(luma: flatEcho, chroma: neutral)
+    #expect(!v.isFoil)
+    #expect(v.channel.isEmpty)
+
+    // The same score with real structure under it stays an accept.
+    let star = SparkleReading(score: 0.607, offsetU: 0, offsetV: 0,
+                              contrast: 0.027, samples: 1)
+    let real = SparkleVerdict(luma: star, chroma: neutral)
+    #expect(real.isFoil)
+    #expect(real.channel == "luma")
 }
 
 @Test func lumaStillOutranksChromaInTheLog() {

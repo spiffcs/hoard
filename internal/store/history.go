@@ -174,16 +174,28 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// One timestamp for the history rows and the snapshot, so the refresh
-	// reads back as a single instant everywhere.
+	// One timestamp for the history rows and the snapshot, and one
+	// transaction for both: written separately, an interrupt between them
+	// left history rows with no snapshot at that instant — and the next
+	// refresh, seeing the prices already recorded, wrote nothing, so the
+	// value chart carried a permanent gap indistinguishable from "never
+	// looked".
 	ts := now()
-	if err := s.appendPrices(seen, ts); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := appendPrices(tx, seen, ts); err != nil {
 		return nil, err
 	}
 	// The snapshot is written whether or not anything moved: a chart's flat
 	// stretches are information ("checked, unchanged"), and skipping them
 	// would leave gaps indistinguishable from "never looked".
-	if err := s.snapshotValue(ts); err != nil {
+	if err := snapshotValue(tx, ts); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return moved, nil
@@ -192,8 +204,8 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 // snapshotValue records what the whole hoard is worth right now, split the way
 // the summary splits it. Uses entryValue, so the snapshot and the summary can
 // never disagree about the same instant.
-func (s *Store) snapshotValue(ts string) error {
-	_, err := s.db.Exec(`
+func snapshotValue(tx *sql.Tx, ts string) error {
+	_, err := tx.Exec(`
 INSERT INTO value_snapshots (as_of, binder, decks, total, source)
 SELECT ?,
        COALESCE(SUM(CASE WHEN ct.kind = '`+KindCollection+`' THEN e.quantity * `+entryValue+` END), 0),
@@ -247,17 +259,12 @@ FROM value_snapshots ORDER BY as_of`)
 }
 
 // appendPrices writes one observation per change, all at the same instant so a
-// single refresh reads back as a single point in the series.
-func (s *Store) appendPrices(changes []PriceChange, ts string) error {
+// single refresh reads back as a single point in the series. It runs inside
+// the caller's transaction, beside the value snapshot the observations imply.
+func appendPrices(tx *sql.Tx, changes []PriceChange, ts string) error {
 	if len(changes) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	// Two refreshes within the same second collide on the primary key. The later
 	// price is the truer one, so it wins rather than failing the whole run.
 	stmt, err := tx.Prepare(`
@@ -276,7 +283,7 @@ ON CONFLICT(scryfall_id, finish, as_of) DO UPDATE SET
 			return fmt.Errorf("recording price for %s: %w", c.Name, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Movers reports every held printing whose price differs from what it was at
@@ -387,20 +394,28 @@ func (s *Store) backfillHistory(table string, byCard map[string][]mtgjson.Observ
 		}
 		normalized[sid] = ns
 	}
-	if err := s.retireSwitchedSeries(table, normalized); err != nil {
-		return 0, 0, err
-	}
-	// After any retirements, so a replaced series' bound reflects only the
-	// rows that actually survived.
-	firstLive, err := s.firstObservationsIn(table)
-	if err != nil {
-		return 0, 0, err
-	}
+	// One transaction around the whole import — the retirements and the
+	// replacement inserts live or die together. The retire pass used to
+	// commit its DELETEs on the spot, before this transaction began, so an
+	// interrupt in the gap destroyed a card's reconstructed series with
+	// nothing put back — and MTGJSON reaches back only 90 days, so anything
+	// older was gone for good. The package's own doctrine (main.go: "every
+	// write is a single transaction") now actually holds here.
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
+
+	if err := retireSwitchedSeries(tx, table, normalized); err != nil {
+		return 0, 0, err
+	}
+	// After any retirements, so a replaced series' bound reflects only the
+	// rows that actually survived.
+	firstLive, err := firstObservationsIn(tx, table)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	stmt, err := tx.Prepare(`
 INSERT INTO ` + table + ` (scryfall_id, finish, price_usd, source, as_of)
@@ -447,7 +462,9 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 // were actually seen, so "live rows stand" survives the switch. A series
 // with no incoming observations keeps its old reconstruction: deletion
 // without a replacement would just erase history.
-func (s *Store) retireSwitchedSeries(table string, byCard map[string][]mtgjson.Observation) error {
+// It runs inside the backfill's own transaction: a retirement whose
+// replacement never lands must roll back with it.
+func retireSwitchedSeries(tx *sql.Tx, table string, byCard map[string][]mtgjson.Observation) error {
 	incoming := map[string]string{} // sid|finish → the import's vendor
 	for sid, obs := range byCard {
 		for _, o := range obs {
@@ -459,7 +476,7 @@ func (s *Store) retireSwitchedSeries(table string, byCard map[string][]mtgjson.O
 	if len(incoming) == 0 {
 		return nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := tx.Query(`
 SELECT DISTINCT scryfall_id, finish, source FROM ` + table + `
 WHERE as_of LIKE '%T00:00:00Z'`)
 	if err != nil {
@@ -487,7 +504,7 @@ WHERE as_of LIKE '%T00:00:00Z'`)
 		return err
 	}
 	for _, sw := range switched {
-		if _, err := s.db.Exec(`
+		if _, err := tx.Exec(`
 DELETE FROM `+table+`
 WHERE scryfall_id = ? AND finish = ? AND as_of LIKE '%T00:00:00Z'
   AND source != ? AND source != 'scryfall'`,
@@ -509,8 +526,8 @@ func storeFinish(finish string) string {
 // firstObservationsIn maps every (card, finish) with history in the given
 // table to the moment its live history began — the per-series bound the
 // backfill imports up to.
-func (s *Store) firstObservationsIn(table string) (map[string]string, error) {
-	rows, err := s.db.Query(`
+func firstObservationsIn(tx *sql.Tx, table string) (map[string]string, error) {
+	rows, err := tx.Query(`
 SELECT scryfall_id, finish, MIN(as_of) FROM ` + table + `
 GROUP BY scryfall_id, finish`)
 	if err != nil {

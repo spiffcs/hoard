@@ -101,7 +101,14 @@ public final class PeerLink {
     private let queue: DispatchQueue
     private var reader = FrameReader()
     /// Set while a droppable send is in flight. See the file header.
-    private var previewInFlight = false
+    ///
+    /// Behind a lock, not a bare Bool: it is armed on whatever thread the
+    /// sender is on and cleared by the network completion on `queue`. As a
+    /// plain Bool it could also stick true across a mid-send teardown —
+    /// contentProcessed does fire on cancellation, but a stuck flag starves
+    /// every preview frame after it forever, so the state handler clears it
+    /// on failure and cancel as a belt beside that brace.
+    private let previewInFlight = SendGate()
     private(set) public var state: PeerState = .connecting
 
     init(connection: NWConnection, role: PeerRole, queue: DispatchQueue) {
@@ -131,6 +138,12 @@ public final class PeerLink {
             default:
                 break
             }
+            // A connection that failed or was cancelled will never run the
+            // droppable completion that clears the gate; leaving it armed
+            // would refuse every frame on a link that later recovers a
+            // wrapper (it cannot — but the flag should not be the reason).
+            if case .failed = st { self.previewInFlight.clear() }
+            if case .cancelled = st { self.previewInFlight.clear() }
         }
         connection.start(queue: queue)
     }
@@ -145,11 +158,27 @@ public final class PeerLink {
         self.role = role
     }
 
-    /// send queues a frame that must arrive. Control traffic only.
-    public func send(_ frame: Frame) {
-        guard let data = try? encode(frame) else { return }
+    /// limitPayloads narrows (or restores) the reader's frame-size ceiling.
+    /// The listener starts an unverified connection at hello size and raises
+    /// it here once the pairing proof checks out. Called on `queue`, where
+    /// the reader lives.
+    func limitPayloads(_ bytes: Int) {
+        reader.limit = bytes
+    }
+
+    /// send queues a frame that must arrive. Control traffic — and the
+    /// counted still path, whose caller needs `completed` to know when the
+    /// wire has let go of a multi-megabyte payload. Called even when the
+    /// frame never made it onto the wire, so a caller's in-flight count
+    /// cannot leak upward on an encode failure.
+    public func send(_ frame: Frame, completed: (() -> Void)? = nil) {
+        guard let data = try? encode(frame) else {
+            completed?()
+            return
+        }
         connection.send(content: data, completion: .contentProcessed { [weak self] err in
             if let err { self?.set(.failed(LinkFailure(err))) }
+            completed?()
         })
     }
 
@@ -160,11 +189,13 @@ public final class PeerLink {
     /// silently degrading is how it stops being one.
     @discardableResult
     public func sendDroppable(_ frame: Frame) -> Bool {
-        guard !previewInFlight, let data = try? encode(frame) else { return false }
-        previewInFlight = true
+        // Encode before arming the gate: an encode failure after testAndSet
+        // would leave it stuck with no completion coming to clear it.
+        guard let data = try? encode(frame) else { return false }
+        guard !previewInFlight.testAndSet() else { return false }
         connection.send(content: data, completion: .contentProcessed { [weak self] err in
             guard let self else { return }
-            self.previewInFlight = false
+            self.previewInFlight.clear()
             if let err { self.set(.failed(LinkFailure(err))) }
         })
         return true
@@ -213,6 +244,31 @@ public final class PeerLink {
 
     private func log(_ message: String) {
         FileHandle.standardError.write(Data("scan: \(message)\n".utf8))
+    }
+}
+
+/// A cross-thread Bool behind a lock — the capture head's Flag pattern,
+/// repeated here because ScanLink cannot depend on the app target that owns
+/// it. One in-flight gate per link, so the name says what it gates.
+final class SendGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    /// testAndSet arms the gate and reports whether it was already armed —
+    /// the check and the claim as one transaction, so two threads racing to
+    /// send cannot both pass a separate check first.
+    func testAndSet() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = value
+        value = true
+        return was
+    }
+
+    func clear() {
+        lock.lock()
+        value = false
+        lock.unlock()
     }
 }
 

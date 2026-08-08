@@ -387,10 +387,10 @@ public enum CardGeometry {
     public static let head = CGRect(x: 0, y: 0, width: 1, height: 0.30)
 
     /// The expansion symbol's neighbourhood, at the right end of the type line.
-    /// `docs/scanner-symbol-plan.md` measures the symbol's centre at (0.877,
-    /// 0.578) on the old frame and (0.867, 0.590) on the 8th Edition frame; this
-    /// window spans both with room to spare, because the constants have not been
-    /// re-measured at this resolution and a patch that misses is worth nothing.
+    /// The symbol's centre was measured at (0.877, 0.578) on the old frame and
+    /// (0.867, 0.590) on the 8th Edition frame; this window spans both with
+    /// room to spare, because the constants have not been re-measured at this
+    /// resolution and a patch that misses is worth nothing.
     public static let symbol = CGRect(x: 0.78, y: 0.53, width: 0.19, height: 0.11)
 }
 

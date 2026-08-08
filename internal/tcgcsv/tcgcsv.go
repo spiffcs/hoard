@@ -260,14 +260,23 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 	out := map[int]map[string]float64{}
 	var missing []int
 	for _, gid := range groupIDs {
-		b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)))
+		path := filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid))
+		b, err := os.ReadFile(path)
 		if err != nil {
 			missing = append(missing, gid)
 			continue
 		}
-		if prices, err := foilMarket(b); err == nil {
-			out[gid] = prices
+		prices, err := foilMarket(b)
+		if err != nil {
+			// A cache file that does not parse is not an answer, it is damage
+			// (a torn write from before these were atomic, a bad disk). Kept,
+			// it would stand in for this group-day forever — a permanent hole
+			// in the treated-foil history — so it is deleted and re-fetched.
+			os.Remove(path)
+			missing = append(missing, gid)
+			continue
 		}
+		out[gid] = prices
 	}
 	if len(missing) == 0 {
 		return out, nil
@@ -299,16 +308,46 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 		if len(b) == 0 {
 			// This day's archive has no such group — remember the absence so
 			// the next backfill does not re-download the archive to relearn it.
-			os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), []byte("{}"), 0o644)
+			writeFileAtomic(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), []byte("{}"))
 			continue
 		}
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), b, 0o644)
-		if prices, err := foilMarket(b); err == nil {
-			out[gid] = prices
+		prices, err := foilMarket(b)
+		if err != nil {
+			// A member that does not parse is a bad archive day. Left uncached
+			// so a later, repaired archive can still answer; caching it would
+			// only feed the delete-and-refetch path above every run.
+			continue
 		}
+		writeFileAtomic(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), b)
+		out[gid] = prices
 	}
 	pruneArchive(dir)
 	return out, nil
+}
+
+// writeFileAtomic lands b at path via a same-directory temp and rename — the
+// mtgjson cache's pattern. The extraction files written with it are treated as
+// authoritative by presence, so a ctrl-C or full disk mid-write must leave
+// nothing rather than truncated JSON claiming to be that group-day's answer.
+// Best-effort like the writes it replaces: the caller already holds the bytes,
+// so a failed cache write costs a re-download, not the result.
+func writeFileAtomic(path string, b []byte) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+	}
 }
 
 // pruneArchive removes extractions older than archiveKeepDays; their

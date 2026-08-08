@@ -41,7 +41,7 @@ public enum CardLayout {
     /// This is the card's horizontal landmark, and it has to be the *left*
     /// edge because the right one is wherever the sentence happened to end:
     /// across the same cards it ranges 0.42 to 0.62. Worth recording that
-    /// docs/scanner-limits.md called this footer "two centred rows" — it is
+    /// this footer was once described as "two centred rows" — it is
     /// left-aligned, and the measurement is what says so.
     ///
     /// **These two are the pre-1998 values only** — kept because they are what

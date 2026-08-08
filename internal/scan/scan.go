@@ -25,6 +25,10 @@ const (
 	EventError  = "error"  // capture failed; the session is still alive
 	EventClosed = "closed" // the session is over
 	EventAuto   = "auto"   // auto-trigger state change; see Event.State
+	// EventPromote is the operator answering the second-copy offer from the
+	// phone's screen — the same overrule the terminal's `+` key performs.
+	// The offer travels the other way as HUDResult.Note/Promote.
+	EventPromote = "promote"
 )
 
 // Event is one message from a capture session.
@@ -145,6 +149,17 @@ type HUDResult struct {
 	// weaker claim — plenty of foils print no marker at all, and a printing
 	// that does not come in foil cannot be one however the glyph read.
 	Finish string `json:"finish,omitempty"`
+	// Note is a short instruction for the phone's screen, sent when the
+	// duplicate rules suppressed a sighting the operator may overrule — the
+	// phone is what they are looking at mid-pile, not the terminal, and a
+	// prompt only the terminal shows is a prompt that goes unanswered
+	// (observed live: every "+ if that's a second copy" offer of a session
+	// expired unseen). Older phones ignore the field.
+	Note string `json:"note,omitempty"`
+	// Promote marks the note as the second-copy offer: the phone may show a
+	// button that answers it by sending a "promote" event back, the same
+	// overrule the terminal's `+` key performs.
+	Promote bool `json:"promote,omitempty"`
 }
 
 // CollectorAlt is one alternative collector block read from the band. Finish
@@ -390,10 +405,6 @@ type OpenOptions struct {
 	// tab, remembered per device in scan.json. A session without one cannot
 	// complete the handshake, so this is required in practice.
 	PairingCode string
-	// Mirror asks for a preview window on this Mac too. Off by default: the
-	// phone shows the preview, the price and the cue, and a second window is a
-	// second place to look during a session.
-	Mirror bool
 }
 
 var (

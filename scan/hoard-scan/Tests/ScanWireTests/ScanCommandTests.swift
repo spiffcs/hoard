@@ -54,6 +54,25 @@ func bareResultParses() {
     #expect(ScanCommand(line: "result") == .result(payload: ""))
 }
 
+@Test("tune parses in range and clamps out of range")
+func tuneIsClamped() {
+    // In range passes through untouched.
+    #expect(ScanCommand(line: "tune 6 0.05") == .tune(stable: 6, interval: 0.05))
+    // The tune knobs gate the capture path — the sample throttle sits in
+    // front of manual capture too — so a wire value must not be able to
+    // stall it. "tune 2000000000 1e9" once meant a trigger interval of
+    // roughly thirty years; now it means the slowest tuning that is still a
+    // session.
+    #expect(ScanCommand(line: "tune 2000000000 1e9")
+        == .tune(stable: 60, interval: 5.0))
+    // Below the floor clamps up rather than spinning the sampler.
+    #expect(ScanCommand(line: "tune 1 0.0001") == .tune(stable: 1, interval: 0.01))
+    // Zero and negative stay rejected: they are malformed, not extreme.
+    #expect(ScanCommand(line: "tune 0 0.5") == nil)
+    #expect(ScanCommand(line: "tune 6 -1") == nil)
+    #expect(ScanCommand(line: "tune 6") == nil, "a half-specified tuning must not parse")
+}
+
 @Test("an unknown verb is nil, not a crash and not a silent no-op")
 func unknownVerbsAreRejected() {
     // A newer hoard talking to an older helper is a supported pairing, so this

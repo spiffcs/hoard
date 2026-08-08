@@ -54,3 +54,98 @@ func TestFinishGuessRoundTrip(t *testing.T) {
 		t.Errorf("ClearFinishGuess of nothing: %v", err)
 	}
 }
+
+// The browse promise: fixing a wrong finish in the detail editor retires the
+// guess it corrects, so `hoard guessed` drains as the pile gets checked.
+func TestMoveEntryFinishClearsTheGuess(t *testing.T) {
+	s := newTestStore(t)
+	card := scryfall.Card{ID: "digger-id", Name: "Trap Digger", Set: "mmq",
+		CollectorNumber: "50", Finishes: []string{"nonfoil", "foil"},
+		ScryfallURL: "https://scryfall.com/card/mmq/50"}
+	if err := s.AddCardFinish(card, "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	cid, err := s.collectionID()
+	if err != nil {
+		t.Fatalf("collectionID: %v", err)
+	}
+	// The scan's sentinel for "the default binder" resolves to the real
+	// container, so the editor's real id can find the row again.
+	if err := s.RecordFinishGuess(0, card.ID, "nonfoil"); err != nil {
+		t.Fatalf("RecordFinishGuess: %v", err)
+	}
+
+	if _, err := s.MoveEntryFinish(cid, card.ID, "nonfoil", "foil", ConditionUnknown); err != nil {
+		t.Fatalf("MoveEntryFinish: %v", err)
+	}
+	rows, err := s.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("guesses after the correction = %d, want 0 — the re-key is the evidence", len(rows))
+	}
+}
+
+// Deleting a container takes its guesses with it (the v26 FK). Before it, a
+// removed binder left its guess rows behind forever: `hoard guessed` kept
+// listing cards to check in a binder that no longer existed.
+func TestDeletingContainerCascadesGuesses(t *testing.T) {
+	s := newTestStore(t)
+	card := scryfall.Card{ID: "cascade-id", Name: "Sol Ring", Set: "c21",
+		CollectorNumber: "1", ScryfallURL: "https://scryfall.com/card/c21/1"}
+	if err := s.AddCardFinish(card, "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	res, err := s.db.Exec(`
+INSERT INTO containers (kind, name, source, created_at, updated_at)
+VALUES ('collection', 'Trade Binder', 'manual', 'x', 'x')`)
+	if err != nil {
+		t.Fatalf("creating binder: %v", err)
+	}
+	bid, _ := res.LastInsertId()
+	if err := s.RecordFinishGuess(bid, card.ID, "nonfoil"); err != nil {
+		t.Fatalf("RecordFinishGuess: %v", err)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM containers WHERE id = ?`, bid); err != nil {
+		t.Fatalf("deleting binder: %v", err)
+	}
+	rows, err := s.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("guesses after deleting their container = %d, want 0", len(rows))
+	}
+}
+
+// A held row knows a guess is standing against it, which is how the browse
+// detail can mark the finish a scan defaulted.
+func TestHoldingsCarryTheGuessedFlag(t *testing.T) {
+	s := newTestStore(t)
+	card := scryfall.Card{ID: "levy-id", Name: "Charitable Levy", Set: "mmq",
+		CollectorNumber: "12", Finishes: []string{"nonfoil", "foil"},
+		ScryfallURL: "https://scryfall.com/card/mmq/12"}
+	if err := s.AddCardFinish(card, "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.RecordFinishGuess(0, card.ID, "nonfoil"); err != nil {
+		t.Fatalf("RecordFinishGuess: %v", err)
+	}
+	for _, load := range []struct {
+		what string
+		get  func() ([]Holding, error)
+	}{
+		{"HoldingsOf", func() ([]Holding, error) { return s.HoldingsOf(card.ID) }},
+		{"HoldingsOfName", func() ([]Holding, error) { return s.HoldingsOfName(card.Name) }},
+	} {
+		hs, err := load.get()
+		if err != nil {
+			t.Fatalf("%s: %v", load.what, err)
+		}
+		if len(hs) != 1 || !hs[0].Guessed {
+			t.Errorf("%s = %+v, want one holding wearing the guessed flag", load.what, hs)
+		}
+	}
+}

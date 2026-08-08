@@ -63,6 +63,13 @@ func awaitConfirm(ctx context.Context, ch <-chan ConfirmRequest) tea.Cmd {
 // at most one request can exist, so a single slot suffices). Either way the
 // pump re-arms.
 func (m Model) onOpConfirm(msg opConfirmMsg) (tea.Model, tea.Cmd) {
+	// The capacity contract was a doc comment; a zero-cap Reply turns every
+	// answer below into a blocking send against a worker that may have given
+	// up. Enforced at the door, loudly: this is a wiring bug in the caller,
+	// not a runtime condition to degrade around.
+	if cap(msg.req.Reply) < 1 {
+		panic("browse: ConfirmRequest.Reply must have capacity ≥ 1")
+	}
 	if m.confirm != nil {
 		req := msg.req
 		m.deferredAsk = &req
@@ -70,6 +77,19 @@ func (m Model) onOpConfirm(msg opConfirmMsg) (tea.Model, tea.Cmd) {
 		m.stageConfirmRequest(msg.req)
 	}
 	return m, awaitConfirm(m.ctx, m.confirmCh)
+}
+
+// declineDeferredAsk answers a parked bridge question "no" — the same
+// reading every non-yes key gives it — so no op goroutine stays blocked on
+// its reply past the program. The ask only exists while a user-staged
+// confirm is up, and the quit routes that bypass that confirm's own answer
+// path (ctrl+c inside it, a quit the confirm itself staged) would otherwise
+// strand the worker forever.
+func (m *Model) declineDeferredAsk() {
+	if m.deferredAsk != nil {
+		m.deferredAsk.Reply <- false
+		m.deferredAsk = nil
+	}
 }
 
 // stageConfirmRequest turns a bridge request into an ordinary confirm whose

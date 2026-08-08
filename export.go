@@ -63,15 +63,15 @@ func cmdExport(st *store.Store, args []string, jsonOut bool) error {
 	if *out == "" {
 		return write(os.Stdout, rows)
 	}
-	f, err := os.Create(*out)
+	f, err := createOutput(*out)
 	if err != nil {
 		return err
 	}
 	if err := write(f, rows); err != nil {
-		f.Close()
+		f.Abort()
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err := f.Commit(); err != nil {
 		return err
 	}
 	copies := 0

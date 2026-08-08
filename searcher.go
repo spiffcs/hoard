@@ -129,9 +129,16 @@ func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.
 	if err != nil || card == nil {
 		return card, cardname.Match{}, err
 	}
+	n, c := cardname.Normalize(text), cardname.Normalize(card.Name)
 	if !cardname.Plausible(text, card.Name) {
+		// Same nomination rule as the catalog: a truncated title comes back
+		// flagged PrefixOnly rather than as nothing, so the scan resolver
+		// can confirm it against the frame's collector number. Anything else
+		// implausible stays refused.
+		if cardname.PrefixCandidate(text, card.Name) {
+			return card, cardname.Match{Similarity: cardname.Similarity(n, c), PrefixOnly: true}, nil
+		}
 		return nil, cardname.Match{}, nil
 	}
-	n, c := cardname.Normalize(text), cardname.Normalize(card.Name)
 	return card, cardname.Match{Exact: n == c, Similarity: cardname.Similarity(n, c)}, nil
 }

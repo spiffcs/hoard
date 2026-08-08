@@ -139,6 +139,13 @@ func (s *Store) MoveEntryFinish(containerID int64, scryfallID, fromFinish, toFin
 	if fromFinish == toFinish {
 		return 0, nil
 	}
+	// Re-keying a finish is the evidence a scanner's guess was waiting for —
+	// a human looked at the card — so the newest guess standing on the old
+	// finish is answered here, in the same transaction as the correction.
+	// This is what makes `hoard guessed` drainable from the browser, which
+	// the scan flow promises ("fix a wrong one in browse … which clears it
+	// here"). Deleting nothing is fine: most re-keys never had a guess.
+	//
 	// The condition rides across untouched. Correcting a finish says nothing
 	// about a card's wear, and resetting it would quietly discard an
 	// assessment the user made.
@@ -183,6 +190,14 @@ DELETE FROM card_entries
 WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
   AND board = 'main'`,
 		containerID, scryfallID, fromFinish, condition); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`
+DELETE FROM finish_guesses WHERE id = (
+    SELECT id FROM finish_guesses
+    WHERE container_id = ? AND scryfall_id = ? AND finish = ?
+    ORDER BY id DESC LIMIT 1)`,
+		containerID, scryfallID, fromFinish); err != nil {
 		return 0, err
 	}
 	return prevTarget, tx.Commit()

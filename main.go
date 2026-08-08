@@ -82,6 +82,10 @@ func run(args []string) error {
 		printUsage(os.Stdout, ui.Detect(os.Stdout))
 		return nil
 	}
+	if cmd == "version" || cmd == "-v" || cmd == "--version" {
+		printVersion(os.Stdout, ui.Detect(os.Stdout))
+		return nil
+	}
 
 	// --db wins over $HOARD_DB, which in turn wins over the per-user default.
 	dbPath := dbFlag
@@ -464,15 +468,15 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if rerr != nil {
 				return "", rerr
 			}
-			f, ferr := os.Create(path)
+			f, ferr := createOutput(path)
 			if ferr != nil {
 				return "", ferr
 			}
 			if werr := write(f, rows); werr != nil {
-				f.Close()
+				f.Abort()
 				return "", werr
 			}
-			if cerr := f.Close(); cerr != nil {
+			if cerr := f.Commit(); cerr != nil {
 				return "", cerr
 			}
 			return fmt.Sprintf("exported %s rows to %s", ui.Count(len(rows)), path), nil

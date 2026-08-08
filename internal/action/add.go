@@ -30,6 +30,13 @@ func binderTarget(st *store.Store, ref string) (int64, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
+	// ListBinders creates the default binder on demand today, but that
+	// invariant lives three call-frames away; a future filter (hidden
+	// binders, a corrupt row) returning an empty list must be an error here,
+	// not an index panic on the add path.
+	if len(binders) == 0 {
+		return 0, "", fmt.Errorf("no default binder exists to add into; the database is missing its collection container")
+	}
 	return binders[0].ID, binders[0].Name, nil
 }
 
@@ -184,6 +191,22 @@ type DeckAddResult struct {
 func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck) (DeckAddResult, error) {
 	var res DeckAddResult
 	res.Name, res.Source = deck.Name, deck.Source
+
+	// Re-importing an existing deck replaces every entry, and with them any
+	// conditions assessed or printings corrected by hand — an evening of
+	// browse edits gone to one re-pasted URL. So an overwrite is asked, not
+	// assumed. Asked before the resolve work, too: the answer changes
+	// whether any of it should happen. The CLI wires Confirm to a terminal
+	// prompt (or --refresh); the browser to its confirm surface; a script
+	// with neither declines and gets told how to proceed.
+	if _, name, exists, err := d.Store.DeckBySource(deck.Source, deck.SourceID); err != nil {
+		return res, err
+	} else if exists {
+		q := fmt.Sprintf("Deck %q is already imported. Replace its cards (manual edits to them are lost)?", name)
+		if !d.confirm(q) {
+			return res, fmt.Errorf("deck %q is already imported; re-importing replaces its cards and discards manual edits (re-run with --refresh to do it)", name)
+		}
+	}
 
 	// Resolve every entry in bulk — the shared pipeline also retries misses
 	// by name and corrects finishes the printing does not come in (a

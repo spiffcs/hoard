@@ -31,7 +31,14 @@ type Session struct {
 	// log receives a timestamped copy of every helper line when
 	// HOARD_SCAN_LOG names a file — the telemetry tap for tuning sessions
 	// where the TUI, not a terminal, owns the helper's pipes.
-	log *os.File
+	//
+	// logMu serializes the three parties that touch the file: the helper's
+	// stderr pipe goroutine (logWriter), the Bubble Tea goroutine (Note),
+	// and pump's close. Close nils the handle under the lock so a late
+	// writer no-ops instead of writing into a closed fd. Separate from mu,
+	// which guards the command pipe — the two have no ordering to share.
+	logMu sync.Mutex
+	log   *os.File
 
 	mu     sync.Mutex
 	closed bool
@@ -40,10 +47,23 @@ type Session struct {
 // logLine appends one timestamped line to the telemetry log, if one is open.
 // The prefix separates the streams: "<" for helper events, "!" for its stderr.
 func (s *Session) logLine(prefix string, line []byte) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
 	if s.log == nil {
 		return
 	}
 	fmt.Fprintf(s.log, "%s %s %s\n", time.Now().Format("15:04:05.000"), prefix, line)
+}
+
+// closeLog closes the telemetry log and drops the handle, under the same
+// lock every write takes.
+func (s *Session) closeLog() {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if s.log != nil {
+		_ = s.log.Close()
+		s.log = nil
+	}
 }
 
 // logWriter tees a helper stream into the telemetry log chunk-wise; stderr
@@ -79,10 +99,6 @@ func Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	if opts.DeviceID != "" {
 		args = append(args, "--device", opts.DeviceID)
 	}
-	if opts.Mirror {
-		args = append(args, "--mirror")
-	}
-
 	cmd := exec.CommandContext(ctx, path, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -110,9 +126,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
-		if s.log != nil {
-			_ = s.log.Close()
-		}
+		s.closeLog()
 		return nil, err
 	}
 
@@ -125,11 +139,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 // startup — no camera, denied permission — and its stderr is the useful message.
 func (s *Session) pump(stdout io.Reader, stderr *bytes.Buffer) {
 	defer close(s.events)
-	defer func() {
-		if s.log != nil {
-			_ = s.log.Close()
-		}
-	}()
+	defer s.closeLog()
 
 	var sawEvent bool
 	sc := bufio.NewScanner(stdout)
@@ -189,13 +199,6 @@ func (s *Session) Auto(on bool) error {
 // (stacked squarely on the pile), and discards the re-read if it turns out to
 // be the card it already processed.
 func (s *Session) Rearm() error { return s.send("rearm") }
-
-// EVBias asks the phone to apply a one-shot exposure bias (in EV) to its next
-// auto capture — the finish rescue's darker retake, which un-clips a
-// glare-blown foil marker. Restored phone-side after that capture completes.
-func (s *Session) EVBias(ev float64) error {
-	return s.send(fmt.Sprintf("evbias %.1f", ev))
-}
 
 // Chime plays the card-processed sound. Fired by the parent when a scan
 // resolves — auto-added or queued for review — unlike the shutter pop,
@@ -262,12 +265,29 @@ func (s *Session) Shutdown() error {
 	return s.stdin.Close()
 }
 
+// closeGrace is how long Close waits for the helper to exit on its own
+// before killing it. Generous against a slow camera teardown, short enough
+// that the terminal never reads as frozen.
+const closeGrace = 2 * time.Second
+
 // Close ends the session and closes the camera window, consuming any remaining
 // events so pump can finish and Wait can be reached. It is safe to call more
 // than once.
+//
+// The drain only ends when the helper *process* ends, and Close runs on the
+// TUI's update goroutine — so a wedged helper (a stuck network read, a
+// macOS permission dialog) used to freeze the whole terminal with ctrl-c
+// dead, the key handler being exactly the code blocked here. Closing stdin
+// is the polite exit signal; the deadline is the impolite one.
 func (s *Session) Close() error {
 	err := s.Shutdown()
+	deadline := time.AfterFunc(closeGrace, func() {
+		if p := s.cmd.Process; p != nil {
+			_ = p.Kill()
+		}
+	})
 	for range s.events { //nolint:revive // draining
 	}
+	deadline.Stop()
 	return err
 }

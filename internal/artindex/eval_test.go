@@ -5,7 +5,6 @@
 package artindex_test
 
 import (
-	"testing"
 	"encoding/csv"
 	"fmt"
 	"image"
@@ -15,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"testing"
 
 	"github.com/spiffcs/hoard/internal/artindex"
 	"github.com/spiffcs/hoard/internal/catalog"

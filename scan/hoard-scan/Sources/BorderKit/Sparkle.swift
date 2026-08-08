@@ -244,7 +244,11 @@ public struct SparkleVerdict: Sendable {
     /// caught misaligned. See `SparkleGate.acceptChromaContrast` for the
     /// cross-rig measurement that separates it from the score's failure.
     public var isFoil: Bool {
-        if (luma?.score ?? -1) >= SparkleGate.accept { return true }
+        // The score alone is not an accept: a flat patch that correlates is
+        // furniture, not sheen — see SparkleGate.acceptLumaContrast for the
+        // live nonfoil that scored 0.607.
+        if (luma?.score ?? -1) >= SparkleGate.accept,
+           (luma?.contrast ?? -1) >= SparkleGate.acceptLumaContrast { return true }
         return (chroma?.contrast ?? -1) >= SparkleGate.acceptChromaContrast
             && (luma?.contrast ?? -1) >= SparkleGate.chromaVoteLumaFloor
     }
@@ -256,7 +260,8 @@ public struct SparkleVerdict: Sendable {
     /// session logs is the evidence a second-rig corpus would be judged
     /// against.
     public var channel: String {
-        if (luma?.score ?? -1) >= SparkleGate.accept { return "luma" }
+        if (luma?.score ?? -1) >= SparkleGate.accept,
+           (luma?.contrast ?? -1) >= SparkleGate.acceptLumaContrast { return "luma" }
         if (chroma?.contrast ?? -1) >= SparkleGate.acceptChromaContrast,
            (luma?.contrast ?? -1) >= SparkleGate.chromaVoteLumaFloor { return "chroma" }
         if (chroma?.score ?? -1) >= SparkleGate.acceptChroma { return "chroma-only" }
@@ -417,6 +422,13 @@ public func sparkleScan(_ sample: CardSampler,
 /// decimated patch uses, then re-normalises — correlation is only meaningful
 /// between two vectors normalised over the *same* cells.
 func sparkleTemplateDecimated(_ step: Int, _ source: [CGFloat] = sparkleTemplate) -> [CGFloat] {
+    // The templates are generated source (see SparkleTemplateData.swift), so a
+    // wrong-length regeneration is not a build error — it is an
+    // index-out-of-range in the read path, at the first scan of a session.
+    // An empty result instead: correlation against it scores zero, the
+    // sparkle verdict stays quiet, and the card goes to review rather than
+    // the app going down.
+    guard source.count == SparkleTemplate.rows * SparkleTemplate.cols else { return [] }
     var out: [CGFloat] = []
     var j = 0
     while j < SparkleTemplate.rows {

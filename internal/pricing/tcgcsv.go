@@ -46,12 +46,10 @@ func (f *Fetcher) tcgcsvOptions() tcgcsv.Options {
 // treatedExtra builds the overlay series for every ref whose printing has
 // a split TCGplayer product: today's market price, and with days > 1 the
 // archive series behind it. Returns nil — no overlay — when nothing is
-// treated or the source is unreachable.
-func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int) mtgjson.ExtraSeries {
-	uuids, err := f.resolve(ctx, refs)
-	if err != nil {
-		return nil
-	}
+// treated or the source is unreachable. uuids is the caller's resolve
+// result, threaded in because resolve is whole-catalog scans and every op
+// that builds an overlay follows it with a remap over the same refs.
+func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids map[string]string) mtgjson.ExtraSeries {
 	foilIDs, etchedIDs, _, err := f.st.TCGAltProducts()
 	if err != nil || (len(foilIDs) == 0 && len(etchedIDs) == 0) {
 		return nil

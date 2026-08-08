@@ -146,16 +146,82 @@ final class Sounds {
             SessionLog.write("audio session failed: \(error.localizedDescription)")
             status = "No sound. Check the phone is not on silent"
         }
+        observeSessionLife()
+    }
+
+    /// observeSessionLife keeps the engine honest across the session's life.
+    ///
+    /// Nothing observed these before, so the first phone call or Bluetooth
+    /// speaker wandering out of range killed audio for the rest of the sitting
+    /// while `isWorking` went on reporting healthy — the "sound is broken"
+    /// warning on the scanning screen, built for exactly this, never showed.
+    /// A person working by ear does not notice silence until cards later.
+    private func observeSessionLife() {
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: AVAudioSession.interruptionNotification,
+                       object: nil, queue: .main) { [weak self] note in
+            // Read out of the notification before the actor hop; the
+            // Notification itself is not Sendable.
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt)
+                .flatMap(AVAudioSession.InterruptionType.init)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch type {
+                case .began:
+                    // The engine is already stopped by the system; say so, so
+                    // the warning shows during the call rather than after it.
+                    self.working = false
+                    self.status = "Sound paused by a call or another app"
+                case .ended, nil:
+                    // `.shouldResume` is deliberately not consulted: it means
+                    // "polite to resume", and a scanner whose whole feedback
+                    // channel is audio is the case politeness defers to.
+                    self.restartEngine()
+                @unknown default:
+                    break
+                }
+            }
+        }
+        nc.addObserver(forName: AVAudioSession.routeChangeNotification,
+                       object: nil, queue: .main) { [weak self] _ in
+            // Any route change: AirPods connecting, a cable pulled, Bluetooth
+            // dropping. The engine stops itself on most of these and does not
+            // restart on its own; a blanket restart is cheap and idempotent.
+            Task { @MainActor [weak self] in self?.restartEngine() }
+        }
+    }
+
+    /// restartEngine brings the session and engine back after an interruption
+    /// or route change, and records honestly when it could not.
+    private func restartEngine() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            if !engine.isRunning { try engine.start() }
+            player.play()
+            working = true
+            status = "Ready"
+        } catch {
+            working = false
+            SessionLog.write("audio restart failed: \(error.localizedDescription)")
+            status = "No sound. Check the phone is not on silent"
+        }
     }
 
     /// Why sound is or is not playing, for the session screen.
     private(set) var status = "Starting"
 
-    var isWorking: Bool { working }
+    /// The engine's real state, not init's memory of it. `working` alone went
+    /// stale the moment anything stopped the engine from outside — which is
+    /// exactly when the scanning screen needs this to read false.
+    var isWorking: Bool { working && engine.isRunning }
 
     /// play cuts whatever tail is still ringing and starts the voice.
     /// A rapid next card should clip the last fanfare, not queue behind it.
     func play(voice: String) {
+        // One self-heal before giving up: an engine stopped behind our back
+        // (a route change this run missed, a media-services reset) restarts
+        // in a few milliseconds, and a card's sound is worth that try.
+        if working, !engine.isRunning { restartEngine() }
         guard working, let buffer = buffers[voice] else { return }
         // Schedule first, then play. Doing it the other way round races: `stop()`
         // resets the node's render state, and a buffer handed to a node that has

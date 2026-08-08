@@ -77,8 +77,7 @@ public struct PairingCode: Equatable, Sendable {
 /// with `sec_protocol_options_add_pre_shared_key`, a TLS 1.3 ciphersuite and a
 /// permissive verify block, both ends sat in `.connecting` forever — no error,
 /// no timeout. Plain TCP over the identical code paths pairs in under a second,
-/// which is what isolated it. Left as a known gap rather than half-shipped; see
-/// docs/sprint-iphone-capture-head.md.
+/// which is what isolated it. Left as a known gap rather than half-shipped.
 func proof(session: String, code: PairingCode) -> String {
     var mac = HMAC<SHA256>(key: code.key)
     mac.update(data: Data(session.utf8))

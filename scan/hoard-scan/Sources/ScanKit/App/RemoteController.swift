@@ -17,19 +17,17 @@ import ScanWire
 /// negotiates arrives through the `ready` event's feature list rather than
 /// being assumed here.
 ///
-/// **Headless by default.** The phone shows the preview, the price and the
-/// outline cue, and plays the sounds; the terminal shows the queue. There is
-/// nothing for a Mac window to add, and one would be a second place to look
-/// during a session where the user is already looking at two. `--mirror` opens
-/// one anyway, for framing the rig and for debugging the link.
+/// **Headless.** The phone shows the preview, the price and the outline cue,
+/// and plays the sounds; the terminal shows the queue. There is nothing for a
+/// Mac window to add, and one would be a second place to look during a
+/// session where the user is already looking at two. (A `--mirror` window
+/// existed once and was deleted: no preview frame was ever sent, so it shipped
+/// as a permanently black rectangle. Resurrect it only with the phone-side
+/// sender in the same change.)
 final class RemoteController: NSObject {
     private let browser = PeerBrowser()
-    private let mirror: Bool
     private let requestedDevice: String?
     private var session: PeerSession?
-    private var window: NSWindow?
-    private var preview: RemotePreviewLayer?
-    private let hud = PriceHUD()
 
     /// The pairing code, remembered between runs by the Go side and handed back
     /// on the command line. A session with no code cannot pair, and saying so
@@ -46,11 +44,9 @@ final class RemoteController: NSObject {
     /// network fault rather than a typo.
     private let verifyOnly: Bool
 
-    init(deviceID: String?, code: PairingCode, mirror: Bool,
-         verifyOnly: Bool = false) {
+    init(deviceID: String?, code: PairingCode, verifyOnly: Bool = false) {
         self.requestedDevice = deviceID
         self.code = code
-        self.mirror = mirror
         self.verifyOnly = verifyOnly
         super.init()
     }
@@ -73,7 +69,6 @@ final class RemoteController: NSObject {
         }
 
         wire(session)
-        if mirror { buildWindow(named: chosen.name) }
 
         // Readiness is the phone's to declare: it knows whether its camera came
         // up, and the feature list it sends is what the parent negotiates
@@ -90,22 +85,22 @@ final class RemoteController: NSObject {
             DispatchQueue.main.async { self?.linkStateChanged(state) }
         }
         session.preview.onFrame = { [weak self] frame in
-            // Everything that is not a preview goes through the same handler
-            // the control connection uses.
-            //
-            // Fixture stills travel on this connection on purpose — it exists
-            // to carry large droppable payloads, and a multi-megabyte JPEG
-            // queued ahead of a `result` on the control connection would delay
-            // the sound the operator is waiting for. But this callback used to
-            // drop every non-preview frame on the floor, so a still sent here
-            // arrived and vanished: the phone reported sending, the Mac wrote
-            // nothing, and the debug directory stayed empty with no error on
-            // either side.
-            guard frame.kind == .preview else {
-                DispatchQueue.main.async { self?.handle(frame) }
-                return
-            }
-            DispatchQueue.main.async { self?.showPreview(frame.payload) }
+            // Everything goes through the same handler the control connection
+            // uses. Fixture stills travel on this connection on purpose — it
+            // exists to carry large droppable payloads, and a multi-megabyte
+            // JPEG queued ahead of a `result` on the control connection would
+            // delay the sound the operator is waiting for. This callback used
+            // to drop non-preview frames on the floor, so a still sent here
+            // arrived and vanished with no error on either side.
+            DispatchQueue.main.async { self?.handle(frame) }
+        }
+        session.preview.onState = { [weak self] state in
+            // Same treatment as the control leg. A preview connection that
+            // dies while control survives is a session that keeps scanning
+            // while every fixture still vanishes into a dead socket — no
+            // error on either side, and a corpus session discovers its loss
+            // only when the debug dir comes up empty.
+            DispatchQueue.main.async { self?.linkStateChanged(state) }
         }
     }
 
@@ -148,12 +143,25 @@ final class RemoteController: NSObject {
     private func handle(_ frame: Frame) {
         switch frame.kind {
         case .ndjson:
-            // Passed through verbatim rather than decoded and re-encoded. The
+            // Passed through undecoded rather than decoded and re-encoded. The
             // phone speaks ScanWire's Event, this side speaks it too, and a
             // round trip through a struct here would silently drop any field
             // this build happens not to know about — which is exactly the
             // forward compatibility the wire contract promises.
-            FileHandle.standardOutput.write(frame.payload)
+            //
+            // Not quite verbatim, though: the frame codec explicitly permits
+            // newlines in a payload, but stdout here is the Go side's *line*
+            // parser, so a raw \n or \r inside the payload would split one
+            // event into two half-lines and poison everything after it.
+            // Interior newline bytes become spaces — a legal JSON encoder
+            // never emits them (it writes the two-byte escape \n instead), so
+            // this only ever rewrites a payload that was already going to
+            // break the pipe.
+            var line = frame.payload
+            for i in line.indices where line[i] == 0x0A || line[i] == 0x0D {
+                line[i] = 0x20
+            }
+            FileHandle.standardOutput.write(line)
             FileHandle.standardOutput.write(Data("\n".utf8))
             // The phone declares readiness, so this is the first moment it is
             // known to be listening. Asking earlier would talk to a link that
@@ -178,7 +186,9 @@ final class RemoteController: NSObject {
         case .still:
             saveRemoteStill(frame.payload)
         case .preview:
-            showPreview(frame.payload)
+            // Nothing sends these since the mirror window was deleted; the
+            // kind stays in the wire contract for older phone builds.
+            break
         }
     }
 
@@ -257,38 +267,6 @@ final class RemoteController: NSObject {
         exit(0)
     }
 
-    // MARK: - The optional mirror
-
-    private func showPreview(_ jpeg: Data) {
-        guard let preview, let image = decodeJPEG(jpeg) else { return }
-        preview.show(image)
-    }
-
-    private func buildWindow(named name: String) {
-        let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
-            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        win.title = "hoard · \(name) · mirrored from iPhone"
-        win.center()
-
-        let view = PreviewView(frame: win.contentLayoutRect)
-        view.autoresizingMask = [.width, .height]
-        let layer = RemotePreviewLayer()
-        view.wantsLayer = true
-        view.layer = layer
-        preview = layer
-        hud.attach(to: layer, scale: win.backingScaleFactor)
-        view.hud = hud
-        // No outline overlay and no keys. The phone draws its own cue over its
-        // own preview, so tracing one again here would be a second drawing of
-        // the same fact a frame later; and the phone is the camera while the
-        // terminal is the controller, so a mirror window that also accepted a
-        // shutter press would be a third place to drive the session from.
-        win.contentView = view
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        window = win
-    }
 }
 
 /// The `kind` a network source carries in the device list. The Go side matches

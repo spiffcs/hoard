@@ -112,7 +112,6 @@ func TestNamedFuzzy(t *testing.T) {
 		{"Sol Rlng", "Sol Ring", "one-character OCR slip"},
 		{"sol ring", "Sol Ring", "case is not a difference"},
 		{"Elspeth Knight Errant", "Elspeth, Knight-Errant", "punctuation dropped"},
-		{"Elspeth", "Elspeth, Knight-Errant", "partial read of a longer name"},
 		{"Bitterblossom", "Bitterblossom", "clean read of a long name"},
 		{"Bitterbiossom", "Bitterblossom", "l/i confusion, the classic OCR slip"},
 		{"Opt", "Opt", "exact read of a short name"},
@@ -129,7 +128,7 @@ func TestNamedFuzzy(t *testing.T) {
 		{"", "", "nothing read"},
 	}
 	for _, tc := range cases {
-		got, _, err := c.NamedFuzzy(context.Background(), tc.text)
+		got, m, err := c.NamedFuzzy(context.Background(), tc.text)
 		if err != nil {
 			t.Fatalf("NamedFuzzy(%q): %v", tc.text, err)
 		}
@@ -140,6 +139,28 @@ func TestNamedFuzzy(t *testing.T) {
 		if name != tc.want {
 			t.Errorf("NamedFuzzy(%q) = %q, want %q — %s", tc.text, name, tc.want, tc.why)
 		}
+		if got != nil && m.PrefixOnly {
+			t.Errorf("NamedFuzzy(%q) flagged PrefixOnly; identities in this table are earned outright", tc.text)
+		}
+	}
+}
+
+// A truncated title comes back as a *nomination*, never an identity: the card
+// is surfaced with Match.PrefixOnly set, and the scan resolver only keeps it
+// when the frame's collector number verifies one of that card's printings.
+// The prefix rule that returned these unflagged resolved "Gliding" — debris
+// of Glowrider mid-slide — to the real card Gliding Licid, live.
+func TestNamedFuzzyNominatesPrefixesFlagged(t *testing.T) {
+	c := stocked(t)
+	got, m, err := c.NamedFuzzy(context.Background(), "Elspeth")
+	if err != nil {
+		t.Fatalf("NamedFuzzy: %v", err)
+	}
+	if got == nil || got.Name != "Elspeth, Knight-Errant" {
+		t.Fatalf("NamedFuzzy(Elspeth) = %v, want the completed name as a nomination", got)
+	}
+	if !m.PrefixOnly || m.Exact {
+		t.Errorf("match = %+v, want PrefixOnly and not Exact — a nomination, not an identity", m)
 	}
 }
 

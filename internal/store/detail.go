@@ -105,6 +105,11 @@ type Holding struct {
 	// Treatment is the foil treatment's display word, empty for plain —
 	// same semantics as Card.Treatment. Filled by the by-name query.
 	Treatment string
+	// Guessed says a scanner guess is still standing against this
+	// container+printing+finish: the finish was committed by default, not
+	// evidence, and nobody has checked the card yet. It is display truth,
+	// not holding identity — undo/restore ignores it.
+	Guessed bool
 }
 
 // HoldingsOf reports every container holding a printing, and how many.
@@ -114,7 +119,11 @@ type Holding struct {
 // copies of a card are one loose and three spread across two decks.
 func (s *Store) HoldingsOf(scryfallID string) ([]Holding, error) {
 	rows, err := s.db.Query(`
-SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity
+SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity,
+       EXISTS(SELECT 1 FROM finish_guesses g
+              WHERE g.container_id = e.container_id
+                AND g.scryfall_id = e.scryfall_id
+                AND g.finish = e.finish) AS guessed
 FROM card_entries e
 JOIN containers ct ON ct.id = e.container_id
 WHERE e.scryfall_id = ?
@@ -132,7 +141,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 	for rows.Next() {
 		var h Holding
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
-			&h.Finish, &h.Condition, &h.Board, &h.Quantity); err != nil {
+			&h.Finish, &h.Condition, &h.Board, &h.Quantity, &h.Guessed); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
@@ -148,7 +157,11 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity,
-       c.scryfall_id, c.set_code, c.collector_number, c.promo_types
+       c.scryfall_id, c.set_code, c.collector_number, c.promo_types,
+       EXISTS(SELECT 1 FROM finish_guesses g
+              WHERE g.container_id = e.container_id
+                AND g.scryfall_id = e.scryfall_id
+                AND g.finish = e.finish) AS guessed
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
@@ -166,7 +179,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 		var promos sql.NullString
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
 			&h.Finish, &h.Condition, &h.Board, &h.Quantity,
-			&h.ScryfallID, &h.SetCode, &h.CollectorNumber, &promos); err != nil {
+			&h.ScryfallID, &h.SetCode, &h.CollectorNumber, &promos, &h.Guessed); err != nil {
 			return nil, err
 		}
 		h.Treatment = FoilTreatment(promos)

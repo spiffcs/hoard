@@ -299,15 +299,51 @@ func (m Model) helpRows() int {
 	// tallest help any right-pane view would show; writeHelp pads the
 	// difference blank.
 	if m.palette == nil && !m.filtering && !m.watchPick && m.detail == nil && m.text == nil {
-		alt := m
-		alt.confirm, alt.prompt = nil, nil
-		for v := viewHoldings; v <= viewMarket; v++ {
-			alt.view = v
-			rows = max(rows, len(ui.WrapHelp(alt.helpLine(), m.width)))
-		}
+		rows = max(rows, m.tallestViewHelpRows())
 	}
 	if m.paletteDesc() != "" {
 		rows++
+	}
+	return rows
+}
+
+// helpRowsKey names everything the five per-view help lines can differ on
+// under helpRows' guard (no palette/filter/pick/overlay, confirm and prompt
+// blanked): the wrap width, the market view's fetch state, and the holdings
+// line's focus/lens/read-only variants.
+type helpRowsKey struct {
+	width                       int
+	marketLoaded, marketLoading bool
+	focus                       pane
+	setsMode                    bool
+	selKind                     string
+}
+
+// tallestViewHelpRows is the gutter reservation: the tallest wrapped help
+// across the right-pane views. Memoized, because helpRows runs from several
+// layout callers on every frame and this loop rebuilt and re-wrapped five
+// views' help each time for a value that only changes on resize or the
+// handful of state flips the key names. The map is a reference field, so
+// the per-frame value copies of Model share one cache; a Model built
+// without New (tests) has a nil map and simply recomputes.
+func (m Model) tallestViewHelpRows() int {
+	key := helpRowsKey{width: m.width, focus: m.focus, setsMode: m.setsMode,
+		marketLoaded: m.marketLoaded, marketLoading: m.marketLoading}
+	if sel := m.selectedContainer(); sel != nil {
+		key.selKind = sel.Kind
+	}
+	if rows, ok := m.helpRowsMemo[key]; ok {
+		return rows
+	}
+	alt := m
+	alt.confirm, alt.prompt = nil, nil
+	rows := 0
+	for v := viewHoldings; v <= viewMarket; v++ {
+		alt.view = v
+		rows = max(rows, len(ui.WrapHelp(alt.helpLine(), m.width)))
+	}
+	if m.helpRowsMemo != nil {
+		m.helpRowsMemo[key] = rows
 	}
 	return rows
 }

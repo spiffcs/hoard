@@ -134,3 +134,28 @@ func TestTextViewNarrowWidthRenders(t *testing.T) {
 		t.Fatal("narrow render must not vanish")
 	}
 }
+
+// mode() ranks a bridge confirm above the text takeover, so while both are
+// up the confirm owns every key — and the takeover rendered no status slot,
+// leaving the question invisible while it ate the keyboard (an op's catalog
+// ask staged behind a valuation report). The takeover now cedes the slot
+// under its rule, the same contract the card overlay keeps.
+func TestOpConfirmIsVisibleOverTheTextTakeover(t *testing.T) {
+	m := reportModel(t, manyLines(30))
+	m, _ = runPaletteCommand(t, m, "report.view")
+	if m.text == nil {
+		t.Fatal("setup: no takeover open")
+	}
+	m, reply := ask(t, m, "download the catalog (1.2 GB)?")
+	if m.mode() != modeConfirm {
+		t.Fatalf("mode = %v, want modeConfirm over the takeover", m.mode())
+	}
+	if v := m.View(); !strings.Contains(v, "download the catalog") {
+		t.Fatalf("the question that owns the keyboard is not on screen:\n%s", v)
+	}
+	m = key(m, "y")
+	mustReply(t, reply, true)
+	if m.text == nil {
+		t.Error("answering the confirm should leave the takeover up")
+	}
+}

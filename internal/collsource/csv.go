@@ -59,10 +59,13 @@ var specs = []spec{
 	// Delver Lens columns vary by version and export settings; this is the
 	// common default. Anything else fails the sniff and the error suggests
 	// --format, which is the design: guessing at an unknown dialect silently
-	// mangles quantities and finishes.
+	// mangles quantities and finishes. The sniff needs the pair — "Card
+	// number" alone is generic enough that another tool's CSV carrying it
+	// would silently map the wrong quantity and finish columns, which is
+	// exactly the guessing the sniff-order comment above forswears.
 	{
 		name:  "delver",
-		sniff: []string{"Card number"},
+		sniff: []string{"Card number", "Set code"},
 		qty:   "Quantity", cardName: "Name", set: "Set code", number: "Card number",
 		finish: "Foil", scryfall: "Scryfall ID",
 		condition: "Condition", language: "Language", price: "Price",
@@ -201,9 +204,16 @@ func identFor(id, set, number, name string) scryfall.Identifier {
 	}
 }
 
-// parseQty accepts "2" and the "2x"/"x2" stylings some apps emit.
+// parseQty accepts "2" and the "2x"/"x2" stylings some apps emit. One x,
+// either side, not both: trimming prefix and suffix in a single pass read
+// "x2x" — a malformed cell, not a styling — as 2.
 func parseQty(s string) (int, error) {
-	trimmed := strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(s), "x"), "x")
+	trimmed := strings.ToLower(s)
+	if t := strings.TrimPrefix(trimmed, "x"); t != trimmed {
+		trimmed = t
+	} else {
+		trimmed = strings.TrimSuffix(trimmed, "x")
+	}
 	n, err := strconv.Atoi(trimmed)
 	if err != nil || n <= 0 {
 		return 0, fmt.Errorf("cannot parse quantity %q", s)

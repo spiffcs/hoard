@@ -556,8 +556,12 @@ func (m *Model) applyMarketRows() {
 		// comps better (owner's call, dogfooding). The CLI still prints the
 		// kind, so the analysis itself is untouched; only this surface
 		// filters it out, and marketSections depends on the kinds here
-		// never reaching compsSection's slot.
-		if r.Kind == market.KindBelowMarket {
+		// never reaching compsSection's slot. Stated as "everything but the
+		// two rendered kinds" rather than naming KindBelowMarket: the
+		// downstream [3] state indexes by Kind, so any kind market ever
+		// grows past 2 (KindLowball already exists at 3) must die here, not
+		// as an index-out-of-range in the render.
+		if r.Kind != market.KindProfit && r.Kind != market.KindLiquid {
 			continue
 		}
 		if min := m.floorMin(); min > 0 {
@@ -594,6 +598,12 @@ func (m *Model) applyMarketRows() {
 func (m Model) marketSectionTotals() [3]int {
 	var t [3]int
 	for _, r := range m.marketAllRows {
+		// applyMarketRows admits only the two rendered kinds; this keeps the
+		// count total anyway, because the price of a stray Kind reaching an
+		// index expression here is a panic mid-render.
+		if r.Kind < 0 || int(r.Kind) >= compsSection {
+			continue
+		}
 		t[r.Kind]++
 	}
 	t[compsSection] = len(m.marketAllComps)

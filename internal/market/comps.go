@@ -226,6 +226,14 @@ func hasFinish(qs []mtgjson.Quote, finish string) bool {
 // $2.49 the card actually sells for is noise wearing a money column.
 const listingOutlierRatio = 20
 
+// trollListing is the clamp itself, shared by the comp sheet and Assess so
+// the two tables the market command renders can never disagree about which
+// quotes are jokes. A lone figure is trusted — with one voice there is
+// nothing to compare — hence the figure count in the signature.
+func trollListing(price, cheapest float64, figures int) bool {
+	return figures > 1 && cheapest > 0 && price > cheapest*listingOutlierRatio
+}
+
 // dropTrollListings clears any sale figure over listingOutlierRatio times
 // the cheapest other one on the sheet, and re-derives Low without it. A
 // lone figure is trusted — with one voice there is nothing to compare.
@@ -254,7 +262,7 @@ func (c *Comp) dropTrollListings() {
 		if !*f.has {
 			continue
 		}
-		if cheapest > 0 && *f.p > cheapest*listingOutlierRatio {
+		if trollListing(*f.p, cheapest, len(present)) {
 			*f.p, *f.has = 0, false
 			continue
 		}

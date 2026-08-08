@@ -99,14 +99,17 @@ func (f *Fetcher) say(format string, args ...any) {
 
 // remap runs one MTGJSON reader over the resolvable refs and re-keys its result
 // by Scryfall id. The public readers differ only in which reader they hand
-// over; the resolution and the key translation are one decision, made here.
+// over; the resolution and the key translation are one decision, made in the
+// public op — resolve runs four whole-catalog scans, so each op runs it once
+// and threads the answer here and into the treated overlay rather than paying
+// for it twice (eight scans per price op, measured before the threading).
 // The int is how many refs resolved, so a caller can report the printings it
 // could not ask about without resolving them all a second time.
-func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, what string,
+func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, uuids map[string]string, what string,
 	read func(context.Context, mtgjson.Options, map[string]bool) (map[string]T, error)) (map[string]T, int, error) {
-	byUUID, toScryfall, err := f.want(ctx, refs)
-	if err != nil || len(byUUID) == 0 {
-		return nil, 0, err
+	byUUID, toScryfall := f.want(refs, uuids)
+	if len(byUUID) == 0 {
+		return nil, 0, nil
 	}
 	got, err := read(ctx, f.options(), byUUID)
 	if err != nil {
@@ -122,8 +125,12 @@ func remap[T any](f *Fetcher, ctx context.Context, refs []Ref, what string,
 // Prices returns the best USD price for each printing that has one, keyed by
 // Scryfall id.
 func (f *Fetcher) Prices(ctx context.Context, refs []Ref) (map[string]mtgjson.Price, error) {
-	extra := f.treatedExtra(ctx, refs, 1)
-	out, _, err := remap(f, ctx, refs, "prices", mtgjson.TodayPricesWith(extra))
+	uuids, err := f.resolve(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	extra := f.treatedExtra(ctx, refs, 1, uuids)
+	out, _, err := remap(f, ctx, refs, uuids, "prices", mtgjson.TodayPricesWith(extra))
 	return out, err
 }
 
@@ -155,10 +162,14 @@ func (f *Fetcher) Quotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.
 // left the treated-foil overlay invisible until midnight (observed live:
 // a comps sheet of dashes beside freshly updated prices).
 func (f *Fetcher) RefreshQuotes(ctx context.Context, refs []Ref) (map[string][]mtgjson.Quote, error) {
+	uuids, err := f.resolve(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
 	// The overlay merges before the save, so the day cache holds the full
 	// bundles and CachedQuotes never serves a poorer answer than this did.
-	extra := f.treatedExtra(ctx, refs, 1)
-	out, _, err := remap(f, ctx, refs, "quotes", mtgjson.TodayQuotesWith(extra))
+	extra := f.treatedExtra(ctx, refs, 1, uuids)
+	out, _, err := remap(f, ctx, refs, uuids, "quotes", mtgjson.TodayQuotesWith(extra))
 	if err == nil {
 		f.saveQuotes(refs, out)
 	}
@@ -169,16 +180,17 @@ func (f *Fetcher) RefreshQuotes(ctx context.Context, refs []Ref) (map[string][]m
 // Scryfall id, plus how many refs had an id to ask with. Reads a ~150 MB
 // archive, so it is only for a deliberate backfill.
 func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string]mtgjson.CardHistory, int, error) {
-	extra := f.treatedExtra(ctx, refs, historyDays)
-	return remap(f, ctx, refs, "price history", mtgjson.PriceHistoryWith(extra))
-}
-
-// want resolves refs to the UUID set MTGJSON is keyed by, plus the way back.
-func (f *Fetcher) want(ctx context.Context, refs []Ref) (map[string]bool, map[string]string, error) {
 	uuids, err := f.resolve(ctx, refs)
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, err
 	}
+	extra := f.treatedExtra(ctx, refs, historyDays, uuids)
+	return remap(f, ctx, refs, uuids, "price history", mtgjson.PriceHistoryWith(extra))
+}
+
+// want narrows an already-resolved uuid map to the UUID set MTGJSON is keyed
+// by for these refs, plus the way back.
+func (f *Fetcher) want(refs []Ref, uuids map[string]string) (map[string]bool, map[string]string) {
 	byUUID := make(map[string]bool, len(refs))
 	toScryfall := make(map[string]string, len(refs))
 	for _, r := range refs {
@@ -191,7 +203,7 @@ func (f *Fetcher) want(ctx context.Context, refs []Ref) (map[string]bool, map[st
 			toScryfall[uuid] = r.ScryfallID
 		}
 	}
-	return byUUID, toScryfall, nil
+	return byUUID, toScryfall
 }
 
 // resolve maps Scryfall ids to MTGJSON UUIDs, downloading only the set files it

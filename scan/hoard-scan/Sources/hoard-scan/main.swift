@@ -2,7 +2,9 @@
 //
 // Swift requires top-level code to live in a file named main.swift, and a file
 // with top-level code cannot be linked into a test bundle. Keeping this to one
-// call is what lets Tests/ScanKitTests reach the whole helper with @testable.
+// call is what would let a ScanKitTests target reach the whole helper with
+// @testable — no such target exists yet, so ScanKit's coverage today is the
+// downstream fixture and corpus harnesses, not unit tests.
 
 import ScanKit
 

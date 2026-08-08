@@ -391,13 +391,17 @@ The required text, to be pasted as-is:
 
 **P0 — do these first**
 
-1. **Raise `chunkPause` to ≥500 ms** — `internal/scryfall/scryfall.go:249`. Update
-   the stale comment: `/cards/collection` is a 2/second endpoint now, not
-   10/second.
-2. **Raise the search pagination gap to ≥500 ms** —
-   `internal/scryfall/scryfall.go:497`. `/cards/search` is 2/second.
-3. **Add the Fan Content Policy notice** (§7 text) to `README.md` and, ideally,
-   `hoard --version`.
+1. ✅ **DONE 2026-08-07** (superseded by a stronger fix): per-call-site pauses were
+   replaced by a shared per-endpoint pacer in `apiDo`
+   (`internal/scryfall/scryfall.go`, `apiPacer`) — 500 ms for
+   `/cards/search|named|random|collection`, 100 ms otherwise, enforced across
+   goroutines and every call site. `chunkPause` and the pagination sleep were
+   deleted as redundant.
+2. ✅ **DONE 2026-08-07** — covered by the same pacer.
+3. ✅ **DONE 2026-08-07** — §7 text now in `README.md`, `LICENSE` (with a
+   code-vs-card-imagery scope split), and `hoard version` / `--version`
+   (`internal/buildinfo.FanContentNotice`). The User-Agent also carries a
+   contact URL now (P1.7).
 
 **P1 — cheap, clearly right**
 

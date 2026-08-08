@@ -24,7 +24,12 @@ func TestPlausible(t *testing.T) {
 
 		{"Elspeth, Knight-Errant", "Elspeth, Knight-Errant", true, "clean read"},
 		{"Elspeth Knight Errant", "Elspeth, Knight-Errant", true, "punctuation dropped"},
-		{"Elspeth", "Elspeth, Knight-Errant", true, "partial read of a longer name"},
+		// A partial read is no longer accepted by prefix: "Gliding" (debris of
+		// Glowrider mid-slide) resolved to the real card Gliding Licid live,
+		// and no string property separates that steal from a legitimate
+		// truncation. A truncated title queues for review instead.
+		{"Elspeth", "Elspeth, Knight-Errant", false, "partial read must not resolve by prefix"},
+		{"Gliding", "Gliding Licid", false, "a slide fragment must not become another card"},
 
 		// The substitutions OCR actually makes.
 		{"Sol Rlng", "Sol Ring", true, "l for i"},
@@ -57,10 +62,11 @@ func TestPlausibleRejectsNearMissesThatDropWords(t *testing.T) {
 				c.text, c.canonical)
 		}
 	}
-	// But the guard must not fire on a partial read, which is legitimately much
-	// shorter than its name and is handled by the prefix rule before it.
-	if !Plausible("Bitter", "Bitterblossom") {
-		t.Error("the length guard rejected a partial read")
+	// A partial read is rejected too, since the prefix rule's removal: it is
+	// indistinguishable from a fragment of a different card's title (the
+	// "Gliding" → Gliding Licid steal, live 2026-08-07).
+	if Plausible("Bitter", "Bitterblossom") {
+		t.Error("a bare prefix fragment resolved to a name it cannot confirm")
 	}
 }
 

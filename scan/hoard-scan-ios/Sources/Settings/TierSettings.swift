@@ -50,10 +50,22 @@ final class TierSettings: ObservableObject {
         winAt = store.object(forKey: "tiers.winAt") as? Double ?? Default.winAt
         bigAt = store.object(forKey: "tiers.bigAt") as? Double ?? Default.bigAt
         jackpotAt = store.object(forKey: "tiers.jackpotAt") as? Double ?? Default.jackpotAt
-        bulkVoice = store.string(forKey: "tiers.bulkVoice") ?? Default.voices["bulk"]!
-        winVoice = store.string(forKey: "tiers.winVoice") ?? Default.voices["win"]!
-        bigVoice = store.string(forKey: "tiers.bigVoice") ?? Default.voices["big"]!
-        jackpotVoice = store.string(forKey: "tiers.jackpotVoice") ?? Default.voices["jackpot"]!
+        // Validated against the voices this build actually renders, not taken
+        // on faith. A stored id no voice answers to — a voice renamed or
+        // retired across an update — would silently mute its tier: play()
+        // finds no buffer and returns, and the Settings picker shows a blank
+        // row. The tier falls back to its factory voice instead, which is
+        // audible and re-pickable.
+        let known = Set(Sounds.voices.map(\.id))
+        func voice(_ key: String, or fallback: String) -> String {
+            guard let stored = store.string(forKey: key), known.contains(stored)
+            else { return fallback }
+            return stored
+        }
+        bulkVoice = voice("tiers.bulkVoice", or: Default.voices["bulk"]!)
+        winVoice = voice("tiers.winVoice", or: Default.voices["win"]!)
+        bigVoice = voice("tiers.bigVoice", or: Default.voices["big"]!)
+        jackpotVoice = voice("tiers.jackpotVoice", or: Default.voices["jackpot"]!)
     }
 
     func reset() {

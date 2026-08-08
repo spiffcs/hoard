@@ -79,10 +79,18 @@ func (m Model) textViewRender() string {
 		b.WriteString("\n")
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
-	if len(t.lines) > rows {
+	// An active surface claims the slot under the rule, exactly as the card
+	// overlay's does: mode() ranks a confirm or prompt above the takeover, so
+	// while one is up it owns every key — an op's catalog question staged
+	// behind a valuation report was answered blind, the worker hanging on a
+	// prompt that was never on screen.
+	switch {
+	case m.confirm != nil || m.prompt != nil:
+		b.WriteString(m.statusLine())
+	case len(t.lines) > rows:
 		b.WriteString(m.theme.Help.Render(fmt.Sprintf("%s · lines %d–%d of %d",
 			t.title, t.offset+1, min(t.offset+rows, len(t.lines)), len(t.lines))))
-	} else {
+	default:
 		b.WriteString(m.theme.Help.Render(t.title))
 	}
 	b.WriteString("\n")

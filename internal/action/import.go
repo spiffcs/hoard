@@ -146,6 +146,12 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	if err != nil {
 		return res, err
 	}
+	// Same guard as binderTarget: the default binder's existence is enforced
+	// three call-frames away, and an empty list here must fail the import
+	// before the write plan indexes into it.
+	if len(binders) == 0 {
+		return res, fmt.Errorf("no default binder exists to import into; the database is missing its collection container")
+	}
 	targetID, targetName := binders[0].ID, binders[0].Name
 	if o.BinderRef != "" {
 		b, err := d.Store.BinderByRef(o.BinderRef)

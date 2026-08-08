@@ -1,7 +1,7 @@
 package action
 
 // The fast read capabilities. No steps, no confirms — they exist so every
-// row of docs/parity.md names one function both frontends call, and so the
+// capability names one function both frontends call, and so the
 // TUI's palette has a single injection point per capability. Binder
 // create/rename/remove are the deliberate exception: both frontends call
 // the store directly (the browser through its Editor interface, whose undo

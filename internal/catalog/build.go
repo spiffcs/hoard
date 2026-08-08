@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/buildinfo"
@@ -200,10 +201,10 @@ type bulkCard struct {
 			Small string `json:"small"`
 		} `json:"image_uris"`
 	} `json:"card_faces"`
-	Colors          []string `json:"colors"`
-	ColorIdentity   []string `json:"color_identity"`
-	Games           []string `json:"games"`
-	Prices          struct {
+	Colors        []string `json:"colors"`
+	ColorIdentity []string `json:"color_identity"`
+	Games         []string `json:"games"`
+	Prices        struct {
 		USD       string `json:"usd"`
 		USDFoil   string `json:"usd_foil"`
 		USDEtched string `json:"usd_etched"`
@@ -239,10 +240,26 @@ func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 	// Built beside the real catalog under a temporary name and renamed into
 	// place only on success. An interrupted download must not leave a partial
 	// catalog that looks complete — every lookup would then quietly miss.
-	tmpPath := filepath.Join(c.dir, fileName+".building")
-	os.Remove(tmpPath)
+	//
+	// The name is unique per build, and nothing here deletes anyone else's:
+	// two updates can genuinely overlap (browse's catalog op plus a second
+	// terminal's `hoard catalog update`), and a fixed name with a clear-away
+	// delete let one unlink the other's 77 MB in-progress build minutes in,
+	// surfacing as a corrupt-database error on the innocent side. Last rename
+	// wins, which is fine — both were building the same bundle. A crash's
+	// orphaned temp is swept by the next build once it is safely stale.
+	pruneStaleBuilds(c.dir)
+	tmpFile, err := os.CreateTemp(c.dir, fileName+".building-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	// SQLite treats an existing zero-length file as a new database, so the
+	// handle only reserved the name.
+	tmpFile.Close()
 	tmp, err := openAt(c.dir, tmpPath)
 	if err != nil {
+		os.Remove(tmpPath)
 		return err
 	}
 
@@ -286,6 +303,33 @@ func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 		return fmt.Errorf("catalog: replacing the catalog: %w", renameErr)
 	}
 	return nil
+}
+
+// staleBuildAge is how long a .building-* temp must sit untouched before it
+// reads as abandoned. A live build writes its temp continuously, so an hour
+// of silence only ever describes a crash's orphan.
+const staleBuildAge = time.Hour
+
+// pruneStaleBuilds sweeps build temps abandoned by a crash — at ~77 MB each
+// they are worth collecting — while leaving any concurrent build's fresh temp
+// alone (mtime, per staleBuildAge). Best-effort: a failed sweep costs disk,
+// not correctness.
+func pruneStaleBuilds(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleBuildAge)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), fileName+".building") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		os.Remove(filepath.Join(dir, e.Name()))
+	}
 }
 
 // countingReader counts compressed bytes as they arrive, which is the only

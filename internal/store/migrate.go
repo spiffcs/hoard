@@ -1,10 +1,12 @@
 package store
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -52,6 +54,9 @@ var migrations = []migration{
 	{22, cardLanguage},
 	{23, holdingCondition},
 	{24, finishGuesses},
+	{25, guessContainerRepoint},
+	{26, guessContainerFK},
+	{27, traitFilterIndex},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -403,9 +408,9 @@ ALTER TABLE cards ADD COLUMN tcg_product_id TEXT;`
 // hoard has valued an etched copy at the foil price since v1, because the
 // catalog had one foil column and Scryfall's etched figure was folded into it
 // on the way in. That was a simplification, and the rest of the tool has since
-// outgrown it: the comps sheet reads the vendors' own etched bucket, and
-// docs/pricing.md says plainly that etched is a real bucket in the feed and not
-// a synonym for foil. The portfolio was the last place still saying otherwise,
+// outgrown it: the comps sheet reads the vendors' own etched bucket, because
+// etched is a real bucket in the feed and not a synonym for foil. The
+// portfolio was the last place still saying otherwise,
 // so a card whose etched printing trades well away from its foil one was
 // carried at the wrong number in every total hoard reports.
 //
@@ -528,6 +533,73 @@ CREATE TABLE finish_guesses (
     guessed_at   TEXT NOT NULL
 );
 CREATE INDEX finish_guesses_card ON finish_guesses(scryfall_id, finish);`
+
+// v25: guesses recorded while the scan's destination was the default binder
+// were filed under container 0 — the adder's "default" sentinel, not a real
+// container id — so any join against containers silently dropped them.
+// Re-point them at the collection container. The store now resolves the
+// sentinel before writing (see RecordFinishGuess), so no new 0-rows appear.
+// A guess can only follow a commit and a commit creates the collection row,
+// so when there is anything to update the subquery finds its target.
+const guessContainerRepoint = `
+UPDATE finish_guesses
+SET container_id = (SELECT id FROM containers
+                    WHERE source = 'manual' AND source_id = '__collection__')
+WHERE container_id = 0
+  AND EXISTS (SELECT 1 FROM containers
+              WHERE source = 'manual' AND source_id = '__collection__');`
+
+// v26: finish_guesses gets the containers FK v24 left out.
+//
+// With container_id a bare integer, deleting a container left its guess rows
+// behind forever: `hoard guessed` kept listing cards to go check in a binder
+// that no longer existed. Same rename-aside rebuild shape as v23 (SQLite
+// cannot add an FK in place), and safe under enforced foreign keys for the
+// same reason — nothing references finish_guesses. Ids are copied so "newest
+// first" ordering and ClearFinishGuess's newest-row rule keep meaning what
+// they meant.
+//
+// The WHERE is the FK applied retroactively: a guess whose container was
+// deleted before the constraint existed is exactly the row the CASCADE would
+// have removed, and copying it across would abort the whole migration on the
+// new table's own constraint.
+const guessContainerFK = `
+ALTER TABLE finish_guesses RENAME TO finish_guesses_pre_v26;
+
+CREATE TABLE finish_guesses (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    scryfall_id  TEXT NOT NULL REFERENCES cards(scryfall_id),
+    finish       TEXT NOT NULL,
+    guessed_at   TEXT NOT NULL
+);
+
+INSERT INTO finish_guesses (id, container_id, scryfall_id, finish, guessed_at)
+SELECT id, container_id, scryfall_id, finish, guessed_at
+FROM finish_guesses_pre_v26
+WHERE container_id IN (SELECT id FROM containers);
+
+DROP TABLE finish_guesses_pre_v26;
+
+CREATE INDEX finish_guesses_card ON finish_guesses(scryfall_id, finish);`
+
+// v27: one covering index for the browse filter's trait predicates.
+//
+// The v5 trait columns are VIRTUAL, so MatchingCardIDs' table scan re-parsed
+// ~5.4 KB of raw_json per row to evaluate them — re-run on every filter
+// keystroke, a visible stutter at a few thousand printings. An index over a
+// virtual column stores the computed value, so with every column the WHERE
+// can name in one index (plus scryfall_id, the only output), the whole query
+// is an index scan of short strings and raw_json is never touched.
+// One composite index rather than one per column: the planner only scans a
+// single index, and any per-column index would send the remaining predicates
+// back to the row — and to the JSON parse this exists to avoid. The cost
+// model never picks this index on its own (substring LIKEs give it nothing
+// to seek on), so MatchingCardIDs names it with INDEXED BY; renaming it here
+// breaks that query loudly.
+const traitFilterIndex = `
+CREATE INDEX IF NOT EXISTS cards_trait_filter ON cards(
+    type_line, artist, layout, set_name, rarity, cmc, color_identity, scryfall_id);`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the
@@ -652,6 +724,22 @@ SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`)
 		v = 1
 	}
 
+	// apply hands the driver a multi-statement string and trusts it to run
+	// every statement. v23 rebuilds card_entries inside one such string —
+	// rename aside, recreate, copy, drop — so a driver change that silently
+	// stopped after the first statement would commit an empty holdings table
+	// and the loss would look like a clean upgrade. Holdings are the one
+	// table that cannot be re-downloaded, and no shipped migration removes
+	// rows from it, so a shrinking count is proof of a destroyed rebuild.
+	// The count is captured here, after the legacy transform has filled the
+	// table but before any migration rewrites it.
+	entriesBefore := int64(-1)
+	if v < 23 {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM card_entries`).Scan(&entriesBefore); err != nil {
+			entriesBefore = -1 // no table to guard (nothing was at risk)
+		}
+	}
+
 	for _, m := range migrations {
 		if m.Version <= v {
 			continue
@@ -663,6 +751,20 @@ SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`)
 			if err := s.seedValueSnapshots(); err != nil {
 				return fmt.Errorf("seeding value snapshots: %w", err)
 			}
+		}
+	}
+
+	if entriesBefore >= 0 {
+		var after int64
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM card_entries`).Scan(&after); err != nil {
+			return fmt.Errorf("verifying holdings after migration: %w", err)
+		}
+		if after < entriesBefore {
+			// The versions are stamped by now, but failing here stops anything
+			// from writing to the gutted table and names the way back.
+			return fmt.Errorf(
+				"migration left card_entries with %d rows where it had %d; refusing to continue — restore the pre-migration backup beside the database",
+				after, entriesBefore)
 		}
 	}
 	return s.stampApplicationID()
@@ -871,7 +973,18 @@ func pruneBackups(dbPath, keep string) {
 	}
 	prefix := filepath.Base(dbPath) + ".bak-v"
 
-	var mine []string
+	// Ordered by the parsed version number, not by name: the version is not
+	// zero-padded, so lexically bak-v10 < bak-v9 and a name sort would prune
+	// the newer snapshot while keeping the older — the exact file the net
+	// exists to preserve. The date (zero-padded, so string order is fine)
+	// breaks ties for one version backed up on different days. A name whose
+	// tail does not parse is not one of ours and is left alone.
+	type backup struct {
+		path    string
+		version int
+		date    string
+	}
+	var mine []backup
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
 			continue
@@ -880,17 +993,29 @@ func pruneBackups(dbPath, keep string) {
 		if full == keep {
 			continue
 		}
-		mine = append(mine, full)
+		tail := strings.TrimPrefix(e.Name(), prefix)
+		ver, date, ok := strings.Cut(tail, "-")
+		if !ok {
+			continue
+		}
+		v, err := strconv.Atoi(ver)
+		if err != nil {
+			continue
+		}
+		mine = append(mine, backup{full, v, date})
 	}
 	if len(mine) < keptBackups {
 		return
 	}
 
-	// The names embed version then date, both zero-padded enough to sort in the
-	// order they were written, so the oldest are simply the first.
-	slices.Sort(mine)
+	slices.SortFunc(mine, func(a, b backup) int {
+		if c := cmp.Compare(a.version, b.version); c != 0 {
+			return c
+		}
+		return strings.Compare(a.date, b.date)
+	})
 	for _, old := range mine[:len(mine)-(keptBackups-1)] {
-		os.Remove(old)
+		os.Remove(old.path)
 	}
 }
 

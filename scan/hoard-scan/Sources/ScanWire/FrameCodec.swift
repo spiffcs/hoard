@@ -83,7 +83,19 @@ public func encode(_ frame: Frame) throws -> Data {
 public struct FrameReader {
     private var buffer = Data()
 
+    /// The payload ceiling this reader enforces, maxFramePayload unless the
+    /// owner narrows it. Narrowed for a peer that has not proved anything
+    /// yet: an unverified connection's only legitimate frame is a hello of a
+    /// few hundred bytes, and before this cap it could declare 64 MB and
+    /// feed it byte by byte — twenty such connections were a gigabyte of
+    /// buffers on a phone, no pairing code required.
+    public var limit = maxFramePayload
+
     public init() {}
+
+    public init(limit: Int) {
+        self.limit = limit
+    }
 
     /// How many bytes are held pending a complete frame. Exposed for tests and
     /// for a health check: a reader that only grows is a reader whose peer is
@@ -109,7 +121,7 @@ public struct FrameReader {
             let length =
                 Int(header[1]) << 24 | Int(header[2]) << 16
                 | Int(header[3]) << 8 | Int(header[4])
-            guard length <= maxFramePayload else {
+            guard length <= limit else {
                 throw FrameCodecError.payloadTooLarge(length)
             }
             let total = frameHeaderSize + length

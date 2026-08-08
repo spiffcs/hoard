@@ -68,7 +68,53 @@ func TestParseTextErrors(t *testing.T) {
 		t.Error("expected error for empty decklist")
 	}
 	if _, err := ParseText("x", "", "", "", strings.NewReader("this is not a card line\n")); err == nil {
-		t.Error("expected parse error for unrecognized line")
+		t.Error("expected parse error when nothing at all parses")
+	}
+}
+
+// One odd line must not refuse a whole file: the unreadable lines are
+// collected with their numbers and the cards around them import. A file where
+// nothing parses still errors (TestParseTextErrors) — an all-skips "success"
+// would import an empty deck silently.
+func TestParseTextSkipsUnreadableLines(t *testing.T) {
+	in := `2 Sol Ring
+what even is this line
+1 Lightning Bolt
+`
+	d, err := ParseText("x", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if len(d.Entries) != 2 {
+		t.Fatalf("entries = %+v, want the 2 readable cards", d.Entries)
+	}
+	if len(d.Skipped) != 1 || !strings.Contains(d.Skipped[0], "line 2") {
+		t.Errorf("skipped = %v, want the unreadable line reported with its number", d.Skipped)
+	}
+}
+
+// MTGO-style .dek exports mark the sideboard per line ("SB: 2 Duress") rather
+// than with a section header; the marker beats the section the line sits in.
+func TestParseTextReadsSBPrefix(t *testing.T) {
+	in := `4 Thoughtseize
+SB: 2 Duress
+sb: 1x Leyline of the Void (M20) 107
+`
+	d, err := ParseText("x", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if len(d.Entries) != 3 || len(d.Skipped) != 0 {
+		t.Fatalf("entries = %+v (skipped %v), want all 3 lines read", d.Entries, d.Skipped)
+	}
+	if d.Entries[0].Board != BoardMain {
+		t.Errorf("Thoughtseize board = %q, want main", d.Entries[0].Board)
+	}
+	if d.Entries[1].Board != BoardSide || d.Entries[1].Quantity != 2 {
+		t.Errorf("Duress entry = %+v, want 2 on side", d.Entries[1])
+	}
+	if e := d.Entries[2]; e.Board != BoardSide || e.Ident.Set != "m20" || e.Ident.CollectorNumber != "107" {
+		t.Errorf("Leyline entry = %+v, want the set+number form on side", e)
 	}
 }
 

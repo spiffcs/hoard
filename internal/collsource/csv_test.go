@@ -97,6 +97,35 @@ func TestDelverParsesQuantityStylings(t *testing.T) {
 	}
 }
 
+// One x, either side: "x2x" is a malformed cell, and reading it as 2 would
+// import a quantity nobody wrote.
+func TestParseQtyRejectsDoubleX(t *testing.T) {
+	for _, ok := range []struct {
+		in   string
+		want int
+	}{{"2", 2}, {"2x", 2}, {"x2", 2}, {"X4", 4}} {
+		if n, err := parseQty(ok.in); err != nil || n != ok.want {
+			t.Errorf("parseQty(%q) = %d, %v; want %d", ok.in, n, err, ok.want)
+		}
+	}
+	for _, bad := range []string{"x2x", "xx2", "2xx", "x", ""} {
+		if n, err := parseQty(bad); err == nil {
+			t.Errorf("parseQty(%q) = %d, want an error", bad, n)
+		}
+	}
+}
+
+// "Card number" alone is a column any tool might emit; sniffing Delver on it
+// silently mapped another dialect's quantity and finish columns. An unknown
+// header must fail loudly toward --format instead.
+func TestGenericCardNumberColumnIsNotDelver(t *testing.T) {
+	in := "Count,Name,Card number\n2,Sol Ring,125\n"
+	if _, err := Parse(strings.NewReader(in), "auto"); err == nil ||
+		!strings.Contains(err.Error(), "unrecognized CSV header") {
+		t.Errorf("err = %v, want the unrecognized-header refusal", err)
+	}
+}
+
 func TestHoardCanonicalRoundTripsContainers(t *testing.T) {
 	c := parseFile(t, "hoard.csv", "auto")
 	if c.Format != "hoard" {

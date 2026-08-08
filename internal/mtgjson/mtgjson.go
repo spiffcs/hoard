@@ -308,9 +308,18 @@ func pruneCache(cacheDir string) {
 	}
 	prefix := today() + "-"
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) {
-			os.Remove(filepath.Join(cacheDir, e.Name()))
+		if strings.HasPrefix(e.Name(), prefix) {
+			continue
 		}
+		// In-flight temps are not stale entries: fetch writes downloads as
+		// dl-* and the quotes day-cache writes quotes-*, renaming each into
+		// place when complete. Neither carries the date prefix, and two
+		// overlapping fetches each prune — unlinking the other's temp here
+		// made its final rename fail ENOENT, aborting a 150 MB download.
+		if strings.HasPrefix(e.Name(), "dl-") || strings.HasPrefix(e.Name(), "quotes-") {
+			continue
+		}
+		os.Remove(filepath.Join(cacheDir, e.Name()))
 	}
 }
 

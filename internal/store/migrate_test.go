@@ -226,8 +226,10 @@ CREATE TABLE card_price_history (
     as_of       TEXT NOT NULL,
     PRIMARY KEY (scryfall_id, finish, as_of)
 );
--- A real v11 database has v5's raw_json; v14's generated column needs it.
-ALTER TABLE cards ADD COLUMN raw_json TEXT;
+`+
+		// A real v11 database ran v5, whose columns later migrations build on
+		// (v14's generated column, v27's index), so the fixture carries it whole.
+		richCardData+`
 INSERT INTO cards (scryfall_id, set_code, collector_number, name, price_usd,
                    price_usd_foil, scryfall_url, updated_at)
 VALUES ('c1','mh3','1','Fblthp',1.0,NULL,'http://x','x');
@@ -554,6 +556,45 @@ func TestBackupPruneKeepsTheRecentOnes(t *testing.T) {
 	}
 }
 
+// The version in a backup name is not zero-padded, so a lexical sort puts
+// bak-v10 before bak-v9 and the prune would delete the newer snapshot while
+// keeping the older — the one file the safety net exists for. Versions must
+// compare as numbers.
+func TestBackupPruneSortsVersionsNumerically(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "hoard.db")
+
+	for _, name := range []string{
+		"hoard.db.bak-v9-20260101",
+		"hoard.db.bak-v10-20260102",
+		"hoard.db.bak-v23-20260103",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := filepath.Join(dir, "hoard.db.bak-v25-20260104")
+	if err := os.WriteFile(current, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pruneBackups(db, current)
+
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(dir, name))
+		return err == nil
+	}
+	if exists("hoard.db.bak-v9-20260101") {
+		t.Error("v9 is the oldest and should have been pruned")
+	}
+	for _, name := range []string{
+		"hoard.db.bak-v10-20260102", "hoard.db.bak-v23-20260103", "hoard.db.bak-v25-20260104",
+	} {
+		if !exists(name) {
+			t.Errorf("%s should have survived the prune", name)
+		}
+	}
+}
+
 // Below the keep threshold nothing is touched.
 func TestBackupPruneLeavesAFewAlone(t *testing.T) {
 	dir := t.TempDir()
@@ -568,6 +609,37 @@ func TestBackupPruneLeavesAFewAlone(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s was pruned with only two present", name)
 		}
+	}
+}
+
+// The migration runner trusts the driver to execute every statement in a
+// multi-statement migration; a driver that stopped early through a
+// rename-recreate-copy rebuild (v23's shape) would leave card_entries empty
+// and stamped. The runner's row-count check must catch a shrink and fail the
+// open instead of proceeding on a gutted holdings table.
+func TestMigrationRefusesShrunkCardEntries(t *testing.T) {
+	savedMigrations, savedVersion := migrations, schemaVersion
+	t.Cleanup(func() { migrations, schemaVersion = savedMigrations, savedVersion })
+	// A stand-in for a rebuild whose copy step never ran.
+	migrations = append(append([]migration(nil), migrations...),
+		migration{savedVersion + 1, `DELETE FROM card_entries;`})
+	schemaVersion = savedVersion + 1
+
+	path := filepath.Join(t.TempDir(), "hoard.db")
+	seedRawDB(t, path, preVersioningDDL+`
+INSERT INTO cards VALUES ('ulamog-id','uma','7','Ulamog, the Infinite Gyre',
+                          10.0,25.0,'http://x','2020-01-01T00:00:00Z');
+INSERT INTO containers (kind,name,source,source_id,created_at,updated_at)
+  VALUES ('collection','Collection','manual','__collection__','x','x');
+INSERT INTO card_entries VALUES (1,'ulamog-id','normal','main',2);`)
+
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded across a migration that emptied card_entries")
+	}
+	if !strings.Contains(err.Error(), "card_entries") {
+		t.Errorf("err = %v, want the shrunk-holdings refusal", err)
 	}
 }
 

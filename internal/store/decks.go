@@ -10,8 +10,29 @@ import (
 
 // Decks: importing one, listing them, and reading what is inside.
 
+// DeckBySource reports the deck previously imported from (source, sourceID):
+// its id and display name, or ok=false when no such deck exists. It is the
+// pre-flight for UpsertDeck's replacement semantics — callers who would
+// destroy a user's manual edits ask this first and confirm before they do.
+func (s *Store) DeckBySource(source, sourceID string) (id int64, name string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT id, name FROM containers WHERE source=? AND source_id=?`,
+		source, sourceID).Scan(&id, &name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	return id, name, true, nil
+}
+
 // UpsertDeck inserts or updates a deck by (source, source_id) and replaces its
 // entries wholesale, so re-importing is idempotent. Returns the deck's id.
+//
+// Replacement is total: conditions assessed and printings corrected in browse
+// are discarded with the old entries. That is the right behavior for an undo
+// restoring a deck it just removed, and the wrong surprise for a casual
+// re-import — which is why DeckAdd confirms against DeckBySource first.
 func (s *Store) UpsertDeck(meta DeckMeta, entries []Entry) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

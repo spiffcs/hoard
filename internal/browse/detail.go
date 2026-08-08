@@ -512,10 +512,12 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 		}
 	}
 	// The stat box, bottom-right of the frame the way the card prints it:
-	// power/toughness for creatures, loyalty for planeswalkers.
+	// power/toughness for creatures, loyalty for planeswalkers. Display
+	// cells, not bytes: a byte count over-pads any multi-byte stat (Infinity
+	// Elemental's power is ∞) and shoves the box past the frame's edge.
 	if stat := statBox(c); stat != "" {
 		styled := m.theme.Title.Render(stat)
-		out = append(out, strings.Repeat(" ", max(cardW-len(stat), 0))+styled)
+		out = append(out, strings.Repeat(" ", max(cardW-ansi.StringWidth(stat), 0))+styled)
 	}
 	// The frame's footer: who drew it, where and when it was printed.
 	footer := joinNonEmpty(" · ",
@@ -545,12 +547,23 @@ func (m Model) hoardLines(d detail, width int) []string {
 	// twice. It is a field of the editor, so it renders even when every row is
 	// unassessed — unlike the browse table's COND column, which can hide
 	// because nothing there is editable.
+	// A scanner-guessed finish wears a "?": the scan committed the default
+	// because nothing on the card chose, and this row is where a human
+	// finally looks. Editing the finish (enter → finish) both fixes the row
+	// and retires the guess from `hoard guessed`.
+	finishCell := func(h store.Holding) string {
+		s := ui.FinishTreated(h.Finish, h.Treatment)
+		if h.Guessed {
+			s += "?"
+		}
+		return s
+	}
 	var qtyW, setW, finW, condW int
 	for _, h := range d.holdings {
 		qtyW = max(qtyW, ansi.StringWidth(ui.Qty(h.Quantity)))
 		setW = max(setW, ansi.StringWidth(ui.Printing(h.SetCode, h.CollectorNumber)))
 		condW = max(condW, ansi.StringWidth(ui.Condition(h.Condition)))
-		finW = max(finW, ansi.StringWidth(ui.FinishTreated(h.Finish, h.Treatment)))
+		finW = max(finW, ansi.StringWidth(finishCell(h)))
 	}
 	pad := func(s string, w int, left bool) string {
 		fill := strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
@@ -566,7 +579,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 		qty := pad(ui.Qty(h.Quantity), qtyW, true)
 		set := pad(ui.Printing(h.SetCode, h.CollectorNumber), setW, false)
-		fin := pad(ui.FinishTreated(h.Finish, h.Treatment), finW, false)
+		fin := pad(finishCell(h), finW, false)
 		cond := pad(ui.Condition(h.Condition), condW, false)
 		// In the held zone the selected row shows its editable fields, the
 		// highlighted one wearing the cursor: ←/→ choose, enter edits.

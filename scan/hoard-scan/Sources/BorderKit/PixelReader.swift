@@ -11,9 +11,15 @@ final class PixelReader {
     private let data: UnsafeMutablePointer<UInt8>
     private let bytesPerRow: Int
 
+    /// The largest frame worth copying, in pixels. Live captures are 12 MP;
+    /// the offline probe reads arbitrary files, and before this ceiling a
+    /// 20000×20000 PNG was a 1.6 GB allocation and an unhandled abort inside
+    /// `allocate` — nil is an answerable failure, a trap is not.
+    private static let maxPixels = 64 * 1024 * 1024
+
     init?(_ cg: CGImage) {
         let w = cg.width, h = cg.height
-        guard w > 0, h > 0 else { return nil }
+        guard w > 0, h > 0, w * h <= Self.maxPixels else { return nil }
         let stride = w * 4
         let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: stride * h)
         guard let ctx = CGContext(

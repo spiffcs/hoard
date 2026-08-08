@@ -66,10 +66,20 @@ public enum ScanCommand: Equatable {
         case _ where line.hasPrefix("tune "):
             // "tune <stable> <interval>", both required — a half-specified
             // tuning is a worse experiment than none.
+            //
+            // Clamped rather than rejected. These two knobs sit in front of
+            // the capture path: their product is the floor on every shutter,
+            // and the sample throttle gates *manual* capture too — so
+            // "tune 2000000000 1e9" would park the phone for what works out
+            // to decades, looking exactly like a dead camera. A wild value is
+            // someone experimenting (or an env var forwarded unvalidated),
+            // and the useful ranges are known: no session wants more than a
+            // minute of stillness or a sample gap past five seconds.
             let f = line.split(separator: " ")
             guard f.count == 3, let n = Int(f[1]), let i = Double(f[2]),
                   n > 0, i > 0 else { return nil }
-            self = .tune(stable: n, interval: i)
+            self = .tune(stable: min(max(n, 1), 60),
+                         interval: min(max(i, 0.01), 5.0))
         case _ where line.hasPrefix("evbias "):
             guard let v = Double(payload), v >= -8, v <= 8 else { return nil }
             self = .evBias(v)

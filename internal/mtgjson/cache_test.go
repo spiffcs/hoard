@@ -11,6 +11,38 @@ import (
 	"time"
 )
 
+// The day-cache prune removes yesterday's entries, not in-flight temps: two
+// overlapping fetches (Prices + Quotes both run treatedExtra and remap) each
+// prune, and sweeping the other's dl-* or quotes-* temp made its final rename
+// fail ENOENT after the whole download.
+func TestPruneCacheSparesInflightTemps(t *testing.T) {
+	oldDay := today
+	today = func() string { return "2026-08-02" }
+	defer func() { today = oldDay }()
+
+	dir := t.TempDir()
+	for _, name := range []string{
+		"2026-08-01-AllPricesToday.json.gz", // yesterday's: prune
+		"2026-08-02-AllPricesToday.json.gz", // today's: keep
+		"dl-1234",                           // another fetch's in-flight download
+		"quotes-5678",                       // the quotes day-cache mid-write
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneCache(dir)
+
+	if _, err := os.Stat(filepath.Join(dir, "2026-08-01-AllPricesToday.json.gz")); !os.IsNotExist(err) {
+		t.Error("yesterday's entry should have been pruned")
+	}
+	for _, name := range []string{"2026-08-02-AllPricesToday.json.gz", "dl-1234", "quotes-5678"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s should have survived the prune: %v", name, err)
+		}
+	}
+}
+
 // A 200 that is not gzip — a captive portal, an outage page — must not become
 // today's cache entry: cached, it would wedge every price command until
 // midnight with an error naming neither the file nor the fix.

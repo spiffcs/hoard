@@ -159,12 +159,12 @@ func (m *Model) heldEditable() (store.Holding, bool) {
 // adjustHeldQuantity changes the held row under the detail cursor by
 // delta — the overlay's +/-. Seeing the real count is exactly when a wrong
 // one gets noticed, so the edit lives where the reader already is.
-func (m *Model) adjustHeldQuantity(delta int) {
+func (m *Model) adjustHeldQuantity(delta int) tea.Cmd {
 	h, ok := m.heldEditable()
 	if !ok {
-		return
+		return nil
 	}
-	m.setHeldQuantity(h, max(h.Quantity+delta, 0), m.detail.card.Name)
+	return m.setHeldQuantity(h, max(h.Quantity+delta, 0), m.detail.card.Name)
 }
 
 // editHeldField opens the edit prompt for the held row's highlighted
@@ -204,8 +204,7 @@ func (m *Model) promptHeldQuantity() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			m.setHeldQuantity(h, want, name)
-			return nil
+			return m.setHeldQuantity(h, want, name)
 		},
 	}
 }
@@ -220,15 +219,17 @@ func parseQuantity(text string) (int, error) {
 }
 
 // setHeldQuantity commits a held row's new count, undo included — the
-// shared tail of the overlay's +/- and its quantity prompt.
-func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
+// shared tail of the overlay's +/- and its quantity prompt. The returned
+// command is reloadDetail's comp refetch, and dropping it is what left the
+// COMPS section on "reading today's vendor quotes…" with no read in flight.
+func (m *Model) setHeldQuantity(h store.Holding, want int, name string) tea.Cmd {
 	if want == h.Quantity {
-		return
+		return nil
 	}
 	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, want)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
@@ -245,10 +246,11 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) {
 	}
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	cmd := m.reloadDetail()
 	if want == 0 {
 		m.closeDetailIfUnheld()
 	}
+	return cmd
 }
 
 // promptHeldFinish asks for the held row's finish — the fix for copies
@@ -272,8 +274,7 @@ func (m *Model) promptHeldFinish() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			m.moveHeldFinish(h, name, want)
-			return nil
+			return m.moveHeldFinish(h, name, want)
 		},
 	}
 }
@@ -296,15 +297,15 @@ func parseFinish(text string) (string, error) {
 // held in the target finish, undo included. The overlay's cursor follows
 // the row to its new finish, and the links refresh with it — Card
 // Kingdom's page is per finish.
-func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
+func (m *Model) moveHeldFinish(h store.Holding, name, want string) tea.Cmd {
 	if want == h.Finish {
 		m.status, m.statusErr = "already "+ui.Finish(h.Finish), false
-		return
+		return nil
 	}
 	prevTarget, err := m.store.MoveEntryFinish(h.ContainerID, h.ScryfallID, h.Finish, want, h.Condition)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	cid, id, from, qty, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
 	m.undoable(undoAction{
@@ -320,7 +321,7 @@ func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
 	m.status = fmt.Sprintf("%s (%s → %s) in %s", name, ui.Finish(from), ui.Finish(want), h.ContainerName)
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	cmd := m.reloadDetail()
 	if d := m.detail; d != nil {
 		for i, held := range d.holdings {
 			if held.ScryfallID == id && held.ContainerID == cid && held.Finish == want {
@@ -330,6 +331,7 @@ func (m *Model) moveHeldFinish(h store.Holding, name, want string) {
 		}
 		m.refreshLinks(d)
 	}
+	return cmd
 }
 
 // promptHeldCondition asks what condition the held row's copies are in — the
@@ -353,8 +355,7 @@ func (m *Model) promptHeldCondition() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			m.moveHeldCondition(h, name, want)
-			return nil
+			return m.moveHeldCondition(h, name, want)
 		},
 	}
 }
@@ -399,19 +400,19 @@ func parseCondition(text string) (string, error) {
 // already held in the target condition, undo included. The mirror of
 // moveHeldFinish, down to the two-step undo: the merge destroyed a quantity
 // that has to come back before the source row does.
-func (m *Model) moveHeldCondition(h store.Holding, name, want string) {
+func (m *Model) moveHeldCondition(h store.Holding, name, want string) tea.Cmd {
 	from := h.Condition
 	if from == "" {
 		from = store.ConditionUnknown
 	}
 	if want == from {
 		m.status, m.statusErr = "already "+ui.Condition(from), false
-		return
+		return nil
 	}
 	prevTarget, err := m.store.MoveEntryCondition(h.ContainerID, h.ScryfallID, h.Finish, from, want)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	cid, id, finish, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
 	m.undoable(undoAction{
@@ -428,7 +429,7 @@ func (m *Model) moveHeldCondition(h store.Holding, name, want string) {
 		name, ui.Condition(from), ui.Condition(want), h.ContainerName)
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	cmd := m.reloadDetail()
 	if d := m.detail; d != nil {
 		for i, held := range d.holdings {
 			if held.ScryfallID == id && held.ContainerID == cid &&
@@ -438,6 +439,7 @@ func (m *Model) moveHeldCondition(h store.Holding, name, want string) {
 			}
 		}
 	}
+	return cmd
 }
 
 // promptHeldSet asks which set the held row should be attributed to — the
@@ -509,11 +511,16 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 		name, ui.Printing(pick.Set, pick.CollectorNumber), h.ContainerName)
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	// reloadDetail's comp fetch answers the printing the overlay showed;
+	// loadPrinting below re-points at the corrected one and marks its comps
+	// pending, so that fetch must run too — dropping either left the COMPS
+	// section pending forever on whichever printing lost its command.
+	var cmds []tea.Cmd
+	cmds = append(cmds, m.reloadDetail())
 	// The overlay follows the corrected printing, art included.
 	d := m.detail
 	if d == nil {
-		return nil
+		return tea.Batch(cmds...)
 	}
 	for i, held := range d.holdings {
 		if held.ScryfallID == toID && held.ContainerID == cid && held.Finish == finish {
@@ -523,12 +530,14 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 	}
 	if m.loadPrinting(d, toID) {
 		m.refreshLinks(d)
+		cmds = append(cmds, m.fetchDetailComps(toID))
 		if cmd := m.fetchDetailImage(); cmd != nil {
-			return cmd
+			cmds = append(cmds, cmd)
+		} else {
+			d.image = nil
 		}
-		d.image = nil
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 // lowestPrintIn picks the set's printing with the lowest collector number
@@ -580,22 +589,22 @@ func (m *Model) promptHeldLocation() {
 			}
 			return nil
 		},
-		commit: func(m *Model, text string) tea.Cmd { m.moveHeldTo(h, name, text); return nil },
+		commit: func(m *Model, text string) tea.Cmd { return m.moveHeldTo(h, name, text) },
 	}
 }
 
 // moveHeldTo moves the held row into another binder, merging with copies
 // already there.
-func (m *Model) moveHeldTo(h store.Holding, name, text string) {
+func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {
 	want := strings.TrimSpace(text)
 	if strings.EqualFold(want, h.ContainerName) {
 		m.status, m.statusErr = "already in "+h.ContainerName, false
-		return
+		return nil
 	}
 	binders, err := m.store.ListBinders()
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	var target *store.DeckSummary
 	for i := range binders {
@@ -616,12 +625,12 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) {
 	}
 	if target == nil {
 		m.status, m.statusErr = fmt.Sprintf("no binder named %q", want), true
-		return
+		return nil
 	}
 	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, target.ID, h.ScryfallID)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	fromC, toC, sid, finish, qty, cond := h.ContainerID, target.ID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
 	m.undoable(undoAction{
@@ -637,7 +646,7 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) {
 	m.status = fmt.Sprintf("moved %s (%s) ×%d to %s", name, finish, qty, target.Name)
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	return m.reloadDetail()
 }
 
 // askHeldRemoval stages the removal of the held row under the detail
@@ -652,16 +661,16 @@ func (m *Model) askHeldRemoval() {
 		help: "y remove · any other key cancels",
 		prompt: fmt.Sprintf("remove %s (%s) ×%d from %s?",
 			name, h.Finish, h.Quantity, h.ContainerName),
-		onYes: func(m *Model) tea.Cmd { m.removeHeld(h, name); return nil },
+		onYes: func(m *Model) tea.Cmd { return m.removeHeld(h, name) },
 	}
 }
 
 // removeHeld zeroes the confirmed held row and records the undo.
-func (m *Model) removeHeld(h store.Holding, name string) {
+func (m *Model) removeHeld(h store.Holding, name string) tea.Cmd {
 	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, 0)
 	if err != nil {
 		m.setError(err)
-		return
+		return nil
 	}
 	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
@@ -674,8 +683,9 @@ func (m *Model) removeHeld(h store.Holding, name string) {
 	m.status = fmt.Sprintf("removed %s (%s) from %s", name, h.Finish, h.ContainerName)
 	m.statusErr = false
 	m.refresh()
-	m.reloadDetail()
+	cmd := m.reloadDetail()
 	m.closeDetailIfUnheld()
+	return cmd
 }
 
 // removeDeck deletes the selected deck.

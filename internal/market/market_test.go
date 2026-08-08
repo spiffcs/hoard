@@ -18,13 +18,11 @@ func q(provider, kind, finish string, price float64) mtgjson.Quote {
 	return mtgjson.Quote{Provider: provider, Kind: kind, Finish: finish, Price: price}
 }
 
-// The listing this guard exists for. Manapool quotes Legion Loyalty foil at
-// $138,518.78 against Card Kingdom's $2.49; it is real data in MTGJSON, and a
-// naive "widest spread first" ranking puts it at the top of the first screen.
 // The listing this design exists for. Manapool quotes Legion Loyalty foil at
 // $138,518.78 against Card Kingdom's $2.49 — real data in MTGJSON. Anchored
-// on the sales price, a lone high ask simply never becomes a row: only
-// asks *below* what cards actually sell for are interesting.
+// on the sales price, a lone high ask never becomes a row, and the shared
+// troll clamp (trollListing) drops it from the vendor count too, so "two
+// vendors disagree" keeps meaning two real prices.
 func TestAssessAnchorsOnMarket(t *testing.T) {
 	qs := []mtgjson.Quote{
 		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
@@ -34,8 +32,8 @@ func TestAssessAnchorsOnMarket(t *testing.T) {
 	}
 	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 
-	if usable != 3 {
-		t.Errorf("usable retail = %d, want 3", usable)
+	if usable != 2 {
+		t.Errorf("usable retail = %d, want 2 — the troll ask is not a vendor", usable)
 	}
 	if !op.HasMarket || op.Market != 3.20 {
 		t.Errorf("market = %v (has %v), want the tcgplayer sales price", op.Market, op.HasMarket)
@@ -45,6 +43,38 @@ func TestAssessAnchorsOnMarket(t *testing.T) {
 	}
 	if op.SellAt != 0.75 {
 		t.Errorf("sell = %v, want 0.75", op.SellAt)
+	}
+}
+
+// The clamp matters most on the anchor itself: a joke figure landing in the
+// tcgplayer bucket becomes Market, and every market-relative section then
+// measures real prices against a number nobody pays — the comps table beside
+// them (dropTrollListings) already refused it, and the two tables disagreed
+// about the same card.
+func TestAssessDropsTrollListings(t *testing.T) {
+	qs := []mtgjson.Quote{
+		q("tcgplayer", mtgjson.Retail, "foil", 7362059.74),
+		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
+		q("manapool", mtgjson.Retail, "foil", 3.00),
+	}
+	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
+	if op.HasMarket {
+		t.Errorf("market = %v, want the polluted anchor dropped", op.Market)
+	}
+	if usable != 2 {
+		t.Errorf("usable retail = %d, want 2", usable)
+	}
+	if op.BuyAt != 2.49 || op.BuyFrom != "cardkingdom" {
+		t.Errorf("buy = %v from %q, want the cheapest sane ask", op.BuyAt, op.BuyFrom)
+	}
+
+	// One voice: nothing to compare against, so it stands — same rule as the
+	// comp sheet's.
+	lone, usable := Assess(ownedFoil("Legion Loyalty"), []mtgjson.Quote{
+		q("manapool", mtgjson.Retail, "foil", 500),
+	})
+	if usable != 1 || !lone.HasRetail || lone.BuyAt != 500 {
+		t.Errorf("lone figure = %+v (usable %d), want trusted", lone, usable)
 	}
 }
 

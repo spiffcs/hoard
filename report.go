@@ -34,28 +34,33 @@ func cmdReport(st *store.Store, args []string, jsonOut bool) error {
 		return err
 	}
 
-	w := os.Stdout
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
+	// Detect on the actual destination: a report written to a file must be
+	// plain text however colorful the terminal running the command.
+	emit := func(w io.Writer, env ui.Env) error {
+		switch {
+		case jsonOut:
+			return hoardjson.Write(w, hoardjson.FromValuation(d))
+		case *csvOut:
+			owned, err := st.OwnedByFinish()
+			if err != nil {
+				return err
+			}
+			return report.ValuationCSV(w, d.AsOf, owned)
+		default:
+			_, err := io.WriteString(w, report.Valuation(env, d))
 			return err
 		}
-		defer f.Close()
-		w = f
 	}
-	switch {
-	case jsonOut:
-		return hoardjson.Write(w, hoardjson.FromValuation(d))
-	case *csvOut:
-		owned, err := st.OwnedByFinish()
-		if err != nil {
-			return err
-		}
-		return report.ValuationCSV(w, d.AsOf, owned)
-	default:
-		// Detect on the actual destination: a report written to a file must
-		// be plain text however colorful the terminal running the command.
-		_, err := io.WriteString(w, report.Valuation(ui.Detect(w), d))
+	if *out == "" {
+		return emit(os.Stdout, ui.Detect(os.Stdout))
+	}
+	f, err := createOutput(*out)
+	if err != nil {
 		return err
 	}
+	if err := emit(f, ui.Detect(f.f)); err != nil {
+		f.Abort()
+		return err
+	}
+	return f.Commit()
 }

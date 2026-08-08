@@ -60,7 +60,7 @@ func (m Model) sortLabel() string {
 		// Checked before selectedMarketKind, which defaults to the profit
 		// table for any cursor outside the Kind sections.
 		if m.selectedComp() != nil {
-			label := "comps · " + m.compsSortColumnsNow()[m.compsSortIdx]
+			label := "comps · " + m.compsSortKey()
 			if m.compsSortRev {
 				label += " (reversed)"
 			}

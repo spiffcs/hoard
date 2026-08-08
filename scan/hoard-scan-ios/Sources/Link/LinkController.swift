@@ -29,6 +29,13 @@ final class LinkController: ObservableObject {
     /// even when two identical prices land in a row.
     @Published private(set) var price = PriceResult()
     @Published private(set) var priceSequence = 0
+    /// The second-copy offer, when one stands: the parent suppressed a
+    /// sighting as a repeat and the operator may overrule it from here — the
+    /// screen they are actually watching mid-pile. Cleared by the button, by
+    /// the next result (a new card landed, the question is stale), or by the
+    /// same 30s window the terminal's `+` honours.
+    @Published private(set) var dupOffer: String?
+    private var dupOfferAt = Date.distantPast
 
     /// Raised when the Mac asks for a capture. The view owns the camera, so the
     /// controller asks rather than reaches.
@@ -118,6 +125,21 @@ final class LinkController: ObservableObject {
         trace("peer verified")
     }
 
+    /// releaseSession gives the whole session back when either leg dies.
+    ///
+    /// Cancelling the survivor is the half that is easy to forget: a session
+    /// whose preview died still has a live control connection, and leaving it
+    /// up means the Mac keeps believing in a session the phone has already
+    /// abandoned. The survivor's own `.cancelled` callback then finds
+    /// `session` nil and does nothing, which is what the identity guards are
+    /// for.
+    private func releaseSession() {
+        let dead = session
+        session = nil
+        connected = false
+        dead?.cancel()
+    }
+
     /// markLost undoes markVerified when the partner connection never arrived.
     ///
     /// The cost of claiming a session early is having to give it back. Without
@@ -145,10 +167,19 @@ final class LinkController: ObservableObject {
         if changed, connected { announceReady() }
     }
 
+    /// start brings the listener up — again, if need be. Safe to call on
+    /// every return to foreground: iOS tears the NWListener down on suspend
+    /// and nothing else restarts it, so a phone switched away from and back
+    /// used to stay invisible to the Mac's picker until the app was killed.
+    /// PeerListener.start() rebuilds its listener each call; established
+    /// sessions ride their own connections and are untouched.
     func start() {
         do {
             try listener.start()
-            status = "Waiting for hoard, code \(code.display)"
+            // Not while connected: a brief background can leave the session
+            // alive, and stamping "Waiting" over a live link's "Connected"
+            // would be the header lying in the other direction.
+            if !connected { status = "Waiting for hoard, code \(code.display)" }
         } catch {
             SessionLog.write("listener failed: \(error.localizedDescription)")
             status = "Could not join the network. Check Wi-Fi and try again"
@@ -202,8 +233,9 @@ final class LinkController: ObservableObject {
         // would be a link retaining itself through its own state handler.
         session.control.onState = { [weak self, weak control = session.control] state in
             Task { @MainActor in
-                if case .failed(let failure) = state {
-                    guard let self else { return }
+                guard let self else { return }
+                switch state {
+                case .failed(let failure):
                     self.connected = false
                     // The phone's own screen gets the plain reason too; the
                     // framework's wording goes to the session log, which is
@@ -221,7 +253,48 @@ final class LinkController: ObservableObject {
                     // By identity, and only if this is still the live session: a
                     // late failure from the connection that was just replaced
                     // would otherwise tear down the reconnect that replaced it.
-                    if self.session?.control === control { self.session = nil }
+                    if self.session?.control === control { self.releaseSession() }
+                case .cancelled:
+                    // A clean Mac shutdown cancels rather than fails, and
+                    // handling only `.failed` left `connected` true — a green
+                    // header over a dead link — with the stale session never
+                    // released, so markVerified's `session == nil` guard
+                    // refused the next Mac until a second connection happened
+                    // to adopt. Same identity check as above; a local stop()
+                    // has already nilled the session, so this is a no-op there.
+                    guard self.session?.control === control else { return }
+                    self.releaseSession()
+                    self.status = "hoard disconnected"
+                    self.trace("link cancelled: the Mac closed the session")
+                default:
+                    break
+                }
+            }
+        }
+        // The preview leg carries only fixture stills, which is exactly why
+        // its death used to be invisible: control kept verbs and prices
+        // flowing while every still vanished into a dead socket, and a corpus
+        // session found out when the debug dir came up empty. A dead preview
+        // is a dead session — released the same way, so the Mac's reconnect
+        // gets a fresh pair of connections.
+        session.preview.onState = { [weak self, weak preview = session.preview] state in
+            Task { @MainActor in
+                guard let self else { return }
+                switch state {
+                case .failed(let failure):
+                    guard self.session?.preview === preview else { return }
+                    self.releaseSession()
+                    self.connected = false
+                    self.status = failure.reason
+                    self.trace("preview leg failed: \(failure.detail)")
+                case .cancelled:
+                    guard self.session?.preview === preview else { return }
+                    self.releaseSession()
+                    self.connected = false
+                    self.status = "hoard disconnected"
+                    self.trace("preview leg cancelled")
+                default:
+                    break
                 }
             }
         }
@@ -257,8 +330,17 @@ final class LinkController: ObservableObject {
 
     private func handle(_ frame: Frame) {
         guard frame.kind == .ndjson, let line = frame.text else { return }
-        guard let verb = ScanCommand(line: line.trimmingCharacters(in: .whitespacesAndNewlines))
-        else { return }
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let verb = ScanCommand(line: trimmed) else {
+            // Reported, matching the Mac end: RemoteController answers an
+            // unparseable stdin line with an error event, and this end used
+            // to drop the same condition on the floor — so where the mangled
+            // verb died depended on which hop it died at, and "parsed and
+            // ignored" was indistinguishable from "worked" at the terminal.
+            send(Event(event: "error", message: "Unknown command: \(trimmed)"))
+            trace("unknown command: \(trimmed)")
+            return
+        }
         switch verb {
         case .capture:
             onCapture?()
@@ -313,7 +395,29 @@ final class LinkController: ObservableObject {
         guard let data = payload.data(using: .utf8),
               let cmd = try? JSONDecoder().decode(HUDCommand.self, from: data)
         else { return }
+        // The second-copy offer rides the result verb with no tier and no
+        // sound — the suppression it reports was deliberately silent, and a
+        // tone here would turn every correct suppression into a stop.
+        if let note = cmd.note, cmd.promote == true {
+            dupOffer = note
+            let stamp = Date()
+            dupOfferAt = stamp
+            // The offer hides itself. Nothing else is guaranteed to: on the
+            // last card of a pile no next result ever arrives, and the banner
+            // sat on screen indefinitely (live, 2026-08-08). Ten seconds is
+            // long enough to read and act; the answering window itself stays
+            // 30s, so a slow tap after the banner faded still lands.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, self.dupOfferAt == stamp else { return }
+                self.dupOffer = nil
+            }
+            return
+        }
         guard cmd.tier != nil else { return }
+        // A real result supersedes the offer: a new card landed, so "was
+        // that a second copy" no longer refers to what the operator sees.
+        dupOffer = nil
         // The phone's own tier lines, not the Mac's. The wire carries the
         // amount alongside its three-tier verdict, and the Settings tab owns
         // the thresholds here — so a priced card is re-tiered locally and
@@ -353,10 +457,53 @@ final class LinkController: ObservableObject {
     /// of a `result` would delay the sound.
     func sendStill(_ image: CGImage) {
         guard sendStills, let session else { return }
-        DispatchQueue.global(qos: .utility).async {
-            guard let data = jpeg(image, quality: 0.95) else { return }
-            session.preview.send(Frame(kind: .still, payload: data))
+        // Bounded, because `send` is not: control frames must all arrive, so
+        // it queues without limit, and a still is 4-8 MB — on a link slower
+        // than the capture rate an unbounded queue buffers the session's
+        // whole output in memory while latency grows without anyone saying
+        // so. Two in flight rides out one slow send; beyond that this
+        // capture's still is dropped and the log records the hole in the
+        // fixture set. Claimed here, on the main actor, so two captures
+        // cannot race past the same check; released by the wire completion.
+        let claimed = stillsInFlight.update { n -> Bool in
+            guard n < Self.maxStillsInFlight else { return false }
+            n += 1
+            return true
         }
+        guard claimed else {
+            SessionLog.write(
+                "still dropped: \(Self.maxStillsInFlight) already queued on a slow link")
+            return
+        }
+        let counter = stillsInFlight
+        DispatchQueue.global(qos: .utility).async {
+            guard let data = jpeg(image, quality: 0.95) else {
+                counter.update { $0 -= 1 }
+                return
+            }
+            session.preview.send(Frame(kind: .still, payload: data)) {
+                counter.update { $0 -= 1 }
+            }
+        }
+    }
+
+    /// Stills claimed but not yet off the wire. Cross-thread — claimed on the
+    /// main actor, released by the network completion — hence Locked, the
+    /// capture head's pattern.
+    private let stillsInFlight = Locked(0)
+    private static let maxStillsInFlight = 2
+
+    /// promote answers the second-copy offer — the parent's `+` key, tapped.
+    /// The 30s window mirrors the terminal's; past it the parent answers the
+    /// stale promote gracefully, so a race costs a status line, not a row.
+    func promote() {
+        guard dupOffer != nil, Date().timeIntervalSince(dupOfferAt) < 30 else {
+            dupOffer = nil
+            return
+        }
+        dupOffer = nil
+        send(Event(event: "promote"))
+        trace("promote sent: operator confirmed a second copy")
     }
 
     func send(_ event: Event) {
@@ -384,6 +531,10 @@ final class LinkController: ObservableObject {
         _ reading: CardReading, rotation: Int, auto: Bool, fireReason: String? = nil,
         holdDelta: Double? = nil, faceDelta: Double? = nil
     ) {
+        // A new read is going out, so whatever the standing offer referred to
+        // is no longer what the camera sees; the read's own outcome (a fresh
+        // offer included) supersedes it.
+        dupOffer = nil
         send(reading.scanEvent(
             rotation: rotation, auto: auto ? true : nil, fireReason: fireReason,
             holdDelta: holdDelta, faceDelta: faceDelta))
@@ -407,12 +558,6 @@ final class LinkController: ObservableObject {
         session.control.send(Frame(kind: .trace, payload: Data(message.utf8)))
     }
 
-    /// preview offers a frame to the Mac's optional mirror window. Droppable by
-    /// design — a stale preview frame is worse than a missing one — so this
-    /// silently does nothing when the previous frame is still in flight.
-    func preview(_ jpeg: Data) {
-        session?.preview.sendDroppable(Frame(kind: .preview, payload: jpeg))
-    }
 }
 
 /// jpeg encodes a capture for the wire.

@@ -134,6 +134,18 @@ public func sceneSignature(
     } else {
         // BGRA. Green-weighted rather than a true luma: it is within a few
         // percent and this number is only ever compared with itself.
+        //
+        // Only for formats that really are four bytes per pixel. This branch
+        // used to catch *anything* non-biplanar and index with a stride of 4,
+        // so a two-byte packed format ('2vuy', 'yuvs') would read past the
+        // end of the mapped plane — one videoSettings edit away from an OOB.
+        // An unrecognized format now answers .unknown, which the trigger
+        // already treats as "no evidence" rather than crashing on it.
+        guard format == kCVPixelFormatType_32BGRA
+            || format == kCVPixelFormatType_32ARGB
+            || format == kCVPixelFormatType_32RGBA,
+            bytesPerRow >= width * 4
+        else { return .unknown }
         read = { x, y in Int(bytes[y * bytesPerRow + x * 4 + 1]) }
     }
     return SceneSignature(cells: sampleGrid(

@@ -38,6 +38,13 @@ struct HoardScanApp: App {
     /// camera runs somewhere you cannot see.
     @State private var tab = Tab.scan
 
+    /// Watched so the listener can be brought back. iOS tears an NWListener
+    /// down when the app suspends and never restores it, so without this a
+    /// phone switched away from and back stayed off the network — looking
+    /// exactly like the "phone is off" failure the Pair tab warns about,
+    /// except that reopening the app did not fix it.
+    @Environment(\.scenePhase) private var scenePhase
+
     private enum Tab: Hashable { case scan, pair, settings }
 
     var body: some Scene {
@@ -64,6 +71,14 @@ struct HoardScanApp: App {
             // it can see more than one source, so a phone that has not started
             // listening yet is indistinguishable from no phone at all.
             .task { link.start() }
+            // And again on every return to foreground — start() is
+            // restartable for exactly this. Unconditional rather than gated
+            // on the listener looking dead, because a listener that has been
+            // through a suspension can report a healthy state while no longer
+            // being advertised.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { link.start() }
+            }
         }
     }
 }

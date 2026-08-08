@@ -291,9 +291,14 @@ type queueItem struct {
 	// inside one frame (a fanned playset) can be told from a card lingering
 	// across frames (an un-swapped pile).
 	captureSeq int
-	dup        bool   // flagged as a possible duplicate of a recent commit
-	note       string // human-readable reason the card queued
-	errText    string // resolve error, if any
+	// queuedAt is when the entry joined the review queue (zero until it
+	// does). It is what bounds the finish-hint carry in upgradeQueued to the
+	// second-look window: past it, a same-name better read may be a second
+	// physical copy rather than a re-photograph of this one.
+	queuedAt time.Time
+	dup      bool   // flagged as a possible duplicate of a recent commit
+	note     string // human-readable reason the card queued
+	errText  string // resolve error, if any
 	// numberOverridden records that a collector number was read but no
 	// candidate carrying one verified, so the card rests on its name and a
 	// single printing instead. Rare and worth auditing: it is the one path
@@ -315,6 +320,13 @@ type queueItem struct {
 type resolveDoneMsg struct {
 	gen  int
 	item queueItem
+	// supplementary marks a result no resolveCardCmd increment paid for —
+	// the art channel's synthetic re-read runs *beside* the real resolve,
+	// which already decremented m.resolving when it landed. Decrementing
+	// again made the counter under-count: afterCard ended the close-time
+	// walk while lookups were still in flight, and the close prompt's
+	// "N unsaved scans" warnings understated what a discard would drop.
+	supplementary bool
 	// nameDur and printsDur time the two lookup halves, for the telemetry
 	// log — the Go side's slice of the per-card latency breakdown.
 	nameDur   time.Duration
@@ -382,6 +394,23 @@ func titleLikely(line string) bool {
 		return false
 	}
 	return !strings.ContainsAny(s, "™©®") && !collectorish.MatchString(s)
+}
+
+// typeLineRE matches a card's TYPE line read as text: one or more card-type
+// words, then the dash that separates subtypes ("Creature — Eldrazi",
+// "Legendary Artifact Creature - Golem"). No card NAME follows this grammar —
+// names use commas, and their hyphens bind words without spaces (No-Dachi,
+// Snow-Covered Island) — so a type-shaped line is skippable even at index 0,
+// where the no-filter rule otherwise protects keyword-named cards ("Fear").
+// The separator set covers what OCR makes of an em dash.
+var typeLineRE = regexp.MustCompile(`(?i)^(?:(?:legendary|basic|snow|world|tribal|kindred|token|artifact|enchantment|creature|instant|sorcery|land|planeswalker|battle)s?\s+)*` +
+	`(?:creature|artifact|enchantment|instant|sorcery|land|planeswalker|battle)s?\s*[-–—~=]`)
+
+// typeLineShape reports a line that is the card's type line, not its title.
+// Searching one buys nothing but a wrong fuzzy match and a queue ghost
+// ("Creature - Eldrazi" queued as unidentifiable, live 2026-08-07).
+func typeLineShape(line string) bool {
+	return typeLineRE.MatchString(strings.TrimSpace(line))
 }
 
 // abilityWords marks the keyword abilities that print alone on their own line
@@ -563,7 +592,16 @@ func searchLine(ctx context.Context, s Searcher, local localOnlySearcher,
 // ghost — and it charged a lot: one live session spent 19s across 15 failed
 // resolutions, the worst single line taking 4.8s, against 0-15ms for every
 // catalog hit.
-func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, ocr string, lineIdx int, match cardname.Match, err error) {
+// prefixNominee is a truncated-title nomination carried back beside a failed
+// identification: the card whose name the title line was a clean prefix of.
+// Not an identity — the caller must confirm it against the frame's collector
+// evidence before it becomes one (see resolveCardCmd's nomination pass).
+type prefixNominee struct {
+	name  string
+	match cardname.Match
+}
+
+func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, ocr string, lineIdx int, match cardname.Match, nominee *prefixNominee, err error) {
 	var firstErr error
 	local, hasLocal := s.(localOnlySearcher)
 	for i, line := range lines {
@@ -574,6 +612,12 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 			continue
 		}
 		if i > 0 && (fallbackLineSuspect(line) || !titleLikely(line) || keywordLine(line)) {
+			continue
+		}
+		// Even line 0: a type-shaped line is the card's TYPE row, which the
+		// helper serves as the title when the real title never read. No name
+		// matches its grammar, so searching it can only produce a wrong card.
+		if typeLineShape(line) {
 			continue
 		}
 		// Line 0 always gets its catalog try, unfiltered — that is what keeps
@@ -591,15 +635,28 @@ func resolveName(ctx context.Context, s Searcher, lines []string) (canonical, oc
 			}
 			continue
 		}
-		if card != nil && cardname.Plausible(line, card.Name) {
-			return card.Name, line, i, m, nil
+		if card == nil {
+			continue
+		}
+		// A nomination is not an acceptance: the searchers flag a truncated
+		// title PrefixOnly instead of answering with it, and only the
+		// helper's own title guess (line 0) may nominate — a fallback line
+		// prefixing some card's name is noise prefixing noise.
+		if m.PrefixOnly {
+			if i == 0 && nominee == nil {
+				nominee = &prefixNominee{name: card.Name, match: m}
+			}
+			continue
+		}
+		if cardname.Plausible(line, card.Name) {
+			return card.Name, line, i, m, nominee, nil
 		}
 	}
 	var top string
 	if len(lines) > 0 {
 		top = lines[0]
 	}
-	return "", top, 0, cardname.Match{}, firstErr
+	return "", top, 0, cardname.Match{}, nominee, firstErr
 }
 
 // resolveCardCmd runs one card's whole lookup — name, printings, collector
@@ -622,7 +679,7 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 			fromMoved: fromMoved, fromReplaced: fromReplaced, faceDelta: faceDelta,
 			captureSeq: captureSeq}
 		tName := time.Now()
-		canonical, ocr, idx, match, err := resolveName(ctx, s, c.Lines())
+		canonical, ocr, idx, match, nominee, err := resolveName(ctx, s, c.Lines())
 		nameDur := time.Since(tName)
 		var printsDur time.Duration
 		it.canonical, it.ocrLine, it.lineIdx, it.match = canonical, ocr, idx, match
@@ -651,125 +708,172 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 			if perr != nil {
 				it.errText = perr.Error()
 			} else {
-				// The band can hold several collector blocks — a stacked
-				// card's sliver parses as well as the target's — so every
-				// candidate is tried and the strongest verification wins: a
-				// neighbour's number can't match this card's printings, the
-				// real one can.
-				cands := append([]scan.CollectorAlt{
-					{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint,
-						Source: c.NumberSource, Year: c.CopyrightYear}},
-					c.CollectorAlts...)
-				// A copyright-line number is upgrade-only evidence: the tiny
-				// italic serif misreads digits (observed live: "30/145" read
-				// as "80/145" on a card that must keep auto-committing), so
-				// when no trusted band number was read, an empty sentinel
-				// re-derives the no-number outcome as the floor — a matching
-				// copyright number can only rank higher, never veto. A band
-				// number that matches nothing keeps its veto: there the
-				// number is trusted, so the mismatch means the name match
-				// itself is suspect.
-				//
-				// The alts carry no Source of their own and so read as band
-				// numbers here. That holds because the helper fills a
-				// copyright number only when the band gave nothing at all,
-				// and the alts are the band parse's own tail — so a
-				// copyright-sourced primary always arrives with an empty alt
-				// list and an empty set code. Keep those facts together if
-				// either side changes: an alt able to carry a copyright
-				// number would silently defeat this gate.
-				trusted := slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
-					return cd.Number != "" && cd.Source != "copyright"
-				})
-				// An exact name earns the same floor. The veto below exists
-				// because a number matching nothing suggests the *name* landed
-				// on the wrong card — but that reasoning is about a fuzzy
-				// match, and it inverts when the name is exact: there the
-				// mismatch is the digits, and this glyph size misreads digits
-				// constantly (Lethal Vapors' 68 arrived as 8, live, on a card
-				// with one printing and a perfect name read).
-				//
-				// The floor only pays out when the printings collapse to one,
-				// since rankByScanStrength gives an empty number nothing to
-				// work with otherwise — so a card with nine printings and a
-				// bad number still queues. The effect is simply that a garbage
-				// number can no longer be worse than no number at all, which
-				// is the outcome an exact name already commits on.
-				//
-				// The risk it accepts: scanning off a stack, an exact read of
-				// a *neighbour's* title whose card has one printing will now
-				// commit that neighbour instead of queueing. Auditable — the
-				// resolve line marks every rescue `number-overridden`.
-				// The year rides along: without it the sentinel re-derives the
-				// no-number outcome blind, and soleIndexInYear cannot fire in
-				// the one situation it exists for — an old frame whose only
-				// number came off the copyright line and matched nothing.
-				if !trusted || match.Exact {
-					cands = append(cands, scan.CollectorAlt{
-						Finish: c.FinishHint, Year: c.CopyrightYear})
-				}
-				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
-				// The frame stratum commits a printing off no digits at all,
-				// so it runs only behind a near-certain name. It began
-				// exact-only; the operator relaxed it to 0.92 after the
-				// 18:58 pile run, where Consuming Corruption read at 95%
-				// twice — once per rescue — and took the session's only
-				// review stop for a card the frame evidence had already
-				// separated. 0.92 sits above the general auto-commit floor
-				// (0.88, fitted on old-frame serif slips) on purpose: a
-				// fuzzy name plus a frame guess is still two soft reads
-				// compounding, so this bet keeps a stricter bar than
-				// evidence-corroborated commits get.
-				frame, priors := c.FrameStyle, priorSets
-				if !match.Exact && match.Similarity < frameNameFloor {
-					frame, priors = "", nil
-				}
-				for _, cd := range cands {
-					// The copyright year belongs to the card, not to any one
-					// collector block — there is only one copyright line. An
-					// alt block arriving with Year 0 was silently discarding
-					// the year the log still printed, which is how Lion Umbra
-					// ranked `none` off a clean 2024 read and queued (live,
-					// 2026-08-07). Same fallback shape as Language below.
-					ranked, r := rankByScanStrength(
-						prints, cd.Set, cd.Number, cmp.Or(cd.Year, c.CopyrightYear),
-						c.BorderColor, c.FinishHint,
-						cmp.Or(cd.Language, c.Language), frame, priors)
-					if r > it.rank {
-						it.prints, it.rank = ranked, r
-						// The winning candidate becomes the item's collector
-						// context, so the picker's ranking, the ← scanned
-						// marker, and the finish marker all agree with what
-						// actually verified.
-						it.raw.SetCode, it.raw.CollectorNumber = cd.Set, cd.Number
-						it.finishHint = cd.Finish
-					}
-				}
-				// A number was printed on the wire and none of the candidates
-				// carrying one verified: whatever committed rests on the name
-				// and a lone printing.
-				it.numberOverridden = it.raw.CollectorNumber == "" &&
-					slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
-						return cd.Number != ""
-					})
+				rankPrints(&it, c, prints, match, priorSets)
 			}
-			// Border last, and only over the ordering the ranking settled on.
-			// It never revisits the rank: an old frame that verified nothing
-			// still queues, it just queues with the right printing on top.
-			//
-			// And only when the rank did not already name a printing. A
-			// number match put one specific row at the head, and the head is
-			// what commits — a border+year shuffle after that can replace a
-			// set+number+lang exact with a sibling printing that happens to
-			// share the read border, which is how an M15 Ornithopter read as
-			// M15/223 nonfoil committed as SLD/604 foil on 2026-08-06. Border
-			// evidence is for orderings the number never settled.
-			if !printingPinned(it.rank) {
-				it.prints, it.borderFiltered = applyBorderEvidence(
-					it.prints, c.BorderColor, c.CopyrightYear)
+		}
+
+		// A truncated title alone identifies nothing — treating a prefix as
+		// identity is how "Gliding", debris of Glowrider mid-slide, became
+		// Gliding Licid (live). Paired with the frame's own collector digits
+		// it can identify: the fragment nominates a card, and the number
+		// either verifies one of that card's own printings or the nomination
+		// dies unspoken. The trial is ranked by exactly the machinery a real
+		// name match answers to, and only a numberVerified rank confirms — a
+		// frame-or-year ordering is a preference, not evidence the number
+		// agreed. The confirming number must be band-sourced: copyright
+		// digits misread too often to confirm an identity.
+		if it.canonical == "" && nominee != nil && bandNumberRead(c) {
+			tPrints := time.Now()
+			prints, perr := s.SearchPrints(ctx, nominee.name)
+			printsDur += time.Since(tPrints)
+			if perr == nil && len(prints) > 0 {
+				trial := it
+				trial.canonical, trial.match = nominee.name, nominee.match
+				rankPrints(&trial, c, prints, nominee.match, priorSets)
+				if numberVerified(trial.rank) {
+					it = trial
+				}
 			}
 		}
 		return resolveDoneMsg{gen: gen, item: it, nameDur: nameDur, printsDur: printsDur}
+	}
+}
+
+// bandNumberRead reports whether the capture carries a band-sourced collector
+// number — the confirmation currency a prefix nomination spends. The alts are
+// band numbers by construction (see rankPrints's trusted gate for why a
+// copyright-sourced primary always arrives alone).
+func bandNumberRead(c scan.Card) bool {
+	if c.CollectorNumber != "" && c.NumberSource != "copyright" {
+		return true
+	}
+	return slices.ContainsFunc(c.CollectorAlts, func(a scan.CollectorAlt) bool {
+		return a.Number != ""
+	})
+}
+
+// rankPrints settles which printing leads and how strongly the frame's
+// collector evidence verified it — the shared back half of a resolution,
+// one function so a prefix nomination's trial is judged by exactly the same
+// rules as an accepted name match.
+func rankPrints(it *queueItem, c scan.Card, prints []scryfall.Card, match cardname.Match, priorSets []string) {
+	{
+		// The band can hold several collector blocks — a stacked
+		// card's sliver parses as well as the target's — so every
+		// candidate is tried and the strongest verification wins: a
+		// neighbour's number can't match this card's printings, the
+		// real one can.
+		cands := append([]scan.CollectorAlt{
+			{Number: c.CollectorNumber, Set: c.SetCode, Finish: c.FinishHint,
+				Source: c.NumberSource, Year: c.CopyrightYear}},
+			c.CollectorAlts...)
+		// A copyright-line number is upgrade-only evidence: the tiny
+		// italic serif misreads digits (observed live: "30/145" read
+		// as "80/145" on a card that must keep auto-committing), so
+		// when no trusted band number was read, an empty sentinel
+		// re-derives the no-number outcome as the floor — a matching
+		// copyright number can only rank higher, never veto. A band
+		// number that matches nothing keeps its veto: there the
+		// number is trusted, so the mismatch means the name match
+		// itself is suspect.
+		//
+		// The alts carry no Source of their own and so read as band
+		// numbers here. That holds because the helper fills a
+		// copyright number only when the band gave nothing at all,
+		// and the alts are the band parse's own tail — so a
+		// copyright-sourced primary always arrives with an empty alt
+		// list and an empty set code. Keep those facts together if
+		// either side changes: an alt able to carry a copyright
+		// number would silently defeat this gate.
+		trusted := slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
+			return cd.Number != "" && cd.Source != "copyright"
+		})
+		// An exact name earns the same floor. The veto below exists
+		// because a number matching nothing suggests the *name* landed
+		// on the wrong card — but that reasoning is about a fuzzy
+		// match, and it inverts when the name is exact: there the
+		// mismatch is the digits, and this glyph size misreads digits
+		// constantly (Lethal Vapors' 68 arrived as 8, live, on a card
+		// with one printing and a perfect name read).
+		//
+		// The floor only pays out when the printings collapse to one,
+		// since rankByScanStrength gives an empty number nothing to
+		// work with otherwise — so a card with nine printings and a
+		// bad number still queues. The effect is simply that a garbage
+		// number can no longer be worse than no number at all, which
+		// is the outcome an exact name already commits on.
+		//
+		// The risk it accepts: scanning off a stack, an exact read of
+		// a *neighbour's* title whose card has one printing will now
+		// commit that neighbour instead of queueing. Auditable — the
+		// resolve line marks every rescue `number-overridden`.
+		// The year rides along: without it the sentinel re-derives the
+		// no-number outcome blind, and soleIndexInYear cannot fire in
+		// the one situation it exists for — an old frame whose only
+		// number came off the copyright line and matched nothing.
+		if !trusted || match.Exact {
+			cands = append(cands, scan.CollectorAlt{
+				Finish: c.FinishHint, Year: c.CopyrightYear})
+		}
+		it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
+		// The frame stratum commits a printing off no digits at all,
+		// so it runs only behind a near-certain name. It began
+		// exact-only; the operator relaxed it to 0.92 after the
+		// 18:58 pile run, where Consuming Corruption read at 95%
+		// twice — once per rescue — and took the session's only
+		// review stop for a card the frame evidence had already
+		// separated. 0.92 sits above the general auto-commit floor
+		// (0.88, fitted on old-frame serif slips) on purpose: a
+		// fuzzy name plus a frame guess is still two soft reads
+		// compounding, so this bet keeps a stricter bar than
+		// evidence-corroborated commits get.
+		frame, priors := c.FrameStyle, priorSets
+		if !match.Exact && match.Similarity < frameNameFloor {
+			frame, priors = "", nil
+		}
+		for _, cd := range cands {
+			// The copyright year belongs to the card, not to any one
+			// collector block — there is only one copyright line. An
+			// alt block arriving with Year 0 was silently discarding
+			// the year the log still printed, which is how Lion Umbra
+			// ranked `none` off a clean 2024 read and queued (live,
+			// 2026-08-07). Same fallback shape as Language below.
+			ranked, r := rankByScanStrength(
+				prints, cd.Set, cd.Number, cmp.Or(cd.Year, c.CopyrightYear),
+				c.BorderColor, c.FinishHint,
+				cmp.Or(cd.Language, c.Language), frame, priors)
+			if r > it.rank {
+				it.prints, it.rank = ranked, r
+				// The winning candidate becomes the item's collector
+				// context, so the picker's ranking, the ← scanned
+				// marker, and the finish marker all agree with what
+				// actually verified.
+				it.raw.SetCode, it.raw.CollectorNumber = cd.Set, cd.Number
+				it.finishHint = cd.Finish
+			}
+		}
+		// A number was printed on the wire and none of the candidates
+		// carrying one verified: whatever committed rests on the name
+		// and a lone printing.
+		it.numberOverridden = it.raw.CollectorNumber == "" &&
+			slices.ContainsFunc(cands, func(cd scan.CollectorAlt) bool {
+				return cd.Number != ""
+			})
+	}
+	// Border last, and only over the ordering the ranking settled on.
+	// It never revisits the rank: an old frame that verified nothing
+	// still queues, it just queues with the right printing on top.
+	//
+	// And only when the rank did not already name a printing. A
+	// number match put one specific row at the head, and the head is
+	// what commits — a border+year shuffle after that can replace a
+	// set+number+lang exact with a sibling printing that happens to
+	// share the read border, which is how an M15 Ornithopter read as
+	// M15/223 nonfoil committed as SLD/604 foil on 2026-08-06. Border
+	// evidence is for orderings the number never settled.
+	if !printingPinned(it.rank) {
+		it.prints, it.borderFiltered = applyBorderEvidence(
+			it.prints, c.BorderColor, c.CopyrightYear)
 	}
 }
 
@@ -926,8 +1030,7 @@ func verdict(it queueItem) (auto bool, finish string, note string) {
 	//
 	// So this is a deliberate bet on the foil reader, and it is why the number
 	// that matters about that reader is its false *negative* rate — every miss
-	// is now a silently underpriced row rather than a question. See
-	// docs/scanner-foil-registration.md.
+	// is now a silently underpriced row rather than a question.
 	finish, _ = finishFromEvidence(it.prints[0], it.finishHint)
 	return true, finish, ""
 }
@@ -1750,6 +1853,23 @@ func dupCapture(recent []recentCommit, id string, now time.Time) (prior recentCo
 	return recentCommit{}, 0, false
 }
 
+// dupCaptureByName is dupCapture keyed on the card's *name* rather than the
+// printing id. The id is a proxy for the physical card that a degraded
+// re-read walks right past: one card whose first read pinned set+number and
+// whose second read, moments later, ranked only by year can land on two
+// different printings — two ids, no duplicate to dupCapture, two rows
+// committed for one card. The name is the physical card's identity across
+// both reads, so the same-card rules get to run.
+func dupCaptureByName(recent []recentCommit, name string, now time.Time) (prior recentCommit, since time.Duration, dup bool) {
+	for i := len(recent) - 1; i >= 0; i-- {
+		rc := recent[i]
+		if rc.name == name && now.Sub(rc.at) <= dupWindow {
+			return rc, now.Sub(rc.at), true
+		}
+	}
+	return recentCommit{}, 0, false
+}
+
 // recordCommit appends to the window, pruning it to a fixed size.
 func recordCommit(recent []recentCommit, card scryfall.Card, finish string, captureSeq int,
 	now time.Time, finishGuessed, printingGuessed bool) []recentCommit {
@@ -2117,10 +2237,25 @@ func nudgeBackoff(drops int) time.Duration {
 func (m *model) scheduleNudge() tea.Cmd {
 	m.nudgeGen++
 	gen := m.nudgeGen
-	delay := nudgeBackoff(m.nudgeDrops)
+	return delayedMsg(m.ctx, nudgeBackoff(m.nudgeDrops), nudgeMsg{gen: gen})
+}
+
+// delayedMsg delivers msg after d, or nothing once ctx ends — the timer
+// commands' shared shape. These used to be bare time.Sleep goroutines,
+// unabortable and one per processed capture: a 200-card pile left hundreds
+// parked past the session they were armed for, with close unable to reach
+// them.
+func delayedMsg(ctx context.Context, d time.Duration, msg tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		time.Sleep(delay)
-		return nudgeMsg{gen: gen}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		select {
+		case <-time.After(d):
+			return msg
+		case <-ctx.Done():
+			return nil
+		}
 	}
 }
 

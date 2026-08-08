@@ -42,7 +42,7 @@ are standard:
 
 Everything the ecosystem does not model — containers, boards, counts, movers,
 opportunities — is hoard's own, documented in the schema descriptions
-(generated from the model's doc comments) and in `docs/json.md`.
+(generated from the model's doc comments).
 
 Prices are USD throughout (`priceUsd`, `valueUsd`, …), matching the sources
 they come from (Scryfall's `usd`, MTGJSON's TCGplayer/Card Kingdom feeds). An

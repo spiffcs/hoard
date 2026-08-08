@@ -109,3 +109,13 @@ func TestIndexRoundTripAndBest(t *testing.T) {
 		t.Error("sole finish did not round-trip")
 	}
 }
+
+// A degenerate crop hashes to the zero grid instead of trusting grid math
+// against an empty Bounds: the probe can emit a sliver, and FromCard's
+// percentage crop collapses to nothing on a tiny source. The constant hash
+// it produces sits far from every real card, so the caller's distance gates
+// reject it.
+func TestDegenerateCropsHashWithoutPanicking(t *testing.T) {
+	_ = FromImage(image.NewRGBA(image.Rect(0, 0, 0, 0)))
+	_ = FromCard(image.NewRGBA(image.Rect(0, 0, 1, 1)))
+}

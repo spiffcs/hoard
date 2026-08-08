@@ -69,6 +69,12 @@ const compsSection = 2
 func (m Model) marketSections() [3]marketSection {
 	var s [3]marketSection
 	for _, r := range m.marketRows {
+		// Total by construction, not by upstream filtering alone: a stray
+		// Kind (KindLowball is 3) indexing the [3] array is a panic in the
+		// middle of a frame, and the filter guarding it lives a file away.
+		if r.Kind < 0 || int(r.Kind) >= compsSection {
+			continue
+		}
 		s[r.Kind].count++
 	}
 	s[compsSection].count = len(m.marketComps)
@@ -164,11 +170,21 @@ func (m Model) compsSortColumnsNow() []string {
 	return compsSellSortColumns
 }
 
+// compsSortKey is the active column's name, index clamped at the read: the
+// buy cycle is one column longer than the sell cycle, and the pairing that
+// keeps compsSortIdx in range is the side flip's reset — a convention held
+// in another file, not an invariant. A missed reset degrades to the last
+// column instead of indexing past the slice.
+func (m Model) compsSortKey() string {
+	cols := m.compsSortColumnsNow()
+	return cols[min(max(m.compsSortIdx, 0), len(cols)-1)]
+}
+
 // sortCompRows re-orders the full comp ranking by its own column and
 // direction, then re-derives the visible page — a sort speaks for the
 // whole ranking, so the page shows its slice of the new order.
 func (m *Model) sortCompRows() {
-	key, rev := m.compsSortColumnsNow()[m.compsSortIdx], m.compsSortRev
+	key, rev := m.compsSortKey(), m.compsSortRev
 	buySide := m.compsBuySide
 	sortRows(m.marketAllComps, rev, func(a, b market.Comp) int {
 		if c := compKeyFor(key, buySide, a, b); c != 0 {

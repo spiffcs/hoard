@@ -125,8 +125,7 @@ func render(objs []object, userVersion int) []byte {
 -- A migrated database carries this version in PRAGMA user_version, and
 -- PRAGMA application_id 0x484F5244 ("HORD") identifies the file as hoard's.
 --
--- See docs/data-model.md for what these tables mean and schema/sqlite/README.md
--- for the compatibility rules.
+-- See schema/sqlite/README.md for the compatibility rules.
 `, userVersion)
 
 	for _, o := range objs {

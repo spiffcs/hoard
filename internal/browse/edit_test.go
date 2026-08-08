@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -168,5 +169,51 @@ func TestHeaderTotalsStillHugAWideTable(t *testing.T) {
 	if got := lipgloss.Width(strings.TrimRight(ansi.Strip(header), " ")); got >= right+containerPaneWidth+paneGap {
 		t.Errorf("header spans %d columns, want the totals short of the pane's far edge:\n%q",
 			got, header)
+	}
+}
+
+// Every held edit re-reads the overlay, and reloadDetail's comp refetch is
+// part of that re-read: with the memo empty, loadPrinting marks the sheet
+// pending and only the returned command clears it. The edit paths discarded
+// it — the COMPS section sat on "reading today's vendor quotes…" with no
+// read in flight.
+func TestHeldEditCarriesTheCompsRefetch(t *testing.T) {
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {
+			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: "nonfoil", Quantity: 4,
+				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
+		},
+	}
+	m := newTestModel(t, st)
+	m.cardComps = func(id string) (map[string]market.Comp, bool) {
+		return map[string]market.Comp{"nonfoil": {}}, true
+	}
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // open; the fetch cmd is dropped on purpose
+	m = next.(Model)
+	if m.detail == nil || !m.detail.compsPending {
+		t.Fatal("setup: want an open detail with its comp sheet pending")
+	}
+	id := m.detail.card.ScryfallID
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
+	m = next.(Model)
+	if !m.detail.compsPending {
+		t.Fatal("setup drift: the edit's reload should re-mark the sheet pending")
+	}
+	if cmd == nil {
+		t.Fatal("the held edit dropped reloadDetail's command — the sheet pends forever")
+	}
+	msg, ok := cmd().(detailCompsMsg)
+	if !ok || msg.scryfallID != id {
+		t.Fatalf("edit command yielded %+v, want this printing's comp read", msg)
+	}
+	next, _ = m.Update(msg)
+	m = next.(Model)
+	if m.detail.compsPending || !m.detail.compsOK {
+		t.Errorf("pending %v ok %v after the read landed, want the sheet answered",
+			m.detail.compsPending, m.detail.compsOK)
 	}
 }

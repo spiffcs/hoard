@@ -227,3 +227,32 @@ func TestConfirmBridgeRoundTrip(t *testing.T) {
 		t.Fatal("worker never heard the answer")
 	}
 }
+
+// A bridge question parked behind a user-staged confirm must be answered on
+// the way out: ctrl+c on that confirm replied to the confirm's own asker and
+// quit, leaving the parked worker blocked on a reply forever.
+func TestQuitAnswersTheParkedBridgeQuestion(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.stageQuit() // a user confirm is up…
+	m, reply := ask(t, m, "download?")
+	if m.deferredAsk == nil {
+		t.Fatal("setup: the ask should be parked behind the open confirm")
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_ = next
+	mustReply(t, reply, false)
+}
+
+// The Reply capacity contract was a doc comment; now it fails at the door.
+// A zero-cap channel turns every answer into a blocking send against a
+// worker that may have given up — a hang later, in someone else's key
+// handler, is strictly worse than a panic naming the wiring bug.
+func TestZeroCapReplyChannelIsRejectedLoudly(t *testing.T) {
+	m := newTestModel(t, testStore())
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a zero-capacity Reply channel must be refused at staging")
+		}
+	}()
+	_, _ = m.Update(opConfirmMsg{req: ConfirmRequest{Question: "q?", Reply: make(chan bool)}})
+}

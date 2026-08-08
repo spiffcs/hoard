@@ -98,7 +98,7 @@ through Xcode's Organizer. A `make scan-ios-release` target is the natural home.
 | | Current state | What to do |
 |---|---|---|
 | **Bundle ID** | `dev.spiffcs.hoard.scan.ios` | Register on developer.apple.com |
-| **Team** | `[team-id-redacted]`, in gitignored `Signing.xcconfig` | Present locally; a release script needs it injected, not read from disk |
+| **Team** | The team identifier lives only in gitignored `Signing.xcconfig` — never in a tracked file | Present locally; a release script needs it injected, not read from disk |
 | **Deployment target** | iOS 18.0 | Narrow, driven by `RecognizeTextRequest` and `RotationCoordinator`. Lowering means keeping an older Vision path. Probably accept it |
 | **Device family** | `TARGETED_DEVICE_FAMILY: "1"` — iPhone only | Fine, and it means no iPad screenshots |
 | **Version** | `MARKETING_VERSION 0.1`, `CURRENT_PROJECT_VERSION 1` | Marketing version should be `1.0` at submission; build number must increment on every upload |

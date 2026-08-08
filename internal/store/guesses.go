@@ -16,11 +16,27 @@ type FinishGuessRow struct {
 	GuessedAt   string
 }
 
+// guessContainer resolves the adder's "default binder" sentinel (0) to the
+// real collection container before a guess row is keyed on it. Stored
+// verbatim, the 0 matched no container, so default-binder guesses were
+// invisible to every join and unclearable by the editors (which pass real
+// ids). Migration v25 repoints rows written before this existed.
+func (s *Store) guessContainer(containerID int64) (int64, error) {
+	if containerID != 0 {
+		return containerID, nil
+	}
+	return s.collectionID()
+}
+
 // RecordFinishGuess remembers that a scan committed this finish by default
 // rather than by evidence. One row per commit: three guessed copies of one
 // printing are three cards to go check, not one.
 func (s *Store) RecordFinishGuess(containerID int64, scryfallID, finish string) error {
-	_, err := s.db.Exec(`
+	containerID, err := s.guessContainer(containerID)
+	if err != nil {
+		return fmt.Errorf("recording finish guess: %w", err)
+	}
+	_, err = s.db.Exec(`
 INSERT INTO finish_guesses (container_id, scryfall_id, finish, guessed_at)
 VALUES (?, ?, ?, ?)`, containerID, scryfallID, finish, now())
 	if err != nil {
@@ -33,7 +49,11 @@ VALUES (?, ?, ?, ?)`, containerID, scryfallID, finish, now())
 // a better read or a human who checked the card. One row, not all of them: a
 // correction answers for the commit it corrected and nothing more.
 func (s *Store) ClearFinishGuess(containerID int64, scryfallID, finish string) error {
-	_, err := s.db.Exec(`
+	containerID, err := s.guessContainer(containerID)
+	if err != nil {
+		return fmt.Errorf("clearing finish guess: %w", err)
+	}
+	_, err = s.db.Exec(`
 DELETE FROM finish_guesses WHERE id = (
     SELECT id FROM finish_guesses
     WHERE container_id = ? AND scryfall_id = ? AND finish = ?

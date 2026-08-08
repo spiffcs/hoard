@@ -355,7 +355,7 @@ func score(manifest: String, misses: Bool) async -> Never {
     if foreignTotal > 0 {
         print(pad("(non-English)", 24) + pad("\(foreignTotal)", 6)
             + pad(pct(foreignNameOK, foreignTotal), 8) + pct(foreignNumOK, foreignTotal)
-            + "   scored apart; see docs/scanner-limits.md")
+            + "   scored apart")
     }
     print(pad("ALL", 24) + pad("\(totals.n)", 6) + pad(pct(totals.name, totals.n), 8)
         + pct(totals.num, totals.n)

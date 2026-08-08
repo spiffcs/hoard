@@ -26,6 +26,25 @@ func init() {
 	sevenzip.RegisterDecompressor(ppmdMethodID, lenientPPMd)
 }
 
+// The three figures below come straight from the archive's own headers — an
+// attacker-shaped input from a volunteer mirror, decoded by v0 single-
+// maintainer dependencies — and the ppmd package allocates whatever they ask
+// for. These ceilings are what a genuine archive can plausibly need, so a
+// hostile or corrupt header fails as a bad archive instead of as an
+// arbitrary allocation (times three concurrent backfill workers).
+const (
+	// PPMd var.H model orders run 2..64 by the format's own definition;
+	// 7-Zip produces 6 for these archives.
+	ppmdMinOrder = 2
+	ppmdMaxOrder = 64
+	// The model allocation. 7-Zip's UI tops out at 1 GB, but these archives
+	// use 16 MB; a quarter of a gigabyte is already indulgent.
+	ppmdMaxMemory = 256 << 20
+	// The decoded member size. A whole day's extraction is ~4 MB compressed;
+	// a member claiming to inflate past a gigabyte is not price data.
+	ppmdMaxOutput = 1 << 30
+)
+
 // lenientPPMd mirrors upstream's PPMd reader with the property check
 // loosened from "exactly five bytes" to "at least five".
 func lenientPPMd(p []byte, uncompressedSize uint64, readers []io.ReadCloser) (io.ReadCloser, error) {
@@ -37,6 +56,15 @@ func lenientPPMd(p []byte, uncompressedSize uint64, readers []io.ReadCloser) (io
 	}
 	order := p[0]
 	memory := binary.LittleEndian.Uint32(p[1:5])
+	if order < ppmdMinOrder || order > ppmdMaxOrder {
+		return nil, fmt.Errorf("ppmd: implausible model order %d", order)
+	}
+	if memory > ppmdMaxMemory {
+		return nil, fmt.Errorf("ppmd: implausible memory size %d", memory)
+	}
+	if uncompressedSize > ppmdMaxOutput {
+		return nil, fmt.Errorf("ppmd: implausible uncompressed size %d", uncompressedSize)
+	}
 	pr, err := ppmd.NewH7zReader(readers[0], int(order), int(memory), int(uncompressedSize)) //nolint:gosec
 	if err != nil {
 		return nil, fmt.Errorf("ppmd: error creating reader: %w", err)

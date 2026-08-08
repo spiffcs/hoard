@@ -12,6 +12,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	_ "image/png"
 	"os"
@@ -57,6 +58,12 @@ type artMatcher struct {
 	byID     cardsByID
 	stillDir string
 	probe    string
+	// sem bounds concurrent probe processes. One command spawns per queued
+	// card with no other limit, and a burst of bad reads (a pile session's
+	// signature) launched a probe per card at once — each a full process
+	// with an image decode behind it. Slots beyond two buy nothing: the
+	// still-wait serializes most of the window anyway.
+	sem chan struct{}
 }
 
 // newArtMatcher wires the channel when every piece is present: a built index,
@@ -86,7 +93,8 @@ func newArtMatcher(s Searcher) *artMatcher {
 		}
 		return nil
 	}
-	return &artMatcher{index: ix, byID: byID, stillDir: dir, probe: probe}
+	return &artMatcher{index: ix, byID: byID, stillDir: dir, probe: probe,
+		sem: make(chan struct{}, 2)}
 }
 
 func (am *artMatcher) close() {
@@ -142,11 +150,29 @@ func (m model) artMatchCmd(it queueItem, notBefore time.Time) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), artMatchTimeout)
 		defer cancel()
 
+		// A slot before any work: the timeout keeps running while queued
+		// here, so a probe that cannot start in time simply never starts.
+		select {
+		case am.sem <- struct{}{}:
+			defer func() { <-am.sem }()
+		case <-ctx.Done():
+			return nil
+		}
+
 		still := waitForStill(ctx, am.stillDir, notBefore)
 		if still == "" {
 			return nil
 		}
-		crop := filepath.Join(os.TempDir(), "hoard-artmatch.png")
+		// One crop file per capture, never shared: with a fixed name, two
+		// cards queued in the same window raced the same path, and card B
+		// could hash card A's crop — art corroboration then committed the
+		// wrong printing (and A's deferred remove deleted B's crop mid-read).
+		cropFile, err := os.CreateTemp("", fmt.Sprintf("hoard-artmatch-%d-*.png", captureSeq))
+		if err != nil {
+			return nil
+		}
+		crop := cropFile.Name()
+		cropFile.Close()
 		defer os.Remove(crop)
 		// Exit 3 is "nothing readable", which does not matter here — the
 		// crop is emitted before the reading is judged. Exit 4 is "no card
@@ -163,7 +189,11 @@ func (m model) artMatchCmd(it queueItem, notBefore time.Time) tea.Cmd {
 			return nil
 		}
 		best, second := am.index.Best(artindex.FromImage(img))
-		if !artDecisive(best, second) {
+		// A one-entry index cannot render a decisive verdict: the runner-up
+		// is Best's seeded 65, so any image inside the distance gate clears
+		// the margin unopposed. Two entries is the least field a margin
+		// means anything against.
+		if am.index.Count() < 2 || !artDecisive(best, second) {
 			return nil
 		}
 		cards, err := am.byID.Cards([]string{best.ScryfallID})

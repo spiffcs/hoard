@@ -105,6 +105,14 @@ func FromImage(img image.Image) Hash {
 func grayGrid(img image.Image) [phashSize][phashSize]float64 {
 	b := img.Bounds()
 	var sum, cnt [phashSize][phashSize]float64
+	// A degenerate crop (<1px in either axis — a probe emitting a sliver, or
+	// FromCard's percentage crop collapsing on a tiny source) has nothing to
+	// average. The zero grid hashes to a constant, which sits far from every
+	// real card and fails the caller's distance gates — better than trusting
+	// grid arithmetic against an empty or inverted Bounds.
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return sum
+	}
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		gy := (y - b.Min.Y) * phashSize / b.Dy()
 		for x := b.Min.X; x < b.Max.X; x++ {

@@ -8,18 +8,15 @@
 //
 // Modes:
 //   hoard-scan --list-devices   Print the phones visible on the network as JSON, exit.
-//   hoard-scan --code <digits> [--device <id>] [--mirror] [--verify]
+//   hoard-scan --code <digits> [--device <id>] [--verify]
 //                               Live session against a paired iPhone. One JSON
 //                               event per line on stdout, commands (capture /
 //                               auto-on / auto-off / rearm / torch-on /
 //                               torch-off / chime / result {json} / quit) as
 //                               lines on stdin.
 //
-//                               Headless unless --mirror, because the phone
-//                               shows the preview, the price and the cue and
-//                               plays the sounds; --mirror opens a window here
-//                               anyway, for framing the rig and for debugging
-//                               the link.
+//                               Headless, always: the phone shows the preview,
+//                               the price and the cue, and plays the sounds.
 //
 //                               --verify connects, waits for the phone to accept
 //                               the code, and exits — that is what makes
@@ -46,8 +43,9 @@ import ScanLink
 import ScanWire
 
 /// runCLI is the helper's whole entry point, called by the executable target's
-/// main.swift. It lives in the library rather than in top-level code so the
-/// tests can link everything here; the executable is a three-line shell.
+/// main.swift. It lives in the library rather than in top-level code so a
+/// test bundle could link everything here — though no ScanKitTests target
+/// exists yet, so nothing does; the executable is a three-line shell.
 ///
 /// Every mode either exits or blocks in `app.run()`, so this never returns
 /// normally — which is also what keeps `remote` alive.
@@ -88,12 +86,11 @@ public func runCLI() {
     }
 
     let app = NSApplication.shared
-    // Accessory unless mirroring: a translator has no business taking focus
-    // from the terminal the user is working in.
-    app.setActivationPolicy(args.contains("--mirror") ? .regular : .accessory)
+    // Accessory, always: a translator has no business taking focus from the
+    // terminal the user is working in.
+    app.setActivationPolicy(.accessory)
     let remote = RemoteController(
         deviceID: requestedDevice, code: code,
-        mirror: args.contains("--mirror"),
         verifyOnly: args.contains("--verify"))
     installStdinPump(
         onCommand: { remote.handle(command: $0) },

@@ -42,6 +42,7 @@ var usageSections = []struct {
 		{"watch list | watch rm <id|name>", "Your watches, and removing one"},
 		{"catalog [status|update]", "The local copy of Scryfall's card data"},
 		{"artindex [status|build]", "The scanner's art-identification hash index"},
+		{"version", "This build's version, and the legal notices"},
 	}},
 	{"Binder commands:", []usageRow{
 		{"binder list", "Your binders, with counts and value"},
@@ -50,7 +51,7 @@ var usageSections = []struct {
 		{"binder rm <binder>", "Remove an empty binder"},
 	}},
 	{"Deck commands:", []usageRow{
-		{"deck add <archidekt-url>", "Import/refresh a deck from a link"},
+		{"deck add <archidekt-url> [--refresh]", "Import/refresh a deck from a link"},
 		{"deck add --file <path> [--name NAME] [--source S]", "Import a text/exported decklist"},
 		{"deck remove <name>", "Delete a deck"},
 		{"deck repin <name> <set>", "Re-point a deck's cards at the set it came from"},

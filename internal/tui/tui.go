@@ -62,10 +62,6 @@ type ScanSession interface {
 	// Rearm nudges a parked auto trigger back to searching; the caller
 	// discards the re-read if it is the card it already processed.
 	Rearm() error
-	// EVBias applies a one-shot exposure bias (EV) to the phone's next auto
-	// capture — the finish rescue's darker retake, restored phone-side after
-	// that capture. Old helpers ignore the verb harmlessly.
-	EVBias(ev float64) error
 	// Chime plays the card-processed sound: the audible receipt fired when
 	// a scan resolves — auto-added or queued for review — so the user knows
 	// to place the next card without reading the screen. Fired at

@@ -219,6 +219,16 @@ func (c *Catalog) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, 
 		return nil, cardname.Match{}, err
 	}
 	if !cardname.Plausible(text, best) {
+		// A truncated title is not an identity — the prefix rule that said
+		// otherwise stole cards — but it is worth nominating, flagged as
+		// such: the resolver can confirm a nomination against the frame's
+		// collector number, which is signal the fragment cannot fake.
+		// Callers MUST check Match.PrefixOnly before treating the card as an
+		// answer; today the only consumer is the scan resolver, which does.
+		if cardname.PrefixCandidate(text, best) {
+			card, err := c.newestPrinting(ctx, best)
+			return card, cardname.Match{Similarity: score, PrefixOnly: true}, err
+		}
 		return nil, cardname.Match{}, nil
 	}
 	card, err := c.newestPrinting(ctx, best)

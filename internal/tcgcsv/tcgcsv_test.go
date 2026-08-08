@@ -167,6 +167,76 @@ func TestArchivePrices(t *testing.T) {
 	}
 }
 
+// A cache file that fails to parse — a torn write from a kill mid-extraction,
+// disk damage — must read as absent, not as that group-day's answer: kept, it
+// would silently hole the treated-foil history for that day forever.
+func TestArchivePricesRefetchesUnparseableCache(t *testing.T) {
+	oldRead := readArchiveMembers
+	defer func() { readArchiveMembers = oldRead }()
+	readArchiveMembers = func(_ string, want map[string]bool) (map[string][]byte, error) {
+		out := map[string][]byte{}
+		for member := range want {
+			out[member] = []byte(`{"results": [
+				{"productId": 553005, "marketPrice": 16.90, "subTypeName": "Foil"}]}`)
+		}
+		return out, nil
+	}
+	var archiveHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		archiveHits++
+		w.Write([]byte("7z-bytes"))
+	}))
+	defer srv.Close()
+	o := Options{BaseURL: srv.URL, CacheDir: t.TempDir()}
+
+	// The truncated JSON a pre-atomic write could leave behind.
+	dir := filepath.Join(o.CacheDir, "archive")
+	os.MkdirAll(dir, 0o755)
+	torn := filepath.Join(dir, "2026-07-25-23445.json")
+	os.WriteFile(torn, []byte(`{"results": [{"productId": 5`), 0o644)
+
+	got, err := ArchivePrices(context.Background(), o, "2026-07-25", []int{23445})
+	if err != nil {
+		t.Fatalf("ArchivePrices: %v", err)
+	}
+	if archiveHits != 1 {
+		t.Errorf("archive downloads = %d, want the torn cache file re-fetched", archiveHits)
+	}
+	if got[23445]["553005"] != 16.90 {
+		t.Errorf("prices = %v, want the re-extracted figure", got)
+	}
+	// And the replacement extraction answers the next read.
+	b, err := os.ReadFile(torn)
+	if err != nil || !strings.Contains(string(b), "553005") {
+		t.Errorf("cache file after refetch = %q, %v; want the good extraction", b, err)
+	}
+}
+
+// The coder properties and uncompressed size come from the archive's own
+// headers. A hostile or corrupt archive naming an absurd model order, memory
+// size, or output size must be refused as a bad archive rather than handed to
+// the decoder as an allocation request.
+func TestLenientPPMdRefusesImplausibleHeaders(t *testing.T) {
+	reader := func() []io.ReadCloser {
+		return []io.ReadCloser{io.NopCloser(bytes.NewReader(nil))}
+	}
+	for _, tc := range []struct {
+		name  string
+		props []byte
+		size  uint64
+	}{
+		{"order too small", []byte{1, 0, 0, 0, 1}, 10},
+		{"order too big", []byte{65, 0, 0, 0, 1}, 10},
+		{"memory over the ceiling", []byte{8, 0xFF, 0xFF, 0xFF, 0xFF}, 10},
+		{"output over the ceiling", []byte{8, 0, 0, 0, 1}, 2 << 30},
+	} {
+		if _, err := lenientPPMd(tc.props, tc.size, reader()); err == nil ||
+			!strings.Contains(err.Error(), "implausible") {
+			t.Errorf("%s: err = %v, want the implausible-header refusal", tc.name, err)
+		}
+	}
+}
+
 // The lenient PPMd decompressor accepts the seven-byte coder properties
 // the tcgcsv archives carry (five canonical bytes plus trailing zeros)
 // and still refuses genuinely short ones.
