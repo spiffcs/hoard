@@ -165,21 +165,23 @@ another photograph — `wantsSecondLook` in `internal/tui/autoscan.go`, one retr
 when a card queues for an unverified printing, bounded to one so a card that
 will never read cannot hold the session open.
 
-**The retry is event-driven, and that is not a detail.** The trigger does not
-re-fire on a card it has already read — it fires on placement — so the retry is
-a `Rearm`, and a `Rearm` only lands once the phone is listening for one. Timing
-it was the first attempt. The phone's own `held → armed` gap, over this
-session's 18 captures, is bimodal:
+**The retry goes out at queue time, into `held`.** This paragraph used to
+claim the opposite — that a `Rearm` sent into `held` "silently never happens"
+and the retry must wait for the next `armed` — and the code was built to
+match. The phone's actual contract is the inverse: `Trigger.forceRearm()`
+opens with `guard phase == .hold`, so a `Rearm` acts *exactly* while the
+trigger is parked on the card it just shot (reported as `held`) and is a
+guaranteed no-op sent into `armed` (the machine already left `.hold` on its
+own; its next fire is coming, or the scene gate is holding it). Under the
+inverted version every retry was a no-op, and every rescue the session logs
+showed was the phone's own accidental re-fire.
 
-    ~130ms   ····                    (4 captures)
-    760-855ms ··············         (14 captures)
-
-Any single constant is either late for the fast half or fired into `held` for
-the slow half, and a `Rearm` sent into `held` is a retry that silently never
-happens. So the retry is parked as `secondLookPending` and spent by the next
-`armed` the trigger reports — quicker than the safe constant and safer than the
-quick one. The 5500ms `nudgeDelay` timer stays armed underneath as the backstop
-for a helper that never reports its state.
+The bimodal `held → armed` gap that motivated the waiting design — four
+captures at ~130ms, fourteen at 760-855ms over one session — is the phone's
+own disruption accumulation and decay. The queue-time send into `held` skips
+it entirely. The 5500ms `nudgeDelay` timer stays armed underneath as the
+backstop for a scene that never changes and a helper that never reports its
+state.
 
 None of this can make a session feel slower. A pending retry is not a gate on
 anything: if the operator places the next card, the trigger fires on that

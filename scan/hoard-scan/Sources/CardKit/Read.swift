@@ -474,7 +474,13 @@ func recognizeText(_ cg: CGImage, correctLanguage: Bool) async -> [String] {
 /// know where those lines are. Vision hands the box over with the string, so
 /// this costs nothing — it is the same request, read more completely.
 public func recognizeLines(_ cg: CGImage, correctLanguage: Bool) async -> [Line] {
-    var request = RecognizeTextRequest()
+    // Actually pinned, now. The doc comment above promised this from the
+    // start and the revision was never set, so every golden and every fitted
+    // gate constant described whatever text model that machine's OS shipped —
+    // and the phone and the Mac ship different ones (live, 2026-08-07: the
+    // same still read "418" through cardkit-probe on macOS and "918" on the
+    // phone).
+    var request = RecognizeTextRequest(.revision3)
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = correctLanguage
     request.recognitionLanguages = [Locale.Language(identifier: "en-US")]

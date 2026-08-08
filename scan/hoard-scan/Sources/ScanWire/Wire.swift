@@ -239,6 +239,14 @@ public struct CardEntry: Encodable {
     /// agreed, "footer" when only one edge was in shot. The Go side may hold
     /// the weaker one to a lower bar.
     public var borderSource: String? = nil
+    /// The frame family the footer's shape claims: "retro" when the artist is
+    /// credited on a row of its own ("Illus. …" — the 1993-2003 frames and
+    /// their modern retro-frame reprints), absent when the footer read as a
+    /// modern frame or read too badly to say. Absent rather than "modern" on
+    /// silence, for the same reason borderColor is: no evidence must never
+    /// downstream-compare equal to evidence. A same-set regular/retro twin
+    /// pair differs in nothing else the wire carries.
+    public var frameStyle: String? = nil
 
     public init(
         name: String = "",
@@ -260,7 +268,8 @@ public struct CardEntry: Encodable {
         numberSource: String? = nil,
         copyrightYear: Int? = nil,
         borderColor: String? = nil,
-        borderSource: String? = nil
+        borderSource: String? = nil,
+        frameStyle: String? = nil
     ) {
         self.name = name
         self.candidates = candidates
@@ -282,6 +291,7 @@ public struct CardEntry: Encodable {
         self.copyrightYear = copyrightYear
         self.borderColor = borderColor
         self.borderSource = borderSource
+        self.frameStyle = frameStyle
     }
 }
 

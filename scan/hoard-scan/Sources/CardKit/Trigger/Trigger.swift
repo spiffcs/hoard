@@ -589,6 +589,12 @@ public final class Trigger {
         resetPass()
         watched = nil
         cue = nil
+        // A nudge's premise is "the scene nobody touched" — once the pass it
+        // re-armed has been abandoned, that scene is gone, and the next fire
+        // is whatever somebody put down. Left latched, `nudged` rode onto
+        // genuinely new cards placed after a rescue rearm and the parent's
+        // echo rules could swallow them.
+        if rearmCause == .nudged { rearmCause = .none }
         // The baseline self-heals. Live: one background rectangle, then 46
         // seconds of the detector finding the card and the filter deleting it.
         if abandonedPasses >= tuning.backgroundResetPasses {

@@ -318,9 +318,6 @@ type model struct {
 	// second look and queues at the normal cadence. Cleared by any commit, so
 	// the same card met again later in the pile gets a fresh chance.
 	secondLookFor string
-	// secondLookPending is a retry waiting for the phone to say it is listening.
-	// Consumed by the next "armed" the trigger reports — see onSessionEvent.
-	secondLookPending bool
 	// deferredFlashFor is a card sitting in review whose *phone* signal has not
 	// been sent, because a second look is still out on it. Held rather than
 	// dropped: the flash still owes the operator an answer, it just owes it
@@ -1449,11 +1446,16 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 		m.lastScanReplaced = msg.ev.FireReason == scan.FireReplaced
 		m.lastScanFaceDelta = msg.ev.FaceDelta
 		switch msg.ev.FireReason {
-		case scan.FireNudge:
-			m.lastScanNudged = true
 		case scan.FireRemoved, scan.FireReplaced, scan.FireMoved:
 			m.lastScanNudged = false
 		default:
+			// "nudged" and the old helpers' empty reason share the clock: the
+			// wire reason alone is not enough, because forceRearm latches
+			// rearmCause to nudged and nothing on the phone resets it when a
+			// pass is abandoned, so a genuinely new card placed well after a
+			// rescue Rearm still fires as "nudged". ANDing with the send
+			// clock keeps the echo rules away from real placements — outside
+			// the window, a "nudged" fire is a card someone put down.
 			m.lastScanNudged = !m.nudgeSentAt.IsZero() &&
 				m.now().Sub(m.nudgeSentAt) < nudgeEchoWindow
 		}
@@ -1515,26 +1517,16 @@ func (m model) onSessionEvent(msg sessionEventMsg) (tea.Model, tea.Cmd) {
 
 	case scan.EventAuto:
 		m.autoState = msg.ev.State
-		// A pending retry waits for this rather than for a timer. The trigger
-		// will not re-fire on a card it has already read — it fires on
-		// placement — so the retry is a Rearm, and a Rearm only lands once the
-		// phone is listening for one.
-		//
-		// Timing it instead was the first attempt, and it cannot be tuned into
-		// this. Measured over one session's 18 captures, the phone's own
-		// held→armed gap is bimodal: four at ~130ms and fourteen at 760-855ms.
-		// Any single constant is either late for the fast half or fired into
-		// `held` for the slow half, and a Rearm sent into `held` is a retry that
-		// silently never happens. The phone already says when it is ready, so
-		// asking it is both quicker than the safe constant and safer than the
-		// quick one.
-		if m.secondLookPending && msg.ev.State == "armed" {
-			m.secondLookPending = false
-			if m.session != nil && m.autoCapable {
-				_ = m.session.Rearm()
-				m.nudgeSentAt = m.now()
-			}
-		}
+		// No retry is sent from here. The second look's Rearm goes out at
+		// queue time, into `held` — the one state where the phone's
+		// forceRearm acts (its first line is `guard phase == .hold`). This
+		// handler used to wait for "armed" and send the Rearm then, which was
+		// exactly backwards: "armed" means the phone already left `.hold` on
+		// its own (a disruption re-armed it, a fire is coming or the scene
+		// gate is holding it), and a Rearm sent there is a guaranteed no-op.
+		// The bimodal held→armed gap that waiting was built around (four at
+		// ~130ms, fourteen at 760-855ms over one session) is the phone's own
+		// disruption accumulation — the queue-time send skips it entirely.
 		return m, again
 
 	case scan.EventTorch:
@@ -1677,6 +1669,11 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	//
 	// Only ever a queued entry, never the one under the cursor: swapping a card
 	// out from under someone mid-cascade is worse than a stale rank.
+	// Invariant from here down: a read that replaced a queued entry must reach
+	// either the adder or the queue append — the entry it replaced is already
+	// gone, so any drop between here and there erases the card entirely. Every
+	// drop rule on both the commit and queue paths must be gated on
+	// !replacedQueued.
 	upgraded, replacedQueued := m.upgradeQueued(&it)
 	if replacedQueued {
 		m.note("outcome %q re-read: %s beats the queued %s, replacing it",
@@ -1779,36 +1776,29 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 				// Honoured however long ago the last sighting was.
 				return m.suppressRepeat(it, finish, prior, now,
 					"same card, the source says it only moved", false)
-			case it.placedDecisively():
-				// The same machinery answering the other way, and answering
-				// convincingly: a box on the watched spot wearing a face that
-				// is not the captured card's, by a margin over the threshold
-				// that decides it. The source looked at both cards. The floor
-				// below only counts seconds, and it exists to stand in for
-				// exactly this evidence — so where the evidence arrives, it
-				// governs.
-				//
-				// This is what the floor was costing. Observed live: a second
-				// No-Dachi stacked 1671ms after the first, reported `replaced`
-				// with face=32.5 against a 20.0 threshold, dropped anyway on
-				// the clock, and not written until 73s later when the window
-				// aged out. The floor's own 3856ms measurement was fitted on
-				// card *swaps* — remove, then place — and stacking skips the
-				// removal, so it never described the faster motion at all.
-				//
-				// `it.dup` rides along exactly as in the deliberate-re-scan
-				// case below: the outcome line and the session summary record
-				// that a repeat was seen, which is how a false positive here
-				// would ever be noticed.
-				it.dup = true
 			case since < sameCardFloor:
-				// The fallback, now covering only what the source cannot
-				// answer: a helper too old to send a reason, a manual shutter
-				// with no trigger decision behind it, a `removed` that says a
-				// card left without saying what replaced it, or a `replaced`
-				// too marginal to trust. On a repeat under three seconds none
-				// of those is credible, because nobody swaps a card in under
-				// 3856ms. See sameCardFloor.
+				// Under the floor, identity outranks the face measurement —
+				// a `replaced` whose face cleared placementFaceFloor used to
+				// override this case (a placedDecisively arm sat above it),
+				// on the reasoning that the phone had looked at both cards
+				// and the clock had only counted. That reasoning assumed a
+				// card's face is stable, and a foil's is not. Hand-held pile
+				// scanning, live 2026-08-07: the *same* Trap Digger measured
+				// face=30.4, 32.5 and 26.5 across three fires as the hand
+				// shifted and the sparkle moved — every one over the 25.0
+				// floor — and one card committed three rows in 2.5s. The
+				// resolve had just identified the very printing the session
+				// wrote moments before; a noisy one-bit threshold does not
+				// outrank that.
+				//
+				// The case the override used to serve — a genuine second
+				// copy stacked fast (No-Dachi, 1671ms, face=32.5) — is what
+				// the suppression's pendingDup slot exists for: the status
+				// line offers the copy back for one keystroke, so being
+				// wrong costs a key instead of a phantom row. A finish that
+				// *conflicts* still re-keys through suppressRepeat's
+				// guess→evidence rule, which is how a foil's nonfoil-guessed
+				// first read gets corrected rather than doubled.
 				return m.suppressRepeat(it, finish, prior, now,
 					fmt.Sprintf("same card, re-read %dms after the last sighting",
 						since.Milliseconds()), false)
@@ -1835,8 +1825,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	if auto {
 		card := it.prints[0]
 		_, evidenced := finishFromEvidence(card, it.finishHint)
+		printingGuessed := it.rank == scanMatchYearAndFrame
 		res := Result{Card: card, Finish: finish, Qty: 1, ContainerID: m.dest.ID,
-			FinishGuessed: !evidenced}
+			FinishGuessed: !evidenced, PrintingGuessed: printingGuessed}
 		if err := m.adder(res); err != nil {
 			// The write failed, so the card is review-bound, not celebrated.
 			m.note("outcome %q queued: add failed: %v", it.canonical, err)
@@ -1861,16 +1852,20 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		if !evidenced {
 			guessed = " (finish guessed)"
 		}
+		if printingGuessed {
+			guessed += " (printing guessed)"
+		}
 		m.note("outcome %q committed: %s/%s %s%s%s", card.Name,
 			strings.ToUpper(card.Set), card.CollectorNumber, finish, chosen, guessed)
-		m.recent = recordCommit(m.recent, card.ID, finish, it.captureSeq, now, !evidenced)
+		m.recent = recordCommit(m.recent, card, finish, it.captureSeq, now, !evidenced,
+			printingGuessed)
 		m.recentNames = recordName(m.recentNames, it.canonical, now)
 		m.nudgeDrops = 0
 		// The retry bound is about one card's run of bad reads, not about the
 		// session. Once anything commits, a later copy of the same card that
 		// reads badly deserves its own second look — and a retry still waiting
 		// to be sent is moot, because the card it was for is written.
-		m.secondLookFor, m.secondLookPending = "", false
+		m.secondLookFor = ""
 		// This is the case the held flash was held for: the retry read the card
 		// properly, upgradeQueued took its entry back out of review, and the
 		// review the phone was never told about turned out not to be one.
@@ -1909,7 +1904,12 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	//
 	// Otherwise: the source calling it a move, or a repeat too fast to be a
 	// swap. A worse read is not new evidence.
-	if !it.dup && it.canonical != "" && !it.placedDecisively() {
+	//
+	// !replacedQueued for the invariant at upgradeQueued: a read that took the
+	// queued entry out is that card's only representation now, however it
+	// arrived — dropping it here erased cards live (the entry gone, a review
+	// flash promised for nothing).
+	if !it.dup && !replacedQueued && it.canonical != "" && !it.placedDecisively() {
 		if since, seen := seenWithin(m.recentNames, it.canonical, now); seen &&
 			(it.fromMoved || since < sameCardFloor) {
 			why := fmt.Sprintf("re-read %dms later", since.Milliseconds())
@@ -1925,6 +1925,40 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// The nameless flavour of the same repeat: no title read at all, but the
+	// footer digits are the ones on a card committed moments ago. That is the
+	// card still in frame — shot mid-swap, half under a hand — and an entry
+	// that names nothing while describing a card already written is a stop
+	// with no question in it. Not for errored lookups: a timeout is not a
+	// verdict about the card. See footerEcho for the match and for why
+	// placedDecisively gets no say.
+	if it.canonical == "" && it.errText == "" {
+		if prior, ok := footerEcho(m.recent, it.raw, now); ok {
+			m.note("outcome %q dropped: footer echo of %q, committed moments ago",
+				orDash(it.ocrLine), prior.name)
+			// Re-stamped as a sighting, so a burst of echoes stays suppressed
+			// for as long as the card keeps announcing itself — same anchor
+			// the same-card floor rolls; see touchCommit.
+			m.recent = touchCommit(m.recent, prior.scryfallID, now)
+			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", prior.name)
+			m.statusErr = false
+			return m, m.scheduleNudge()
+		}
+	}
+
+	// The pile flow's other nameless junk: a mid-slide read that caught half
+	// a title and identified nothing. "couldn't identify" queue entries carry
+	// nothing an operator can act on, and in hand-held scanning they arrive
+	// once per slide — see mangledEcho for the match and its guards.
+	if it.canonical == "" && it.errText == "" && len(it.prints) == 0 && it.ocrLine != "" {
+		if name, ok := mangledEcho(m.recentNames, it.ocrLine, now); ok {
+			m.note("outcome %q dropped: mid-slide mangle of %q", it.ocrLine, name)
+			m.status = fmt.Sprintf("Still seeing %s, waiting for the next card", name)
+			m.statusErr = false
+			return m, m.scheduleNudge()
+		}
+	}
+
 	// An unresolved or shaky read that looks like a recently processed name,
 	// seen in a nudge or multi-card context, is that card still in frame
 	// wearing an OCR mangle — drop it rather than pile OCR variants of an
@@ -1932,8 +1966,10 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	// deliberately re-scanned worn card must not vanish. A dup-flagged item
 	// skips the probe: it was recognized above as a deliberate duplicate, and
 	// matching its own name here would swallow the very queue entry the
-	// recognition chose to keep.
-	if !it.dup && (it.fromNudge || it.siblings > 1) {
+	// recognition chose to keep. And !replacedQueued for the invariant at
+	// upgradeQueued: a nudged re-read that replaced the queued entry always
+	// matches its own name here — swallowing it erases the card.
+	if !it.dup && !replacedQueued && (it.fromNudge || it.siblings > 1) {
 		probe := it.canonical
 		if probe == "" {
 			probe = it.ocrLine
@@ -1991,9 +2027,26 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	nudge := m.scheduleNudge()
 	var deadline tea.Cmd
 	if secondLook {
-		m.secondLookFor, m.secondLookPending = it.canonical, true
+		m.secondLookFor = it.canonical
 		m.deferredFlashFor = it.canonical
 		m.note("outcome %q: looking again", it.canonical)
+		// The retry is sent now, into `held` — the only state where the
+		// phone's forceRearm acts. After a capture the trigger is parked in
+		// `.hold` staring at the card it just shot; this asks it to look
+		// again while the card is still on the mat. If the scene has changed
+		// since the shutter (the usual case for a bad read: the hand that was
+		// holding the card has withdrawn), it re-fires ~0.6-0.7s later and the
+		// re-read lands well inside the decision ceiling via upgradeQueued.
+		// If the scene is truly static, the phone's own gate blocks the
+		// re-fire and the ceiling expires to review exactly as before —
+		// nothing lost. Any other state means the phone already re-armed
+		// itself and a fire is coming (or blocked) regardless; a Rearm there
+		// is a no-op by construction, so it is not sent.
+		if m.session != nil && m.autoCapable && m.autoState == "held" {
+			_ = m.session.Rearm()
+			m.nudgeSentAt = m.now()
+			m.note("rescue %q: rearm sent into held", it.canonical)
+		}
 		// The flash is held, but not indefinitely: see decisionCeiling.
 		name := it.canonical
 		deadline = func() tea.Msg {
@@ -2111,7 +2164,8 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 	// Banked under a fresh captureSeq so the copy just written cannot itself be
 	// read as the fanned-playset case by whatever the next capture brings.
 	m.captureSeq++
-	m.recent = recordCommit(m.recent, card.ID, p.finish, m.captureSeq, now, !evidenced)
+	// Promoted by hand, so the printing is the operator's word — never a guess.
+	m.recent = recordCommit(m.recent, card, p.finish, m.captureSeq, now, !evidenced, false)
 	m.recentNames = recordName(m.recentNames, p.it.canonical, now)
 	m.addedCount++
 	m.addedValue += priceValue(card, p.finish)

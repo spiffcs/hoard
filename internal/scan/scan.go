@@ -247,6 +247,14 @@ type Card struct {
 	// card's opposite edge agreed, "footer" when only one edge was in shot.
 	// Empty when no border was read.
 	BorderSource string `json:"borderSource"`
+	// FrameStyle is the frame family the footer's shape claims: "retro" when
+	// the artist is credited on a row of its own ("Illus. …" — the 1993-2003
+	// frames and their modern retro-frame reprints), "" when the footer read
+	// as a modern frame or read too badly to say. Empty means no evidence,
+	// never "modern": a same-set regular/retro twin pair differs in nothing
+	// else the wire carries, and this must only ever pick between candidates
+	// a positive read supports.
+	FrameStyle string `json:"frameStyle"`
 }
 
 // Lines returns the card's OCR'd text, best guess first, falling back to Name

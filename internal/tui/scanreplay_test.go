@@ -68,12 +68,15 @@ func replayCatalog(t *testing.T) *catalog.Catalog {
 	return cat
 }
 
-// frameOrder sorts capture-N by N so the report reads in capture order rather
-// than lexically (capture-10 before capture-2).
+// frameOrder sorts frames by their numeric component so the report reads in
+// capture order rather than lexically (capture-10 before capture-2). Both
+// name shapes carry their order in the digits: capture-N-ocr.png by sequence,
+// remote-still-<epoch ms>.jpg by wall clock.
 func frameOrder(paths []string) {
 	num := func(p string) int {
 		base := filepath.Base(p)
 		base = strings.TrimSuffix(strings.TrimPrefix(base, "capture-"), "-ocr.png")
+		base = strings.TrimSuffix(strings.TrimPrefix(base, "remote-still-"), ".jpg")
 		n, _ := strconv.Atoi(base)
 		return n
 	}
@@ -92,9 +95,17 @@ func TestSessionReplay(t *testing.T) {
 	cat := replayCatalog(t)
 	defer cat.Close()
 
+	// Two name shapes, one per helper generation: the Continuity-era
+	// capture-N-ocr.png, and remote-still-<ms>.jpg, which is the only thing
+	// the current phone helper writes (PhotoDecode.saveRemoteStill). The old
+	// glob alone made this harness silently skip every session captured since
+	// the switch.
 	frames, err := filepath.Glob(filepath.Join(dir, "capture-*-ocr.png"))
 	if err != nil || len(frames) == 0 {
-		t.Skipf("no capture-*-ocr.png frames in %s", dir)
+		frames, err = filepath.Glob(filepath.Join(dir, "remote-still-*.jpg"))
+	}
+	if err != nil || len(frames) == 0 {
+		t.Skipf("no capture-*-ocr.png or remote-still-*.jpg frames in %s", dir)
 	}
 	frameOrder(frames)
 
@@ -114,6 +125,7 @@ func TestSessionReplay(t *testing.T) {
 		}
 		cards := ev.CardList()
 		label := strings.TrimSuffix(filepath.Base(frame), "-ocr.png")
+		label = strings.TrimSuffix(label, ".jpg")
 		if len(cards) == 0 {
 			t.Logf("%-12s (nothing readable)", label)
 			continue

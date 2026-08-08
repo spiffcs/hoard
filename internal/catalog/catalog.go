@@ -32,7 +32,7 @@ import (
 // v3 added lang, so a scan that reads a card's language can tell a
 // foreign-only printing from its English namesake — they share a set and a
 // collector number, differing only by a marker the OCR cannot see.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // fileName is the catalog's name inside the cache directory.
 const fileName = "catalog.db"
@@ -67,6 +67,9 @@ CREATE TABLE cards (
     finishes         TEXT,
     promo_types      TEXT,
     frame_effects    TEXT,
+    -- Scryfall's frame family ("1993", "1997", "2015", …): what separates a
+    -- retro-frame reprint from its regular same-set twin for the scanner.
+    frame            TEXT,
     border_color     TEXT,
     colors           TEXT,
     color_identity   TEXT,

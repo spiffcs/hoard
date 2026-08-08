@@ -103,6 +103,7 @@ extension CardReading {
             || plausibleTitle(title)
             || lines.contains(where: plausibleTitle)
         else { return nil }
+        let retroFooter = retroFrameFooter(bandLines + lines)
         return CardEntry(
             name: title,
             candidates: Array(lines.prefix(3)),
@@ -162,7 +163,15 @@ extension CardReading {
             // on a border — so the cost of the three abstentions is a card that
             // queues exactly as it does today.
             borderColor: border.color,
-            borderSource: border.source)
+            borderSource: border.source,
+            // The frame family, from the footer's own shape: retro frames
+            // (and their modern retro-frame reprints) credit the artist on a
+            // row of their own, modern frames never do. A same-set
+            // regular/retro twin pair differs in nothing else on this wire,
+            // and the parent needs the difference to pick a printing when the
+            // digits never read. Nil on silence — an unreadable footer is not
+            // a modern one.
+            frameStyle: retroFooter ? "retro" : nil)
     }
 }
 

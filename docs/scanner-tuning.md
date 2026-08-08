@@ -87,22 +87,20 @@ The loop that made every failure reproducible offline:
 
 ### Trigger knobs (env, no rebuild)
 
+Two knobs exist. This table used to list twelve more; they were the macOS
+Continuity-era trigger's, and none of them is read by any current source (the
+stillness-fires-without-a-rectangle path they configured does not exist in the
+phone's trigger at all). Verified 2026-08-07 by grepping `scan/**/Sources` for
+`environment[` — the only reads are the two below plus `HOARD_SCAN_DEBUG_DIR`
+(save incoming stills) and `HOARD_SCAN_WAIT`.
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `HOARD_SCAN_AUTO_INTERVAL` | 0.1 | sample period, seconds |
-| `HOARD_SCAN_AUTO_STABLE` | 6 | still samples before firing (0.6s at the 0.1s period) |
-| `HOARD_SCAN_AUTO_REARM` | 3 | pooled disruption samples before re-arming |
-| `HOARD_SCAN_AUTO_GRACE` | 6 | bad samples tolerated mid-stabilization; the knob settle actually turns on |
-| `HOARD_SCAN_AUTO_IOU` | 0.65 | overlap for "same rectangle, still" |
-| `HOARD_SCAN_AUTO_BG_IOU` | 0.5 | overlap for "that's background furniture" |
-| `HOARD_SCAN_AUTO_BG_RESET` | 8 | stabilization passes abandoned back-to-back before the background baseline is discarded as wrong |
-| `HOARD_SCAN_AUTO_STILL_AFTER` | 3 | abandoned passes before the stillness path may fire at all |
-| `HOARD_SCAN_AUTO_STILL` | 6 | samples of frame-to-frame stillness that fire the shutter without a rectangle; **0 disables the path** |
-| `HOARD_SCAN_AUTO_STILL_DELTA` | 2.5 | mean per-cell luma change below which two frames are the same picture |
-| `HOARD_SCAN_AUTO_SCENE_CHANGED` | 6.0 | how far the scene must differ from the last capture before stillness may fire again |
-| `HOARD_SCAN_AUTO_SCENE_DETAIL` | 12.0 | spread in the middle of the frame below which there is nothing worth photographing |
-| `HOARD_SCAN_FOCUS` | `lock` | focus policy: `lock` = continuous AF, frozen after the first good read (all cards sit at one distance; two consecutive empty reads thaw it); `continuous` = AF plus the hunt-aware fire gate but no freeze; `off` = no focus code at all, the pre-focus behavior |
-| `HOARD_SCAN_FOCUS_WAIT` | 1.5 | seconds a completed stability streak waits out a focus hunt before firing anyway |
+| `HOARD_SCAN_AUTO_INTERVAL` | 0.1 | sample period, seconds (forwarded to the phone as the `tune` verb) |
+| `HOARD_SCAN_AUTO_STABLE` | 6 | still samples before firing — 0.6s at the 0.1s period, **0.198s at the 0.033s period a live rig sets**, which is short enough to photograph a card still in the operator's hand |
+
+Everything else in the phone's `TriggerTuning` (grace, IoU, background reset,
+rearm samples, scene gates, `movedFaceMax`) is compile-time only.
 
 Focus hunts are first-class trigger input: a hunt blurs every edge in frame,
 so the trigger freezes (no streak growth, no grace burn, no reset, no HOLD
@@ -496,12 +494,20 @@ every second look that ever rescued a card landed 0.70-0.90s after its queue,
 and no retry that missed that window ever answered — the late reads arrive
 mangled off a nudge and drop.
 
-**1300 starts tight by choice, to be raised on evidence.** The tell in a
+**1300 started tight by choice, to be raised on evidence.** The tell in a
 session log is a rescue — a "re-read … beats the queued …" or a second-look
 commit — landing *after* its card's "no better read within" line: that is the
-ceiling cutting into real rescues, and the answer is a step up
-(1300 → 1800 → 2500), not doubting the rescue. The 0.9s cap was measured on
-one operator and one rig; the tight start spends that unknown deliberately.
+ceiling cutting into real rescues. The 0.9s cap was measured on one operator
+and one rig; the tight start spent that unknown deliberately.
+
+**2026-08-07, later: pinned at 1000 by requirement.** It rode at 1800 for one
+session while the queue-time Rearm landed. Then the operator set a hard
+product bound — no card decision past one second, the hand-held pile flow
+stalls otherwise — and the first pile session measured the active rescue at
+584-614ms after queue, 5 of 5. 1000 clears that with ~40% margin. The
+escalation ladder (1300 → 1800 → 2500) is retired: if a rescue ever lands
+after its "no better read within" line again, make the retake faster rather
+than the ceiling later.
 
 ### Knobs that do not do what they look like they do
 

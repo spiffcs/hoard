@@ -58,7 +58,12 @@ type Card struct {
 	Finishes     []string // e.g. ["nonfoil","foil","etched"]
 	PromoTypes   []string
 	FrameEffects []string
-	BorderColor  string // frame color ("black", "borderless") — not WUBRG
+	// Frame is Scryfall's frame family ("1993", "1997", "2003", "2015",
+	// "future"). It is what separates a modern set's retro-frame reprint from
+	// its regular twin — same set, same year, both black-bordered — which the
+	// scanner needs when the collector digits never read.
+	Frame       string
+	BorderColor string // frame color ("black", "borderless") — not WUBRG
 	// Colors and ColorIdentity are WUBRG letters. ColorIdentity is always at
 	// the object root; Colors is absent on multi-faced cards (it lives per
 	// face there), so identity is the field displays should reach for.
@@ -118,6 +123,7 @@ type apiCard struct {
 	Finishes        []string `json:"finishes"`
 	PromoTypes      []string `json:"promo_types"`
 	FrameEffects    []string `json:"frame_effects"`
+	Frame           string   `json:"frame"`
 	BorderColor     string   `json:"border_color"`
 	Colors          []string `json:"colors"`
 	ColorIdentity   []string `json:"color_identity"`
@@ -433,6 +439,7 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 		Finishes:        ac.Finishes,
 		PromoTypes:      ac.PromoTypes,
 		FrameEffects:    ac.FrameEffects,
+		Frame:           ac.Frame,
 		BorderColor:     ac.BorderColor,
 		Colors:          ac.Colors,
 		ColorIdentity:   ac.ColorIdentity,

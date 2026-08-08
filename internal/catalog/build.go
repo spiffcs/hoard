@@ -190,6 +190,7 @@ type bulkCard struct {
 	Finishes        []string `json:"finishes"`
 	PromoTypes      []string `json:"promo_types"`
 	FrameEffects    []string `json:"frame_effects"`
+	Frame           string   `json:"frame"`
 	BorderColor     string   `json:"border_color"`
 	Colors          []string `json:"colors"`
 	ColorIdentity   []string `json:"color_identity"`
@@ -316,10 +317,11 @@ func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.
 
 	insertCard, err := tx.Prepare(`
 INSERT OR REPLACE INTO cards (scryfall_id, name, name_norm, set_code, collector_number,
-    set_name, released_at, rarity, lang, finishes, promo_types, frame_effects, border_color,
+    set_name, released_at, rarity, lang, finishes, promo_types, frame_effects, frame,
+    border_color,
     colors, color_identity,
     price_usd, price_usd_foil, price_usd_etched, scryfall_url)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -370,6 +372,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		if _, err := insertCard.Exec(bc.ID, bc.Name, norm, bc.Set, bc.CollectorNumber,
 			nullable(bc.SetName), nullable(bc.ReleasedAt), nullable(bc.Rarity),
 			nullable(bc.Lang), jsonArray(bc.Finishes), jsonArray(bc.PromoTypes), jsonArray(bc.FrameEffects),
+			nullable(bc.Frame),
 			nullable(bc.BorderColor),
 			jsonArrayKeepEmpty(bc.Colors), jsonArrayKeepEmpty(bc.ColorIdentity),
 			parsePrice(bc.Prices.USD), parsePrice(bc.Prices.USDFoil),

@@ -62,7 +62,7 @@ type rowScanner interface{ Scan(...any) error }
 // that feeds scanCard interpolates this rather than restating the list, so the
 // column order is decided once, beside the code that depends on it.
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
-       released_at, lang, finishes, promo_types, frame_effects, border_color,
+       released_at, lang, finishes, promo_types, frame_effects, frame, border_color,
        colors, color_identity,
        price_usd, price_usd_foil, price_usd_etched, scryfall_url`
 
@@ -74,12 +74,12 @@ const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
 // interchangeable and no caller has to know which it got.
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
-	var setName, released, lang, finishes, promos, frames, border *string
+	var setName, released, lang, finishes, promos, frames, frame, border *string
 	var colors, identity *string
 	var usd, foil, etched *float64
 
 	if err := r.Scan(&c.ID, &c.Name, &c.Set, &c.CollectorNumber, &setName,
-		&released, &lang, &finishes, &promos, &frames, &border,
+		&released, &lang, &finishes, &promos, &frames, &frame, &border,
 		&colors, &identity,
 		&usd, &foil, &etched, &c.ScryfallURL); err != nil {
 		return scryfall.Card{}, fmt.Errorf("catalog: scanning a card: %w", err)
@@ -88,6 +88,7 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.SetName = deref(setName)
 	c.ReleasedAt = deref(released)
 	c.Lang = deref(lang)
+	c.Frame = deref(frame)
 	c.BorderColor = deref(border)
 	c.Finishes = decodeArray(finishes)
 	c.PromoTypes = decodeArray(promos)

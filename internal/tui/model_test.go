@@ -1754,28 +1754,28 @@ func TestVerdict(t *testing.T) {
 
 func TestRankByScanStrength(t *testing.T) {
 	cards := solRingPrints()
-	if _, s := rankByScanStrength(cards, "MH3", "123", 0, "", "", ""); s != scanMatchSetAndNumber {
+	if _, s := rankByScanStrength(cards, "MH3", "123", 0, "", "", "", "", nil); s != scanMatchSetAndNumber {
 		t.Errorf("set+number strength = %v, want scanMatchSetAndNumber", s)
 	}
-	if _, s := rankByScanStrength(cards, "", "263", 0, "", "", ""); s != scanMatchNumberOnly {
+	if _, s := rankByScanStrength(cards, "", "263", 0, "", "", "", "", nil); s != scanMatchNumberOnly {
 		t.Errorf("unique number strength = %v, want scanMatchNumberOnly", s)
 	}
 	dupes := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
 	}
-	if _, s := rankByScanStrength(dupes, "", "7", 0, "", "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(dupes, "", "7", 0, "", "", "", "", nil); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared number strength = %v, want scanMatchNumberAmbiguous", s)
 	}
-	if _, s := rankByScanStrength(cards[:1], "", "", 0, "", "", ""); s != scanMatchSinglePrint {
+	if _, s := rankByScanStrength(cards[:1], "", "", 0, "", "", "", "", nil); s != scanMatchSinglePrint {
 		t.Errorf("single printing strength = %v, want scanMatchSinglePrint", s)
 	}
 	// A number that matches nothing makes even a lone printing suspect: the
 	// name match may have landed on the wrong card entirely.
-	if _, s := rankByScanStrength(cards[:1], "", "999", 0, "", "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards[:1], "", "999", 0, "", "", "", "", nil); s != scanMatchNone {
 		t.Errorf("conflicting number strength = %v, want scanMatchNone", s)
 	}
-	if _, s := rankByScanStrength(cards, "", "", 0, "", "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(cards, "", "", 0, "", "", "", "", nil); s != scanMatchNone {
 		t.Errorf("no signal strength = %v, want scanMatchNone", s)
 	}
 }
@@ -1887,9 +1887,9 @@ func TestApplyBorderEvidence(t *testing.T) {
 // the whole catalog — it is the single remaining difference between them.
 func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 	prints := controlMagicPrints()
-	_, before := rankByScanStrength(prints, "", "", 1995, "", "", "")
+	_, before := rankByScanStrength(prints, "", "", 1995, "", "", "", "", nil)
 	reordered, _ := applyBorderEvidence(prints, "white", 1995)
-	_, after := rankByScanStrength(reordered, "", "", 1995, "", "", "")
+	_, after := rankByScanStrength(reordered, "", "", 1995, "", "", "", "", nil)
 	if before != after {
 		t.Errorf("rank moved from %v to %v after a border reorder", before, after)
 	}
@@ -1902,6 +1902,136 @@ func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 
 // A read number pins a printing, and a misread border must not replace it.
 // Live on 2026-08-06: Ornithopter read set=M15 num=223 lang=en — an exact
+// A re-read that replaces a queued entry but still cannot commit must land
+// back in review, not vanish.
+//
+// upgradeQueued removes the queued entry the moment a better-ranked read of
+// the same name arrives. If that read then fails verdict anyway (better rank,
+// still unverified) it heads for the queue — where the same-card drop rules
+// used to swallow it, because its own first read put its name in
+// recentNames moments ago. The entry it replaced was already gone, so the
+// card ended represented nowhere: no commit, no review row, and a "Needs
+// Review" flash promised for an entry that did not exist.
+func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "a68", Name: "Gravel Slinger", Set: "ons", CollectorNumber: "68",
+			ReleasedAt: "2002-10-07", Finishes: []string{"nonfoil"}},
+		{ID: "b68", Name: "Gravel Slinger", Set: "mmq", CollectorNumber: "68",
+			ReleasedAt: "1999-10-04", Finishes: []string{"nonfoil"}},
+		{ID: "c12", Name: "Gravel Slinger", Set: "8ed", CollectorNumber: "12",
+			ReleasedAt: "2003-07-28", Finishes: []string{"nonfoil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Gravel Slinger": "Gravel Slinger"},
+		prints: map[string][]scryfall.Card{"Gravel Slinger": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 7, 12, 20, 1, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	// First read: name only. Three printings, nothing pinned — queues.
+	blind := scan.Card{Name: "Gravel Slinger", Candidates: []string{"Gravel Slinger"},
+		Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, blind, 1)())
+	got := mm.(model)
+	if len(got.review) != 1 {
+		t.Fatalf("setup: blind read should queue, review = %d", len(got.review))
+	}
+
+	// 900ms later: digits that match two printings, and a year that matches
+	// neither of them — a strictly better rank that still cannot commit.
+	clock = clock.Add(900 * time.Millisecond)
+	got.captureSeq++
+	better := scan.Card{Name: "Gravel Slinger", Candidates: []string{"Gravel Slinger"},
+		CollectorNumber: "68", CopyrightYear: 1997, Confidence: 0.95, Source: "crop"}
+	it := got.resolveCardCmd(2, better, 1)().(resolveDoneMsg).item
+	if it.rank <= scanMatchNone {
+		t.Fatalf("premise broken: the second read should outrank none, got %v", it.rank)
+	}
+	if auto, _, _ := verdict(it); auto {
+		t.Fatalf("premise broken: the second read should still fail verdict")
+	}
+	mm, _ = got.Update(got.resolveCardCmd(2, better, 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Fatalf("review = %d, want the upgraded read re-queued, not vanished",
+			len(got.review))
+	}
+	if got.review[0].rank <= scanMatchNone {
+		t.Errorf("queued rank = %v, want the better read's rank kept", got.review[0].rank)
+	}
+	if len(ra.got) != 0 {
+		t.Errorf("adds = %d, want none — nothing verified", len(ra.got))
+	}
+}
+
+// A frame-picked printing commits, and commits flagged: no digits confirmed
+// it, so the row must be auditable against the physical card later.
+func TestFramePickedPrintingCommitsFlagged(t *testing.T) {
+	twins := []scryfall.Card{
+		{ID: "reg", Name: "Brainsurge", Set: "mh3", CollectorNumber: "106",
+			ReleasedAt: "2024-06-14", Frame: "2015", Finishes: []string{"nonfoil", "foil"}},
+		{ID: "retro", Name: "Brainsurge", Set: "mh3", CollectorNumber: "399",
+			ReleasedAt: "2024-06-14", Frame: "1997", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Brainsurge": "Brainsurge"},
+		prints: map[string][]scryfall.Card{"Brainsurge": twins},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	c := scan.Card{Name: "Brainsurge", Candidates: []string{"Brainsurge"},
+		CopyrightYear: 2024, FrameStyle: "retro", Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, c, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("adds = %d, want the frame-picked printing committed (review=%+v)",
+			len(ra.got), got.review)
+	}
+	if ra.got[0].Card.ID != "retro" {
+		t.Errorf("committed %s, want the retro-frame row", ra.got[0].Card.ID)
+	}
+	if !ra.got[0].PrintingGuessed {
+		t.Error("PrintingGuessed = false, want the commit flagged — no digits confirmed it")
+	}
+}
+
+// An alt collector block with no year of its own still ranks with the card's
+// copyright year. The year belongs to the card — there is only one copyright
+// line — but the ranker used to see only the winning block's Year field, so
+// an alt carrying just digits silently discarded the year the log printed
+// and a read that should have corroborated ranked a stratum lower.
+func TestAltBlockInheritsTheCopyrightYear(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "mh3", Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426",
+			ReleasedAt: "2024-06-14", Finishes: []string{"nonfoil", "foil"}},
+		{ID: "roe", Name: "Lion Umbra", Set: "roe", CollectorNumber: "36",
+			ReleasedAt: "2010-04-23", Finishes: []string{"nonfoil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Lion Umbra": "Lion Umbra"},
+		prints: map[string][]scryfall.Card{"Lion Umbra": prints},
+	}
+	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
+	c := scan.Card{
+		Name: "Lion Umbra", Candidates: []string{"Lion Umbra"},
+		CopyrightYear: 2024,
+		CollectorAlts: []scan.CollectorAlt{{Number: "426"}},
+	}
+	it := m.resolveCardCmd(1, c, 1)().(resolveDoneMsg).item
+	if it.rank != scanMatchNumberAndYear {
+		t.Fatalf("rank = %v, want number+year — the alt's digits plus the "+
+			"card's copyright year", it.rank)
+	}
+	if it.prints[0].ID != "mh3" {
+		t.Errorf("head = %q, want mh3", it.prints[0].ID)
+	}
+}
+
 // set+number+lang pin — with the border misread as white on a black-bordered
 // card. The border reorder then ruled the pinned M15 row out, promoted a
 // borderless SLD sibling to the head, and the head is what commits: the
@@ -1960,7 +2090,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "alt", Name: "X", Set: "ody", CollectorNumber: "72†"},
 		{ID: "plain", Name: "X", Set: "ody", CollectorNumber: "72"},
 	}
-	ranked, s := rankByScanStrength(variants, "", "", 0, "", "", "")
+	ranked, s := rankByScanStrength(variants, "", "", 0, "", "", "", "", nil)
 	if s != scanMatchSinglePrint {
 		t.Errorf("variant pair strength = %v, want scanMatchSinglePrint", s)
 	}
@@ -1972,7 +2102,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "plain", Name: "X", Set: "8ed", CollectorNumber: "95"},
 		{ID: "star", Name: "X", Set: "8ed", CollectorNumber: "95★"},
 	}
-	if _, s := rankByScanStrength(stars, "", "", 0, "", "", ""); s != scanMatchSinglePrint {
+	if _, s := rankByScanStrength(stars, "", "", 0, "", "", "", "", nil); s != scanMatchSinglePrint {
 		t.Errorf("star pair strength = %v, want scanMatchSinglePrint", s)
 	}
 	// Variants across different sets are genuinely different printings.
@@ -1980,7 +2110,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 		{ID: "a", Name: "X", Set: "7ed", CollectorNumber: "95"},
 		{ID: "b", Name: "X", Set: "8ed", CollectorNumber: "95★"},
 	}
-	if _, s := rankByScanStrength(spread, "", "", 0, "", "", ""); s != scanMatchNone {
+	if _, s := rankByScanStrength(spread, "", "", 0, "", "", "", "", nil); s != scanMatchNone {
 		t.Errorf("cross-set variants strength = %v, want scanMatchNone", s)
 	}
 }
@@ -1995,7 +2125,7 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 	// The year did not merely break the tie, it agreed with the winner — two
 	// signals, so the name gate is waived downstream.
-	ranked, s := rankByScanStrength(prints, "", "95", 2003, "", "", "")
+	ranked, s := rankByScanStrength(prints, "", "95", 2003, "", "", "", "", nil)
 	if s != scanMatchNumberAndYear {
 		t.Errorf("year-pinned strength = %v, want scanMatchNumberAndYear", s)
 	}
@@ -2004,7 +2134,7 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	}
 	// A misread year matches no printing and must leave the tie as it found
 	// it — ambiguous queues, never a guessed commit.
-	if _, s := rankByScanStrength(prints, "", "95", 2013, "", "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(prints, "", "95", 2013, "", "", "", "", nil); s != scanMatchNumberAmbiguous {
 		t.Errorf("misread year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
 	// A year shared by both matches decides nothing either.
@@ -2012,11 +2142,11 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7", ReleasedAt: "2003-01-01"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7", ReleasedAt: "2003-06-01"},
 	}
-	if _, s := rankByScanStrength(same, "", "7", 2003, "", "", ""); s != scanMatchNumberAmbiguous {
+	if _, s := rankByScanStrength(same, "", "7", 2003, "", "", "", "", nil); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
 	// The year never overrides a full set+number verification.
-	if _, s := rankByScanStrength(prints, "7ed", "95", 2003, "", "", ""); s != scanMatchSetAndNumber {
+	if _, s := rankByScanStrength(prints, "7ed", "95", 2003, "", "", "", "", nil); s != scanMatchSetAndNumber {
 		t.Errorf("set+number with year = %v, want scanMatchSetAndNumber", s)
 	}
 }
@@ -2161,28 +2291,154 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 	}
 }
 
-// A second copy stacked faster than the floor allows still commits, when the
-// source measured the difference and says so.
+// A mid-slide mangle of a card just handled is dropped, not queued.
 //
-// The session that prompted this: two physical No-Dachi stacked 1671ms apart.
-// The phone reported `replaced` with face=32.5 against its own movedFaceMax of
-// 20.0 — it looked at both cards and they were not the same one — and the
-// commit path threw that away because 1671ms is under sameCardFloor. The copy
-// was not written for another 73.5 seconds.
+// Live, 2026-08-07 pile session: sliding Hollow Specter off the pile put
+// "AMN Spectes" in front of the lens — half a title plus debris. It resolved
+// to nothing, carried a copyright year (so the junk filter rightly spared
+// it: digits prove a card was in frame), and queued as `couldn't identify
+// "AMN Spectes"` — a review stop with nothing actionable in it.
+func TestMidSlideMangleIsDropped(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "lgn75", Name: "Hollow Specter", Set: "lgn", CollectorNumber: "75",
+			ReleasedAt: "2003-01-31", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Hollow Specter": "Hollow Specter"},
+		prints: map[string][]scryfall.Card{"Hollow Specter": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 7, 13, 54, 12, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	good := scan.Card{Name: "Hollow Specter", Candidates: []string{"Hollow Specter"},
+		CollectorNumber: "75", NumberSource: "copyright", CopyrightYear: 2003,
+		Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, good, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: the clean read should commit, adds = %d", len(ra.got))
+	}
+
+	// 5.1s later, the slide: half a title, a year, no identity.
+	clock = clock.Add(5111 * time.Millisecond)
+	got.captureSeq++
+	mangle := scan.Card{Name: "AMN Spectes", Candidates: []string{"AMN Spectes"},
+		CopyrightYear: 2003, Confidence: 0.4, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(2, mangle, 1)())
+	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the mangle dropped", got.review)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want nothing new", len(ra.got))
+	}
+
+	// An unidentifiable line that resembles nothing recent still queues — a
+	// worn card deliberately rescanned must not vanish.
+	clock = clock.Add(2 * time.Second)
+	got.captureSeq++
+	unrelated := scan.Card{Name: "Zzyzx Qwrbl", Candidates: []string{"Zzyzx Qwrbl"},
+		CopyrightYear: 1997, Confidence: 0.4, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(3, unrelated, 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Errorf("review = %d, want an unrelated unreadable card kept", len(got.review))
+	}
+}
+
+// The live pile-mode triple: one hand-held foil, three fires in 2.5s, every
+// face "decisive" — one row, finish corrected, no phantom copies.
 //
-// The floor's 3856ms was fitted on card *swaps*, remove-then-place. Stacking
-// skips the removal and is quicker, so the number never described the motion
-// this flow is built around. Where the source can answer directly, it wins;
-// where it cannot, the clock still does.
-func TestDecisivePlacementBeatsTheSameCardFloor(t *testing.T) {
+// Trap Digger, 2026-08-07: committed nonfoil-guessed off a footerless first
+// read, then re-read twice as the hand shifted (`replaced` face=32.5, then
+// 26.5, both over placementFaceFloor) and committed three rows. The wanted
+// shape: the first repeat carries the foil marker the first read missed and
+// re-keys the row (guess → evidence); the second repeat is a plain drop.
+func TestPileRepeatCorrectsInsteadOfDuplicating(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "scg24", Name: "Trap Digger", Set: "scg", CollectorNumber: "24",
+			ReleasedAt: "2003-05-26", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Trap Digger": "Trap Digger"},
+		prints: map[string][]scryfall.Card{"Trap Digger": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 7, 13, 54, 9, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	// Footerless first read: single printing, no finish marker → nonfoil
+	// guessed.
+	first := scan.Card{Name: "Trap Digger", Candidates: []string{"Trap Digger"},
+		Confidence: 0.95, Source: "crop"}
+	got := resolve(t, m, first)
+	if len(ra.got) != 1 || !ra.got[0].FinishGuessed || ra.got[0].Finish != "nonfoil" {
+		t.Fatalf("setup: first read should commit nonfoil guessed, got %+v", ra.got)
+	}
+
+	// 1.6s later, "decisive" face on the same card — and a real foil marker.
+	clock = clock.Add(1602 * time.Millisecond)
+	got.captureSeq++
+	got.lastScanReplaced = true
+	face := 32.5
+	got.lastScanFaceDelta = &face
+	foilRead := scan.Card{Name: "Trap Digger", Candidates: []string{"Trap Digger"},
+		FinishHint: "foil", Confidence: 0.95, Source: "crop"}
+	got = resolve(t, got, foilRead)
+	if len(ra.got) != 2 {
+		t.Fatalf("adds = %d, want the correction and nothing else", len(ra.got))
+	}
+	if ra.got[1].ReplacesFinish != "nonfoil" || ra.got[1].Finish != "foil" {
+		t.Errorf("second write = %+v, want a nonfoil→foil re-key, not a new row", ra.got[1])
+	}
+
+	// 0.95s later, another "decisive" face, foil again: nothing new — drop.
+	clock = clock.Add(946 * time.Millisecond)
+	got.captureSeq++
+	face2 := 26.5
+	got.lastScanFaceDelta = &face2
+	got = resolve(t, got, foilRead)
+	if len(ra.got) != 2 {
+		t.Errorf("adds = %d, want the third sighting dropped", len(ra.got))
+	}
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want no stop for a card already written", got.review)
+	}
+}
+
+// A same-printing repeat under the floor is suppressed and offered back on
+// the recovery key — whatever the face measurement claimed.
+//
+// This contract has flipped once, each direction backed by a live session.
+// First: two physical No-Dachi stacked 1671ms apart, the phone said
+// `replaced` face=32.5, the floor threw it away, and the copy waited 73.5s —
+// so a decisive face was allowed to override the floor. Then hand-held pile
+// scanning showed the measurement cannot carry that weight: a foil's face
+// moves with the hand — the same Trap Digger read face=30.4/32.5/26.5 across
+// three fires, all "decisive", and committed three rows in 2.5s. Identity
+// (the resolve naming the printing just written) now outranks the face; the
+// stacked-copy case pays one keystroke on pendingDup instead of the
+// collection growing phantom rows.
+func TestSameCardFloorOutranksADecisiveFace(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		reason string
 		face   *float64
 		want   int // adds after the repeat, including the first copy
 	}{
-		// The live drop this exists to fix.
-		{"decisive replacement", scan.FireReplaced, fp(32.5), 2},
+		// This row used to want 2: a `replaced` at face=32.5 overrode the
+		// floor and committed (the No-Dachi stack). Hand-held pile scanning
+		// refuted the measurement — the same card reads face=26.5-32.5 as
+		// the hand shifts a foil, and one Trap Digger committed three rows
+		// in 2.5s through this override. Identity now outranks the face
+		// under the floor; the fast-stacked real copy is what the pendingDup
+		// recovery key is for, and the assertions below insist it is offered.
+		{"decisive replacement", scan.FireReplaced, fp(32.5), 1},
 		// The other side of the same measurement, from the same session.
 		{"moved", scan.FireMoved, fp(15.8), 1},
 		// Over movedFaceMax but under our margin: the source's claim is real
@@ -2687,6 +2943,87 @@ func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 	}
 }
 
+// A nameless footer echo of a card just committed is dropped, not queued.
+//
+// Live, 2026-08-07: Trap Digger committed on SCG/24, and 896ms later the
+// trigger fired `replaced` on the card sliding out under a hand. The capture
+// read no title at all — just the footer: number 24, copyright year 2003 —
+// so every named echo rule skipped it, and it queued as "nothing readable".
+// A review entry that names nothing and describes the card already written
+// is a stop with no question in it.
+//
+// The fire was also placedDecisively (face=25.0, at the floor), which must
+// not save it: with no readable name there is nothing an operator could
+// confirm from the entry anyway.
+func TestFooterEchoOfACommittedCardIsDropped(t *testing.T) {
+	prints := []scryfall.Card{
+		{ID: "scg24", Name: "Trap Digger", Set: "scg", CollectorNumber: "24",
+			ReleasedAt: "2003-05-26", Finishes: []string{"nonfoil", "foil"}},
+	}
+	fs := fakeSearcher{
+		fuzzy:  map[string]string{"Trap Digger": "Trap Digger"},
+		prints: map[string][]scryfall.Card{"Trap Digger": prints},
+	}
+	ra := &recordingAdder{}
+	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+	clock := time.Date(2026, 8, 7, 11, 53, 43, 0, time.UTC)
+	m.now = func() time.Time { return clock }
+	m, _ = openCapture(t, m)
+
+	good := scan.Card{Name: "Trap Digger", Candidates: []string{"Trap Digger"},
+		CollectorNumber: "24", NumberSource: "copyright", CopyrightYear: 2003,
+		Confidence: 0.95, Source: "crop"}
+	mm, _ := m.Update(m.resolveCardCmd(1, good, 1)())
+	got := mm.(model)
+	if len(ra.got) != 1 {
+		t.Fatalf("setup: the good read should commit, adds = %d", len(ra.got))
+	}
+
+	// 896ms later: the same footer with no title anchor, on a fire the
+	// trigger called a decisive placement.
+	clock = clock.Add(896 * time.Millisecond)
+	got.captureSeq++
+	got.lastScanReplaced = true
+	face := 25.0
+	got.lastScanFaceDelta = &face
+	echo := scan.Card{CollectorNumber: "24", NumberSource: "copyright",
+		CopyrightYear: 2003, Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(2, echo, 1)())
+	got = mm.(model)
+	if len(got.review) != 0 {
+		t.Errorf("review = %+v, want the footer echo dropped", got.review)
+	}
+	if len(ra.got) != 1 {
+		t.Errorf("adds = %d, want no second copy either", len(ra.got))
+	}
+	if !strings.Contains(got.status, "Still seeing Trap Digger") {
+		t.Errorf("status = %q, want the still-seeing note", got.status)
+	}
+
+	// The same nameless footer a comfortable swap later is not an echo — a
+	// deliberately re-scanned second copy that read badly must still reach
+	// review rather than vanish.
+	clock = clock.Add(sameCardFloor + time.Second)
+	got.captureSeq++
+	mm, _ = got.Update(got.resolveCardCmd(3, echo, 1)())
+	got = mm.(model)
+	if len(got.review) != 1 {
+		t.Errorf("review = %d, want a later nameless read to reach review", len(got.review))
+	}
+
+	// And a nameless footer naming a *different* printing inside the window
+	// still queues: digits that match nothing recent are a real card the
+	// operator has to finish reading.
+	clock = clock.Add(time.Second)
+	got.captureSeq++
+	other := scan.Card{SetCode: "MSH", CollectorNumber: "412", Source: "crop"}
+	mm, _ = got.Update(got.resolveCardCmd(4, other, 1)())
+	got = mm.(model)
+	if len(got.review) != 2 {
+		t.Errorf("review = %d, want an unrelated footer to reach review", len(got.review))
+	}
+}
+
 func TestTabTogglesQueueReview(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
@@ -2783,7 +3120,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "", "", nil)
 	m.review = []queueItem{{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		raw:    scan.Card{SetCode: "MH3", CollectorNumber: "123", Confidence: 0.5},
 		match:  cardname.Match{Exact: true, Similarity: 1},
@@ -2825,7 +3162,7 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 
-	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "")
+	ranked, rank := rankByScanStrength(solRingPrints(), "MH3", "123", 0, "", "", "", "", nil)
 	item := queueItem{id: 1, canonical: "Sol Ring", ocrLine: "Sol Ring",
 		match:  cardname.Match{Exact: true, Similarity: 1},
 		prints: ranked, rank: rank, note: "queued"}
@@ -3331,7 +3668,7 @@ func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
 		{ID: "10e", Name: "Keeper of the Nine Gales", Set: "10e", CollectorNumber: "88",
 			ReleasedAt: "2007-07-13", Finishes: []string{"nonfoil"}},
 	}
-	ranked, rank := rankByScanStrength(prints, "", "", 2003, "", "", "")
+	ranked, rank := rankByScanStrength(prints, "", "", 2003, "", "", "", "", nil)
 	if rank != scanMatchYearOnly {
 		t.Fatalf("rank = %v, want scanMatchYearOnly", rank)
 	}
@@ -3346,15 +3683,15 @@ func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
 // Two printings from the same year settle nothing, so the card must queue
 // rather than pick whichever the catalog happened to list first.
 func TestCopyrightYearAmbiguousLeavesUnverified(t *testing.T) {
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003, "", "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone — both printings are 2003", rank)
 	}
 	// A year matching no printing is the misread case: unchanged behavior.
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997, "", "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone for a year no printing shares", rank)
 	}
 	// And with no year read at all, nothing changes either.
-	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0, "", "", ""); rank != scanMatchNone {
+	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone without a year", rank)
 	}
 }
@@ -3821,7 +4158,7 @@ func eternalDragonPrints() []scryfall.Card {
 // at 76% and queued while the band read a clean 12/143 and "1993-2003".
 func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 	prints := eternalDragonPrints()
-	ranked, rank := rankByScanStrength(prints, "", "12", 2003, "", "", "")
+	ranked, rank := rankByScanStrength(prints, "", "12", 2003, "", "", "", "", nil)
 	if rank != scanMatchNumberAndYear {
 		t.Fatalf("rank = %v, want scanMatchNumberAndYear", rank)
 	}
@@ -3844,7 +4181,7 @@ func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 // collector number 12 is common enough that a fuzzy match onto the wrong card
 // could collide with it, which is the luck the second signal removes.
 func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
-	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0, "", "", "")
+	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0, "", "", "", "", nil)
 	if rank != scanMatchNumberOnly {
 		t.Fatalf("rank = %v, want scanMatchNumberOnly without a year", rank)
 	}
@@ -3860,7 +4197,7 @@ func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
 
 // A year that agrees with no printing is a misread and must add nothing.
 func TestDisagreeingYearDoesNotEarnTheRank(t *testing.T) {
-	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999, "", "", ""); rank != scanMatchNumberOnly {
+	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999, "", "", "", "", nil); rank != scanMatchNumberOnly {
 		t.Errorf("rank = %v, want scanMatchNumberOnly when the year matches nothing", rank)
 	}
 }

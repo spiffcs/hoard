@@ -115,6 +115,12 @@ type Result struct {
 	// record it so the row can be checked against the physical card later;
 	// adders that do not may ignore it.
 	FinishGuessed bool
+	// PrintingGuessed marks a printing no digits confirmed: the scan read a
+	// name, a year and the footer's frame family, and those picked one row —
+	// the frame stratum's context bet. Same audit contract as FinishGuessed:
+	// record it where possible so a later look can correct the row, ignore it
+	// where not.
+	PrintingGuessed bool
 }
 
 // Adder persists a confirmed selection. It is called once per card the user

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -39,6 +40,7 @@ const (
 	scanMatchNumberTail                 // number matched nothing, but is the tail of exactly one printing's
 	scanMatchYearOnly                   // no number, but the copyright year names one printing
 	scanMatchYearAndMarks               // year narrowed to a few, the card's printed markings picked one
+	scanMatchYearAndFrame               // year narrowed to a few, the footer's frame family picked one
 	scanMatchNumberOnly                 // number matched exactly one printing
 	scanMatchSinglePrint                // no number read, but only one printing exists
 	scanMatchNumberAndYear              // number named a printing and its release year agrees
@@ -73,7 +75,12 @@ func corroboratedPrinting(r scanMatch) bool {
 // by its number — the ranks whose head row is a claim about *which* row, not
 // merely a preferred ordering. Border evidence must leave that head alone.
 func printingPinned(r scanMatch) bool {
-	return numberVerified(r) || r == scanMatchNumberTail
+	// scanMatchYearAndFrame is pinned for *ordering* purposes only — it never
+	// joins numberVerified or corroboratedPrinting, so verdict's name gates
+	// still stand over it. It is here because a frame-picked head is a named
+	// printing, and the border reorder displacing a named head is the SLD/604
+	// bug shape.
+	return numberVerified(r) || r == scanMatchNumberTail || r == scanMatchYearAndFrame
 }
 
 // String names the match for the telemetry log.
@@ -85,6 +92,8 @@ func (m scanMatch) String() string {
 		return "number-tail"
 	case scanMatchYearAndMarks:
 		return "year+marks"
+	case scanMatchYearAndFrame:
+		return "year+frame"
 	case scanMatchYearOnly:
 		return "year-only"
 	case scanMatchNumberOnly:
@@ -596,6 +605,10 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 	fromReplaced := m.lastScanReplaced
 	faceDelta := m.lastScanFaceDelta
 	captureSeq := m.captureSeq
+	// Snapshotted like the flags above: the closure runs off the update loop,
+	// and the prior it feeds the frame stratum must be the session as it stood
+	// when this capture arrived.
+	priorSets := recentSets(m.recent)
 	return func() tea.Msg {
 		it := queueItem{id: id, raw: c, siblings: siblings, fromNudge: fromNudge,
 			fromMoved: fromMoved, fromReplaced: fromReplaced, faceDelta: faceDelta,
@@ -688,10 +701,25 @@ func (m model) resolveCardCmd(id int, c scan.Card, siblings int) tea.Cmd {
 						Finish: c.FinishHint, Year: c.CopyrightYear})
 				}
 				it.prints, it.rank, it.finishHint = prints, scanMatchNone, c.FinishHint
+				// The frame stratum commits a printing off no digits at all,
+				// so it only runs behind an exact name — the same scope the
+				// number-overridden gate above draws. A fuzzy name plus a
+				// frame guess would compound two soft reads into a commit.
+				frame, priors := c.FrameStyle, priorSets
+				if !match.Exact {
+					frame, priors = "", nil
+				}
 				for _, cd := range cands {
+					// The copyright year belongs to the card, not to any one
+					// collector block — there is only one copyright line. An
+					// alt block arriving with Year 0 was silently discarding
+					// the year the log still printed, which is how Lion Umbra
+					// ranked `none` off a clean 2024 read and queued (live,
+					// 2026-08-07). Same fallback shape as Language below.
 					ranked, r := rankByScanStrength(
-						prints, cd.Set, cd.Number, cd.Year, c.BorderColor, c.FinishHint,
-						cmp.Or(cd.Language, c.Language))
+						prints, cd.Set, cd.Number, cmp.Or(cd.Year, c.CopyrightYear),
+						c.BorderColor, c.FinishHint,
+						cmp.Or(cd.Language, c.Language), frame, priors)
 					if r > it.rank {
 						it.prints, it.rank = ranked, r
 						// The winning candidate becomes the item's collector
@@ -770,7 +798,7 @@ func printingUnverified(it queueItem) (short bool, note string) {
 		// standing over it.
 		scanMatchNumberTail:
 		return false, ""
-	case scanMatchYearOnly, scanMatchYearAndMarks:
+	case scanMatchYearOnly, scanMatchYearAndMarks, scanMatchYearAndFrame:
 		// The same contradiction check the ambiguous-number case carries, and
 		// these ranks need it more: the year is their *whole* evidence, so a
 		// head row from a different year means something after the ranking —
@@ -1260,13 +1288,13 @@ func langSaysSo(c scryfall.Card, lang string) bool {
 }
 
 func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
-	border, finish, lang string,
+	border, finish, lang, frame string, priorSets []string,
 ) ([]scryfall.Card, scanMatch) {
 	if len(cards) == 0 {
 		return cards, scanMatchNone
 	}
 	if number == "" {
-		return rankWithoutNumber(cards, year, border, finish, true)
+		return rankWithoutNumber(cards, year, border, finish, frame, priorSets, true)
 	}
 	matchIdxs := numberMatches(cards, set, number, lang)
 	best, exactSet, langAgrees := -1, false, false
@@ -1319,7 +1347,7 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 		// and a number that matched nothing is a positive reason for suspicion
 		// standing against it. The strata that rest on something the card
 		// actually said still apply.
-		return rankWithoutNumber(cards, year, border, finish, false)
+		return rankWithoutNumber(cards, year, border, finish, frame, priorSets, false)
 	}
 	return rankMatchedNumber(cards, matchIdxs, best, exactSet, langAgrees, year, border, finish)
 }
@@ -1330,8 +1358,8 @@ func rankByScanStrength(cards []scryfall.Card, set, number string, year int,
 //
 // solePrintCounts is false when a number *was* read and matched nothing. The
 // difference is not cosmetic — see the call site.
-func rankWithoutNumber(cards []scryfall.Card, year int, border, finish string,
-	solePrintCounts bool,
+func rankWithoutNumber(cards []scryfall.Card, year int, border, finish, frame string,
+	priorSets []string, solePrintCounts bool,
 ) ([]scryfall.Card, scanMatch) {
 	if solePrintCounts {
 		if len(cards) == 1 {
@@ -1399,7 +1427,114 @@ func rankWithoutNumber(cards []scryfall.Card, year int, border, finish string,
 			}
 		}
 	}
+	// The frame family is the discriminator the twins case turns on. A modern
+	// set's retro-frame reprint shares its set, year and border with its
+	// regular twin — MH3 prints Brainsurge as 399 in the 1997 frame beside
+	// its regular row — so when the digits never read, nothing above can
+	// separate them. The footer's own shape can: retro frames credit the
+	// artist on an "Illus." row of their own, modern frames never do, and the
+	// helper sends that read as frameStyle.
+	//
+	// Outside the year gate on purpose: the same glare that eats the digits
+	// eats the copyright year (live, 2026-08-07: four Brainsurge captures in
+	// a row read the "Illus." row cleanly and the copyright row not at all),
+	// and the frame's pick does not rest on the year — it rests on exactly
+	// one printing positively matching the read. A year that *was* read still
+	// constrains: a candidate from another year is not agreeing.
+	//
+	// Same fail-closed rules as the border stratum: the pick must positively
+	// match the read, not merely survive the elimination ("survival is not
+	// agreement" — the Mana Leak rule), and a printing whose frame the
+	// catalog does not know is never treated as modern. The caller only
+	// supplies frame on an exact name match — this stratum commits a printing
+	// off no digits at all, and the commit is flagged as guessed so a later
+	// look can correct it.
+	if frame != "" {
+		ruledOut := 0
+		var agreed []int
+		prefix := fmt.Sprintf("%d", year)
+		for i, c := range cards {
+			if frameRulesOut(c, frame) {
+				ruledOut++
+				continue
+			}
+			if frameAgrees(c, frame) &&
+				(year <= 0 || strings.HasPrefix(c.ReleasedAt, prefix)) {
+				agreed = append(agreed, i)
+			}
+		}
+		// The elimination must have bitten: a read that ruled nothing out
+		// added no information, exactly as in the border stratum.
+		if ruledOut > 0 && ruledOut < len(cards) {
+			if len(agreed) == 1 {
+				return moveToFront(cards, agreed[0]), scanMatchYearAndFrame
+			}
+			// Several frame-agreeing printings — across sets, since a set
+			// prints one retro row per card. The session's own recent commits
+			// break that tie and only that tie: the prior never picks against
+			// physical evidence, it picks among printings the frame (and the
+			// year, where one was read) already supports. A pile is
+			// overwhelmingly one product.
+			if len(agreed) > 1 && len(priorSets) > 0 {
+				var inPrior []int
+				for _, i := range agreed {
+					if slices.ContainsFunc(priorSets, func(s string) bool {
+						return strings.EqualFold(s, cards[i].Set)
+					}) {
+						inPrior = append(inPrior, i)
+					}
+				}
+				if len(inPrior) == 1 {
+					return moveToFront(cards, inPrior[0]), scanMatchYearAndFrame
+				}
+			}
+		}
+	}
 	return cards, scanMatchNone
+}
+
+// frameRulesOut reports whether a read frame family excludes a printing.
+//
+// Only a "retro" read ever asserts anything — the helper sends nothing for a
+// modern or unreadable footer, because absence of the "Illus." row is not
+// evidence of a modern frame when the row may simply have failed OCR. A retro
+// read excludes the families that never print that row ("2003" credits with a
+// paintbrush glyph, "2015" puts the name on the set line, "future" likewise);
+// it cannot exclude a printing whose frame the catalog does not know.
+func frameRulesOut(c scryfall.Card, frame string) bool {
+	if frame != "retro" {
+		return false
+	}
+	switch c.Frame {
+	case "2003", "2015", "future":
+		return true
+	}
+	return false
+}
+
+// frameAgrees is positive agreement — survival is not agreement, exactly as
+// borderRulesOut's white-read asymmetry: a printing that merely could not be
+// eliminated (unknown frame) has no evidence behind it and must not win.
+func frameAgrees(c scryfall.Card, frame string) bool {
+	return frame == "retro" && (c.Frame == "1993" || c.Frame == "1997")
+}
+
+// recentSets is the session prior: the distinct set codes of the cards
+// committed lately, oldest window first. A pile is overwhelmingly one or two
+// products, so a printing from a set the session has already committed is the
+// likelier twin — but only ever as a tie-breaker among candidates the
+// physical evidence already supports; see the frame stratum.
+func recentSets(recent []recentCommit) []string {
+	var out []string
+	for _, rc := range recent {
+		if rc.set == "" || slices.ContainsFunc(out, func(s string) bool {
+			return strings.EqualFold(s, rc.set)
+		}) {
+			continue
+		}
+		out = append(out, rc.set)
+	}
+	return out
 }
 
 // rankMatchedNumber weighs a capture whose collector number matched at least
@@ -1505,26 +1640,26 @@ const (
 const sameCardFloor = 3 * time.Second
 
 // placementFaceFloor is how far a card's face must sit from the one already
-// read before the source's claim that this is a different card outranks
-// sameCardFloor.
+// read before the source's `replaced` claim counts as decisive.
 //
-// The floor above is a fallback standing in for evidence the source could not
-// give. It no longer cannot. The phone measures the nearest in-frame card
-// against the one it shot and calls the result `moved` below its own
-// movedFaceMax (20.0) or `replaced` above it — the exact question the clock
-// was approximating. Where that measurement is decisive it wins, because it
-// looked at the cards and the clock only counted.
+// It used to outrank sameCardFloor on the commit path, on the reasoning that
+// the phone had looked at both cards and the clock had only counted. Hand-held
+// pile scanning refuted that: a foil's face is not stable — the same Trap
+// Digger measured 30.4, 32.5 and 26.5 across three fires as the hand shifted
+// and the sparkle moved, every reading over this floor, and one card
+// committed three rows in 2.5s (live, 2026-08-07). Against a resolve that
+// names the very printing the session just wrote, this one-bit threshold now
+// loses; see the sameCardFloor case in onResolveDone.
 //
-// Set at movedFaceMax plus a 25% margin rather than at it. Two reasons: the
-// phone's threshold is interpolated rather than measured, and exactly one
-// `moved` sample exists to fit against. A marginal `replaced` is therefore
-// still handed to the clock, which is the conservative answer — the cost is a
-// keystroke on the recovery affordance, not a lost card.
+// It still gates the queue path: a badly-read sighting the source decisively
+// calls a placement queues for the cascade instead of vanishing, because
+// there identity is exactly what is in doubt.
 //
-// Observed over 19 fires in one session: the sole `moved` reading was 15.8;
-// real placements ran 20.1 through 44.1, eight of nine at 26.4 or above. The
-// drop this exists to stop read 32.5. Re-fit it from live `face=` traces
-// before trusting it further; see docs/scanner-tuning.md.
+// Observed over 19 fires in one mat-swap session: the sole `moved` reading
+// was 15.8; real placements ran 20.1 through 44.1, eight of nine at 26.4 or
+// above. In-hand same-card re-reads run 26.5-32.5 — overlapping the real
+// placements entirely, which is why it cannot decide identity. Re-fit from
+// live `face=` traces before trusting it further; see docs/scanner-tuning.md.
 const placementFaceFloor = 25.0
 
 // placedDecisively reports whether the source watched a different card arrive
@@ -1573,10 +1708,23 @@ type recentCommit struct {
 	finish     string
 	captureSeq int
 	at         time.Time
+	// name, set, collectorNumber and releaseYear are the committed printing's
+	// printed footer, kept so a later capture that read digits but no title
+	// can be recognized as this card still in frame — see footerEcho.
+	name            string
+	set             string
+	collectorNumber string
+	releaseYear     int
 	// finishGuessed records that nothing on the card chose this finish — it
 	// is the nonfoil default. A later look that *does* carry a marker is
 	// better evidence than this row, and finishConflict finds that case.
 	finishGuessed bool
+	// printingGuessed records that no digits confirmed this printing — the
+	// frame stratum's context bet chose it. Held for the same reason
+	// finishGuessed is: a later look that reads a real number is better
+	// evidence than this row, and the guess→evidence correction (a separate
+	// slice) will need to find these.
+	printingGuessed bool
 }
 
 // dupCapture reports whether the same printing was seen within the time
@@ -1608,14 +1756,74 @@ func dupCapture(recent []recentCommit, id string, now time.Time) (prior recentCo
 }
 
 // recordCommit appends to the window, pruning it to a fixed size.
-func recordCommit(recent []recentCommit, id, finish string, captureSeq int, now time.Time,
-	finishGuessed bool) []recentCommit {
-	recent = append(recent, recentCommit{scryfallID: id, finish: finish,
-		captureSeq: captureSeq, at: now, finishGuessed: finishGuessed})
+func recordCommit(recent []recentCommit, card scryfall.Card, finish string, captureSeq int,
+	now time.Time, finishGuessed, printingGuessed bool) []recentCommit {
+	year := 0
+	if len(card.ReleasedAt) >= 4 {
+		year, _ = strconv.Atoi(card.ReleasedAt[:4])
+	}
+	recent = append(recent, recentCommit{scryfallID: card.ID, finish: finish,
+		captureSeq: captureSeq, at: now, finishGuessed: finishGuessed,
+		printingGuessed: printingGuessed,
+		name:            card.Name, set: card.Set,
+		collectorNumber: card.CollectorNumber, releaseYear: year})
 	if len(recent) > dupKeep {
 		recent = recent[len(recent)-dupKeep:]
 	}
 	return recent
+}
+
+// footerEcho reports whether a capture that could not read a title is
+// re-announcing the printed footer of a card committed moments ago, and
+// which commit that was.
+//
+// The junk filter at the top of onResolveDone spares any nameless capture
+// carrying printing evidence, because digits prove a card was in frame
+// (Quicksilver, Brash Blur: a clean MSH/412 under a title read as rules
+// text). That mercy has a hole: the card whose digits those are may be the
+// one just written. Observed live, 2026-08-07: Trap Digger committed on
+// SCG/24, and 896ms later a footer-only capture — no title anchor, number 24,
+// copyright year 2003, the card sliding out under a hand — queued as
+// "nothing readable". An entry that names nothing and describes the card
+// already handled is a stop with no question in it.
+//
+// So: a read number that matches a commit younger than sameCardFloor, with
+// neither a set code nor a year that contradicts it, is that commit's echo.
+// The number must match — a bare year matches half a pile. placedDecisively
+// gets no say here, deliberately: it exists to let a well-read second copy
+// commit, and this capture read nothing an operator could confirm from the
+// queue anyway. The cost of being wrong is one re-scan of a card still on
+// the pile; the cost of the old behaviour was a review stop on every clean
+// swap the trigger double-fired.
+func footerEcho(recent []recentCommit, c scan.Card, now time.Time) (recentCommit, bool) {
+	type block struct {
+		set, number string
+		year        int
+	}
+	blocks := []block{{c.SetCode, c.CollectorNumber, c.CopyrightYear}}
+	for _, a := range c.CollectorAlts {
+		blocks = append(blocks, block{a.Set, a.Number, a.Year})
+	}
+	for i := len(recent) - 1; i >= 0; i-- {
+		rc := recent[i]
+		if now.Sub(rc.at) >= sameCardFloor || rc.collectorNumber == "" {
+			continue
+		}
+		for _, b := range blocks {
+			if b.number == "" ||
+				scryfall.BaseNumber(b.number) != scryfall.BaseNumber(rc.collectorNumber) {
+				continue
+			}
+			if b.set != "" && !strings.EqualFold(b.set, rc.set) {
+				continue
+			}
+			if b.year != 0 && rc.releaseYear != 0 && b.year != rc.releaseYear {
+				continue
+			}
+			return rc, true
+		}
+	}
+	return recentCommit{}, false
 }
 
 // touchCommit re-stamps the most recent sighting of a printing without banking
@@ -1698,6 +1906,70 @@ func seenWithin(recent []recentName, name string, now time.Time) (time.Duration,
 // similarRecent finds a recently processed name the text plausibly is — the
 // same shape-tolerant match resolution itself uses, so "Doc Gal's Hanchmen"
 // recognizes the "Doc Ock's Henchmen" added seconds ago.
+// mangledEcho reports whether an unidentifiable OCR line is a mid-slide
+// mangle of a recently processed name — the pile flow's signature junk.
+//
+// Sliding a card off a hand-held pile drags partial rows past the lens, and
+// the reads they produce are truncations with debris, not glyph slips: "AMN
+// Spectes" off Hollow Specter, "bard Eviden" off Hard Evidence, "Trap 1" off
+// Trap Digger (all live, 2026-08-07 — the first queued as `couldn't
+// identify`, a review stop with nothing in it). Plausible() is built for
+// whole-title slips and matches none of these, so this compares word-wise:
+// every word of the line long enough to mean anything (≥4 letters) must sit
+// within one edit of — or be a prefix of, for the truncation case — some
+// word of one recent name, and at least one such word must exist.
+//
+// Only ever consulted for reads that identified nothing: a line that
+// resolves to a real card name never reaches this, so a genuinely different
+// card is only at risk when its title read too badly to resolve AND every
+// surviving word coincides with the previous card's. And a wrong drop in
+// pile flow costs little — the card is still in frame, and the next fire
+// retries it.
+func mangledEcho(recent []recentName, line string, now time.Time) (string, bool) {
+	words := mangleWords(line)
+	if len(words) == 0 {
+		return "", false
+	}
+	for _, rn := range recent {
+		if now.Sub(rn.at) > dupWindow {
+			continue
+		}
+		nameWords := mangleWords(rn.name)
+		matched := true
+		for _, w := range words {
+			if !slices.ContainsFunc(nameWords, func(nw string) bool {
+				return cardname.EditDistance(w, nw) <= 1 || strings.HasPrefix(nw, w)
+			}) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return rn.name, true
+		}
+	}
+	return "", false
+}
+
+// mangleWords is a line's comparable words: letters only, lowercased, with
+// shorter-than-4 debris dropped — "1", "Ea" and OCR shrapnel carry no
+// identity either way.
+func mangleWords(s string) []string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		w := strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) {
+				return unicode.ToLower(r)
+			}
+			return -1
+		}, f)
+		if len(w) >= 4 {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 func similarRecent(recent []recentName, text string, now time.Time) (string, bool) {
 	if strings.TrimSpace(text) == "" {
 		return "", false
@@ -1746,14 +2018,16 @@ type flashDeadlineMsg struct{ name string }
 // margin; the nudge stays armed behind it as the capture backstop it always
 // was.
 //
-// 1300 starts tight by choice — the operator's call, against the measured
-// 0.9s rescue cap. The number to watch in the session log is a rescue
-// ("re-read ... beats the queued ..." or a second-look commit) landing
-// *after* its card's "no better read within" line: that is the ceiling
-// cutting into real rescues, and the answer is to raise this a step
-// (1300 → 1800 → 2500), not to doubt the rescue. The four sessions behind
-// the 0.9s figure share one operator and one rig.
-const decisionCeiling = 1300 * time.Millisecond
+// 1000 is a requirement, not a fit: the operator set a hard bound — no card
+// decision may take longer than a second, because past that the pile flow
+// stalls. It still clears the evidence comfortably: with the active rescue
+// (the queue-time Rearm into `held`), every rescue in the first hand-held
+// pile session landed 584-614ms after its queue, 5 of 5 — a ~40% margin. The
+// old escalation ladder (1300 → 1800 → 2500) ran the other way and is
+// retired; if a session ever shows a rescue landing after its card's "no
+// better read within" line, the answer now is to make the retake faster, not
+// the ceiling later.
+const decisionCeiling = 1000 * time.Millisecond
 
 // nudgeEchoWindow is how long after a sent nudge a scan counts as possibly
 // nudge-originated. A window rather than a consumed flag, because a real scan
