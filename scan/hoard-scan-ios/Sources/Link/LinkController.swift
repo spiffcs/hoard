@@ -31,11 +31,25 @@ final class LinkController: ObservableObject {
     @Published private(set) var priceSequence = 0
     /// The second-copy offer, when one stands: the parent suppressed a
     /// sighting as a repeat and the operator may overrule it from here — the
-    /// screen they are actually watching mid-pile. Cleared by the button, by
-    /// the next result (a new card landed, the question is stale), or by the
-    /// same 30s window the terminal's `+` honours.
+    /// screen they are actually watching mid-pile.
+    ///
+    /// It is answered, never merely overtaken. Three separate things used to
+    /// clear it — the next outgoing read, the next result, and a 10s timer —
+    /// and in a hands-free pile the first of those fires within a second of
+    /// the banner appearing, because the suppressed card is still sitting in
+    /// frame and the trigger keeps firing on it. The offer was gone before it
+    /// could be read (live, 2026-08-09). Now only three things end it: the
+    /// "Second copy" button, the "Dismiss" button, and the answering window
+    /// itself — so the banner is on screen for exactly as long as tapping it
+    /// would do something, and a question the operator never answered is
+    /// never silently withdrawn.
     @Published private(set) var dupOffer: String?
     private var dupOfferAt = Date.distantPast
+    /// How long a standing offer can still be answered. The terminal's `+`
+    /// honours the same window (pendingDupWindow), and the parent holds the
+    /// suppressed sighting across whatever commits in the meantime precisely
+    /// because this banner is still up — see suppressRepeat's `offered`.
+    static let dupOfferWindow: TimeInterval = 30
 
     /// Raised when the Mac asks for a capture. The view owns the camera, so the
     /// controller asks rather than reaches.
@@ -513,22 +527,20 @@ final class LinkController: ObservableObject {
             dupOffer = note
             let stamp = Date()
             dupOfferAt = stamp
-            // The offer hides itself. Nothing else is guaranteed to: on the
-            // last card of a pile no next result ever arrives, and the banner
-            // sat on screen indefinitely (live, 2026-08-08). Ten seconds is
-            // long enough to read and act; the answering window itself stays
-            // 30s, so a slow tap after the banner faded still lands.
+            // The offer hides itself, because nothing else does any more: on
+            // the last card of a pile no next result ever arrives, and the
+            // banner sat on screen indefinitely (live, 2026-08-08). It expires
+            // with the answering window rather than before it — a ten-second
+            // banner in front of a thirty-second window meant the operator
+            // spent twenty of those seconds looking at nothing.
             Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(10))
+                try? await Task.sleep(for: .seconds(Self.dupOfferWindow))
                 guard let self, self.dupOfferAt == stamp else { return }
                 self.dupOffer = nil
             }
             return
         }
         guard cmd.tier != nil else { return }
-        // A real result supersedes the offer: a new card landed, so "was
-        // that a second copy" no longer refers to what the operator sees.
-        dupOffer = nil
         // The phone's own tier lines, not the Mac's. The wire carries the
         // amount alongside its three-tier verdict, and the Settings tab owns
         // the thresholds here — so a priced card is re-tiered locally and
@@ -608,13 +620,28 @@ final class LinkController: ObservableObject {
     /// The 30s window mirrors the terminal's; past it the parent answers the
     /// stale promote gracefully, so a race costs a status line, not a row.
     func promote() {
-        guard dupOffer != nil, Date().timeIntervalSince(dupOfferAt) < 30 else {
+        guard dupOffer != nil,
+              Date().timeIntervalSince(dupOfferAt) < Self.dupOfferWindow
+        else {
             dupOffer = nil
             return
         }
         dupOffer = nil
         send(Event(event: "promote"))
         trace("promote sent: operator confirmed a second copy")
+    }
+
+    /// dismissDupOffer is the operator answering "no" — the suppression was
+    /// right, this was the same card seen twice.
+    ///
+    /// It exists because the banner no longer withdraws itself while the
+    /// question is still live, so "no" needs somewhere to go. Purely local:
+    /// the parent's held sighting expires on its own window, and telling it
+    /// "not a second copy" would only ask it to do what it already does.
+    func dismissDupOffer() {
+        guard dupOffer != nil else { return }
+        dupOffer = nil
+        trace("promote dismissed: operator confirmed the suppression")
     }
 
     func send(_ event: Event) {
@@ -642,10 +669,13 @@ final class LinkController: ObservableObject {
         _ reading: CardReading, rotation: Int, auto: Bool, fireReason: String? = nil,
         holdDelta: Double? = nil, faceDelta: Double? = nil
     ) {
-        // A new read is going out, so whatever the standing offer referred to
-        // is no longer what the camera sees; the read's own outcome (a fresh
-        // offer included) supersedes it.
-        dupOffer = nil
+        // The standing offer deliberately survives this read. It used to be
+        // cleared here on the theory that a new read means a new card — but
+        // the card a repeat was suppressed on is by definition still on the
+        // mat, and the trigger fires on it again within a second, so this
+        // line was killing the banner before the operator could look at it.
+        // The question "was that a second copy" is about a card already
+        // written, not about what the camera is pointed at now.
         send(reading.scanEvent(
             rotation: rotation, auto: auto ? true : nil, fireReason: fireReason,
             holdDelta: holdDelta, faceDelta: faceDelta))

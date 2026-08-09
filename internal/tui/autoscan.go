@@ -1792,16 +1792,42 @@ type pendingDup struct {
 	it     queueItem
 	finish string
 	at     time.Time
+	// offered records that the phone was sent a button for this sighting and
+	// is still showing it.
+	//
+	// It is what lets the slot outlive the next commit. The terminal's own
+	// offer is a status line, and a status line is gone the moment the next
+	// card overwrites it — so dropping the slot then costs nothing, and
+	// keeping it would let `+` write a copy of a card whose prompt the
+	// operator can no longer see. The phone's offer is a banner that stays up
+	// until it is answered, which makes the opposite true: the question is
+	// still on screen, so the answer must still land. Bounded either way by
+	// pendingDupWindow, which the phone's banner expires on too.
+	offered bool
 }
 
 // pendingDupWindow is how long `+` can still promote a suppressed sighting.
 //
-// A backstop, not the mechanism: the slot is normally cleared by the next card
-// to commit or queue, because by then the operator has moved on and "that was
-// a second copy" no longer refers to anything they can see. This bounds the
-// other case — a session left sitting — and is set to comfortably cover
-// reading the status line and deciding, since the line itself is the prompt.
+// For an un-offered slot this is a backstop, not the mechanism: it is normally
+// cleared by the next card to commit or queue, because by then the terminal's
+// prompt has scrolled off and "that was a second copy" no longer refers to
+// anything the operator can see. For a slot the phone is showing a button for,
+// this window *is* the mechanism — see pendingDup.offered. Either way it is set
+// to comfortably cover reading the prompt and deciding.
 const pendingDupWindow = 30 * time.Second
+
+// clearUnofferedPending drops a held sighting whose prompt the operator can no
+// longer see, and keeps one whose prompt is still up on the phone.
+//
+// A function rather than the bare `= nil` it replaced because both call sites
+// (commit and queue) have to agree, and the rule they have to agree on is not
+// obvious from either of them.
+func clearUnofferedPending(p *pendingDup) *pendingDup {
+	if p == nil || !p.offered {
+		return nil
+	}
+	return p
+}
 
 type recentCommit struct {
 	scryfallID string

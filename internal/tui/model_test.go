@@ -3076,6 +3076,108 @@ func TestStalePendingCopyIsNotPromoted(t *testing.T) {
 	}
 }
 
+// An offer the phone is showing outlives the next card; one only the terminal
+// ever saw does not.
+//
+// The asymmetry is the whole point. The terminal's offer is a status line, and
+// the next commit overwrites it — so holding the slot past that would let `+`
+// write a copy of a card whose prompt is gone. The phone's offer is a banner
+// that stays up until it is answered, so dropping the slot underneath it is
+// how the operator taps "Second copy" and gets nothing (live, 2026-08-09: the
+// suppressed card is still on the mat, the trigger re-fires on it, and the
+// next card commits within a second or two).
+func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
+	ev, fs := confidentFixture()
+	fs.fuzzy["Black Lotus"] = "Black Lotus"
+	fs.prints["Black Lotus"] = []scryfall.Card{
+		{ID: "bl", Name: "Black Lotus", Set: "lea", CollectorNumber: "232",
+			Finishes: []string{"nonfoil"}},
+	}
+
+	// offered reports whether the sighting was held with a live phone banner,
+	// which is the only input that differs between the two halves below.
+	suppress := func(t *testing.T, replaced bool) (model, *recordingAdder, *fakeSession) {
+		t.Helper()
+		ra := &recordingAdder{}
+		m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
+		clock := time.Date(2026, 8, 5, 23, 54, 51, 0, time.UTC)
+		m.now = func() time.Time { return clock }
+		m, sess := hudSession(t, m)
+
+		first := ev
+		first.FireReason = scan.FireRemoved
+		mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
+		got := resolve(t, mm.(model), first.CardList()[0])
+		if len(ra.got) != 1 {
+			t.Fatalf("setup: adds = %d, want the first copy committed", len(ra.got))
+		}
+
+		// A repeat the rules suppress: too fast, and no measurement behind it.
+		clock = clock.Add(900 * time.Millisecond)
+		repeat := ev
+		if replaced {
+			// The phone claiming a placement is what earns the banner — see
+			// suppressRepeat.
+			repeat.FireReason = scan.FireReplaced
+		}
+		mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: repeat})
+		got = resolve(t, mm.(model), repeat.CardList()[0])
+		if got.pending == nil {
+			t.Fatal("setup: the suppressed copy should be held")
+		}
+		if got.pending.offered != replaced {
+			t.Fatalf("pending.offered = %v, want %v", got.pending.offered, replaced)
+		}
+
+		// The next card lands, overwriting the terminal's prompt.
+		clock = clock.Add(2 * time.Second)
+		next := confidentEvent()
+		next.Name, next.Candidates = "Black Lotus", []string{"Black Lotus"}
+		next.SetCode, next.CollectorNumber = "LEA", "232"
+		next.FireReason = scan.FireRemoved
+		mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: next})
+		got = resolve(t, mm.(model), next.CardList()[0])
+		if len(ra.got) != 2 {
+			t.Fatalf("setup: adds = %d, want the next card committed", len(ra.got))
+		}
+		return got, ra, sess
+	}
+
+	t.Run("offered on the phone", func(t *testing.T) {
+		got, ra, sess := suppress(t, true)
+		if !slices.ContainsFunc(sess.results, func(r scan.HUDResult) bool { return r.Promote }) {
+			t.Fatalf("setup: HUD results = %+v, want the second-copy offer sent", sess.results)
+		}
+		if got.pending == nil {
+			t.Fatal("the held copy died under a banner the phone is still showing")
+		}
+		mm, _ := got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
+			ev: scan.Event{Kind: scan.EventPromote}})
+		got = mm.(model)
+		if len(ra.got) != 3 {
+			t.Fatalf("adds = %d, want the tapped offer to write the second copy", len(ra.got))
+		}
+		if ra.got[2].Card.Name != "Sol Ring" {
+			t.Errorf("promoted %q, want the card the offer was about", ra.got[2].Card.Name)
+		}
+	})
+
+	t.Run("terminal only", func(t *testing.T) {
+		got, ra, _ := suppress(t, false)
+		if got.pending != nil {
+			t.Fatal("a slot with no live prompt survived the next card")
+		}
+		mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
+		got = mm.(model)
+		if len(ra.got) != 2 {
+			t.Errorf("adds = %d, want + to write nothing", len(ra.got))
+		}
+		if !strings.Contains(got.status, "Nothing to add") {
+			t.Errorf("status = %q, want the empty-slot answer", got.status)
+		}
+	})
+}
+
 func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 	// Two captures in flight; the user tabs into the review list before either
 	// resolves. Both land regardless of UI state, out of order.

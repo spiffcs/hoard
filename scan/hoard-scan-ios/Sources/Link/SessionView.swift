@@ -75,6 +75,7 @@ struct SessionView: View {
                 }
                 footer
             }
+            .animation(.easeInOut(duration: 0.2), value: link.dupOffer)
         }
         // The result flash is driven by a result arriving, not by the trigger's
         // hold phase. Hold runs until the card is disturbed, which can be many
@@ -227,11 +228,19 @@ struct SessionView: View {
     /// live session expired unseen. Deliberately quiet — the suppression it
     /// reports was silent by design, and a tone would turn every *correct*
     /// suppression into a stop.
+    ///
+    /// It carries both answers, because it now waits to be answered. "Second
+    /// copy" is yes; the dismiss X is no, and exists so that a banner which no
+    /// longer withdraws itself mid-question cannot become something to scan
+    /// around. Both are hit targets in a hands-free session where the other
+    /// hand is holding a card, so the X is padded well past its glyph.
     private func dupOfferBanner(_ text: String) -> some View {
         HStack(spacing: 10) {
             Text(text)
                 .font(.callout)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
             Button {
                 link.promote()
             } label: {
@@ -239,11 +248,27 @@ struct SessionView: View {
                     .font(.callout.bold())
             }
             .buttonStyle(.borderedProminent)
+            Button {
+                link.dismissDupOffer()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.callout.bold())
+                    .padding(8)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 12)
+        // The offer appears mid-pile in peripheral vision; a hard cut reads as
+        // a glitch, and — more to the point — a banner that fades out is one
+        // the operator can tell they are losing rather than one that was
+        // simply gone the next time they looked up.
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var footer: some View {

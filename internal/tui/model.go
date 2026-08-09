@@ -1970,8 +1970,11 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			m.note("outcome %q: commit answered an unidentified capture's held flash", it.canonical)
 		}
 		// A new card landed, so "was that a second copy" no longer refers to
-		// anything the operator is looking at.
-		m.pending = nil
+		// anything the operator is looking at — unless the phone is still
+		// showing the offer, in which case it refers to exactly what they are
+		// looking at, and withdrawing the answer under a live question is the
+		// bug this flag exists for. Those expire on pendingDupWindow instead.
+		m.pending = clearUnofferedPending(m.pending)
 		m.addedCount++
 		m.addedValue += priceValue(card, finish)
 		// After the increment, so the HUD total is the post-commit number.
@@ -2164,7 +2167,9 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.note("outcome %q queued: %s", orDash(it.canonical), note)
 	m.nudgeDrops = 0
-	m.pending = nil
+	// Same rule as the commit path: a slot the phone is still asking about
+	// keeps its answer, everything else goes stale with the status line.
+	m.pending = clearUnofferedPending(m.pending)
 	// The phone's review signal waits on the retry. A card we are about to
 	// photograph again is not yet a review — it is a card we have not finished
 	// reading — and telling the phone otherwise flashes a stop the operator did
@@ -2302,10 +2307,16 @@ func (m model) suppressRepeat(it queueItem, finish string, prior recentCommit,
 	// one that might genuinely be copy two. The terminal status still shows
 	// every offer — glancing there is deliberate, so it can afford the noise.
 	if m.session != nil && m.hudCapable && it.fromReplaced {
-		_ = m.session.Result(scan.HUDResult{
+		if err := m.session.Result(scan.HUDResult{
 			Note:    seeing + " — another copy?",
 			Promote: true,
-		})
+		}); err == nil {
+			// Only once the offer is actually on the wire: a slot marked
+			// offered survives the next commit, and surviving on the strength
+			// of a banner that was never delivered is how `+` would write a
+			// copy of a card nobody was asked about.
+			m.pending.offered = true
+		}
 	}
 	return m, m.scheduleNudge()
 }
