@@ -340,7 +340,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if derr != nil {
 				return tui.Child{}, derr
 			}
-			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), helperScanner{}, "", dests), nil
+			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, "", dests), nil
 		}))
 	// The scan receipt outlives the alternate screen: unattended writes need
 	// a durable record, and the status line dies with the program.

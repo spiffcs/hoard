@@ -222,7 +222,7 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	sum, err := tui.Run(ctx, newSearcher(cat), storeAdder(st), helperScanner{}, name, dests)
+	sum, err := tui.Run(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, name, dests)
 	if err != nil {
 		return err
 	}

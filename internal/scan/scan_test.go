@@ -70,30 +70,6 @@ func TestEventLines(t *testing.T) {
 	}
 }
 
-func TestParseDevices(t *testing.T) {
-	devs, err := parseDevices([]byte(
-		`{"devices":[{"id":"a","name":"Chris's iPhone","kind":"iPhone"},` +
-			`{"id":"b","name":"Old iPhone","kind":"iPhone"}]}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(devs) != 2 {
-		t.Fatalf("got %d devices, want 2", len(devs))
-	}
-	if devs[0].ID != "a" || devs[0].Name != "Chris's iPhone" || devs[0].Kind != "iPhone" {
-		t.Errorf("first device wrong: %+v", devs[0])
-	}
-
-	// No cameras attached is an empty list, not an error — the caller decides
-	// how to tell the user.
-	if devs, err := parseDevices([]byte(`{"devices":[]}`)); err != nil || len(devs) != 0 {
-		t.Errorf("empty list: got %v, %v", devs, err)
-	}
-	if _, err := parseDevices([]byte(`not json`)); err == nil {
-		t.Error("expected error for malformed JSON")
-	}
-}
-
 func TestCardListFallsBackToFlatFields(t *testing.T) {
 	// A helper too old to report a card list still describes exactly one card
 	// in its flat fields; CardList is the one place that compatibility lives.

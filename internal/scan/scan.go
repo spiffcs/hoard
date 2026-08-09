@@ -407,23 +407,9 @@ type OpenOptions struct {
 	PairingCode string
 }
 
-var (
-	// ErrUnsupported is returned on platforms without a scan helper.
-	ErrUnsupported = errors.New("card scanning is only available on macOS builds")
-	// ErrHelperMissing means the native helper binary was not found.
-	ErrHelperMissing = errors.New("hoard-scan helper not found; build it with ./build-scan.sh")
-)
-
-// deviceList matches the JSON the helper prints for --list-devices.
-type deviceList struct {
-	Devices []Device `json:"devices"`
-}
-
-// parseDevices turns the helper's --list-devices JSON into a device slice.
-func parseDevices(data []byte) ([]Device, error) {
-	var dl deviceList
-	if err := json.Unmarshal(data, &dl); err != nil {
-		return nil, err
-	}
-	return dl.Devices, nil
-}
+// ErrUnsupported and ErrHelperMissing are gone with the helper they described.
+// "hoard-scan helper not found; build it with ./build-scan.sh" was the error a
+// user hit when the Swift .app had not been built, and there is no longer
+// anything to build: hoard finds and talks to the phone itself. The failures
+// that remain are about the phone and the network, and Client.friendly words
+// them.
