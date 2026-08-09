@@ -79,11 +79,19 @@ the setup (§10.2). The script itself only ever downloads from
 `github.com/spiffcs/hoard/releases/download` — R2 hosts the script, not the
 binaries.
 
-**D4 — Branch is `master`, not `main`.**
-Every triage workflow says `branches: [main]`. hoard's default branch is
-`master`. Each copied file needs that substitution — it is the single most
-likely silent mistake in this whole plan, because a workflow with the wrong
-branch filter simply never runs and reports nothing.
+**D4 — Branch is `main`.** (Reversed 2026-08-09; was "`master`, not `main`.")
+hoard's default branch was `master` until 2026-08-09, when it was renamed with
+GitHub's branch-rename API — which retargets open PRs and carries branch
+protection across, unlike push-new-then-delete-old. Every triage workflow says
+`branches: [main]`, so copied files no longer need a branch substitution at
+all.
+
+The hazard this decision originally flagged outlived it. Renaming the branch
+does not rewrite the filters already in the repo: `validations.yaml`,
+`scan.yml`, and `validate-github-actions.yaml` all still said
+`branches: [master]` afterwards, and were corrected in the same change. A
+workflow with the wrong branch filter simply never runs and reports nothing,
+so a rename is not finished until every `branches:` filter has been re-read.
 
 **D5 — First tag is `v0.1.0`; `prerelease: auto` handles the rest.**
 hoard has no tags. Pre-1.0 signals "the CLI surface can still move," which is
@@ -581,7 +589,7 @@ contains the workflow filename — so if a later rename ever happens, fix
 Changes beyond the rename:
 
 **E.1 — Add `workflow_call:` and `workflow_dispatch:`** to the `on:` block,
-keeping `push: branches: [master]` and `pull_request:`.
+keeping `push: branches: [main]` and `pull_request:`.
 
 **E.2 — Add a concurrency group.** Three pushes to a PR currently mean three
 full runs:
@@ -714,7 +722,7 @@ In order, stopping at the first failure:
 1. **Dry run.** `.tool/goreleaser release --snapshot --clean --skip=sign` on a
    clean tree. Inspect `dist/`: six archives (3 OS × 2 arch, Windows as `.zip`),
    `checksums.txt`, and a binary that prints a real version.
-2. **Confirm CI is green on `master`** — all of Stage E and F, not just the
+2. **Confirm CI is green on `main`** — all of Stage E and F, not just the
    build job.
 3. **Confirm the Apple preflight passes**: `.tool/quill submission list` with
    the notary env vars.

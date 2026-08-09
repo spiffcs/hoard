@@ -24,7 +24,7 @@ The tag format must match `vX.Y.Z` or `vX.Y.Z-suffix` (e.g., `v0.1.0`, `v0.2.0-r
 
 If the release workflow fails after the tag is pushed, **do not delete and recreate the tag**. Instead:
 
-1. **Fix the issue** in a new commit on `master`
+1. **Fix the issue** in a new commit on `main`
 2. **Bump the version** and create a new tag (e.g., if `v0.2.0` failed, release `v0.2.1`)
 3. If the failed tag created a partial GitHub release, delete the release (not the tag) from the UI
 

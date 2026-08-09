@@ -13,7 +13,7 @@
 # The workflow was manual-only for a while on cost grounds, and the price of
 # that was written into this header at the time: "nothing checks the goldens
 # automatically any more" — a change altering what the scanner reads could
-# reach master unnoticed unless somebody remembered the local sweep
+# reach main unnoticed unless somebody remembered the local sweep
 # (`make scan && make scan-test && make scan-check`). The feature with the
 # most surface area and the least test automation had no gate; the filtered
 # triggers below are the compromise that pays only for scanner changes.
