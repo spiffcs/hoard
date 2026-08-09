@@ -103,6 +103,73 @@ func FromExportRows(rows []export.Row) Document {
 	return doc
 }
 
+// FromSnapshot builds the interchange document for one whole hoard: the
+// catalog, container identity and watches from the snapshot, and the holdings
+// from the same export rows every other holdings emission uses.
+//
+// Prices on a Printing are carried verbatim rather than rounded to cents. Every
+// other document here is a report, where cent-rounding removes float noise a
+// reader would only be distracted by; this one is a copy of the catalog on its
+// way into another database, and a copy should be a copy.
+func FromSnapshot(snap store.Snapshot, rows []export.Row) Document {
+	h := &Hoard{
+		DatabaseVersion: snap.Version,
+		Printings:       make([]Printing, 0, len(snap.Printings)),
+		Containers:      make([]Container, 0, len(snap.Containers)),
+		Watches:         make([]Watch, 0, len(snap.Watches)),
+	}
+	for _, p := range snap.Printings {
+		h.Printings = append(h.Printings, Printing{
+			ScryfallID:     p.Card.ID,
+			Name:           p.Card.Name,
+			SetCode:        p.Card.Set,
+			Number:         p.Card.CollectorNumber,
+			ScryfallURL:    p.Card.ScryfallURL,
+			UpdatedAt:      p.UpdatedAt,
+			MTGJSONUUID:    p.MTGJSONUUID,
+			PriceUsd:       p.Card.PriceUSD,
+			PriceUsdFoil:   p.Card.PriceUSDFoil,
+			PriceUsdEtched: p.Card.PriceUSDEtched,
+			Raw:            p.Card.Raw,
+		})
+	}
+	for _, c := range snap.Containers {
+		// The document speaks the export's vocabulary — "binder", not the
+		// storage layer's "collection" — so a container name and kind mean
+		// the same thing here as in the holdings rows beside them.
+		kind := "binder"
+		if c.Kind == store.KindDeck {
+			kind = "deck"
+		}
+		h.Containers = append(h.Containers, Container{
+			Name: c.Name, Kind: kind, Source: c.Source,
+			SourceID: c.SourceID, SourceURL: c.SourceURL, Format: c.Format,
+		})
+	}
+	for _, w := range snap.Watches {
+		h.Watches = append(h.Watches, Watch{
+			Card: Card{
+				Name:        w.Name,
+				ScryfallID:  w.ScryfallID,
+				MTGJSONUUID: w.MTGJSONUUID,
+				SetCode:     w.SetCode,
+				Number:      w.CollectorNumber,
+				Finish:      w.Finish,
+				Lang:        w.Lang,
+			},
+			Op:        w.Op,
+			Threshold: w.Threshold,
+			Display:   w.Display,
+			CreatedAt: w.CreatedAt,
+		})
+	}
+	h.Holdings = *FromExportRows(rows).Holdings
+
+	doc := envelope(KindHoard)
+	doc.Hoard = h
+	return doc
+}
+
 // FromUnpriced builds the unpriced document.
 func FromUnpriced(rows []store.UnpricedRow) Document {
 	u := &Unpriced{Rows: make([]UnpricedRow, 0, len(rows))}

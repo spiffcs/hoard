@@ -227,12 +227,12 @@ As built:
 cmd/hoard/main.go     os.Exit(command.Run(os.Args[1:])) — and nothing else
 internal/command/
   command.go          Run, execute, globals, buildRoot, detectEnv, the db paths
-  commands.go         the tree: 18 NewCmdXxx calls, the groups, the root flags
+  commands.go         the tree: 19 NewCmdXxx calls, the groups, the root flags
   browse.go           bare `hoard` (split out of the old 570-line main.go)
   util.go             what more than one command shares: caches, printer, confirm
   add.go artindex.go backfill.go binder.go catalog.go deck.go export.go
-  guessed.go import.go market.go movers.go report.go repair.go unpriced.go
-  updateprices.go vacuum.go version.go watch.go
+  guessed.go import.go market.go merge.go movers.go report.go repair.go
+  unpriced.go updateprices.go vacuum.go version.go watch.go
 internal/cli/         Env (+Report), Usagef, the annotations, InstallHelp
 ```
 

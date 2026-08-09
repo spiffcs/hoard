@@ -59,6 +59,10 @@ Cards are organized into binders (`hoard binder new trades`) and decks. Decks im
 Archidekt link or a pasted text decklist (`hoard deck add --file list.txt`), and collection
 CSV exports from ManaBox, Moxfield and Delver Lens import with `hoard import`.
 
+A whole second hoard — a bulk box, an inherited collection, the database from another machine —
+folds in with `hoard merge other.db`: holdings, decks and watches, offline, in one transaction,
+and it never writes to the database it reads. Try `--dry-run` first. See [docs/merge.md](docs/merge.md).
+
 ## Scanning cards (macOS + iPhone)
 
 On macOS, `hoard add` can drive a paired iPhone as a hands-free card scanner: cards held up to

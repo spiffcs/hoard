@@ -5,6 +5,9 @@ package hoardjson
 // break these tests exist to catch.
 
 import (
+	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,7 +36,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -79,7 +82,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -127,7 +130,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -167,7 +170,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -213,7 +216,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -247,7 +250,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -341,7 +344,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -425,7 +428,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -455,7 +458,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.4",
+  "schemaVersion": "1.1.5",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -523,5 +526,111 @@ func TestHoldingsDocumentCarriesCondition(t *testing.T) {
 	}
 	if strings.Contains(out, `"unknown"`) {
 		t.Errorf("unassessed row emitted the word rather than omitting the field:\n%s", out)
+	}
+}
+
+// A hoard document survives the round trip that `hoard merge` puts it
+// through — write, read back, plan from what was read. The card document in
+// Raw is the field most likely to be mangled by an encoder, so it is the one
+// asserted byte-for-byte.
+func TestHoardDocumentRoundTrip(t *testing.T) {
+	raw := json.RawMessage(`{"rarity":"mythic","card_faces":[{"type_line":"Legendary Creature — Eldrazi"}]}`)
+	doc := Document{
+		SchemaVersion: SchemaVersion,
+		Kind:          KindHoard,
+		Hoard: &Hoard{
+			DatabaseVersion: 27,
+			Printings: []Printing{{
+				ScryfallID: "u-id", Name: "Ulamog", SetCode: "uma", Number: "7",
+				ScryfallURL: "https://scryfall.com/card/uma/7",
+				UpdatedAt:   "2026-08-09T00:00:00Z",
+				MTGJSONUUID: "abc", PriceUsd: f(10.5), Raw: raw,
+			}},
+			Containers: []Container{
+				{Name: "Collection", Kind: "binder", Source: "manual"},
+				{Name: "Superfriends", Kind: "deck", Source: "archidekt",
+					SourceID: "111", Format: "commander"},
+			},
+			Holdings: Holdings{Rows: []Holding{{
+				Card:  Card{Name: "Ulamog", ScryfallID: "u-id", SetCode: "uma", Number: "7", Finish: "foil"},
+				Count: 2, Container: "Collection", ContainerKind: "binder", Board: "main",
+			}}},
+			Watches: []Watch{{
+				Card:      Card{Name: "Ulamog", ScryfallID: "u-id", SetCode: "uma", Number: "7", Finish: "foil"},
+				Op:        "under",
+				Threshold: 5, Display: "Ulamog",
+			}},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, doc); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	first := buf.String()
+
+	got, err := ReadHoard(strings.NewReader(first))
+	if err != nil {
+		t.Fatalf("ReadHoard: %v", err)
+	}
+
+	// Raw is compared as JSON rather than as bytes. Write indents the whole
+	// document, embedded card documents included, so what comes back is the
+	// same JSON pretty-printed — which is why action.planMerge compacts it
+	// again before storing.
+	if !json.Valid(got.Printings[0].Raw) {
+		t.Fatalf("the card document did not survive: %s", got.Printings[0].Raw)
+	}
+	var gotRaw, wantRaw any
+	if err := json.Unmarshal(got.Printings[0].Raw, &gotRaw); err != nil {
+		t.Fatalf("unmarshalling the round-tripped document: %v", err)
+	}
+	if err := json.Unmarshal(raw, &wantRaw); err != nil {
+		t.Fatalf("unmarshalling the original document: %v", err)
+	}
+	if !reflect.DeepEqual(gotRaw, wantRaw) {
+		t.Errorf("card document changed:\n got %s\nwant %s", got.Printings[0].Raw, raw)
+	}
+
+	got.Printings[0].Raw, doc.Hoard.Printings[0].Raw = nil, nil
+	if !reflect.DeepEqual(*got, *doc.Hoard) {
+		t.Errorf("round trip changed the payload:\n got %+v\nwant %+v", *got, *doc.Hoard)
+	}
+	got.Printings[0].Raw = raw
+
+	// Writing what was read must reproduce the same bytes. `hoard merge`
+	// identifies a merge by hashing them, so an unstable encoding would
+	// silently disable the guard against merging twice.
+	var again bytes.Buffer
+	if err := Write(&again, Document{SchemaVersion: SchemaVersion, Kind: KindHoard, Hoard: got}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if again.String() != first {
+		t.Errorf("re-encoding differs:\n got %s\nwant %s", again.String(), first)
+	}
+}
+
+// A document from a future MODEL is refused rather than half-understood; a
+// higher ADDITION is fine, since the unknown fields are the ignorable ones.
+func TestReadRejectsNewerModel(t *testing.T) {
+	if _, err := Read(strings.NewReader(`{"schemaVersion":"2.0.0","kind":"hoard"}`)); err == nil {
+		t.Error("a MODEL 2 document was accepted by a MODEL 1 build")
+	}
+	if _, err := Read(strings.NewReader(`{"schemaVersion":"1.9.9","kind":"summary"}`)); err != nil {
+		t.Errorf("a later ADDITION was refused: %v", err)
+	}
+	if _, err := Read(strings.NewReader(`{"kind":"hoard"}`)); err == nil {
+		t.Error("a document with no schemaVersion was accepted")
+	}
+}
+
+// ReadHoard insists on the kind it names.
+func TestReadHoardRejectsOtherKinds(t *testing.T) {
+	_, err := ReadHoard(strings.NewReader(`{"schemaVersion":"1.1.5","kind":"summary"}`))
+	if err == nil {
+		t.Fatal("a summary document was accepted as a hoard")
+	}
+	if !strings.Contains(err.Error(), "not a") {
+		t.Errorf("error was %q", err)
 	}
 }

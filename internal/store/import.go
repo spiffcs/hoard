@@ -25,6 +25,19 @@ type CardAdd struct {
 	Quantity  int
 }
 
+// entryAccumulateSQL adds copies to a holding rather than replacing it: the
+// natural key is (container, printing, finish, condition, board), and two
+// sources naming the same one mean the user owns both lots.
+//
+// Shared by every writer that adds rather than declares — import, merge, and
+// the entry half of a deck upsert (which gets its idempotency from deleting
+// the deck's rows first, not from this statement).
+const entryAccumulateSQL = `
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+DO UPDATE SET quantity = quantity + excluded.quantity`
+
 // ImportReceipt records that one file's content has been imported, so a
 // re-run can be refused instead of silently doubling quantities.
 type ImportReceipt struct {
@@ -121,11 +134,7 @@ func (s *Store) ApplyImport(receipt *ImportReceipt, newBinders []string, adds []
 		return nil, err
 	}
 
-	stmt, err := tx.Prepare(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
-DO UPDATE SET quantity = quantity + excluded.quantity`)
+	stmt, err := tx.Prepare(entryAccumulateSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +147,10 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 				return nil, fmt.Errorf("add for %q names binder %q, which this import does not create", a.Card.Name, a.Binder)
 			}
 		}
+		// Binder entries are always 'main': boards are a deck's structure,
+		// and an import writes loose cards.
 		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, orUnknown(a.Condition),
-			a.Quantity); err != nil {
+			"main", a.Quantity); err != nil {
 			return nil, fmt.Errorf("adding %s: %w", a.Card.Name, err)
 		}
 	}

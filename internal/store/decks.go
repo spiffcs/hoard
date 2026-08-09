@@ -39,7 +39,17 @@ func (s *Store) UpsertDeck(meta DeckMeta, entries []Entry) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	id, err := upsertDeckTx(tx, meta, entries)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
 
+// upsertDeckTx is UpsertDeck's body without the transaction, so a merge — which
+// must land its decks, binders and catalog together or not at all — can call it
+// inside its own. The same split UpsertPrintings and upsertPrintingsTx use.
+func upsertDeckTx(tx *sql.Tx, meta DeckMeta, entries []Entry) (int64, error) {
 	ts := now()
 	if _, err := tx.Exec(`
 INSERT INTO containers (kind, name, source, source_id, source_url, format, created_at, updated_at)
@@ -62,11 +72,7 @@ ON CONFLICT(source, source_id) DO UPDATE SET
 	if _, err := tx.Exec(`DELETE FROM card_entries WHERE container_id=?`, id); err != nil {
 		return 0, err
 	}
-	stmt, err := tx.Prepare(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
-DO UPDATE SET quantity = quantity + excluded.quantity`)
+	stmt, err := tx.Prepare(entryAccumulateSQL)
 	if err != nil {
 		return 0, err
 	}
@@ -77,7 +83,7 @@ DO UPDATE SET quantity = quantity + excluded.quantity`)
 			return 0, fmt.Errorf("inserting deck entry: %w", err)
 		}
 	}
-	return id, tx.Commit()
+	return id, nil
 }
 
 // containerSelect reads one container. Since v19 containers.name is the

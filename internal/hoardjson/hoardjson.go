@@ -22,7 +22,7 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.1.4"
+const SchemaVersion = "1.1.5"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -36,13 +36,14 @@ const (
 	KindMarket   Kind = "market"
 	KindReport   Kind = "report"
 	KindWatch    Kind = "watch"
+	KindHoard    Kind = "hoard"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard"`
 
 	Summary  *Summary    `json:"summary,omitempty"`
 	Holdings *Holdings   `json:"holdings,omitempty"`
@@ -51,6 +52,7 @@ type Document struct {
 	Market   *Market     `json:"market,omitempty"`
 	Report   *Report     `json:"report,omitempty"`
 	Watch    *WatchCheck `json:"watch,omitempty"`
+	Hoard    *Hoard      `json:"hoard,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -301,6 +303,94 @@ type FiredWatch struct {
 	Op           string  `json:"op" jsonschema:"enum=under,enum=over"`
 	ThresholdUsd float64 `json:"thresholdUsd"`
 	PriceUsd     float64 `json:"priceUsd"`
+}
+
+// Hoard is a whole hoard as one interchange document — the payload `hoard
+// merge` moves between two databases. Where the holdings document answers
+// "what do you own", this one answers "what is in that database", and carries
+// the printing catalog alongside the holdings so the receiving hoard needs no
+// network to accept it.
+//
+// It is deliberately not the whole SQLite file. Price and bid history, alt
+// prices, gap records, finish guesses and settings are omitted; so are
+// value_snapshots, which are one hoard's dated totals and cannot be combined
+// with another's, and the import ledger, which records what a *particular*
+// database has ingested.
+// A hoard document is content and nothing else: it names neither the file it
+// was read from nor the moment it was taken. That is deliberate. `hoard merge`
+// identifies a merge by hashing these bytes and refuses a repeat, because
+// holdings accumulate and a second merge would double every quantity — so a
+// path or a timestamp in here would change the hash on every run and quietly
+// disable the guard. Provenance belongs to the receipt, which records the file
+// and the date it was applied.
+type Hoard struct {
+	// DatabaseVersion is the source database's SQLite user_version — hoard's
+	// storage schema, which versions independently of this document's
+	// schemaVersion.
+	DatabaseVersion int         `json:"databaseVersion"`
+	Printings       []Printing  `json:"printings"`
+	Containers      []Container `json:"containers"`
+	Holdings        Holdings    `json:"holdings"`
+	Watches         []Watch     `json:"watches"`
+}
+
+// Printing is one row of the card catalog in full, so a hoard receiving this
+// document can accept a card it has never seen without asking Scryfall.
+//
+// Raw is the card's Scryfall document verbatim. It is the field that makes the
+// catalog complete rather than merely sufficient: hoard derives rarity, type
+// line, oracle text, mana cost, artist, art URI and color identity from it as
+// generated columns, so a printing that arrives without one is held, priced
+// and counted correctly but reads as blank everywhere those appear.
+type Printing struct {
+	ScryfallID  string `json:"scryfallId"`
+	Name        string `json:"name"`
+	SetCode     string `json:"setCode"`
+	Number      string `json:"number"`
+	ScryfallURL string `json:"scryfallUrl"`
+	// UpdatedAt is when this row was last refreshed (RFC 3339). A merge keeps
+	// whichever side's row is newer, so a stale database cannot overwrite
+	// fresher prices in the one receiving it.
+	UpdatedAt   string `json:"updatedAt"`
+	MTGJSONUUID string `json:"mtgjsonUuid,omitempty"`
+	// Prices are per copy in the named finish, absent when no source prices
+	// that finish — absent is not free.
+	PriceUsd       *float64        `json:"priceUsd,omitempty"`
+	PriceUsdFoil   *float64        `json:"priceUsdFoil,omitempty"`
+	PriceUsdEtched *float64        `json:"priceUsdEtched,omitempty"`
+	Raw            json.RawMessage `json:"raw,omitempty" jsonschema:"type=object"`
+}
+
+// Container is one binder or deck, carrying the identity a flat holdings row
+// cannot. Binders are identified by name; decks are identified by the
+// (source, sourceId) pair of the site they were imported from, which is what
+// makes the same decklist in two hoards recognizable as one deck.
+type Container struct {
+	Name string `json:"name"`
+	Kind string `json:"kind" jsonschema:"enum=binder,enum=deck"`
+	// Source is the provider a container came from — "manual" for a binder,
+	// the site's slug for a deck.
+	Source    string `json:"source,omitempty"`
+	SourceID  string `json:"sourceId,omitempty"`
+	SourceURL string `json:"sourceUrl,omitempty"`
+	Format    string `json:"format,omitempty"`
+}
+
+// Watch is one standing price alert: a threshold on one printing and finish,
+// in one direction.
+//
+// It carries no last-fired state. A watch arriving in a hoard that has never
+// alerted on it is new there, and hoard's rule is that a threshold already met
+// is worth exactly one alert — so a merged watch evaluates fresh and may fire
+// on the receiving hoard's next check.
+type Watch struct {
+	Card      Card    `json:"card"`
+	Op        string  `json:"op" jsonschema:"enum=under,enum=over"`
+	Threshold float64 `json:"threshold"`
+	// Display is the name the alert prints, kept as the source hoard wrote it.
+	Display string `json:"display"`
+	// CreatedAt is when the watch was first set (RFC 3339).
+	CreatedAt string `json:"createdAt,omitempty"`
 }
 
 // Write emits one document: two-space indented, HTML left unescaped (card

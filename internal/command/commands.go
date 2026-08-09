@@ -29,6 +29,10 @@ import (
 type app struct {
 	store *store.Store
 	env   *cli.Env
+	// dbPath is the file store was opened on. Only `merge` needs it — to
+	// refuse merging a hoard into itself — and it is empty when a command
+	// runs without a store.
+	dbPath string
 }
 
 const tagline = "hoard: catalog valuable MTG cards and decks in SQLite"
@@ -127,6 +131,8 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdExport(a),
 
 		NewCmdImport(a),
+
+		NewCmdMerge(a),
 
 		NewCmdVersion(a),
 	)

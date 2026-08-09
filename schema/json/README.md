@@ -50,6 +50,14 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
+- **1.1.5** — ADDITION: the `hoard` document kind, which carries a whole hoard
+  for interchange — `hoard.printings` (the card catalog, each with the verbatim
+  Scryfall document in `raw`, so a receiving hoard needs no network),
+  `hoard.containers` (binder and deck identity), `hoard.holdings` (the same
+  rows as the holdings document) and `hoard.watches`. It is what `hoard merge`
+  moves between two databases. It is deliberately not a whole database: price
+  and bid history, alt prices, gap records, finish guesses, settings, the
+  dated `value_snapshots` series and the import ledger are all omitted.
 - **1.1.4** — ADDITION: `card.condition` on the holdings document — the copies'
   wear (`nm`, `lp`, `mp`, `hp`, `dmg`), absent when nobody has assessed them.
   It describes the copies rather than the printing, so two holdings entries of

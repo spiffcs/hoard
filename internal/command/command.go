@@ -157,7 +157,7 @@ func execute(args []string) error {
 		if err != nil {
 			return err
 		}
-		a.store, closeStore = st, func() { st.Close() }
+		a.store, a.dbPath, closeStore = st, dbPath, func() { st.Close() }
 		if newDB {
 			ui.NewReport().Progress("Initialized hoard database at %s", dbPath)
 		}

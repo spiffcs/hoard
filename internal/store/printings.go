@@ -62,6 +62,82 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 	return nil
 }
 
+// mergePrintingsTx writes catalog rows that came from another hoard rather
+// than from Scryfall, and differs from upsertPrintingsTx in three ways that
+// only matter when the source is a sibling database:
+//
+//   - It keeps the source's updated_at instead of stamping now(), because that
+//     timestamp is what says how fresh the prices are, and rewriting it would
+//     make a year-old row look freshly fetched.
+//   - It refuses to overwrite a newer row (the WHERE on the DO UPDATE). A
+//     merge from an old database must not drag the receiving hoard's prices
+//     backwards; upsertPrintingsTx overwrites unconditionally because its
+//     input is always a live fetch, which is by definition the newest thing
+//     anyone has.
+//   - It carries mtgjson_uuid, which the Scryfall path never has.
+//
+// The refusal is silent by design: an older row losing is the correct outcome,
+// not an error, and a merge of a stale database is a normal thing to do.
+func mergePrintingsTx(tx *sql.Tx, ps []SourcePrinting) error {
+	stmt, err := tx.Prepare(`
+INSERT INTO cards (scryfall_id, set_code, collector_number, name,
+                   price_usd, price_usd_foil, price_usd_etched,
+                   scryfall_url, updated_at, raw_json, mtgjson_uuid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(scryfall_id) DO UPDATE SET
+    set_code         = excluded.set_code,
+    collector_number = excluded.collector_number,
+    name             = excluded.name,
+    price_usd        = excluded.price_usd,
+    price_usd_foil   = excluded.price_usd_foil,
+    price_usd_etched = excluded.price_usd_etched,
+    scryfall_url     = excluded.scryfall_url,
+    updated_at       = excluded.updated_at,
+    raw_json         = COALESCE(excluded.raw_json, cards.raw_json),
+    mtgjson_uuid     = COALESCE(excluded.mtgjson_uuid, cards.mtgjson_uuid)
+WHERE excluded.updated_at >= cards.updated_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	// A second pass fills documents the guard above would have skipped. An
+	// older source can still hold a card document the receiving hoard lacks —
+	// a decklist import writes catalog rows with no raw_json at all — and
+	// losing the freshness contest should not also forfeit the one thing that
+	// makes a printing readable. Filling a NULL is never a downgrade.
+	fill, err := tx.Prepare(`
+UPDATE cards SET raw_json = COALESCE(raw_json, ?),
+                 mtgjson_uuid = COALESCE(mtgjson_uuid, ?)
+WHERE scryfall_id = ? AND (raw_json IS NULL OR mtgjson_uuid IS NULL)`)
+	if err != nil {
+		return err
+	}
+	defer fill.Close()
+
+	for _, p := range ps {
+		var raw, uuid any // nil, not "", so the COALESCEs above see NULL
+		if len(p.Card.Raw) > 0 {
+			raw = string(p.Card.Raw)
+		}
+		if p.MTGJSONUUID != "" {
+			uuid = p.MTGJSONUUID
+		}
+		if _, err := stmt.Exec(p.Card.ID, p.Card.Set, p.Card.CollectorNumber,
+			p.Card.Name, p.Card.PriceUSD, p.Card.PriceUSDFoil, p.Card.PriceUSDEtched,
+			p.Card.ScryfallURL, p.UpdatedAt, raw, uuid); err != nil {
+			return fmt.Errorf("merging printing %s: %w", p.Card.Name, err)
+		}
+		if raw == nil && uuid == nil {
+			continue
+		}
+		if _, err := fill.Exec(raw, uuid, p.Card.ID); err != nil {
+			return fmt.Errorf("merging printing %s: %w", p.Card.Name, err)
+		}
+	}
+	return nil
+}
+
 // ActivePrintingIDs returns every printing that is held or watched — the
 // bulk-refresh set. Not every row in cards: re-pointing entries at
 // corrected printings (deck repin, the detail's set editor) leaves the old

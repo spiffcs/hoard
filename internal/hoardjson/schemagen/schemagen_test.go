@@ -11,6 +11,7 @@ import (
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -122,6 +123,48 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 			Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
 			Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 		}),
+		// The interchange document `hoard merge` moves between two databases.
+		// The card document in Raw is the field most at risk here: the schema
+		// declares it an object, and json.RawMessage would otherwise reflect
+		// as a base64 string.
+		"hoard": hoardjson.FromSnapshot(
+			store.Snapshot{
+				Version: 27,
+				Printings: []store.SourcePrinting{{
+					Card: scryfall.Card{ID: "sol", Name: "Sol Ring", Set: "c21",
+						CollectorNumber: "125", ScryfallURL: "https://scryfall.com/card/c21/125",
+						PriceUSD: f(2),
+						Raw:      []byte(`{"rarity":"uncommon","type_line":"Artifact"}`)},
+					MTGJSONUUID: "uu-sol", UpdatedAt: "2026-08-09T00:00:00Z",
+				}, {
+					// The other side of every optional field: no uuid, no
+					// prices, no stored document.
+					Card: scryfall.Card{ID: "rem", Name: "Mystic Remora", Set: "ice",
+						CollectorNumber: "78", ScryfallURL: "https://scryfall.com/card/ice/78"},
+					UpdatedAt: "2026-08-09T00:00:00Z",
+				}},
+				Containers: []store.Container{
+					{Kind: store.KindCollection, Name: "Binder", Source: "manual",
+						SourceID: "__collection__"},
+					{Kind: store.KindDeck, Name: "Fish", Source: "archidekt",
+						SourceID: "42", SourceURL: "https://archidekt.com/decks/42",
+						Format: "commander"},
+				},
+				Watches: []store.WatchStatus{{
+					Watch: store.Watch{ScryfallID: "sol", Display: "Sol Ring",
+						Finish: "foil", Op: "over", Threshold: 10,
+						CreatedAt: "2026-08-09T00:00:00Z"},
+					Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
+				}},
+			},
+			[]export.Row{
+				{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
+					Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol",
+					Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
+				{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
+					Finish: "etched", Condition: "lp", ScryfallID: "rem",
+					Container: "Fish", Kind: "deck", Board: "side"},
+			}),
 		"arbitrage": hoardjson.FromMarket(market.Result{
 			Compared: 1,
 			Opportunities: []market.Opportunity{{
