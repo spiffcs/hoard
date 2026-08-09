@@ -10,7 +10,9 @@ TOOL_DIR = .tool
 BINNY = $(TOOL_DIR)/binny
 TASK = $(TOOL_DIR)/task
 
-.DEFAULT_GOAL := make-default
+# No bare-`make` build: there is no `default` task to forward to, so an
+# argument-less `make` lists what is available rather than erroring out of task.
+.DEFAULT_GOAL := help
 
 ## Bootstrapping targets #################################
 
@@ -34,11 +36,6 @@ ci-bootstrap-go:
 	@$(TASK) $@
 
 ## Shim targets #################################
-
-.PHONY: make-default
-make-default: $(TASK)
-	@# run the default task in the taskfile
-	@$(TASK)
 
 # for those of us that can't seem to kick the habit of typing `make ...` lets wrap the superior `task` tool
 TASKS := $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' | tr '\n' ' '" ) $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep 'aliases:' | cut -d ':' -f 3 | tr '\n' ' ' | tr -d ','")

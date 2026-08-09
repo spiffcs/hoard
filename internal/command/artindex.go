@@ -30,18 +30,18 @@ func artindexDir() string {
 // has, and only someone deliberately iterating on the hash footprint stores
 // ten gigabytes of card images.
 //
-// HOARD_ARTINDEX_CACHE — directory to keep source images in. `task
-// artindex-cache` points it at ./artindex-cache in the working tree, which
-// .gitignore excludes: the images are Wizards' copyright and are fetched,
-// never committed. See docs/data-licensing.md §6.
+// HOARD_ARTINDEX_CACHE — directory to keep source images in. Point it at
+// ./artindex-cache in the working tree, which .gitignore excludes: the images
+// are Wizards' copyright and are fetched, never committed. See
+// docs/specs/data-licensing.md §6.
 //
 // HOARD_ARTINDEX_VARIANT — which Scryfall size to fetch (small, normal,
 // art_crop, large). Read artindex's variant constants before changing it;
 // the choice is coupled to the hash footprint.
 //
 // Environment rather than flags on purpose: these are not part of hoard's
-// command surface, they are a contributor's iteration loop, and `task
-// artindex-cache` is the documented way to reach them.
+// command surface, they are a contributor's iteration loop — set them in the
+// environment around `hoard artindex build` / `rehash`.
 func artindexBuildOptions() artindex.BuildOptions {
 	return artindex.BuildOptions{
 		CacheDir: os.Getenv("HOARD_ARTINDEX_CACHE"),
@@ -154,7 +154,7 @@ func runArtindexRehash(ctx context.Context, env *cli.Env) error {
 	opts := artindexBuildOptions()
 	if opts.CacheDir == "" {
 		return fmt.Errorf("no image cache configured — set HOARD_ARTINDEX_CACHE " +
-			"(or run `task artindex-cache`) and build once to populate it")
+			"to a directory and run `hoard artindex build` once to populate it")
 	}
 
 	ix, err := artindex.Open(artindexDir())

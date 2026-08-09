@@ -1,40 +1,15 @@
 version: "3"
 
 vars:
-  OWNER: spiffcs
-  PROJECT: hoard
-
-  # static file dirs
+  # where binny installs the pinned toolchain
   TOOL_DIR: .tool
-  TMP_DIR: .tmp
-
-  # TOOLS
-  TASK: "{{ .TOOL_DIR }}/task"
 
   # used for changelog generation
   CHANGELOG: CHANGELOG.md
   NEXT_VERSION: VERSION
 
-  # used for snapshot builds
-  PROJECT_ROOT:
-    sh: echo $PWD
-
-  VERSION:
-    sh: git describe --dirty --always --tags
-
-env:
-  GNUMAKEFLAGS: "--no-print-directory"
-
 tasks:
   ## High-level tasks #################################
-
-  default:
-    desc: Run all validation tasks
-    aliases:
-      - pr-validations
-      - validations
-    cmds:
-      - task: static-analysis
 
   static-analysis:
     desc: Run all static analysis tasks
@@ -122,12 +97,6 @@ tasks:
     cmd: "{{ .TOOL_DIR }}/binny list --updates"
     silent: true
 
-  tmpdir:
-    silent: true
-    generates:
-      - "{{ .TMP_DIR }}"
-    cmd: "mkdir -p {{ .TMP_DIR }}"
-
   ## Static analysis tasks #################################
 
   format:
@@ -188,7 +157,7 @@ tasks:
   # Build the macOS scan helper (bin/hoard-scan.app). macOS + Xcode only.
   #
   # The helper owns no camera: it is the Mac end of the link to the iPhone app,
-  # which is what actually captures and reads. See docs/ios-development.md for
+  # which is what actually captures and reads. See docs/specs/ios-development.md for
   # building that side.
   scan:
     desc: Build the macOS scan helper (bin/hoard-scan.app)
@@ -247,63 +216,9 @@ tasks:
     deps: [cardkit]
     cmd: ./bin/cardkit-probe --score scan/corpus/manifest.tsv {{ .CLI_ARGS }} ${ARGS:-}
 
-  #   task foil-eval                       # finish-accuracy scoreboard per rig
-  #   task foil-eval -- --misses           # and every capture that would commit wrong
-  foil-eval:
-    desc: Score foil/nonfoil accuracy against the foil corpus
-    platforms: [darwin]
-    deps: [cardkit]
-    cmd: python3 scan/foil-corpus/eval-finish.py {{ .CLI_ARGS }} ${ARGS:-}
-
-  ## Art-index tasks #################################
-
-  # Populate the local image cache the art-index hash is fitted against.
-  #
-  # Why this exists: changing the hash footprint — the keep block, FromCard's
-  # crop, the plane it reads — invalidates all ~107k rows, and without a local
-  # corpus every attempt costs a fresh pass over Scryfall's CDN. The build is
-  # paced at ten images a second out of politeness, so that pass is about three
-  # hours no matter how fast the link is. Pay it once, iterate for free.
-  #
-  # The images land in ./artindex-cache, which .gitignore excludes. They are
-  # Wizards' copyrighted card images served by Scryfall: cached locally, never
-  # committed, every one re-fetchable. docs/data-licensing.md §6 covers the
-  # terms. This is why the cache is a task rather than a default — a contributor
-  # opts in and fetches their own copy; the repo carries none of it.
-  #
-  # VARIANT picks the Scryfall size. `normal` is the whole card at 488x680,
-  # which is what FromCard's fixed-fraction crop expects on both the index side
-  # and the scanner side. `art_crop` is sharper per byte but is Scryfall's own
-  # crop, whose geometry varies by frame and cannot be reproduced from a scanner
-  # flatten — see the variant constants in internal/artindex/cache.go before
-  # switching. Resumable: interrupt it and run it again.
-  artindex-cache:
-    desc: Download the art-index image corpus locally (~10GB, ~3h, resumable)
-    deps: [build]
-    vars:
-      VARIANT: '{{ .VARIANT | default "normal" }}'
-    env:
-      HOARD_ARTINDEX_CACHE: "{{ .PROJECT_ROOT }}/artindex-cache"
-      HOARD_ARTINDEX_VARIANT: "{{ .VARIANT }}"
-    cmd: ./hoard artindex build
-
-  # Re-derive every hash from the cached images. No network: a source with no
-  # cached image keeps its old hash and is counted, rather than quietly turning
-  # a rehash back into a three-hour download. Run this after any change to the
-  # hash footprint.
-  artindex-rehash:
-    desc: Re-hash the cached art corpus after a footprint change (no network)
-    deps: [build]
-    vars:
-      VARIANT: '{{ .VARIANT | default "normal" }}'
-    env:
-      HOARD_ARTINDEX_CACHE: "{{ .PROJECT_ROOT }}/artindex-cache"
-      HOARD_ARTINDEX_VARIANT: "{{ .VARIANT }}"
-    cmd: ./hoard artindex rehash
-
   # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
   # (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
-  # reports whichever is missing. See docs/ios-development.md.
+  # reports whichever is missing. See docs/specs/ios-development.md.
   scan-ios:
     desc: Build the iPhone capture head
     platforms: [darwin]
@@ -328,7 +243,7 @@ tasks:
   # registered and the team has an Apple Distribution certificate, and the
   # upload needs App Store Connect credentials that no tracked file holds.
   # release-scan-ios.sh reports whichever is missing, in the same shape
-  # build-scan-ios.sh reports a signing failure. See docs/app-store-release.md.
+  # build-scan-ios.sh reports a signing failure. See docs/specs/app-store-release.md.
   scan-ios-release:
     desc: Archive and export the iPhone capture head for App Store Connect
     platforms: [darwin]

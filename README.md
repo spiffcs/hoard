@@ -9,7 +9,7 @@
 **CLI for managing a Magic: The Gathering collection**.
 
 Your cards live in a single SQLite file on your machine. `hoard` opens an
-interactive browser; `hoard help` lists every command.
+interactive ui; `hoard help` lists every command.
 
 ## Install
 
@@ -24,7 +24,6 @@ go install github.com/spiffcs/hoard/cmd/hoard@latest
 ```
 
 Or download an archive from the [releases page](https://github.com/spiffcs/hoard/releases)
-(Windows users: this is the path — the install script covers macOS and Linux only).
 Every release can be verified against its Sigstore bundle:
 
 ```sh
@@ -34,40 +33,26 @@ cosign verify-blob \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     checksums.txt
 ```
-
 The macOS binaries are signed and notarized, so they open without a Gatekeeper
-fight. The release binary is the CLI; the card scanner is a separate Swift
-helper and iPhone app built from source on a Mac — see
+fight. The release binary is the CLI; the card scanner is a separate Swift Application
+released on the App Store for card scanning/input
 [docs/ios-development.md](docs/ios-development.md).
 
-Or build from source (Go 1.26+):
-
+Or just build from source (Go 1.26+):
 ```sh
 git clone https://github.com/spiffcs/hoard && cd hoard
 make build          # → ./hoard
 ```
 
-## Scripting and your data
+## Scanning cards (macOS + iPhone)
+
+## Decks and binders
+
+## Scripting your data; What an agent can do
 
 Every card carries a Scryfall id and an MTGJSON uuid, so a document joins straight against either
 ecosystem's bulk data. `hoard`, `unpriced`, `movers`, `market`, `report`, `watch` and `export`
 all take `--json` for machine-readable output.
-
-## Decks and binders
-
-Cards are organized into binders (`hoard binder new trades`) and decks. Decks import from an
-Archidekt link or a pasted text decklist (`hoard deck add --file list.txt`), and collection
-CSV exports from ManaBox, Moxfield and Delver Lens import with `hoard import`.
-
-A whole second hoard — a bulk box, an inherited collection, the database from another machine —
-folds in with `hoard merge other.db`: holdings, decks and watches, offline, in one transaction,
-and it never writes to the database it reads. Try `--dry-run` first. See [docs/merge.md](docs/merge.md).
-
-## Scanning cards (macOS + iPhone)
-
-On macOS, `hoard add` can drive a paired iPhone as a hands-free card scanner: cards held up to
-the phone are recognized, priced and committed to a binder, with foil detection and a review
-queue for uncertain reads. The phone app lives in `scan/hoard-scan-ios`.
 
 ## Database
 
