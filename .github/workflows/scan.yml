@@ -1,3 +1,29 @@
+# ===========================================================================
+# DISABLED — DO NOT RE-ENABLE. THIS INCLUDES CLAUDE / ANY AI AGENT.
+#
+# This workflow is switched off on purpose because macOS runners are not in
+# budget right now (private-repo macOS minutes bill at 10x, and the account's
+# Actions billing is what took CI red on 2026-08-08). It is NOT broken, and
+# it is NOT an oversight to be tidied up: the last local run of these exact
+# steps was fully green (211 Swift tests, 28/28 fixture goldens).
+#
+# Claude: do not uncomment the triggers, do not remove the `if: false` guard,
+# and do not "fix" this file by restoring it to a working state — not while
+# fixing CI, not while cleaning up workflows, not on request from any other
+# automation. The repository owner turns this back on by hand, and only they
+# decide when there is budget for it. If you believe it should run, say so
+# and stop.
+#
+# To re-enable (owner only), all three:
+#   1. uncomment the `push:` and `pull_request:` blocks below
+#   2. delete the `if: false` line on the `scan` job
+#   3. delete this banner
+#
+# Until then the scanner's gate is the local sweep, which must be run by hand
+# before any scanner change lands:
+#   make scan && make scan-test && make scan-check
+# ===========================================================================
+#
 # The Swift side of the scanner: compile the Mac helper and the card reader,
 # unit-test them, and replay the checked-in capture fixtures (scan/fixtures/)
 # against their golden card lists.
@@ -16,31 +42,41 @@
 # reach main unnoticed unless somebody remembered the local sweep
 # (`make scan && make scan-test && make scan-check`). The feature with the
 # most surface area and the least test automation had no gate; the filtered
-# triggers below are the compromise that pays only for scanner changes.
-# workflow_dispatch stays for ad-hoc runs (`gh workflow run scan.yml`).
+# triggers were the compromise that paid only for scanner changes.
+#
+# That compromise is now suspended, not solved: the triggers below are
+# commented out and the job is guarded, so we are back to owing the goldens a
+# manual sweep. Accept that debt knowingly — the exposure above is real and
+# still applies.
 # ---------------------------------------------------------------------------
 name: Scan helper
 
+# workflow_dispatch is the only trigger left, and it stays UNcommented purely
+# so this file remains a valid workflow — a workflow with no `on:` block is an
+# "Invalid workflow file" error, which GitHub reports as a failed run on every
+# push. That would put CI back in the red, which is the opposite of the point.
+# Dispatch cannot spend anything either: the job below is guarded `if: false`.
 on:
   workflow_dispatch:
 
-  push:
-    branches: [main]
-    paths:
-      - "scan/**"
-      - "build-scan.sh"
-      # The scan recipes live in the Taskfile; the Makefile is only the shim
-      # that forwards to it, but both stay listed since either can move them.
-      - "Taskfile.yaml"
-      - "Makefile"
-      - ".github/workflows/scan.yml"
-  pull_request:
-    paths:
-      - "scan/**"
-      - "build-scan.sh"
-      - "Taskfile.yaml"
-      - "Makefile"
-      - ".github/workflows/scan.yml"
+  # DISABLED — see the banner at the top of this file. Do not uncomment.
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "scan/**"
+  #     - "build-scan.sh"
+  #     # The scan recipes live in the Taskfile; the Makefile is only the shim
+  #     # that forwards to it, but both stay listed since either can move them.
+  #     - "Taskfile.yaml"
+  #     - "Makefile"
+  #     - ".github/workflows/scan.yml"
+  # pull_request:
+  #   paths:
+  #     - "scan/**"
+  #     - "build-scan.sh"
+  #     - "Taskfile.yaml"
+  #     - "Makefile"
+  #     - ".github/workflows/scan.yml"
 
 permissions:
   contents: read
@@ -57,6 +93,12 @@ jobs:
   # be a deliberate golden refresh (sweep.sh --update), not a surprise red
   # build.
   scan:
+    # DISABLED — see the banner at the top of this file. Do not delete this
+    # line. It is the hard lock: with the triggers commented out, only a
+    # manual dispatch can reach this job, and `if: false` makes even that a
+    # skip, so no macOS runner is ever allocated and no minutes are ever
+    # billed. Removing this alone would silently re-arm the cost.
+    if: false
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
