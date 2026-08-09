@@ -53,6 +53,12 @@ scan/hoard-scan/.build/
 scan/hoard-scan-ios/*.xcodeproj/
 scan/hoard-scan-ios/.build/
 scan/hoard-scan-ios/Signing.xcconfig
+# App Store Connect API keys. release-scan-ios.sh tells you to put the .p8 in
+# ~/.appstoreconnect/private_keys, but altool also searches ./private_keys, so
+# the repo root is one `mv` away from committing a credential that can upload
+# builds as you. The .p8 downloads exactly once and cannot be re-downloaded.
+*.p8
+/private_keys/
 # Info.plist is generated from project.yml's info.properties block. Tracking it
 # would give the same settings two homes, and the checked-in one would rot.
 scan/hoard-scan-ios/Info.plist
@@ -85,6 +91,14 @@ scan/foil-dataset/images/
 # The parser corpus: third-party card images, fetched not authored.
 # Labels beside them are tracked — see scan/corpus/README.md.
 scan/corpus/images/
+
+# The art-index image cache (`task artindex-cache`, HOARD_ARTINDEX_CACHE).
+# Every printing's Scryfall image, ~10GB, kept locally so re-hashing after a
+# footprint change costs a disk read instead of a three-hour re-download.
+# These are Wizards' copyrighted card images fetched from Scryfall's CDN: they
+# are cached, never committed, and every one of them is re-fetchable. See
+# docs/data-licensing.md §6.
+artindex-cache/
 
 # The foil-sparkle corpus. Unlike the two above, these photographs CANNOT be
 # refetched, so the part the detector is fitted and scored on — cards/ — is

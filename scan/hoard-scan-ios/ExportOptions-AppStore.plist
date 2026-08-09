@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for `xcodebuild -exportArchive`, App Store Connect flavour.
+  Used by release-scan-ios.sh; see that script for the whole path.
+
+  This is a TEMPLATE, not the plist xcodebuild is handed. The script copies it
+  into the build directory and writes `teamID` into the copy at run time, from
+  $HOARD_IOS_TEAM or from the gitignored Signing.xcconfig. A team identifier is
+  account data and must never land in a tracked file, which is the same reason
+  DEVELOPMENT_TEAM is absent from project.yml.
+
+  (`teamID` could be omitted altogether — xcodebuild documents it as defaulting
+  to the team the archive was built with. It is injected anyway because that
+  default is only unambiguous for an account with one team, and the failure
+  when it is not is a re-signing error several minutes into an export.)
+
+  Nothing else here is a secret, so the rest is tracked and diffable, which is
+  how the repo treats every other Xcode input: project.yml is the source of
+  truth and the .xcodeproj is disposable output.
+-->
+<plist version="1.0">
+<dict>
+	<!--
+	  app-store-connect is the current spelling. `app-store` still works and is
+	  what most recipes on the internet say, but xcodebuild -help on Xcode 26
+	  lists it as deprecated, so it will start warning and then stop working.
+	-->
+	<key>method</key>
+	<string>app-store-connect</string>
+
+	<!--
+	  export, not upload. xcodebuild can do both in one step — set this to
+	  `upload` and pass -authenticationKey* and the .ipa never touches disk —
+	  and that is deliberately not what happens here.
+
+	  Splitting it means the expensive half (archive + export, minutes) is
+	  separable from the half that fails on credentials (upload, seconds), so a
+	  missing App Store Connect key costs a re-run of the upload and not a
+	  re-run of the build. It also leaves an .ipa on disk to inspect, validate
+	  with `--validate` before spending a build number, or hand to Transporter
+	  by hand when altool is having a day.
+	-->
+	<key>destination</key>
+	<string>export</string>
+
+	<!--
+	  Automatic, matching CODE_SIGN_STYLE in project.yml. Manual signing would
+	  need a provisioningProfiles dictionary here naming a profile by UUID,
+	  which is machine-local state — exactly the kind of thing this repo keeps
+	  out of tracked files.
+	-->
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<!--
+	  NO, and this one matters. It defaults to YES, and YES means Xcode
+	  silently rewrites CFBundleVersion during export to whatever App Store
+	  Connect thinks comes next. That would throw away the timestamp stamp
+	  release-scan-ios.sh passes in — the number that ties an uploaded build
+	  back to a moment and a git rev — and replace it with a counter nothing
+	  local can reproduce. Own the build number or do not; half-owning it is
+	  how you end up unable to say which commit a TestFlight build came from.
+	-->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+
+	<!--
+	  Symbols go up with the build, so App Store Connect can symbolicate
+	  crash reports. The app collects nothing and reports nothing itself, so
+	  Apple's crash organizer is the only crash signal that exists for it.
+	-->
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+
+	<!--
+	  false, so a build can go to external TestFlight testers. Set it to true
+	  for a build you want to be certain cannot escape the internal group.
+	-->
+	<key>testFlightInternalTestingOnly</key>
+	<false/>
+</dict>
+</plist>

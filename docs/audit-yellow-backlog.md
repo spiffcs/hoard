@@ -431,8 +431,28 @@ log out of Documents); single serial writer.
   UserDefaults silently mutes that tier.
 - `FooterPatterns.swift:13,16,19` — the codebase's only `try!`s (literal
   regexes); safe, but worth converting for the lint story.
-- No `ScanKitTests` target despite two source comments claiming one
-  (`main.swift:5`, `CLI.swift:47`); `RemoteController`, `PriceHUD`,
-  `PhotoDecode`, `PreviewHost`, `CameraSession`, `TriggerRunner`,
-  `LinkController`, `Sounds`, `PairingStore`, `PixelReader` bounds all have zero
-  automated coverage — which is how the dead mirror path (Red) survived.
+- ~~No `ScanKitTests` target~~ **DONE 2026-08-08.** The target exists and carries
+  26 tests. Three seams were extracted to make it possible: `ndjsonLine`
+  (`App/LineProtocol.swift`, the passthrough's one non-verbatim step), `ScanArgs`
+  (`CLI.swift`, the parse lifted out of `runCLI`), and a `dir`/`now` parameter on
+  `saveRemoteStill` so the writer can be exercised without mutating the process
+  environment. The stale comments at `main.swift:5` and `CLI.swift:47` are
+  corrected. Full package suite 175 → 201.
+
+  **The original list here was wrong about where things live**, and the
+  correction matters for anyone reading this as a coverage map. ScanKit is 487
+  lines in four files: `RemoteController`, `CLI`, `RunLoopPump`, `PhotoDecode`.
+  Of the ten types named above:
+  - `PriceHUD` and `PreviewHost` **do not exist anywhere** in the repo — deleted
+    with the mirror window and the Continuity path.
+  - `CameraSession`, `TriggerRunner`, `LinkController`, `Sounds` and
+    `PairingStore` are in the **iPhone app** (`scan/hoard-scan-ios`), which is an
+    Xcode target outside the SwiftPM package. A ScanKitTests target cannot reach
+    them; covering them needs a test target in the app project and is separate
+    work.
+  - `PixelReader` is in **BorderKit**, which already has `BorderKitTests`.
+
+  What remains uncovered in ScanKit is `RemoteController`'s session lifecycle —
+  it browses the network, holds `PeerSession`, and calls `exit()` on three paths,
+  so it needs dependency seams before a test bundle can drive it. That is real
+  remaining work, not a claim of completion.

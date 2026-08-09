@@ -1,20 +1,27 @@
 // The price tiers' voices, on the phone.
 //
-// Synthesis parameters for the original four voices are copied deliberately and
-// exactly from the macOS helper's SoundBank, because the sound *is* the feature
-// — the whole point of one sound per card is that a person stops looking at the
-// screen and works by ear, and a voice that differs between the two scan
-// sources retrains them for nothing. Same frequencies, same durations, same
-// decay, same soft clip.
+// Every voice belongs to exactly one tier. That is not a UI rule enforced
+// somewhere else — it is a field on the voice itself, and the Settings picker
+// is derived from it, so Bulk can only ever offer Bulk's voices and a harp run
+// can never land on a ten-cent common. The tiers are told apart by weight:
+// bulk is short and dry, the win tiers ring, the jackpot runs, and review asks
+// a question. A voice that could appear anywhere would undo that.
 //
-// Which voice speaks for which tier is no longer fixed here: the Settings tab
-// assigns voices to tiers (TierSettings), and this file only knows how to say
-// each one. Two voices exist beyond the macOS four — a double bell and a rising
-// arpeggio — so four price tiers can each sound distinct.
+// Deriving the palettes from this one table also makes the dangerous mistake
+// unrepresentable. A palette that named a voice with no spec would leave its
+// tier silently mute — play() finds no buffer and simply returns — and nothing
+// in the app would report it. There is no second list to fall out of step.
+//
+// The four original voices keep their exact synthesis parameters (frequencies,
+// durations, decay, soft clip) because people have already learned them by ear.
+// They were once shared with a macOS helper's SoundBank; that helper is gone
+// and this is now the only audio in the project, so the parameters are free to
+// change — they are held for the people using them, not for a counterpart.
 //
 // Everything is synthesized into PCM buffers once at init — additive sine bursts
 // with exponential decay — so the app bundles no audio files and owes no one a
-// license.
+// license. Strike frequencies are fixed for the strike's life, so there are no
+// glides: every voice is built from discrete hits.
 //
 // The rules that matter more than the waveforms:
 //   · exactly one sound per card, played when the scan *resolves*, never at the
@@ -35,75 +42,179 @@ private struct Strike {
 }
 
 /// One assignable voice, as the Settings picker sees it.
+///
+/// `tier` is what scopes the picker. It is stored on the voice rather than in a
+/// separate per-tier list so the two can never disagree.
 struct SoundVoice: Identifiable, Equatable {
     let id: String
     let label: String
+    let tier: Tier
 }
 
-/// The voices, at the macOS helper's measured parameters where a macOS
-/// counterpart exists.
-private enum Voice {
+/// A voice's definition: what the picker shows, and what the renderer plays.
+private struct VoiceSpec {
+    let id: String
+    let label: String
+    let tier: Tier
+    let strikes: [Strike]
+    /// Buffer length. Must cover the last strike's `at + dur` or the tail is
+    /// clipped — render() truncates silently rather than complaining.
+    let seconds: Double
+}
+
+/// The voices, in picker order: tier by tier, each tier's default first.
+private let voiceTable: [VoiceSpec] = [
+
+    // MARK: Bulk — short, dry, low. A tick that means "next", not "look".
+
     /// A low woody knock, gone in 50 ms.
-    static let knock = ([Strike(at: 0, freqs: [420, 840, 1260], dur: 0.05, amp: 0.55)], 0.12)
+    VoiceSpec(id: "knock", label: "Knock", tier: .bulk,
+              strikes: [Strike(at: 0, freqs: [420, 840, 1260], dur: 0.05, amp: 0.55)],
+              seconds: 0.12),
+
+    /// Higher and drier than the knock — a fingernail rather than a knuckle,
+    /// for a pile being moved fast enough that the knock starts to feel heavy.
+    VoiceSpec(id: "tick", label: "Tick", tier: .bulk,
+              strikes: [Strike(at: 0, freqs: [1400, 2800], dur: 0.03, amp: 0.45)],
+              seconds: 0.08),
+
+    /// Below the knock, and softer. Nearly felt rather than heard, for long
+    /// sittings where any bright bulk sound wears through.
+    VoiceSpec(id: "thump", label: "Thump", tier: .bulk,
+              strikes: [Strike(at: 0, freqs: [180, 360, 540], dur: 0.07, amp: 0.60)],
+              seconds: 0.16),
+
+    // MARK: Win — one bright event. Something happened; keep going.
 
     /// A single bright service bell — fundamental plus an inharmonic 2.76x
     /// partial, which is what reads as "bell" rather than "tone".
-    static let bell = ([Strike(at: 0, freqs: [2093, 5777], dur: 0.4, amp: 0.42)], 0.55)
+    VoiceSpec(id: "bell", label: "Bell", tier: .win,
+              strikes: [Strike(at: 0, freqs: [2093, 5777], dur: 0.4, amp: 0.42)],
+              seconds: 0.55),
+
+    /// The same bell recipe struck a fourth lower — rounder and less piercing
+    /// over a long session, still unmistakably the same instrument.
+    VoiceSpec(id: "chime", label: "Chime", tier: .win,
+              strikes: [Strike(at: 0, freqs: [1568, 4327], dur: 0.45, amp: 0.40)],
+              seconds: 0.6),
+
+    /// Deliberately *not* a bell: one pure partial, no inharmonic, short decay.
+    /// Dropping the 2.76x partial is exactly what turns it from bell into tone,
+    /// so it reads as a marker rather than a celebration.
+    VoiceSpec(id: "ping", label: "Ping", tier: .win,
+              strikes: [Strike(at: 0, freqs: [2637], dur: 0.22, amp: 0.40)],
+              seconds: 0.32),
+
+    // MARK: Big Win — two or more events, rising. Set it aside.
 
     /// Two bells rising — the same inharmonic 2.76x recipe as the single bell,
     /// struck a fourth apart, so it reads as the bell's bigger sibling rather
     /// than a new instrument.
-    static let bells = (
-        [Strike(at: 0.00, freqs: [1568, 4329], dur: 0.3, amp: 0.38),
-         Strike(at: 0.17, freqs: [2093, 5777], dur: 0.45, amp: 0.42)],
-        0.75)
+    VoiceSpec(id: "bells", label: "Double Bell", tier: .big,
+              strikes: [Strike(at: 0.00, freqs: [1568, 4329], dur: 0.3, amp: 0.38),
+                        Strike(at: 0.17, freqs: [2093, 5777], dur: 0.45, amp: 0.42)],
+              seconds: 0.75),
 
     /// A quick major arpeggio landing on a held octave — smaller than the harp
     /// run, but unmistakably a fanfare.
-    static let arpeggio = (
-        [Strike(at: 0.00, freqs: [1046.5], dur: 0.14, amp: 0.34),
-         Strike(at: 0.09, freqs: [1318.5], dur: 0.14, amp: 0.34),
-         Strike(at: 0.18, freqs: [1568.0], dur: 0.14, amp: 0.34),
-         Strike(at: 0.27, freqs: [2093.0, 1046.5], dur: 0.5, amp: 0.42)],
-        0.9)
+    VoiceSpec(id: "arpeggio", label: "Fanfare", tier: .big,
+              strikes: [Strike(at: 0.00, freqs: [1046.5], dur: 0.14, amp: 0.34),
+                        Strike(at: 0.09, freqs: [1318.5], dur: 0.14, amp: 0.34),
+                        Strike(at: 0.18, freqs: [1568.0], dur: 0.14, amp: 0.34),
+                        Strike(at: 0.27, freqs: [2093.0, 1046.5], dur: 0.5, amp: 0.42)],
+              seconds: 0.9),
+
+    /// One chord opening into a wider one — no melody to follow, just the room
+    /// getting bigger. The quietest way to say "this one is worth money".
+    VoiceSpec(id: "swell", label: "Swell", tier: .big,
+              strikes: [Strike(at: 0.00, freqs: [1046.5, 2093.0], dur: 0.18, amp: 0.38),
+                        Strike(at: 0.14, freqs: [1318.5, 1568.0, 2637.0], dur: 0.55, amp: 0.44)],
+              seconds: 0.8),
+
+    // MARK: Jackpot — long and multi-note. Stop and look.
 
     /// A pentatonic sweep, two octaves in under a second, landing on a held
     /// octave chord — a harp run up to the top of the machine. The offsets are
     /// fixed, never random: the sound being identical every time is what makes
     /// it recognizable.
-    static let harp: ([Strike], Double) = (
-        [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.7, 1318.5, 1568.0, 1760.0]
-            .enumerated()
-            .map { Strike(at: Double($0.offset) * 0.055, freqs: [$0.element], dur: 0.12, amp: 0.32) }
-            + [Strike(at: 0.62, freqs: [2093.0, 1046.5, 4186.0], dur: 0.9, amp: 0.48)],
-        1.9)
+    VoiceSpec(id: "harp", label: "Harp Run", tier: .jackpot,
+              strikes: [523.25, 587.33, 659.25, 783.99, 880.0,
+                        1046.5, 1174.7, 1318.5, 1568.0, 1760.0]
+                  .enumerated()
+                  .map { Strike(at: Double($0.offset) * 0.055, freqs: [$0.element],
+                                dur: 0.12, amp: 0.32) }
+                  + [Strike(at: 0.62, freqs: [2093.0, 1046.5, 4186.0], dur: 0.9, amp: 0.48)],
+              seconds: 1.9),
+
+    /// A four-note call that turns back on itself before landing on the triad —
+    /// the shape of a bugle rather than a sweep. Shorter than the harp run, for
+    /// a jackpot line set low enough that it trips more than once a box.
+    VoiceSpec(id: "fanfare", label: "Brass Call", tier: .jackpot,
+              strikes: [Strike(at: 0.00, freqs: [783.99], dur: 0.12, amp: 0.36),
+                        Strike(at: 0.10, freqs: [1046.5], dur: 0.12, amp: 0.36),
+                        Strike(at: 0.20, freqs: [1318.5], dur: 0.12, amp: 0.36),
+                        Strike(at: 0.30, freqs: [1046.5], dur: 0.10, amp: 0.32),
+                        Strike(at: 0.40, freqs: [1568.0, 1046.5, 783.99],
+                               dur: 0.8, amp: 0.46)],
+              seconds: 1.4),
+
+    /// The harp run's mirror: the notes fall instead of climbing, then bloom
+    /// into a chord anchored an octave below where the harp lands. Same length
+    /// of event, opposite gesture, so the two are never confused for each other.
+    VoiceSpec(id: "cascade", label: "Cascade", tier: .jackpot,
+              strikes: [2093.0, 1760.0, 1568.0, 1318.5, 1046.5, 880.0, 783.99, 659.25]
+                  .enumerated()
+                  .map { Strike(at: Double($0.offset) * 0.05, freqs: [$0.element],
+                                dur: 0.11, amp: 0.30) }
+                  + [Strike(at: 0.45, freqs: [523.25, 1046.5, 1568.0, 2093.0],
+                            dur: 1.0, amp: 0.50)],
+              seconds: 1.6),
+
+    // MARK: Review — a question, never an outcome.
+    //
+    // These three all end unresolved, on purpose. A review sound that lands
+    // like a price would send someone to the keep pile for a card the Mac is
+    // still asking about, which is the one mistake this tier can cause.
 
     /// Two soft notes rising a fourth — "hm-hmm?" — the upward inflection of a
     /// question. A queued card is a request, not a price outcome.
-    static let question = (
-        [Strike(at: 0.00, freqs: [440, 880], dur: 0.12, amp: 0.34),
-         Strike(at: 0.16, freqs: [587.33, 1174.7], dur: 0.28, amp: 0.38)],
-        0.6)
+    VoiceSpec(id: "question", label: "Question", tier: .review,
+              strikes: [Strike(at: 0.00, freqs: [440, 880], dur: 0.12, amp: 0.34),
+                        Strike(at: 0.16, freqs: [587.33, 1174.7], dur: 0.28, amp: 0.38)],
+              seconds: 0.6),
 
-    static let specs: [String: ([Strike], Double)] = [
-        "knock": knock, "bell": bell, "bells": bells,
-        "arpeggio": arpeggio, "harp": harp, "question": question,
-    ]
-}
+    /// Three steps up and no landing — "hm-hm-hmm?". More insistent than the
+    /// question, for a session where reviews need to interrupt.
+    VoiceSpec(id: "query", label: "Query", tier: .review,
+              strikes: [Strike(at: 0.00, freqs: [523.25], dur: 0.10, amp: 0.32),
+                        Strike(at: 0.11, freqs: [587.33], dur: 0.10, amp: 0.32),
+                        Strike(at: 0.22, freqs: [698.46, 1396.9], dur: 0.26, amp: 0.36)],
+              seconds: 0.6),
+
+    /// The same note twice, then a lift — a tap on the shoulder before the
+    /// question. The softest of the three, for working next to other people.
+    VoiceSpec(id: "nudge", label: "Nudge", tier: .review,
+              strikes: [Strike(at: 0.00, freqs: [392.0, 784.0], dur: 0.14, amp: 0.30),
+                        Strike(at: 0.15, freqs: [392.0, 784.0], dur: 0.14, amp: 0.28),
+                        Strike(at: 0.32, freqs: [523.25, 1046.5], dur: 0.30, amp: 0.34)],
+              seconds: 0.7),
+]
 
 /// Sounds plays one voice per resolved card.
 @MainActor
 final class Sounds {
-    /// What the Settings picker offers, in the order the shelf reads best:
-    /// quietest to loudest.
-    static let voices: [SoundVoice] = [
-        SoundVoice(id: "knock", label: "Knock"),
-        SoundVoice(id: "bell", label: "Bell"),
-        SoundVoice(id: "bells", label: "Double Bell"),
-        SoundVoice(id: "arpeggio", label: "Fanfare"),
-        SoundVoice(id: "harp", label: "Harp Run"),
-        SoundVoice(id: "question", label: "Question"),
-    ]
+    /// Every voice, in picker order. Derived from the table, so it can never
+    /// name a voice the renderer does not know.
+    static let voices: [SoundVoice] = voiceTable.map {
+        SoundVoice(id: $0.id, label: $0.label, tier: $0.tier)
+    }
+
+    /// What one tier's picker offers, that tier's default first. A voice
+    /// belongs to exactly one tier, so these partition `voices` with no
+    /// overlap: what Bulk can say, Jackpot cannot.
+    static func voices(for tier: Tier) -> [SoundVoice] {
+        voices.filter { $0.tier == tier }
+    }
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -115,9 +226,9 @@ final class Sounds {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
 
-        for (voice, spec) in Voice.specs {
-            if let buf = render(spec.0, seconds: spec.1, format: format) {
-                buffers[voice] = buf
+        for spec in voiceTable {
+            if let buf = render(spec.strikes, seconds: spec.seconds, format: format) {
+                buffers[spec.id] = buf
             }
         }
 

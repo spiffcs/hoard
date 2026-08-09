@@ -13,42 +13,22 @@
 # The team identifier lives in scan/hoard-scan-ios/Signing.xcconfig, which is
 # gitignored. This script writes a template on first run and tells you what to
 # put in it.
+#
+# For the App Store side of the same app — archive, export, upload — see
+# release-scan-ios.sh. The four setup steps the two share (xcodegen, the
+# xcconfig template, project generation, the version stamp) live in
+# scan-ios-common.sh; that file's header says why they are two scripts.
 set -euo pipefail
 
-root=$(cd "$(dirname "$0")" && pwd)
-proj_dir="$root/scan/hoard-scan-ios"
-xcconfig="$proj_dir/Signing.xcconfig"
+# shellcheck source=scan-ios-common.sh
+source "$(cd "$(dirname "$0")" && pwd)/scan-ios-common.sh"
+
+proj_dir="$scan_ios_proj_dir"
 install=false
 [ "${1:-}" = "--install" ] && install=true
 
-if ! command -v xcodegen >/dev/null 2>&1; then
-    cat >&2 <<'EOF'
-xcodegen not found. The Xcode project is generated from project.yml rather than
-checked in, so it is needed to build:
-
-    brew install xcodegen
-
-(If you would rather not add the dependency, `xcodegen generate` once elsewhere
-and commit the .xcodeproj — but then project.yml stops being the source of
-truth, so pick one.)
-EOF
-    exit 2
-fi
-
-if [ ! -f "$xcconfig" ]; then
-    team=$(security find-identity -v -p codesigning 2>/dev/null \
-        | sed -n 's/.*(\([A-Z0-9]\{10\}\))"$/\1/p' | head -1)
-    cat >"$xcconfig" <<EOF
-// Local signing identity. Gitignored — a team identifier is account data, not
-// project configuration, and it should not travel with the repo.
-DEVELOPMENT_TEAM = ${team:-YOUR_TEAM_ID}
-EOF
-    echo "wrote $xcconfig${team:+ (team $team, guessed from your keychain)}"
-    [ -z "$team" ] && {
-        echo "  no signing identity found — put your team ID in that file" >&2
-        exit 2
-    }
-fi
+ios_require_xcodegen
+ios_ensure_signing_xcconfig
 
 # The attached device's hardware UDID, read from devicectl's JSON.
 #
@@ -75,15 +55,16 @@ for dev in d.get("result", {}).get("devices", []):
         break
 ' "$devjson" 2>/dev/null)
 
-echo "Generating the Xcode project…"
-(cd "$proj_dir" && xcodegen generate --quiet)
+ios_generate_project
 
 echo "Building HoardScan…"
 # A fresh CFBundleVersion every build, so the ready event's appVersion in the
-# session log proves which build the phone is running. Numeric-dotted to stay
-# a valid bundle version; the git rev is echoed here for the human running
-# the build.
-stamp="$(date +%y%m%d.%H%M.%S)"
+# session log proves which build the phone is running. The stamp's shape — and
+# why it is UTC — is explained on ios_build_stamp in scan-ios-common.sh; the
+# short version is that the release path orders App Store uploads by this
+# number, and it is one function so that a stamp means the same thing whichever
+# script printed it. The git rev is echoed here for the human running the build.
+stamp="$(ios_build_stamp)"
 echo "Build stamp: $stamp (git $(git rev-parse --short HEAD 2>/dev/null || echo '?')$(git diff --quiet 2>/dev/null || echo '-dirty'))"
 build_args=(
     -project "$proj_dir/HoardScan.xcodeproj"

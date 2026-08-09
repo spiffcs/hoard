@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,11 +27,46 @@ func slug(s string) string {
 	return strings.Trim(nonAlnum.ReplaceAllString(strings.ToLower(s), "-"), "-")
 }
 
+// repoRoot locates the working tree from the package directory rather than
+// naming somebody's home directory. `go test` runs with the package as the
+// working directory, so the tree is two levels up; HOARD_REPO overrides it for
+// a run from anywhere else.
+func repoRoot() string {
+	if r := os.Getenv("HOARD_REPO"); r != "" {
+		return r
+	}
+	return "../.."
+}
+
+// The acceptance gates under evaluation, overridable so Stage C can sweep them
+// without editing this file.
+//
+// The defaults are the values fitted against the 64-bit hash and are WRONG for
+// the current 256-bit footprint — every distance below is drawn from a range
+// four times wider, so an unswept run reports approximately nothing decisive.
+// That is the point of running this: the eval prints per-read distances and
+// margins, and the gates get refit from those distributions, with zero
+// wrong-printing matches as the bar. See docs/sprint-artmatch-v2.md Stage C.
+func evalGates() (maxDistance, minMargin int) {
+	maxDistance, minMargin = 10, 8
+	if v, err := strconv.Atoi(os.Getenv("HOARD_ARTMATCH_MAX_DISTANCE")); err == nil {
+		maxDistance = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("HOARD_ARTMATCH_MIN_MARGIN")); err == nil {
+		minMargin = v
+	}
+	return maxDistance, minMargin
+}
+
 func TestArtMatchEval(t *testing.T) {
 	if os.Getenv("HOARD_ARTMATCH_EVAL") == "" {
 		t.Skip("set HOARD_ARTMATCH_EVAL=1 to replay the labelled corpus against the full index")
 	}
-	repo := "/Users/hal/development/hoard"
+	gateDistance, gateMargin := evalGates()
+	fmt.Printf("gates: distance ≤%d, margin ≥%d "+
+		"(override with HOARD_ARTMATCH_MAX_DISTANCE / HOARD_ARTMATCH_MIN_MARGIN)\n",
+		gateDistance, gateMargin)
+	repo := repoRoot()
 	cache, _ := os.UserCacheDir()
 	ix, err := artindex.Open(filepath.Join(cache, "hoard", "artindex"))
 	if err != nil {
@@ -105,7 +141,7 @@ func TestArtMatchEval(t *testing.T) {
 		name := slug(cards[best.ScryfallID].Name)
 		ok := name == slug(e.want)
 		mark := "  "
-		if best.Distance <= 10 && second.Distance-best.Distance >= 8 {
+		if best.Distance <= gateDistance && second.Distance-best.Distance >= gateMargin {
 			decisive++
 			if ok {
 				right++

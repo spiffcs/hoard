@@ -96,6 +96,19 @@ struct SessionView: View {
             }
         }
         .statusBarHidden()
+        // Who is arming the trigger. Exactly one of the two, never both: a Mac
+        // that connects mid-session would otherwise inherit a trigger it never
+        // armed and has no record of, and its first `auto off` would look like
+        // it had failed to take effect.
+        .onChange(of: link.connected) { _, connected in
+            if connected {
+                // Stop, and let the Mac arm it with its own verb. That keeps
+                // the protocol exactly as it was: the terminal drives.
+                camera.stopTrigger()
+            } else {
+                camera.startTrigger()
+            }
+        }
         .task {
             await camera.start()
             // Only the capture hook is wired here: the camera lives on this
@@ -121,6 +134,16 @@ struct SessionView: View {
                 cue.rect = box.flatMap { b in toLayer.map { $0(b) } }
             }
             link.onTune = { camera.tuneTrigger(stable: $0, interval: $1) }
+            // Nothing above arms the trigger. `link.onAuto` does, and it is a
+            // verb from the Mac — so with no Mac the camera runs, the preview
+            // is live, and not one frame is ever captured or read. The app
+            // looks like it is working and is doing nothing, which is exactly
+            // what an App Store reviewer with no Mac would have seen.
+            //
+            // So: drive it locally while unpaired. The terminal is still the
+            // authority whenever it is present (see this file's header) —
+            // `linkTookOver` hands control back the moment one connects.
+            if !link.connected { camera.startTrigger() }
             camera.onPhase = { phase in
                 autoPhase = phase
                 cue.phase = phase
@@ -234,7 +257,25 @@ struct SessionView: View {
             // error when it is usually just a card halfway onto the mat. The
             // read goes to the wire and to SessionLog either way, so nothing is
             // lost by not saying it here.
-            if developerMode, !lastRead.isEmpty {
+            //
+            // Both of those hold *while a Mac is driving*, and only then. The
+            // queue, the tally and the running total are on the terminal, so
+            // the phone repeating the read is noise, and a miss mid-box reads
+            // as an error when it is usually a card halfway onto the mat.
+            //
+            // Unpaired, every one of those premises is false. There is no
+            // terminal, no queue, and nothing else on screen — the read is the
+            // only evidence the app works at all, and hiding it is why an App
+            // Store reviewer would conclude it does not. Shown larger there
+            // for the same reason: it is the answer, not a diagnostic.
+            if !link.connected, !lastRead.isEmpty {
+                Text(lastRead)
+                    .font(.callout.weight(.semibold).monospaced())
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal)
+            } else if developerMode, !lastRead.isEmpty {
                 Text(lastRead).font(.caption2.monospaced()).lineLimit(1)
             }
             // The per-capture timing used to sit here — "163ms shutter · 299ms
@@ -393,9 +434,56 @@ struct SessionView: View {
             // never sit in front of the result the operator is waiting to hear.
             link.sendStill(frame.image)
             camera.focus(afterGoodRead: !reading.title.isEmpty)
+            // The set row exactly as the card prints it: set code, collector
+            // number, and the separator glyph — ★ for foil, • for nonfoil.
+            //
+            // An empty finish renders **nothing**, and that is the whole point
+            // of the three-way. `Printing.finish` is empty when the frame
+            // prints no marker at all or the glyph was unreadable, and
+            // Collector.swift is emphatic that empty is not nonfoil: old
+            // frames carry no marker, so drawing a dot from silence would show
+            // as read something that was never printed — and foil is worth a
+            // multiple of nonfoil, so that is the expensive direction to guess
+            // in.
+            //
+            // **Only the printed glyph.** `finish` has two sources and they
+            // are not the same kind of statement. "separator" is the set row's
+            // marker read as text — the card said so. "sparkle-<channel>" is
+            // BorderKit inferring foil from a retro frame's starburst, which
+            // docs/scanner-limits.md §6 measures at 53% recall overall and
+            // between 23% and 69% across three rigs on identical code.
+            //
+            // This line is an account of what the camera *read*, shown to
+            // someone holding the card, who can see for themselves whether it
+            // is foil. Rendering an inference in the same glyph as a reading
+            // would make the two indistinguishable at exactly the moment the
+            // difference is checkable — and a ★ that is wrong a third of the
+            // time is worse than no ★, because it teaches the reader to
+            // believe it.
+            //
+            // The wire is untouched: `link.sendScan` still carries `finish`
+            // and `finishSource` in full, so the Mac keeps treating any
+            // present finish as evidence and nothing about auto-commit
+            // changes. This is a display rule, not a protocol one.
+            let printing = reading.printing
+            var mark = ""
+            if printing.finishSource == "separator" {
+                switch printing.finish {
+                case "foil": mark = "★"
+                case "nonfoil": mark = "•"
+                default: break
+                }
+            }
+            // Joined by filtering rather than interpolating, so a pre-1998
+            // card — which prints neither a set code nor a collector number —
+            // reads as its bare title instead of a name trailed by the spaces
+            // where two empty fields used to be.
+            let detail = [printing.setCode, printing.number, mark]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
             lastRead = reading.title.isEmpty
                 ? "(nothing read)"
-                : "\(reading.title)  \(reading.printing.setCode) \(reading.printing.number)"
+                : detail.isEmpty ? reading.title : "\(reading.title)  \(detail)"
             // Park the trigger on what was just shot, whatever fired it. A
             // manual shutter must do this too or the trigger can double-fire
             // on the same card.

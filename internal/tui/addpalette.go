@@ -13,6 +13,7 @@ package tui
 // which is exactly the part a shared control should not own.
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -74,6 +75,7 @@ func addCommands() []addCommand {
 			PaletteItem: ui.PaletteItem{
 				Title:   "Done",
 				Aliases: "finish exit quit close collection back",
+				Desc:    "End the session and go back to your collection. Everything added is already saved; anything still waiting for review is dropped.",
 				Key:     "ctrl+d",
 			},
 			applies: func(m model) bool { return true },
@@ -182,19 +184,44 @@ func (m model) handleAddPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // finishAdding ends the session and hands the terminal back — the browser's
 // collection view when embedded, the shell when standalone.
 //
-// Queued cards do not block it. They used to: ctrl+d refused outright with
-// "finish or ctrl+s them first", which is a refusal that makes someone hunt
-// for a second key before they can leave a view they have already decided to
-// leave. It asks instead, with the same gate esc has always shown, and the
-// count in the prompt is what makes the answer an informed one.
+// Nothing blocks it and nothing asks. ctrl+d is the key for "this session is
+// over", and a session someone has already declared over should not answer
+// with a question — every card that committed is on disk before the key is
+// pressed, so there is no unsaved work to protect and nothing to warn about.
+// esc is the deliberate exit that still asks; the two keys differ precisely in
+// that, which is why both exist.
+//
+// The unanswered queue is what makes the no-warning finish safe, and it is not
+// dropped here: embedded, it is left standing for the parent to take (see
+// Pending), so the next `a` opens on the same cards. Standalone there is no
+// parent to take it — the process *is* the session — so it goes into the
+// receipt as discarded, which is the honest word for it there.
+//
+// Resolutions still in flight go either way: their command was issued into a
+// program that is about to stop reading messages, so there is nothing to carry
+// and nothing that could arrive. They are always the discarded count.
 func (m model) finishAdding() (tea.Model, tea.Cmd) {
-	if m.reviewing() || len(m.review) > 0 || m.resolving > 0 {
-		m.leaveFrom = m.state
-		m.state = stateLeaveConfirm
-		return m, nil
+	m.closeSession()
+	// Bumped so a resolve still in flight can't land on a finished session.
+	m.resolveGen++
+	dropped := m.resolving
+	m.resolving = 0
+	if m.reviewing() {
+		// The card in hand goes back to the head of the queue it was taken
+		// from — the walk is ending with it unanswered, which is the same
+		// thing as never having been walked.
+		m.review = append([]queueItem{*m.current}, m.review...)
+		m.current = nil
+	}
+	m.walking = false
+	if !m.embedded {
+		dropped += len(m.review)
+		m.review = nil
+	}
+	if dropped > 0 {
+		m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
 	}
 	m.done = true
-	m.closeSession()
 	return m, tea.Quit
 }
 

@@ -7,7 +7,7 @@ builds:
   # target cross-compiles from the ubuntu runner with no toolchain wrangling.
   - id: hoard-linux
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
@@ -19,7 +19,7 @@ builds:
 
   - id: hoard-windows
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [windows]
     goarch: [amd64, arm64]
@@ -31,7 +31,7 @@ builds:
   # credentials and talks to nobody.
   - id: hoard-darwin
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [darwin]
     goarch: [amd64, arm64]

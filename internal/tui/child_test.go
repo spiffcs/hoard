@@ -25,6 +25,131 @@ func TestChildCtrlDSetsDoneAndSwallowsQuit(t *testing.T) {
 	}
 }
 
+// The scanning view advertises ctrl+d, and ctrl+d ends the session from it
+// without a gate — the pile is finished, the operator's hands are full, and
+// the receipt for everything committed is already on disk.
+func TestCaptureAdvertisesAndHonoursCtrlD(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
+	m, _ = openCapture(t, m)
+
+	// Just through the new entry: the line wraps at the terminal's width, so
+	// asserting across the esc/ctrl+c tail would be asserting on where the
+	// wrap happens to fall.
+	if v := m.View(); !strings.Contains(v, "c close camera · ctrl+d done") {
+		t.Fatalf("capture help line is missing ctrl+d:\n%s", v)
+	}
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlD})
+	got := mm.(model)
+	if !got.done {
+		t.Fatalf("ctrl+d did not finish from the camera: state = %v", got.state)
+	}
+	if got.session != nil {
+		t.Fatal("the camera session outlived the finish")
+	}
+}
+
+// Embedded, ctrl+d pauses the pile rather than dropping it: the unanswered
+// queue is handed to the parent, and the next cascade opens holding it. The
+// receipt says nothing about a discard, because nothing was discarded.
+func TestCtrlDPausesTheQueueWhenEmbedded(t *testing.T) {
+	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	c.m.review = []queueItem{
+		{id: 4, canonical: "Sol Ring", captureSeq: 7},
+		{id: 5, ocrLine: "brainstorrn", captureSeq: 8},
+	}
+	// A card mid-walk belongs to the queue too — it was taken off it.
+	c.m.current = &queueItem{id: 3, canonical: "Counterspell", captureSeq: 6}
+
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if !c.Done() {
+		t.Fatal("ctrl+d did not finish")
+	}
+	p := c.Pending()
+	if p.Len() != 3 {
+		t.Fatalf("Pending().Len() = %d, want the walked card back with the other two", p.Len())
+	}
+	if p.items[0].canonical != "Counterspell" {
+		t.Fatalf("the card in hand is not at the head of the queue: %+v", p.items[0])
+	}
+	for _, e := range c.Summary().Entries {
+		if e.Kind == "discarded" {
+			t.Fatalf("a paused queue must not read as discarded: %q", e.Line)
+		}
+	}
+
+	// The next session opens on the same cards, says so, and offers the door.
+	next := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	next.Restore(p)
+	next, _ = next.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	if got := len(next.m.review); got != 3 {
+		t.Fatalf("restored queue holds %d cards, want 3", got)
+	}
+	v := next.View()
+	if !strings.Contains(v, "3 scanned cards are still waiting for review") {
+		t.Fatalf("the restored session doesn't say what it is holding:\n%s", v)
+	}
+	if !strings.Contains(v, "tab review queue (3)") {
+		t.Fatalf("the restored queue has no advertised door:\n%s", v)
+	}
+	// A new capture must not be able to claim a restored card's identity: ids
+	// key the queue, and captureSeq is what tells a fanned playset from an
+	// un-swapped pile.
+	if next.m.nextResolveID < 5 || next.m.captureSeq < 8 {
+		t.Fatalf("counters not advanced past the restored cards: id=%d seq=%d",
+			next.m.nextResolveID, next.m.captureSeq)
+	}
+}
+
+// The restored queue is reachable and leaveable with no camera anywhere in
+// the picture — tab opens it, and backing out lands on the name prompt
+// rather than a capture view for a session that isn't running.
+func TestRestoredQueueWalksFromTheNamePrompt(t *testing.T) {
+	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	c.Restore(Pending{items: []queueItem{{id: 1, canonical: "Sol Ring"}}})
+	c, _ = c.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if c.m.state != stateQueueReview {
+		t.Fatalf("tab did not open the queue: state = %v", c.m.state)
+	}
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if c.m.state != stateName {
+		t.Fatalf("esc out of the queue landed on %v, want the name prompt", c.m.state)
+	}
+	if c.m.session != nil {
+		t.Fatal("no camera should have been opened by any of that")
+	}
+}
+
+// The leave gate opens with the count of what is already on disk, in the
+// same green the auto-add receipts use — esc is asked by people who want to
+// know whether leaving costs them anything, and the answer is usually no.
+func TestLeaveGateStatesWhatWasSaved(t *testing.T) {
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	m.addedCount = 12
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mm.(model)
+	if m.state != stateLeaveConfirm {
+		t.Fatalf("esc did not open the gate: state = %v", m.state)
+	}
+	v := m.View()
+	if !strings.Contains(v, "12 cards automatically saved to the database") {
+		t.Fatalf("the gate does not say what was saved:\n%s", v)
+	}
+	if !strings.Contains(v, "quit add session?") {
+		t.Fatalf("the gate lost its prompt:\n%s", v)
+	}
+
+	// One card is one card: a gate that reads "1 cards" undercuts the
+	// reassurance it exists to give.
+	one := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
+	one.addedCount = 1
+	mm, _ = one.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if v := mm.(model).View(); !strings.Contains(v, "1 card automatically saved") {
+		t.Fatalf("singular not handled:\n%s", v)
+	}
+}
+
 // esc walks the leave gate: the first press asks, a single y leaves, and
 // any other key stays in the session.
 func TestChildEscGatesLeavingBehindY(t *testing.T) {

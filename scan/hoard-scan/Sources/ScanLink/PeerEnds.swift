@@ -39,6 +39,12 @@ public final class PeerListener {
     /// half-session was dropped. The counterpart to `onPeerVerified`.
     public var onPeerLost: (() -> Void)?
     public var onError: ((String) -> Void)?
+    /// A peer just paired for the first time and was pinned.
+    ///
+    /// The phone uses this to burn the code it just showed: a pairing token
+    /// that stays valid after it has been used is a password, and this one is
+    /// six digits.
+    public var onPaired: ((Data) -> Void)?
 
     private let code: PairingCode
     /// Empty means "let Bonjour use the device's own name".
@@ -85,9 +91,22 @@ public final class PeerListener {
     /// one second, not a lockout.
     private var refuseUntil = Date.distantPast
 
-    public init(name: String, code: PairingCode) {
+    /// What this listener presents and accepts. `nil` is plaintext — the way
+    /// this link worked until 2026-08-08, kept only for tests about framing.
+    private let trust: PeerTrust?
+    /// Where a newly paired peer gets recorded. Separate from `trust` because
+    /// `trust` is a snapshot taken when parameters were built and this is a
+    /// live store: pinning during a session must not mutate the set the
+    /// running verify block closed over.
+    private let pins: PinnedPeers?
+
+    public init(
+        name: String, code: PairingCode, trust: PeerTrust? = nil, pins: PinnedPeers? = nil
+    ) {
         self.name = name
         self.code = code
+        self.trust = trust
+        self.pins = pins
     }
 
     public func start() throws {
@@ -100,7 +119,7 @@ public final class PeerListener {
         listener?.cancel()
         // The role only affects Nagle, and the listener accepts both kinds on
         // one port; control's parameters are the stricter of the two.
-        let params = parameters(role: .control)
+        let params = parameters(role: .control, trust: trust, queue: queue)
         let listener = try NWListener(using: params)
         listener.service = name.isEmpty
             ? NWListener.Service(type: scanServiceType)
@@ -168,7 +187,31 @@ public final class PeerListener {
             // connection dropped and never reaches the session — the scanner
             // auto-commits, so this is the difference between a companion app
             // and an open write endpoint on the local network.
-            guard verifyProof(hello.proof, session: hello.session, code: self.code) else {
+            // An already-pinned peer does not present the code at all.
+            //
+            // This is what makes a rotating code possible, and it is the whole
+            // point of the identity work: a peer that completed TLS against a
+            // fingerprint this device pinned has already proved something
+            // stronger than six digits, and demanding the digits again would
+            // mean the code could never change without breaking every existing
+            // pairing. That is exactly the constraint LinkController's comment
+            // described when it explained why the code was static.
+            //
+            // Note the ordering this depends on: `acceptUnknown` false means an
+            // unpinned peer cannot finish the handshake, so anything reaching
+            // here with an unknown fingerprint is in an open pairing window.
+            let known = self.pins.flatMap { store in
+                link.peerFingerprint.map { store.all.contains($0) }
+            } ?? false
+
+            // Bound to *this* listener's own certificate. The peer signed the
+            // fingerprint it observed, so a relay that terminated TLS and
+            // re-opened it presents its own certificate to the peer and cannot
+            // produce a proof that matches what is checked here — which is the
+            // whole reason the fingerprint is in the MAC.
+            guard known || verifyProof(
+                hello.proof, session: hello.session, code: self.code,
+                ownFingerprint: self.trust?.identity.fingerprint) else {
                 self.accepting.removeValue(forKey: ObjectIdentifier(link))
                 link.cancel()
                 self.refuseUntil = Date().addingTimeInterval(1)
@@ -177,6 +220,14 @@ public final class PeerListener {
             }
             // One hello per connection; everything after it is session traffic
             // and belongs to whoever took the session.
+            // Proved the code and, if this is a TLS link, proved which
+            // certificate it was looking at. That is the trust-on-first-use
+            // moment: from here the fingerprint authenticates and the code is
+            // not needed again.
+            if !known, let pins = self.pins, let seen = link.peerFingerprint {
+                pins.pin(seen, name: self.name)
+                self.onPaired?(seen)
+            }
             link.onFrame = nil
             self.accepting.removeValue(forKey: ObjectIdentifier(link))
             link.assign(role: hello.role)
@@ -306,21 +357,33 @@ public final class PeerBrowser {
     }
 
     /// connect opens both connections of a session.
-    public func connect(to service: PeerService, code: PairingCode) -> PeerSession {
+    public func connect(
+        to service: PeerService, code: PairingCode, trust: PeerTrust? = nil
+    ) -> PeerSession {
         let session = UUID().uuidString
         func open(_ role: PeerRole) -> PeerLink {
-            let conn = NWConnection(to: service.endpoint, using: parameters(role: role))
+            let conn = NWConnection(
+                to: service.endpoint,
+                using: parameters(role: role, trust: trust, queue: queue))
             let link = PeerLink(connection: conn, role: role, queue: queue)
-            link.start()
-            // The hello goes out immediately; NWConnection queues sends made
-            // before ready and flushes them when the handshake completes, so
-            // there is nothing to wait for.
-            let hello = PeerHello(
-                role: role, session: session,
-                proof: proof(session: session, code: code))
-            if let frame = Frame.json(hello) {
-                link.send(frame)
+            // The hello now waits for `.ready` rather than going out
+            // immediately. It used to rely on NWConnection queueing sends made
+            // before the handshake completes — true, and no longer sufficient:
+            // the proof commits to the peer's certificate fingerprint, and
+            // that does not exist until TLS has settled. A hello sent early
+            // would carry a proof bound to nothing and fail the check on the
+            // far side, which would report as a wrong pairing code.
+            link.onReady = { [weak link] in
+                guard let link else { return }
+                let hello = PeerHello(
+                    role: role, session: session,
+                    proof: proof(session: session, code: code,
+                                 peerFingerprint: link.peerFingerprint))
+                if let frame = Frame.json(hello) {
+                    link.send(frame)
+                }
             }
+            link.start()
             return link
         }
         return PeerSession(control: open(.control), preview: open(.preview))

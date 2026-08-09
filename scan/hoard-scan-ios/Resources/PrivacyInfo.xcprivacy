@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The privacy manifest. Required since May 2024 for any app that touches one of
+  Apple's "required reason" APIs, and checked at upload rather than at review.
+
+  This one is nearly empty, and that is the honest answer rather than an
+  optimistic one. The app has no accounts, no analytics and no third-party SDKs:
+  hoard-scan/Package.swift declares no `.package(url:)` at all, every target
+  depends only on its siblings and Apple frameworks, and there is no
+  Package.resolved because there is nothing to resolve. Reads run on-device
+  through CardKit and go to a Mac on the same Wi-Fi. Nothing is sent anywhere
+  else, so there is nothing to declare as collected and nobody to name as a
+  tracking domain.
+
+  Coverage is a property of the whole linked binary, not of the app target's own
+  sources. The grep that produced the one entry below ran across
+  scan/hoard-scan-ios/Sources and all four linked package targets (CardKit,
+  BorderKit, ScanLink, ScanWire), for each of the four required-reason
+  categories:
+
+    - File timestamps: nothing. SessionLog is the only thing here that touches
+      the filesystem and it uses FileHandle(forWritingTo:), seekToEnd() and
+      write(contentsOf:) — none of which are on the list. It never asks a file
+      how old it is, so `creationDate`, `modificationDate`, `getattrlist`,
+      `fstat` and `stat` all return no hits.
+    - System boot time: nothing. No `systemUptime`, no `mach_absolute_time`.
+      The capture loop times itself with `Date`/`CFAbsoluteTime`, which are not
+      required-reason APIs.
+    - Disk space: nothing. Nothing here asks how full the phone is.
+    - Active keyboards: nothing. No `activeInputModes`.
+
+  Re-run that grep after any new dependency lands. A manifest that was correct
+  when it was written is not evidence that it is correct now.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!--
+			  UserDefaults, and it genuinely applies. Two independent readers:
+			  DevMode.key through @AppStorage in PairingView.swift and
+			  SessionView.swift (@AppStorage *is* UserDefaults, which is easy to
+			  forget because it does not look like it), and TierSettings.swift,
+			  which holds a UserDefaults directly and reads and writes the
+			  "tiers.*" keys for the price tiers and their voices.
+
+			  An earlier note claimed this category did not apply because the
+			  pairing code lives in the Keychain. That is true of the code —
+			  PairingStore.swift uses SecItem* deliberately, and the Keychain is
+			  not a required-reason API — and irrelevant to the preferences.
+
+			  CA92.1 is "access info from the app's own container, or from the
+			  app group's container," which is exactly what both readers do:
+			  standard defaults, no suite, no app group, nothing read back out.
+			-->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+</dict>
+</plist>

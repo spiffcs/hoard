@@ -11,25 +11,53 @@ import (
 	"image/color"
 	"math"
 	"math/bits"
+	"sort"
 )
 
-// Hash is a 64-bit DCT perceptual hash. Two images of the same printing land
+// Hash is a 256-bit DCT perceptual hash. Two images of the same printing land
 // within a few bits of each other across JPEG recompression, mild blur and
 // exposure shifts; different printings land tens of bits apart.
-type Hash uint64
+//
+// Four words rather than one, since 2026-08-08. The 64-bit version measured
+// 31/35 correct nearest-neighbour on hand-held stills but with margins of only
+// 2-6 bits between the winner and the runner-up — too thin to gate on, because
+// foil glare compresses exactly those low frequencies. More bits is the direct
+// answer: the same distortion moves a proportional number of bits either way,
+// so a wider hash separates the same pair by a wider absolute margin.
+type Hash [hashWords]uint64
 
 // Distance is the Hamming distance between two hashes.
-func (h Hash) Distance(o Hash) int { return bits.OnesCount64(uint64(h ^ o)) }
+func (h Hash) Distance(o Hash) int {
+	d := 0
+	for i := range h {
+		d += bits.OnesCount64(h[i] ^ o[i])
+	}
+	return d
+}
 
 // phashSize is the working grid: the image is reduced to 32x32 grayscale, a
-// 2D DCT is taken, and the hash is the sign of the lowest 8x8 frequencies
+// 2D DCT is taken, and the hash is the sign of the lowest 16x16 frequencies
 // against their median. The standard construction — chosen over average-hash
 // because the DCT's low frequencies survive the exact distortions a phone
 // capture adds (lighting gradients, slight blur), which an intensity mean
 // does not.
+//
+// The grid stays 32x32 while the keep block grows to 16x16. That pairing is
+// deliberate: the DCT of a 32x32 block has 32x32 coefficients, so a 16x16 keep
+// is still the lower half of the spectrum in each axis — real image structure,
+// not the sampling noise the top octave carries.
 const (
 	phashSize = 32
-	phashKeep = 8
+	phashKeep = 16
+	// hashBits is the keep block minus the DC term, which is dropped because
+	// it is overall brightness — the one thing two photographs of one card
+	// never share. 255 bits in 4 words leaves the top bit of the last word
+	// always zero; that costs nothing and keeps the layout arithmetic plain.
+	hashBits  = phashKeep*phashKeep - 1
+	hashWords = 4
+	// maxDistance is every bit differing. Callers seed their "nothing found
+	// yet" sentinel above this.
+	maxDistance = hashWords * 64
 )
 
 // FromCard hashes a full-card image by its central region — the art and the
@@ -68,9 +96,9 @@ func FromImage(img image.Image) Hash {
 	px := grayGrid(img)
 	d := dct2d(px)
 
-	// The 8x8 low-frequency block, skipping the DC term — DC is overall
+	// The 16x16 low-frequency block, skipping the DC term — DC is overall
 	// brightness, the one thing two photographs of one card never share.
-	var vals []float64
+	vals := make([]float64, 0, hashBits)
 	for y := 0; y < phashKeep; y++ {
 		for x := 0; x < phashKeep; x++ {
 			if x == 0 && y == 0 {
@@ -89,7 +117,7 @@ func FromImage(img image.Image) Hash {
 				continue
 			}
 			if d[y][x] > med {
-				h |= 1 << bit
+				h[bit/64] |= 1 << (bit % 64)
 			}
 			bit++
 		}
@@ -134,16 +162,28 @@ func grayGrid(img image.Image) [phashSize][phashSize]float64 {
 	return px
 }
 
-// dct2d is the type-II DCT of a 32x32 block, direct evaluation. ~130k
-// multiplies with the cosine table hoisted — microseconds per image, and the
-// index build is network-bound regardless.
-func dct2d(px [phashSize][phashSize]float64) [phashSize][phashSize]float64 {
+// dctCos is the cosine table, built once for the process.
+//
+// It used to be rebuilt inside dct2d on every call — 1024 math.Cos evaluations
+// per image — while the comment above dct2d claimed it was hoisted. That cost
+// nothing worth measuring while the only caller was a network-bound build
+// paced at ten images a second. `artindex rehash` changed that: it reads the
+// image corpus off local disk, so the whole ~107k-printing pass is CPU-bound
+// and this table would be rebuilt 107k times for no reason.
+var dctCos = func() [phashSize][phashSize]float64 {
 	var cos [phashSize][phashSize]float64
 	for k := 0; k < phashSize; k++ {
 		for n := 0; n < phashSize; n++ {
 			cos[k][n] = math.Cos(math.Pi / phashSize * (float64(n) + 0.5) * float64(k))
 		}
 	}
+	return cos
+}()
+
+// dct2d is the type-II DCT of a 32x32 block, direct evaluation. ~130k
+// multiplies against the hoisted cosine table — microseconds per image.
+func dct2d(px [phashSize][phashSize]float64) [phashSize][phashSize]float64 {
+	cos := dctCos
 	var tmp, out [phashSize][phashSize]float64
 	for y := 0; y < phashSize; y++ { // rows
 		for k := 0; k < phashSize; k++ {
@@ -166,12 +206,14 @@ func dct2d(px [phashSize][phashSize]float64) [phashSize][phashSize]float64 {
 	return out
 }
 
+// median of the kept coefficients — the threshold every hash bit is taken
+// against.
+//
+// sort.Float64s rather than the insertion sort this used to carry. That was
+// justified at n=63; at n=255 it is 16x the comparisons, and `artindex rehash`
+// runs it ~107k times back to back with no network in between to hide it.
 func median(v []float64) float64 {
 	s := append([]float64(nil), v...)
-	for i := 1; i < len(s); i++ { // insertion sort: n=63, once per image
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+	sort.Float64s(s)
 	return s[len(s)/2]
 }

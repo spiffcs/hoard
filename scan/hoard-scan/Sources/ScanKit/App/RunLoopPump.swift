@@ -5,6 +5,7 @@
 // main queue they are already running on.
 
 import Foundation
+import ScanLink
 
 /// spinRunLoop pumps the main run loop for up to `seconds`, returning as soon as
 /// `ready()` is true.
@@ -44,4 +45,33 @@ final class Flag: @unchecked Sendable {
         defer { lock.unlock() }
         return value
     }
+}
+
+/// The last `LinkFailure` a connection reported, readable from another queue.
+///
+/// The sibling of `Flag`, and it exists for the same reason: state is written
+/// from the link's own queue and read from the main queue that `spinRunLoop`
+/// is pumping, and hopping to the main queue to record it deadlocks — that
+/// block cannot run until the pumping one returns. See the note on
+/// `RemoteController.verify`, which is where that was measured.
+final class LastFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: LinkFailure?
+
+    func record(_ reason: LinkFailure) {
+        lock.lock()
+        // First failure wins. A connection tearing down reports a cascade, and
+        // the later entries are consequences of the first — "iPhone
+        // disconnected" after a TLS error names the symptom over the cause.
+        if failure == nil { failure = reason }
+        lock.unlock()
+    }
+
+    var value: LinkFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return failure
+    }
+
+    var isSet: Bool { value != nil }
 }
