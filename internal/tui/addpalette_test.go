@@ -134,9 +134,11 @@ func TestDoneFinishesWhenNothingIsPending(t *testing.T) {
 	}
 }
 
-// Queued cards no longer refuse the finish — they ask, through the same gate
-// esc has always shown, and the prompt says what leaving would cost.
-func TestDoneAsksRatherThanRefusingWhenCardsAreQueued(t *testing.T) {
+// Queued cards neither refuse the finish nor gate it. Standalone — this
+// model is not embedded — there is no next session to hand them to, so the
+// queue goes with the process and the summary line is the only trace. See
+// TestCtrlDPausesTheQueueWhenEmbedded for the other half.
+func TestDoneDropsQueuedCardsWithoutAskingStandalone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		act  func(model) model
@@ -154,32 +156,30 @@ func TestDoneAsksRatherThanRefusingWhenCardsAreQueued(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := paletteModel(t, &fakeScanner{})
 			m.review = []queueItem{{ocrLine: "x"}, {ocrLine: "y"}}
+			m.resolving = 1
 			m = tc.act(m)
 
-			if m.done {
-				t.Fatal("queued cards must not be dropped without asking")
+			if !m.done {
+				t.Fatalf("queued cards must not hold the session open: state = %v", m.state)
 			}
-			if m.state != stateLeaveConfirm {
-				t.Fatalf("state = %v, want the leave gate", m.state)
+			// Nothing was asked, so the receipt is where the drop is
+			// answerable for — all three of them, the in-flight resolve
+			// included.
+			var got string
+			for _, e := range m.summary.Entries {
+				if e.Kind == "discarded" {
+					got = e.Line
+				}
 			}
-			v := m.viewContent()
-			if !strings.Contains(v, "2 unsaved scans will be dropped") {
-				t.Fatalf("the gate must say what leaving costs:\n%s", v)
+			if got != "3 scanned cards discarded unprocessed" {
+				t.Fatalf("summary discard line = %q, want all three accounted for", got)
 			}
-			// The old behaviour, which must not come back: a refusal that
-			// sent you hunting for ctrl+s before you could leave.
-			if strings.Contains(v, "finish or ctrl+s them first") {
-				t.Fatalf("done refused instead of asking:\n%s", v)
-			}
-
-			// y leaves, anything else stays.
-			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-			if next.(model).done {
-				t.Fatal("a stray key on the gate must stay")
-			}
-			next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-			if !next.(model).done {
-				t.Fatal("y on the gate must finish")
+			// The old behaviours, neither of which should come back: a
+			// refusal that sent you hunting for ctrl+s, and the gate that
+			// replaced it.
+			if len(m.review) != 0 || m.resolving != 0 {
+				t.Fatalf("queue survived the finish: %d queued, %d resolving",
+					len(m.review), m.resolving)
 			}
 		})
 	}

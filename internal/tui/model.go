@@ -168,11 +168,6 @@ type model struct {
 	searcher Searcher
 	adder    Adder
 	scanner  Scanner
-	// art is the picture-identification channel, nil when any of its pieces
-	// (built index, by-id searcher, stills dir, probe) is missing — see
-	// newArtMatcher. Nil is the pre-art scanner, exactly.
-	art *artMatcher
-
 	// theme is the shared ui palette — no styles are defined in this package.
 	theme ui.Theme
 
@@ -440,7 +435,6 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	m := model{
 		ctx:       ctx,
 		searcher:  s,
-		art:       newArtMatcher(s),
 		adder:     add,
 		scanner:   sc,
 		theme:     th,
@@ -614,16 +608,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resolveDoneMsg:
 		return settleAfterResolve(m.onResolveDone(msg))
 
-	case artMatchMsg:
-		// A decisive picture match re-enters as an ordinary better read: the
-		// same gen check, upgradeQueued, dup rules and verdict as any other
-		// resolution — art evidence gets no private path to the collection.
-		if msg.gen != m.resolveGen {
-			return m, nil
-		}
-		return settleAfterResolve(m.onResolveDone(resolveDoneMsg{
-			gen: msg.gen, item: msg.item, supplementary: true}))
-
 	case nudgeMsg:
 		return m.onNudge(msg)
 
@@ -697,16 +681,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status, m.statusErr = "skipped", false
 		return m.afterCard()
 	}
-	// ctrl+d finishes the add session from anywhere: everything confirmed so
-	// far is already saved, and the receipt says so. Pending review work does
-	// not block it — it asks, through the same gate esc uses, so leaving is a
-	// decision rather than an errand. See finishAdding.
-	//
-	// Not while a confirm is already up: ctrl+d there would re-enter the gate
-	// with leaveFrom pointing at the gate itself, and declining would loop.
-	if msg.Type == tea.KeyCtrlD &&
-		m.state != stateLeaveConfirm && m.state != stateAbandonConfirm &&
-		m.state != stateClosePrompt {
+	// ctrl+d finishes the add session from anywhere, with no gate: everything
+	// confirmed so far is already saved. Every state, including the confirms —
+	// a key that means "I'm done" has nothing to ask on a screen that is
+	// already asking, and the two gates it used to be excluded from were
+	// excluded only because it opened a third one on top of them. See
+	// finishAdding for what happens to queued scans.
+	if msg.Type == tea.KeyCtrlD {
 		m.addPalette = nil
 		return m.finishAdding()
 	}
@@ -728,6 +709,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// the browser's quit confirm.
 			m.leaveFrom = stateName
 			m.state = stateLeaveConfirm
+			return m, nil
+		case tea.KeyTab:
+			// The same key the camera uses for the same list. It matters
+			// here because a restored queue (see Child.Restore) arrives with
+			// no camera open: without this the cards would be carried across
+			// sessions to a screen with no way to reach them.
+			if len(m.review) > 0 {
+				return m.showReviewList()
+			}
 			return m, nil
 		case tea.KeyCtrlP:
 			// Pairing a phone deliberately, rather than meeting the prompt on the
@@ -889,7 +879,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Type {
 		case tea.KeyTab, tea.KeyEsc:
-			// Back to the camera; the queue keeps whatever it holds.
+			// Back where the list was opened from; the queue keeps whatever
+			// it holds. stateCapture is only a place to go while a session is
+			// live — a restored queue is browsed from the name prompt with no
+			// camera at all, and sending that back to the capture view would
+			// render "Scanning with…" over a camera that isn't running.
+			if m.session == nil {
+				return m.resetForNext()
+			}
 			m.state = stateCapture
 			return m, nil
 		case tea.KeyEnter:
@@ -2225,14 +2222,8 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			m.note("rescue %q: rearm sent into held", it.canonical)
 		}
 	}
-	// The picture channel runs beside the retry, not instead of it: whichever
-	// answers first wins through upgradeQueued, and both losing leaves the
-	// card queued exactly as before. notBefore excludes the previous
-	// capture's still — this capture's own still lands after its event, and
-	// at pile pace the predecessor's is already older than this margin.
-	art := m.artMatchCmd(it, m.now().Add(-400*time.Millisecond))
 	next, cmd := m.reviewChanged()
-	return next, tea.Batch(cmd, nudge, deadline, art)
+	return next, tea.Batch(cmd, nudge, deadline)
 }
 
 // suppressRepeat drops a repeat sighting of a card already handled, and keeps
@@ -3157,6 +3148,14 @@ func (m model) viewContent() string {
 			}
 			e = append(e, ui.K("ctrl+p", "pair"), ui.K("ctrl+o", open))
 		}
+		// Only with cards in it, and with the count in the label: the queue
+		// is normally the camera's business, and the one time this prompt
+		// has one is when a previous session handed its leftovers over. A
+		// bare "tab review" would then be advertising an empty list on every
+		// ordinary add.
+		if n := len(m.review); n > 0 {
+			e = append(e, ui.K("tab", fmt.Sprintf("review queue (%d)", n)))
+		}
 		e = append(e, ui.K("enter", "search"), ui.K("ctrl+d", "done"),
 			ui.K("esc", m.escWord()), ui.K("ctrl+c", "force quit"))
 		help := ui.Help(e...)
@@ -3263,7 +3262,11 @@ func (m model) viewContent() string {
 		if len(m.tally) > tallyShown {
 			e = append(e, ui.K("↑/↓", "history"))
 		}
-		e = append(e, ui.K("c", "close camera"),
+		// ctrl+d sits where it sits on the name view — between this view's own
+		// keys and the two exits — because it is the ordinary way a scanning
+		// session ends, and the reader who has finished a pile is looking for
+		// it here rather than reading `c` and `esc` as a two-step guess at it.
+		e = append(e, ui.K("c", "close camera"), ui.K("ctrl+d", "done"),
 			ui.K("esc", m.escWord()), ui.K("ctrl+c", "force quit"))
 		b.WriteString(m.help(ui.Help(e...)))
 		return b.String()
@@ -3282,14 +3285,33 @@ func (m model) viewContent() string {
 		b.WriteString(m.help("enter review them now · d discard them · esc back to camera"))
 		return b.String()
 	case stateLeaveConfirm:
-		// The browser's quit confirm, word for word in shape: red prompt,
-		// dim y/n, one line. Same gate, same look — plus the cost, when
-		// quitting would drop scanned-but-unsaved cards.
+		// The browser's quit confirm, red prompt and dim y/n — over a green
+		// line that answers the question the gate exists for. "Did that even
+		// save?" is what esc is really asking, and a bare prompt answered it
+		// only by omission: the tally scrolls, the counter sits in help-dim
+		// text, and neither is on screen at the moment someone is deciding
+		// whether leaving costs them the pile they just scanned. Saying the
+		// number in the same colour the auto-add receipts use makes leaving
+		// an informed act rather than a hopeful one.
+		//
+		// addedCount, not len(m.tally): the tally is a capped window (see
+		// tallyCap) and undercounts past a few hundred cards, and it holds
+		// only the auto-commits — a card confirmed through review or typed in
+		// by hand is just as saved.
+		noun := "cards"
+		if m.addedCount == 1 {
+			noun = "card"
+		}
+		saved := m.theme.OK.Render(fmt.Sprintf(
+			"%d %s automatically saved to the database", m.addedCount, noun))
+		// The cost of leaving still rides on the prompt, and only when there
+		// is one: scans that never committed die with the session, and the
+		// one moment that is worth knowing is this one.
 		prompt := "quit add session?"
 		if n := len(m.review) + m.resolving; n > 0 {
 			prompt = fmt.Sprintf("quit add session? %d unsaved scans will be dropped", n)
 		}
-		return m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
+		return saved + "\n" + m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
 	case stateAbandonConfirm:
 		n := len(m.review) + m.resolving + 1
 		return m.theme.Err.Render(fmt.Sprintf(

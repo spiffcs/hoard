@@ -367,8 +367,14 @@ type Model struct {
 	// addSummary the session's accumulated receipt across every cascade
 	// invocation, printed to scrollback when the browser exits so the
 	// record of unattended writes outlives the alt screen.
+	//
+	// addPending carries a finished cascade's unanswered scans to the next
+	// one, so ctrl+d out of a half-reviewed pile is a pause rather than a
+	// discard: press `a` again and the queue is still there. Browser-scoped
+	// and memory-only — it dies with the process, which is the point.
 	newAddChild func() (tui.Child, error)
 	addChild    *tui.Child
+	addPending  tui.Pending
 	addSummary  tui.Summary
 
 	// helpRowsMemo caches the gutter's tallest-view-help reservation; see

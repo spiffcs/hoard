@@ -1,8 +1,14 @@
 // The Settings tab: the tier lines and their voices.
 //
-// One section per price tier, top down the way the money reads — jackpot
-// first would be the casino's order, but a person setting this up thinks in
-// "everything under a dollar" first, so bulk leads.
+// One section per tier, top down the way the money reads — jackpot first would
+// be the casino's order, but a person setting this up thinks in "everything
+// under a dollar" first, so bulk leads. Review comes last, after the prices,
+// because it is not one.
+//
+// Each picker offers only the voices built for that tier, so the choice is
+// between three sounds of the right weight rather than fifteen of every weight.
+// That scoping lives on the voices themselves (Sounds.swift); this file just
+// asks for the tier's own.
 //
 // Every voice change plays itself. A sound picked silently is a sound
 // discovered mid-box, and the whole point of the tiers is knowing them by ear
@@ -19,31 +25,52 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TierSection(
-                    title: "Bulk", subtitle: "under \(dollars(settings.winAt))",
-                    voice: $settings.bulkVoice, threshold: nil, sounds: sounds)
-                TierSection(
-                    title: "Win", subtitle: "\(dollars(settings.winAt)) and up",
-                    voice: $settings.winVoice, threshold: $settings.winAt,
-                    sounds: sounds)
-                TierSection(
-                    title: "Big Win", subtitle: "\(dollars(settings.bigAt)) and up",
-                    voice: $settings.bigVoice, threshold: $settings.bigAt,
-                    sounds: sounds)
-                TierSection(
-                    title: "Jackpot", subtitle: "\(dollars(settings.jackpotAt)) and up",
-                    voice: $settings.jackpotVoice, threshold: $settings.jackpotAt,
-                    sounds: sounds)
+                ForEach(Tier.allCases) { tier in
+                    TierSection(
+                        tier: tier,
+                        subtitle: subtitle(for: tier),
+                        voice: Binding(
+                            get: { settings.voice(for: tier) },
+                            set: { settings.setVoice($0, for: tier) }),
+                        threshold: threshold(for: tier),
+                        sounds: sounds)
+                }
 
                 Section {
                     Button("Reset to Defaults", role: .destructive) {
                         settings.reset()
                     }
                 } footer: {
-                    Text("Prices come from the Mac; which sound plays is decided here.")
+                    Text("Prices come from the Mac; which sound plays is decided here. "
+                         + "Each tier has its own sounds — a jackpot run cannot be "
+                         + "assigned to bulk.")
                 }
             }
             .navigationTitle("Settings")
+        }
+    }
+
+    /// What the tier covers, said in the header beside its name.
+    private func subtitle(for tier: Tier) -> String {
+        switch tier {
+        case .bulk: return "under \(dollars(settings.winAt))"
+        case .win: return "\(dollars(settings.winAt)) and up"
+        case .big: return "\(dollars(settings.bigAt)) and up"
+        case .jackpot: return "\(dollars(settings.jackpotAt)) and up"
+        // No dollar figure, because there is no line: this is the Mac asking
+        // rather than pricing.
+        case .review: return "queued for a decision"
+        }
+    }
+
+    /// The editable line where a tier begins, or nil where a tier has none —
+    /// bulk is everything under the win line, and review is not a price.
+    private func threshold(for tier: Tier) -> Binding<Double>? {
+        switch tier {
+        case .win: return $settings.winAt
+        case .big: return $settings.bigAt
+        case .jackpot: return $settings.jackpotAt
+        case .bulk, .review: return nil
         }
     }
 
@@ -54,11 +81,10 @@ struct SettingsView: View {
 
 /// One tier's card: where it starts, and what it sounds like.
 private struct TierSection: View {
-    let title: String
+    let tier: Tier
     let subtitle: String
     @Binding var voice: String
-    /// Nil for bulk, which has no line of its own — it is everything under the
-    /// win threshold.
+    /// Nil for the tiers with no line of their own.
     let threshold: Binding<Double>?
     let sounds: Sounds
 
@@ -72,8 +98,10 @@ private struct TierSection: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
+            // This tier's voices only. A voice belongs to exactly one tier, so
+            // nothing here overlaps with any other section.
             Picker("Sound", selection: $voice) {
-                ForEach(Sounds.voices) { v in
+                ForEach(Sounds.voices(for: tier)) { v in
                     Text(v.label).tag(v.id)
                 }
             }
@@ -86,7 +114,7 @@ private struct TierSection: View {
                 Label("Play", systemImage: "speaker.wave.2.fill")
             }
         } header: {
-            Text("\(title) · \(subtitle)")
+            Text("\(tier.label) · \(subtitle)")
         }
         .onChange(of: voice) { _, picked in
             sounds.play(voice: picked)

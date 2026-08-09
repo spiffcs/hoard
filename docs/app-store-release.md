@@ -1,9 +1,12 @@
 # Shipping Hoardling on the App Store
 
-**Status: audited 2026-08-06; steps 4–8 built and verified 2026-08-08.**
-The app installs to a registered device via `make scan-ios-install` and has
-never been through TestFlight, App Store Connect, or review. See
-[ios-development.md](ios-development.md) for building and running it.
+**Status: audited 2026-08-06; everything up to an uploadable build done
+2026-08-08.** `make scan-ios-release` produces a signed `HoardScan.ipa` and the
+App Store Connect record exists. The app has never been through TestFlight or
+review. See [ios-development.md](ios-development.md) for building and running
+it, and **"What is left before review"** below for the remaining work — that
+section is the current one; the blocker write-ups above it are kept for their
+reasoning, not their status.
 
 Channel decision, 2026-08-08: **full App Store submission**, with TestFlight as
 the stage before it rather than an alternative to it. Open question 1 below is
@@ -14,10 +17,11 @@ than asserted:
 
 - The privacy manifest, the export-compliance key, Debug-only file sharing, and
   the version reconcile — steps 4 through 7.
-- A release build path — step 8. `make scan-ios-release` archives successfully
-  today; it stops at `-exportArchive`, which needs an account and a
-  distribution certificate that do not exist yet. See that step for the exact
-  error and why it is not a bug.
+- A release build path — step 8. Now working end to end: archive → export →
+  a signed IPA. The two account items it waited on (an Xcode sign-in and an
+  Apple Distribution certificate) were done the same day, and the bundle ID
+  registered itself via `-allowProvisioningUpdates` on the first successful
+  export.
 - [scan-transport-encryption.md](scan-transport-encryption.md), which answers
   step 9's exploration half — five options, ranked, with a root-cause theory
   for the TLS-PSK failure and a one-hour experiment that would settle it.
@@ -31,11 +35,31 @@ wrong about why — which is the ordinary way a doc rots.
 
 ## Blockers
 
-### 1. Transport is authenticated but not encrypted
+### 1. Transport is authenticated but not encrypted — RESOLVED 2026-08-08, pending hardware validation
 
-Confirmed: `PeerLink.swift:226` builds `NWParameters.tcp`. Plaintext. The
-`.tls` case at `PeerLink.swift:65` is error-message mapping only — nothing in
-the tree ever negotiates TLS.
+**The link now runs TLS with self-signed certificates pinned on first use**, the
+model KDE Connect and Syncthing use for the same problem. `ScanLink` gained
+`PeerIdentity` (a hand-rolled DER certificate, since iOS has no public API that
+generates one) and `PeerTrust` (the pin store and verify-block policy); the
+pairing proof is bound to the peer's certificate fingerprint so a relay cannot
+forward it; and an already-pinned peer is not asked for the code at all, which
+is what let the six-digit code become **per-launch and single-use** instead of
+permanent. Landed in `64b6702`, 211/211 package tests green.
+
+⚠️ **Loopback only. It has never run on real hardware** — see A2 in "What is
+left before review", which is a gate on shipping any build to a tester.
+
+The original analysis follows. Its *conclusion* was right and two of its
+premises were not: the failure was never a mystery, and TLS-PSK does in fact
+work on Apple platforms (TLS 1.2 only, and the selection block's completion
+takes the identity rather than the key). PSK was measured working and then set
+aside in favour of certificates, because a PSK keeps the pairing code
+security-critical for the life of the link and a pinned certificate does not.
+See [scan-transport-encryption.md](scan-transport-encryption.md) §10.
+
+Confirmed at the time: `PeerLink.swift:226` builds `NWParameters.tcp`.
+Plaintext. The `.tls` case at `PeerLink.swift:65` is error-message mapping only
+— nothing in the tree ever negotiates TLS.
 
 The pairing handshake itself is sound — HMAC-SHA256 over a fresh session id,
 keyed by an HKDF-derived key, verified with
@@ -170,10 +194,17 @@ app. That log contains card names and prices, and `SessionLog.startSession()`
 only truncates it when a Mac connects — a phone that never pairs accumulates
 forever.
 
-### 4. No release build path — BUILT 2026-08-08, blocked on an account
+### 4. No release build path — DONE 2026-08-08, produces a signed IPA
 
-`make scan-ios-release` exists. **Archiving succeeds.** Export does not, and
-the reason is an account, not a defect:
+`make scan-ios-release` archives, exports and emits a signed
+`HoardScan.ipa` — verified as `Authority=Apple Distribution: Christopher
+Phillips (5MTL28V684)`, bundle id `dev.spiffcs.hoard.scan.ios`, version `0.1.0`,
+with the privacy manifest present and the file-sharing keys absent.
+
+Two things stood in the way and both are recorded because neither was obvious.
+
+**The account half**, now resolved — an Xcode sign-in and an Apple Distribution
+certificate. Until both existed the export failed with:
 
 ```
 error: exportArchive No Accounts
@@ -222,91 +253,302 @@ Two decisions inside it that are easy to get wrong:
 
 | | Current state | What to do |
 |---|---|---|
-| **Bundle ID** | `dev.spiffcs.hoard.scan.ios` | Register on developer.apple.com |
+| **Bundle ID** | `dev.spiffcs.hoard.scan.ios` | **Done 2026-08-08.** Registered automatically by `-allowProvisioningUpdates` on the first successful export; no manual step was needed |
 | **Team** | The team identifier lives only in gitignored `Signing.xcconfig` — never in a tracked file | Present locally; a release script needs it injected, not read from disk |
 | **Deployment target** | iOS 18.0 | Narrow, driven by `RecognizeTextRequest` and `RotationCoordinator`. Lowering means keeping an older Vision path. Probably accept it |
 | **Device family** | `TARGETED_DEVICE_FAMILY: "1"` — iPhone only | Fine, and it means no iPad screenshots |
-| **Version** | ~~`MARKETING_VERSION 0.1`~~ → `1.0`, pointed at by the plist | **Done 2026-08-08.** Build number increments per upload via the UTC stamp; see blocker 4 |
+| **Version** | ~~`MARKETING_VERSION 0.1`~~ → `0.1.0`, pointed at by the plist | **Done 2026-08-08.** Deliberately **not** `1.0`: the phone app tracks the Go binary's version, because the two halves are useless apart and a user quoting a version in a bug report should not have to say which one. Build number increments per upload via the UTC stamp; see blocker 4 |
 | **~~Info.plist drift~~** | **This entry was wrong.** `Info.plist` is *gitignored* (`.gitignore:64`) — xcodegen regenerates it from `project.yml` every run, so there were never two tracked sources of truth | And the drift ran the other way: a Release build *before* any change already produced `1.0`, because a literal in the plist is not a reference — so `MARKETING_VERSION` was dead config, not the winner. Fixed by making the plist reference `$(MARKETING_VERSION)`, mirroring the `CFBundleVersion` pattern, so they cannot diverge again |
 | **Export compliance** | `ITSAppUsesNonExemptEncryption: false` set and verified in a Release bundle | **Done 2026-08-08**, and re-verified honest: `CryptoKit` appears only in `ScanLink/Pairing.swift`, as `HKDF` and `HMAC` — no AES, no ChaChaPoly, no sealed box anywhere. **Revisit if the transport gains payload encryption**; see the ordering note under step 9 |
 | **App icon** | `icon-1024.png` is a true 1024×1024 file, but `make-icon.swift` derives it from a 356px full-bleed crop of the 512px `.icns` | Upscaled ~3×. Ships, but a higher-resolution original is a straight improvement |
-| **Screenshots** | None | Required for 6.9" iPhone. Awkward: the interesting screen is a camera pointed at a card |
+| **Screenshots** | None | Required for 6.9" iPhone. Awkward: the interesting screen is a camera pointed at a card — and it shows nothing at all until A1 is built |
 | **Privacy policy URL** | None | Required. Can be short — the app collects nothing |
 | **Support URL** | None | Required |
 | **Age rating, category, description, keywords** | None | Category is probably Utilities or Reference |
-| **TestFlight** | Never used | Should precede review by some margin |
+| **TestFlight** | Never used | Should precede review by some margin. External testers need a beta description, a feedback email, and Beta App Review on the first build of a version |
 
-## The order to do it in
+## What is left before review
 
-Roughly dependency-ordered. Steps 1–2 are the two that can invalidate later work
-if left late. **Steps 4–8 are done** (2026-08-08); what remains needs an Apple
-account, a device, or a decision.
+Everything through "produce a signed, uploadable build" is **done and
+verified** (2026-08-08). `make scan-ios-release` archives, exports, and emits
+`HoardScan.ipa` signed by `Apple Distribution: Christopher Phillips
+(5MTL28V684)`, carrying the privacy manifest, `ITSAppUsesNonExemptEncryption`,
+`CFBundleShortVersionString 0.1.0`, and no file-sharing keys. The App Store
+Connect record exists and the bundle ID is registered — `-allowProvisioningUpdates`
+registered it during the first successful export, so nobody needs to do it by
+hand.
 
-**One ordering correction:** step 5 must not be finished before step 9.
-`ITSAppUsesNonExemptEncryption: false` is correct for a transport that encrypts
-nothing, and stays correct if step 9 lands on TLS or on disclose-and-ship. It
-becomes a genuine judgement call if step 9 lands on application-layer payload
-encryption. The key is set today on the strength of the crypto being
-authentication-only; treat it as provisional until the transport is decided.
+What follows is only what remains. It is grouped by what would stop a
+submission, because that is the order it bites in.
 
-The account work, in the order it unblocks things — items 1 and 2 are the
-current hard stop, and everything below waits on them:
+### A. Engineering — must be true of the build that ships
 
-1. Sign Xcode into the Apple Developer account (Xcode › Settings › Accounts).
-2. Create an **Apple Distribution** certificate. Needs Admin or Account Holder
-   on the team. None exists today.
-3. Register the bundle ID (step 3 below).
-4. Create the App Store Connect record (step 1 below).
-5. An App Store Connect API key with the **App Manager** role — Developer
-   cannot upload. The `.p8` downloads exactly once; `*.p8` and `private_keys/`
-   are now gitignored because altool searches `./private_keys`.
+**A1. The reviewer has no Mac, and today the app shows them nothing.**
+*This is the one most likely to get the app rejected, and it has no owner yet.*
+The read pipeline runs entirely on-device, so the app genuinely works alone —
+it identifies a card without any network at all. It just never says so:
+`SessionView.swift:237` gates the read line behind `developerMode`, so a
+reviewer grants camera access, points it at a card, and watches a live preview
+do nothing observable. That reads as a broken app.
 
-1. **Create the app record in App Store Connect.** This is the only
-   authoritative check that the name `Hoardling` is free — a store search sees
-   published apps but not unused reservations in other developers' accounts. Do
-   it first; everything downstream carries the name.
-2. **Ungate `lastRead` when not connected.** **This step is unactionable as
-   written and needs a decision.** "See the top of this page" points at nothing
-   — no such section exists — and the gate at `SessionView.swift:237` is
-   `developerMode`, not connection state, so "when not connected" does not
-   describe the code. The comment above it records a deliberate product call:
-   both footer lines were hidden because `"(nothing read)"` reads as an error
-   mid-box when it is usually just a card halfway onto the mat.
+The fix is small and is the original intent of the old "ungate `lastRead`"
+note, which had lost its cross-reference: **show the read result when no Mac is
+connected.** The comment that hid it is still correct for the connected case —
+`"(nothing read)"` mid-box reads as an error when it is usually a card halfway
+onto the mat — and that case is exactly when a Mac *is* driving. Unconnected,
+there is no queue to watch and nothing else on screen, so the objection does
+not apply. Decide and build before uploading; a demo video in review notes is
+a weaker substitute, not an equivalent.
 
-   The underlying worry is presumably real — an App Store reviewer has no Mac
-   to pair with, so they open the app, grant camera access, and see a live
-   preview that never visibly does anything. Whatever fixes that is the actual
-   requirement. Restate it before building it.
-3. **Register the bundle ID** `dev.spiffcs.hoard.scan.ios` and confirm the team
-   still provisions.
-4. **Add `PrivacyInfo.xcprivacy`** with the UserDefaults entry, and wire it into
-   `project.yml`.
-5. **Add `ITSAppUsesNonExemptEncryption: false`** to `project.yml`.
-6. **Decide on the session log** — gate the two file-sharing keys to Debug, or
-   keep them and disclose.
-7. **Reconcile the versions** — `MARKETING_VERSION` to `1.0` in both
-   `project.yml` and `Info.plist`.
-8. **Add a release build path** — `make scan-ios-release` doing archive +
-   export. Step 4 through 7 all need to actually land in a Release build, and
-   nothing today produces one.
-9. **Decide the transport question.** Either fix TLS-PSK, or write the privacy
-   disclosure that admits plaintext-on-LAN. This gates the disclosure text, not
-   the build, so it can run in parallel with 4–8.
-10. **Take screenshots** on a 6.9" device.
-11. **Write the store metadata** — description, keywords, privacy policy page,
-    support page, age rating, category. Read
-    [scanner-limits.md](scanner-limits.md) before making any accuracy claim.
-    It exists now, and it is stricter than this page's summary was: name reads
-    scored **87%** on 231 clean digital scans and that number is *generous by
-    construction*, because the corpus scores names leniently with a prefix
-    match either way. Foil recall measured **53%** overall with a 23–69% spread
-    across three rigs on identical code. Planar cards are not merely unread —
-    the aspect gate accepts them, so each one emits a card entry carrying
-    rules-box text as its title. Sections 12 and 13 of that doc give sentences
-    that are safe to publish and the overstatements to avoid.
-12. **Upload to TestFlight** and run a real box of cards through it.
-13. **Submit**, with review notes explaining the Mac companion and a video of
-    the pairing flow.
+**A2. The TLS transport has never run on hardware.** Shipped in `64b6702`,
+green on loopback only. `includePeerToPeer` over AWDL and the iOS
+suspend/restart path at `PeerEnds.swift:94` have never been through TLS, and
+the USB-C tether is both likeliest to break and most used. **Both ends must be
+rebuilt and re-paired together** — a phone on the new build against a Mac on
+the old helper cannot pair at all, and it presents as "phone not found."
+
+Session to run before any build goes to a tester: pair over Wi-Fi (code shown,
+`hoard scan pair`, Pair tab flips to "1 Mac paired" and the code disappears) →
+reconnect without pairing → relaunch the phone, proving a rotated code does not
+break the pinned Mac → USB-C tether → background and foreground mid-session →
+then a real box of cards.
+
+**A3. `docs/scanner-limits.md` is untracked.** Every accuracy claim in the
+store description has to trace to it, and it is not in the repository.
+
+### B. App Store Connect — the fields review will not start without
+
+| | Notes |
+| --- | --- |
+| **Screenshots, 6.9" iPhone** | Required. Awkward here: the interesting screen is a camera pointed at a card, and it will look like nothing without A1 |
+| **Description, subtitle, keywords** | Read [scanner-limits.md](scanner-limits.md) first. §12 and §13 give sentences that are defensible and the overstatements to avoid |
+| **Privacy policy URL** | Required. Can be short and true: nothing is collected, nothing leaves the local network |
+| **Support URL** | Required. A repository page is acceptable |
+| **Category** | Utilities or Reference |
+| **Age rating questionnaire** | All-negative answers; nothing here triggers a rating |
+| **App privacy ("data collection")** | Answer *no collection*. Verified: no third-party SDKs, no analytics, no accounts, no `.package(url:)` at all |
+| **Copyright, contact details** | Trivial, but they block submission |
+
+### C. Upload
+
+**C1. App Store Connect API key**, role **App Manager** — a Developer role
+cannot upload. The `.p8` downloads exactly once. Put it in
+`~/.appstoreconnect/private_keys/`, `chmod 600`, then export
+`HOARD_ASC_KEY_ID` and `HOARD_ASC_ISSUER_ID`. `*.p8` and `private_keys/` are
+gitignored.
+
+**C2.** `./release-scan-ios.sh --validate` first — Apple's pre-upload checks,
+no build spent — then `--upload`.
+
+**C3. TestFlight.** Internal testing needs nothing further. **External** testing
+needs a beta app description, a feedback email, and a **Beta App Review** on
+the first build of each version. Builds expire after 90 days.
+
+### D. Submission
+
+**D1. Review notes.** Explain that the Mac companion is required, that it is
+free and open source, and how to reach it. Include the pairing flow. If A1 is
+built, the app demonstrates itself and this is context rather than a
+workaround.
+
+**D2. Demo video** of pairing, since the reviewer cannot reproduce it.
+
+**D3. Export compliance** is already answered in the build via
+`ITSAppUsesNonExemptEncryption: false`, so the per-upload questionnaire is
+skipped. **Re-confirm this is still honest**: it was set when the link
+encrypted nothing. The link now runs TLS, which is exempt as platform-provided
+encryption — but the answer is no longer trivially true and should be stated
+deliberately rather than inherited.
+
+### Not blocking, worth doing
+
+- **App icon** is upscaled ~3× from a 356px crop (`make-icon.swift`). Ships as
+  is; a higher-resolution original is a straight improvement.
+- **`Pairing.swift:9`** still says "the link is TLS with a pre-shared key."
+  It is now TLS with a pinned certificate. The sentence has been wrong in two
+  different directions and should be fixed once.
+
+## The metadata, ready to paste
+
+Drafted 2026-08-08 against App Store Connect's actual version page. Every
+accuracy sentence traces to a measurement in
+[scanner-limits.md](scanner-limits.md) §12; nothing here is a claim that
+document's §13 tells us to avoid.
+
+**Read this first.** The Fan Content notice below is **mandatory and its wording
+is fixed by Wizards** — see [data-licensing.md](data-licensing.md) §7, which
+records it as the clearest single gap in that audit. It must appear in the
+description. It is not optional and it is not paraphrasable.
+
+### Promotional Text (170 characters, editable without a submission)
+
+161 characters. One paragraph, one line — see the warning below about line
+breaks.
+
+```
+Point your iPhone at a card and it lands in your collection on your Mac. No typing, no clicking through dropdowns. Reads on device — nothing leaves your network.
+```
+
+### Description
+
+**Paste these lines exactly as they are.** App Store Connect **preserves every
+newline**, so each paragraph below is deliberately one long unwrapped line — it
+will wrap itself to the reader's device. Re-wrapping it to look tidy in an
+editor puts hard breaks mid-sentence on the public product page. The blank
+lines and the bullet lines are the only intentional breaks.
+
+Note the second paragraph of "WHAT YOU NEED": it is the single most important
+sentence for review, because a reviewer without a Mac has to understand
+immediately why the app is built the way it is.
+
+```
+Hoardling is the camera for hoard, a Magic: The Gathering collection tracker that runs on your Mac.
+
+Put a card on the mat. Hoardling reads its name, set and collector number on the phone, and the card appears in your collection on the Mac. Put the next one down and keep going — no typing, no barcode, no scrolling a dropdown to find the right printing.
+
+WHAT IT DOES
+
+• Reads modern English cards in good light in about a tenth of a second.
+• Recognises cards from every frame era, from 1993 originals to current sets.
+• On a labelled corpus of 214 English printings spanning every era, it identified the card name on 87% and the exact collector number on 78%.
+• When it is unsure it asks rather than guesses: uncertain reads go to a review queue instead of into your collection.
+• The foil detector is deliberately conservative — across three test rigs it was correct on 51 of the 52 cards it gave a verdict on. Cards it records on a guess are flagged, and "hoard guessed" lists every one.
+• Everything runs on device. No card image leaves your phone and your Mac.
+
+WHAT IT DOES NOT DO
+
+• It reads English cards. Cards printed in other languages will not resolve.
+• It does not judge condition, and it does not grade.
+• It reads the front face of double-faced cards.
+• It cannot tell apart printings that differ only by a variant marker.
+
+WHAT YOU NEED
+
+A Mac on the same Wi-Fi running hoard, which is free and open source. Pairing is a six-digit code shown on the phone and typed on the Mac, once. After that the two recognise each other on their own.
+
+Without the Mac, Hoardling will still read a card and show you what it sees — but there is nowhere to put it. hoard is where a collection lives.
+
+The link between phone and Mac is encrypted and stays on your local network. There are no accounts, no analytics, and no third-party SDKs.
+
+hoard is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.
+```
+
+⚠️ **"Hoardling will still read a card and show you what it sees" depends on
+A1.** If the unconnected read-out is not built, delete that sentence — it would
+be false, and it is exactly the sentence a reviewer will test.
+
+### Keywords (100 character limit, commas, no spaces)
+
+87 characters.
+
+```
+mtg,magic,trading card,scanner,collection,inventory,catalog,tcg,binder,cards,price,deck
+```
+
+86 characters. Deliberately excludes "Hoardling" and the category name — both
+are already indexed, so spending characters on them is waste.
+
+### Support URL / Marketing URL
+
+Both need to exist before submission and neither does yet. The repository's
+GitHub page satisfies Support. Marketing URL is **optional** — leave it blank
+rather than pointing it at the same page.
+
+### Version / Copyright
+
+- **Version**: `0.1.0` — must match `CFBundleShortVersionString` in the build,
+  and it tracks the Go binary rather than App Store convention. See the Version
+  row in Chores.
+
+  ⚠️ **Unverified: whether App Store Connect accepts a leading `0`.** The format
+  is certainly legal — one to three period-separated non-negative integers — but
+  Apple may separately require the first component to be greater than zero for a
+  public release. Nobody here has submitted a `0.x` app, so treat this as
+  untested. `./release-scan-ios.sh --validate` runs Apple's own pre-upload
+  checks and is the cheap way to find out, once the API key exists. If it is
+  refused, the smallest honest answer is `1.0.0` in App Store Connect while the
+  binary stays at `0.1.0` — but do not pre-emptively concede the point.
+- **Copyright**: `2026 Christopher Phillips`
+
+### Fields that do not apply
+
+Leave every one of these alone; each is a place to accidentally create work.
+
+| Field | Why not |
+| --- | --- |
+| **Routing App Coverage File** | For apps that give directions. Not this |
+| **App Clip** | None, and it would need a build containing one |
+| **iMessage App** | The Messages framework is not linked |
+| **Game Center** | Not used |
+| **Sign-In Information** | **There are no accounts.** Leave the username and password blank and say so in the review notes — supplying a fake credential is worse than none |
+
+### Build → export compliance
+
+Already answered inside the binary: `ITSAppUsesNonExemptEncryption: false` is
+in the Info.plist, so the per-upload questionnaire is skipped and **no
+documentation upload is required**.
+
+**Confirm this deliberately rather than inheriting it.** The key was set when
+the link encrypted nothing. The link now runs TLS. The answer stays `false`
+because the exemption covers encryption provided by the operating system, and
+the app calls Network.framework and Security rather than shipping its own
+cipher — the only hand-written cryptography is the certificate's DER encoding,
+which is a data format, not an algorithm. If that reasoning ever stops holding,
+this becomes a legal declaration made wrongly, so re-read it before each
+submission.
+
+### App Review Information
+
+**Contact**: your name, phone and email. Used only if review has a question.
+
+**Notes** — paste this. Same rule as the description: the paragraphs are
+single unwrapped lines on purpose.
+
+```
+Hoardling is the camera for hoard, a free and open-source Magic: The Gathering collection tracker that runs on macOS. The phone reads the card; the Mac keeps the collection.
+
+NO ACCOUNT IS REQUIRED. There is no sign-in of any kind, so the sign-in fields are intentionally blank.
+
+TO TEST WITHOUT A MAC:
+Launch the app and allow camera access, then point the camera at any Magic card in reasonable light. The card's name, set and collector number appear on screen. This read runs entirely on the device using Vision — no network is involved, and no Mac is needed to see it work.
+
+The "Pair" tab shows a six-digit code used to introduce a Mac running hoard on the same local network. Without a Mac there is nothing to pair with, and the code is inert. An attached video demonstrates the full pairing and scanning flow.
+
+PRIVACY: no data is collected. No card image or scan result leaves the device except to a Mac the user has explicitly paired with, on their own local network. There are no analytics and no third-party SDKs.
+
+hoard for macOS: <repository URL>
+```
+
+⚠️ The "TO TEST WITHOUT A MAC" paragraph **is a promise that A1 makes true**.
+Do not submit these notes until it is built and verified on a device.
+
+**Attachment**: a demo video of pairing (`.mp4`). Not optional in practice —
+the reviewer cannot reproduce the Mac half.
+
+### App Store Version Release
+
+**Manually release this version.** The first release should not go live the
+moment it is approved: approval can land overnight, and the Mac helper's
+download page and the pairing instructions should be up and correct before
+anyone can install the phone app that needs them.
+
+### Screenshots — the size problem, before anyone tries
+
+App Store Connect wants **1242 × 2688** or **1284 × 2778** (or those
+transposed). The attached device is an **iPhone 16**, whose screen is
+**1179 × 2556**. It cannot produce either size natively, and the Simulator has
+no camera, so the screens worth showing cannot be captured there at all.
+
+The aspect ratios are nearly identical — 0.4613 against 0.4622 — so the
+practical route is to capture on the real device and rescale:
+
+```
+sips -Z 2778 shot.png --out tall.png          # scale to the target height
+sips -p 2778 1284 tall.png --out final.png    # pad the ~3px of width
+```
+
+Apple checks dimensions, not provenance. Ten slots exist; three or four honest
+ones are better than ten padded with variations.
 
 ## What is already fine
 

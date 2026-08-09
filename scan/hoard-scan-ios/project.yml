@@ -121,9 +121,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.spiffcs.hoard.scan.ios
-        # The one place the marketing version is written; the plist above points
-        # here. 1.0 because that is what a first submission is called.
-        MARKETING_VERSION: "1.0"
+        # The one place the marketing version is written; the plist above
+        # points here.
+        #
+        # Tracks the Go binary, deliberately: hoard and Hoardling are one
+        # product in two halves that have to be paired to do anything, so a
+        # phone at 1.0 talking to a helper at 0.1.0 invites the question of
+        # which number the user is meant to quote in a bug report. They move
+        # together.
+        #
+        # 0.1.0 rather than 1.0 because that is what the thing actually is.
+        # Nothing about a first App Store submission requires calling it 1.0,
+        # and doing so would be the only place in the project that overstates
+        # its own maturity.
+        MARKETING_VERSION: "0.1.0"
         # "0" means an unstamped build — Xcode-GUI builds report phone=0 and
         # say so honestly; build-scan-ios.sh overrides this with its
         # per-build timestamp, which is the number a tuning session trusts.

@@ -187,9 +187,6 @@ func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName str
 	if ok && fm.session != nil {
 		_ = fm.session.Close()
 	}
-	if ok {
-		fm.art.close()
-	}
 	if err != nil {
 		return Summary{}, err
 	}

@@ -322,7 +322,30 @@ cp "$opts_template" "$opts"
     || /usr/libexec/PlistBuddy -c "Set :teamID $team" "$opts" >/dev/null
 
 echo "Exporting for App Store Connect…"
-if ! xcodebuild -exportArchive \
+# Exported with a system-only PATH, and this is load-bearing rather than
+# hygiene.
+#
+# The IPA step shells out to `/usr/bin/rsync -8aPhhE`. That absolute path is
+# openrsync, which understands Apple's `-E` (--extended-attributes) — but
+# rsync's local-copy mode spawns its other half by exec'ing `rsync --server`
+# *through PATH*, and a Homebrew rsync (3.4.4 here) gets found first. Upstream
+# rsync has no --extended-attributes; it spells that -X/--xattrs. So the client
+# speaks Apple's dialect to a GNU-dialect server and the export dies with:
+#
+#     rsync: on remote machine: --extended-attributes: unknown option
+#     error: exportArchive Copy failed
+#
+# "Copy failed" is all xcodebuild prints. The cause appears only as
+# `[server=3.4.4]` inside the .xcdistributionlogs bundle, and the absolute path
+# in the logged command line actively misleads — it looks like the system rsync
+# ran, and it did; it was the child that was wrong. Measured on 2026-08-08: the
+# identical export succeeds with Homebrew off PATH and fails with it on.
+#
+# Narrowing PATH rather than telling the user to `brew unlink rsync`: this is a
+# build step with no legitimate need for anything outside the system
+# directories, and a fix that survives a fresh checkout beats one that lives in
+# somebody's shell history.
+if ! env PATH="/usr/bin:/bin:/usr/sbin:/sbin" xcodebuild -exportArchive \
     -archivePath "$archive_path" \
     -exportPath "$export_dir" \
     -exportOptionsPlist "$opts" \

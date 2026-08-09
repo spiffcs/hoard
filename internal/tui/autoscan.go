@@ -47,8 +47,17 @@ const (
 	scanMatchNumberAndYear              // number named a printing and its release year agrees
 	scanMatchSetAndNumber               // set and number both matched
 	scanMatchSetNumberAndLang           // set, number and the printed language all matched
-	scanMatchArt                        // the card's own picture matched one printing's image hash
 )
+
+// There was a scanMatchArt above this line — the picture-identification
+// channel's rank, produced by internal/tui/artmatch.go. Both are gone as of
+// 2026-08-09: the channel was removed from the scanner rather than left
+// wired-but-inert, because its acceptance gates no longer matched the hash
+// they were fitted against and a rank nothing produces is a trap for the next
+// reader. The research substrate is untouched — internal/artindex, the
+// `hoard artindex` commands and the eval harnesses all remain — and
+// docs/artmatch-design.md records what was measured and what would have to be
+// true to bring it back.
 
 // numberVerified reports whether a collector number actually matched a
 // printing of the resolved card. That is the corroboration the weaker gates
@@ -69,12 +78,8 @@ func numberVerified(r scanMatch) bool {
 // fuzzy match onto the wrong card could collide with it by luck — pairing it
 // with the set code or the release year is what removes the luck.
 func corroboratedPrinting(r scanMatch) bool {
-	// An art match earns the waiver on different grounds: the picture chose
-	// the printing without the name's help at all, decisively (see the
-	// distance gates in artmatch.go), so a mangled title has nothing to
-	// poison. The name on an art-matched item *came from* the match.
 	return r == scanMatchSetNumberAndLang || r == scanMatchSetAndNumber ||
-		r == scanMatchNumberAndYear || r == scanMatchArt
+		r == scanMatchNumberAndYear
 }
 
 // printingPinned reports whether the rank already chose one specific printing
@@ -87,7 +92,7 @@ func printingPinned(r scanMatch) bool {
 	// printing, and the border reorder displacing a named head is the SLD/604
 	// bug shape.
 	return numberVerified(r) || r == scanMatchNumberTail ||
-		r == scanMatchYearAndFrame || r == scanMatchArt
+		r == scanMatchYearAndFrame
 }
 
 // String names the match for the telemetry log.
@@ -113,8 +118,6 @@ func (m scanMatch) String() string {
 		return "set+number"
 	case scanMatchSetNumberAndLang:
 		return "set+number+lang"
-	case scanMatchArt:
-		return "art-match"
 	default:
 		return "none"
 	}
@@ -909,8 +912,7 @@ func printingUnverified(it queueItem) (short bool, note string) {
 		return false, ""
 	}
 	switch it.rank {
-	case scanMatchArt,
-		scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
+	case scanMatchSetNumberAndLang, scanMatchSetAndNumber, scanMatchNumberAndYear,
 		scanMatchNumberOnly, scanMatchSinglePrint,
 		// A tail match is a repaired number, not a verified one, so it commits
 		// on the same terms as the year strata: numberVerified() still says no,

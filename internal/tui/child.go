@@ -16,6 +16,9 @@ package tui
 //   - If the parent tears the child down early (quitting with the cascade
 //     open), call Close() first: it shuts the camera session and records
 //     what was abandoned, so the receipt stays honest.
+//   - Take Pending() off a done child and Restore() it into the next one, so
+//     scans that finished without an answer survive between cascades instead
+//     of being re-scanned. A parent that skips this drops them silently.
 
 import (
 	"context"
@@ -73,6 +76,53 @@ func (c Child) Added() int { return c.m.addedCount }
 // AddedValue is the market value of those adds (qty-weighted; unpriced
 // printings contribute nothing).
 func (c Child) AddedValue() float64 { return c.m.addedValue }
+
+// Pending is a cascade's unanswered review queue, in transit between one
+// cascade and the next.
+//
+// Opaque on purpose: a queued scan is a half-finished piece of the cascade's
+// own state machine — the OCR line, the ranked printings its background
+// resolution already fetched, the evidence that stopped it short of an
+// auto-commit — and the only thing that can read it is the cascade. The
+// parent's job is to hold it, not to know what it is.
+//
+// It lives in memory for exactly as long as the parent process does. A queued
+// scan was never written to anything, and the cards are still on the desk:
+// persisting a stale opinion about a pile that has since been put away would
+// be worse than asking for it again.
+type Pending struct{ items []queueItem }
+
+// Len is how many cards are waiting, for a caller that wants to say so.
+func (p Pending) Len() int { return len(p.items) }
+
+// Pending hands back the scans this cascade never got an answer for, so a
+// parent can carry them into the next one. Finishing with ctrl+d leaves the
+// queue standing for exactly this; Close (the parent is quitting) does not,
+// because nothing survives that.
+func (c Child) Pending() Pending { return Pending{items: c.m.review} }
+
+// Restore seeds a fresh cascade with a previous one's unanswered scans, so
+// re-entering the add screen picks the pile back up where it was left rather
+// than opening on an empty queue the operator has to re-scan into.
+//
+// Call before the first Update. The restored cards keep their own ids and
+// capture sequence numbers and the counters move up past them: those numbers
+// tell the duplicate rules which sightings came from one frame (a fanned
+// playset) and which came from different ones, and a new capture reusing a
+// restored number would make the two indistinguishable.
+func (c *Child) Restore(p Pending) {
+	if len(p.items) == 0 {
+		return
+	}
+	c.m.review = append(c.m.review, p.items...)
+	for _, it := range p.items {
+		c.m.nextResolveID = max(c.m.nextResolveID, it.id)
+		c.m.captureSeq = max(c.m.captureSeq, it.captureSeq)
+	}
+	c.m.status = fmt.Sprintf(
+		"%d scanned cards are still waiting for review · tab opens the queue", len(p.items))
+	c.m.statusErr = false
+}
 
 // Err is the fatal error that ended the cascade, if any.
 func (c Child) Err() error { return c.m.err }

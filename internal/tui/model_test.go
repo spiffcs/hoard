@@ -5057,28 +5057,15 @@ func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
 	}
 }
 
-// An art-channel result is supplementary: no resolveCardCmd increment ever
-// paid for it, so it must not spend the counter a real resolve owns. It used
-// to route through onResolveDone's decrement like any resolution, and the
-// under-count ended the close-time walk early and shrank the close prompt's
-// "N unsaved scans" warning.
-func TestArtMatchDoesNotSpendTheResolveCounter(t *testing.T) {
-	sol := scryfall.Card{ID: "art", Name: "Sol Ring", Set: "ltc",
-		CollectorNumber: "284", Finishes: []string{"nonfoil"}}
-	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
-	m, _ = openCapture(t, m)
-	m.resolving = 2 // two real lookups in flight
-
-	it := queueItem{id: 7, canonical: "Sol Ring", rank: scanMatchArt,
-		prints: []scryfall.Card{sol}, match: cardname.Match{Exact: true}}
-	mm, _ := m.Update(artMatchMsg{gen: m.resolveGen, item: it})
-	got := mm.(model)
-
-	if got.resolving != 2 {
-		t.Errorf("resolving = %d after the art message, want 2 — the real lookups are still out",
-			got.resolving)
-	}
-}
+// TestArtMatchDoesNotSpendTheResolveCounter was here. It guarded the art
+// channel's supplementary resolve path — the one that used to route through
+// onResolveDone's decrement and under-count `resolving`, ending the close-time
+// walk early and shrinking the close prompt's "N unsaved scans" warning.
+//
+// Removed 2026-08-09 with the channel itself. The hazard it covered was
+// specific to a message type that no longer exists; the general invariant it
+// implied — that only a real resolveCardCmd may decrement `resolving` — is
+// worth restating in any future supplementary channel.
 
 // The queued look's finish marker only carries onto a read of the same
 // physical sighting. A same-name better read landing past the second-look
@@ -5121,11 +5108,13 @@ func TestUpgradeFinishCarryStopsAtTheSecondLookWindow(t *testing.T) {
 }
 
 // ctrl+d runs ahead of the drawer intercept, so it must dismiss the drawer
-// itself: finishAdding left it mounted, and the leave gate's y went to the
-// invisible palette query instead of answering the confirm.
-func TestCtrlDUnderTheDrawerReachesTheLeaveGate(t *testing.T) {
+// itself. It finishes outright now, so the old failure (the leave gate's y
+// typing into an invisible palette query) is gone by construction — but a
+// drawer left mounted on a finished model is still state the parent would
+// render for one frame during teardown.
+func TestCtrlDUnderTheDrawerFinishesTheSession(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
-	m.review = []queueItem{{id: 1, canonical: "Sol Ring"}} // pending work arms the gate
+	m.review = []queueItem{{id: 1, canonical: "Sol Ring"}} // pending work must not gate it
 	mm, _ := m.openAddPalette()
 	m = mm.(model)
 	if m.addPalette == nil {
@@ -5134,17 +5123,11 @@ func TestCtrlDUnderTheDrawerReachesTheLeaveGate(t *testing.T) {
 
 	mm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlD})
 	got := mm.(model)
-	if got.state != stateLeaveConfirm {
-		t.Fatalf("state = %v, want the leave gate", got.state)
+	if !got.done {
+		t.Fatalf("ctrl+d did not finish: state = %v", got.state)
 	}
 	if got.addPalette != nil {
-		t.Fatal("the drawer is still mounted under the gate")
-	}
-
-	// And the y actually answers the gate now.
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	if !mm.(model).done {
-		t.Error("y did not answer the leave confirm")
+		t.Fatal("the drawer is still mounted on a finished session")
 	}
 }
 

@@ -39,6 +39,12 @@ func (m *Model) openAddCascade() tea.Cmd {
 		m.status, m.statusErr = "add unavailable: "+err.Error(), true
 		return nil
 	}
+	// Whatever the last cascade left unanswered is this one's opening queue.
+	// Handed over rather than copied: the queue has exactly one owner, and
+	// after this it is the cascade's, so a cascade that ends by discarding
+	// them cannot leave a ghost copy here for the next `a` to resurrect.
+	child.Restore(m.addPending)
+	m.addPending = tui.Pending{}
 	// Size it before its first render — the cascade must never draw its
 	// default geometry inside a frame that already knows better.
 	child, _ = child.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
@@ -66,11 +72,21 @@ func (m Model) forwardToChild(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) closeAddChild() (tea.Model, tea.Cmd) {
 	child := m.addChild
 	m.addChild = nil
+	// Taken before the summary is read: cards still queued were never
+	// answered, so they are neither added nor discarded yet — they are
+	// waiting, and the receipt should not claim otherwise.
+	m.addPending = child.Pending()
 	m.addSummary.Entries = append(m.addSummary.Entries, child.Summary().Entries...)
 	if err := child.Err(); err != nil {
 		m.status, m.statusErr = "add ended: "+err.Error(), true
 	} else {
 		m.status, m.statusErr = addReceiptLine(child.Added(), child.AddedValue(), child.Summary()), false
+		// Said on the way out, because this is the only screen that can say
+		// it: the cascade is gone and the cards it is holding for are
+		// invisible until someone presses `a` again.
+		if n := m.addPending.Len(); n > 0 {
+			m.status += fmt.Sprintf(" · %d still waiting for review (press a to finish them)", n)
+		}
 	}
 	m.refresh()
 	if err := m.loadView(); err != nil {
@@ -91,6 +107,19 @@ func (m Model) closeAddChild() (tea.Model, tea.Cmd) {
 // quitting: the camera session must die before the program does, and
 // whatever the cascade abandoned goes into the receipt as discarded.
 func (m *Model) teardownAddChild() {
+	// The held-over queue dies here too, and unlike the pause it is a real
+	// loss: nothing is left to press `a` on. It takes the same discard line
+	// a cascade's own abandoned cards take, so the exit receipt does not
+	// quietly lose the difference between reviewed and never-answered.
+	// Cleared as it is recorded, so the two teardown paths (the quit key and
+	// browse.Run's safety net) can't count it twice.
+	if n := m.addPending.Len(); n > 0 {
+		m.addSummary.Entries = append(m.addSummary.Entries, tui.SummaryEntry{
+			Kind: "discarded",
+			Line: fmt.Sprintf("%d scanned cards discarded unprocessed", n),
+		})
+		m.addPending = tui.Pending{}
+	}
 	if m.addChild == nil {
 		return
 	}
