@@ -73,10 +73,11 @@ each grounded in something already known about this codebase:
 The README promises card scanning, so the scanner must exist the day the repo
 goes public — a dead promise on the landing page is worse than no promise.
 
-- **Read every line of `scan/`,** same standard as Step 1 — the macOS helper
-  (`scan/hoard-scan`) and the iPhone app (`scan/hoard-scan-ios`). This is a
-  second walkthrough, not a skim; the Swift side carries the camera, the
-  network link, and the pairing gate.
+- **Read every line of `scan/`,** same standard as Step 1 — the shared Swift
+  package (`scan/hoard-scan`) and the iPhone app (`scan/hoard-scan-ios`). This
+  is a second walkthrough, not a skim; the Swift side carries the camera, the
+  phone's half of the network link, and the pairing gate. hoard's half is Go,
+  in `internal/scan/link`, and belongs to the Step 1 pass.
 - **iPhone app distribution.** The app goes through the App Store, not a GitHub
   release — see `docs/app-store-release.md` for the submission chores (bundle
   id, deployment target, versions). The Developer ID work just completed

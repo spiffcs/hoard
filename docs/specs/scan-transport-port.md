@@ -1,9 +1,11 @@
 # Porting the phone link into Go
 
-**Status:** **Stages 0 and A–F done.** `hoard` finds, pairs with and scans from
-the phone with no helper process anywhere in the path, and a 10-minute pile has
-been through it (§9, §10). **Only Stage G — the deletion — is outstanding**,
-plus two gaps named in §10.3. Written 2026-08-09.
+**Status: complete. Stages 0 and A–G are done.** `hoard` finds, pairs with and
+scans from the phone with no helper process anywhere in the path; a 10-minute
+pile has been through it (§9, §10); and the helper, its bundle and its build
+script have been deleted (§11). The two things that should exist now do, and
+nothing else. Two gaps remain open and are named in §10.3 — the USB-C tether,
+and first contact on a machine that has never run this. Written 2026-08-09.
 
 **The spike's headline, because it changes two decisions in this document:** a
 bare Go binary *can* do local-network discovery on macOS 15 and *can* open TCP to
@@ -328,7 +330,7 @@ reason the port comes first and the deletion second.
   rather than a proxy for it.
 - **Stage F** — live pile session. **Done over Wi-Fi, 2026-08-09 (§10); the
   USB-C tether is still unproven.**
-- **Stage G** — the deletion this was all for.
+- **Stage G** — the deletion this was all for. **Done, 2026-08-09 (§11).**
 
 **Stage G deletion list:**
 
@@ -709,3 +711,50 @@ intent; the write path is unchanged by this port and was never in question.
 - **A fresh Mac.** Every measurement in this document comes from a machine that
   has been developing this software for weeks. No TCC prompt has ever appeared;
   that is not evidence that none will on first contact elsewhere.
+
+---
+
+## 11. Stage G — the deletion
+
+Done 2026-08-09, after the pile in §10. Gates: `go build`, `go vet`,
+`go test ./...`, `gofmt -l -s`, `make lint` (darwin + linux), `make scan-test`
+(185 tests) and `make scan-check` (28 fixtures) all green.
+
+**Removed:**
+
+| | |
+| --- | --- |
+| Build script | `build-scan.sh` |
+| Bundle | `scan/hoard-scan/Info.plist`, `hoard-scan.icns`, and `bin/hoard-scan.app` |
+| SwiftPM targets | `ScanKit`, `ScanKitTests`, `hoard-scan` |
+| Sources | `Sources/ScanKit/` (5 files), `Sources/hoard-scan/`, `Tests/ScanKitTests/` (4 files) |
+| Task | `scan:`, and `all`'s dependency on it |
+| CI | the `build scan helper` step in the (disabled) `scan.yml` |
+
+The Go subprocess path — `session_darwin.go`, `scan_darwin.go`, `scan_other.go`,
+`ErrHelperMissing`, `HOARD_SCAN` — went in Stage E.
+
+**Kept:** `CardKit`, `BorderKit`, `ScanLink`, `ScanWire` — the phone links all
+four — and `cardkit-probe`, the macOS harness behind `make scan-check` and
+`make cardkit-score`. `scan.yml` stays disabled, triggers commented and
+`if: false` intact; only the step invoking a task that no longer exists was
+removed.
+
+### Two claims the deletion falsified
+
+Worth recording, because both were true when written and are the kind of thing
+that survives a grep:
+
+- **`"Hoardling"` is no longer a cross-language wire value.** `scan.KindRemote`
+  and `ScanKit`'s `remoteKind` used to carry the same string, matched by
+  equality, and `app-store-release.md` warned that they move together or pairing
+  breaks. The helper was the only Swift holder; hoard now sets the value itself,
+  so renaming it is a local change. Both the doc and the comment on
+  `KindRemote` said otherwise until this stage.
+- **`Device`'s JSON tags are vestigial.** The struct was decoded from a helper's
+  `--list-devices` output; `Client.Devices` fills it in directly now. The tags
+  are harmless and kept, but they no longer describe a wire.
+
+`docs/specs/scanner-tuning.md`'s Continuity banner was extended for the same
+reason: every `ScanKit` reference in it is now historical, not only the `Core/`
+ones it already disclaimed.

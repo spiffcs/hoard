@@ -31,7 +31,7 @@ Xcode** and is **not** gated in regular CI — its Taskfile tasks carry
 nothing about the Swift side. The scanner gate is local:
 
 ```sh
-make scan scan-test scan-check
+make scan-test scan-check
 ```
 
 plus the path-filtered [scan.yml](.github/workflows/scan.yml) workflow on

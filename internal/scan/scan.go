@@ -372,24 +372,31 @@ const (
 	FireNudge = "nudged"
 )
 
-// Device is a phone the helper can capture from. Kind is a short human tag,
-// always KindRemote today, kept because it is on the wire and because it is
-// what a picker renders beside the name.
+// Device is a phone hoard can capture from. Kind is a short human tag, always
+// KindRemote today, kept because it is what a picker renders beside the name.
+//
+// The JSON tags are vestigial: this used to be decoded from a helper's
+// `--list-devices` output, and it is now filled in directly by Client.Devices.
+// They are harmless and are kept only so an older tool reading a dumped device
+// list still parses.
 type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	// NeedsPairing is set by the caller, not by the helper: whether a device
-	// requires a pairing code depends on what this machine has already paired
-	// with, which the helper cannot know. Excluded from the wire for the same
-	// reason.
+	// NeedsPairing is whether this machine has to be introduced to the phone
+	// before a session can open — read from the pin set, because under trust
+	// on first use holding the phone's certificate fingerprint is what
+	// actually governs it.
 	NeedsPairing bool `json:"-"`
 }
 
 // KindRemote is the Device.Kind an iPhone running the companion app carries.
-// The helper sets it and the Go side reads it back, so the two spellings have
-// to stay in step. Every device carries it now that there is one kind of
-// source; it survives as the wire's own word for what a source is.
+//
+// **No longer a cross-language wire value.** It used to be set by the Swift
+// helper and read back here, so the two spellings had to stay in step; the
+// helper is gone and this side now sets it itself (Client.Devices). The only
+// remaining Swift mention of the name is prose in an error message. Renaming it
+// is a local change.
 const KindRemote = "Hoardling"
 
 // OpenOptions says which phone to open and how.

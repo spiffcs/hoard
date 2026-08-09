@@ -102,11 +102,14 @@ prerelease with no config change.
 
 ## 3. What is explicitly out of scope
 
-- **Shipping the Swift helper or the iPhone app in the release archives.**
-  They get Taskfile targets (D1), not goreleaser build entries. The macOS helper
-  is an `.app` bundle built by `build-scan.sh`; the iOS head goes through the App
-  Store — `docs/app-store-release.md`. The README must say plainly that the
-  release binary is the CLI, and that scanning needs a separate build on a Mac.
+- **Shipping the iPhone app in the release archives.** It gets Taskfile
+  targets (D1), not goreleaser build entries, and goes through the App Store —
+  `docs/app-store-release.md`.
+
+  This used to also cover a macOS `.app` helper built by `build-scan.sh`, and
+  the README had to say that scanning needed a separate build on a Mac. Neither
+  is true any more: the release binary talks to the phone itself, so scanning
+  needs the CLI and the app on a phone, and nothing else.
 - **The macOS `scan.yml` workflow.** It stays manual-only for the reasons its own
   header comment gives (10× billing on macOS runners). Releasing does not change
   that math. Going public does change it — revisit separately, not here.
@@ -222,7 +225,7 @@ Two porting details that will bite otherwise:
   # Makefile used $(shell ...) at parse time; Taskfile uses a var with `sh:`,
   # which is evaluated lazily — so this no longer runs xcrun on Linux.
   scan-ios-test:
-    desc: Run ScanKit's unit tests on the iOS simulator
+    desc: Run the scan package's unit tests on the iOS simulator
     platforms: [darwin]
     vars:
       SIM_NAME:

@@ -114,7 +114,7 @@ Both halves have to be running.
 
 ```sh
 # On the Mac, once:
-make all            # the hoard binary + bin/hoard-scan.app (the link's Mac end)
+make all            # the hoard binary — it is the whole Mac side now
 
 # Then, per session:
 ./hoard add
@@ -158,17 +158,20 @@ scan/hoard-scan/            SwiftPM package, shared
                             linked directly by the app
   Sources/ScanLink/         Bonjour + the pairing handshake (HMAC-SHA256)
   Sources/ScanWire/         the NDJSON contract with the Go side
-  Sources/ScanKit/          the *Mac* end of the link. The phone does not use it
 ```
+
+There is no Mac target in this package. `Sources/ScanKit/` and the `hoard-scan`
+executable used to hold hoard's end of the link; that is Go now, in
+`internal/scan/link` — see `docs/specs/scan-transport-port.md`.
 
 `ScanWire` is the contract with Go (`internal/scan`). Both ends speak it, so it
 must not fork — that is why it is a target of its own rather than a struct on
 each side.
 
 The app declares three package dependencies in `project.yml` — `CardKit`,
-`ScanLink`, `ScanWire` — and gets `BorderKit` through `CardKit`. `ScanKit` is
-not among them and must not be added: it is the Mac's end of the link and links
-AppKit.
+`ScanLink`, `ScanWire` — and gets `BorderKit` through `CardKit`. That is every
+target in the package: nothing here is Mac-only any more, apart from the
+`cardkit-probe` harness.
 
 ## Tests
 

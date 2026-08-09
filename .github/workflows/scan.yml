@@ -21,7 +21,7 @@
 #
 # Until then the scanner's gate is the local sweep, which must be run by hand
 # before any scanner change lands:
-#   make scan && make scan-test && make scan-check
+#   make scan-test && make scan-check
 # ===========================================================================
 #
 # The Swift side of the scanner: compile the Mac helper and the card reader,
@@ -40,7 +40,7 @@
 # that was written into this header at the time: "nothing checks the goldens
 # automatically any more" — a change altering what the scanner reads could
 # reach main unnoticed unless somebody remembered the local sweep
-# (`make scan && make scan-test && make scan-check`). The feature with the
+# (`make scan-test && make scan-check`). The feature with the
 # most surface area and the least test automation had no gate; the filtered
 # triggers were the compromise that paid only for scanner changes.
 #
@@ -111,11 +111,6 @@ jobs:
       # first makes that five seconds to diagnose instead of a puzzle.
       - name: toolchain
         run: swift --version
-
-      # The Mac end of the link to the phone. It owns no camera and reads no
-      # cards — this step only proves it still compiles.
-      - name: build scan helper
-        run: make scan
 
       # Before the sweep: seconds rather than a minute, and a broken trigger
       # rule or parser predicate is far easier to read here than as a golden

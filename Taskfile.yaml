@@ -39,12 +39,13 @@ tasks:
     cmds:
       - go build -o hoard ./cmd/hoard
 
-  # Build everything needed for the full experience (binary + scan helper).
+  # `all` used to build the hoard binary *and* a macOS scan helper. hoard now
+  # talks to the phone itself, so the binary is the whole product and this is a
+  # thin alias kept because the docs and muscle memory both use it.
   all:
-    desc: Build the hoard binary and the macOS scan helper
+    desc: Build the hoard binary
     cmds:
       - task: build
-      - task: scan
 
   clean:
     desc: Remove build output (binary, scan helper, release artifacts)
@@ -152,17 +153,12 @@ tasks:
   # runner it is SKIPPED SILENTLY rather than failing, which is what makes a
   # single `task all` safe everywhere. The flip side: a green run on Linux
   # proves nothing about the Swift half. The real native gate is local
-  # `make scan scan-test scan-check` plus the manual scan.yml workflow.
-
-  # Build the macOS scan helper (bin/hoard-scan.app). macOS + Xcode only.
+  # `make scan-test scan-check` plus the manual scan.yml workflow.
   #
-  # The helper owns no camera: it is the Mac end of the link to the iPhone app,
-  # which is what actually captures and reads. See docs/specs/ios-development.md for
-  # building that side.
-  scan:
-    desc: Build the macOS scan helper (bin/hoard-scan.app)
-    platforms: [darwin]
-    cmd: ./build-scan.sh
+  # There is no `scan` task any more. It built bin/hoard-scan.app, the Mac end
+  # of the link to the phone; hoard now does that itself in internal/scan/link,
+  # so the Swift here is the phone's code and the corpus harness only. See
+  # docs/specs/scan-transport-port.md.
 
   # Replay the checked-in scan fixtures through the reader and diff the
   # extracted card lists against their goldens (macOS only). The reader is
@@ -259,20 +255,21 @@ tasks:
     platforms: [darwin]
     cmd: ./release-scan-ios.sh --upload
 
-  # Run ScanKit's unit tests on the iOS simulator. They are Vision-free and
-  # CoreGraphics-only, so they prove Core/ still compiles and behaves for iOS
-  # without needing a device or a signing identity. This is the cheap gate; the
-  # expensive one is the on-device fixture replay in the app itself, because
-  # simulator Vision is not device Vision and goldens must never come from it.
+  # Run the package's unit tests on the iOS simulator. They are Vision-free and
+  # CoreGraphics-only, so they prove the phone's targets still compile and
+  # behave for iOS without needing a device or a signing identity. This is the
+  # cheap gate; the expensive one is the on-device fixture replay in the app
+  # itself, because simulator Vision is not device Vision and goldens must never
+  # come from it.
   #
-  # hoard-scan-Package is SwiftPM's generated all-targets scheme — the ScanKit
-  # scheme is the library alone and carries no test action. The simulator is
+  # hoard-scan-Package is SwiftPM's generated all-targets scheme, which is what
+  # carries a test action across every target at once. The simulator is
   # discovered rather than named, because the installed runtime's device list
   # changes with every Xcode update and a hardcoded model goes stale silently.
   # The Makefile used $(shell ...) at parse time; this var uses `sh:`, which is
   # evaluated lazily — so xcrun never runs on Linux.
   scan-ios-test:
-    desc: Run ScanKit's unit tests on the iOS simulator
+    desc: Run the scan package's unit tests on the iOS simulator
     platforms: [darwin]
     vars:
       SIM_NAME:

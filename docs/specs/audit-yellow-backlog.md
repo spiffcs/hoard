@@ -32,8 +32,9 @@ already runs inside the merge's immediate transaction).
   guard) are done.
 - **B10's View() mutation through the detail pointer** — structural; safe
   today, wants the render path made read-only as its own change.
-- **C10's ScanKitTests target** — the false comments were corrected; creating
-  the target and covering RemoteController is real new work, post-launch.
+- ~~**C10's ScanKitTests target**~~ **moot 2026-08-09.** ScanKit and
+  `RemoteController` were deleted with the helper; hoard's end of the link is Go
+  now and is covered by `internal/scan/link`'s own tests.
 - **PeerBrowser's run-loop busy-pump** — one-shot CLI path, cosmetic.
 
 Scanner-behavior items (B2, B6, and the Red-phase resolver changes) still owe a

@@ -32,7 +32,7 @@ permissions:
 # and was gated separately by scan.yml — which is now DISABLED for budget
 # reasons (see the banner in that file; do not re-enable it, including Claude).
 # So the scanner has no CI gate at all right now: its goldens are checked only
-# by a hand-run `make scan && make scan-test && make scan-check`.
+# by a hand-run `make scan-test && make scan-check`.
 jobs:
   Static-Analysis:
     # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline

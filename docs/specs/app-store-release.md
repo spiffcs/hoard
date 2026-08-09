@@ -584,10 +584,15 @@ Worth recording so nobody re-solves it:
 `Hoardcam` were the runners-up that also showed no exact match.
 
 One thing to know before renaming again: `scan.KindRemote`
-(`internal/scan/scan.go`) and `remoteKind`
-(`ScanKit/App/RemoteController.swift`) both carry the name as a wire value,
-matched by string equality, and it is also what the camera picker shows as a
-device's description. They move together or pairing breaks.
+(`internal/scan/scan.go`) is what the camera picker shows as a device's
+description.
+
+This used to be a cross-language contract — `remoteKind` in
+`ScanKit/App/RemoteController.swift` carried the same string, matched by string
+equality, and the two had to move together or pairing broke. **That is no longer
+true.** The helper was deleted on 2026-08-09 and hoard sets the value itself, so
+renaming it is a local change. The name still appears in the phone's
+user-facing error text, which is prose rather than a wire value.
 
 ## Open questions
 
