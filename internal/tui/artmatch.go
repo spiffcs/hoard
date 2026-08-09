@@ -27,13 +27,27 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// Fail-closed acceptance gates, provisional until the full-index offline
-// eval (Phase B verification) refits them. What they stand on today: the
-// hash's measured margins — the same image survives scale and brightness
-// shifts within 8 bits, distinct images sit 14+ bits apart (phash_test.go) —
-// so a winner must be both close in absolute terms and clearly ahead of the
-// runner-up. Either miss and the card simply stays queued, exactly as if the
-// channel did not exist.
+// Fail-closed acceptance gates.
+//
+// UNFITTED AT THE CURRENT FOOTPRINT — these are the values that were fitted
+// against the 64-bit hash, and the hash is now 256 bits (2026-08-08). Every
+// distance they are compared against is drawn from a range four times wider,
+// so as written they reject nearly everything. That is the safe direction to
+// be wrong in — a rejected match leaves the card queued, exactly as if the
+// channel did not exist, while an accepted wrong one commits a wrong printing
+// — and it is why they were not rescaled by arithmetic here. Guessing a gate
+// that ACCEPTS is the one move this channel must never make.
+//
+// docs/sprint-artmatch-v2.md Stage C refits them from the measured
+// distributions: HOARD_MINI_EVAL=1 first for the go/no-go, then
+// HOARD_ARTMATCH_EVAL=1 across all ~107k printings, with zero wrong-printing
+// matches as the bar. Until then this channel stays inert, which it already
+// was for an unrelated reason (the audit's B7: stills only land in
+// HOARD_SCAN_DEBUG_DIR).
+//
+// For scale when reading the eval output: at 256 bits the same synthetic image
+// survives scale and brightness shifts within 6 bits while distinct images sit
+// 104+ bits apart (phash_test.go). The live numbers will be worse than both.
 const (
 	artAcceptDistance = 10
 	artAcceptMargin   = 8
@@ -190,9 +204,9 @@ func (m model) artMatchCmd(it queueItem, notBefore time.Time) tea.Cmd {
 		}
 		best, second := am.index.Best(artindex.FromImage(img))
 		// A one-entry index cannot render a decisive verdict: the runner-up
-		// is Best's seeded 65, so any image inside the distance gate clears
-		// the margin unopposed. Two entries is the least field a margin
-		// means anything against.
+		// is Best's sentinel, seeded above every reachable distance, so any
+		// image inside the distance gate clears the margin unopposed. Two
+		// entries is the least field a margin means anything against.
 		if am.index.Count() < 2 || !artDecisive(best, second) {
 			return nil
 		}

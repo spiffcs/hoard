@@ -86,6 +86,14 @@ scan/foil-dataset/images/
 # Labels beside them are tracked — see scan/corpus/README.md.
 scan/corpus/images/
 
+# The art-index image cache (`task artindex-cache`, HOARD_ARTINDEX_CACHE).
+# Every printing's Scryfall image, ~10GB, kept locally so re-hashing after a
+# footprint change costs a disk read instead of a three-hour re-download.
+# These are Wizards' copyrighted card images fetched from Scryfall's CDN: they
+# are cached, never committed, and every one of them is re-fetchable. See
+# docs/data-licensing.md §6.
+artindex-cache/
+
 # The foil-sparkle corpus. Unlike the two above, these photographs CANNOT be
 # refetched, so the part the detector is fitted and scored on — cards/ — is
 # tracked on purpose. Only the bulky derivatives are ignored: full/ is the

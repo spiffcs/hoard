@@ -47,12 +47,12 @@ func TestMiniFootprintEval(t *testing.T) {
 		req.Header.Set("User-Agent", "hoard/mini-eval")
 		resp, err := c.Do(req)
 		if err != nil {
-			return 0, err
+			return artindex.Hash{}, err
 		}
 		defer resp.Body.Close()
 		img, _, err := image.Decode(resp.Body)
 		if err != nil {
-			return 0, err
+			return artindex.Hash{}, err
 		}
 		return artindex.FromCard(img), nil
 	}
@@ -123,7 +123,7 @@ func TestMiniFootprintEval(t *testing.T) {
 			continue
 		}
 		h := artindex.FromCard(img)
-		b1, b2 := 65, 65
+		b1, b2 := 257, 257 // above the 256-bit maximum
 		var n1 string
 		for _, r := range idx {
 			d := h.Distance(r.h)

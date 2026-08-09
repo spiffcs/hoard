@@ -40,8 +40,13 @@ func TestHashIsStableAcrossScaleAndBrightness(t *testing.T) {
 			big.Set(x, y, base.At(x*146/630, y*204/880))
 		}
 	}
-	if d := h.Distance(FromImage(big)); d > 6 {
-		t.Errorf("scale changed the hash by %d bits, want ≤6", d)
+	// Bounds fitted by measurement at the 256-bit footprint (2026-08-08),
+	// not scaled from the 64-bit ones by arithmetic: this synthetic pair
+	// measures 6 bits apart, and the bound carries the same ~3x headroom the
+	// 64-bit test allowed. See TestDifferentImagesLandFarApart for the other
+	// side of the gap these two numbers define.
+	if d := h.Distance(FromImage(big)); d > 18 {
+		t.Errorf("scale changed the hash by %d bits, want ≤18", d)
 	}
 
 	// A global brightness shift — the one thing two photographs never
@@ -60,23 +65,32 @@ func TestHashIsStableAcrossScaleAndBrightness(t *testing.T) {
 			bright.Set(x, y, color.RGBA{lift(r), lift(g), lift(b), 255})
 		}
 	}
-	if d := h.Distance(FromImage(bright)); d > 8 {
-		t.Errorf("brightness shifted the hash by %d bits, want ≤8", d)
+	if d := h.Distance(FromImage(bright)); d > 24 {
+		t.Errorf("brightness shifted the hash by %d bits, want ≤24", d)
 	}
 }
 
 func TestDifferentImagesLandFarApart(t *testing.T) {
 	// 20 distinct pseudo-cards: every pair must sit further apart than any
 	// plausible same-card acceptance bar. The margin between same-image
-	// distortion (≤8 above) and cross-image distance here is what the
+	// distortion (≤24 above) and cross-image distance here is what the
 	// match rank's fail-closed thresholds get fitted inside.
+	//
+	// Measured at 256 bits (2026-08-08): min 104, mean 123 over 190 pairs,
+	// against a worst same-image distortion of 6 — a 17.3x separation, where
+	// the 64-bit footprint measured 9.0x on the identical images. That
+	// widening is the whole point of Stage A. It is NOT a substitute for the
+	// live numbers: these are synthetic blocky images, and the 64-bit hash
+	// also separated them 9x while managing only 2-6 bits of margin on real
+	// hand-held foil captures. docs/sprint-artmatch-v2.md Stage C is the
+	// measurement that decides anything.
 	var hs []Hash
 	for s := int64(0); s < 20; s++ {
 		hs = append(hs, FromImage(synthImage(s, 146, 204)))
 	}
 	for i := range hs {
 		for j := i + 1; j < len(hs); j++ {
-			if d := hs[i].Distance(hs[j]); d < 14 {
+			if d := hs[i].Distance(hs[j]); d < 80 {
 				t.Errorf("images %d and %d only %d bits apart", i, j, d)
 			}
 		}
@@ -91,8 +105,8 @@ func TestIndexRoundTripAndBest(t *testing.T) {
 	}
 	defer ix.Close()
 	if _, err := ix.db.Exec(`INSERT INTO hashes VALUES ('a', ?, 'foil'), ('b', ?, '')`,
-		int64(FromImage(synthImage(1, 146, 204))),
-		int64(FromImage(synthImage(2, 146, 204)))); err != nil {
+		encodeHash(FromImage(synthImage(1, 146, 204))),
+		encodeHash(FromImage(synthImage(2, 146, 204)))); err != nil {
 		t.Fatal(err)
 	}
 	if err := ix.reload(); err != nil {
@@ -102,7 +116,7 @@ func TestIndexRoundTripAndBest(t *testing.T) {
 	if best.ScryfallID != "a" || best.Distance != 0 {
 		t.Errorf("best = %+v, want a at 0", best)
 	}
-	if second.ScryfallID != "b" || second.Distance < 14 {
+	if second.ScryfallID != "b" || second.Distance < 80 {
 		t.Errorf("second = %+v, want b comfortably far", second)
 	}
 	if ix.SoleFinish("a") != "foil" || ix.SoleFinish("b") != "" {
