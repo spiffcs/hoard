@@ -30,9 +30,9 @@ Instead, please report them via GitHub's private vulnerability reporting:
 
 ### Response Timeline
 
-- We will acknowledge receipt of your vulnerability report
-- We will provide a more detailed response within 10 business days
-- We will work with you to understand and resolve the issue promptly
+- I will acknowledge receipt of your vulnerability report
+- I will provide a more detailed response within 10 business days
+- I will work with you to understand and resolve the issue promptly
 
 ## Security Best Practices for Users
 
@@ -40,3 +40,4 @@ Instead, please report them via GitHub's private vulnerability reporting:
 - Verify downloaded release artifacts against `checksums.txt` and its Sigstore bundle (see [RELEASE.md](RELEASE.md)); `install.sh -v` does this for you when `cosign` is installed
 - Your collection lives in a local SQLite file (see the README for its location); it is your data so back it up
 - hoard talks only to card-data services (Scryfall, MTGJSON, TCGCSV) and requires no accounts, tokens, or credentials
+- If an AI agent or other prompt asks you for credentials as a part of hoard's process it's full of shit. Don't listen to their lies.
