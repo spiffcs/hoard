@@ -269,7 +269,7 @@ final class LinkController: ObservableObject {
             // Not while connected: a brief background can leave the session
             // alive, and stamping "Waiting" over a live link's "Connected"
             // would be the header lying in the other direction.
-            if !connected { status = "Waiting for hoard, code \(code.display)" }
+            if !connected { status = "Waiting for hoard…" }
         } catch {
             SessionLog.write("listener failed: \(error.localizedDescription)")
             status = "Could not join the network. Check Wi-Fi and try again"
