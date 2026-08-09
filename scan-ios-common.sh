@@ -39,6 +39,36 @@ EOF
     exit 2
 }
 
+# The team identifier of the first Apple Development identity in the keychain,
+# on stdout. Empty if there is none.
+#
+# **Read from the certificate's OU, never from its common name.** This is the
+# whole subtlety, and getting it wrong produces a build that fails with "No
+# Account for Team XXXXXXXXXX" naming a team the developer has never heard of:
+#
+#     UID=AAAAAAAAAA
+#     CN=Apple Development: A Developer (BBBBBBBBBB)   <- individual identifier
+#     OU=CCCCCCCCCC                                    <- the team identifier
+#
+# The parenthetical in an Apple Development certificate's common name is the
+# *person*, not the team. They look identical — ten uppercase alphanumerics —
+# so a common-name parse gets a plausible, wrong answer, and every later error
+# points at provisioning rather than at this. That was the original bug here.
+#
+# Apple Development identities only: those are the ones that can sign a build
+# for a device. A Developer ID or Apple Distribution certificate carries a team
+# too, but picking one of those produces a profile mismatch further along.
+ios_guess_team() {
+    local name
+    name=$(security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/^[[:space:]]*[0-9]*)[[:space:]]*[0-9A-F]*[[:space:]]*"\(Apple Development:[^"]*\)"[[:space:]]*$/\1/p' \
+        | head -1)
+    [ -n "$name" ] || return 0
+    security find-certificate -c "$name" -p 2>/dev/null \
+        | openssl x509 -noout -subject -nameopt sep_multiline,utf8 2>/dev/null \
+        | sed -n 's/^[[:space:]]*OU=//p' | head -1
+}
+
 # Write scan/hoard-scan-ios/Signing.xcconfig if it is missing, guessing the team
 # from the keychain.
 #
@@ -50,8 +80,7 @@ EOF
 ios_ensure_signing_xcconfig() {
     [ -f "$scan_ios_xcconfig" ] && return 0
     local team
-    team=$(security find-identity -v -p codesigning 2>/dev/null \
-        | sed -n 's/.*(\([A-Z0-9]\{10\}\))"$/\1/p' | head -1)
+    team=$(ios_guess_team)
     cat >"$scan_ios_xcconfig" <<EOF
 // Local signing identity. Gitignored — a team identifier is account data, not
 // project configuration, and it should not travel with the repo.
