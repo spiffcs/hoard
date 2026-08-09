@@ -20,7 +20,7 @@ curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b /usr/local/
 Or install with Go (1.26+):
 
 ```sh
-go install github.com/spiffcs/hoard@latest
+go install github.com/spiffcs/hoard/cmd/hoard@latest
 ```
 
 Or download an archive from the [releases page](https://github.com/spiffcs/hoard/releases)
@@ -83,7 +83,7 @@ your cache directory and are always safe to delete.
 
 ```sh
 make tools               # install the pinned toolchain into .tool/
-make build               # go build -o hoard .
+make build               # go build -o hoard ./cmd/hoard
 make test                # go test ./...   (no network needed)
 make static-analysis     # golangci-lint + go mod tidy check
 make help                # list every target, the Swift scanner's included

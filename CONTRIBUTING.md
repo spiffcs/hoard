@@ -4,7 +4,7 @@
 
 ```sh
 make tools     # bootstrap the pinned toolchain (binny → .tool/)
-make build     # go build -o hoard .
+make build     # go build -o hoard ./cmd/hoard
 make test      # go test ./...   (no network needed)
 make help      # list every target
 ```

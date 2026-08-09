@@ -189,7 +189,7 @@ Task groups:
 
 - **High level** — `default`/`validations` → static-analysis; `static-analysis` →
   `check-go-mod-tidy` + `lint`; `test` → `unit`; `unit` → `go test ./...`;
-  `build` → `go build -o hoard .`; `all` → `build` + `scan`.
+  `build` → `go build -o hoard ./cmd/hoard`; `all` → `build` + `scan`.
 - **Bootstrap** — `binny`, `tools`/`bootstrap`, `update-tools`, `list-tools`,
   `list-tool-updates`, `tmpdir`. Copy from triage unchanged.
 - **Static analysis** — `format`, `lint`, `lint-fix`, `check-go-mod-tidy`. Copy,
@@ -282,7 +282,7 @@ Verify:
 
 ```bash
 make test && make build && ./hoard version
-go build -ldflags "-X github.com/spiffcs/hoard/internal/buildinfo.Version=v0.0.1-test" -o /tmp/hoard-vt . && /tmp/hoard-vt version
+go build -ldflags "-X github.com/spiffcs/hoard/internal/buildinfo.Version=v0.0.1-test" -o /tmp/hoard-vt ./cmd/hoard && /tmp/hoard-vt version
 ```
 
 The second command is the one that matters: if the ldflag path is wrong, the
@@ -307,7 +307,7 @@ builds:
   # target cross-compiles from the ubuntu runner with no toolchain wrangling.
   - id: hoard-linux
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
@@ -319,7 +319,7 @@ builds:
 
   - id: hoard-windows
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [windows]
     goarch: [amd64, arm64]
@@ -331,7 +331,7 @@ builds:
   # credentials and talks to nobody.
   - id: hoard-darwin
     binary: hoard
-    main: .
+    main: ./cmd/hoard
     env: [CGO_ENABLED=0]
     goos: [darwin]
     goarch: [amd64, arm64]
@@ -672,7 +672,7 @@ reads before it ships.
 
 **G.1 — README install section.** The README currently has no install path at
 all — it goes from the screenshot straight into usage. Add, right after the
-badges: the `install.sh` one-liner, `go install github.com/spiffcs/hoard@latest`,
+badges: the `install.sh` one-liner, `go install github.com/spiffcs/hoard/cmd/hoard@latest`,
 manual download from the releases page with the `cosign verify-blob`
 incantation, and one sentence saying the release binary is the CLI — the card
 scanner needs the Swift helper and the iPhone app built from source on a Mac

@@ -62,7 +62,7 @@ tasks:
   build:
     desc: Build the hoard binary
     cmds:
-      - go build -o hoard .
+      - go build -o hoard ./cmd/hoard
 
   # Build everything needed for the full experience (binary + scan helper).
   all:
