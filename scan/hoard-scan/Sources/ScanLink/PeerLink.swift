@@ -96,6 +96,13 @@ public final class PeerLink {
     /// Called on `queue` for every complete frame received.
     public var onFrame: ((Frame) -> Void)?
     public var onState: ((PeerState) -> Void)?
+    /// Fired once, on `.ready`, before `onState`.
+    ///
+    /// Separate from `onState` because it is load-bearing rather than
+    /// informational: PeerEnds sends the hello from here, and `onState` is
+    /// public and routinely reassigned by callers — a test that watches states
+    /// would otherwise silently unhook the handshake it is trying to watch.
+    var onReady: (() -> Void)?
 
     private let connection: NWConnection
     private let queue: DispatchQueue
@@ -110,6 +117,11 @@ public final class PeerLink {
     /// on failure and cancel as a belt beside that brace.
     private let previewInFlight = SendGate()
     private(set) public var state: PeerState = .connecting
+
+    /// The peer's certificate fingerprint, once TLS has settled. `nil` on a
+    /// plaintext link. This is what the hello's proof is bound to, and what
+    /// gets pinned when a pairing succeeds.
+    private(set) public var peerFingerprint: Data?
 
     init(connection: NWConnection, role: PeerRole, queue: DispatchQueue) {
         self.connection = connection
@@ -238,7 +250,17 @@ public final class PeerLink {
 
     private func set(_ new: PeerState) {
         guard state != new else { return }
+        // Read at the moment the link comes up, which is the earliest the TLS
+        // metadata exists and the latest it is still guaranteed to — a
+        // cancelled connection stops answering. Captured here rather than in
+        // the verify block because a listener shares one parameters object
+        // across every connection it accepts, so a callback there cannot say
+        // which connection it belongs to. `nil` on a plaintext link.
+        if new == .ready, peerFingerprint == nil {
+            peerFingerprint = ScanLink.peerFingerprint(of: connection)
+        }
         state = new
+        if new == .ready { onReady?(); onReady = nil }
         onState?(new)
     }
 
@@ -281,8 +303,25 @@ final class SendGate: @unchecked Sendable {
 /// all, and over a USB-C tether's link-local interface. Nagle off matters
 /// because the control traffic is tiny — a `capture` verb is eight bytes — and
 /// waiting to coalesce it would add up to 40 ms to a shutter press.
-func parameters(role: PeerRole) -> NWParameters {
-    let params = NWParameters.tcp
+/// - Parameters:
+///   - trust: what to present and what to accept. `nil` is plaintext, which is
+///     what this link was until 2026-08-08 and is now only used by tests that
+///     are about framing rather than about identity.
+///   - sawPeer: called with the peer's certificate fingerprint during the
+///     handshake. The hello step needs it to bind the pairing proof.
+func parameters(
+    role: PeerRole, trust: PeerTrust? = nil,
+    queue: DispatchQueue = DispatchQueue(label: "hoard-scan.tls"),
+    sawPeer: @escaping (Data) -> Void = { _ in }
+) -> NWParameters {
+    let params: NWParameters
+    if let trust {
+        let tls = NWProtocolTLS.Options()
+        applyTrust(trust, to: tls, queue: queue, sawPeer: sawPeer)
+        params = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+    } else {
+        params = NWParameters.tcp
+    }
     params.includePeerToPeer = true
     if role == .control, let tcp = params.defaultProtocolStack
         .internetProtocol as? NWProtocolTCP.Options {

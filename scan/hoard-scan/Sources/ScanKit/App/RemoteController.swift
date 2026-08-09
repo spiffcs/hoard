@@ -44,11 +44,40 @@ final class RemoteController: NSObject {
     /// network fault rather than a typo.
     private let verifyOnly: Bool
 
+    /// This Mac's own certificate, and the phones it has paired with.
+    ///
+    /// Both live in the keychain under the helper's bundle identifier. The
+    /// identity is generated once, on the first run that needs it, and never
+    /// again — regenerating would invalidate every phone that pinned it, which
+    /// is why nothing here has a "refresh" path.
+    private let identityService = "dev.spiffcs.hoard.scan.mac"
+    private lazy var pins = PinnedPeers(service: identityService + ".pins")
+
     init(deviceID: String?, code: PairingCode, verifyOnly: Bool = false) {
         self.requestedDevice = deviceID
         self.code = code
         self.verifyOnly = verifyOnly
         super.init()
+    }
+
+    /// What this Mac presents, and which phones it will talk to.
+    ///
+    /// `acceptUnknown` is the pairing window and it is open only in verify
+    /// mode — that is, only when a person has just typed a code. During a
+    /// scanning session the phone must already be pinned, so an impostor
+    /// cannot complete a handshake at all rather than being turned away one
+    /// layer later by the pairing proof.
+    private func trust() -> PeerTrust {
+        do {
+            let identity = try loadOrCreatePeerIdentity(service: identityService)
+            return PeerTrust(
+                identity: identity, pinned: pins.all, acceptUnknown: verifyOnly)
+        } catch {
+            fail("""
+                Could not create this Mac's link certificate: \(error). \
+                The login keychain has to be unlocked for hoard to pair with a phone
+                """, code: 4)
+        }
     }
 
     func start() {
@@ -61,7 +90,18 @@ final class RemoteController: NSObject {
             fail(noPhoneAppMessage, code: 4)
         }
 
-        let session = browser.connect(to: chosen, code: code)
+        // A scanning session against a phone this Mac has never paired with
+        // cannot succeed, and saying so here is worth the extra branch: with
+        // `acceptUnknown` false the handshake simply fails, and a TLS failure
+        // is a much worse way to learn "you have not paired yet".
+        if !verifyOnly, pins.all.isEmpty {
+            fail("""
+                This Mac has not paired with a phone yet. Run `hoard scan pair` \
+                and enter the six digits shown on Hoardling's Pair tab
+                """, code: 4)
+        }
+
+        let session = browser.connect(to: chosen, code: code, trust: trust())
         self.session = session
 
         if verifyOnly {
@@ -119,18 +159,66 @@ final class RemoteController: NSObject {
     /// showing "connected to hoard".
     private func verify(_ session: PeerSession, chosenName: String) -> Never {
         let ready = Flag()
+        // Whether the link ever came up, and the last failure if it did not.
+        //
+        // Everything below exists because this function used to report exactly
+        // one cause — a wrong pairing code — for every way verification can
+        // fail. That is true of the common case and false of all the others,
+        // and it is expensive: a TLS handshake that never completes, a phone
+        // that suspended, a Mac on the wrong Wi-Fi, and six mistyped digits all
+        // came back as "check the digits on its Pair tab". Someone following
+        // that advice re-reads a correct code, retypes it, and learns nothing.
+        // A whole TLS-PSK attempt was abandoned partly under this message; see
+        // docs/scan-transport-encryption.md §7.
+        //
+        // `linkUp` is the discriminator, and it is the right one because it
+        // divides the causes where they actually differ. The pairing proof
+        // travels in the hello, which is sent *after* the connection is
+        // established — so a link that never reached `.ready` never offered the
+        // code at all, and blaming the digits is not merely unhelpful, it is
+        // wrong. A link that came up and then went quiet is the case where the
+        // code really is the first thing to suspect.
+        let linkUp = Flag()
+        let failure = LastFailure()
+        session.control.onState = { state in
+            switch state {
+            case .ready: linkUp.set()
+            case .failed(let reason): failure.record(reason)
+            case .connecting, .cancelled: break
+            }
+        }
         session.control.onFrame = { frame in
             guard frame.kind == .ndjson, let text = frame.text,
                   text.contains("\"event\":\"ready\"")
             else { return }
             ready.set()
         }
-        spinRunLoop(seconds: verifyTimeout) { ready.isSet }
+        spinRunLoop(seconds: verifyTimeout) { ready.isSet || failure.isSet }
         let ok = ready.isSet
+        let transport = failure.value
+        let established = linkUp.isSet
         session.cancel()
         if !ok {
+            // Exit code 5 stays "the pairing did not complete" in every branch —
+            // the Go side keys off it and does not care which cause it was.
+            if !established, let transport {
+                fail("\(transport.reason) (\(transport.detail))", code: 5)
+            } else if !established {
+                fail("""
+                    Could not open a link to the phone before the deadline. The code was \
+                    never sent, so it is not the digits — check that Hoardling is open and \
+                    that both devices are on the same Wi-Fi or a cable
+                    """, code: 5)
+            }
             fail("The phone did not accept that code. Check the digits on its Pair tab",
                  code: 5)
+        }
+        // Trust on first use, from this side. The phone pinned this Mac when
+        // it accepted the proof; this is the matching half, and it is done
+        // only after `ready` proves the pairing actually completed rather than
+        // merely that a certificate was seen.
+        if let seen = session.control.peerFingerprint {
+            pins.pin(seen, name: chosenName)
         }
         // Say so on stdout. runHelper treats an empty stdout as a hard failure
         // and reports whatever is on stderr instead — so a verification that
@@ -147,22 +235,9 @@ final class RemoteController: NSObject {
             // phone speaks ScanWire's Event, this side speaks it too, and a
             // round trip through a struct here would silently drop any field
             // this build happens not to know about — which is exactly the
-            // forward compatibility the wire contract promises.
-            //
-            // Not quite verbatim, though: the frame codec explicitly permits
-            // newlines in a payload, but stdout here is the Go side's *line*
-            // parser, so a raw \n or \r inside the payload would split one
-            // event into two half-lines and poison everything after it.
-            // Interior newline bytes become spaces — a legal JSON encoder
-            // never emits them (it writes the two-byte escape \n instead), so
-            // this only ever rewrites a payload that was already going to
-            // break the pipe.
-            var line = frame.payload
-            for i in line.indices where line[i] == 0x0A || line[i] == 0x0D {
-                line[i] = 0x20
-            }
-            FileHandle.standardOutput.write(line)
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            // forward compatibility the wire contract promises. ndjsonLine is
+            // the one concession, and its comment says why.
+            FileHandle.standardOutput.write(ndjsonLine(frame.payload))
             // The phone declares readiness, so this is the first moment it is
             // known to be listening. Asking earlier would talk to a link that
             // has not finished coming up.

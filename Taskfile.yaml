@@ -315,6 +315,35 @@ tasks:
     platforms: [darwin]
     cmd: ./build-scan-ios.sh --install
 
+  # The distribution path for the same app: Release archive + signed .ipa.
+  #
+  # Split into three targets rather than one with a flag, matching how
+  # scan-ios/scan-ios-install already split — and here the split is also a
+  # safety property. `scan-ios-release` never talks to Apple, so it is the one
+  # to run while iterating; `-validate` runs Apple's pre-upload checks without
+  # spending a build number; `-upload` is the irreversible one, because a build
+  # number that has been uploaded can never be reused.
+  #
+  # The archive stops short of a signed export until the bundle ID is
+  # registered and the team has an Apple Distribution certificate, and the
+  # upload needs App Store Connect credentials that no tracked file holds.
+  # release-scan-ios.sh reports whichever is missing, in the same shape
+  # build-scan-ios.sh reports a signing failure. See docs/app-store-release.md.
+  scan-ios-release:
+    desc: Archive and export the iPhone capture head for App Store Connect
+    platforms: [darwin]
+    cmd: ./release-scan-ios.sh
+
+  scan-ios-release-validate:
+    desc: Archive, export, and run App Store Connect's pre-upload validation
+    platforms: [darwin]
+    cmd: ./release-scan-ios.sh --validate
+
+  scan-ios-release-upload:
+    desc: Archive, export, and upload the iPhone capture head to App Store Connect
+    platforms: [darwin]
+    cmd: ./release-scan-ios.sh --upload
+
   # Run ScanKit's unit tests on the iOS simulator. They are Vision-free and
   # CoreGraphics-only, so they prove Core/ still compiles and behaves for iOS
   # without needing a device or a signing identity. This is the cheap gate; the

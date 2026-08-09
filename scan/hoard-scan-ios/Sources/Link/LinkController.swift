@@ -69,22 +69,96 @@ final class LinkController: ObservableObject {
     private var session: PeerSession?
     let sounds = Sounds()
 
+    /// This phone's certificate and the Macs it has paired with.
+    private let identityService = "dev.spiffcs.hoard.scan.ios.identity"
+    private let pins = PinnedPeers(service: "dev.spiffcs.hoard.scan.ios.pins")
+
+    /// Whether an unpaired Mac may complete a handshake right now.
+    ///
+    /// Open when nothing is paired — otherwise a fresh install could never
+    /// pair at all — and whenever the person asks to add a Mac. Closed again
+    /// the moment a pairing succeeds, which is what makes the window narrow
+    /// enough for six digits to be an appropriate size of secret.
+    ///
+    /// Mirrored into `openGate` because this property is main-actor isolated
+    /// and the TLS verify block that consults it runs on Network.framework's
+    /// own queue. Two representations of one fact is a smell; the alternative
+    /// is reading main-actor state from a network callback, which is worse.
+    @Published private(set) var pairingOpen: Bool {
+        didSet { openGate.set(pairingOpen) }
+    }
+
+    private let openGate = PairingGate()
+
     init(deviceName: String = "") {
-        // Restored, not regenerated. A code that changes every launch makes
-        // "paired" meaningless — the Mac remembers a code per phone, so a fresh
-        // one silently invalidates that the next morning and the failure looks
-        // like a network fault rather than an expired secret. Generated once,
-        // then kept.
-        let code = PairingStore.load() ?? {
-            let fresh = PairingCode.random()
-            PairingStore.save(fresh)
-            return fresh
-        }()
-        self.code = code
+        // Regenerated, not restored — the reverse of what this did until
+        // 2026-08-08, and the reversal is a consequence of pinning rather than
+        // a change of mind. The old comment was right on its own terms: while
+        // the code was the *only* thing identifying a peer, rotating it
+        // silently invalidated every pairing, so it had to be stable for the
+        // life of the install. That made a six-digit secret a permanent one,
+        // which is the worst combination available.
+        //
+        // Under trust-on-first-use the code identifies nothing. A paired Mac
+        // is recognised by the certificate it pinned, and PeerEnds skips the
+        // proof entirely for a peer it already knows — so the code is a
+        // one-time introduction token, and a token that outlives its use is
+        // just a password. It is therefore generated per launch, held only in
+        // memory, and burned as soon as it has been used.
+        //
+        // PairingStore is deliberately no longer read or written. Nothing
+        // needs the code to survive a launch, and a six-digit secret sitting
+        // in the keychain forever is a liability with no remaining purpose.
+        let fresh = PairingCode.random()
+        self.code = fresh
         self.deviceName = deviceName
-        listener = PeerListener(name: deviceName, code: code)
+        let openAtLaunch = pins.all.isEmpty
+        self.pairingOpen = openAtLaunch
+        openGate.set(openAtLaunch)
+        listener = LinkController.makeListener(
+            name: deviceName, code: fresh, identityService: identityService,
+            pins: pins, gate: openGate)
         wireListener()
     }
+
+    /// Builds a listener carrying this phone's identity and trust policy.
+    ///
+    /// Static because it runs from `init` before `self` is available, and
+    /// factored because rotation rebuilds the listener rather than mutating
+    /// it — a listener whose key or trust can change under a live connection
+    /// is a bug waiting for a busy session.
+    private static func makeListener(
+        name: String, code: PairingCode, identityService: String,
+        pins: PinnedPeers, gate: PairingGate
+    ) -> PeerListener {
+        guard let identity = try? loadOrCreatePeerIdentity(service: identityService) else {
+            // Plaintext rather than no link at all. A phone that cannot reach
+            // its own keychain — locked before first unlock, most likely —
+            // would otherwise refuse to advertise with no way to say why, and
+            // the Mac would report a phone that is not there. The Pair tab
+            // shows the downgrade; see `encrypted`.
+            return PeerListener(name: name, code: code)
+        }
+        // Both closures are read per handshake. `pins.all` in particular must
+        // not be snapshotted: the Mac pinned during this session has to be
+        // recognised on its next connection, and the listener is not rebuilt
+        // in between.
+        return PeerListener(
+            name: name, code: code,
+            trust: PeerTrust(
+                identity: identity, pinned: { pins.all }, acceptUnknown: { gate.isOpen }),
+            pins: pins)
+    }
+
+    /// Whether the link this phone is advertising is encrypted.
+    ///
+    /// False only in the keychain-unavailable fallback above. Surfaced so the
+    /// Pair tab can say so rather than letting a downgrade pass silently —
+    /// which is the failure mode this whole change exists to remove.
+    var encrypted: Bool { (try? loadOrCreatePeerIdentity(service: identityService)) != nil }
+
+    /// How many Macs this phone has paired with.
+    var pairedCount: Int { pins.all.count }
 
     private func wireListener() {
         listener.onSession = { [weak self] session in
@@ -104,6 +178,22 @@ final class LinkController: ObservableObject {
         }
         listener.onError = { [weak self] message in
             Task { @MainActor in self?.status = message }
+        }
+        // A Mac just paired and was pinned. Close the window and burn the code
+        // it used, in that order — the rotation restarts the listener, so
+        // doing it while the new session is being adopted would tear down the
+        // connection that just succeeded. Deferred to the next main-actor turn
+        // for exactly that reason.
+        listener.onPaired = { [weak self] _ in
+            // Close the window the instant a Mac pairs. Deliberately *not* a
+            // rotation here: rotating rebuilds the listener, and rebuilding it
+            // would cancel the connection that just succeeded. Closing the
+            // gate is enough to make the code inert — an unpinned peer can no
+            // longer complete TLS, so it never reaches the point of being
+            // asked for digits — and the code itself is replaced the next time
+            // pairing is opened. The Pair tab stops showing it in the
+            // meantime, so a stale code is never on screen.
+            Task { @MainActor in self?.pairingOpen = false }
         }
     }
 
@@ -193,20 +283,41 @@ final class LinkController: ObservableObject {
         connected = false
     }
 
-    /// newCode rotates the pairing code and restarts advertising.
+    /// newCode rotates the pairing code and reopens the pairing window.
     ///
-    /// The way to revoke a Mac. Every existing pairing stops working, which is
-    /// the point — and is why this is a deliberate action rather than something
-    /// that happens on its own at launch.
+    /// "Add a Mac". It no longer revokes anything — that is `forgetMacs()`
+    /// now, and separating the two is the point: rotating a code used to be
+    /// the only way to revoke, so the two actions could not be taken
+    /// independently, and the destructive one happened whether or not it was
+    /// wanted.
     func newCode() {
-        let fresh = PairingCode.random()
-        PairingStore.save(fresh)
-        code = fresh
+        rotate(open: true)
+    }
+
+    /// Unpairs every Mac. The revocation half of what `newCode` used to do.
+    ///
+    /// A Mac that is forgotten cannot complete a handshake at all on its next
+    /// attempt, because its certificate is no longer pinned — it does not get
+    /// as far as being asked for a code.
+    func forgetMacs() {
+        pins.forgetAll()
+        rotate(open: true)
+    }
+
+    /// Burns the current code and rebuilds the listener.
+    ///
+    /// Called on every pairing, successful or abandoned, because a pairing
+    /// token that is still valid after it has been used is a password. The
+    /// listener is rebuilt rather than mutated for the reason its own comment
+    /// gives: its code and trust are fixed at construction, and a live
+    /// connection must not see either change underneath it.
+    private func rotate(open: Bool) {
+        code = PairingCode.random()
+        pairingOpen = open
         stop()
-        // The listener holds its code from construction, so rotating means a
-        // new one. Rebuilt rather than mutated: a listener whose key can change
-        // under a live connection is a bug waiting for a busy session.
-        listener = PeerListener(name: deviceName, code: fresh)
+        listener = LinkController.makeListener(
+            name: deviceName, code: code, identityService: identityService,
+            pins: pins, gate: openGate)
         wireListener()
         start()
     }
@@ -576,4 +687,28 @@ func jpeg(_ image: CGImage, quality: Double) -> Data? {
     ] as CFDictionary)
     guard CGImageDestinationFinalize(dest) else { return nil }
     return out as Data
+}
+
+/// A Bool that the pairing window is read through, safe to touch from the TLS
+/// verify block's queue.
+///
+/// The capture head's `Flag` pattern, and the same reason: `pairingOpen` lives
+/// on the main actor and Network.framework asks this question from its own
+/// queue mid-handshake. Hopping to the main actor to answer would deadlock a
+/// handshake behind whatever the UI is doing.
+final class PairingGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = false
+
+    func set(_ value: Bool) {
+        lock.lock()
+        open = value
+        lock.unlock()
+    }
+
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return open
+    }
 }

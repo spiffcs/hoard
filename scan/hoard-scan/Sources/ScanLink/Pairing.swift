@@ -78,9 +78,30 @@ public struct PairingCode: Equatable, Sendable {
 /// permissive verify block, both ends sat in `.connecting` forever — no error,
 /// no timeout. Plain TCP over the identical code paths pairs in under a second,
 /// which is what isolated it. Left as a known gap rather than half-shipped.
-func proof(session: String, code: PairingCode) -> String {
+/// `peerFingerprint` is what binds this proof to a particular TLS channel.
+///
+/// Without it a proof says only "I know the code", which a relay in the middle
+/// can forward verbatim: it completes TLS with each honest end separately,
+/// passes their proofs through, and both ends pin *it*. With it, a proof says
+/// "I know the code and I am looking at the certificate whose fingerprint is
+/// this" — and the relay cannot produce that, because the certificate each end
+/// sees is the relay's own. The sender therefore binds the fingerprint it
+/// *observed*, and the verifier checks against its own certificate, which it
+/// knows independently.
+///
+/// Optional so a plaintext link still has a proof at all. That case is tests
+/// and history; it is not a supported way to run the link.
+func proof(session: String, code: PairingCode, peerFingerprint: Data? = nil) -> String {
     var mac = HMAC<SHA256>(key: code.key)
     mac.update(data: Data(session.utf8))
+    if let peerFingerprint {
+        // A separator, so that a session id ending in bytes that happen to look
+        // like a fingerprint cannot be re-split to authenticate a different
+        // pair of values. Cheap, and the class of bug it prevents is the kind
+        // that survives review.
+        mac.update(data: Data([0x00]))
+        mac.update(data: peerFingerprint)
+    }
     return Data(mac.finalize()).base64EncodedString()
 }
 
@@ -89,10 +110,17 @@ func proof(session: String, code: PairingCode) -> String {
 /// `HMAC.isValidAuthenticationCode` rather than `==`: comparing MACs with a
 /// short-circuiting equality leaks how much of the value was right through
 /// timing, which is the standard way this check is quietly not a check.
-func verifyProof(_ claimed: String, session: String, code: PairingCode) -> Bool {
+func verifyProof(
+    _ claimed: String, session: String, code: PairingCode, ownFingerprint: Data? = nil
+) -> Bool {
     guard let bytes = Data(base64Encoded: claimed) else { return false }
+    var authenticated = Data(session.utf8)
+    if let ownFingerprint {
+        authenticated.append(0x00)
+        authenticated.append(ownFingerprint)
+    }
     return HMAC<SHA256>.isValidAuthenticationCode(
-        bytes, authenticating: Data(session.utf8), using: code.key)
+        bytes, authenticating: authenticated, using: code.key)
 }
 
 /// The Bonjour service type. Nine characters, inside the fifteen the spec

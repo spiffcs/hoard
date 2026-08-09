@@ -67,6 +67,12 @@ let package = Package(
         // into frames, plus the optional `--mirror` window. No camera, no read
         // pipeline — which is why it needs neither AVFoundation nor BorderKit.
         .target(name: "ScanKit", dependencies: ["ScanWire", "ScanLink"]),
+        // ScanKit's sources are all behind `#if os(macOS)`, so on an iOS
+        // destination this bundle compiles to nothing and passes trivially —
+        // which is correct, and is why `task scan-ios-test` can keep running
+        // the whole package against the simulator. The tests themselves carry
+        // the same fence for the same reason.
+        .testTarget(name: "ScanKitTests", dependencies: ["ScanKit"]),
         .executableTarget(name: "hoard-scan", dependencies: ["ScanKit"]),
         // CardKit is the iPhone head's read pipeline. It shares no code with the
         // Mac side beyond ScanWire, which is the Go side's protocol and must not

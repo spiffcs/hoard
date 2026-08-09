@@ -42,17 +42,50 @@ import AppKit
 import ScanLink
 import ScanWire
 
+/// ScanArgs is the command line, parsed and nothing else.
+///
+/// Split out from `runCLI` so it can be tested: everything around it browses
+/// the network, takes over the process with `NSApplication.run()`, or calls
+/// `exit`, none of which a test bundle can do. The parse is the part that has
+/// edge cases — a `--device` with nothing after it, a code that is not six
+/// digits — and it was the part with no coverage.
+struct ScanArgs {
+    var listDevices = false
+    var device: String?
+    /// nil when `--code` is absent, present but last, or not six digits. The
+    /// three cases collapse on purpose: the caller's message is the same, and
+    /// naming which one it was would be guidance nobody can act on differently.
+    var code: PairingCode?
+    var verify = false
+
+    init(_ args: [String]) {
+        listDevices = args.contains("--list-devices")
+        verify = args.contains("--verify")
+        // `i + 1 < args.count` rather than a plain successor: `--device` as the
+        // final argument is a typo, not a request to read past the end.
+        if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
+            device = args[i + 1]
+        }
+        if let i = args.firstIndex(of: "--code"), i + 1 < args.count {
+            code = PairingCode(args[i + 1])
+        }
+        // `--remote` is deliberately not read. It used to select this backend
+        // over a local Continuity Camera; that path is gone, so the flag is
+        // accepted and ignored — a newer hoard driving an older helper, and an
+        // older hoard driving this one, both still land here.
+    }
+}
+
 /// runCLI is the helper's whole entry point, called by the executable target's
-/// main.swift. It lives in the library rather than in top-level code so a
-/// test bundle could link everything here — though no ScanKitTests target
-/// exists yet, so nothing does; the executable is a three-line shell.
+/// main.swift. It lives in the library rather than in top-level code so a test
+/// bundle can link everything here.
 ///
 /// Every mode either exits or blocks in `app.run()`, so this never returns
 /// normally — which is also what keeps `remote` alive.
 public func runCLI() {
-    let args = Array(CommandLine.arguments.dropFirst())
+    let args = ScanArgs(Array(CommandLine.arguments.dropFirst()))
 
-    if args.contains("--list-devices") {
+    if args.listDevices {
         // Accessory rather than a plain process: this is a bundled app, and the
         // local-network permission macOS attributes to that bundle is the one
         // Bonjour browsing needs. Dock-less because a device query is not
@@ -72,16 +105,9 @@ public func runCLI() {
         exit(0)
     }
 
-    var requestedDevice: String?
-    if let i = args.firstIndex(of: "--device"), i + 1 < args.count {
-        requestedDevice = args[i + 1]
-    }
-
     // A code is not optional. Saying so up front beats a browse that finds a
     // phone and then silently fails its handshake.
-    guard let i = args.firstIndex(of: "--code"), i + 1 < args.count,
-          let code = PairingCode(args[i + 1])
-    else {
+    guard let code = args.code else {
         fail("hoard-scan needs --code <six digits>, shown on the Pair tab in the app on your phone")
     }
 
@@ -90,8 +116,8 @@ public func runCLI() {
     // terminal the user is working in.
     app.setActivationPolicy(.accessory)
     let remote = RemoteController(
-        deviceID: requestedDevice, code: code,
-        verifyOnly: args.contains("--verify"))
+        deviceID: args.device, code: code,
+        verifyOnly: args.verify)
     installStdinPump(
         onCommand: { remote.handle(command: $0) },
         onClosed: { remote.shutdown() })

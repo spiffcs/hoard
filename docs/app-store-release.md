@@ -1,10 +1,33 @@
 # Shipping Hoardling on the App Store
 
-**Status: audited 2026-08-06, nothing attempted.**
-The app installs to a registered device
-via `make scan-ios-install` and has never been through TestFlight, App Store
-Connect, or review. See [ios-development.md](ios-development.md) for building
-and running it.
+**Status: audited 2026-08-06; steps 4–8 built and verified 2026-08-08.**
+The app installs to a registered device via `make scan-ios-install` and has
+never been through TestFlight, App Store Connect, or review. See
+[ios-development.md](ios-development.md) for building and running it.
+
+Channel decision, 2026-08-08: **full App Store submission**, with TestFlight as
+the stage before it rather than an alternative to it. Open question 1 below is
+therefore answered.
+
+What landed on 2026-08-08, all verified against a built Release bundle rather
+than asserted:
+
+- The privacy manifest, the export-compliance key, Debug-only file sharing, and
+  the version reconcile — steps 4 through 7.
+- A release build path — step 8. `make scan-ios-release` archives successfully
+  today; it stops at `-exportArchive`, which needs an account and a
+  distribution certificate that do not exist yet. See that step for the exact
+  error and why it is not a bug.
+- [scan-transport-encryption.md](scan-transport-encryption.md), which answers
+  step 9's exploration half — five options, ranked, with a root-cause theory
+  for the TLS-PSK failure and a one-hour experiment that would settle it.
+- [scanner-limits.md](scanner-limits.md), which step 11 already cited and which
+  did not exist. Every number in it was measured on 2026-08-08, not quoted.
+
+Three of this page's own claims were wrong and are corrected in place below:
+the `Info.plist` drift, the direction of the version drift, and the reason the
+session log needed gating. The audit was right that each needed attention and
+wrong about why — which is the ordinary way a doc rots.
 
 ## Blockers
 
@@ -21,13 +44,50 @@ keyed by an HKDF-derived key, verified with
 names and prices cross the LAN in the clear.
 
 TLS-PSK was built first and did not work — both ends sat in `.connecting`
-forever with no error. See `docs/sprint-iphone-capture-head.md`.
+forever with no error. `docs/sprint-iphone-capture-head.md` is a **dead
+pointer**: that file was deleted in `72b09fc`. Its post-mortem is still
+readable with `git show 72b09fc^:docs/sprint-iphone-capture-head.md`.
 
 Apple will not test for this. It matters because the privacy disclosure would
 have to admit it, and because it is the one security claim the app currently
 cannot make.
 
-### 2. No privacy manifest
+**It is worse than "readable on the LAN," and this page understated it.**
+`Pairing.swift:9` says "the link is TLS with a pre-shared key," which is not
+true of any tree that has ever existed. The rationale at `Pairing.swift:46-52`
+then leans on that: it concedes six digits is a million possibilities and
+grindable offline from a captured handshake, and names the compensating control
+— "the real protection is that TLS-PSK requires an *online* guess per attempt."
+That control was never built. So the weak code has no backstop, and any scheme
+keyed *only* on the pairing code inherits the same problem; every viable option
+needs an ephemeral Diffie-Hellman.
+
+The options are worked through in
+[scan-transport-encryption.md](scan-transport-encryption.md). Two findings from
+it belong here. Both ends are **Swift** linking the same `ScanLink` target —
+`internal/scan/` does no networking at all, it drives the helper over
+`os/exec` and NDJSON pipes — so a fix is written once, and `crypto/tls`'s lack
+of external PSK does not apply. And `RemoteController.swift:119` reports every
+transport failure as "The phone did not accept that code," which is why the
+last attempt failed silently; fixing it is a prerequisite to attempting
+anything, not a nicety.
+
+### 2. No privacy manifest — DONE 2026-08-08
+
+`Resources/PrivacyInfo.xcprivacy` now exists and is confirmed present at the
+`.app` root of a built Release bundle. The audit below held up on re-grep, with
+one correction: **UserDefaults is more widespread than it says.** Besides
+`DevMode.key` via `@AppStorage`, `Sources/Settings/TierSettings.swift` holds a
+`UserDefaults` directly across seven `tiers.*` keys. Same category, same
+`CA92.1`, so still exactly one entry — but the count is not two call sites.
+
+The rest re-verified clean across the app target and all four linked package
+targets: zero hits for file-timestamp, boot-time, disk-space, and active-keyboard
+APIs, and `Package.swift` has no `.package(url:)` at all, so the empty
+`NSPrivacyCollectedDataTypes` is honest rather than optimistic.
+
+The original audit follows, since its reasoning is what to re-run against any
+new dependency.
 
 `PrivacyInfo.xcprivacy` does not exist anywhere under `scan/`. Required since
 May 2024 for any app touching a "required reason" API.
@@ -69,7 +129,40 @@ Add the file under `Resources/` and list it in `project.yml`'s `sources`.
 Re-run the grep after any new dependency lands. Required-reason coverage is a
 property of the whole linked binary, not of the app target's own source.
 
-### 3. The session log is world-readable
+### 3. The session log is world-readable — DONE 2026-08-08, premise was stale
+
+Both keys are now Debug-only, verified absent from a built Release `Info.plist`
+and present in Debug.
+
+**The stated reason was already out of date.** `SessionLog.fileURL` writes to
+`.cachesDirectory`, not `Documents` — it was moved there deliberately so the
+file-sharing keys would not expose card names and prices. Gating was still the
+right call; the exposure it was closing had already been closed elsewhere.
+
+`Sources/Link/SessionLog.swift:11-13` still says the file-sharing keys "stay"
+for the corpus workflow. That comment is now wrong and is worth fixing.
+
+**How it is gated, because two obvious routes silently fail.**
+`project.yml` splits *build settings* per config but not `info.properties`, and
+neither declarative workaround survives measurement:
+
+- `INFOPLIST_KEY_*` per config merges booleans into an existing plist, but the
+  setting names are an allowlist of 95 in Xcode's `CoreBuildSystem.xcspec` and
+  `INFOPLIST_KEY_UIFileSharingEnabled` is not among them. It drops the key with
+  no warning. (It is also ignored outright without `GENERATE_INFOPLIST_FILE=YES`.)
+- `$(SETTING)` expansion yields a *string*, so Release would ship the literal
+  `"NO"` rather than a boolean or an absence.
+
+What works is a `postBuildScripts` phase that strips both keys with PlistBuddy
+when `CONFIGURATION != Debug`. It declares the built plist as an `inputFile` so
+the build system orders it after `ProcessInfoPlistFile` rather than leaving that
+to the scheduler; it sets `basedOnDependencyAnalysis: false` because the phase
+rewrites its own input and a skipped run would ship the keys; and it re-reads
+each key after deleting so a failure fails the build. That last part matters
+more than it looks: every failure mode here otherwise looks exactly like
+success.
+
+The original note follows.
 
 `UIFileSharingEnabled: true` and `LSSupportsOpeningDocumentsInPlace: true` are
 both set (`project.yml`), so `Documents/session-log.txt` is visible in the Files
@@ -77,21 +170,53 @@ app. That log contains card names and prices, and `SessionLog.startSession()`
 only truncates it when a Mac connects — a phone that never pairs accumulates
 forever.
 
-Right call for a development build. Before shipping, either gate both keys
-behind the Debug config or keep them and say so in the privacy disclosure.
-Gating is cleaner: `project.yml` already splits settings per config.
+### 4. No release build path — BUILT 2026-08-08, blocked on an account
 
-### 4. No release build path
+`make scan-ios-release` exists. **Archiving succeeds.** Export does not, and
+the reason is an account, not a defect:
 
-`build-scan-ios.sh` hardcodes `-configuration Debug` and produces
-`.build/Build/Products/Debug-iphoneos/HoardScan.app`. There is no `archive`, no
-`-exportArchive`, and no upload step anywhere in the repo. `project.yml` does
-define a `Release` config, so nothing structural is in the way — the script just
-has never needed it.
+```
+error: exportArchive No Accounts
+error: exportArchive No profiles for 'dev.spiffcs.hoard.scan.ios' were found
+```
 
-Needed: `xcodebuild archive` → `-exportArchive` with an `app-store-connect`
-export plist → `xcrun altool`/`notarytool` upload, or the same three steps
-through Xcode's Organizer. A `make scan-ios-release` target is the natural home.
+The first line is the cause and the second is noise, the same way it is on the
+Debug path. The distinction is worth internalising: **archiving signs from the
+keychain, but exporting has to ask Apple for a distribution profile, and
+xcodebuild can only ask as an account Xcode is signed into.** A keychain
+identity is not an account, so `security find-identity` showing a valid cert
+tells you nothing about whether export will work. Separately, there is no
+`Apple Distribution` certificate on this machine at all — only
+`Apple Development` and two `Developer ID Application` — so export will fail a
+second time on the certificate once the account is added.
+
+Three files, sibling-script rather than a flag on `build-scan-ios.sh`, because
+the two paths share only their first four steps and diverge completely after:
+
+- `scan-ios-common.sh` — the shared half: xcodegen check, `Signing.xcconfig`
+  template, `ios_team_id()` (env, then the gitignored xcconfig, never a tracked
+  file), project generation, build stamp.
+- `release-scan-ios.sh` — archive → export → validate/upload, with a
+  credential preflight that fails *before* archiving so a missing key costs no
+  build time.
+- `ExportOptions-AppStore.plist` — tracked template with **no team ID**;
+  the ID is injected at runtime into a generated copy.
+
+**`altool`, not `notarytool`.** notarytool exists on this machine but has no
+iOS mode — it is Developer ID notarization for distribution outside the store.
+
+Two decisions inside it that are easy to get wrong:
+
+- The build stamp moved to **UTC**. `date +%y%m%d.%H%M.%S` is a valid
+  `CFBundleVersion` and monotonic — except across the DST fall-back hour, where
+  local wall-clock repeats and the upload is rejected for going backwards,
+  unrecoverably. Leading zeros are stripped with `10#` arithmetic, which is
+  load-bearing: a bare `$((08))` is invalid octal and would abort every build
+  between 08:00 and 09:59.
+- `manageAppVersionAndBuildNumber = false` in the export plist. It defaults to
+  *YES*, which silently rewrites `CFBundleVersion` at export to Xcode's own
+  counter — discarding the stamp that ties a build to a moment and a git rev,
+  and which `LinkController.swift:323` reports as `appVersion`.
 
 ## Chores
 
@@ -101,9 +226,9 @@ through Xcode's Organizer. A `make scan-ios-release` target is the natural home.
 | **Team** | The team identifier lives only in gitignored `Signing.xcconfig` — never in a tracked file | Present locally; a release script needs it injected, not read from disk |
 | **Deployment target** | iOS 18.0 | Narrow, driven by `RecognizeTextRequest` and `RotationCoordinator`. Lowering means keeping an older Vision path. Probably accept it |
 | **Device family** | `TARGETED_DEVICE_FAMILY: "1"` — iPhone only | Fine, and it means no iPad screenshots |
-| **Version** | `MARKETING_VERSION 0.1`, `CURRENT_PROJECT_VERSION 1` | Marketing version should be `1.0` at submission; build number must increment on every upload |
-| **Info.plist drift** | `Info.plist` says `CFBundleShortVersionString 1.0`, `project.yml` says `MARKETING_VERSION 0.1` | Xcode's build setting wins, so the shipped value is `0.1`. Harmless today, confusing at release — make them agree |
-| **Export compliance** | CryptoKit HKDF + HMAC, no `ITSAppUsesNonExemptEncryption` key | Add `ITSAppUsesNonExemptEncryption: false` to `project.yml`'s `info.properties`. Authentication-only crypto is exempt, and the key skips the questionnaire on every upload |
+| **Version** | ~~`MARKETING_VERSION 0.1`~~ → `1.0`, pointed at by the plist | **Done 2026-08-08.** Build number increments per upload via the UTC stamp; see blocker 4 |
+| **~~Info.plist drift~~** | **This entry was wrong.** `Info.plist` is *gitignored* (`.gitignore:64`) — xcodegen regenerates it from `project.yml` every run, so there were never two tracked sources of truth | And the drift ran the other way: a Release build *before* any change already produced `1.0`, because a literal in the plist is not a reference — so `MARKETING_VERSION` was dead config, not the winner. Fixed by making the plist reference `$(MARKETING_VERSION)`, mirroring the `CFBundleVersion` pattern, so they cannot diverge again |
+| **Export compliance** | `ITSAppUsesNonExemptEncryption: false` set and verified in a Release bundle | **Done 2026-08-08**, and re-verified honest: `CryptoKit` appears only in `ScanLink/Pairing.swift`, as `HKDF` and `HMAC` — no AES, no ChaChaPoly, no sealed box anywhere. **Revisit if the transport gains payload encryption**; see the ordering note under step 9 |
 | **App icon** | `icon-1024.png` is a true 1024×1024 file, but `make-icon.swift` derives it from a 356px full-bleed crop of the 512px `.icns` | Upscaled ~3×. Ships, but a higher-resolution original is a straight improvement |
 | **Screenshots** | None | Required for 6.9" iPhone. Awkward: the interesting screen is a camera pointed at a card |
 | **Privacy policy URL** | None | Required. Can be short — the app collects nothing |
@@ -114,14 +239,44 @@ through Xcode's Organizer. A `make scan-ios-release` target is the natural home.
 ## The order to do it in
 
 Roughly dependency-ordered. Steps 1–2 are the two that can invalidate later work
-if left late.
+if left late. **Steps 4–8 are done** (2026-08-08); what remains needs an Apple
+account, a device, or a decision.
+
+**One ordering correction:** step 5 must not be finished before step 9.
+`ITSAppUsesNonExemptEncryption: false` is correct for a transport that encrypts
+nothing, and stays correct if step 9 lands on TLS or on disclose-and-ship. It
+becomes a genuine judgement call if step 9 lands on application-layer payload
+encryption. The key is set today on the strength of the crypto being
+authentication-only; treat it as provisional until the transport is decided.
+
+The account work, in the order it unblocks things — items 1 and 2 are the
+current hard stop, and everything below waits on them:
+
+1. Sign Xcode into the Apple Developer account (Xcode › Settings › Accounts).
+2. Create an **Apple Distribution** certificate. Needs Admin or Account Holder
+   on the team. None exists today.
+3. Register the bundle ID (step 3 below).
+4. Create the App Store Connect record (step 1 below).
+5. An App Store Connect API key with the **App Manager** role — Developer
+   cannot upload. The `.p8` downloads exactly once; `*.p8` and `private_keys/`
+   are now gitignored because altool searches `./private_keys`.
 
 1. **Create the app record in App Store Connect.** This is the only
    authoritative check that the name `Hoardling` is free — a store search sees
    published apps but not unused reservations in other developers' accounts. Do
    it first; everything downstream carries the name.
-2. **Ungate `lastRead` when not connected.** See the top of this page. One
-   condition, and it is what makes the app reviewable.
+2. **Ungate `lastRead` when not connected.** **This step is unactionable as
+   written and needs a decision.** "See the top of this page" points at nothing
+   — no such section exists — and the gate at `SessionView.swift:237` is
+   `developerMode`, not connection state, so "when not connected" does not
+   describe the code. The comment above it records a deliberate product call:
+   both footer lines were hidden because `"(nothing read)"` reads as an error
+   mid-box when it is usually just a card halfway onto the mat.
+
+   The underlying worry is presumably real — an App Store reviewer has no Mac
+   to pair with, so they open the app, grant camera access, and see a live
+   preview that never visibly does anything. Whatever fixes that is the actual
+   requirement. Restate it before building it.
 3. **Register the bundle ID** `dev.spiffcs.hoard.scan.ios` and confirm the team
    still provisions.
 4. **Add `PrivacyInfo.xcprivacy`** with the UserDefaults entry, and wire it into
@@ -139,9 +294,16 @@ if left late.
    the build, so it can run in parallel with 4–8.
 10. **Take screenshots** on a 6.9" device.
 11. **Write the store metadata** — description, keywords, privacy policy page,
-    support page, age rating, category. Read `docs/scanner-limits.md` before
-    making any accuracy claim: foreign-language cards do not resolve, and planes
-    and full-art cards with no printed title cannot be read at all.
+    support page, age rating, category. Read
+    [scanner-limits.md](scanner-limits.md) before making any accuracy claim.
+    It exists now, and it is stricter than this page's summary was: name reads
+    scored **87%** on 231 clean digital scans and that number is *generous by
+    construction*, because the corpus scores names leniently with a prefix
+    match either way. Foil recall measured **53%** overall with a 23–69% spread
+    across three rigs on identical code. Planar cards are not merely unread —
+    the aspect gate accepts them, so each one emits a card entry carrying
+    rules-box text as its title. Sections 12 and 13 of that doc give sentences
+    that are safe to publish and the overstatements to avoid.
 12. **Upload to TestFlight** and run a real box of cards through it.
 13. **Submit**, with review notes explaining the Mac companion and a video of
     the pairing flow.
@@ -187,9 +349,14 @@ device's description. They move together or pairing breaks.
 
 ## Open questions
 
-1. **Is the App Store even the right channel?** The app is only useful to people
-   already running hoard on a Mac. TestFlight alone. 10,000 testers, a public
-   link, no review beyond the first build — might serve the actual audience with
-   a fraction of the overhead. Worth deciding before step 4, not after step 12.
+1. ~~**Is the App Store even the right channel?**~~ **Answered 2026-08-08: full
+   App Store submission.** The question was mis-framed — TestFlight is the
+   stage *before* the store, not an alternative to it, which is why it is
+   already step 12. Stopping there would have spared only screenshots,
+   keywords, category, and age rating; it would not have spared the bundle ID,
+   the App Store Connect record, a signed Release archive, export compliance,
+   or the privacy manifest, since required-reason validation happens at
+   *upload* rather than at review. TestFlight builds also expire after 90 days,
+   so testers reinstall on a cadence — a worse product than shipping.
 2. **Does the read pipeline's accuracy matter for review?** No. But it matters
    for the description; see step 11.

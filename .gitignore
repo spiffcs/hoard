@@ -53,6 +53,12 @@ scan/hoard-scan/.build/
 scan/hoard-scan-ios/*.xcodeproj/
 scan/hoard-scan-ios/.build/
 scan/hoard-scan-ios/Signing.xcconfig
+# App Store Connect API keys. release-scan-ios.sh tells you to put the .p8 in
+# ~/.appstoreconnect/private_keys, but altool also searches ./private_keys, so
+# the repo root is one `mv` away from committing a credential that can upload
+# builds as you. The .p8 downloads exactly once and cannot be re-downloaded.
+*.p8
+/private_keys/
 # Info.plist is generated from project.yml's info.properties block. Tracking it
 # would give the same settings two homes, and the checked-in one would rot.
 scan/hoard-scan-ios/Info.plist

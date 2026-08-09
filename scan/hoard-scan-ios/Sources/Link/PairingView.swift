@@ -31,21 +31,64 @@ struct PairingView: View {
                     Text("Status")
                 }
 
-                Section {
-                    Text(link.code.display)
-                        .font(.system(size: 46, weight: .heavy, design: .monospaced))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                        .textSelection(.enabled)
-                } header: {
-                    Text("Pairing code")
-                } footer: {
-                    Text("In hoard, press ctrl+p at the card prompt and type this code. "
-                        + "It is only needed once per Mac.")
+                // The code is shown only while pairing is actually open.
+                //
+                // It used to be permanent and always on screen, because it was
+                // the only thing identifying a Mac. Now a paired Mac is
+                // recognised by the certificate it pinned, so the code is a
+                // one-time introduction token: generated per launch, closed
+                // the moment a Mac pairs, and replaced whenever this window is
+                // reopened. Leaving a used code on screen would suggest it
+                // still does something, which is exactly the belief that makes
+                // a six-digit secret dangerous.
+                if link.pairingOpen {
+                    Section {
+                        Text(link.code.display)
+                            .font(.system(size: 46, weight: .heavy, design: .monospaced))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .textSelection(.enabled)
+                    } header: {
+                        Text("Pairing code")
+                    } footer: {
+                        Text("In hoard, press ctrl+p at the card prompt and type this code. "
+                            + "It is used once, to introduce a Mac — after that the two "
+                            + "recognise each other and the code is replaced.")
+                    }
+                } else {
+                    Section {
+                        Label(
+                            link.pairedCount == 1
+                                ? "1 Mac paired"
+                                : "\(link.pairedCount) Macs paired",
+                            systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                        Button("Add a Mac") { link.newCode() }
+                    } header: {
+                        Text("Pairing")
+                    } footer: {
+                        Text("Paired Macs connect on their own — no code needed. "
+                            + "Adding one shows a fresh code for as long as it takes to use it.")
+                    }
+                }
+
+                if !link.encrypted {
+                    // Never silent. A downgrade that nobody is told about is
+                    // the failure this whole design exists to remove, and the
+                    // one case that can reach it — the keychain unavailable
+                    // before first unlock — is recoverable by the person
+                    // holding the phone.
+                    Section {
+                        Label("Link is not encrypted", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    } footer: {
+                        Text("This phone could not reach its keychain, so it could not present "
+                            + "its certificate. Unlock the phone and reopen Hoardling.")
+                    }
                 }
 
                 Section {
-                    Button("Generate a new code", role: .destructive) {
+                    Button("Forget all Macs", role: .destructive) {
                         confirmingNewCode = true
                     }
                 } footer: {
@@ -91,9 +134,9 @@ struct PairingView: View {
             }
             .navigationTitle("Pair")
             .confirmationDialog(
-                "Generate a new code?", isPresented: $confirmingNewCode, titleVisibility: .visible
+                "Forget all Macs?", isPresented: $confirmingNewCode, titleVisibility: .visible
             ) {
-                Button("Generate", role: .destructive) { link.newCode() }
+                Button("Forget", role: .destructive) { link.forgetMacs() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Any Mac already paired with this phone will stop working "
