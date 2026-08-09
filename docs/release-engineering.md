@@ -27,7 +27,7 @@ interleave.
 | Lint | golangci-lint v2 + gosimports + go-mod-tidy check | **gofmt + vet only** |
 | Actions pinning | every `uses:` pinned to a commit SHA | `@v7` floating tags |
 | macOS binaries | quill sign + Apple notarize | n/a |
-| Supply chain | cosign keyless signing, CodeQL, zizmor, dependabot | **none** |
+| Supply chain | cosign keyless signing, zizmor, dependabot | **none** |
 | Install path | `install.sh` on Cloudflare R2 | **none** — build from source |
 | Repo meta | `SECURITY.md`, `RELEASE.md`, `CHANGELOG.md` | README + LICENSE + `docs/` |
 | Toolchain | binny (`.binny.yaml`) + Taskfile, Makefile is a shim | hand-written Makefile (Go **and** Swift targets) |
@@ -550,8 +550,8 @@ Implementation notes:
 
 - **Every `uses:` is pinned to a verified commit SHA.** Resolved 2026-08-08 via
   `gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'`
-  (dereferencing the tag object where annotated — codeql-action is); each SHA
-  matches the version comment beside it, and matches triage's pins. Keep the
+  (dereferencing the tag object where annotated); each SHA matches the version
+  comment beside it, and matches triage's pins. Keep the
   `# vX.Y.Z` comment — it is what dependabot reads to offer bumps.
 - **`uses: ./.github/workflows/validations.yaml` requires that file to exist
   with `workflow_call:`** — Stage E. Build Stage E first or this fails on its
@@ -628,8 +628,6 @@ PR checks go green.
 - **`.github/dependabot.yaml`** — gomod + github-actions, weekly, 7-day
   cooldown, `chore(deps)` prefix. The github-actions ecosystem is what turns SHA
   pinning from a maintenance burden into a PR queue.
-- **`.github/workflows/codeql.yaml`** — `main` → `master`. Weekly cron plus
-  push/PR. Free on public repos.
 - **`.github/workflows/validate-github-actions.yaml` + `.github/zizmor.yml`** —
   zizmor lints the workflows themselves (unpinned `uses`, credential
   persistence, template injection). Runs only on `.github/**` changes.
@@ -777,7 +775,7 @@ Stage E  validations.yaml (renamed ✓), bootstrap        ← blocks D
          action, golangci, go-mod-tidy check
 Stage D  Apple secrets (§8.1, long lead — start early)
          + .github/workflows/release.yaml
-Stage F  dependabot, codeql, zizmor, SECURITY.md,       ← R2 setup needs org access
+Stage F  dependabot, zizmor, SECURITY.md,               ← R2 setup needs org access
          install.sh, R2 workflow + bucket + rewrite
 Stage G  README install + credits + CONTRIBUTING +
          RELEASE.md + issue templates
