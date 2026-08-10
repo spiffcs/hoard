@@ -740,74 +740,20 @@ func (m *Model) turnMarketPage(dir int) {
 		m.sortLabel()), false
 }
 
-// marketSectionBudgets divides the pane's rows among the four sections:
-// equal shares, with a section that needs less than its share donating the
-// slack to the ones that need more. Deterministic, sums to at most the
-// pool, and never exceeds a section's own row count.
+// marketSectionBudgets divides the pane's rows among the three sections;
+// the arithmetic is sectionBudgets, shared with the watches pane.
 func (m Model) marketSectionBudgets() [3]int {
 	secs := m.marketSections()
+	counts := make([]int, len(secs))
+	for i, s := range secs {
+		counts[i] = s.count
+	}
 	// Furniture: a separator above each section but the first, and a title
 	// plus one line (the column header, or the empty note) per section.
 	pool := max(m.visibleRows()-(2+3*2), 0)
-	var budget [3]int
-	var active []int
-	for i, s := range secs {
-		if s.count > 0 {
-			active = append(active, i)
-		}
-	}
-	for len(active) > 0 {
-		share := pool / len(active)
-		if share == 0 {
-			break
-		}
-		kept := active[:0]
-		satisfied := false
-		for _, i := range active {
-			if secs[i].count <= share {
-				budget[i] = secs[i].count
-				pool -= secs[i].count
-				satisfied = true
-				continue
-			}
-			kept = append(kept, i)
-		}
-		active = kept
-		if satisfied {
-			continue // the slack returns to the pool; re-share it
-		}
-		// Everyone left is overfull: the share each, remainder one row at a
-		// time in section order.
-		for _, i := range active {
-			budget[i] = share
-			pool -= share
-		}
-		for _, i := range active {
-			if pool == 0 {
-				break
-			}
-			if budget[i] < secs[i].count {
-				budget[i]++
-				pool--
-			}
-		}
-		break
-	}
-	// The cursor's section always shows at least its selected row, even at
-	// a pathological height — steal one from the largest budget.
 	sec, _ := m.marketCursorPos()
-	if budget[sec] == 0 && secs[sec].count > 0 {
-		big := 0
-		for i := range budget {
-			if budget[i] > budget[big] {
-				big = i
-			}
-		}
-		if budget[big] > 0 {
-			budget[big]--
-			budget[sec] = 1
-		}
-	}
+	var budget [3]int
+	copy(budget[:], sectionBudgets(counts, pool, sec))
 	return budget
 }
 

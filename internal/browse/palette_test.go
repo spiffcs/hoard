@@ -274,22 +274,29 @@ func TestWatchesPaletteRanking(t *testing.T) {
 	}
 	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
 	for range 3 {
-		m = key(m, "v") // movers → unpriced → watches
+		m = key(m, "v") // movers → market → watches
 	}
 	if m.view != viewWatches {
 		t.Fatalf("view = %v, want watches", m.view)
 	}
 	m.openPalette()
-	pickAt, byNameAt := -1, -1
+	pickAt, byNameAt, repairAt := -1, -1, -1
 	for i, match := range m.palette.matches {
 		switch m.commands[match.index].id {
 		case "watch.pick":
 			pickAt = i
 		case "watch.add-by-name":
 			byNameAt = i
-		case "remove", "undo", "op.repair-finishes":
+		case "op.repair-finishes":
+			repairAt = i
+		case "remove", "undo":
 			t.Errorf("%s offered on watches", m.commands[match.index].id)
 		}
+	}
+	// RepairFinishes belongs here now: this screen carries the unpriced
+	// table, which is where a wrong finish shows up as a missing price.
+	if repairAt == -1 {
+		t.Error("RepairFinishes must be offered where the unpriced table lives")
 	}
 	if pickAt == -1 || byNameAt == -1 || byNameAt != pickAt+1 {
 		t.Errorf("AddWatchFromCollection at %d, AddWatchForAnyCard at %d — want them adjacent, picker first",

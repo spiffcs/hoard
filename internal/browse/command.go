@@ -100,14 +100,14 @@ func commands() []command {
 			id: "sort", aliases: "order by",
 			key: "s", hidden: true,
 			run: func(m *Model) tea.Cmd {
-				if m.view != viewMarket {
+				if singleTableView(m.view) {
 					// Page first, then sort: the new order's first rows
-					// live on page one (market resets its own inside
-					// cycleSort).
+					// live on page one (the multi-table panes reset their
+					// own inside cycleSort).
 					m.cardsPage, m.moversPage = 0, 0
 				}
 				m.cycleSort()
-				if m.view != viewMarket {
+				if singleTableView(m.view) {
 					m.cursor[paneCards], m.offset[paneCards] = 0, 0
 				}
 				m.status, m.statusErr = "sorted by "+m.sortLabel(), false
@@ -118,11 +118,11 @@ func commands() []command {
 			id: "sort.reverse", aliases: "order descending ascending",
 			key: "S", hidden: true,
 			run: func(m *Model) tea.Cmd {
-				if m.view != viewMarket {
+				if singleTableView(m.view) {
 					m.cardsPage, m.moversPage = 0, 0
 				}
 				m.reverseSort()
-				if m.view != viewMarket {
+				if singleTableView(m.view) {
 					m.cursor[paneCards], m.offset[paneCards] = 0, 0
 				}
 				m.status, m.statusErr = "sorted by "+m.sortLabel(), false
@@ -153,7 +153,7 @@ func commands() []command {
 				switch {
 				case m.view == viewMovers && len(m.movers) == 0:
 					return 5
-				case m.view == viewMovers, m.view == viewUnpriced, m.view == viewWatches:
+				case m.view == viewMovers, m.view == viewWatches:
 					return 3
 				}
 				return 2
@@ -193,14 +193,13 @@ func commands() []command {
 			desc:  "Move cards stored in a finish their printing lacks onto one it has.",
 			key:   "f",
 			where: func(m *Model) bool { return m.opRepairFinishes != nil },
-			// Listed where its symptom shows — the unpriced view and the
-			// collection — not on movers or watches, whose rows are all
-			// priced. The card detail keeps it: its palette is the price
-			// refreshers. The f key works everywhere regardless.
-			hide: func(m *Model) bool {
-				return m.detail == nil && (m.view == viewMovers || m.view == viewWatches)
-			},
-			rank: onView(viewUnpriced, 4),
+			// Listed where its symptom shows — the collection, and the
+			// watches screen, which now carries the unpriced table — not on
+			// movers, whose rows are all priced. The card detail keeps it:
+			// its palette is the price refreshers. The f key works
+			// everywhere regardless.
+			hide: func(m *Model) bool { return m.detail == nil && m.view == viewMovers },
+			rank: onView(viewWatches, 4),
 			run:  func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
 		},
 		{
@@ -448,16 +447,18 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { m.promptSetMarketFloor(); return nil },
 		},
 		{
-			id: "market.table.next", aliases: "next table section",
+			// Both multi-table panes answer these: market's three questions
+			// and the watches screen's overs/unders/unpriced.
+			id: "table.next", aliases: "next table section",
 			key: "]", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket },
-			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(1); return nil },
+			where: func(m *Model) bool { return m.view == viewMarket || m.view == viewWatches },
+			run:   func(m *Model) tea.Cmd { m.jumpSection(1); return nil },
 		},
 		{
-			id: "market.table.prev", aliases: "previous table section",
+			id: "table.prev", aliases: "previous table section",
 			key: "[", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket },
-			run:   func(m *Model) tea.Cmd { m.jumpMarketSection(-1); return nil },
+			where: func(m *Model) bool { return m.view == viewMarket || m.view == viewWatches },
+			run:   func(m *Model) tea.Cmd { m.jumpSection(-1); return nil },
 		},
 		{
 			id: "page.next", aliases: "next page turn more rows",
@@ -556,6 +557,24 @@ func (m *Model) cycleMoversWindow() tea.Cmd {
 	return nil
 }
 
+// singleTableView reports whether the right pane is one table the cursor
+// walks end to end. The two multi-table panes are excluded: each keeps a
+// sort per table and lands the cursor on the sorted table itself, so the
+// shared "back to row zero" reset would drag the hand onto the first
+// table's heading and sort something the user is no longer looking at.
+func singleTableView(v viewMode) bool {
+	return v != viewMarket && v != viewWatches
+}
+
+// jumpSection sends ]/[ to whichever multi-table pane is showing.
+func (m *Model) jumpSection(dir int) {
+	if m.view == viewWatches {
+		m.jumpWatchSection(dir)
+		return
+	}
+	m.jumpMarketSection(dir)
+}
+
 // onView is a rank helper: n on one view, 0 elsewhere.
 func onView(v viewMode, n int) func(*Model) int {
 	return func(m *Model) int {
@@ -568,23 +587,17 @@ func onView(v viewMode, n int) func(*Model) int {
 
 // populateView runs whatever fills the current view with fresh data — the
 // per-view F key: arbitrage fetches quotes, movers refreshes prices and
-// backfills history, unpriced repairs finishes, everything else refreshes
-// prices. One key, and the view knows what it needs.
+// backfills history, the watches screen refreshes prices and repairs
+// finishes, everything else refreshes prices. One key, and the view knows
+// what it needs.
 func (m *Model) populateView() tea.Cmd {
 	switch m.view {
 	case viewMarket:
 		return m.startMarketFetch()
 	case viewMovers:
 		return m.populateMovers()
-	case viewUnpriced:
-		return m.populateUnpriced()
 	case viewWatches:
-		if err := m.loadView(); err != nil {
-			m.setError(err)
-			return nil
-		}
-		m.status, m.statusErr = "watches refreshed against stored prices", false
-		return nil
+		return m.populateWatches()
 	}
 	return m.startOp("updating prices", m.opUpdatePrices)
 }
@@ -625,10 +638,15 @@ func (m *Model) populateMovers() tea.Cmd {
 	})
 }
 
-// populateUnpriced is the unpriced pipeline: refresh prices first — most
-// $0 rows are price gaps — then repair finishes, the other cause. Composed
-// like the movers pipeline so one F attacks both.
-func (m *Model) populateUnpriced() tea.Cmd {
+// populateWatches is the watches screen's pipeline: refresh prices first —
+// which is also what re-decides every watch's state, and what most $0 rows
+// are missing — then repair finishes, the other cause of an unpriced row.
+// Composed like the movers pipeline so one F serves all three tables.
+//
+// It replaced a cheap re-read against stored prices when the unpriced table
+// arrived here: two of the three tables need the network to change, so a
+// local reload would have answered F with an unchanged screen.
+func (m *Model) populateWatches() tea.Cmd {
 	up, rf := m.opUpdatePrices, m.opRepairFinishes
 	if up == nil && rf == nil {
 		m.status, m.statusErr = "price operations are unavailable in this build", true
@@ -688,6 +706,14 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 		return nil
 	}
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
+	if v == viewWatches {
+		// Three tables, and row zero is the OVERS heading — which is a place
+		// to navigate to, never one to be dropped into. Arrive on the first
+		// table that actually has rows, with every region scrolled to its
+		// top.
+		m.watchSecOffset = [watchSectionCount]int{}
+		m.cursor[paneCards] = m.firstWatchCursor()
+	}
 	// Naming the sort with the view answers the "why is this order
 	// different" beat before it lands — each view keeps its own sort, and
 	// arriving somewhere sorted by a column you chose last week reads as

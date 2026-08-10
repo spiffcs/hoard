@@ -307,7 +307,8 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
 			name, op string, threshold float64) (string, error) {
 			res, err := action.WatchAdd(ctx, deps, p,
-				action.WatchAddOptions{Name: name, Op: op, Threshold: threshold})
+				action.WatchAddOptions{Name: name,
+					Bounds: []action.WatchBound{{Op: op, Threshold: threshold}}})
 			if err != nil {
 				return "", err
 			}

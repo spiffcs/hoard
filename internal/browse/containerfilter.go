@@ -143,7 +143,7 @@ func (m Model) eligibleSets(holds func(setCode string) bool) map[int64]bool {
 // viewSkips reports whether the current view greys ineligible containers,
 // which is also the views whose cursor skips them.
 func (m Model) viewSkips() bool {
-	return m.view == viewUnpriced || m.view == viewWatches
+	return m.view == viewWatches
 }
 
 // viewScope names the selected container when it narrows the view — the

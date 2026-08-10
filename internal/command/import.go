@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"sort"
 
@@ -35,7 +34,7 @@ func NewCmdImport(a *app) *cobra.Command {
 	var o importOpts
 
 	cmd := &cobra.Command{
-		Use:     "import FILE",
+		Use:     "import FILE|-",
 		GroupID: groupInterop,
 		// Short is 60 columns or fewer because it is what this command's own
 		// page prints when there is no Long, verbatim and unwrapped. The
@@ -48,12 +47,13 @@ func NewCmdImport(a *app) *cobra.Command {
 			"from ManaBox, Moxfield, Delver Lens and hoard itself;\n" +
 			"--format names the format when the header does not.",
 		Example: "hoard import FILE [--binder B | --preserve-binders]\n" +
-			"       [--format F] [--dry-run]",
+			"       [--format F] [--dry-run]\n" +
+			"pbpaste | hoard import -",
 		// Not cobra.ExactArgs(1): its "accepts 1 arg(s), received 0" says less
 		// than the sentence this command has always answered with.
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return cli.Usagef("import needs exactly one CSV file")
+				return cli.Usagef("import needs exactly one CSV file (or - for stdin)")
 			}
 			return nil
 		},
@@ -78,7 +78,11 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 		return cli.Usagef("--binder and --preserve-binders name different destinations; choose one")
 	}
 
-	data, err := os.ReadFile(path)
+	// A lone dash is stdin, spelled the way add --file spells it, so a
+	// collection can be piped from wherever it was generated. ImportOptions
+	// has documented its Display as a path or stdin since it was written;
+	// only this line never delivered the second half.
+	data, display, err := readPathOrStdin(path)
 	if err != nil {
 		return err
 	}
@@ -86,7 +90,7 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 	res, err := action.ImportCollection(ctx,
 		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver}, pr.Fn(),
 		action.ImportOptions{
-			Data: data, Display: path, Format: o.format,
+			Data: data, Display: display, Format: o.format,
 			BinderRef: o.binderRef, Preserve: o.preserve, DryRun: o.dryRun, Again: o.again,
 		})
 	pr.Close()
@@ -113,9 +117,12 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 		// thing a scripted restore has to see, and Warn is where hoard puts
 		// a partial outcome — marked, and on stderr where the caveats live.
 		// It names the route rather than the command: 'hoard deck add' alone
-		// could not read any file hoard wrote until --format text existed.
+		// could not read any file hoard wrote until --format text existed,
+		// and the two halves could not be piped together until --file -
+		// existed. Now that they can, the advice is the one line a user can
+		// paste rather than two commands and a temporary file between them.
 		r.Warn("Skipped %d deck rows: import fills binders. Restore a deck with "+
-			"'hoard export --deck NAME --format text', then 'hoard deck add --file'.",
+			"'hoard export --deck NAME --format text | hoard deck add --file - --name NAME'.",
 			res.SkippedDeckRows)
 	}
 	if res.Refinished > 0 {

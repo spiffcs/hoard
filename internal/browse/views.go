@@ -23,7 +23,6 @@ type viewMode int
 const (
 	viewHoldings viewMode = iota
 	viewMovers
-	viewUnpriced
 	viewWatches
 	viewMarket
 )
@@ -32,9 +31,10 @@ func (v viewMode) String() string {
 	switch v {
 	case viewMovers:
 		return "movers"
-	case viewUnpriced:
-		return "unpriced"
 	case viewWatches:
+		// The unpriced holdings are the third table on this screen, not a
+		// view of their own (owner's call) — so there is no "unpriced" here
+		// for the view switcher to stop on.
 		return "watches"
 	case viewMarket:
 		// Renamed on screen: the view holds three market questions —
@@ -46,9 +46,10 @@ func (v viewMode) String() string {
 }
 
 // viewCycle is the v-key order (owner's call): the everyday reads first —
-// cards, movers, market — then the alerts, then the maintenance list. The
-// enum's declaration order stays untouched; state arrays index by it.
-var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewWatches, viewUnpriced}
+// cards, movers, market — then the alerts, which now carry the maintenance
+// list as their third table. The enum's declaration order stays untouched;
+// state arrays index by it.
+var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewWatches}
 
 func (v viewMode) next() viewMode {
 	for i, cur := range viewCycle {
@@ -216,18 +217,18 @@ func (m *Model) loadView() error {
 			m.moversCacheGen = m.dataGen
 		}
 		m.moversCache[m.moversDaysIdx] = m.allMovers
-	case viewUnpriced:
-		rows, err := m.store.Unpriced()
-		if err != nil {
-			return fmt.Errorf("reading unpriced cards: %w", err)
-		}
-		m.allUnpriced = rows
 	case viewWatches:
-		rows, err := m.store.ListWatches()
+		// One screen, two reads: the watches screen's third table is the
+		// unpriced holdings, so both lists load together or neither does.
+		watches, err := m.store.ListWatches()
 		if err != nil {
 			return fmt.Errorf("reading watches: %w", err)
 		}
-		m.allWatches = rows
+		unpriced, err := m.store.Unpriced()
+		if err != nil {
+			return fmt.Errorf("reading unpriced cards: %w", err)
+		}
+		m.allWatches, m.allUnpriced = watches, unpriced
 	}
 	m.deriveView()
 	return nil
@@ -284,8 +285,34 @@ func (m *Model) deriveView() {
 		m.filteredMovers = rows
 		m.moversColW = measureMoverCols(rows)
 		m.applySort() // sorts filteredMovers and re-derives the page
-	case viewUnpriced:
-		rows := make([]store.UnpricedRow, 0, len(m.allUnpriced))
+	case viewWatches:
+		watches := make([]store.WatchStatus, 0, len(m.allWatches))
+		for _, w := range m.allWatches {
+			if m.underFloor(w.PriceUSD) {
+				continue
+			}
+			if filtered && !m.inContainerPriced(cid, w.ScryfallID, w.Finish) {
+				continue
+			}
+			if bySet && w.SetCode != set {
+				continue
+			}
+			if !m.filter.empty() && !m.filter.matches(watchAsCard(w), m.allowed) {
+				continue
+			}
+			watches = append(watches, w)
+		}
+		// The split is the screen: every watch lands in exactly one of the
+		// two tables, by the same reading of Op that store.Met uses.
+		m.overs, m.unders = nil, nil
+		for _, w := range watches {
+			if wantsUnder(w) {
+				m.unders = append(m.unders, w)
+				continue
+			}
+			m.overs = append(m.overs, w)
+		}
+		unpriced := make([]store.UnpricedRow, 0, len(m.allUnpriced))
 		for _, r := range m.allUnpriced {
 			if filtered {
 				qty := m.containerQty(cid, r.ScryfallID, r.Finish)
@@ -297,11 +324,26 @@ func (m *Model) deriveView() {
 			if bySet && r.SetCode != set {
 				continue
 			}
-			rows = append(rows, r)
+			// Last, so the query sees the container-scoped Copies above and
+			// `qty` describes the number the QTY column prints.
+			if !m.filter.empty() && !m.filter.matches(unpricedAsCard(r), m.allowed) {
+				continue
+			}
+			unpriced = append(unpriced, r)
 		}
-		m.unpriced = rows
+		m.unpriced = unpriced
+		// Eligibility is the union of the three tables: a container greyed
+		// out here must hold nothing this whole screen would show, and the
+		// unpriced holdings are as much a reason to keep it lit as a watch.
+		// It reads the pristine rows, so the grey set holds still while the
+		// floor and the query thin what is visible.
 		if m.setsMode {
 			m.viewEligible = m.eligibleSets(func(code string) bool {
+				for _, w := range m.allWatches {
+					if w.SetCode == code {
+						return true
+					}
+				}
 				for _, r := range m.allUnpriced {
 					if r.SetCode == code {
 						return true
@@ -311,43 +353,13 @@ func (m *Model) deriveView() {
 			})
 		} else {
 			m.viewEligible = m.eligibleContainers(func(id int64) bool {
-				for _, r := range m.allUnpriced {
-					if m.inContainer(id, r.ScryfallID, r.Finish) {
-						return true
-					}
-				}
-				return false
-			})
-		}
-		m.applySort()
-	case viewWatches:
-		rows := make([]store.WatchStatus, 0, len(m.allWatches))
-		for _, w := range m.allWatches {
-			if m.underFloor(w.PriceUSD) {
-				continue
-			}
-			if filtered && !m.inContainerPriced(cid, w.ScryfallID, w.Finish) {
-				continue
-			}
-			if bySet && w.SetCode != set {
-				continue
-			}
-			rows = append(rows, w)
-		}
-		m.watches = rows
-		if m.setsMode {
-			m.viewEligible = m.eligibleSets(func(code string) bool {
-				for _, w := range m.allWatches {
-					if w.SetCode == code {
-						return true
-					}
-				}
-				return false
-			})
-		} else {
-			m.viewEligible = m.eligibleContainers(func(id int64) bool {
 				for _, w := range m.allWatches {
 					if m.inContainerPriced(id, w.ScryfallID, w.Finish) {
+						return true
+					}
+				}
+				for _, r := range m.allUnpriced {
+					if m.inContainer(id, r.ScryfallID, r.Finish) {
 						return true
 					}
 				}
@@ -361,6 +373,14 @@ func (m *Model) deriveView() {
 		return
 	}
 	m.clampCursor(paneCards)
+	// A cursor left on a table that no longer has rows moves to one that
+	// does — an empty heading is somewhere to navigate to, not somewhere to
+	// be put. Same rule the market view applies after re-ranking.
+	if m.view == viewWatches && m.watchTotalRows() > 0 {
+		if sec, _ := m.watchCursorPos(); m.watchCount(sec) == 0 {
+			m.cursor[paneCards] = m.firstWatchCursor()
+		}
+	}
 }
 
 // now is a var so tests can pin the movers window rather than depending on when
@@ -377,10 +397,10 @@ func (m Model) viewRowCount() int {
 	switch m.view {
 	case viewMovers:
 		return len(m.movers)
-	case viewUnpriced:
-		return len(m.unpriced)
 	case viewWatches:
-		return len(m.watches)
+		// Slots, not rows: the cursor also visits the heading of a table
+		// with nothing under it — see watchRegion.
+		return m.watchCursorSlots()
 	case viewMarket:
 		// Slots, not rows: the market view's cursor also visits the heading
 		// of a table with nothing under it.
@@ -426,28 +446,6 @@ func (m Model) moversLines(width int) []string {
 	})
 }
 
-// unpricedLines renders the holdings nothing can price.
-func (m Model) unpricedLines(width int) []string {
-	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
-		t := ui.Table{Cols: []ui.Col{
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10},
-			{Title: "ID", Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 3, Style: env.Dim()},
-			{Title: "FINISH", Align: ui.Left, Priority: 4, Style: env.Dim()},
-			{Title: "QTY", Align: ui.Right, Priority: 2},
-			{Title: "HELD IN", Align: ui.Left, Priority: 5, Style: env.Dim()},
-		}}
-		for _, r := range m.unpriced {
-			finish := ui.FinishTreated(r.Finish, r.Treatment)
-			t.Add(ui.Cell{Text: r.Name, Style: env.Identity(r.ColorIdentity)},
-				ui.C(ui.Pips(r.ColorIdentity)),
-				ui.C(ui.Printing(r.SetCode, r.CollectorNumber)), ui.C(finish),
-				ui.C(ui.Qty(r.Copies)), ui.C(r.HeldIn))
-		}
-		return t
-	})
-}
-
 // viewHeader is the right pane's title and summary for the current mode.
 func (m Model) viewHeader() (title, totals string) {
 	switch m.view {
@@ -464,22 +462,8 @@ func (m Model) viewHeader() (title, totals string) {
 				m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers))
 	case viewMarket:
 		return m.marketHeader()
-	case viewUnpriced:
-		var copies int
-		for _, r := range m.unpriced {
-			copies += r.Copies
-		}
-		return "UNPRICED" + m.viewScope(), fmt.Sprintf("%s printings · %s copies",
-			ui.Count(len(m.unpriced)), ui.Count(copies))
 	case viewWatches:
-		met := 0
-		for _, w := range m.watches {
-			if w.Met() {
-				met++
-			}
-		}
-		return "WATCHES" + m.viewScope(), fmt.Sprintf("%s watches · %s met",
-			ui.Count(len(m.watches)), ui.Count(met))
+		return m.watchHeader()
 	}
 	if sel := m.selectedContainer(); sel != nil {
 		return "CARDS · " + strings.ToUpper(sel.Name),

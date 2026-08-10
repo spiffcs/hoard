@@ -211,8 +211,12 @@ shape for the tool.
 
 - `hoard export --format json` is the `holdings` kind. The `hoard` kind is the
   DB→DB merge document and is reached through `merge`, not `export`.
-- `--json` and `--format json` coexist deliberately; the one ambiguous
-  combination is a clean usage error.
+- `--json` and `--format json` coexist deliberately, and naming any other
+  format alongside `--json` is a clean usage error. That now includes
+  `--format csv`: it used to be promoted to JSON in silence, because the check
+  tested the flag's value and so could not tell an explicit `csv` from the
+  `csv` default. It tests `Changed("format")` instead, so the rule is "you
+  named a second format", not "the format you named is unlike the default".
 - `priceUsd` is per copy. Totals need `priceUsd * count` — confirmed against
   `report`.
 - Prices are the printing's price whatever the copy's condition, and

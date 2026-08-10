@@ -71,9 +71,11 @@ func TestMoversFilterByContainer(t *testing.T) {
 	}
 }
 
-// The unpriced view greys out containers with nothing unpriced: switching
+// The watches screen greys out containers with nothing to show: switching
 // to it from an ineligible selection snaps to All Cards, and the container
-// cursor steps over the greyed rows in both directions.
+// cursor steps over the greyed rows in both directions. Its unpriced table
+// is as much a reason to keep a container lit as a watch is, which is what
+// this exercises — the only rows seeded are unpriced ones.
 func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 	st := testStore()
 	st.unpriced = []store.UnpricedRow{
@@ -81,16 +83,13 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 			Finish: "nonfoil", Copies: 1, HeldIn: "Rich Deck"},
 	}
 	m := newTestModel(t, st) // binder selected — no unpriced card lives there
-	// Straight to unpriced: the v-cycle now passes watches, whose own
-	// eligibility snap would move the selection before the arrival under
-	// test here ever runs.
-	m = key(m, "v") // movers
-	_ = (&m).showView(viewUnpriced)
+	m = key(m, "v")          // movers
+	_ = (&m).showView(viewWatches)
 
 	if m.cursor[paneContainers] != 0 {
 		t.Fatalf("cursor = %d, want the ineligible selection snapped to All Cards", m.cursor[paneContainers])
 	}
-	if !strings.Contains(m.status, "has no unpriced") {
+	if !strings.Contains(m.status, "has no watches") {
 		t.Errorf("status = %q, want the snap explained", m.status)
 	}
 	if len(m.unpriced) != 1 {
@@ -129,33 +128,36 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 func TestWatchesFilterByContainer(t *testing.T) {
 	st := testStore()
 	w1 := store.WatchStatus{Name: "Bitterblossom", PriceUSD: price(34)}
-	w1.ScryfallID, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", "nonfoil", "<=", 30
+	w1.ScryfallID, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", "nonfoil", "under", 30
 	w2 := store.WatchStatus{Name: "Force of Will", PriceUSD: price(45)}
-	w2.ScryfallID, w2.Finish, w2.Op, w2.Threshold = "Force of Will-id", "foil", ">=", 50
+	w2.ScryfallID, w2.Finish, w2.Op, w2.Threshold = "Force of Will-id", "foil", "over", 50
 	st.watches = []store.WatchStatus{w1, w2}
 
 	m := atAllCards(t, newTestModel(t, st))
 	for range 3 {
-		m = key(m, "v") // movers → unpriced → watches
+		m = key(m, "v") // movers → market → watches
 	}
 	if m.view != viewWatches {
 		t.Fatalf("view = %v, want watches", m.view)
 	}
-	if len(m.watches) != 2 {
-		t.Fatalf("all-cards watches = %d, want both", len(m.watches))
+	if len(shownWatches(m)) != 2 {
+		t.Fatalf("all-cards watches = %d, want both", len(shownWatches(m)))
 	}
 
 	m = key(m, "tab")
 	m = key(m, "down") // the binder holds the Bitterblossom watch
-	if m.cursor[paneContainers] != 1 || len(m.watches) != 1 || m.watches[0].Name != "Bitterblossom" {
-		t.Fatalf("binder watches = %+v at cursor %d", m.watches, m.cursor[paneContainers])
+	// It waits for a fall, so it is the UNDERS table's row and the OVERS
+	// table is empty — the container filter narrows both.
+	if m.cursor[paneContainers] != 1 || len(m.unders) != 1 || len(m.overs) != 0 ||
+		m.unders[0].Name != "Bitterblossom" {
+		t.Fatalf("binder watches = %+v/%+v at cursor %d", m.overs, m.unders, m.cursor[paneContainers])
 	}
 	if title, _ := m.viewHeader(); !strings.Contains(title, "WATCHES · BINDER") {
 		t.Errorf("header = %q, want the selection named", title)
 	}
-	m = key(m, "down") // Rich Deck holds the Force of Will watch
-	if len(m.watches) != 1 || m.watches[0].Name != "Force of Will" {
-		t.Fatalf("rich deck watches = %+v", m.watches)
+	m = key(m, "down") // Rich Deck holds the Force of Will watch, an over
+	if len(m.overs) != 1 || len(m.unders) != 0 || m.overs[0].Name != "Force of Will" {
+		t.Fatalf("rich deck watches = %+v/%+v", m.overs, m.unders)
 	}
 	m = key(m, "down") // Cheap Deck holds no watch: greyed, skipped
 	if m.cursor[paneContainers] != 2 {

@@ -200,3 +200,35 @@ func TestCmdWatchAddUnknownCard(t *testing.T) {
 		t.Errorf("err = %v, want a no-match error naming the card", err)
 	}
 }
+
+// A band is one card, so it is one resolve. The two directions were looped in
+// the command, which named the card twice: two /cards/collection calls paced
+// ~500ms apart by the shared limiter, for a question already answered. The
+// control is the call count, not the output — the output was always right.
+func TestCmdWatchAddBandResolvesOnce(t *testing.T) {
+	st := exportStore(t)
+	calls := stubFetch(t, watchCard())
+	if _, err := execCmd(context.Background(), st,
+		[]string{"watch", "add", "Sol Ring", "--under", "1", "--over", "5"}, false); err != nil {
+		t.Fatalf("band add: %v", err)
+	}
+	if *calls != 1 {
+		t.Errorf("resolved the card %d times, want 1", *calls)
+	}
+	// Still two rows: resolve once, write twice.
+	if w, err := st.ListWatches(); err != nil || len(w) != 2 {
+		t.Errorf("watches = %+v, %v, want 2", w, err)
+	}
+}
+
+// One direction was always one resolve, and stays one.
+func TestCmdWatchAddOneDirectionResolvesOnce(t *testing.T) {
+	st := exportStore(t)
+	calls := stubFetch(t, watchCard())
+	if err := execWatch(context.Background(), st, []string{"add", "Sol Ring", "--under", "1"}, false); err != nil {
+		t.Fatalf("watch add: %v", err)
+	}
+	if *calls != 1 {
+		t.Errorf("resolved the card %d times, want 1", *calls)
+	}
+}

@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,18 +24,15 @@ import (
 // this is only the exit status.
 var errWatchFired = fmt.Errorf("a watch fired")
 
-// watchBound is one direction of one watch add.
+// watchAdd stands one or both directions of a watch on one card.
 //
 // Both bounds at once is a band — alert outside $1 to $5 — and a band is two
 // watches, not one: the store keys on (card, finish, op), so under and over
 // are separate rows with separate ids. That is not an implementation detail
 // to be hidden, because every other watch command already deals in one
-// direction at a time; list shows two lines and rm takes one id.
-type watchBound struct {
-	op        string
-	threshold float64
-}
-
+// direction at a time; list shows two lines and rm takes one id. It is one
+// card, though, so the bounds go to the action layer together and the card is
+// resolved once — see action.WatchAddOptions.
 func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string, under, over float64, foil bool) error {
 	name := strings.TrimSpace(strings.Join(words, " "))
 	if name == "" {
@@ -45,12 +40,12 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	}
 	// A zero or negative bound is an unset one: prices are positive, so
 	// there is no threshold either flag could be asking for down there.
-	var bounds []watchBound
+	var bounds []action.WatchBound
 	if under > 0 {
-		bounds = append(bounds, watchBound{"under", under})
+		bounds = append(bounds, action.WatchBound{Op: "under", Threshold: under})
 	}
 	if over > 0 {
-		bounds = append(bounds, watchBound{"over", over})
+		bounds = append(bounds, action.WatchBound{Op: "over", Threshold: over})
 	}
 	if len(bounds) == 0 {
 		return cli.Usagef("watch add needs a threshold: --under N, --over N, or both for a band")
@@ -67,30 +62,22 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	}
 
 	pr := stderrPrinter()
-	var res action.WatchAddResult
-	for i, b := range bounds {
-		var err error
-		// Each direction resolves as it stands, so a band names the card
-		// twice. Both land on the same printing — the resolve is the same
-		// query — and the last result speaks for the confirmation.
-		res, err = action.WatchAdd(ctx, addDeps(st), pr.Fn(),
-			action.WatchAddOptions{Name: name, Foil: foil, Op: b.op, Threshold: b.threshold})
-		if err != nil {
-			pr.Close()
-			if i > 0 {
-				// Two writes, and the first one stood. Say so, or a retry
-				// reads as though the whole command did nothing.
-				return fmt.Errorf("the %s watch stood; the %s watch did not: %w",
-					bounds[0].op, b.op, err)
-			}
-			return err
-		}
-	}
+	res, err := action.WatchAdd(ctx, addDeps(st), pr.Fn(),
+		action.WatchAddOptions{Name: name, Foil: foil, Bounds: bounds})
 	pr.Close()
+	if err != nil {
+		if res.Stood > 0 {
+			// Some of the writes stood. Say so, or a retry reads as though
+			// the whole command did nothing.
+			return fmt.Errorf("the %s watch stood; the %s watch did not: %w",
+				bounds[res.Stood-1].Op, bounds[res.Stood].Op, err)
+		}
+		return err
+	}
 
 	parts := make([]string, 0, len(bounds))
 	for _, b := range bounds {
-		parts = append(parts, fmt.Sprintf("%s %s", b.op, ui.Money(b.threshold)))
+		parts = append(parts, fmt.Sprintf("%s %s", b.Op, ui.Money(b.Threshold)))
 	}
 	fmt.Fprintf(env.Out, "Watching %s (%s) %s: %s.\n",
 		res.Card.Name, ui.Printing(res.Card.Set, res.Card.CollectorNumber),
@@ -111,15 +98,7 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 	// watch list can be piped from wherever it was generated. WatchImport
 	// has always documented its Display as a path or stdin; only this line
 	// never delivered the second half.
-	var data []byte
-	var err error
-	display := pos[0]
-	if display == "-" {
-		display = "stdin"
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(pos[0])
-	}
+	data, display, err := readPathOrStdin(pos[0])
 	if err != nil {
 		return err
 	}

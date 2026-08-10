@@ -260,6 +260,69 @@ func (f filter) unsupportedOnMovers() string {
 	return ""
 }
 
+// watchAsCard and unpricedAsCard project the watches screen's two row types
+// onto the shape matches reads, so all three of its tables narrow through
+// the same grammar and the same code as the holdings pane — the movers
+// treatment (see moverAsCard), extended to a screen that holds two kinds of
+// row at once.
+//
+// A watch is a threshold on one printing, not on copies: it carries no
+// quantity, board or condition, and so no value either. Price is what the
+// PRICE column shows, nil when nothing can price the card — which is
+// exactly the state matches already refuses a price term for.
+func watchAsCard(w store.WatchStatus) card {
+	return card{
+		ScryfallID:      w.ScryfallID,
+		Name:            w.Name,
+		SetCode:         w.SetCode,
+		CollectorNumber: w.CollectorNumber,
+		Finish:          w.Finish,
+		Price:           w.PriceUSD,
+		Treatment:       w.Treatment,
+	}
+}
+
+// unpricedAsCard is its twin for the third table. Price stays nil by
+// definition — the row exists because nothing can price it — so a `price:`
+// term empties this table rather than treating an unknown price as zero.
+// Quantity is the copies held, which is what the QTY column prints.
+func unpricedAsCard(r store.UnpricedRow) card {
+	return card{
+		ScryfallID:      r.ScryfallID,
+		Name:            r.Name,
+		SetCode:         r.SetCode,
+		CollectorNumber: r.CollectorNumber,
+		Finish:          r.Finish,
+		Quantity:        r.Copies,
+		ColorIdentity:   r.ColorIdentity,
+		Treatment:       r.Treatment,
+	}
+}
+
+// unsupportedOnWatches names the first term this screen cannot answer, ""
+// when the query asks nothing of it.
+//
+// The screen holds two row types, and a term is refused when either of them
+// would have to invent an answer. `qty` and `value` are refused because a
+// watch is a threshold on a printing and carries no copies at all — an
+// unpriced holding could answer qty, but a term that silently filters one
+// table and not the others is worse than one that says no. `board` is
+// refused for the same reason it is on movers: neither row type has one.
+// Everything else works: name, set and finish read off both, `price` reads
+// the watch's and correctly refuses the unpriced rows, and the trait half
+// is an id set both carry a scryfall id for.
+func (f filter) unsupportedOnWatches() string {
+	switch {
+	case len(f.boards) > 0:
+		return "board"
+	case len(f.nums["qty"]) > 0:
+		return "qty"
+	case len(f.nums["value"]) > 0:
+		return "value"
+	}
+	return ""
+}
+
 // filterMatchCount is how many rows the query selects in the list the
 // current view is showing — the whole result, not the page. It returns -1
 // on the views that do not consume the query at all, so the bar can decline
@@ -271,6 +334,11 @@ func (m Model) filterMatchCount() int {
 		return len(m.filteredCards)
 	case viewMovers:
 		return len(m.filteredMovers)
+	case viewWatches:
+		// One number for the screen, not three: the bar sits under a pane
+		// showing all three tables, and a count for whichever one the cursor
+		// happened to be in would read as the answer for the lot.
+		return m.watchTotalRows()
 	}
 	return -1
 }
@@ -278,11 +346,15 @@ func (m Model) filterMatchCount() int {
 // filterUnsupported is the bar's note when the query uses a term the current
 // view cannot answer, empty otherwise.
 func (m Model) filterUnsupported() string {
-	if m.view != viewMovers {
-		return ""
-	}
-	if k := m.filter.unsupportedOnMovers(); k != "" {
-		return k + ": does not apply on movers · a mover row sums every board"
+	switch m.view {
+	case viewMovers:
+		if k := m.filter.unsupportedOnMovers(); k != "" {
+			return k + ": does not apply on movers · a mover row sums every board"
+		}
+	case viewWatches:
+		if k := m.filter.unsupportedOnWatches(); k != "" {
+			return k + ": does not apply on the watches screen · a watch is a line on a printing, not on copies"
+		}
 	}
 	return ""
 }

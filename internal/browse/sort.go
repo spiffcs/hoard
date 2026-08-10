@@ -18,14 +18,13 @@ import (
 // headers read. Index 0 is the default and reproduces the order rows already
 // arrive in, so an untouched pane looks exactly as it always has.
 //
-// The market view is absent here: its three tables each keep their own sort
-// (marketSortColumns), so its entry is a placeholder that only sizes the
-// per-view state arrays.
+// The market and watches views are absent here: each is three tables that
+// keep their own sorts (marketSortColumns, watchSection.sortColumns), so
+// their entries are placeholders that only size the per-view state arrays.
 var sortColumns = [...][]string{
 	viewHoldings: {"value", "name", "set", "finish", "qty", "price"},
 	viewMovers:   {"impact", "name", "set/num", "was", "now", "change", "qty"},
-	viewUnpriced: {"name", "set/num", "finish", "qty", "held in"},
-	viewWatches:  {"state", "name", "watch", "price"},
+	viewWatches:  {"per-table"},
 	viewMarket:   {"per-table"},
 }
 
@@ -52,10 +51,27 @@ func (m Model) firstMarketRowOfKind(k market.Kind) int {
 	return m.marketSections()[k].curStart
 }
 
+// watchSortKey is the cursor's table's active column, its index clamped at
+// the read: the two watch tables' cycle and the unpriced cycle are
+// different lengths, and moving between them without a reset would index
+// past the shorter slice. Degrading to the last column beats a panic.
+func (m Model) watchSortKey(s watchSection) string {
+	cols := s.sortColumns()
+	return cols[min(max(m.watchSortIdx[s], 0), len(cols)-1)]
+}
+
 // sortLabel is how the status line describes the focused view's order. On
-// the market view it names the table the sort belongs to, since each keeps
-// its own.
+// the market and watches views it names the table the sort belongs to,
+// since each keeps its own.
 func (m Model) sortLabel() string {
+	if m.view == viewWatches {
+		sec, _ := m.watchCursorPos()
+		label := sec.title() + " · " + m.watchSortKey(sec)
+		if m.watchSortRev[sec] {
+			label += " (reversed)"
+		}
+		return label
+	}
 	if m.view == viewMarket {
 		// Checked before selectedMarketKind, which defaults to the profit
 		// table for any cursor outside the Kind sections.
@@ -84,6 +100,18 @@ func (m Model) sortLabel() string {
 // the market view only the cursor's table advances, and the cursor lands on
 // that table's first row so the sort's effect is on screen.
 func (m *Model) cycleSort() {
+	if m.view == viewWatches {
+		sec, _ := m.watchCursorPos()
+		m.watchSortIdx[sec] = (m.watchSortIdx[sec] + 1) % len(sec.sortColumns())
+		m.watchSortRev[sec] = false
+		m.applySort()
+		// The cursor lands on that table's first row so the sort's effect is
+		// on screen; the other two tables keep their own order and place.
+		m.cursor[paneCards] = m.watchRegions()[sec].curStart
+		m.watchSecOffset[sec] = 0
+		m.scrollIntoView()
+		return
+	}
 	if m.view == viewMarket {
 		if m.selectedComp() != nil {
 			m.compsSortIdx = (m.compsSortIdx + 1) % len(m.compsSortColumnsNow())
@@ -114,6 +142,15 @@ func (m *Model) cycleSort() {
 // reverseSort flips the current column's direction — on the market view,
 // the cursor's table's column.
 func (m *Model) reverseSort() {
+	if m.view == viewWatches {
+		sec, _ := m.watchCursorPos()
+		m.watchSortRev[sec] = !m.watchSortRev[sec]
+		m.applySort()
+		m.cursor[paneCards] = m.watchRegions()[sec].curStart
+		m.watchSecOffset[sec] = 0
+		m.scrollIntoView()
+		return
+	}
 	if m.view == viewMarket {
 		if m.selectedComp() != nil {
 			m.compsSortRev = !m.compsSortRev
@@ -140,14 +177,16 @@ func (m *Model) applySort() {
 	key, rev := sortColumns[m.view][m.sortIdx[m.view]], m.sortRev[m.view]
 	switch m.view {
 	case viewWatches:
-		sortRows(m.watches, rev, watchCompare(key))
+		// Three tables, three orders: each is sorted by its own column, so
+		// the shared key above says nothing here (see sortColumns).
+		sortRows(m.overs, m.watchSortRev[secOvers], watchCompare(m.watchSortKey(secOvers)))
+		sortRows(m.unders, m.watchSortRev[secUnders], watchCompare(m.watchSortKey(secUnders)))
+		sortRows(m.unpriced, m.watchSortRev[secUnpriced], unpricedCompare(m.watchSortKey(secUnpriced)))
 	case viewMovers:
 		// The whole filtered ranking sorts, then the page re-derives — a
 		// sort speaks for every row, not the fifty on screen.
 		sortRows(m.filteredMovers, rev, moverCompare(key))
 		m.deriveMoversPage()
-	case viewUnpriced:
-		sortRows(m.unpriced, rev, unpricedCompare(key))
 	case viewMarket:
 		m.sortArbRows()
 	default:
@@ -233,9 +272,9 @@ func cardCompare(key string) func(a, b card) int {
 	}
 }
 
-// watchCompare orders the watches view. The default "state" leads with the
-// watches that have met their threshold — the rows the view exists to
-// surface — then unpriced last, then name.
+// watchCompare orders one of the two watch tables. The default "state"
+// leads with the watches that have met their threshold — the rows the
+// screen exists to surface — then unpriced last, then name.
 func watchCompare(key string) func(a, b store.WatchStatus) int {
 	rank := func(w store.WatchStatus) int {
 		switch {
@@ -251,10 +290,10 @@ func watchCompare(key string) func(a, b store.WatchStatus) int {
 		switch key {
 		case "name":
 			c = strings.Compare(a.Name, b.Name)
-		case "watch":
-			if c = strings.Compare(a.Op, b.Op); c == 0 {
-				c = cmp.Compare(b.Threshold, a.Threshold)
-			}
+		case "threshold":
+			// The line alone: a table named OVERS holds one direction, so
+			// the op it used to lead with is constant down every row.
+			c = cmp.Compare(b.Threshold, a.Threshold)
 		case "price":
 			c = cmp.Compare(priceOrder(b.PriceUSD), priceOrder(a.PriceUSD))
 		default: // state

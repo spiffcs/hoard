@@ -116,9 +116,15 @@ func (m *Model) openDetail() tea.Cmd {
 			id = c.ScryfallID
 		}
 	case viewWatches:
-		// A watch row names one printing just as well as a holding row.
+		// A watch row names one printing just as well as a holding row, and
+		// so does an unpriced one — the gap there is the price, not the
+		// card. The two are mutually exclusive: whichever of the screen's
+		// three tables the cursor is in answers, and a heading with nothing
+		// under it answers neither.
 		if w := m.selectedWatch(); w != nil {
 			id = w.ScryfallID
+		} else if r := m.selectedUnpricedRow(); r != nil {
+			id = r.ScryfallID
 		}
 	case viewMarket:
 		// So does an arbitrage row — the quotes describe a printing you
@@ -128,11 +134,6 @@ func (m *Model) openDetail() tea.Cmd {
 		} else if r := m.selectedMarketRow(); r != nil {
 			id = r.Card.ScryfallID
 			fromArbitrage = r.Kind == market.KindProfit
-		}
-	case viewUnpriced:
-		// And an unpriced row — the gap is the price, not the card.
-		if i := m.cursor[paneCards]; i >= 0 && i < len(m.unpriced) {
-			id = m.unpriced[i].ScryfallID
 		}
 	case viewMovers:
 		// And a mover — each row is one printing in one finish, and the

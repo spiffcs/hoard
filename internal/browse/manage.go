@@ -198,10 +198,10 @@ func (m *Model) subjectCard() *subjectRef {
 		if w := m.selectedWatch(); w != nil {
 			return &subjectRef{scryfallID: w.ScryfallID, name: w.Name, finish: w.Finish, price: w.PriceUSD}
 		}
-	case viewUnpriced:
-		i := m.cursor[paneCards]
-		if i >= 0 && i < len(m.unpriced) {
-			r := m.unpriced[i]
+		// An unpriced row is a subject too — it names a printing, which is
+		// all a watch needs — but it carries no price for a bare threshold
+		// to infer a direction from.
+		if r := m.selectedUnpricedRow(); r != nil {
 			return &subjectRef{scryfallID: r.ScryfallID, name: r.Name, finish: r.Finish}
 		}
 	case viewMarket:

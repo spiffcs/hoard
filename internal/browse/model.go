@@ -231,7 +231,21 @@ type Model struct {
 	view     viewMode
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
-	watches  []store.WatchStatus
+	// overs and unders are the watches screen's first two tables: every
+	// watch that survived the filters lands in exactly one of them, by
+	// direction (see wantsUnder). There is deliberately no merged slice
+	// beside them — each table carries its own order, so one would have to
+	// disagree with what is on screen. unpriced is the screen's third table.
+	overs  []store.WatchStatus
+	unders []store.WatchStatus
+
+	// The watches screen's per-table state, indexed by watchSection: which
+	// of that table's sortColumns orders it, whether that column runs
+	// backwards, and how far its own region is scrolled. Sized by the enum
+	// that indexes it, so a fourth table would grow all three together.
+	watchSortIdx   [watchSectionCount]int
+	watchSortRev   [watchSectionCount]bool
+	watchSecOffset [watchSectionCount]int
 
 	// The pristine analytical rows as queried; the floor and the container
 	// filter derive the visible slices above from these (deriveView), so
@@ -734,7 +748,15 @@ func (m *Model) refreshEmptyNote() {
 	// The pane the query emptied, not the holdings pane specifically: the
 	// same trait terms narrow the analytical views, and a movers list emptied
 	// by `rarity:mythic` needs the same explanation.
-	if m.viewRowCount() > 0 || m.filter.empty() || !m.filter.needsCatalog() {
+	rows := m.viewRowCount()
+	if m.view == viewWatches {
+		// Rows, not slots: this screen's count includes one cursor slot per
+		// empty table (see watchRegion), and reading three empty tables as
+		// "something is showing" would suppress the note exactly when a
+		// trait query has emptied the screen and needs explaining.
+		rows = m.watchTotalRows()
+	}
+	if rows > 0 || m.filter.empty() || !m.filter.needsCatalog() {
 		return
 	}
 	enriched, total, err := m.store.EnrichedCount()
@@ -1224,12 +1246,18 @@ func (m *Model) askRemoval() {
 		return
 	}
 
-	// On the watches view, 'd' removes the watch under the cursor.
+	// On the watches screen, 'd' removes the watch under the cursor.
 	if w := m.selectedWatch(); w != nil {
 		m.askWatchRemoval(*w)
 		return
 	}
 	if m.view == viewWatches {
+		// The screen's third table holds cards, not watches, and this key
+		// has never removed a card from here. Say so: the same press two
+		// rows higher stages a removal, and silence reads as a broken key.
+		if m.selectedUnpricedRow() != nil {
+			m.status, m.statusErr = "d removes a watch · this row is a card you hold, not a watch", true
+		}
 		return
 	}
 

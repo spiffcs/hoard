@@ -354,6 +354,76 @@ func (m Model) visibleRows() int {
 	return max(m.height-chromeRows-m.paletteRows()-(m.helpRows()-1), 1)
 }
 
+// sectionBudgets divides a pool of body rows among the tables of a
+// multi-table pane: equal shares, with a table that needs less than its
+// share donating the slack to the ones that need more. Deterministic, sums
+// to at most the pool, and never exceeds a table's own row count.
+//
+// cursorSec's table always shows at least its selected row, even at a
+// pathological height — one row is stolen from the largest budget to
+// guarantee it. Shared by the market and watches panes, which lay out the
+// same way and differ only in what their tables hold.
+func sectionBudgets(counts []int, pool, cursorSec int) []int {
+	budget := make([]int, len(counts))
+	var active []int
+	for i, n := range counts {
+		if n > 0 {
+			active = append(active, i)
+		}
+	}
+	for len(active) > 0 {
+		share := pool / len(active)
+		if share == 0 {
+			break
+		}
+		kept := active[:0]
+		satisfied := false
+		for _, i := range active {
+			if counts[i] <= share {
+				budget[i] = counts[i]
+				pool -= counts[i]
+				satisfied = true
+				continue
+			}
+			kept = append(kept, i)
+		}
+		active = kept
+		if satisfied {
+			continue // the slack returns to the pool; re-share it
+		}
+		// Everyone left is overfull: the share each, remainder one row at a
+		// time in section order.
+		for _, i := range active {
+			budget[i] = share
+			pool -= share
+		}
+		for _, i := range active {
+			if pool == 0 {
+				break
+			}
+			if budget[i] < counts[i] {
+				budget[i]++
+				pool--
+			}
+		}
+		break
+	}
+	if cursorSec >= 0 && cursorSec < len(budget) &&
+		budget[cursorSec] == 0 && counts[cursorSec] > 0 {
+		big := 0
+		for i := range budget {
+			if budget[i] > budget[big] {
+				big = i
+			}
+		}
+		if budget[big] > 0 {
+			budget[big]--
+			budget[cursorSec] = 1
+		}
+	}
+	return budget
+}
+
 // scrollIntoView moves the focused pane's window so the cursor is inside it.
 //
 // A pane shows one fewer data row than visibleRows: the column-title line is
@@ -366,6 +436,12 @@ func (m *Model) scrollIntoView() {
 			// The market pane scrolls per section, not as one document;
 			// m.offset stays untouched for it.
 			m.scrollMarketIntoView()
+			continue
+		}
+		if pane(p) == paneCards && m.view == viewWatches {
+			// The watches pane is three tables in fixed regions, and scrolls
+			// the same way for the same reason.
+			m.scrollWatchesIntoView()
 			continue
 		}
 		if m.cursor[p] < m.offset[p] {
@@ -478,8 +554,6 @@ func (m Model) rightLines(width int) []string {
 		return m.watchesLines(width)
 	case viewMovers:
 		return m.moversLines(width)
-	case viewUnpriced:
-		return m.unpricedLines(width)
 	case viewMarket:
 		return m.marketLines(width)
 	}
@@ -636,6 +710,12 @@ func (m Model) statusLine() string {
 	if m.view == viewMarket {
 		return m.marketStatus()
 	}
+	if m.view == viewWatches {
+		// Three tables with three orders and three counts: the generic
+		// position line below speaks for one list, and would report the flat
+		// cursor's place in a space that spans all of them.
+		return m.watchStatus()
+	}
 	if m.emptyNote != "" {
 		return m.theme.Help.Render(m.emptyNote)
 	}
@@ -664,19 +744,6 @@ func (m Model) statusLine() string {
 			}
 			return m.theme.Help.Render(
 				"no price movement in this window · F fetches prices and 90 days of history · W widens the window")
-		case viewWatches:
-			if scoped {
-				return m.theme.Help.Render(fmt.Sprintf(
-					"no watches shown for %s · All Cards shows every container", sel.Name))
-			}
-			return m.theme.Help.Render(
-				"no watches · press w on a card in holdings, or : then AddWatchFromCollection")
-		case viewUnpriced:
-			if scoped {
-				return m.theme.Help.Render(fmt.Sprintf(
-					"no unpriced cards in %s · All Cards shows every container", sel.Name))
-			}
-			return m.theme.Help.Render("every card you own has a price")
 		}
 		return m.theme.Help.Render("nothing here")
 	}
@@ -723,10 +790,10 @@ func (m Model) selectedItemName() string {
 	switch m.view {
 	case viewMovers:
 		return name(len(m.movers), func(i int) string { return m.movers[i].Name })
-	case viewUnpriced:
-		return name(len(m.unpriced), func(i int) string { return m.unpriced[i].Name })
 	case viewWatches:
-		return name(len(m.watches), func(i int) string { return m.watches[i].Name })
+		// Three tables of two row types: the cursor's own section decides
+		// which, and a heading with nothing under it names nothing.
+		return m.selectedWatchName()
 	case viewMarket:
 		if c := m.selectedComp(); c != nil {
 			return c.Card.Name
@@ -835,17 +902,15 @@ func (m Model) helpLine() string {
 		// what recovers the discovery is that the palette ranks the watch
 		// verbs to the top of this view (see the watch commands' rank).
 		return ui.Help(tail(ui.HelpCommands, ui.K("w", "edit threshold"),
-			ui.K("d", "remove"), ui.K("enter", "detail"), ui.K("M", "floor"),
-			ui.K("tab", "collections"), ui.K("v", "next view"), ui.K("↑/↓", "move"))...)
+			ui.K("d", "remove"), ui.K("enter", "detail"),
+			ui.K("]/[", "next/prev table"), ui.K("/", "filter"), ui.K("M", "floor"),
+			ui.K("F", "refresh prices"), ui.K("tab", "collections"),
+			ui.K("v", "next view"), ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
 	case m.view == viewMovers:
 		return ui.Help(tail(ui.HelpCommands, ui.K("W", "lookback 7/30/90 days"),
 			ui.K("F", "update prices + history"), ui.K("enter", "detail"),
 			ui.K(">/<", "page"), ui.K("M", "floor"), ui.K("tab", "collections"),
 			ui.K("v", "next view"), ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
-	case m.view == viewUnpriced:
-		return ui.Help(tail(ui.HelpCommands, ui.K("F", "refresh prices"),
-			ui.K("enter", "detail"), ui.K("tab", "collections"), ui.K("v", "next view"),
-			ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
 	case m.view != viewHoldings:
 		// The editing keys do not apply to an analytical view, so offering
 		// them here would be an invitation to a refusal.

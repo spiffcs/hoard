@@ -221,3 +221,44 @@ func TestDeckAddPartialResolutionIsExitCodeTwo(t *testing.T) {
 		t.Errorf("decks = %+v, want the remora imported despite the ghost", decks)
 	}
 }
+
+// A lone dash reads the decklist from stdin, so the round trip `hoard import`
+// prints — export a deck to text, read it back — composes as a pipe instead
+// of needing a temporary file.
+func TestDeckAddStdin(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	withStdin(t, "2 Sol Ring (c21) 125\n1 Mystic Remora\n")
+
+	if _, err := execCmd(context.Background(), st,
+		[]string{"deck", "add", "--file", "-", "--name", "Fish Tank"}, false); err != nil {
+		t.Fatalf("hoard deck add --file -: %v", err)
+	}
+	decks, err := st.ListDecks()
+	if err != nil {
+		t.Fatalf("ListDecks: %v", err)
+	}
+	if len(decks) != 1 || decks[0].Name != "Fish Tank" || decks[0].TotalCopies != 3 {
+		t.Errorf("decks = %+v, want one Fish Tank holding 3", decks)
+	}
+}
+
+// A pipe carries no file name, and a deck name is not cosmetic: `deck remove`
+// and `deck repin` take one. Naming the deck "-" would file it under
+// something the user never said, so the dash is refused until --name says
+// what to call it. The refusal has to name the flag, or the user is left to
+// guess at a rule.
+func TestDeckAddStdinNeedsAName(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	withStdin(t, "2 Sol Ring (c21) 125\n")
+
+	_, err := execCmd(context.Background(), st, []string{"deck", "add", "--file", "-"}, false)
+	if err == nil {
+		t.Fatal("hoard deck add --file - with no --name succeeded, want a usage error")
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Errorf("err = %v, want it to name --name", err)
+	}
+	assertNothingWritten(t, st, "deck add --file - with no --name")
+}

@@ -19,8 +19,9 @@ func watchRow(name string, price *float64, op string, threshold float64, lastSta
 	return w
 }
 
-// The watches view joins the v cycle: rows render, met leads by default,
-// and 'd' removes the selected watch with undo.
+// The watches screen joins the v cycle: rows render under the table for
+// their direction, met leads by default, and 'd' removes the selected watch
+// with undo.
 func TestWatchesView(t *testing.T) {
 	st := testStore()
 	st.watches = []store.WatchStatus{
@@ -34,13 +35,20 @@ func TestWatchesView(t *testing.T) {
 	if m.view != viewWatches {
 		t.Fatalf("view = %v, want watches", m.view)
 	}
-	if m.watches[0].Name != "Methas" {
-		t.Errorf("default order = %s first, want the met watch leading", m.watches[0].Name)
+	// Both seeded watches wait for a fall, so both live in UNDERS and the
+	// OVERS table is an empty heading.
+	if len(m.unders) != 2 || len(m.overs) != 0 {
+		t.Fatalf("split = %d over, %d under, want both under", len(m.overs), len(m.unders))
+	}
+	if m.unders[0].Name != "Methas" {
+		t.Errorf("default order = %s first, want the met watch leading", m.unders[0].Name)
 	}
 	out := m.View()
-	for _, want := range []string{"WATCHES", "under $10.00", "met", "waiting"} {
+	// The direction is the heading, not a word repeated down every row, so
+	// THRESHOLD prints the line alone.
+	for _, want := range []string{"WATCHES", "UNDERS", "THRESHOLD", "$10.00", "met", "waiting"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("watches view missing %q:\n%s", want, out)
+			t.Errorf("watches screen missing %q:\n%s", want, out)
 		}
 	}
 
@@ -570,12 +578,12 @@ func TestPopulateUnpricedComposes(t *testing.T) {
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = next.(Model)
-	for m.view != viewUnpriced {
+	for m.view != viewWatches {
 		m = key(m, "v")
 	}
 	cmd := (&m).populateView()
 	if cmd == nil || m.op == nil {
-		t.Fatal("F did not start the unpriced pipeline")
+		t.Fatal("F did not start the watches screen's pipeline")
 	}
 	msg := findOpDone(t, cmd)
 	if msg.outcome.summary != "prices updated · every finish already correct" {

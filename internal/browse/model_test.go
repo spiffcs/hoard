@@ -1632,15 +1632,13 @@ func TestViewCyclesAndLoads(t *testing.T) {
 		t.Errorf("view = %v, want market after movers", m.view)
 	}
 	m = key(m, "v")
-	if m.view != viewWatches {
-		t.Errorf("view = %v, want watches", m.view)
+	if m.view != viewWatches || len(m.unpriced) != 1 {
+		t.Fatalf("view = %v with %d unpriced rows", m.view, len(m.unpriced))
 	}
-	m = key(m, "v")
-	if m.view != viewUnpriced || len(m.unpriced) != 1 {
-		t.Fatalf("view = %v with %d rows", m.view, len(m.unpriced))
-	}
+	// The unpriced holdings are this screen's third table now, not a view of
+	// their own, so their columns render here.
 	if out := m.View(); !strings.Contains(out, "UNPRICED") || !strings.Contains(out, "HELD IN") {
-		t.Errorf("unpriced view not rendered:\n%s", out)
+		t.Errorf("unpriced table not rendered on the watches screen:\n%s", out)
 	}
 	m = key(m, "v")
 	if m.view != viewHoldings {
@@ -1656,9 +1654,11 @@ func TestUnpricedEnterOpensDetail(t *testing.T) {
 		{ScryfallID: "sf1", Name: "No Price", SetCode: "c", CollectorNumber: "3", Finish: "foil", Copies: 1, HeldIn: "Collection"},
 	}
 	m := newTestModel(t, st)
-	for m.view != viewUnpriced {
+	for m.view != viewWatches {
 		m = key(m, "v")
 	}
+	// With no watches seeded, the two watch tables are empty headings and
+	// the cursor lands on the unpriced table's first row.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.detail == nil {
@@ -1691,15 +1691,17 @@ func TestSortWorksInEveryView(t *testing.T) {
 	}
 
 	m = key(m, "v") // market (empty here)
-	m = key(m, "v") // watches
-	m = key(m, "v") // unpriced, name order: Aardvark first
+	// The watches screen, whose third table is the unpriced holdings. No
+	// watches are seeded, so the two watch tables are empty headings and the
+	// cursor lands in UNPRICED — which is the table 's' then sorts.
+	m = key(m, "v")
 	if m.unpriced[0].Name != "Aardvark" {
 		t.Fatalf("unpriced default = %s first, want name order", m.unpriced[0].Name)
 	}
 	for range 3 {
 		m = key(m, "s") // name → set/num → finish → qty
 	}
-	if m.sortLabel() != "qty" || m.unpriced[0].Name != "Aardvark" {
+	if m.sortLabel() != "UNPRICED · qty" || m.unpriced[0].Name != "Aardvark" {
 		t.Errorf("unpriced by %s = %s first, want the 5-copy card", m.sortLabel(), m.unpriced[0].Name)
 	}
 
@@ -1876,7 +1878,7 @@ func TestMarketArrivalFetchesOnlyWithoutData(t *testing.T) {
 	if !m.marketLoaded || m.marketLoading {
 		t.Fatalf("loaded=%v loading=%v after the reply", m.marketLoaded, m.marketLoading)
 	}
-	for range 5 {
+	for range len(viewCycle) {
 		m = key(m, "v") // a full lap back to market
 	}
 	if m.view != viewMarket || m.marketLoading {
@@ -2250,13 +2252,15 @@ func TestHelpLineIsViewSpecific(t *testing.T) {
 	if h := m.helpLine(); !strings.Contains(h, "w edit threshold") || !strings.Contains(h, ": commands") {
 		t.Errorf("watches help = %q", h)
 	}
+	// The screen carries the unpriced table now, so the keys that table
+	// needed came with it: its refresh, its sort and the table jump.
+	if h := m.helpLine(); !strings.Contains(h, "F refresh prices") ||
+		!strings.Contains(h, "s sort") || !strings.Contains(h, "]/[ next/prev table") {
+		t.Errorf("watches help lost the unpriced table's keys = %q", h)
+	}
 	m.view = viewMovers
 	if h := m.helpLine(); !strings.Contains(h, "W lookback 7/30/90 days") {
 		t.Errorf("movers help = %q", h)
-	}
-	m.view = viewUnpriced
-	if h := m.helpLine(); strings.Contains(h, "repair finishes") || !strings.Contains(h, "F refresh prices") {
-		t.Errorf("unpriced help = %q", h)
 	}
 	m.view = viewHoldings
 	if h := m.helpLine(); !strings.Contains(h, "q quit") {

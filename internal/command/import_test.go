@@ -369,3 +369,49 @@ func TestCmdImportAliasesOldDefaultNameAfterRename(t *testing.T) {
 		t.Errorf("default binder holds %d copies, want 2", got)
 	}
 }
+
+// A lone dash reads the CSV from stdin, the spelling `hoard add --file` has
+// always accepted. ImportOptions has documented its Display as a path or
+// stdin since it was written; only this command never delivered the second
+// half, and the round trip import itself recommends —
+// `hoard export --deck X --format text | hoard deck add --file -` — needed a
+// temporary file without it.
+func TestCmdImportStdin(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	csv, err := os.ReadFile(manaboxFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withStdin(t, string(csv))
+
+	if err := importCmd(st, "--preserve-binders", "-"); err != nil {
+		t.Fatalf("hoard import -: %v", err)
+	}
+	binders, err := st.ListBinders()
+	if err != nil {
+		t.Fatalf("ListBinders: %v", err)
+	}
+	if len(binders) != 2 || binders[1].Name != "Trade Binder" {
+		t.Fatalf("binders = %+v, want the default plus Trade Binder", binders)
+	}
+	totals, err := st.CollectionTotals()
+	if err != nil {
+		t.Fatalf("CollectionTotals: %v", err)
+	}
+	if totals.TotalCopies != 4 {
+		t.Errorf("imported %d copies, want the fixture's 4", totals.TotalCopies)
+	}
+}
+
+// A file that will not parse names its source, and for a pipe the source is
+// the word stdin — a dash in that sentence would read like a flag. Matches
+// what `watch import -` already says.
+func TestCmdImportStdinNamesTheSource(t *testing.T) {
+	st := importStore(t)
+	withStdin(t, "not,a,collection,csv\n")
+	err := importCmd(st, "-")
+	if err == nil || !strings.Contains(err.Error(), "stdin") {
+		t.Fatalf("err = %v, want a parse error naming stdin", err)
+	}
+}

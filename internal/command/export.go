@@ -33,8 +33,9 @@ func NewCmdExport(a *app) *cobra.Command {
 		Example: "hoard export [--binder B | --deck D | --all] [-o FILE]\n" +
 			"       [--format csv|json|text|moxfield|archidekt]",
 		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return runExport(a.store, a.env, format, binder, deck, outPath, all)
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runExport(a.store, a.env, format, c.Flags().Changed("format"),
+				binder, deck, outPath, all)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "csv",
@@ -47,11 +48,19 @@ func NewCmdExport(a *app) *cobra.Command {
 	return cli.JSONCapable(cmd)
 }
 
-func runExport(st *store.Store, env *cli.Env, format, binder, deck, outPath string, all bool) error {
+func runExport(st *store.Store, env *cli.Env, format string, formatSet bool,
+	binder, deck, outPath string, all bool) error {
 	// The global --json is the same request as --format json; saying both
-	// differently is the one combination with no right answer.
+	// differently is the combination with no right answer.
+	//
+	// formatSet, not the value: --format csv --json is exactly as much of a
+	// contradiction as --format moxfield --json, but testing format != "csv"
+	// could not tell an explicit csv from the default it happens to equal, so
+	// the one spelling a script is most likely to write — name the format,
+	// inherit --json from a wrapper — was silently promoted to JSON instead
+	// of refused. --format json --json is the same request twice and stands.
 	if env.JSON {
-		if format != "csv" && format != "json" {
+		if formatSet && format != "json" {
 			return cli.Usagef("--json conflicts with --format %s", format)
 		}
 		format = "json"

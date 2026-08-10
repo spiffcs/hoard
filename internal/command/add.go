@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,9 +20,17 @@ import (
 )
 
 // addOpts are `hoard add`'s flags, gathered rather than passed one by one.
+//
+// foilSet and qtySet record whether the user typed the flag, not what it
+// holds. Both have values a user might mean on purpose — --qty 1 is the
+// default's number and --foil false is its state — so the value cannot say
+// whether it was asked for, and the paths that cannot honour them have to
+// refuse rather than guess.
 type addOpts struct {
 	foil      bool
+	foilSet   bool
 	qty       int
+	qtySet    bool
 	file      string
 	binderRef string
 	again     bool
@@ -47,6 +53,8 @@ func NewCmdAdd(a *app) *cobra.Command {
 		// counted — they are joined and handed to the picker.
 		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
+			o.qtySet = c.Flags().Changed("qty")
+			o.foilSet = c.Flags().Changed("foil")
 			return runAdd(c.Context(), a.store, a.env, args, o)
 		},
 	}
@@ -75,6 +83,13 @@ func runAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o
 		if len(args) > 0 {
 			return cli.Usagef("--file takes the whole list; drop the card name arguments")
 		}
+		// Before addFromList, so the piped form above refuses without first
+		// swallowing the pipe: a list read and then thrown away is a worse
+		// answer than one never read.
+		if err := refusePerCopyFlags(o,
+			"a list names a quantity and a finish on every line"); err != nil {
+			return err
+		}
 		return addFromList(ctx, st, env, o.file, o.binderRef, o.again)
 	}
 
@@ -89,7 +104,49 @@ func runAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o
 		return cli.Usagef("--binder applies to URL and --file adds; " +
 			"the interactive picker chooses destinations itself")
 	}
+	// The same objection, for the two flags the comment above was written
+	// over the top of. Before addByName, so the answer is the flag the user
+	// got wrong rather than a complaint about the terminal.
+	if err := refusePerCopyFlags(o,
+		"the interactive picker asks for both, per card"); err != nil {
+		return err
+	}
 	return addByName(ctx, st, strings.Join(args, " "))
+}
+
+// refusePerCopyFlags rejects --qty and --foil on the paths that cannot honour
+// them, naming the ones the user actually typed.
+//
+// Both describe one copy of one printing, which only the URL form has: a list
+// carries a count and a finish per line, and the picker asks per card. They
+// were marked "(URL form only)" in their usage strings and then dropped in
+// silence on the other two paths — add --file l.txt --qty 4 --foil reported
+// "Added 1 cards" — which records a quantity and a finish the user did not
+// say. That is the defect the --binder refusal beside this call was written
+// to prevent, left standing over the top of two flags doing it.
+//
+// This deliberately breaks invocations that ran green before. They were not
+// doing what they said, so the break is the fix arriving rather than a cost
+// of it.
+func refusePerCopyFlags(o addOpts, because string) error {
+	var named []string
+	if o.qtySet {
+		named = append(named, "--qty")
+	}
+	if o.foilSet {
+		named = append(named, "--foil")
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	// One flag applies, two apply. A refusal that cannot conjugate its own
+	// subject reads as a template rather than as hoard talking.
+	verb := "applies"
+	if len(named) > 1 {
+		verb = "apply"
+	}
+	return cli.Usagef("%s %s to the URL form of add; %s",
+		strings.Join(named, " and "), verb, because)
 }
 
 // looksLikeURL reports whether an argument is a Scryfall card link rather than a
@@ -119,15 +176,7 @@ func addDeps(st *store.Store) action.Deps {
 
 // addFromList reads a pasted or exported card list from a file or stdin.
 func addFromList(ctx context.Context, st *store.Store, env *cli.Env, path, binderRef string, again bool) error {
-	var data []byte
-	var err error
-	display := path
-	if path == "-" {
-		display = "stdin"
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(path)
-	}
+	data, display, err := readPathOrStdin(path)
 	if err != nil {
 		return err
 	}

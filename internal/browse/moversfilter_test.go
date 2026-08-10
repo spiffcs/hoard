@@ -217,14 +217,24 @@ func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 	if got := m.filterMatchCount(); got != len(m.filteredCards) {
 		t.Errorf("holdings count = %d, want %d", got, len(m.filteredCards))
 	}
-	for _, v := range []viewMode{viewMovers, viewUnpriced, viewWatches, viewMarket} {
+	for _, v := range []viewMode{viewMovers, viewWatches, viewMarket} {
 		m.view = v
 		got := m.filterMatchCount()
-		if v == viewMovers && got != len(m.filteredMovers) {
-			t.Errorf("movers count = %d, want %d", got, len(m.filteredMovers))
-		}
-		if v != viewMovers && got != -1 {
-			t.Errorf("%v count = %d, want -1 (the query does not narrow it)", v, got)
+		switch v {
+		case viewMovers:
+			if got != len(m.filteredMovers) {
+				t.Errorf("movers count = %d, want %d", got, len(m.filteredMovers))
+			}
+		case viewWatches:
+			// The watches screen consumes the query across all three of its
+			// tables, so it does have a number to give — one for the screen.
+			if got != m.watchTotalRows() {
+				t.Errorf("watches count = %d, want %d", got, m.watchTotalRows())
+			}
+		default:
+			if got != -1 {
+				t.Errorf("%v count = %d, want -1 (the query does not narrow it)", v, got)
+			}
 		}
 	}
 }

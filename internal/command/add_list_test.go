@@ -135,3 +135,64 @@ func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 		t.Errorf("guesses after evidenced add = %+v, want none", rows)
 	}
 }
+
+// --qty and --foil describe one copy of one printing, which is a thing only
+// the URL form has. On the list path each line carries its own count and
+// finish; on the picker path the picker asks. Both used to drop the flags
+// without a word — `add --file l.txt --qty 4 --foil` reported "Added 1 cards"
+// — which is exactly what the --binder refusal two lines above them exists to
+// prevent. The default is left alone: only a flag the user actually typed is
+// refused, so `hoard add --file l.txt` is untouched.
+func TestCmdAddRefusesPerCopyFlagsOffTheURLForm(t *testing.T) {
+	list := deckFile(t, "list.txt", "1 Sol Ring\n")
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"list --qty", []string{"add", "--file", list, "--qty", "4"}, "--qty"},
+		{"list --foil", []string{"add", "--file", list, "--foil"}, "--foil"},
+		{"list both", []string{"add", "--file", list, "--qty", "4", "--foil"}, "--qty"},
+		// An explicit --qty 1 is the default's value, not the default: the
+		// list still ignores it, so it is refused like any other.
+		{"list --qty 1", []string{"add", "--file", list, "--qty", "1"}, "--qty"},
+		// No --file and no arguments is the piped list spelled without
+		// flags, and it must refuse before it reads a byte of the pipe.
+		{"implicit pipe", []string{"add", "--qty", "4"}, "--qty"},
+		// The picker path, where --binder is already refused.
+		{"picker --qty", []string{"add", "Sol", "Ring", "--qty", "4"}, "--qty"},
+		{"picker --foil", []string{"add", "Sol", "Ring", "--foil"}, "--foil"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := exportStore(t)
+			stubFetch(t, watchCard())
+			_, err := execCmd(context.Background(), st, c.args, false)
+			if err == nil {
+				t.Fatalf("hoard %v succeeded, want a usage error", c.args)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to name %s", err, c.want)
+			}
+			totals, _ := st.CollectionTotals()
+			if totals.TotalCopies != 3 {
+				t.Errorf("collection holds %d copies, want the fixture's 3 untouched",
+					totals.TotalCopies)
+			}
+		})
+	}
+}
+
+// The control against over-refusal: an untyped flag is still the default, and
+// a list add with neither flag goes through exactly as it did.
+func TestCmdAddListWithoutPerCopyFlagsStillAdds(t *testing.T) {
+	st := exportStore(t)
+	stubFetch(t, watchCard())
+	list := deckFile(t, "list.txt", "1 Sol Ring\n")
+	if _, err := execCmd(context.Background(), st, []string{"add", "--file", list}, false); err != nil {
+		t.Fatalf("hoard add --file: %v", err)
+	}
+	totals, _ := st.CollectionTotals()
+	if totals.TotalCopies != 4 {
+		t.Errorf("collection holds %d copies, want the fixture's 3 plus one", totals.TotalCopies)
+	}
+}

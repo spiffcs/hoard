@@ -37,6 +37,7 @@ func NewCmdDeck(a *app) *cobra.Command {
 		Example: "hoard deck add <archidekt-url> [--refresh]\n" +
 			"hoard deck add --file <path> [--name NAME] [--source S]\n" +
 			"hoard deck add --file <path> --dry-run\n" +
+			"... | hoard deck add --file - --name NAME\n" +
 			"hoard deck remove <name>\n" +
 			"hoard deck repin <name> <set>",
 		Args: cobra.NoArgs,
@@ -73,9 +74,9 @@ func newDeckAddCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&o.file, "file", "",
-		"import from a text/exported decklist file instead of a URL")
+		"import a decklist instead of a URL (a path, or - for stdin)")
 	cmd.Flags().StringVar(&o.name, "name", "",
-		"deck name (defaults to the file name for --file imports)")
+		"deck name (defaults to the file name; required when --file is -)")
 	cmd.Flags().StringVar(&o.source, "source", "",
 		"provider label for text imports (e.g. moxfield)")
 	cmd.Flags().BoolVar(&o.refresh, "refresh", false,
@@ -94,6 +95,8 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	var deck *decksource.Deck
 	var err error
 	switch {
+	case o.file == "-":
+		deck, err = readDeckFromStdin(o.name, o.source)
 	case o.file != "":
 		deck, err = importTextDeck(o.file, o.name, o.source)
 	case len(args) == 1:
@@ -157,6 +160,33 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	}
 	noteDryRun(r, o.dryRun)
 	return err
+}
+
+// readDeckFromStdin reads a decklist from a pipe, so the round trip import
+// recommends — export a deck to text, read it back — composes as one line
+// instead of needing a temporary file between the halves.
+//
+// The dash is refused without --name, and that is the decision this function
+// exists to hold. Everywhere else a dash is a straight substitution for the
+// path, but here the path is not only where the bytes come from: it is also
+// what the deck is called, and a deck's name is not cosmetic — deck remove
+// and deck repin take one, and browse lists it. A pipe carries no file name
+// and a decklist has no name inside it (export writes board headers, not a
+// title), so a dash would have to invent one. Naming a deck "-", or "stdin",
+// files it under something the user never said, which is the objection
+// add --binder already makes on the path that cannot honour it. --name
+// already exists for exactly this, so the refusal costs a flag rather than a
+// feature.
+//
+// Separate from importTextDeck deliberately: browse's file prompt calls that
+// one, and inside the TUI a dash names no stream the browser does not
+// already own.
+func readDeckFromStdin(name, source string) (*decksource.Deck, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, cli.Usagef("reading a decklist from stdin needs --name: " +
+			"a pipe carries no file name to call the deck")
+	}
+	return decksource.ParseText(name, "", "", source, os.Stdin)
 }
 
 func importTextDeck(path, name, source string) (*decksource.Deck, error) {

@@ -151,7 +151,7 @@ func TestUnpricedScopedToSetWithEligibility(t *testing.T) {
 	}
 	m := newTestModel(t, st)
 	m = key(m, "B")
-	for m.view != viewUnpriced {
+	for m.view != viewWatches {
 		m = key(m, "v")
 	}
 	if len(m.unpriced) != 1 {
@@ -179,19 +179,21 @@ func TestUnpricedScopedToSetWithEligibility(t *testing.T) {
 func TestWatchesScopedToSet(t *testing.T) {
 	st := testStore()
 	w1 := store.WatchStatus{Name: "Bitterblossom", PriceUSD: price(34)}
-	w1.ScryfallID, w1.SetCode, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", "uma", "nonfoil", "<=", 30
+	w1.ScryfallID, w1.SetCode, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", "uma", "nonfoil", "under", 30
 	w2 := store.WatchStatus{Name: "Solitude", PriceUSD: price(34)}
-	w2.ScryfallID, w2.SetCode, w2.Finish, w2.Op, w2.Threshold = "Solitude-id", "mh3", "nonfoil", ">=", 50
+	w2.ScryfallID, w2.SetCode, w2.Finish, w2.Op, w2.Threshold = "Solitude-id", "mh3", "nonfoil", "over", 50
 	st.watches = []store.WatchStatus{w1, w2}
 	m := newTestModel(t, st)
 	m = key(m, "B")
 	m.showView(viewWatches)
-	if len(m.watches) != 2 {
-		t.Fatalf("all-cards watches = %d, want both", len(m.watches))
+	if len(shownWatches(m)) != 2 {
+		t.Fatalf("all-cards watches = %d, want both", len(shownWatches(m)))
 	}
 	m = atSet(t, m, "mh3")
-	if len(m.watches) != 1 || m.watches[0].Name != "Solitude" {
-		t.Errorf("mh3 watches = %+v, want Solitude alone", m.watches)
+	// Solitude is the over, so the set scope leaves OVERS holding it alone
+	// and UNDERS empty — the scope narrows both tables.
+	if len(m.overs) != 1 || len(m.unders) != 0 || m.overs[0].Name != "Solitude" {
+		t.Errorf("mh3 watches = %+v/%+v, want Solitude alone", m.overs, m.unders)
 	}
 }
 

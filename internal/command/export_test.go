@@ -258,3 +258,39 @@ func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
 		t.Error("hoard export --format moxfield --json succeeded, want an error")
 	}
 }
+
+// An explicit --format csv alongside --json is the same contradiction as
+// --format moxfield: the user named two output shapes. It used to be
+// indistinguishable from the default because the reconciliation tested the
+// flag's value rather than whether it was set, so a script that says
+// --format csv and inherits --json from a wrapper got JSON without a word.
+func TestCmdExportJSONConflictsWithExplicitCSV(t *testing.T) {
+	st := exportStore(t)
+	out, err := execCmd(context.Background(), st, []string{"export", "--format", "csv"}, true)
+	if err == nil {
+		t.Fatalf("hoard export --format csv --json succeeded, want an error; wrote:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--format csv") {
+		t.Errorf("err = %v, want it to name the format it conflicts with", err)
+	}
+}
+
+// The two non-contradictions still stand: --json alone is the JSON document,
+// and --format json --json says one thing twice.
+func TestCmdExportJSONAgreesWithItself(t *testing.T) {
+	st := exportStore(t)
+	bare, err := execCmd(context.Background(), st, []string{"export"}, true)
+	if err != nil {
+		t.Fatalf("hoard export --json: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(bare), "{") {
+		t.Errorf("hoard export --json wrote:\n%s", bare)
+	}
+	spelled, err := execCmd(context.Background(), st, []string{"export", "--format", "json"}, true)
+	if err != nil {
+		t.Fatalf("hoard export --format json --json: %v", err)
+	}
+	if spelled != bare {
+		t.Errorf("--format json --json differs from --json:\n%s\n%s", spelled, bare)
+	}
+}
