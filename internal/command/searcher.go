@@ -73,21 +73,31 @@ func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall
 	return s.remote.NamedFuzzy(ctx, text)
 }
 
-// PrintBySetNumber resolves a printing from its collector block, catalog only.
-// There is no API fallthrough on purpose: the block is a last resort reached
-// when the name would not read at all, and a network round trip per unreadable
-// title is the cost the scan flow least wants to pay. A card newer than the
-// catalog simply stays unidentified, as it would have anyway.
-func (s layeredSearcher) PrintBySetNumber(ctx context.Context, set, number string) (*scryfall.Card, error) {
+// Compile-time proof that the composed searcher still offers the scan flow's
+// collector-block rescue. resolveByBlock can only ask for it at runtime, so
+// without this line a signature change there is a silent capability loss, not
+// a build failure — which is exactly what happened when the block lookup grew
+// its lang parameter and this adapter kept the old two-argument method.
+var _ tui.BlockSearcher = layeredSearcher{}
+
+// PrintBySetNumberLang resolves a printing from its collector block, catalog
+// only. There is no API fallthrough on purpose: the block is a last resort
+// reached when the name would not read at all, and a network round trip per
+// unreadable title is the cost the scan flow least wants to pay. A card newer
+// than the catalog simply stays unidentified, as it would have anyway.
+//
+// lang comes from the card's own set row and rides along untouched, because
+// it is what separates a foreign-only printing from the English namesake it
+// shares a set and number with. Dropping it here would hand the catalog an
+// ambiguous block and get a refusal back.
+func (s layeredSearcher) PrintBySetNumberLang(ctx context.Context, set, number, lang string) (*scryfall.Card, error) {
 	// local is the general Searcher interface, so the capability is asked for
 	// rather than assumed — a nil or fake local simply declines.
-	byBlock, ok := s.local.(interface {
-		PrintBySetNumber(context.Context, string, string) (*scryfall.Card, error)
-	})
+	byBlock, ok := s.local.(tui.BlockSearcher)
 	if !ok {
 		return nil, nil
 	}
-	return byBlock.PrintBySetNumber(ctx, set, number)
+	return byBlock.PrintBySetNumberLang(ctx, set, number, lang)
 }
 
 // NamedFuzzyLocal resolves against the catalog alone. The scan flow uses it

@@ -481,9 +481,19 @@ func hasPrintingEvidence(c scan.Card) bool {
 	})
 }
 
-// blockSearcher is implemented by searchers that can resolve a printing from
+// BlockSearcher is implemented by searchers that can resolve a printing from
 // its collector block alone.
-type blockSearcher interface {
+//
+// Exported so the searchers that compose one can pin it with a compile-time
+// assertion. resolveByBlock asks for this capability with a runtime type
+// assertion, because a Searcher without a local catalog genuinely cannot offer
+// it — and that assertion fails silently, which is how the whole path went
+// dead: the lang parameter was added here, to the catalog, and to the test
+// fake, but not to the layered searcher production passes in. Two live cards
+// (EOE 375, EOS 3) read a perfect set and number and were still dropped as
+// unreadable. An adapter that means to implement this must say so in a way the
+// compiler checks.
+type BlockSearcher interface {
 	PrintBySetNumberLang(ctx context.Context, set, number, lang string) (*scryfall.Card, error)
 }
 
@@ -496,7 +506,7 @@ type blockSearcher interface {
 // number here would not merely rank a card wrongly — it would invent one out of
 // a card that was never identified.
 func resolveByBlock(ctx context.Context, s Searcher, c scan.Card) (*scryfall.Card, scan.CollectorAlt) {
-	byBlock, ok := s.(blockSearcher)
+	byBlock, ok := s.(BlockSearcher)
 	if !ok {
 		return nil, scan.CollectorAlt{}
 	}
