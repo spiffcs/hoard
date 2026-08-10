@@ -14,7 +14,11 @@
 //      connection needs no leniency;
 //   3. a pinned pair connects with `acceptUnknown: false` on both ends — the
 //      steady state, where an unknown certificate cannot even finish TLS;
-//   4. the pairing proof still gates, over TLS, with the right code and the
+//   4. a pairing survives the session that made it — the phone is still
+//      reachable after a session ends, and the same pinned Mac reconnects
+//      without a code, which is what "paired" has to mean to be worth the
+//      six digits;
+//   5. the pairing proof still gates, over TLS, with the right code and the
 //      wrong one.
 //
 // Serialized for the same reason PeerIdentitySuite is: these mint keychain
@@ -196,6 +200,93 @@ struct TrustedSessionSuite {
             a pinned peer was refused after the code rotated
               listener error: \(listenerError ?? "none")
             """)
+    }
+
+    @Test("a paired peer reconnects after a session ends", .timeLimit(.minutes(1)))
+    func pairedPeerReconnectsAfterSessionEnds() throws {
+        let (phoneID, phonePins, phoneService) = try scratch("phoneRe")
+        let (macID, _, macService) = try scratch("macRe")
+        defer {
+            phonePins.forgetAll()
+            deletePeerIdentity(service: phoneService)
+            deletePeerIdentity(service: macService)
+        }
+
+        // The steady state again, but across *two* sessions. What the phone
+        // does between them is the whole subject: a session ending must leave
+        // the listener advertising, because the only controls that rebuild one
+        // are "Add a Mac" and "Forget all Macs", and both rotate the code and
+        // reopen pairing. A phone that stops advertising when a session ends
+        // can therefore only be recovered by re-pairing something that was
+        // never unpaired — which is exactly what LinkController's `quit`
+        // handler used to cause by calling `stop()`.
+        phonePins.pin(macID.fingerprint, name: "mac")
+        let name = "hoard-re-\(UUID().uuidString.prefix(8))"
+        let listener = PeerListener(
+            name: name, code: PairingCode.random(),
+            trust: PeerTrust(
+                identity: phoneID, pinned: { phonePins.all }, acceptUnknown: { false }),
+            pins: phonePins)
+
+        var sessions: [PeerSession] = []
+        var listenerError: String?
+        listener.onSession = { sessions.append($0) }
+        listener.onError = { listenerError = $0 }
+        try listener.start()
+        defer { listener.stop() }
+
+        let macTrust = PeerTrust(
+            identity: macID, pinned: [phoneID.fingerprint], acceptUnknown: false)
+
+        let first = try #require(
+            PeerBrowser().browse(seconds: 4).first { $0.name == name },
+            "the listener never advertised at all")
+        let one = PeerBrowser().connect(to: first, code: PairingCode.random(), trust: macTrust)
+        #expect(waitUntil { sessions.count == 1 }, """
+            the first session never established
+              listener error: \(listenerError ?? "none")
+            """)
+
+        // The Mac closing up: `quit` reaches the phone and its connections go.
+        // Cancelled from this side too, which is what the wire close amounts to.
+        sessions.first?.cancel()
+        one.cancel()
+
+        // A *fresh* browser, deliberately. PeerBrowser accumulates into `found`
+        // and never removes, so re-browsing on the first one would report a
+        // service that had since vanished and this assertion would pass for the
+        // wrong reason — the one way to write this test so it proves nothing.
+        //
+        // Visibility is the weaker half of the check, and knowingly so:
+        // mDNSResponder serves a cancelled listener's record from cache for a
+        // few seconds, so a phone that has just gone off the air still browses
+        // as present. Measured — with the old `stop()` restored between the two
+        // sessions, this require *passes* and the connect below is what fails.
+        // Which is the honest shape of the bug: hoard sometimes reported no
+        // phone and sometimes offered one it could not reach, depending on how
+        // long the operator took to press ctrl+o.
+        let stillThere = PeerBrowser().browse(seconds: 4)
+        let second = try #require(
+            stillThere.first { $0.name == name },
+            """
+            the phone stopped advertising when its session ended, so no Mac \
+            could find it again without re-pairing; saw \(stillThere.map(\.name))
+            """)
+
+        // And it is reachable, not merely visible. No code is offered that
+        // could be the right one — a pinned peer is never asked.
+        let two = PeerBrowser().connect(to: second, code: PairingCode.random(), trust: macTrust)
+        defer { two.cancel() }
+        #expect(waitUntil { sessions.count == 2 }, """
+            a previously paired Mac could not re-establish a session
+              listener error: \(listenerError ?? "none")
+              client now: control \(two.control.state), preview \(two.preview.state)
+            """)
+
+        // Nothing was re-pinned along the way: this was one pairing used twice,
+        // not a second pairing quietly made.
+        #expect(phonePins.all == [macID.fingerprint],
+                "reconnecting changed the trust store; it holds \(phonePins.all.count) entries")
     }
 
     @Test("a stranger cannot complete TLS once pairing is closed", .timeLimit(.minutes(1)))

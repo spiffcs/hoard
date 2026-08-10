@@ -290,11 +290,47 @@ final class LinkController: ObservableObject {
         }
     }
 
+    /// stop takes this phone off the network entirely: the session goes and so
+    /// does the advertisement.
+    ///
+    /// Only `rotate` wants this. A session ending is `endSession`, and the two
+    /// were the same call until 2026-08-09 — see there for what that cost.
     func stop() {
         session?.cancel()
         session = nil
         listener.stop()
         connected = false
+    }
+
+    /// endSession gives back the current session and keeps advertising.
+    ///
+    /// What `quit` means, and the distinction the port lost. When the Mac drove
+    /// a spawned helper *process*, `quit` meant "exit" and stopping everything
+    /// was the whole correct response. The helper is gone: the peer is now this
+    /// app, sitting in a stand for hours, and the Mac sends `quit` at the end of
+    /// every ordinary scanning session — Session.Shutdown does it on the way out
+    /// of the add flow, on esc, and even on ctrl+o to reselect a camera.
+    ///
+    /// Handling it with `stop()` therefore cancelled the NWListener each time,
+    /// and nothing on screen restarts one: `scenePhase` only fires on a return
+    /// to the foreground, and the app never left it. The phone vanished from
+    /// Bonjour while still showing "Waiting for hoard…", so the Mac's next
+    /// ctrl+o found nothing, and the only controls that brought the listener
+    /// back — "Add a Mac" and "Forget all Macs" — both rotate the code and
+    /// reopen the pairing window. A pairing that was intact had to be made
+    /// again, every session, to fix a phone that was never actually unpaired.
+    ///
+    /// The listener is deliberately left alone rather than restarted. It was
+    /// never touched by the session, and rebuilding it here would drop the
+    /// advertisement for exactly the moment the Mac is most likely to be
+    /// browsing for it.
+    func endSession() {
+        // Traced before the release, so the line still has a live control
+        // connection to travel on and lands in the Mac's HOARD_SCAN_LOG beside
+        // the session it is closing, not only in this phone's own log.
+        trace("session ended: the Mac said quit; still advertising")
+        releaseSession()
+        status = "hoard disconnected"
     }
 
     /// newCode rotates the pairing code and reopens the pairing window.
@@ -502,7 +538,10 @@ final class LinkController: ObservableObject {
             // rather than what it asked for.
             send(Event(event: "torch", state: on ? "on" : "off"))
         case .quit:
-            stop()
+            // The Mac finished a session; it did not ask this phone to leave
+            // the network. See endSession for why those were the same thing
+            // until 2026-08-09, and what it cost.
+            endSession()
         default:
             // Rotation, framing, effects — either meaningless here or the
             // phone's own business. Ignored rather than errored: a newer hoard
