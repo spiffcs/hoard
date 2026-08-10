@@ -51,8 +51,6 @@ each grounded in something already known about this codebase:
   match reality.
 - **Comment hygiene.** TODO/FIXME/HACK, placeholder names, anything written for
   an audience of one that reads wrong in public.
-- **Deferred risk is documented, not hidden.** `docs/audit-yellow-backlog.md`
-  records what was consciously left for later and why — confirm it is current.
 
 ### The flip itself (owner-only, after the walkthrough)
 
@@ -85,11 +83,6 @@ goes public — a dead promise on the landing page is worse than no promise.
   Store provisioning.
 - **macOS helper.** Built from source on a Mac (`docs/ios-development.md`); it
   ships in no release archive. The README must say so plainly.
-- **Open Swift risk to triage against launch.** The audit's deferred Swift
-  items — camera configuration on the main thread (C2), and English-only OCR
-  with hand-fitted geometry (C8) — are recorded in
-  `docs/specs/audit-yellow-backlog.md`. Decide which, if any, block a public
-  launch versus ship as known post-launch work.
 
 ## Order of operations
 
