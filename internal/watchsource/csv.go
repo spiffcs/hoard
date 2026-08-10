@@ -24,8 +24,15 @@ const (
 
 func parseCSV(r io.Reader) ([]Row, error) {
 	cr := csv.NewReader(r)
-	// Ragged rows are tolerated and cells beyond a row's end read as empty:
-	// generators routinely omit trailing empty fields.
+	// Go's ErrFieldCount is off because ragged rows are only half-legitimate,
+	// and the excuse runs one way. A row *shorter* than the header is
+	// tolerated and its missing cells read as empty: generators routinely omit
+	// trailing empty fields. A row *longer* than the header cannot be that —
+	// it can only be a delimiter that should have been quoted, nearly always a
+	// comma inside a card name. Every column past it shifts by one, so a
+	// fragment of the name arrives where the direction or threshold belongs.
+	// Over-long rows are refused in the loop below, by line number, before
+	// anything is resolved. Same reasoning as collsource; same trap.
 	cr.FieldsPerRecord = -1
 	records, err := cr.ReadAll()
 	if err != nil {
@@ -67,6 +74,13 @@ func parseCSV(r io.Reader) ([]Row, error) {
 		line := n + 2 // 1-based, counting the header
 		if len(rec) == 0 || (len(rec) == 1 && strings.TrimSpace(rec[0]) == "") {
 			continue
+		}
+		// Refused before the name is even read: with the columns shifted,
+		// every cell this row offers belongs to the wrong header, and the
+		// ones that still look plausible are the dangerous ones.
+		if len(rec) > len(header) {
+			return nil, fmt.Errorf("line %d: %d fields, header has %d — an unquoted comma in a card name?",
+				line, len(rec), len(header))
 		}
 		name := get(rec, colName)
 		if name == "" {

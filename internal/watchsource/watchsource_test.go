@@ -104,6 +104,12 @@ func TestParseErrors(t *testing.T) {
 		{"bad direction", "Name,Direction,Threshold\nSol Ring,below,5\n", `line 2 (Sol Ring): direction must be under or over, not "below"`},
 		{"bad threshold", "Name,Direction,Threshold\nSol Ring,under,cheap\n", `line 2 (Sol Ring): cannot parse threshold "cheap"`},
 		{"zero threshold", "Name,Direction,Threshold\nSol Ring,under,0\n", "line 2 (Sol Ring): threshold must be a positive dollar amount"},
+		// A comma inside an unquoted card name shifts every column after it,
+		// so the direction cell reads a fragment of the name. Short rows stay
+		// tolerated (TestCSVTolerations); only over-long ones are refused,
+		// because nothing but an unquoted delimiter can produce one.
+		{"overlong row", "Name,Direction,Threshold\nShalai, Voice of Plenty,under,5\n",
+			"line 2: 4 fields, header has 3 — an unquoted comma in a card name?"},
 		{"header only", "Name,Direction,Threshold\n", "no watches found in file"},
 		{"not a list", "[{\"name\": 5}]", "not a watch list: want a JSON array of {name, direction, thresholdUsd} objects"},
 		{"json no name", `[{"direction":"under","thresholdUsd":5}]`, "entry 1: no card name"},

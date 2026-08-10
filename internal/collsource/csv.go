@@ -76,8 +76,15 @@ var specs = []spec{
 // "auto"/"" to recognize the file by its header row.
 func Parse(r io.Reader, format string) (*Collection, error) {
 	cr := csv.NewReader(r)
-	// Ragged rows are tolerated here and cells beyond a row's end read as
-	// empty: several apps omit trailing empty fields.
+	// Go's ErrFieldCount is off because ragged rows are only half-legitimate,
+	// and the excuse runs one way. A row *shorter* than the header is
+	// tolerated and its missing cells read as empty: several apps omit
+	// trailing empty fields. A row *longer* than the header cannot be a
+	// truncated export — it can only be a delimiter that should have been
+	// quoted, nearly always a comma inside a card name. Every column past it
+	// shifts by one, so a fragment of the name arrives where the set code
+	// belongs and is sent to Scryfall as one. Over-long rows are refused in
+	// the loop below, by line number, before anything is resolved.
 	cr.FieldsPerRecord = -1
 	records, err := cr.ReadAll()
 	if err != nil {
@@ -128,6 +135,13 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 		line := n + 2 // 1-based, counting the header
 		if len(rec) == 0 || (len(rec) == 1 && strings.TrimSpace(rec[0]) == "") {
 			continue
+		}
+		// Refused before the name is even read: with the columns shifted,
+		// every cell this row offers belongs to the wrong header, and the
+		// ones that still look plausible are the dangerous ones.
+		if len(rec) > len(header) {
+			return nil, fmt.Errorf("line %d: %d fields, header has %d — an unquoted comma in a card name?",
+				line, len(rec), len(header))
 		}
 		name := get(rec, sp.cardName)
 		if name == "" {

@@ -191,6 +191,61 @@ func TestParseErrorsCarryTheLineNumber(t *testing.T) {
 	}
 }
 
+// A comma inside an unquoted card name — what a hand-edit or an LLM writes —
+// makes the row one field too long and shifts every column after it. Read
+// leniently, "Voice of Plenty" landed in Set and went out to Scryfall as a set
+// code, whose 400 came back with no file and no line. Tolerating short rows is
+// the documented case; tolerating long ones was never anything but a bug.
+const overlongHeader = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD\n"
+
+func TestOverlongRowIsRefusedBeforeAnythingResolves(t *testing.T) {
+	in := overlongHeader +
+		"1,Shalai, Voice of Plenty,dom,35,foil,,db827ee7-6f2e-4e10-aac0-120fc2b69fbd,Binder,binder,main,5.08\n"
+	_, err := Parse(strings.NewReader(in), "auto")
+	if err == nil {
+		t.Fatal("a 12-field row under an 11-field header parsed, want a refusal")
+	}
+	for _, want := range []string{"line 2", "12 fields", "header has 11", "unquoted comma"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to mention %q", err, want)
+		}
+	}
+}
+
+// The same row quoted the way hoard's own exporter writes it. This is the
+// round trip the refusal above is protecting: the name keeps its comma and the
+// set code stays a set code.
+func TestQuotedCommaInANameStillParses(t *testing.T) {
+	in := overlongHeader +
+		`1,"Shalai, Voice of Plenty",dom,35,foil,,db827ee7-6f2e-4e10-aac0-120fc2b69fbd,Binder,binder,main,5.08` + "\n"
+	c, err := Parse(strings.NewReader(in), "auto")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := c.Rows[0].Name; got != "Shalai, Voice of Plenty" {
+		t.Errorf("name = %q, want the comma kept", got)
+	}
+	if c.Rows[0].Ident != (scryfall.Identifier{ID: "db827ee7-6f2e-4e10-aac0-120fc2b69fbd"}) {
+		t.Errorf("ident = %+v, want the Scryfall ID unshifted", c.Rows[0].Ident)
+	}
+}
+
+// The other half of the asymmetry, pinned so a future tightening cannot take
+// it away: a row that stops early is an export that omitted trailing empty
+// fields, and its missing cells read as empty.
+func TestShortRowsAreStillTolerated(t *testing.T) {
+	c, err := Parse(strings.NewReader(overlongHeader+"1,Sol Ring,c21,125\n"), "auto")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(c.Rows) != 1 || c.Rows[0].Finish != "nonfoil" || c.Rows[0].Binder != "" {
+		t.Errorf("row = %+v, want the absent cells to read as empty", c.Rows[0])
+	}
+	if c.Rows[0].Ident != (scryfall.Identifier{Set: "c21", CollectorNumber: "125"}) {
+		t.Errorf("ident = %+v, want set+number", c.Rows[0].Ident)
+	}
+}
+
 func TestBOMAndEmptyFilesAreHandled(t *testing.T) {
 	in := "\ufeffCount,Tradelist Count,Name,Edition,Collector Number\n1,0,Sol Ring,c21,125\n"
 	if _, err := Parse(strings.NewReader(in), "auto"); err != nil {
