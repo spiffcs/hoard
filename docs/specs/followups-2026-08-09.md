@@ -29,11 +29,20 @@ add --file`. One line.
 
 **A2. `internal/action/add.go:285` and `:308` (`DeckAdd`, from `:210`)** →
 `deck add` disagrees with itself about what counts as partial. Both guards test
-`len(res.Unresolved)` only; `res.Skipped` — the *unreadable lines* — is reported
-and then ignored. `AddList` (`:68`) tests `len(res.Skipped) +
-len(res.Unresolved)` at `:123`, so two sibling code paths treat the same
-condition differently. → Verified by running it: a decklist of one good line
-plus two unparseable ones prints both skipped lines and **exits 0**.
+`len(res.Unresolved)` only; the *unreadable lines* are reported and then
+ignored. `AddList` (`:68`) counts both at `:123`, so two sibling code paths
+treat the same condition differently. → Verified by running it: a decklist of
+one good line plus two unparseable ones prints both skipped lines and
+**exits 0**.
+
+**Correction, 2026-08-10:** an earlier draft of this item called the field
+`res.Skipped`. There is no such field — `DeckAddResult` does not carry one. The
+unreadable lines live on the *input*, `decksource.Deck.Skipped`, which is why
+`command/deck.go:152` reads them off its own parsed deck rather than off the
+result. That is also the mechanism: in `AddList` the parse happens inside the
+action (`add.go:80`), so the count is in scope at the guard; in `DeckAdd`
+parsing is the frontend's job, so the count arrives as a parameter field that
+nothing consulted.
 
 ```
 Imported deck #2 "Mixed" (text): 1 cards resolved.
