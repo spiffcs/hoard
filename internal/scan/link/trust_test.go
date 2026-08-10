@@ -72,6 +72,52 @@ func TestPinStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// Rename refreshes the label a paired phone is remembered under — someone
+// renaming their iPhone has not re-paired it — and, the half that matters, it
+// cannot bring a peer into the set. Implementing it as a call to Pin would pass
+// the first half of this and fail the second, which is why it is not one.
+func TestPinStoreRenameIsUpdateOnly(t *testing.T) {
+	s := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
+	paired := sha256.Sum256([]byte("paired phone"))
+	if err := s.Pin(paired[:], "Chris's iPhone"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Rename(paired[:], "Chris's iPhone 17"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Names()[b64(paired[:])]; got != "Chris's iPhone 17" {
+		t.Errorf("Rename left the label as %q", got)
+	}
+	// Renaming is not re-pairing: the key is untouched, so the set of trusted
+	// fingerprints is exactly what it was.
+	if len(s.All()) != 1 || !s.Contains(paired[:]) {
+		t.Errorf("Rename disturbed the pin set: %d entries", len(s.All()))
+	}
+
+	// The authorisation property. A fingerprint this machine has never paired
+	// with must not appear in the set because something asked to relabel it.
+	stranger := sha256.Sum256([]byte("some other phone"))
+	if err := s.Rename(stranger[:], "Someone Else's iPhone"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Contains(stranger[:]) {
+		t.Fatal("Rename granted trust to an unpinned fingerprint")
+	}
+	if len(s.All()) != 1 {
+		t.Errorf("store grew to %d entries", len(s.All()))
+	}
+
+	// A malformed fingerprint is ignored rather than stored, so a caller
+	// passing a nil PeerFingerprint cannot write a junk key.
+	if err := s.Rename(nil, "nobody"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.All()) != 1 {
+		t.Errorf("a nil fingerprint reached the file: %d entries", len(s.All()))
+	}
+}
+
 func TestPinStoreForgetAll(t *testing.T) {
 	s := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	for _, n := range []string{"a", "b", "c"} {

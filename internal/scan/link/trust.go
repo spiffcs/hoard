@@ -113,6 +113,36 @@ func (s *PinStore) Pin(fingerprint []byte, name string) error {
 	return s.save(pf)
 }
 
+// Rename updates the label a pinned peer is remembered under, and does nothing
+// at all for a fingerprint that is not pinned.
+//
+// Deliberately not Pin with a different name. Pin creates an entry when one is
+// missing, and creating an entry is the operation that grants trust — the whole
+// authorisation list is these keys. A caller whose only business is refreshing
+// a display label must not be able to widen trust by getting an argument wrong,
+// so the two are separate methods rather than one with a flag. The missing-key
+// case returning nil rather than an error is part of that: "that peer is not
+// pinned" is the ordinary answer here, not a fault.
+func (s *PinStore) Rename(fingerprint []byte, name string) error {
+	if len(fingerprint) != sha256.Size || name == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pf, err := s.load()
+	if err != nil {
+		return err
+	}
+	key := base64.StdEncoding.EncodeToString(fingerprint)
+	if cur, ok := pf.Peers[key]; !ok || cur == name {
+		// Unchanged, or not ours to change. No write either way — this runs on
+		// every session open, and the common case is a name that still matches.
+		return nil
+	}
+	pf.Peers[key] = name
+	return s.save(pf)
+}
+
 // Forget drops one peer.
 func (s *PinStore) Forget(fingerprint []byte) error {
 	s.mu.Lock()

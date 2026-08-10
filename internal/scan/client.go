@@ -75,10 +75,22 @@ func (c *Client) identity() (*link.Identity, error) {
 // Devices lists the phones running Hoardling on this network.
 //
 // NeedsPairing is decided here rather than by the phone, because whether a
-// pairing exists is a fact about this machine. It is read from the pin set:
-// under trust on first use, "paired" means "this machine holds that phone's
-// certificate fingerprint", which is the thing that actually governs whether a
-// session can open.
+// pairing exists is a fact about this machine.
+//
+// It is matched by *name*, which is weaker than the gate it describes, and the
+// gap is not fixable at this layer. What governs whether a session can open is
+// the certificate fingerprint (Trust.verify); what a browse yields is a Bonjour
+// instance name and nothing else — measured, `dns-sd -B` prints no TXT record,
+// and the phone advertises none — so no fingerprint is knowable until a TLS
+// handshake has already happened. Matching the pinned *label* is the only
+// signal available before that, and it is wrong in both directions: a renamed
+// phone reads as unpaired, and a reset phone that kept its name reads as paired.
+//
+// Both are wrong only on this flag. Open still asks the handshake, so a
+// mis-read costs a spurious code screen or a spurious failure, never access —
+// and Open now refreshes the stored label, which keeps the rename case wrong
+// for one browse rather than forever. See docs/specs/followups-2026-08-09.md
+// B2 for the two designs that would make this exact rather than approximate.
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 	// No name: this is the enumerating browse, and it has to hear from every
 	// phone rather than the first one.
@@ -178,6 +190,22 @@ func (c *Client) Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 		return nil, friendly(err)
 	}
 
+	// The stored label is a cache of what the phone called itself when it was
+	// paired, and this is the only moment it can be refreshed from something
+	// authenticated: the handshake has just proved which certificate answered,
+	// and svc.Name is what that certificate advertises as today. Rename is
+	// update-only, so a peer that somehow is not pinned cannot be added by it.
+	//
+	// Read the direction carefully, because it is what separates this from the
+	// defect above it: the fingerprint is the *key* and the name is the *value
+	// being corrected*. Nothing here decides anything from a name. The
+	// handshake decided, and the label is merely what gets fixed as a result —
+	// the inverse of Devices, which has no fingerprint to decide from and so
+	// matches the label instead.
+	// Ignored on failure on purpose — a label on a picker is not worth failing
+	// a session that has already handshaken.
+	_ = pins.Rename(session.PeerFingerprint(), svc.Name)
+
 	s := &Session{link: session, events: make(chan Event, 8)}
 	// HOARD_SCAN_LOG tees the session's traffic, timestamped, to a file — the
 	// only way to watch the live feed while the TUI owns the output. Append
@@ -260,6 +288,23 @@ func awaitReady(ctx context.Context, session *link.Session) error {
 	}
 }
 
+// friendlyError carries a replacement sentence without discarding the error it
+// replaces.
+//
+// Rewriting the text is the whole point of friendly, but doing it with
+// errors.New severs errors.Is, and the sentinels being rewritten are precisely
+// the ones a caller has reason to branch on: "you have not paired with this
+// phone" is a different thing to do next than "the phone went away". Keeping
+// the original reachable through Unwrap costs nothing — Error returns the
+// sentence alone, so what a person reads is unchanged to the byte.
+type friendlyError struct {
+	msg string
+	err error
+}
+
+func (e *friendlyError) Error() string { return e.msg }
+func (e *friendlyError) Unwrap() error { return e.err }
+
 // friendly turns a link error into something a person at a terminal can act on.
 //
 // The raw text is genuinely unhelpful in the place it gets shown: a phone that
@@ -270,11 +315,11 @@ func friendly(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, link.ErrNotFound):
-		return errors.New(
-			"no iPhone running Hoardling was found on this network. Open the app on your phone, and make sure both devices are on the same Wi-Fi (or the phone is plugged in)")
+		return &friendlyError{err: err, msg: "" +
+			"no iPhone running Hoardling was found on this network. Open the app on your phone, and make sure both devices are on the same Wi-Fi (or the phone is plugged in)"}
 	case errors.Is(err, link.ErrPeerNotPinned):
-		return errors.New(
-			"that phone is not paired with this machine. Run the pairing step and enter the six digits from Hoardling's Pair tab")
+		return &friendlyError{err: err, msg: "" +
+			"that phone is not paired with this machine. Run the pairing step and enter the six digits from Hoardling's Pair tab"}
 	case errors.Is(err, link.ErrNoDNSSD):
 		return fmt.Errorf("card scanning needs macOS's dns-sd to find the phone: %w", err)
 	}
