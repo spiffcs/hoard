@@ -5290,3 +5290,112 @@ func TestTallyIsCapped(t *testing.T) {
 		t.Errorf("newest row = %q, want the latest commit kept", got)
 	}
 }
+
+// friendlyish mirrors what scan.Client.Open actually hands back for a refused
+// pairing: a sentence a person can read, with the sentinel still reachable
+// underneath. The two halves are separate on purpose — Error carries only the
+// prose, so a caller that matched on text would see nothing to match.
+type friendlyish struct {
+	msg string
+	err error
+}
+
+func (e friendlyish) Error() string { return e.msg }
+func (e friendlyish) Unwrap() error { return e.err }
+
+// notPairedErr is the value the real Open returns when the handshake refuses.
+func notPairedErr() error {
+	return friendlyish{
+		msg: "that phone is not paired with this machine. Run the pairing step and enter the six digits from Hoardling's Pair tab",
+		err: scan.ErrNotPaired,
+	}
+}
+
+// A lone unpaired phone is opened, refused, and the refusal routes to the code
+// screen. Nothing predicted this beforehand: the browse that found the phone
+// carries no fingerprint, so the handshake is the first thing that knows.
+//
+// Note the entry point — one phone on the network auto-selects and opens with
+// no picker in between, which is the topology most people have. That path never
+// consulted the old NeedsPairing flag at all; it opened, failed, and dumped the
+// user back at the name prompt with a banner telling them to go and pair.
+func TestUnpairedOpenRoutesToTheCodeScreen(t *testing.T) {
+	devices := []scan.Device{cam("phone", "Chris's iPhone", scan.KindRemote)}
+	sc := &fakeScanner{devices: devices, openErr: notPairedErr()}
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	mm, _ = mm.(model).onCameras(camerasMsg{devices: devices})
+	got := mm.(model)
+	if got.state != stateCameraBusy {
+		t.Fatalf("a lone phone should open straight away, got %v", got.state)
+	}
+	// The wait names the phone rather than claiming to still be hunting for
+	// one, which is what stops the hand-off below from reading as a jump cut.
+	if v := got.View(); !strings.Contains(v, "connecting to Chris's iPhone") {
+		t.Errorf("the wait does not say what it is waiting for: %q", v)
+	}
+
+	mm, _ = got.Update(got.openSessionCmd()())
+	got = mm.(model)
+	if got.state != statePairCode {
+		t.Fatalf("a refused pairing should land on the code screen, got %v", got.state)
+	}
+	if got.codeInput.Value() != "" {
+		t.Errorf("the code field should be empty, got %q", got.codeInput.Value())
+	}
+	if got.status == "" {
+		t.Error("arriving here unasked needs a reason on screen")
+	}
+	if got.statusErr {
+		t.Error("a first pairing is the ordinary next step, not an error")
+	}
+
+	// And the six digits complete the job from where the user already is,
+	// rather than sending them back to start the flow over.
+	got.codeInput.SetValue("123456")
+	mm, cmd := got.submitPairCode()
+	runCmds(cmd)
+	if sc.pairs["phone"] != "123456" {
+		t.Errorf("Pair got %q for %q", sc.pairs["phone"], "phone")
+	}
+	if s := mm.(model).state; s != statePairBusy {
+		t.Errorf("submitting the code should show a spinner, got %v", s)
+	}
+}
+
+// The other failure modes. "Enter the six digits" is wrong advice for a phone
+// that went away or a handshake that broke, so only the pairing sentinel earns
+// the code screen and everything else keeps the banner.
+func TestOnlyTheNotPairedSentinelReachesTheCodeScreen(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want state
+	}{
+		{"not paired", notPairedErr(), statePairCode},
+		{"phone went away", errors.New("no iPhone running Hoardling was found on this network"), stateName},
+		{"tls failed", errors.New("the phone refused the connection"), stateName},
+		// The regression this change is exposed to forever. friendly used to
+		// rewrite link errors with errors.New, which severed the sentinel while
+		// leaving the sentence byte-identical. If that comes back, this is what
+		// the user gets — and it must stay visibly different from the real
+		// thing, not quietly right-looking.
+		{"severed sentinel", friendlyish{msg: notPairedErr().Error(), err: nil}, stateName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := &fakeScanner{openErr: tc.err}
+			m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
+			m.cameraID, m.cameraName, m.cameraChosen = "phone", "Chris's iPhone", true
+
+			mm, _ := m.Update(m.openSessionCmd()())
+			got := mm.(model)
+			if got.state != tc.want {
+				t.Errorf("state = %v, want %v", got.state, tc.want)
+			}
+			if tc.want == stateName && !got.statusErr {
+				t.Error("a failure that is not a pairing question should banner as an error")
+			}
+		})
+	}
+}

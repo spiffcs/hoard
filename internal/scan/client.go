@@ -72,25 +72,26 @@ func (c *Client) identity() (*link.Identity, error) {
 	return link.LoadOrCreateIdentity(c.identityPath(), identityCommonName)
 }
 
+// ErrNotPaired reports that this machine has no pairing with the phone a
+// session was asked for. Callers branch on it to send the user to the code
+// screen rather than to a dead end.
+//
+// Re-exported from the transport so that consumers — the TUI in particular —
+// can tell "not paired" from "phone went away" without importing the link
+// package for one sentinel.
+var ErrNotPaired = link.ErrPeerNotPinned
+
 // Devices lists the phones running Hoardling on this network.
 //
-// NeedsPairing is decided here rather than by the phone, because whether a
-// pairing exists is a fact about this machine.
-//
-// It is matched by *name*, which is weaker than the gate it describes, and the
-// gap is not fixable at this layer. What governs whether a session can open is
-// the certificate fingerprint (Trust.verify); what a browse yields is a Bonjour
-// instance name and nothing else — measured, `dns-sd -B` prints no TXT record,
-// and the phone advertises none — so no fingerprint is knowable until a TLS
-// handshake has already happened. Matching the pinned *label* is the only
-// signal available before that, and it is wrong in both directions: a renamed
-// phone reads as unpaired, and a reset phone that kept its name reads as paired.
-//
-// Both are wrong only on this flag. Open still asks the handshake, so a
-// mis-read costs a spurious code screen or a spurious failure, never access —
-// and Open now refreshes the stored label, which keeps the rename case wrong
-// for one browse rather than forever. See docs/specs/followups-2026-08-09.md
-// B2 for the two designs that would make this exact rather than approximate.
+// A name and nothing else, because a name is all a browse yields. This
+// deliberately does not report whether each phone is paired: what governs a
+// session is the certificate fingerprint (Trust.verify), and no fingerprint is
+// knowable before a TLS handshake — measured, `dns-sd -B` prints no TXT record
+// and the phone advertises none. The pinned *label* was once matched here as a
+// stand-in, and it was wrong in both directions: a renamed phone read as
+// unpaired, and a factory-reset phone that kept its name read as paired, which
+// is the worse half because it reassures. Open asks the real gate instead and
+// returns ErrNotPaired when it refuses, which is exact by construction.
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 	// No name: this is the enumerating browse, and it has to hear from every
 	// phone rather than the first one.
@@ -98,18 +99,9 @@ func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 	if err != nil {
 		return nil, friendly(err)
 	}
-	paired := map[string]bool{}
-	for _, name := range c.pins().Names() {
-		paired[name] = true
-	}
 	out := make([]Device, 0, len(services))
 	for _, s := range services {
-		out = append(out, Device{
-			ID:           s.Name,
-			Name:         s.Name,
-			Kind:         KindRemote,
-			NeedsPairing: !paired[s.Name],
-		})
+		out = append(out, Device{ID: s.Name, Name: s.Name, Kind: KindRemote})
 	}
 	return out, nil
 }
@@ -170,8 +162,13 @@ func (c *Client) Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	}
 	pins := c.pins()
 	if len(pins.All()) == 0 {
-		return nil, errors.New(
-			"this machine has not paired with a phone yet. Open Hoardling's Pair tab and enter the six digits")
+		// Carries ErrNotPaired like the handshake's own refusal does. This is
+		// the same answer arrived at without a round trip — nothing is pinned,
+		// so nothing can verify — and a caller routing on the sentinel must not
+		// have to special-case the fresh install, which is the one time it is
+		// certain to be hit.
+		return nil, &friendlyError{err: ErrNotPaired, msg: "" +
+			"this machine has not paired with a phone yet. Open Hoardling's Pair tab and enter the six digits"}
 	}
 
 	svc, err := c.locate(ctx, opts.DeviceID)
@@ -196,14 +193,13 @@ func (c *Client) Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 	// and svc.Name is what that certificate advertises as today. Rename is
 	// update-only, so a peer that somehow is not pinned cannot be added by it.
 	//
-	// Read the direction carefully, because it is what separates this from the
-	// defect above it: the fingerprint is the *key* and the name is the *value
-	// being corrected*. Nothing here decides anything from a name. The
-	// handshake decided, and the label is merely what gets fixed as a result —
-	// the inverse of Devices, which has no fingerprint to decide from and so
-	// matches the label instead.
-	// Ignored on failure on purpose — a label on a picker is not worth failing
-	// a session that has already handshaken.
+	// It is a label and only a label. Nothing decides anything from it — the
+	// fingerprint is the key and the name is the value being corrected, and
+	// keeping it current is what makes link-pins.json readable to a person
+	// looking at which phones this machine trusts. It used to also feed a
+	// paired/unpaired guess in Devices; that guess is gone.
+	// Ignored on failure on purpose — a stale label in a state file is not
+	// worth failing a session that has already handshaken.
 	_ = pins.Rename(session.PeerFingerprint(), svc.Name)
 
 	s := &Session{link: session, events: make(chan Event, 8)}

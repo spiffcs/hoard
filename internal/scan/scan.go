@@ -379,15 +379,16 @@ const (
 // `--list-devices` output, and it is now filled in directly by Client.Devices.
 // They are harmless and are kept only so an older tool reading a dumped device
 // list still parses.
+//
+// There is no pairing flag here, deliberately. Whether this machine may open a
+// session with a phone is decided by its certificate fingerprint, and a browse
+// yields an instance name and nothing else, so any flag set at this point would
+// be a guess from the wrong evidence. Open asks the real gate and reports
+// ErrNotPaired when it refuses; callers branch on that.
 type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	// NeedsPairing is whether this machine has to be introduced to the phone
-	// before a session can open — read from the pin set, because under trust
-	// on first use holding the phone's certificate fingerprint is what
-	// actually governs it.
-	NeedsPairing bool `json:"-"`
 }
 
 // KindRemote is the Device.Kind an iPhone running the companion app carries.

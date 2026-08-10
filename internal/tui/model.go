@@ -3,6 +3,7 @@ package tui
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -790,12 +791,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cameraID = ci.dev.ID
 			m.cameraName = ci.dev.Name
 			m.cameraChosen = true
-			// A phone this machine has never paired with needs its code
-			// before a session can open. Once per phone, not once per run —
-			// and always, when the user came here to pair on purpose.
-			if m.pairing || ci.dev.NeedsPairing {
+			// Only the deliberate pairing flow goes straight to the code
+			// screen. Whether *this* phone is paired is not predicted here:
+			// a browse carries no fingerprint, so any guess would be wrong
+			// in both directions. The open below asks the real gate, and
+			// onSession routes here on ErrNotPaired.
+			if m.pairing {
 				m.codeInput.SetValue("")
 				m.codeInput.Focus()
+				// Nothing to explain on this route — the user asked to pair.
+				// Cleared because status is sticky across states and this
+				// screen now renders a non-error one too, so a leftover
+				// banner from the add flow would follow the user in.
+				m.status, m.statusErr = "", false
 				m.state = statePairCode
 				return m, nil, true
 			}
@@ -1326,6 +1334,8 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 			m.cameraName = phones[0].Name
 			m.codeInput.SetValue("")
 			m.codeInput.Focus()
+			// Same reason as the picker's pairing branch: sticky status.
+			m.status, m.statusErr = "", false
 			m.state = statePairCode
 			return m, nil
 		}
@@ -1396,8 +1406,29 @@ func (m model) toggleTorch() (tea.Model, tea.Cmd) {
 
 // onSession handles the camera window opening: on success the event pump starts
 // and the user can frame their first card.
+//
+// A refused pairing lands here rather than being predicted before the open,
+// because the handshake is the only thing that knows: a browse yields an
+// instance name and the gate is a certificate fingerprint. Asking and being
+// told is exact where guessing was wrong in both directions.
 func (m model) onSession(msg sessionMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		// One sentinel, and only this one, earns the code screen. A phone that
+		// went away, a TLS failure, a missing dns-sd are different situations,
+		// and "enter the six digits" is actively wrong advice for a phone that
+		// is no longer on the network — so everything else keeps the banner.
+		if errors.Is(msg.err, scan.ErrNotPaired) {
+			m.codeInput.SetValue("")
+			m.codeInput.Focus()
+			// The reason for the jump, not a restatement of the screen, which
+			// already names the phone and asks for six digits. Not in the error
+			// style: for a phone that has never been paired this is the ordinary
+			// next step, and the first run would otherwise open in red.
+			m.status = "Not paired with this Mac yet."
+			m.statusErr = false
+			m.state = statePairCode
+			return m, nil
+		}
 		return m.failToName(msg.err.Error())
 	}
 	m.session = msg.session
@@ -3189,6 +3220,15 @@ func (m model) viewContent() string {
 			return fmt.Sprintf("%s looking for a phone running Hoardling…\n\n%s",
 				m.spinner.View(), m.help("esc cancel · ctrl+c force quit"))
 		}
+		// Two different waits wear this one state, and after the phone is
+		// chosen the second one is where the pairing question gets answered —
+		// so it says which phone it is talking to rather than repeating that it
+		// is still hunting for one. That is what keeps a hand-off to the code
+		// screen from reading as an unexplained jump.
+		if m.cameraChosen && m.cameraName != "" {
+			return fmt.Sprintf("%s connecting to %s…\n\n%s",
+				m.spinner.View(), m.cameraName, m.help("esc cancel · ctrl+c force quit"))
+		}
 		return fmt.Sprintf("%s looking for a camera or a paired phone…\n\n%s",
 			m.spinner.View(), m.help("esc cancel · ctrl+c force quit"))
 	case statePairBusy:
@@ -3206,9 +3246,17 @@ func (m model) viewContent() string {
 				"3. Press enter to search for the phone."),
 			m.help("esc back · ctrl+c force quit"))
 	case statePairCode:
+		// Two ways to arrive, two styles. A mistyped code is a failure and
+		// reads as one; being sent here by a refused open is the ordinary
+		// first-run path, and rendering "not paired yet" in red would make
+		// the normal case look broken.
 		banner := ""
-		if m.status != "" && m.statusErr {
-			banner = m.theme.Err.Render(m.status) + "\n\n"
+		if m.status != "" {
+			style := m.theme.Warn
+			if m.statusErr {
+				style = m.theme.Err
+			}
+			banner = style.Render(m.status) + "\n\n"
 		}
 		return banner + fmt.Sprintf(
 			"Pair with %s\n\n%s\n\n%s\n\n%s",

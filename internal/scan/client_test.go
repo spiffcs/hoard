@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -49,12 +50,8 @@ func newTestClient(t *testing.T, names ...string) (*Client, *link.PinStore) {
 	return c, link.NewPinStore(filepath.Join(dir, "link-pins.json"))
 }
 
-func TestDevicesFlagsAnUnpairedPhone(t *testing.T) {
-	c, pins := newTestClient(t, "Chris's iPhone", "Spare iPhone")
-	fp := sha256.Sum256([]byte("chris"))
-	if err := pins.Pin(fp[:], "Chris's iPhone"); err != nil {
-		t.Fatal(err)
-	}
+func TestDevicesListsEveryPhoneOnTheNetwork(t *testing.T) {
+	c, _ := newTestClient(t, "Chris's iPhone", "Spare iPhone")
 
 	devices, err := c.Devices(context.Background())
 	if err != nil {
@@ -63,80 +60,85 @@ func TestDevicesFlagsAnUnpairedPhone(t *testing.T) {
 	if len(devices) != 2 {
 		t.Fatalf("Devices returned %d phones, want 2", len(devices))
 	}
-	want := map[string]bool{"Chris's iPhone": false, "Spare iPhone": true}
 	for _, d := range devices {
-		w, ok := want[d.Name]
-		if !ok {
-			t.Errorf("unexpected phone %q", d.Name)
-			continue
+		if d.Kind != KindRemote {
+			t.Errorf("%q Kind = %q, want %q", d.Name, d.Kind, KindRemote)
 		}
-		if d.NeedsPairing != w {
-			t.Errorf("%q NeedsPairing = %v, want %v", d.Name, d.NeedsPairing, w)
+		if d.ID != d.Name {
+			t.Errorf("%q ID = %q; a browse has only the instance name to offer", d.Name, d.ID)
 		}
 	}
 }
 
-// The known limitation, recorded rather than left to be rediscovered: Devices
-// matches the pinned *label*, and a browse carries no fingerprint to match
-// instead (dns-sd -B prints instance names only, and the phone advertises no
-// TXT record). So renaming a paired phone reads as unpaired, and a phone that
-// was reset — new certificate, same name — reads as paired.
+// The heart of the fix, asserted as a property rather than as an absent field:
+// the pin store cannot reach Devices at all, so there is no state a browse
+// could read that would let it guess right or wrong about pairing.
 //
-// Both are display-only. The gate is Trust.verify, which never consults a name,
-// so this test asserts a cosmetic wrong answer and not an authorisation one. If
-// a later change makes NeedsPairing exact, this test should be deleted, not
-// bent to fit. See docs/specs/followups-2026-08-09.md B2.
-func TestDevicesMisreadsPairingWhenTheNameMoves(t *testing.T) {
-	c, pins := newTestClient(t, "Chris's iPhone 17")
-	fp := sha256.Sum256([]byte("chris"))
-	// Paired under the old name.
-	if err := pins.Pin(fp[:], "Chris's iPhone"); err != nil {
-		t.Fatal(err)
-	}
+// This is what makes the two old misreads impossible rather than merely
+// unlikely — a renamed phone reading as unpaired, and the worse direction, a
+// factory-reset phone that kept its name reading as paired when its certificate
+// is new. Both came from matching the pinned label; nothing matches it now.
+// Whether a session may open is asked of Open, which asks the handshake.
+func TestDevicesDoesNotConsultThePinStore(t *testing.T) {
+	names := []string{"Chris's iPhone", "Spare iPhone"}
 
-	devices, err := c.Devices(context.Background())
+	unpinned, _ := newTestClient(t, names...)
+	before, err := unpinned.Devices(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !devices[0].NeedsPairing {
-		t.Skip("NeedsPairing is now exact; delete this characterization test")
+
+	// The same network, seen by a machine that has pinned one of the two — and,
+	// to cover the rename direction, under a name neither phone advertises.
+	pinned, pins := newTestClient(t, names...)
+	fp := sha256.Sum256([]byte("chris"))
+	if err := pins.Pin(fp[:], "An Older Name"); err != nil {
+		t.Fatal(err)
 	}
-	// The fingerprint that actually governs the session is still pinned, which
-	// is what makes the wrong flag cosmetic.
-	if !pins.Contains(fp[:]) {
-		t.Fatal("the rename cost the pairing itself, not just the flag")
+	after, err := pinned.Devices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("pinning changed what a browse reports:\n before %+v\n after  %+v", before, after)
 	}
 }
 
-// Open refreshes the stored label from the fingerprint the handshake proved, so
-// the misread above lasts until the next successful session rather than
-// forever. Open itself needs a phone; this is the store operation it performs.
-func TestRenameHealsTheLabelAfterASession(t *testing.T) {
-	c, pins := newTestClient(t, "Chris's iPhone 17")
-	fp := sha256.Sum256([]byte("chris"))
-	if err := pins.Pin(fp[:], "Chris's iPhone"); err != nil {
-		t.Fatal(err)
-	}
+// The fresh install: nothing pinned at all, so Open answers without a round
+// trip. It must still answer with the sentinel, because that early return is
+// the one a first-time user is certain to hit and it is exactly when routing to
+// the code screen matters most.
+func TestOpenWithNothingPinnedReportsNotPaired(t *testing.T) {
+	c, _ := newTestClient(t, "Chris's iPhone")
 
-	// What Open does once Dial returns: the peer's fingerprint, and the name it
-	// is advertising under now.
-	if err := pins.Rename(fp[:], "Chris's iPhone 17"); err != nil {
-		t.Fatal(err)
+	_, err := c.Open(context.Background(), OpenOptions{DeviceID: "Chris's iPhone"})
+	if err == nil {
+		t.Fatal("Open succeeded with an empty pin store")
 	}
-
-	devices, err := c.Devices(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrNotPaired) {
+		t.Errorf("Open with no pins: %v, want ErrNotPaired", err)
 	}
-	if devices[0].NeedsPairing {
-		t.Error("a session did not heal the stale label")
+	if !strings.Contains(err.Error(), "Pair tab") {
+		t.Errorf("the sentence a person reads was lost: %q", err.Error())
 	}
 }
 
 // friendly replaces the sentence a person reads without throwing away the error
 // it replaced. Both halves matter: the sentence is the reason friendly exists,
 // and the sentinel is what lets a caller tell "not paired" from "phone gone".
+//
+// This is the load-bearing one. The TUI sends a user to the pairing screen on
+// errors.Is(err, ErrNotPaired) and nowhere else, so severing friendlyError's
+// Unwrap — which is how this function used to be written, with errors.New —
+// silently turns every refused pairing back into a dead-end banner. Nothing
+// else in the package would notice. If this test fails, that routing is broken.
 func TestFriendlyKeepsBothTheSentenceAndTheSentinel(t *testing.T) {
+	// The re-export must stay identical to the transport's sentinel; a fresh
+	// errors.New here would compile and match nothing.
+	if !errors.Is(friendly(link.ErrPeerNotPinned), ErrNotPaired) {
+		t.Error("ErrNotPaired is not the sentinel the handshake actually returns")
+	}
 	for _, tc := range []struct {
 		name     string
 		sentinel error

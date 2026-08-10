@@ -39,10 +39,10 @@ type Scanner interface {
 	// Open starts a capture session on the given phone, holding its camera up
 	// until the session is closed. deviceID is empty to let the scanner pick.
 	Open(ctx context.Context, deviceID string) (ScanSession, error)
-	// Pair records the code for a device whose Devices entry reported
-	// NeedsPairing. The TUI collects the digits and hands them over; where they
-	// are kept is not its business, for the same reason the rotation
-	// preference is not.
+	// Pair records the code for a device Open refused with scan.ErrNotPaired,
+	// or one the user chose to pair with deliberately. The TUI collects the
+	// digits and hands them over; where they are kept is not its business, for
+	// the same reason the rotation preference is not.
 	Pair(deviceID, code string) error
 }
 
