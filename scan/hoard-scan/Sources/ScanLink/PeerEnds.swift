@@ -46,6 +46,30 @@ public final class PeerListener {
     /// six digits.
     public var onPaired: ((Data) -> Void)?
 
+    /// Whether this phone is on the network at all.
+    ///
+    /// Separate from `onError` because that callback is not about the
+    /// advertisement: it also carries a peer failing the pairing check and a
+    /// peer opening two connections of one role, and neither says anything
+    /// about whether the service is on the air. A consumer that rebuilt the
+    /// listener on every `onError` would take the phone off the network every
+    /// time someone mistyped six digits.
+    public enum Advertisement: Sendable, Equatable {
+        /// The listener reached `.ready`. The phone is findable, and any
+        /// recovery that got it back here is over.
+        case up
+        /// The listener died and could not be brought back. Carries the plain
+        /// reason, already out of framework vocabulary. A death that `recover`
+        /// healed is never reported this way — `.up` is, when it comes back.
+        case down(String)
+    }
+
+    /// Called when the advertisement comes up, and when it has gone down for
+    /// good. The consumer's cue to correct what it is telling the person: a
+    /// screen that still says "Waiting for hoard…" over a dead listener is
+    /// waiting for something that cannot arrive.
+    public var onAdvertisement: ((Advertisement) -> Void)?
+
     private let code: PairingCode
     /// Empty means "let Bonjour use the device's own name".
     ///
@@ -61,7 +85,30 @@ public final class PeerListener {
     /// it long is a peer-to-peer link still coming up. Settable so a test does
     /// not have to sit through it.
     var halfSessionTimeout: TimeInterval = 5
-    private var listener: NWListener?
+    /// Readable inside the module so a test can take the phone genuinely off
+    /// the air — cancelling this is the only way to reproduce a dead
+    /// advertisement, and a recovery test that cannot do that proves nothing.
+    /// Written here only: `start` and `stop` own its life.
+    private(set) var listener: NWListener?
+    /// Consecutive deaths in the current episode, cleared the moment the
+    /// service is advertising again.
+    private var restarts = 0
+    /// Whether a restart is already on its way, so two failure reports for one
+    /// death do not each schedule one.
+    private var restarting = false
+    /// Set by `stop()` and cleared by `start()`. A restart scheduled a moment
+    /// before the app took this listener down must not quietly put it back up.
+    private var stopped = false
+    /// Guards the four fields above.
+    ///
+    /// A lock rather than the serial `queue` the connection bookkeeping uses,
+    /// because these are touched from both sides of that boundary: `start` and
+    /// `stop` are called from the screen — `start` synchronously, since it
+    /// throws — while the listener's own state arrives on `queue`. Hopping to
+    /// the main queue instead was tried and is worse: it makes a library depend
+    /// on the app's actor for its own bookkeeping, and a main queue nobody is
+    /// draining (a test process, most of all) silently loses every restart.
+    private let stateLock = NSLock()
     /// Connections that have said hello but whose partner has not arrived yet.
     private var pending: [String: PeerLink] = [:]
     /// Connections that are up but have not said hello yet.
@@ -116,7 +163,20 @@ public final class PeerListener {
         // than reused — a listener that has been through a suspension is
         // not reliably advertising even when its state claims otherwise.
         // Established sessions ride their own connections and are untouched.
-        listener?.cancel()
+        //
+        // The old one still goes before the new one is built. That was already
+        // the order and it is worth keeping now that a restart runs this path
+        // by itself: two listeners claiming one Bonjour instance name have to
+        // be resolved somehow, and the usual resolution is renaming the
+        // newcomer — a phone that came back as "iPhone (2)" is invisible to a
+        // Mac looking for the name it knows. Not measured; the order is free.
+        stateLock.lock()
+        let previous = listener
+        listener = nil
+        stopped = false
+        stateLock.unlock()
+        previous?.cancel()
+
         // The role only affects Nagle, and the listener accepts both kinds on
         // one port; control's parameters are the stricter of the two.
         let params = parameters(role: .control, trust: trust, queue: queue)
@@ -128,17 +188,143 @@ public final class PeerListener {
             self?.accept(conn)
         }
         listener.stateUpdateHandler = { [weak self] st in
-            if case .failed(let err) = st {
-                self?.onError?(LinkFailure(err).reason)
-            }
+            self?.listenerStateChanged(st)
         }
         listener.start(queue: queue)
+        stateLock.lock()
+        // A `stop()` that landed while this was being built wins: it was asked
+        // for after this start, and a listener that outlives the call that took
+        // it down is one advertising a code the app has already rotated away
+        // from.
+        guard !stopped else {
+            stateLock.unlock()
+            listener.cancel()
+            return
+        }
         self.listener = listener
+        stateLock.unlock()
+    }
+
+    /// listenerStateChanged is the listener's own health, handled in one place.
+    ///
+    /// Internal rather than private for the test: an NWListener cannot be made
+    /// to fail on demand, and the recovery below is the part worth proving, so
+    /// the state the framework would have delivered is delivered by hand.
+    func listenerStateChanged(_ state: NWListener.State) {
+        switch state {
+        case .ready:
+            advertising()
+        case .failed(let err):
+            recover(from: LinkFailure(err))
+        default:
+            // `.cancelled` included, deliberately: `stop()` and every restart
+            // cancel the old listener, so treating a cancellation as a death
+            // would have the phone fighting its own teardown.
+            break
+        }
+    }
+
+    /// advertising records that the service is on the air, and closes whatever
+    /// recovery episode got it there.
+    private func advertising() {
+        stateLock.lock()
+        restarts = 0
+        stateLock.unlock()
+        onAdvertisement?(.up)
+    }
+
+    /// recover brings a dead advertisement back.
+    ///
+    /// An NWListener that fails is not replaced by anything. Until this existed
+    /// the failure was reported through `onError` and that was all, so a phone
+    /// whose listener died went off Bonjour and stayed off — the same thing the
+    /// operator sees when a session teardown takes the listener with it, and
+    /// the same only-repairing-fixes-it dead end, reached from the other side.
+    ///
+    /// Shaped after `Sounds.restartEngine` on the phone: try, be idempotent —
+    /// `start()` rebuilds rather than mutates — and say plainly when it cannot.
+    /// The failure is reported first and always, because the phone *is* off the
+    /// network at this instant whatever happens next, and hiding a real death
+    /// behind a hoped-for recovery is the same dishonesty in the other
+    /// direction.
+    ///
+    /// Bounded on purpose. The common death is transient and comes straight
+    /// back; a listener that has failed three times in five seconds will not be
+    /// fixed by a fourth attempt, and a restart loop against a permanent
+    /// failure drains the battery while every attempt briefly looks like
+    /// recovery. Giving up is not the end of the road — returning to the
+    /// foreground calls `start()` again.
+    private func recover(from failure: LinkFailure) {
+        stateLock.lock()
+        // A listener the app has already taken down did not fail; it was
+        // dismissed. Neither news nor something to undo.
+        guard !stopped else {
+            stateLock.unlock()
+            return
+        }
+        let alreadyRestarting = restarting
+        let delay = alreadyRestarting ? nil : PeerListener.restartDelay(after: restarts)
+        if delay != nil {
+            restarts += 1
+            restarting = true
+        }
+        stateLock.unlock()
+
+        onError?(failure.reason)
+        guard let delay else {
+            // Either a restart is already on its way — two reports of one death
+            // — or the episode is over and this phone is off the network until
+            // something outside asks again.
+            if !alreadyRestarting { onAdvertisement?(.down(failure.reason)) }
+            return
+        }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.stateLock.lock()
+            self.restarting = false
+            let dismissed = self.stopped
+            self.stateLock.unlock()
+            guard !dismissed else { return }
+            do {
+                // `.ready` on the rebuilt listener is what reports success. A
+                // `start()` that returns has created a listener, which is not
+                // the same as one that is advertising.
+                try self.start()
+            } catch let error as NWError {
+                self.recover(from: LinkFailure(error))
+            } catch {
+                self.recover(from: LinkFailure(
+                    reason: "Could not get back on the network. Check Wi-Fi",
+                    detail: "\(error)"))
+            }
+        }
+    }
+
+    /// How long to wait before the restart answering `failures` consecutive
+    /// deaths, or nil once the episode is over and the honest answer is that
+    /// the phone is off the network.
+    ///
+    /// Immediate first, because the operator is mid-pile and the usual death
+    /// is a blink; spaced after that, because a listener failing twice in a row
+    /// is failing for a reason a third instant attempt will not change.
+    static let restartDelays: [TimeInterval] = [0, 1, 4]
+
+    static func restartDelay(after failures: Int) -> TimeInterval? {
+        guard failures >= 0, failures < restartDelays.count else { return nil }
+        return restartDelays[failures]
     }
 
     public func stop() {
-        listener?.cancel()
+        // `stopped` under the same lock as the listener it describes, and set
+        // before the cancel rather than after: the cancellation is what a
+        // pending restart would race, so the flag it consults has to be true
+        // by the time anything can observe the teardown.
+        stateLock.lock()
+        stopped = true
+        let dying = listener
         listener = nil
+        stateLock.unlock()
+        dying?.cancel()
         // The dictionaries live on `queue` — accept and pair mutate them
         // there — so the teardown hops rather than racing them from the main
         // actor ("Generate a new code" mid-handshake was a Dictionary race).

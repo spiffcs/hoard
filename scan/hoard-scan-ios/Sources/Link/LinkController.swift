@@ -193,6 +193,13 @@ final class LinkController: ObservableObject {
         listener.onError = { [weak self] message in
             Task { @MainActor in self?.status = message }
         }
+        // The advertisement's own health, which `onError` does not tell apart
+        // from a peer mistyping its code. PeerListener restarts a listener that
+        // dies; this is the half the phone owns — saying so on the screen, and
+        // correcting itself when the restart lands.
+        listener.onAdvertisement = { [weak self] state in
+            Task { @MainActor in self?.advertisementChanged(state) }
+        }
         // A Mac just paired and was pinned. Close the window and burn the code
         // it used, in that order — the rotation restarts the listener, so
         // doing it while the new session is being adopted would tear down the
@@ -269,6 +276,34 @@ final class LinkController: ObservableObject {
         let changed = autoAvailable != available
         autoAvailable = available
         if changed, connected { announceReady() }
+    }
+
+    /// advertisementChanged keeps the screen honest about whether this phone is
+    /// findable at all.
+    ///
+    /// The restart itself is PeerListener's — it owns the NWListener and is the
+    /// only thing that hears it die. What is left here is the half a listener
+    /// cannot do: an operator staring at "Waiting for hoard…" over a dead
+    /// advertisement is waiting for something that cannot arrive, and one
+    /// staring at a failure the phone has already recovered from is being sent
+    /// to fix a network that works.
+    private func advertisementChanged(_ state: PeerListener.Advertisement) {
+        switch state {
+        case .up:
+            SessionLog.write("advertising")
+            // Never over a live session's "Connected": a restart that happened
+            // while a session rode its own connections has not disconnected
+            // anything, and saying so would be the header lying the other way.
+            if !connected { status = "Waiting for hoard…" }
+        case .down(let reason):
+            // The reason goes to the log rather than the screen. LinkFailure's
+            // sentences are written for the person at the *terminal* — "Check
+            // that Hoardling is still running on the phone" — which is nonsense
+            // read on the phone itself. The screen gets the thing that helps
+            // here, and coming back to the foreground calls `start()` again.
+            SessionLog.write("advertisement down, not recovered: \(reason)")
+            status = "Off the network. Check Wi-Fi, then switch away and back"
+        }
     }
 
     /// start brings the listener up — again, if need be. Safe to call on

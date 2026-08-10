@@ -260,3 +260,93 @@ func proofBinding() {
     #expect(!verifyProof("not base64 at all", session: "session-a", code: code))
     #expect(!verifyProof("", session: "session-a", code: code))
 }
+
+@Test("the restart schedule tries three times and then stops")
+func restartScheduleIsBounded() {
+    // Immediate, then spaced. The first attempt answers the common death — a
+    // blink of the network — while the operator is still holding the card.
+    #expect(PeerListener.restartDelay(after: 0) == 0)
+    #expect(PeerListener.restartDelay(after: 1) == 1)
+    #expect(PeerListener.restartDelay(after: 2) == 4)
+    // And then it gives up, which is the half that has to be right. A schedule
+    // with no end is a loop against a permanent failure: the battery goes, and
+    // every attempt briefly looks like recovery to anything watching.
+    #expect(PeerListener.restartDelay(after: 3) == nil)
+    #expect(PeerListener.restartDelay(after: 99) == nil)
+    #expect(PeerListener.restartDelay(after: -1) == nil)
+}
+
+@Test("a listener that dies is restarted and is reachable again",
+      .timeLimit(.minutes(1)))
+func deadListenerComesBack() throws {
+    let code = PairingCode.random()
+    let name = "hoard-revive-\(UUID().uuidString.prefix(8))"
+    let listener = PeerListener(name: name, code: code)
+
+    var sessions: [PeerSession] = []
+    var health: [PeerListener.Advertisement] = []
+    listener.onSession = { sessions.append($0) }
+    listener.onAdvertisement = { health.append($0) }
+    try listener.start()
+    defer { listener.stop() }
+    #expect(waitFor { health.contains(.up) },
+            "the listener never reported that it was advertising")
+
+    // The death, made real, in two halves — and both halves are needed.
+    //
+    // Cancelling the NWListener is what actually takes the phone off the air;
+    // injecting the state is the report the framework would have made, which
+    // is the one thing a test cannot arrange (an NWListener does not fail to
+    // order). Injecting alone would prove nothing: the original listener would
+    // still be advertising underneath, so the connect below would succeed with
+    // no fix present at all.
+    //
+    // Measured against the fix removed — `recover` cut back to the `onError`
+    // line it replaced — this fails on the restart expectation and then again
+    // on the browse, which saw no service at all. The reachability check below
+    // is still the one that has to be there: a cancelled listener is served
+    // from the mDNS cache often enough that visibility alone has passed for a
+    // phone that was answering nothing (see TrustedSessionTests' reconnect
+    // test, where it was measured doing exactly that).
+    health.removeAll()
+    listener.listener?.cancel()
+    listener.listenerStateChanged(.failed(.posix(.ENETDOWN)))
+
+    #expect(waitFor { health.contains(.up) },
+            "the listener was never brought back; saw \(health)")
+    #expect(!health.contains(where: { if case .down = $0 { return true } else { return false } }),
+            "a recovered death was reported as unrecoverable")
+
+    // Reachable, not merely visible. A fresh browser, because PeerBrowser
+    // accumulates into `found` and never removes.
+    let service = try resolve(prefix: "hoard-revive-")
+    let client = PeerBrowser().connect(to: service, code: code)
+    defer { client.cancel() }
+    #expect(waitFor { sessions.count == 1 }, """
+        the restarted listener could not be reached
+          client now: control \(client.control.state), preview \(client.preview.state)
+        """)
+}
+
+@Test("a listener taken down by the app is not restarted underneath it",
+      .timeLimit(.minutes(1)))
+func stopWinsOverAPendingRestart() throws {
+    let name = "hoard-stopwin-\(UUID().uuidString.prefix(8))"
+    let listener = PeerListener(name: name, code: PairingCode.random())
+    var health: [PeerListener.Advertisement] = []
+    listener.onAdvertisement = { health.append($0) }
+    try listener.start()
+    #expect(waitFor { health.contains(.up) }, "the listener never advertised")
+
+    // A death and an immediate `stop()` — "Forget all Macs" landing in the same
+    // instant as a failure. The restart is already scheduled at this point, and
+    // a listener that came back after the app deliberately took it down would
+    // be advertising a code the app has already rotated away from.
+    health.removeAll()
+    listener.listenerStateChanged(.failed(.posix(.ENETDOWN)))
+    listener.stop()
+
+    _ = waitFor(2) { health.contains(.up) }
+    #expect(!health.contains(.up), "a stopped listener put itself back on the network")
+    #expect(listener.listener == nil, "a stopped listener rebuilt itself")
+}
