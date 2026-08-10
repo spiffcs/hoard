@@ -24,12 +24,15 @@ import (
 // and never the machine's name.
 const identityCommonName = "dev.spiffcs.hoard.scan.mac"
 
-// browseWindow is how long to look for phones. Bonjour on a local network
-// answers in milliseconds; this is patience for a phone a beat slow to
-// advertise, and it is paid every time the picker opens.
+// browseWindow is how long to look for phones before giving up. Bonjour on a
+// local network answers in milliseconds, and discovery returns as soon as it
+// has its answer, so this is the ceiling a phone that never advertises costs
+// — not what a browse takes.
 const browseWindow = 2500 * time.Millisecond
 
-// resolveWindow is how long to turn a chosen phone into an address.
+// resolveWindow is how long to turn a chosen phone into an address. Same
+// shape as browseWindow: the answer arrives in single-digit milliseconds, and
+// this bounds the case where it never arrives at all.
 const resolveWindow = 4 * time.Second
 
 // pairWindow bounds a pairing attempt: connect, wait for the phone to accept
@@ -77,7 +80,9 @@ func (c *Client) identity() (*link.Identity, error) {
 // certificate fingerprint", which is the thing that actually governs whether a
 // session can open.
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
-	services, err := c.finder().Browse(ctx, browseWindow)
+	// No name: this is the enumerating browse, and it has to hear from every
+	// phone rather than the first one.
+	services, err := c.finder().Browse(ctx, "", browseWindow)
 	if err != nil {
 		return nil, friendly(err)
 	}
@@ -194,7 +199,11 @@ func (c *Client) Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 // from an earlier session is stale as soon as the app restarts. Measured — see
 // docs/specs/scan-transport-port.md §9.
 func (c *Client) locate(ctx context.Context, deviceID string) (link.Service, error) {
-	services, err := c.finder().Browse(ctx, browseWindow)
+	// Named when the caller knows which phone, which is the common case and
+	// the fast one: the browse ends the moment that phone answers instead of
+	// serving out a window whose only remaining purpose would be to hear
+	// about phones this call is going to discard.
+	services, err := c.finder().Browse(ctx, deviceID, browseWindow)
 	if err != nil {
 		return link.Service{}, friendly(err)
 	}

@@ -77,10 +77,33 @@ type fakeScanner struct {
 	usedDevice string
 	opened     int
 	last       *fakeSession
+	// listed counts device enumerations, which is a browse of the network and
+	// the slowest step in opening a session. Tests assert on it where the
+	// point of the code is that the list was not needed.
+	listed int
 }
 
 func (f *fakeScanner) Devices(context.Context) ([]scan.Device, error) {
+	f.listed++
 	return f.devices, f.devErr
+}
+
+// runCmds executes a command tree far enough for its side effects to land,
+// which for these tests means the scanner calls buried inside a tea.Batch.
+// The resulting messages are not fed back into the model — the question is
+// which calls were made, not what they rendered.
+func runCmds(cmd tea.Cmd) {
+	queue := []tea.Cmd{cmd}
+	for i := 0; i < 64 && len(queue) > 0; i++ {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		if batch, ok := c().(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+		}
+	}
 }
 
 // paired records what Pair was asked to remember, so a test can assert the

@@ -46,7 +46,7 @@ func findPhone(t *testing.T) Service {
 	t.Helper()
 	d := DNSSD{}
 	ctx := context.Background()
-	found, err := d.Browse(ctx, 5*time.Second)
+	found, err := d.Browse(ctx, "", 5*time.Second)
 	if err != nil {
 		t.Fatalf("Browse: %v\n\nIs Hoardling open, and both devices on the same Wi-Fi?", err)
 	}

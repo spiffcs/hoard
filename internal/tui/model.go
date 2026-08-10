@@ -353,7 +353,8 @@ type model struct {
 	cameraName   string
 	cameraChosen bool
 	// justPairedID is the phone this run has just finished pairing with, and it
-	// is consumed by the very next camera list.
+	// is consumed by the very next scan, which opens it without asking the
+	// network anything first.
 	//
 	// A one-shot rather than a preference. Having typed a six-digit code onto a
 	// phone a second ago, being asked "scan with which phone?" and offered that
@@ -361,6 +362,12 @@ type model struct {
 	// the user did. But a *later* ctrl+o is a different situation — there the
 	// picker is how someone switches phones at all — so this clears as soon as
 	// it is used and the choice reverts to being offered.
+	//
+	// It skips the device list outright rather than pre-selecting from it. The
+	// list is a browse, and the pairing that just succeeded is proof the phone
+	// is on this network — so the browse can only confirm, slowly, what the
+	// previous step established. Open does its own named lookup and reports a
+	// phone that has since gone away with the better message anyway.
 	justPairedID string
 	// pairing is set while the camera flow is being used to set a phone up
 	// rather than to open a session. The discovery, the picker and the code
@@ -547,6 +554,16 @@ func (m *model) beginScan() tea.Cmd {
 	}
 	m.status = ""
 	m.state = stateCameraBusy
+	// A phone paired moments ago is not a question, so it does not get asked
+	// one: straight to opening, with no device list in between. Consumed
+	// whatever happens next, so the flag cannot survive to bypass a later
+	// ctrl+o's picker — which is the only way to switch phones.
+	if id := m.justPairedID; id != "" {
+		m.justPairedID = ""
+		m.cameraID = id
+		m.cameraChosen = true
+		return tea.Batch(m.spinner.Tick, m.openSessionCmd())
+	}
 	return tea.Batch(m.spinner.Tick, m.listCamerasCmd())
 }
 
@@ -1325,20 +1342,9 @@ func (m model) onCameras(msg camerasMsg) (tea.Model, tea.Cmd) {
 		m.cameraChosen = true
 		return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
 	default:
-		// A phone paired moments ago is not a question. Consumed either way:
-		// if it is no longer in the list the picker is the right answer, and
-		// the flag must not survive to surprise a later ctrl+o.
-		if id := m.justPairedID; id != "" {
-			m.justPairedID = ""
-			for _, d := range msg.devices {
-				if d.ID != id {
-					continue
-				}
-				m.cameraID, m.cameraName = d.ID, d.Name
-				m.cameraChosen = true
-				return m, tea.Batch(m.spinner.Tick, m.openSessionCmd())
-			}
-		}
+		// No just-paired case to handle here any more: beginScan consumes that
+		// mark before a list is ever asked for, so a phone reaching this point
+		// is one the user genuinely has to choose between.
 		showPicker(&m, "Scan with which phone?", msg.devices, stateCameraPick, func(_ int, d scan.Device) list.Item {
 			return cameraItem{dev: d}
 		})
@@ -2924,12 +2930,15 @@ func (m model) onPaired(msg pairedMsg) (tea.Model, tea.Cmd) {
 	// typed its code, wanting to scan with it is the only plausible next intent.
 	//
 	// The pairing check disconnects after verifying, so this reconnects a moment
-	// later. That is the seam to look at if the hand-off ever feels ragged.
+	// later. Measured, that seam is a TCP and TLS handshake — tens of
+	// milliseconds, and the phone announces ready on session assembly rather
+	// than on camera warm-up, so nothing restarts. It was the discovery either
+	// side of it that made the hand-off feel ragged.
 	m.pairing = false
 	m.cameraChosen = true
-	// The next camera list goes straight to this phone rather than offering it
-	// beside the others, which is a question the last six keystrokes already
-	// answered.
+	// The next scan opens this phone directly, with no device list in between:
+	// which phone was answered by the last six keystrokes, and whether it is
+	// reachable was answered by the pairing that just succeeded.
 	m.justPairedID = m.cameraID
 	m.status = fmt.Sprintf("Paired with %s", m.cameraName)
 	// statusErr is sticky across states, so a banner left over from an earlier

@@ -8,6 +8,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -358,13 +359,19 @@ func TestYearAndBorderIsAutoCommittable(t *testing.T) {
 	}
 }
 
-// A phone paired seconds ago is not a question worth asking.
+// A phone paired seconds ago is not a question worth asking — and not a browse
+// worth paying for either.
 //
 // Live report: after typing a six-digit code onto the phone, ctrl+o offered it
 // beside the household's other phone — a choice the last six keystrokes had
 // already made. Two sources are still the case to test; they are simply two
 // phones now rather than a phone and a Continuity camera.
-func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
+//
+// The list is skipped outright rather than auto-selected from, which is the
+// second half of the same argument: enumerating devices is a browse of the
+// network, and the pairing that just succeeded already proved this phone is on
+// it. Measured, that browse was 2.5s of the pairing hand-off.
+func TestJustPairedPhoneOpensWithoutADeviceList(t *testing.T) {
 	devices := []scan.Device{
 		cam("spare", "Spare iPhone", scan.KindRemote),
 		cam("phone", "Billionaires are Parasites", scan.KindRemote),
@@ -374,14 +381,8 @@ func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
 	m.cameraID = "phone"
 	m.cameraName = "Billionaires are Parasites"
 
-	mm, _ := m.onPaired(pairedMsg{})
+	mm, cmd := m.onPaired(pairedMsg{})
 	got := mm.(model)
-	if got.justPairedID != "phone" {
-		t.Fatalf("pairing should mark the phone for the next list, got %q", got.justPairedID)
-	}
-
-	mm, _ = got.onCameras(camerasMsg{devices: devices})
-	got = mm.(model)
 	if got.state == stateCameraPick {
 		t.Error("the phone just paired; it should open rather than be offered")
 	}
@@ -391,32 +392,54 @@ func TestJustPairedPhoneSkipsThePicker(t *testing.T) {
 	// One shot: the picker is how a phone gets switched, so the next ctrl+o
 	// has to offer the choice again.
 	if got.justPairedID != "" {
-		t.Error("the just-paired mark must be consumed by the list that used it")
+		t.Errorf("the just-paired mark must be consumed by the scan that used it, got %q",
+			got.justPairedID)
 	}
+	runCmds(cmd)
+	if sc.listed != 0 {
+		t.Errorf("the network was browsed %d time(s) for a phone the pairing just reached", sc.listed)
+	}
+	if sc.usedDevice != "phone" {
+		t.Errorf("opened %q, want the just-paired phone", sc.usedDevice)
+	}
+
+	// A later scan is a different situation: with two phones here, the picker
+	// is the only way to switch between them.
 	mm, _ = got.onCameras(camerasMsg{devices: devices})
 	if mm.(model).state != stateCameraPick {
 		t.Error("a later device list should offer the picker again")
 	}
 }
 
-// The mark is consumed even when the phone has gone, so it cannot surprise a
-// later ctrl+o by silently opening a camera nobody picked.
-func TestJustPairedMarkIsConsumedWhenThePhoneIsGone(t *testing.T) {
-	devices := []scan.Device{
-		cam("spare", "Spare iPhone", scan.KindRemote),
-		cam("other", "Someone Else's iPhone", scan.KindRemote),
+// The mark is consumed even when the open fails, so it cannot surprise a later
+// ctrl+o by silently reopening a camera nobody picked.
+//
+// Failing here is the correct place for it: Open browses for that phone by
+// name and says "not on this network right now", which is the message the
+// device list would have produced anyway, one step later.
+func TestJustPairedMarkIsConsumedWhenTheOpenFails(t *testing.T) {
+	sc := &fakeScanner{
+		devices: []scan.Device{
+			cam("spare", "Spare iPhone", scan.KindRemote),
+			cam("other", "Someone Else's iPhone", scan.KindRemote),
+		},
+		openErr: errors.New(`"phone" is not on this network right now`),
 	}
-	sc := &fakeScanner{devices: devices}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
 	m.justPairedID = "phone"
 
-	mm, _ := m.onCameras(camerasMsg{devices: devices})
-	got := mm.(model)
-	if got.state != stateCameraPick {
-		t.Error("a phone that is no longer listed should fall back to the picker")
+	runCmds(m.beginScan())
+	if m.justPairedID != "" {
+		t.Error("the mark must not survive the scan that used it")
 	}
-	if got.justPairedID != "" {
-		t.Error("the mark must not survive the list that failed to find it")
+	if sc.usedDevice != "phone" {
+		t.Errorf("opened %q, want the just-paired phone", sc.usedDevice)
+	}
+
+	// With the mark spent, the next scan goes back through the list.
+	runCmds(m.beginScan())
+	if sc.listed != 1 {
+		t.Errorf("a later scan should ask for a device list, listed = %d", sc.listed)
 	}
 }
 

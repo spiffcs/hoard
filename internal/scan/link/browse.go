@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -54,10 +55,15 @@ func (s Service) Resolved() bool { return s.Host != "" && s.Port != 0 }
 // Finder is discovery, narrow enough that the dns-sd implementation can be
 // swapped for a cgo DNSServiceBrowse one without anything above it moving.
 type Finder interface {
-	// Browse returns the phones visible within the window, which is a
-	// deadline rather than a wait: mDNS answers arrive in milliseconds on a
-	// local network, and a device a beat slow to appear is not an absent one.
-	Browse(ctx context.Context, window time.Duration) ([]Service, error)
+	// Browse returns the phones visible within the window, which is a ceiling
+	// rather than a wait: mDNS answers arrive in milliseconds on a local
+	// network, and a device a beat slow to appear is not an absent one.
+	//
+	// name, when non-empty, is the one phone the caller is after, and the
+	// browse ends the moment it appears — there is nothing left to learn.
+	// Empty means enumerate for a picker, which cannot stop at the first
+	// answer without hiding the second phone.
+	Browse(ctx context.Context, name string, window time.Duration) ([]Service, error)
 	// Resolve turns an instance name into something dialable.
 	Resolve(ctx context.Context, name string, window time.Duration) (Service, error)
 }
@@ -96,21 +102,53 @@ func (d DNSSD) serviceType() string {
 	return ServiceType
 }
 
+// runOpts says when a run has heard enough and may stop reading.
+type runOpts struct {
+	// stop ends the run at the line it accepts. For a query with exactly one
+	// right answer — a resolve, or a browse for a named phone — that line is
+	// the whole result.
+	stop func(line string) bool
+	// settle ends the run once this long passes with no new line, after at
+	// least one has arrived. For enumeration, where "enough" cannot be
+	// recognised from any single line and the end of the answer is the
+	// network going quiet.
+	settle time.Duration
+}
+
 // run executes dns-sd for a bounded window and returns the lines it printed.
 //
 // dns-sd never exits on its own — every mode is a standing query — so the
 // window is enforced by cancelling it, and the kill that follows is the normal
-// path rather than an error. Output collected up to that point is the result.
-func (d DNSSD) run(ctx context.Context, window time.Duration, args ...string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, window)
+// path rather than an error.
+//
+// The window is a ceiling, not a duration to serve out. dns-sd calls
+// fflush(stdout) inside each reply callback, so an answer is readable within
+// milliseconds of arriving, and opts says when to stop reading rather than
+// waiting for the deadline to do it: measured on a real phone, a browse that
+// used to take its full 2.5s answers in 6ms and a resolve in 4ms.
+//
+// Only replies are flushed — the banner alone sits in the pipe's buffer — so
+// a query nothing answers still costs the whole window and yields no lines at
+// all. That is the one case where the waiting is the point, and it is why the
+// ceiling stays.
+func (d DNSSD) run(
+	parent context.Context, window time.Duration, opts runOpts, args ...string,
+) ([]string, error) {
+	ctx, cancel := context.WithTimeout(parent, window)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, d.path(), args...)
-	stdout, err := cmd.StdoutPipe()
+	// An explicit pipe rather than cmd.StdoutPipe, so this end owns the read
+	// side and can close it. See the close below for what that buys.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
+	defer pr.Close()
+
+	cmd := exec.CommandContext(ctx, d.path(), args...)
+	cmd.Stdout = pw
 	if err := cmd.Start(); err != nil {
+		pw.Close()
 		// Both forms, because which one arrives depends on how the tool was
 		// named: exec.ErrNotFound comes from a PATH lookup, but the default
 		// here is an absolute path, and that fails with ENOENT inside a
@@ -121,27 +159,123 @@ func (d DNSSD) run(ctx context.Context, window time.Duration, args ...string) ([
 		}
 		return nil, fmt.Errorf("link: starting dns-sd: %w", err)
 	}
+	// The child holds the only write end from here, so a tool that does exit
+	// on its own still produces an EOF.
+	pw.Close()
 
-	var lines []string
-	sc := bufio.NewScanner(stdout)
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
+	// Read on its own goroutine so the settle timer can fire while the scan
+	// is blocked on a pipe that may never produce another line — which is
+	// most of the time, and exactly when the timer needs to win.
+	scanned := make(chan string)
+	go func() {
+		defer close(scanned)
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			select {
+			case scanned <- sc.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	var (
+		lines  []string
+		timer  *time.Timer
+		settle <-chan time.Time
+	)
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+
+reading:
+	for {
+		select {
+		case line, ok := <-scanned:
+			if !ok {
+				break reading
+			}
+			lines = append(lines, line)
+			if opts.stop != nil && opts.stop(line) {
+				break reading
+			}
+			if opts.settle > 0 {
+				// Restarted by every line, so it measures quiet rather than
+				// elapsed time: a phone answering a beat after the first one
+				// extends the read instead of being cut off by it.
+				if timer == nil {
+					timer = time.NewTimer(opts.settle)
+					settle = timer.C
+				} else {
+					timer.Reset(opts.settle)
+				}
+			}
+		case <-settle:
+			break reading
+		case <-ctx.Done():
+			// The window, and the only thing that ends a query nothing
+			// answers. Waiting for the pipe to close instead is not
+			// equivalent: the kill closes dns-sd's own descriptor, but a
+			// killed process can leave one open in a child, and then this
+			// loop outlives its deadline waiting on an EOF that is not
+			// coming. Measured at 30s against a fake that forks a sleep.
+			break reading
+		}
+	}
+
+	// Killed here rather than left to the deadline: stopping the read early
+	// and letting the process live out the window would hand the whole saving
+	// straight back.
+	cancel()
+	// Closed from this side rather than waited on for EOF. The reader is
+	// parked in a syscall on a pipe whose write end belongs to a process that
+	// was just killed — but a killed process can leave the descriptor open in
+	// a child of its own, and then the EOF never comes and this drain never
+	// returns. Closing the read end ends it regardless of who still holds the
+	// other one.
+	pr.Close()
+	// Drained before Wait, so the reader is finished with the pipe before
+	// anything else touches it.
+	for range scanned { //nolint:revive // draining; the values are already collected
 	}
 	// Wait always reports the kill; only a failure to start is interesting,
 	// and that was handled above.
 	_ = cmd.Wait()
 
 	// A caller's own cancellation is worth distinguishing from the window
-	// simply elapsing, which is the ordinary end of a browse.
-	if parent := ctx.Err(); errors.Is(parent, context.Canceled) {
-		return lines, ctx.Err()
+	// simply elapsing, which is the ordinary end of a browse. Asked of the
+	// parent rather than the derived context, because this function now
+	// cancels its own child on every early exit — the successful path — and
+	// asking the child would report all of them as aborted.
+	if err := parent.Err(); err != nil {
+		return lines, err
 	}
 	return lines, nil
 }
 
+// browseSettle ends an enumerating browse once the network has been quiet for
+// this long. Long enough that a second phone answering just behind the first
+// is still in the list, short enough that a picker opens in a fraction of the
+// window it used to serve out in full.
+const browseSettle = 400 * time.Millisecond
+
 // Browse lists the phones advertising _hoardscan._tcp.
-func (d DNSSD) Browse(ctx context.Context, window time.Duration) ([]Service, error) {
-	lines, err := d.run(ctx, window, "-B", d.serviceType())
+//
+// A named browse stops at its phone; an enumerating one settles. The split
+// matters because the two callers want different things from the same query:
+// opening a session already knows which phone and only needs to confirm it is
+// here, while a picker is asking the network to say everything it has.
+func (d DNSSD) Browse(ctx context.Context, name string, window time.Duration) ([]Service, error) {
+	opts := runOpts{settle: browseSettle}
+	if name != "" {
+		opts = runOpts{stop: func(line string) bool {
+			found, _, add, ok := parseBrowseLine(line)
+			return ok && add && found == name
+		}}
+	}
+	lines, err := d.run(ctx, window, opts, "-B", d.serviceType())
 	if err != nil {
 		return nil, err
 	}
@@ -214,8 +348,15 @@ func parseBrowseLine(line string) (name, iface string, add, ok bool) {
 }
 
 // Resolve turns an instance name into a host and port.
+//
+// The first answer ends it, with nothing traded away: a resolve has exactly
+// one right answer and the loop below already took the first one — it simply
+// used to wait out the rest of the window before looking.
 func (d DNSSD) Resolve(ctx context.Context, name string, window time.Duration) (Service, error) {
-	lines, err := d.run(ctx, window, "-L", name, d.serviceType(), "local.")
+	lines, err := d.run(ctx, window, runOpts{stop: func(line string) bool {
+		_, _, ok := parseResolveLine(line)
+		return ok
+	}}, "-L", name, d.serviceType(), "local.")
 	if err != nil {
 		return Service{}, err
 	}
