@@ -32,7 +32,12 @@ import (
 // v3 added lang, so a scan that reads a card's language can tell a
 // foreign-only printing from its English namesake — they share a set and a
 // collector number, differing only by a marker the OCR cannot see.
-const schemaVersion = 5
+//
+// v6 dropped image_uri. It held the small-size art URL for the
+// art-identification index and nothing else ever read it; when that feature
+// was deleted the column was 9.5 MB of a 70 MB catalog, written on every
+// build and never selected.
+const schemaVersion = 6
 
 // fileName is the catalog's name inside the cache directory.
 const fileName = "catalog.db"
@@ -71,8 +76,6 @@ CREATE TABLE cards (
     -- retro-frame reprint from its regular same-set twin for the scanner.
     frame            TEXT,
     border_color     TEXT,
-    -- Scryfall's small-size image URL (front face on multi-faced cards).
-    image_uri        TEXT,
     colors           TEXT,
     color_identity   TEXT,
     price_usd        REAL,

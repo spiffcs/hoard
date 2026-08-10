@@ -63,10 +63,7 @@ type Card struct {
 	// "future"). It is what separates a modern set's retro-frame reprint from
 	// its regular twin — same set, same year, both black-bordered — which the
 	// scanner needs when the collector digits never read.
-	Frame string
-	// ImageURI is Scryfall's small-size card image (~30KB). Front face on
-	// multi-faced cards. Empty when the printing has no image.
-	ImageURI    string
+	Frame       string
 	BorderColor string // frame color ("black", "borderless") — not WUBRG
 	// Colors and ColorIdentity are WUBRG letters. ColorIdentity is always at
 	// the object root; Colors is absent on multi-faced cards (it lives per
@@ -131,15 +128,7 @@ type apiCard struct {
 	BorderColor     string   `json:"border_color"`
 	Colors          []string `json:"colors"`
 	ColorIdentity   []string `json:"color_identity"`
-	ImageURIs       struct {
-		Small string `json:"small"`
-	} `json:"image_uris"`
-	CardFaces []struct {
-		ImageURIs struct {
-			Small string `json:"small"`
-		} `json:"image_uris"`
-	} `json:"card_faces"`
-	Prices struct {
+	Prices          struct {
 		USD       string `json:"usd"`
 		USDFoil   string `json:"usd_foil"`
 		USDEtched string `json:"usd_etched"`
@@ -491,18 +480,6 @@ func decodeCards(raws []json.RawMessage) ([]Card, error) {
 	return cards, nil
 }
 
-// smallImage is the printing's small image URL: the card's own when it has
-// one, else the front face's — a double-faced card keeps its images per face.
-func (ac apiCard) smallImage() string {
-	if ac.ImageURIs.Small != "" {
-		return ac.ImageURIs.Small
-	}
-	if len(ac.CardFaces) > 0 {
-		return ac.CardFaces[0].ImageURIs.Small
-	}
-	return ""
-}
-
 // toCard converts a decoded Scryfall JSON card into the exported Card type,
 // carrying the bytes it was decoded from so the store can keep them.
 func (ac apiCard) toCard(raw json.RawMessage) Card {
@@ -521,7 +498,6 @@ func (ac apiCard) toCard(raw json.RawMessage) Card {
 		PromoTypes:      ac.PromoTypes,
 		FrameEffects:    ac.FrameEffects,
 		Frame:           ac.Frame,
-		ImageURI:        ac.smallImage(),
 		BorderColor:     ac.BorderColor,
 		Colors:          ac.Colors,
 		ColorIdentity:   ac.ColorIdentity,

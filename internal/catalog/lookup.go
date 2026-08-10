@@ -63,7 +63,6 @@ type rowScanner interface{ Scan(...any) error }
 // column order is decided once, beside the code that depends on it.
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
        released_at, lang, finishes, promo_types, frame_effects, frame, border_color,
-       image_uri,
        colors, color_identity,
        price_usd, price_usd_foil, price_usd_etched, scryfall_url`
 
@@ -76,18 +75,15 @@ const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
 	var setName, released, lang, finishes, promos, frames, frame, border *string
-	var image *string
 	var colors, identity *string
 	var usd, foil, etched *float64
 
 	if err := r.Scan(&c.ID, &c.Name, &c.Set, &c.CollectorNumber, &setName,
 		&released, &lang, &finishes, &promos, &frames, &frame, &border,
-		&image,
 		&colors, &identity,
 		&usd, &foil, &etched, &c.ScryfallURL); err != nil {
 		return scryfall.Card{}, fmt.Errorf("catalog: scanning a card: %w", err)
 	}
-	c.ImageURI = deref(image)
 
 	c.SetName = deref(setName)
 	c.ReleasedAt = deref(released)

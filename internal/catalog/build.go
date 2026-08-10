@@ -193,34 +193,14 @@ type bulkCard struct {
 	FrameEffects    []string `json:"frame_effects"`
 	Frame           string   `json:"frame"`
 	BorderColor     string   `json:"border_color"`
-	ImageURIs       struct {
-		Small string `json:"small"`
-	} `json:"image_uris"`
-	CardFaces []struct {
-		ImageURIs struct {
-			Small string `json:"small"`
-		} `json:"image_uris"`
-	} `json:"card_faces"`
-	Colors        []string `json:"colors"`
-	ColorIdentity []string `json:"color_identity"`
-	Games         []string `json:"games"`
-	Prices        struct {
+	Colors          []string `json:"colors"`
+	ColorIdentity   []string `json:"color_identity"`
+	Games           []string `json:"games"`
+	Prices          struct {
 		USD       string `json:"usd"`
 		USDFoil   string `json:"usd_foil"`
 		USDEtched string `json:"usd_etched"`
 	} `json:"prices"`
-}
-
-// smallImage is the row's small image URL, front face on multi-faced cards —
-// the art index's input.
-func (bc bulkCard) smallImage() string {
-	if bc.ImageURIs.Small != "" {
-		return bc.ImageURIs.Small
-	}
-	if len(bc.CardFaces) > 0 {
-		return bc.CardFaces[0].ImageURIs.Small
-	}
-	return ""
 }
 
 // Update rebuilds the catalog from Scryfall's current bundle, reporting
@@ -382,10 +362,10 @@ func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.
 	insertCard, err := tx.Prepare(`
 INSERT OR REPLACE INTO cards (scryfall_id, name, name_norm, set_code, collector_number,
     set_name, released_at, rarity, lang, finishes, promo_types, frame_effects, frame,
-    border_color, image_uri,
+    border_color,
     colors, color_identity,
     price_usd, price_usd_foil, price_usd_etched, scryfall_url)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -438,7 +418,6 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 			nullable(bc.Lang), jsonArray(bc.Finishes), jsonArray(bc.PromoTypes), jsonArray(bc.FrameEffects),
 			nullable(bc.Frame),
 			nullable(bc.BorderColor),
-			nullable(bc.smallImage()),
 			jsonArrayKeepEmpty(bc.Colors), jsonArrayKeepEmpty(bc.ColorIdentity),
 			parsePrice(bc.Prices.USD), parsePrice(bc.Prices.USDFoil),
 			parsePrice(bc.Prices.USDEtched), bc.ScryfallURI); err != nil {
