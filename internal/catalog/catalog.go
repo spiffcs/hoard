@@ -71,8 +71,7 @@ CREATE TABLE cards (
     -- retro-frame reprint from its regular same-set twin for the scanner.
     frame            TEXT,
     border_color     TEXT,
-    -- Scryfall's small-size image URL (front face on multi-faced cards):
-    -- the art-identification index downloads and hashes these.
+    -- Scryfall's small-size image URL (front face on multi-faced cards).
     image_uri        TEXT,
     colors           TEXT,
     color_identity   TEXT,

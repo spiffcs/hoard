@@ -567,7 +567,6 @@ product.
 | What separates rig `s5` (69% foil recall) from `s9` (23%) | **Unknown.** The 3× spread is the largest unexplained effect in this document. | The rigs' capture conditions are not recorded in `stills-labels.tsv`; they would have to be reconstructed from session telemetry |
 | Borderless cards in the wild | **Corpus is not valid for this.** The 50% figure in §2 is a full-bleed-scan artifact — a borderless scan has no card-against-desk edge. `docs/scanner-tuning.md` reports a live borderless session reading names fine. Not re-verified today. | A live borderless pile with telemetry |
 | Real-world (non-corpus) name accuracy | **No end-to-end labelled measurement exists.** The 28 fixtures pin decisions, not correctness. | A labelled live pile scored against ground truth |
-| Art matching as a fallback | **Inert.** The channel is built (`internal/tui/artmatch.go`) but requires `HOARD_SCAN_DEBUG_DIR` set, a probe binary, and a locally built ~107k-row index (`:72-95`) — none of which a shipped user has. Whole-card 64-bit hashing was **refuted** (`docs/artindex-results.md`). | `docs/sprint-artmatch-v2.md` |
 | Japanese/Chinese OCR | **Refuted rather than unverified**, but on n=4. | A larger non-Latin stratum, if it ever matters |
 
 ---

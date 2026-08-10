@@ -56,7 +56,7 @@ func TestUsagePipedListsEveryCommand(t *testing.T) {
 		"Browse the hoard",
 		"Collection commands:", "Binder commands:", "Deck commands:", "Interop commands:",
 		"add", "update-prices", "movers", "backfill-prices", "unpriced", "guessed",
-		"repair-finishes", "vacuum", "market", "report", "watch", "catalog", "artindex",
+		"repair-finishes", "vacuum", "market", "report", "watch", "catalog",
 		"binder", "deck", "export", "import", "merge", "schema", "version",
 		"completion", // cobra's, and worth advertising
 	} {

@@ -49,16 +49,6 @@ const (
 	scanMatchSetNumberAndLang           // set, number and the printed language all matched
 )
 
-// There was a scanMatchArt above this line — the picture-identification
-// channel's rank, produced by internal/tui/artmatch.go. Both are gone as of
-// 2026-08-09: the channel was removed from the scanner rather than left
-// wired-but-inert, because its acceptance gates no longer matched the hash
-// they were fitted against and a rank nothing produces is a trap for the next
-// reader. The research substrate is untouched — internal/artindex, the
-// `hoard artindex` commands and the eval harnesses all remain — and
-// docs/artmatch-design.md records what was measured and what would have to be
-// true to bring it back.
-
 // numberVerified reports whether a collector number actually matched a
 // printing of the resolved card. That is the corroboration the weaker gates
 // defer to: a wrong name could not have produced a number that agrees with it.

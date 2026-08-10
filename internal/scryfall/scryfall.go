@@ -64,9 +64,8 @@ type Card struct {
 	// its regular twin — same set, same year, both black-bordered — which the
 	// scanner needs when the collector digits never read.
 	Frame string
-	// ImageURI is Scryfall's small-size card image (~30KB), the input to the
-	// art-identification index. Front face on multi-faced cards. Empty when
-	// the printing has no image.
+	// ImageURI is Scryfall's small-size card image (~30KB). Front face on
+	// multi-faced cards. Empty when the printing has no image.
 	ImageURI    string
 	BorderColor string // frame color ("black", "borderless") — not WUBRG
 	// Colors and ColorIdentity are WUBRG letters. ColorIdentity is always at

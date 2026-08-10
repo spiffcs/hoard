@@ -10,26 +10,28 @@ Format per item: **where** → what's wrong → how it fails → fix direction.
 ## Status — worked 2026-08-07, same day
 
 **Fixed and green** (full Go suite ×3 platforms, vet, gofmt; 174 Swift tests; both
-apps build): A1–A11 and the scan-CI item; B1–B6, B8–B11 and the artindex guards;
-C3–C7, C9, C10. Schema moved v25 → v27 (v26 finish_guesses FK, v27 trait-filter
-index pinned via INDEXED BY). A12 turned out already fixed at HEAD (the SELECT
-already runs inside the merge's immediate transaction).
+apps build): A1–A11; B2–B6, B8–B11; C3–C7, C9, C10. Schema moved v25 → v27 (v26
+finish_guesses FK, v27 trait-filter index pinned via INDEXED BY). A12 turned out
+already fixed at HEAD (the SELECT already runs inside the merge's immediate
+transaction). A13 and A15 are done too — `buildinfo.UserAgent` carries the
+contact URL, and `internal/command/output.go`'s `outputFile` reports the Close
+error through a temp-and-rename.
+
+Numbering is not contiguous: B1, A14, B7 and C1 were struck from this document
+rather than resolved in code. A14's generator-deps half was a won't-fix, and its
+scan-CI half is settled by `scan.yml`'s own banner (the macOS gate is off for
+budget, by owner directive, and the hand-run local sweep replaces it). B1, B7
+and C1 all described a scanner channel that has since been deleted along with
+the package and CLI commands behind it, so there is nothing left to fix. The
+surviving IDs keep their original numbers so citations elsewhere still resolve.
 
 **Deliberately deferred**, with reasons:
-- **A14 (go.mod generator deps)** — won't fix: generator mains don't link into
-  the installed CLI; a tools submodule buys nothing but ceremony.
-- **C1 (Vision + rasterisation on the capture queue)** and **C2 (configure()
-  on main)** — hot-path restructures; the loop currently runs 491ms median
-  against a 700ms budget, so these need live measurement before and after, not
-  a blind rewrite.
+- **C2 (configure() on main)** — a hot-path restructure; the loop currently
+  runs 491ms median against a 700ms budget, so this needs live measurement
+  before and after, not a blind rewrite.
 - **C8 (English-only OCR, hand-fitted sparkle/leftU/trigger geometry)** —
   recognition-quality work; belongs to the approved ML sprint and the tuning
   ledger's live-session rule.
-- **B7's full production enablement of art-match** — the channel is
-  structurally tied to HOARD_SCAN_DEBUG_DIR (stills only land there); enabling
-  it for real means requesting stills without a debug dir, which is ML-sprint
-  scope. The safe halves (probe semaphore, decisive-verdict floor, phash
-  guard) are done.
 - **B10's View() mutation through the detail pointer** — structural; safe
   today, wants the render path made read-only as its own change.
 - ~~**C10's ScanKitTests target**~~ **moot 2026-08-09.** ScanKit and
@@ -175,15 +177,6 @@ history, Scryfall's first contact will otherwise be a block, not an email.
 Cheapest insurance on this list. (Version part is fixed by the Red-plan `hoard
 version` work; add the URL there.)
 
-### A14. Generator-only deps in the main module; scanner has no CI
-- `go.mod:11-12` — `invopop/jsonschema` + `santhosh-tekuri/jsonschema/v6` are
-  direct requires used only by generators/tests; pulled into every `go install`.
-  Fix: tools submodule or build tag.
-- `.github/workflows/scan.yml` is manual-only and its own header says the cost:
-  "nothing checks the goldens automatically any more." The feature with the most
-  surface area and least test automation has no CI gate. Fix: run the golden check
-  on PRs touching `scan/` at minimum.
-
 ### A15. `report.go` ignores the output file's Close error
 `report.go:39,43` — `defer f.Close()` discards the error; disk-full on final flush
 → truncated valuation file, exit 0. `export.go:70-73` does it right; copy that.
@@ -192,15 +185,6 @@ version` work; add the URL there.)
 ---
 
 ## B. Go — TUI / browse
-
-### B1. `artMatchMsg` double-decrements the in-flight resolve counter
-`internal/tui/model.go:606-613` routes `artMatchMsg` into `onResolveDone`, whose
-first act is `if m.resolving > 0 { m.resolving-- }` (`:1517`) — but the art channel
-fires from the queue path (`:2052`) *after* the original resolve already
-decremented. `m.resolving` under-counts: `afterCard` (`:2443`) ends the walk early,
-the real resolve lands with `walking == false` and sits in `m.review` unwalked, and
-the close-prompt "N unsaved scans will be dropped" warnings lie.
-Fix: don't route art results through the resolve-counter path.
 
 ### B2. `upgradeQueued` transplants a foil hint across physical copies
 `internal/tui/model.go:2303-2316` — matched on canonical *name* only; when a
@@ -248,18 +232,6 @@ hatch only exists when the picker is shown. `numberTailMatches`
 (`autoscan.go:1267`) repairs only 1 of 4 observed misread classes
 (`autoscan.go:1247-1250`). Fix: require a second corroborating signal (set code or
 year) before skipping the picker on a number-narrowed single row.
-
-### B7. Art-identification channel is dead in production, unbounded when alive
-`internal/tui/artmatch.go:70` requires `HOARD_SCAN_DEBUG_DIR`; `probePath()`
-(`:99-110`) requires `bin/cardkit-probe` relative to the **cwd**. Real installs get
-a nil matcher — the shipped feature never fires. When it does run (dev), `:151`
-spawns one probe process per queued card with no semaphore. Also
-`internal/artindex/index.go:97`: with one entry in the index the runner-up distance
-stays at the seeded 65, so `artDecisive` is trivially true — any image within 10
-bits "decisively" matches. And `internal/artindex/phash.go:109` divides by
-`b.Dy()` with no guard — a degenerate (<2 px) crop panics.
-Fix: install-path resolution + env-independent enable; probe semaphore; require
-`Count() >= 2` for decisive; guard empty crops.
 
 ### B8. Scan-session telemetry log written from two goroutines, closed under one
 `internal/scan/session_darwin.go:44-60,126-130,227` — `s.log` is a bare `*os.File`
@@ -314,16 +286,6 @@ read-only; add nil guards.
 ---
 
 ## C. Swift — scanner apps
-
-### C1. Vision + full-res rasterisation inline on the capture queue
-`scan/hoard-scan-ios/Sources/Capture/TriggerRunner.swift:255` — the served
-`request(buffer)` closure (`CameraSession.swift:133-138`) builds a `CIImage`,
-`.oriented(.right)`, and `createCGImage` at 4032×3024 inline on
-`hoard-scan.trigger`; `TriggerRects.swift:36` runs `VNDetectRectanglesRequest`
-synchronously; `sceneSignature` runs up to `1 + boxes.count` times per sample.
-`alwaysDiscardsLateVideoFrames = true` converts backlog into silently unseen
-samples. Fix: rasterise/OCR off the trigger queue; keep the queue to cheap
-signature math.
 
 ### C2. Camera `configure()` blocks the main thread at launch
 `CameraSession.swift:230-286` — `beginConfiguration`, input construction,

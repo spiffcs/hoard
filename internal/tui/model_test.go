@@ -5182,16 +5182,6 @@ func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
 	}
 }
 
-// TestArtMatchDoesNotSpendTheResolveCounter was here. It guarded the art
-// channel's supplementary resolve path — the one that used to route through
-// onResolveDone's decrement and under-count `resolving`, ending the close-time
-// walk early and shrinking the close prompt's "N unsaved scans" warning.
-//
-// Removed 2026-08-09 with the channel itself. The hazard it covered was
-// specific to a message type that no longer exists; the general invariant it
-// implied — that only a real resolveCardCmd may decrement `resolving` — is
-// worth restating in any future supplementary channel.
-
 // The queued look's finish marker only carries onto a read of the same
 // physical sighting. A same-name better read landing past the second-look
 // window may be a second copy — one foil, one not, in one session — and it

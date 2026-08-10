@@ -55,39 +55,6 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 	return out, nil
 }
 
-// ImageSource is one printing's art-index input: its id, its small-image
-// URL, and — when the printing comes in exactly one finish — that finish, so
-// an art match can settle foil without a second lookup.
-type ImageSource struct {
-	ScryfallID string
-	ImageURI   string
-	SoleFinish string
-}
-
-// ImageSources lists every printing that has an image, for the art-index
-// build.
-func (c *Catalog) ImageSources() ([]ImageSource, error) {
-	rows, err := c.db.Query(
-		`SELECT scryfall_id, image_uri, finishes FROM cards WHERE image_uri IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ImageSource
-	for rows.Next() {
-		var s ImageSource
-		var finishes *string
-		if err := rows.Scan(&s.ScryfallID, &s.ImageURI, &finishes); err != nil {
-			return nil, err
-		}
-		if f := decodeArray(finishes); len(f) == 1 {
-			s.SoleFinish = f[0]
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
-}
-
 // rowScanner is what both Query and QueryRow results satisfy.
 type rowScanner interface{ Scan(...any) error }
 

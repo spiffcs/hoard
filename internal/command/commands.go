@@ -57,7 +57,7 @@ func commandGroups() []*cobra.Group {
 func rootCommand(a *app) *cobra.Command {
 	// Declaration order, not alphabetical. The tree is written in the order the
 	// help should read it — add before update-prices before movers — and
-	// sorting would scatter that into "add, artindex, backfill-prices".
+	// sorting would scatter that into "add, backfill-prices, binder".
 	cobra.EnableCommandSorting = false
 
 	// -v/--version is a flag as well as a subcommand because both spellings
@@ -118,8 +118,6 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdWatch(a),
 
 		NewCmdCatalog(a),
-
-		NewCmdArtindex(a),
 
 		// ---- Binders ----
 		NewCmdBinder(a),

@@ -124,23 +124,16 @@ func run() async -> Never {
         .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
         .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
 
-    // --emit-card writes the located, perspective-flattened card to a PNG and
-    // says where the card sat. The art-identification channel hashes card
-    // images, not raw frames, and the Go side has no flatten of its own — this
-    // flag is how it borrows this one. Exit 4, distinct from 3's "nothing
-    // readable", means no card was located to emit.
-    //
-    // --emit-sparkle writes the foil marker's neighbourhood from the same
-    // flatten: the sparkle search window plus a context margin wide enough to
-    // absorb the V drift the live reader corrects for. It is the classifier
-    // training set's raw material — the crop is what the reader itself would
-    // judge, extracted by the same geometry, so the model trains on exactly
-    // the reader's view and nothing flattering.
-    let emitCard = flagValue(args, "--emit-card")
+    // --emit-sparkle writes the foil marker's neighbourhood from the located,
+    // perspective-flattened card: the sparkle search window plus a context
+    // margin wide enough to absorb the V drift the live reader corrects for.
+    // It is the classifier training set's raw material — the crop is what the
+    // reader itself would judge, extracted by the same geometry, so the model
+    // trains on exactly the reader's view and nothing flattering. Exit 4,
+    // distinct from 3's "nothing readable", means no card was located to emit.
     let emitSparkle = flagValue(args, "--emit-sparkle")
-    if emitCard != nil || emitSparkle != nil {
+    if emitSparkle != nil {
         guard let card = locateCard(uprighted(cg, orientation)) else { exit(4) }
-        if let path = emitCard { writePNG(card.image, to: path) }
         if let path = emitSparkle {
             let w = CGFloat(card.image.width), h = CGFloat(card.image.height)
             let du = SparkleGate.searchU + SparkleTemplate.spanU / 2 + 0.012

@@ -86,10 +86,10 @@ goes public — a dead promise on the landing page is worse than no promise.
 - **macOS helper.** Built from source on a Mac (`docs/ios-development.md`); it
   ships in no release archive. The README must say so plainly.
 - **Open Swift risk to triage against launch.** The audit's deferred Swift
-  items — capture-queue performance (C1/C2), English-only OCR and hand-fitted
-  geometry (C8), and the CoreML/pHash recognition sprint — are recorded in
-  `docs/audit-yellow-backlog.md`. Decide which, if any, block a public launch
-  versus ship as known post-launch work.
+  items — camera configuration on the main thread (C2), and English-only OCR
+  with hand-fitted geometry (C8) — are recorded in
+  `docs/specs/audit-yellow-backlog.md`. Decide which, if any, block a public
+  launch versus ship as known post-launch work.
 
 ## Order of operations
 
