@@ -12,6 +12,13 @@
 // tier silently mute — play() finds no buffer and simply returns — and nothing
 // in the app would report it. There is no second list to fall out of step.
 //
+// Silence is the one voice with no spec, and it is safe precisely because it is
+// not an accident of a missing buffer: `silence` is offered by every tier, and
+// play() refuses it by name before it ever reaches the buffer lookup. A tier
+// that says nothing because it was asked to and a tier that says nothing
+// because its voice went missing are two different events, and this file is
+// where they are told apart.
+//
 // The four original voices keep their exact synthesis parameters (frequencies,
 // durations, decay, soft clip) because people have already learned them by ear.
 // They were once shared with a macOS helper's SoundBank; that helper is gone
@@ -209,11 +216,28 @@ final class Sounds {
         SoundVoice(id: $0.id, label: $0.label, tier: $0.tier)
     }
 
-    /// What one tier's picker offers, that tier's default first. A voice
-    /// belongs to exactly one tier, so these partition `voices` with no
-    /// overlap: what Bulk can say, Jackpot cannot.
+    /// The id of a tier that has been turned off.
+    ///
+    /// Silence is a choice, so it is a *member of every tier's palette* rather
+    /// than a value sitting outside the vocabulary. That membership is what
+    /// keeps it apart from a dangling id: TierSettings repairs a stored id its
+    /// tier does not offer, and this one is offered by every tier, so it
+    /// survives a relaunch where `""` or an invented `"none"` would be
+    /// mistaken for a retired voice and quietly replaced by the default.
+    ///
+    /// The value cannot collide with a real voice — the whole vocabulary is the
+    /// table above, and nothing in it is named this.
+    static let silence = "silent"
+
+    /// What one tier's picker offers: that tier's default first, silence last.
+    /// A voice belongs to exactly one tier, so the sounding voices partition
+    /// `voices` with no overlap — what Bulk can say, Jackpot cannot. Silence is
+    /// the single exception, and is deliberately shared by every tier: turning
+    /// one off has to be as available as any other choice, and turning all five
+    /// off is a mute app.
     static func voices(for tier: Tier) -> [SoundVoice] {
         voices.filter { $0.tier == tier }
+            + [SoundVoice(id: silence, label: "Silent", tier: tier)]
     }
 
     private let engine = AVAudioEngine()
@@ -329,6 +353,14 @@ final class Sounds {
     /// play cuts whatever tail is still ringing and starts the voice.
     /// A rapid next card should clip the last fanfare, not queue behind it.
     func play(voice: String) {
+        // A tier turned off in Settings arrives here as `silence` and is meant
+        // to make no sound. Refused by name, above everything else, rather than
+        // left to fall out of the buffer lookup below: that lookup also
+        // swallows an id no voice answers to, and a tier the person muted must
+        // not take the same path as a tier that lost its voice. It is also the
+        // reason a silent tier does not restart the engine — nothing is about
+        // to be played, so there is nothing to heal.
+        guard voice != Sounds.silence else { return }
         // One self-heal before giving up: an engine stopped behind our back
         // (a route change this run missed, a media-services reset) restarts
         // in a few milliseconds, and a card's sound is worth that try.

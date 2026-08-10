@@ -19,6 +19,12 @@
 //
 // Each tier's voices are its own — see Sounds.swift. Nothing here can assign
 // across tiers, because the picker is derived from the voices' own tier.
+//
+// Any tier can also be set to no sound, and all five at once makes a silent
+// app. Silence is carried as a voice every tier offers rather than as a missing
+// value, because the validation in init repairs ids it does not recognise: a
+// tier that was turned off has to be something this file can read back, not a
+// hole where a voice used to be.
 
 import Foundation
 import SwiftUI
@@ -93,12 +99,21 @@ final class TierSettings: ObservableObject {
         jackpotAt = store.object(forKey: "tiers.jackpotAt") as? Double ?? Default.jackpotAt
         // Validated against the voices *this tier* offers, not merely against
         // the voices that exist. Two things land here. A stored id no voice
-        // answers to — one renamed or retired across an update — would silently
-        // mute its tier: play() finds no buffer and returns, and the picker
-        // shows a blank row. And an earlier build let any tier pick any voice,
-        // so an install can be carrying a harp run on bulk, which the tier's
-        // own palette no longer contains. Both fall back to the factory voice,
-        // which is audible and re-pickable.
+        // answers to — one renamed or retired across an update — would mute its
+        // tier for a reason nobody chose: play() finds no buffer and returns,
+        // and the picker shows a blank row. And an earlier build let any tier
+        // pick any voice, so an install can be carrying a harp run on bulk,
+        // which the tier's own palette no longer contains. Both fall back to
+        // the factory voice, which is audible and re-pickable.
+        //
+        // A tier deliberately turned off is neither of those, and this loop
+        // already tells the difference without a special case: `Sounds.silence`
+        // is in every tier's palette, so it is a voice that matches and is kept.
+        // That is exactly why silence is a palette member and not an empty
+        // string or a homemade "none" — an id this loop does not recognise is
+        // *restored to the default*, so a sentinel outside the vocabulary would
+        // give a setting that appears to work, reverts on the next launch, and
+        // produces no build error on the way.
         for tier in Tier.allCases {
             let palette = Set(Sounds.voices(for: tier).map(\.id))
             let stored = store.string(forKey: tier.storageKey)
@@ -107,7 +122,11 @@ final class TierSettings: ObservableObject {
         }
     }
 
-    /// voice says which sound a tier speaks with.
+    /// voice says which sound a tier speaks with, or `Sounds.silence` if it has
+    /// been turned off. Still a plain String because this is what the Settings
+    /// picker binds to, and a picker needs a selection for every row including
+    /// the silent one; the nil-for-nothing-to-play shape belongs at the play
+    /// sites below.
     func voice(for tier: Tier) -> String {
         voices[tier] ?? tier.defaultVoice
     }
@@ -119,8 +138,24 @@ final class TierSettings: ObservableObject {
 
     /// The bulk voice by name, for the legacy `chime` verb — a parent too old
     /// to know about tiers gets the sound of the tier most of its cards are in.
-    var bulkVoice: String { voice(for: .bulk) }
+    ///
+    /// Nil when bulk has been turned off. The verb borrows bulk's voice, so it
+    /// has to borrow bulk's silence too: bulk is the tier a person is likeliest
+    /// to mute, and an old parent that went on knocking through it would look
+    /// like the setting had not taken.
+    var bulkVoice: String? { sounding(voice(for: .bulk)) }
 
+    /// The voice to hand `play`, or nil where there is nothing to play. Kept in
+    /// one place so both play sites read as "if there is a sound, make it"
+    /// rather than each testing for silence in its own words.
+    private func sounding(_ voice: String) -> String? {
+        voice == Sounds.silence ? nil : voice
+    }
+
+    /// Reset restores the factory lines and the factory voices — including on a
+    /// tier that was turned off, which is deliberate. This is the button for "I
+    /// have lost track of what I changed", and a tier that stayed silent
+    /// through it would be the one setting the reset did not reach.
     func reset() {
         winAt = Default.winAt
         bigAt = Default.bigAt
@@ -148,10 +183,14 @@ final class TierSettings: ObservableObject {
 
     /// voice says which sound a wire tier speaks with, or nil for silence.
     ///
-    /// Unpriced stays silent, as it always has: it is not a `Tier`, so it falls
-    /// out here along with anything a newer parent invents.
+    /// Two ways to get nil now, and the caller does not have to tell them
+    /// apart. Unpriced stays silent as it always has: it is not a `Tier`, so it
+    /// falls out of the guard along with anything a newer parent invents. And a
+    /// tier turned off in Settings is answered here rather than handed to
+    /// `play` — `play` would refuse it anyway, but a play site should not be
+    /// asked to play something that is not a sound.
     func voice(forTier tier: String?) -> String? {
         guard let tier, let known = Tier(rawValue: tier) else { return nil }
-        return voice(for: known)
+        return sounding(voice(for: known))
     }
 }

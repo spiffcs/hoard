@@ -517,7 +517,11 @@ final class LinkController: ObservableObject {
             onResult?()
         case .chime:
             // The fallback voice for a parent that does not know about tiers.
-            sounds.play(voice: TierSettings.shared.bulkVoice)
+            // Nil when bulk has been turned off in Settings, and then this verb
+            // is silent too — it is bulk's voice it is borrowing.
+            if let voice = TierSettings.shared.bulkVoice {
+                sounds.play(voice: voice)
+            }
         case .tune(let stable, let interval):
             onTune?(stable, interval)
             trace("trigger tuned stable=\(stable) interval=\(interval)")

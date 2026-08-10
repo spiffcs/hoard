@@ -13,6 +13,11 @@
 // Every voice change plays itself. A sound picked silently is a sound
 // discovered mid-box, and the whole point of the tiers is knowing them by ear
 // before the box starts.
+//
+// Every picker also ends in Silent, which is the one choice that does not
+// audition — there is nothing to hear, so the Play button says so and goes
+// dim rather than sitting there doing nothing when pressed. Five silent tiers
+// is a mute app, and a supported one.
 
 import SwiftUI
 
@@ -43,7 +48,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Prices come from the Mac; which sound plays is decided here. "
                          + "Each tier has its own sounds — a jackpot run cannot be "
-                         + "assigned to bulk.")
+                         + "assigned to bulk. Any tier can be set to Silent, and "
+                         + "setting all five makes the app silent.")
                 }
             }
             .navigationTitle("Settings")
@@ -88,6 +94,10 @@ private struct TierSection: View {
     let threshold: Binding<Double>?
     let sounds: Sounds
 
+    /// Silent is a choice like any other in the picker, and the only one with
+    /// nothing to audition.
+    private var isSilent: Bool { voice == Sounds.silence }
+
     var body: some View {
         Section {
             if let threshold {
@@ -98,8 +108,9 @@ private struct TierSection: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
-            // This tier's voices only. A voice belongs to exactly one tier, so
-            // nothing here overlaps with any other section.
+            // This tier's voices only, plus Silent. A sounding voice belongs to
+            // exactly one tier, so nothing here overlaps with any other section
+            // except that last row, which every tier offers.
             Picker("Sound", selection: $voice) {
                 ForEach(Sounds.voices(for: tier)) { v in
                     Text(v.label).tag(v.id)
@@ -108,15 +119,28 @@ private struct TierSection: View {
             // The audition. Also fires on every picker change below, but a
             // button that replays the current choice on demand costs nothing
             // and saves re-picking a voice just to hear it again.
+            //
+            // On Silent it says what it would do instead of doing nothing.
+            // `play` already refuses silence, so an enabled button here would
+            // be a control that responds to a press with no sound and no
+            // explanation — indistinguishable from audio being broken, which
+            // is the reading this tab must never invite.
             Button {
                 sounds.play(voice: voice)
             } label: {
-                Label("Play", systemImage: "speaker.wave.2.fill")
+                isSilent
+                    ? Label("No sound", systemImage: "speaker.slash.fill")
+                    : Label("Play", systemImage: "speaker.wave.2.fill")
             }
+            .disabled(isSilent)
         } header: {
             Text("\(tier.label) · \(subtitle)")
         }
         .onChange(of: voice) { _, picked in
+            // Picking Silent makes no sound, and needs no test for it here:
+            // `play` refuses silence by name. Keeping that check in one place
+            // is what makes "silent" mean the same thing to the audition and
+            // to a card landing mid-session.
             sounds.play(voice: picked)
         }
     }
