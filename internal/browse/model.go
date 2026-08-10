@@ -731,7 +731,10 @@ func (m *Model) cycleFloor() {
 // feature reads as broken.
 func (m *Model) refreshEmptyNote() {
 	m.emptyNote = ""
-	if len(m.cards) > 0 || m.filter.empty() || !m.filter.needsCatalog() {
+	// The pane the query emptied, not the holdings pane specifically: the
+	// same trait terms narrow the analytical views, and a movers list emptied
+	// by `rarity:mythic` needs the same explanation.
+	if m.viewRowCount() > 0 || m.filter.empty() || !m.filter.needsCatalog() {
 		return
 	}
 	enriched, total, err := m.store.EnrichedCount()
@@ -776,20 +779,27 @@ func (m *Model) setFilter(text string) {
 		}
 		m.allowed = ids
 	}
-	m.cardsPage = 0 // a changed query reads from its first page
+	// A changed query reads from its first page, on whichever list it
+	// narrows — the bar is one query over whatever view is showing.
+	m.cardsPage, m.moversPage = 0, 0
+	// deriveView first: applyFilter's tail explains an empty pane, and on an
+	// analytical view the pane it must read is the one deriveView rebuilds.
+	m.deriveView()
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
 }
 
-// clearFilter drops the query and restores the full pane.
+// clearFilter drops the query and restores the full pane — and the full
+// analytical list beside it, since deriveView narrows through the same query.
 func (m *Model) clearFilter() {
 	m.filtering = false
 	m.filterText = ""
 	m.filterErr = ""
 	m.filter = filter{}
 	m.allowed = nil
-	m.cardsPage = 0
+	m.cardsPage, m.moversPage = 0, 0
+	m.deriveView()
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0

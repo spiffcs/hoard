@@ -222,6 +222,71 @@ func (f filter) matches(c card, allowed map[string]bool) bool {
 	return true
 }
 
+// moverAsCard projects a price-movement row onto the shape matches reads, so
+// the movers view narrows through the same grammar and the same code as the
+// holdings pane. A second filter beside this one would drift from it, and the
+// two lists would answer the same query differently.
+//
+// Price is the current price — what the NOW column shows, and what the floor
+// and penny gates already read — and Value is that across every copy held,
+// the figure IMPACT derives from. Board and Condition are deliberately left
+// empty: store.Movers groups by scryfall id and finish, summing copies across
+// every holding, so a mover row has no one board or condition to answer for.
+// unsupportedOnMovers reports the board term rather than letting it silently
+// match nothing.
+func moverAsCard(c store.PriceChange) card {
+	return card{
+		ScryfallID:      c.ScryfallID,
+		Name:            c.Name,
+		SetCode:         c.SetCode,
+		CollectorNumber: c.CollectorNumber,
+		Finish:          c.Finish,
+		Quantity:        c.Copies,
+		Price:           &c.New,
+		Value:           float64(c.Copies) * c.New,
+		ColorIdentity:   c.ColorIdentity,
+		Treatment:       c.Treatment,
+	}
+}
+
+// unsupportedOnMovers names the one term a movers row cannot answer, or ""
+// when the query asks nothing of it. Every other key works there: name, set,
+// finish, qty, price and value read off the row, and the trait half is an id
+// set the row carries a scryfall id for.
+func (f filter) unsupportedOnMovers() string {
+	if len(f.boards) > 0 {
+		return "board"
+	}
+	return ""
+}
+
+// filterMatchCount is how many rows the query selects in the list the
+// current view is showing — the whole result, not the page. It returns -1
+// on the views that do not consume the query at all, so the bar can decline
+// to give a number rather than quote the holdings pane's count over a table
+// the query is not touching.
+func (m Model) filterMatchCount() int {
+	switch m.view {
+	case viewHoldings:
+		return len(m.filteredCards)
+	case viewMovers:
+		return len(m.filteredMovers)
+	}
+	return -1
+}
+
+// filterUnsupported is the bar's note when the query uses a term the current
+// view cannot answer, empty otherwise.
+func (m Model) filterUnsupported() string {
+	if m.view != viewMovers {
+		return ""
+	}
+	if k := m.filter.unsupportedOnMovers(); k != "" {
+		return k + ": does not apply on movers · a mover row sums every board"
+	}
+	return ""
+}
+
 func compare(have float64, c store.NumCond) bool {
 	switch c.Op {
 	case ">":

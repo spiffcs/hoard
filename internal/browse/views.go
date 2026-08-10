@@ -233,11 +233,12 @@ func (m *Model) loadView() error {
 	return nil
 }
 
-// deriveView applies the value floor and the container filter to the
-// pristine slices, rebuilds the eligibility set on the views that grey
-// containers out, and re-clamps the card cursor. Cheap and re-runnable: no
-// database, no network — cycling the floor or moving the left cursor lands
-// here.
+// deriveView applies the value floor, the container filter and — on the
+// views that consume it — the typed query to the pristine slices, rebuilds
+// the eligibility set on the views that grey containers out, and re-clamps
+// the card cursor. Cheap and re-runnable: no database, no network — cycling
+// the floor, moving the left cursor, or pressing a key into the filter bar
+// all land here.
 //
 // Eligibility is computed from the pristine (floor-ignored) rows so the
 // grey set holds still while M cycles; the floor only thins visible rows.
@@ -271,6 +272,11 @@ func (m *Model) deriveView() {
 				c.Copies = qty
 			}
 			if bySet && c.SetCode != set {
+				continue
+			}
+			// Last, so the query sees the container-scoped Copies above and
+			// `qty` describes the same number the QTY column prints.
+			if !m.filter.empty() && !m.filter.matches(moverAsCard(c), m.allowed) {
 				continue
 			}
 			rows = append(rows, c)

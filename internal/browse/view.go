@@ -607,9 +607,19 @@ func (m Model) statusLine() string {
 		if m.filterErr != "" {
 			return bar + "  " + m.theme.Err.Render(m.filterErr)
 		}
+		// A term this view cannot answer says so rather than quietly
+		// selecting nothing — see filter.unsupportedOnMovers.
+		if note := m.filterUnsupported(); note != "" {
+			return bar + "  " + m.theme.Err.Render(note)
+		}
 		// The whole filtered result, not the page on screen — "50 match"
-		// on every page of a 300-row result would read as the answer.
-		return bar + m.theme.Help.Render(fmt.Sprintf("  %d match", len(m.filteredCards)))
+		// on every page of a 300-row result would read as the answer. On a
+		// view the query does not narrow there is no count to give, and a
+		// number describing a list that is not on screen is worse than none.
+		if n := m.filterMatchCount(); n >= 0 {
+			return bar + m.theme.Help.Render(fmt.Sprintf("  %d match", n))
+		}
+		return bar
 	}
 	if m.status != "" {
 		if m.statusErr {
@@ -640,6 +650,14 @@ func (m Model) statusLine() string {
 		scoped := sel != nil && sel.Kind != kindAllCards && m.view != viewHoldings
 		switch m.view {
 		case viewMovers:
+			// The query emptied it, not the window: "no price movement"
+			// would send the reader to F to fetch prices they already have.
+			// Same idiom as an arbitrage table emptied by the container
+			// filter — see marketLines.
+			if !m.filter.empty() {
+				return m.theme.Help.Render(fmt.Sprintf(
+					"no movers match %s · esc clears the filter", m.filter.raw))
+			}
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
 					"no price movement in %s this window · All Cards shows every container", sel.Name))
