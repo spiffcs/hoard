@@ -31,14 +31,14 @@ func NewCmdExport(a *app) *cobra.Command {
 		GroupID: groupInterop,
 		Short:   "Holdings as CSV or JSON, in hoard's format or theirs",
 		Example: "hoard export [--binder B | --deck D | --all] [-o FILE]\n" +
-			"       [--format csv|json|moxfield|archidekt]",
+			"       [--format csv|json|text|moxfield|archidekt]",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runExport(a.store, a.env, format, binder, deck, outPath, all)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "csv",
-		"output format: csv (canonical), json, moxfield, or archidekt")
+		"output format: csv (canonical), json, text (a decklist 'deck add --file' reads), moxfield, or archidekt")
 	cmd.Flags().StringVar(&binder, "binder", "", "export one binder (id, name, or unique fragment)")
 	cmd.Flags().StringVar(&deck, "deck", "", "export one deck (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&all, "all", false, "export every binder and deck (the default)")
@@ -60,11 +60,12 @@ func runExport(st *store.Store, env *cli.Env, format, binder, deck, outPath stri
 	write := map[string]func(io.Writer, []export.Row) error{
 		"csv":       export.WriteCanonical,
 		"json":      writeHoldingsJSON,
+		"text":      export.WriteText,
 		"moxfield":  export.WriteMoxfield,
 		"archidekt": export.WriteArchidekt,
 	}[format]
 	if write == nil {
-		return cli.Usagef("unknown format %q (want csv, json, moxfield, or archidekt)", format)
+		return cli.Usagef("unknown format %q (want csv, json, text, moxfield, or archidekt)", format)
 	}
 	if (binder != "" && deck != "") || (all && (binder != "" || deck != "")) {
 		return cli.Usagef("choose one of --binder, --deck, or --all")
@@ -73,6 +74,14 @@ func runExport(st *store.Store, env *cli.Env, format, binder, deck, outPath stri
 	rows, err := action.Deps{Store: st}.ExportRows(binder, deck)
 	if err != nil {
 		return err
+	}
+	// A text decklist is read back by `hoard deck add --file`, which builds
+	// exactly one deck from the file it is given. Writing several containers
+	// into one file would produce something that restores as a single deck
+	// holding everything — the same quiet lie this format exists to end — so
+	// the scope has to be named rather than guessed at.
+	if format == "text" && containers(rows) > 1 {
+		return cli.Usagef("--format text writes one container's list; name it with --deck D or --binder B")
 	}
 
 	if outPath == "" {
@@ -95,4 +104,13 @@ func runExport(st *store.Store, env *cli.Env, format, binder, deck, outPath stri
 	}
 	env.Report().Result("Exported %d cards to %s", copies, outPath)
 	return nil
+}
+
+// containers counts the distinct binders and decks the rows came from.
+func containers(rows []export.Row) int {
+	seen := make(map[string]bool, 1)
+	for _, r := range rows {
+		seen[r.Container] = true
+	}
+	return len(seen)
 }

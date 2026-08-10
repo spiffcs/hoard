@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,8 +196,10 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 	dst := importStore(t)
 	stubFetch(t, cards...)
-	if err := importCmd(dst, "--preserve-binders", file); err != nil {
-		t.Fatalf("hoard import: %v", err)
+	// Partial, not clean: the deck's four Bolts are in the file and are not
+	// coming back this way. The binder halves below still have to be exact.
+	if err := importCmd(dst, "--preserve-binders", file); !errors.Is(err, errPartial) {
+		t.Fatalf("hoard import: err = %v, want the partial sentinel for the skipped deck rows", err)
 	}
 
 	want, err := src.CollectionTotals()
@@ -228,6 +231,62 @@ func TestExportImportRoundTrip(t *testing.T) {
 			t.Error("the deck came back as a binder")
 		}
 	}
+}
+
+// A canonical export's deck rows are skipped, and the exit status has to say
+// so: this exact command against the real collection restored 356 of 2,235
+// copies and exited 0, so a backup script ran green while dropping 22 decks.
+// errPartial is what Run maps to exit 2 — "done, mostly" — and the rows that
+// could be imported are still imported.
+func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
+	const header = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID," +
+		"Container,Container Kind,Board,Price USD\n"
+	const binderRow = "2,Sol Ring,c21,125,nonfoil,,sol-id-1,Binder,binder,main,2.00\n"
+	const deckRow = "4,Lightning Bolt,2x2,117,nonfoil,,bolt-id-1,Fish,deck,main,1.50\n"
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "export.csv")
+		if err := os.WriteFile(path, []byte(header+body), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		return path
+	}
+
+	t.Run("deck rows present", func(t *testing.T) {
+		st := importStore(t)
+		stubFetch(t, importFixtures()...)
+		err := importCmd(st, write(t, binderRow+deckRow))
+		if !errors.Is(err, errPartial) {
+			t.Errorf("err = %v, want the partial sentinel (exit 2)", err)
+		}
+		// The binder half still landed: partial means done-mostly, not undone.
+		totals, _ := st.CollectionTotals()
+		if totals.TotalCopies != 2 {
+			t.Errorf("copies = %d, want the 2 binder copies to have been written anyway",
+				totals.TotalCopies)
+		}
+	})
+
+	// The rehearsal has to predict the real run, or it is not a rehearsal —
+	// and --dry-run is the form the bug was reported in.
+	t.Run("dry run", func(t *testing.T) {
+		st := importStore(t)
+		stubFetch(t, importFixtures()...)
+		if err := importCmd(st, "--dry-run", write(t, binderRow+deckRow)); !errors.Is(err, errPartial) {
+			t.Errorf("err = %v, want the partial sentinel (exit 2)", err)
+		}
+	})
+
+	// And a file with nothing to skip still exits clean, so the status stays
+	// worth reading.
+	t.Run("no deck rows", func(t *testing.T) {
+		st := importStore(t)
+		stubFetch(t, importFixtures()...)
+		if err := importCmd(st, write(t, binderRow)); err != nil {
+			t.Errorf("err = %v, want nil for a file that imported whole", err)
+		}
+	})
 }
 
 // Importing the same content twice is refused via the ledger; --again is the

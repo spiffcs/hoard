@@ -164,6 +164,93 @@ func TestCmdExportJSON(t *testing.T) {
 	}
 }
 
+// The bug this format exists for: a deck could be exported and never restored.
+// `import` skips deck rows on purpose and `deck add --file` reads text
+// decklists only, which nothing emitted — so this is the whole loop, both real
+// commands, asserting that the cards, their counts, their printings, their
+// finishes and their boards all come home.
+func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
+	src := importStore(t)
+	cards := importFixtures()
+	stubFetch(t, cards...)
+	if err := src.UpsertPrintings(cards); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if _, err := src.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
+		[]store.Entry{
+			{ScryfallID: "sol-id-1", Finish: "foil", Board: "main", Quantity: 1},
+			{ScryfallID: "bolt-id-1", Finish: "nonfoil", Board: "main", Quantity: 4},
+			{ScryfallID: "remora-id-1", Finish: "nonfoil", Board: "commander", Quantity: 1},
+		}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+
+	file := filepath.Join(t.TempDir(), "fish.txt")
+	if _, err := execCmd(context.Background(), src,
+		[]string{"export", "--deck", "Fish", "--format", "text", "-o", file}, false); err != nil {
+		t.Fatalf("hoard export --format text: %v", err)
+	}
+	written, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	// Read back into a *different* database, because that is what a restore
+	// is: the source hoard is gone and only the file is left.
+	dst := importStore(t)
+	if _, err := execCmd(context.Background(), dst,
+		[]string{"deck", "add", "--file", file, "--name", "RoundTrip"}, false); err != nil {
+		t.Fatalf("hoard deck add --file (over our own export):\n%s\n%v", written, err)
+	}
+
+	deck, err := dst.DeckByRef("RoundTrip")
+	if err != nil {
+		t.Fatalf("DeckByRef: %v", err)
+	}
+	entries, err := dst.DeckEntries(deck.ID)
+	if err != nil {
+		t.Fatalf("DeckEntries: %v", err)
+	}
+	type held struct {
+		finish, board string
+		qty           int
+	}
+	got := make(map[string]held, len(entries))
+	for _, e := range entries {
+		got[e.Card.Name] = held{e.Finish, e.Board, e.Quantity}
+	}
+	want := map[string]held{
+		"Sol Ring":       {"foil", "main", 1},
+		"Lightning Bolt": {"nonfoil", "main", 4},
+		"Mystic Remora":  {"nonfoil", "commander", 1},
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s came back as %+v, want %+v\nexported file:\n%s", name, got[name], w, written)
+		}
+	}
+	if len(entries) != len(want) {
+		t.Errorf("restored deck holds %d entries, want %d:\n%s", len(entries), len(want), written)
+	}
+}
+
+// --format text writes a file `deck add --file` turns into exactly one deck,
+// so an unscoped export would restore as one deck holding every deck's cards.
+// It has to be a usage error rather than a merge.
+func TestCmdExportTextRefusesMoreThanOneContainer(t *testing.T) {
+	st := exportStore(t)
+	if _, err := execCmd(context.Background(), st, []string{"export", "--format", "text"}, false); err == nil {
+		t.Error("hoard export --format text over the whole collection succeeded, want a usage error")
+	}
+	// Scoped to one container it is exactly the file the reader wants.
+	out, err := execCmd(context.Background(), st, []string{"export", "--deck", "Fish", "--format", "text"}, false)
+	if err != nil {
+		t.Fatalf("hoard export --deck Fish --format text: %v", err)
+	}
+	if out != "1 Mystic Remora (ice) 78\n" {
+		t.Errorf("deck text export:\n%s", out)
+	}
+}
+
 // --json with a foreign --format is a contradiction, not a precedence puzzle.
 func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
 	st := exportStore(t)

@@ -6,6 +6,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -99,7 +100,15 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 		r.Detail("%d into %s%s", res.PerBinder[name], name, note)
 	}
 	if res.SkippedDeckRows > 0 {
-		r.Detail("Skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards.",
+		// A Warn, not a Detail: this line used to sit on stdout among the
+		// per-binder counts, indented like a receipt, while it was in fact
+		// the sentence "most of this file was not imported". It is the one
+		// thing a scripted restore has to see, and Warn is where hoard puts
+		// a partial outcome — marked, and on stderr where the caveats live.
+		// It names the route rather than the command: 'hoard deck add' alone
+		// could not read any file hoard wrote until --format text existed.
+		r.Warn("Skipped %d deck rows: import fills binders. Restore a deck with "+
+			"'hoard export --deck NAME --format text', then 'hoard deck add --file'.",
 			res.SkippedDeckRows)
 	}
 	if res.Refinished > 0 {
@@ -117,6 +126,17 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 	}
 	if o.dryRun {
 		r.Hint("Dry run: nothing was written.")
+	}
+	// An import that skipped the file's decks did not restore the file, and
+	// exiting 0 said it did: a backup script pointed at a canonical export
+	// ran green while dropping every deck in it — 1,879 of 2,235 copies on
+	// the collection this was found against. Exit 2 is hoard's existing word
+	// for "done, mostly" (Run maps errPartial to it), which is exactly what
+	// this is; the receipt above still prints, and the rows that did import
+	// are still written. A dry run reports it too, because a rehearsal that
+	// hides the outcome of the real run is not a rehearsal.
+	if err == nil && res.SkippedDeckRows > 0 {
+		err = fmt.Errorf("%d deck rows were skipped: %w", res.SkippedDeckRows, errPartial)
 	}
 	return err
 }
