@@ -41,9 +41,16 @@ on the shared `Card` type. Do not add a `cards` catalog block.
 }
 ```
 
-`schemaVersion` goes to **1.1.6** — an ADDITION, not a break. See
-[schemaVersion](#schemaversion-116-and-the-rule-going-forward) for why a MODEL
-bump would actively harm.
+`schemaVersion` is **1.0.0** — the first released schema, not an increment.
+This document originally recommended 1.1.6, reasoning about the change as an
+ADDITION to a live lineage; the owner's decision was that nothing has been
+released, so the corrected schema is the baseline the repository publishes
+rather than the sixteenth revision of something nobody has. The nine
+pre-release files are gone and MODEL stays at 1.
+
+That reasoning is kept below rather than deleted, because it is what makes the
+reset safe: these fields never force a MODEL bump, so resetting the number
+breaks no merge. See [schemaVersion](#schemaversion-100-and-the-rule-going-forward).
 
 | | today | **all 16 in `facts`** | A: on `Card` | C: `cards` block |
 |---|---|---|---|---|
@@ -53,7 +60,7 @@ bump would actively harm.
 | `movers` document | 598,882 | **byte-identical** | ~1.16 MB | byte-identical |
 | `hoard` (merge) document | 8.5 MB | **byte-identical** | grows unless split | grows unless split |
 | merge content hash | — | **unmoved by this change** | moves | moves |
-| SchemaVer | 1.1.5 | **1.1.6 ADDITION** | 1.1.6 ADDITION | 1.1.6, or 2.0.0 if rows go lean |
+| SchemaVer | 1.1.5 | **1.0.0 baseline** (would have been 1.1.6 ADDITION) | ADDITION | ADDITION, or MODEL bump if rows go lean |
 
 The shape is decided by blast radius, not by bytes; the field *set* is decided
 by the asymmetry below. Confirmed by measurement, not assumption: with all
@@ -398,14 +405,23 @@ catalog block possible if the ratio ever crosses). If a future refresh
 populates it, it belongs beside `finish` on the row, not in `facts` — a
 separate decision with its own version bump.
 
-## schemaVersion: 1.1.6, and the rule going forward
+## schemaVersion: 1.0.0, and the rule going forward
 
-**This is an ADDITION.** `schema/json/README.md` defines ADDITION as "a new
-optional field or document kind", and the changelog already contains this exact
-change once: **1.1.1 added `card.colorIdentity`** to the holdings, unpriced and
-movers card objects and versioned it as an ADDITION. `facts` is optional, its
-absence means "hoard has not stored this printing's document", and nothing is
-renamed, removed or redefined. `1.1.5 → 1.1.6`.
+**The shipped answer is 1.0.0.** Nothing had ever been released, so the number
+was reset to name a first release rather than continue a private lineage; the
+eight superseded files are deleted and the changelog begins here. The rest of
+this section is the reasoning that was written when the answer was going to be
+1.1.6, and it is kept because it is what licenses the reset: if these fields
+had forced a MODEL bump, renumbering would have been a compatibility event.
+They do not, so it is not.
+
+**As a change, this is an ADDITION.** `schema/json/README.md` defines ADDITION
+as "a new optional field or document kind", and the changelog contained this
+exact change once already: **1.1.1 added `card.colorIdentity`** to the
+holdings, unpriced and movers card objects and versioned it as an ADDITION.
+`facts` is optional, its absence means "hoard has not stored this printing's
+document", and nothing is renamed, removed or redefined. Against a released
+1.1.5 this would have been `1.1.5 → 1.1.6`.
 
 **Breaking is allowed here but would do damage.** `read.go` compares only the
 MODEL component and refuses a document whose MODEL is higher than the build's.
@@ -414,13 +430,16 @@ hands refuses merge documents in which every field it reads is unchanged. The
 cost is real and the benefit is nil. MODEL is a compatibility kill switch, not a
 version number for the size of a release.
 
-There is one genuine wrinkle worth stating rather than hiding: the generated
-schema sets `additionalProperties: false`, so a consumer validating a 1.1.6
-document against the pinned 1.1.5 schema *will* fail on the unknown `facts`
-key. That is inherent to every ADDITION this project has already shipped
-(1.0.1, 1.0.2, 1.1.1, 1.1.2, 1.1.3, 1.1.4, 1.1.5), and the rules already handle
-it: the versioned schema files are immutable, so a consumer holding an old
-document can always fetch the schema it was written against. No change needed.
+There is one genuine wrinkle worth stating rather than hiding, and the reset
+disposes of it rather than answering it: the generated schema sets
+`additionalProperties: false`, so a consumer validating a document against an
+older pinned schema fails on any key added since. That is inherent to every
+ADDITION — and it is why the immutability rule exists, so a consumer holding an
+old document can always fetch the schema it was written against. Here there is
+no older schema to be pinned to: `schema-1.0.0.json` is the first file the rule
+applies to, and the eight that preceded it were deleted precisely because no
+consumer could ever have pinned one. From 1.0.0 forward the rule is live and
+this wrinkle is handled the ordinary way.
 
 **The rule going forward**, proposed as three lines under `## Rules` in
 `schema/json/README.md`, because the recurring case is not covered explicitly:
@@ -438,10 +457,13 @@ document can always fetch the schema it was written against. No change needed.
 `[]` where they previously emitted nothing, while leaving the generated schema
 byte-identical. A byte-identical schema is not the same as an unchanged
 document: a consumer that recorded "339 rows have unknown colour identity" gets
-different data out of the same hoard. By the rule above that is a REVISION. If
-both land in one release, the combined version is **1.2.0** and this document's
-fields fold into that changelog entry; if the fix ships judged as no bump at
-all, this is **1.1.6**. Either way these fields never force MODEL.
+different data out of the same hoard. By the rule above that is a REVISION.
+
+The reset absorbs that question too: both lanes land inside **1.0.0**, which is
+the first released schema and therefore has nothing to be a revision *of*. What
+survives from this paragraph is the part that outlives the numbering — neither
+change forces MODEL, and both move the merge content hash, so they belong in
+one release note rather than two.
 
 ## What happens to `import` and `merge`
 
@@ -597,9 +619,16 @@ indexes several.
    `schema/json/README.md` changelog entry and the three versioning rules.
 
 Tests worth having: a holdings row for a printing with no stored document emits
-no `facts` key at all (not an empty object); a `hoard` document is byte-identical
-to the 1.1.5 output for the same source, so the ledger hash is provably
-unmoved; `--kind` for the five untouched kinds returns byte-identical schemas.
+no `facts` key at all (not an empty object); a `hoard` document carries no
+`facts` whatever the rows handed to it hold, so these fields contribute nothing
+to the ledger hash; `--kind` for the five untouched kinds returns byte-identical
+schemas.
+
+That second one was drafted as "byte-identical to the 1.1.5 output, so the
+ledger hash is provably unmoved", and the version reset makes that half wrong in
+a way worth keeping visible: the document is byte-identical *apart from the
+schemaVersion string*, and `ContentHash` covers that string. See the as-built
+section — the hash moves, and not because of `facts`.
 
 ## The size problem this does not solve
 
@@ -679,3 +708,123 @@ economics depend on how much payload there is to deduplicate.
   with the `colorIdentity` lane working in the same package.
 - Field coverage, layout counts and the value-by-rarity reconciliation came
   from SQL against the copy opened `?mode=ro`.
+
+## As built
+
+Implemented 2026-08-10 on `impl-card-facts`, off `e08ed79`. The shape is what
+this document decided: all sixteen in a `facts` object on the holdings row, and
+nothing on `Card`. Three things came out differently, and each is recorded here
+rather than left for the next reader to rediscover.
+
+### The version is 1.0.0, not 1.1.6
+
+By owner directive, and it changes the framing rather than the code: nothing has
+been released, so this is not an increment to an existing lineage. The corrected
+schema is the **baseline** the repository publishes when it goes public, and the
+nine files under `schema/json/` (1.0.0 through 1.1.5) are pre-release churn
+against a private repository — the `$id` every one of them names has never
+resolved for anybody.
+
+MODEL stays at 1. It is the only component `read.go` enforces, and a first
+release is not a break; moving it to 0 to spell "0.1.0" would put the kill
+switch outside the SchemaVer vocabulary the README cites for no gain. The app's
+own `v0.1.0` tag is a separate number.
+
+The eight superseded files (1.0.1 through 1.1.5) were put to the owner as a
+separate step and **approved**; they are deleted, leaving `schema-1.0.0.json`
+and `schema-latest.json`. Nothing referenced any of them by name — no test,
+Makefile target, workflow or doc — and the binary embeds only
+`schema-latest.json`. `schema-1.0.0.json` was necessarily rewritten in place,
+since the generator names its output after the version.
+
+### The implementation sketch's step 1 was not followed
+
+The sketch called for extending `cardCols` and `store.Card` with the fourteen
+missing columns. Built that way it collides with `cardDetailCols`, which already
+selects thirteen of them into `CardDetail`'s own `*string` fields — the query
+would read each column twice and the outer fields would shadow the embedded
+ones, replacing a nil-means-unknown distinction the detail view depends on with
+an empty string that means nothing. It would also load oracle and flavor text
+into every browse listing, which asked for neither.
+
+Instead: `store.CardFacts` and `Store.CardFactsInContainer`, a query scoped to
+one container's printings, called only from the export row builders. One
+statement per container instead of one per row, since the columns are
+`json_extract` over the whole stored document and a binder holds the same
+printing in several finishes. The blast radius stops where the payload that
+asked for it stops — the same argument this document makes for the JSON shape.
+
+`export.Row` carries `*store.CardFacts` rather than a copy of the type. Sixteen
+fields whose only job is to be handed to the encoder unchanged would otherwise
+be transcribed three times.
+
+### Doc comments: the constraint is the opposite of what was recorded
+
+This document advised keeping field comments to one line and putting rationale
+on the type. Measured against the generator, that is backwards:
+
+- **A type's comment is truncated to its first sentence.** `AddGoComments` runs
+  it through `go/doc`'s `Synopsis`. Everything after sentence one is free — and
+  invisible. `$defs/Card`'s description is "Card identifies one printing in one
+  finish." and always has been; the three sentences after it have never reached
+  a consumer.
+- **A field's comment is carried whole**, newlines and all, and is charged per
+  field.
+- **A struct-typed field keeps its description alongside its `$ref`.** So
+  `holdings.rows[].facts` can carry multi-line prose even though `CardFacts`
+  itself cannot.
+
+This matters directly to the requirement that the "absent in a `hoard`
+document" disclosure reach a consumer. On the type comment it would have been
+silently dropped. It lives on `Holding.Facts` instead, where it is emitted in
+full.
+
+**Open, and deliberately not fixed here.** The same truncation is already
+costing this schema real guidance: `Card`'s Go comment is four sentences, and
+the three after the first — including "so a document joins directly against
+Scryfall bulk data or MTGJSON's AllPrintings", which is the whole point of
+those identifiers — have never reached a consumer. Several other types are in
+the same position. Repairing them means moving prose onto fields, which changes
+the emitted schema and belongs in its own change with its own diff, not folded
+into this one. Recorded here so the next person writing schema prose knows
+where it lands: **rationale on a type is for the reader of the Go file;
+anything a consumer must know goes on a field.**
+
+### Measured, against predictions
+
+The collection has grown since this document was written — 1,952 owned
+printings and 2,063 holdings rows against 1,666 and 1,768, from a database of
+28,078,080 bytes against 25,489,408 — so every absolute figure below sits above
+its prediction. The ratios are what the predictions can be judged on.
+
+| | predicted | measured | note |
+|---|---|---|---|
+| holdings document | 2,035,780 | **2,363,519** | baseline itself moved to 1,103,887; ratio 2.14× vs 2.12× predicted |
+| `schema --kind holdings` | 6,727 | **7,942** | +1,215, all prose — see below |
+| `unpriced`/`movers`/`market`/`report`/`watch`/`summary` schemas | byte-identical | **byte-identical** | 3,627 · 4,416 · 6,622 · 7,484 · 3,921 · 2,727, exactly as predicted |
+| those six documents | byte-identical | **byte-identical** | modulo the five characters of `schemaVersion` |
+| `hoard` document | byte-identical | **byte-identical** | 15,337,237 both, carrying no `facts` |
+| one 100-card deck | 121,645 | **123,071** | from 57,370 |
+| canonical/Moxfield/Archidekt CSV | unchanged | **byte-identical** | |
+
+The holdings schema's +1,215 is entirely comment prose, and is the price of the
+two disclosures this document required: the `holdings.rows[].facts` description
+is 676 bytes and the sixteen field descriptions 1,488, against a `CardFacts`
+type description of 127 (all that survives Synopsis). It is still 7.9 KB —
+nowhere near the 20 KB that would have damaged the use case.
+
+Per-field coverage on the grown collection tracks the figures above: rarity,
+typeLine, cmc, setName, releasedAt, artist and layout 100%, oracleText 99.9%,
+tcgplayerId 99.8%, manaCost 81.3%, flavorText 55.7%, power and toughness 44.3%,
+promoTypes 23.3%, loyalty 1.3%, **printedName 0.0%** — still costing exactly
+zero bytes, still the field a collector needs the first time he buys a Japanese
+card.
+
+### The merge hash moves, and not because of `facts`
+
+`FromSnapshot` clears `Facts`, so the interchange document is byte-identical to
+the baseline's except for the version string. But `ContentHash` covers those
+bytes too, so resetting 1.1.5 to 1.0.0 moves every hash on its own
+(`a56cea8f…` → `3cad631b…` on the owner's database). The hazard this document
+described is real and is now doubly live — the `colorIdentity` fix moves it as
+well. It remains bounded and one-shot, and it should be one release note.

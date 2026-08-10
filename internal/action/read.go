@@ -138,8 +138,24 @@ func (d Deps) ExportRows(binderRef, deckRef string) ([]export.Row, error) {
 	return rows, nil
 }
 
+// factsFor returns one printing's derived characteristics as the export row
+// carries them: a pointer to a copy, nil when hoard has stored no Scryfall
+// document for the printing — so the JSON emits no `facts` key rather than an
+// object full of empty strings.
+func factsFor(facts map[string]store.CardFacts, scryfallID string) *store.CardFacts {
+	f, ok := facts[scryfallID]
+	if !ok {
+		return nil
+	}
+	return &f
+}
+
 func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 	list, err := d.Store.BinderByFinish(id)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := d.Store.CardFactsInContainer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +171,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			ScryfallID:      r.ScryfallID,
 			MTGJSONUUID:     r.MTGJSONUUID,
 			ColorIdentity:   r.ColorIdentity,
+			Facts:           factsFor(facts, r.ScryfallID),
 			Lang:            r.Lang,
 			Container:       name,
 			Kind:            "binder",
@@ -172,6 +189,10 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 	if err != nil {
 		return nil, err
 	}
+	facts, err := d.Store.CardFactsInContainer(id)
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]export.Row, len(entries))
 	for i, e := range entries {
 		rows[i] = export.Row{
@@ -184,6 +205,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 			ScryfallID:      e.Card.ScryfallID,
 			MTGJSONUUID:     e.Card.MTGJSONUUID,
 			ColorIdentity:   e.Card.ColorIdentity,
+			Facts:           factsFor(facts, e.Card.ScryfallID),
 			Lang:            e.Card.Lang,
 			Container:       name,
 			Kind:            "deck",

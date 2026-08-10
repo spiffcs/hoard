@@ -22,6 +22,17 @@ newest versioned file.
   - **REVISION** — compatible reshape: existing consumers keep working but
     should look (field newly optional, constraint loosened).
   - **ADDITION** — purely additive: a new optional field or document kind.
+- **A new card characteristic — optional, absence meaning the card has no such
+  value — is an ADDITION.** It is the recurring case here and the one the
+  three definitions above leave a reader to infer.
+- **Changing what an existing absence means is a REVISION.** A field that used
+  to be omitted and now emits a value breaks no consumer, but it does change
+  what one already reading the data concludes from it.
+- **MODEL is a compatibility kill switch, not a release size.** It is the only
+  component enforced at read time (`hoardjson.Read` refuses a document whose
+  MODEL exceeds the build's), so bumping it locks every installed hoard out of
+  documents it would otherwise read correctly. Spend it on renames, removals
+  and meaning changes; never on a release that is merely large.
 
 ## Vocabulary: borrowed where the ecosystem has one
 
@@ -50,37 +61,20 @@ absent price field means *unpriced*, never free.
 
 ## Changelog
 
-- **1.1.5** — ADDITION: the `hoard` document kind, which carries a whole hoard
-  for interchange — `hoard.printings` (the card catalog, each with the verbatim
-  Scryfall document in `raw`, so a receiving hoard needs no network),
-  `hoard.containers` (binder and deck identity), `hoard.holdings` (the same
-  rows as the holdings document) and `hoard.watches`. It is what `hoard merge`
-  moves between two databases. It is deliberately not a whole database: price
-  and bid history, alt prices, gap records, finish guesses, settings, the
-  dated `value_snapshots` series and the import ledger are all omitted.
-- **1.1.4** — ADDITION: `card.condition` on the holdings document — the copies'
-  wear (`nm`, `lp`, `mp`, `hp`, `dmg`), absent when nobody has assessed them.
-  It describes the copies rather than the printing, so two holdings entries of
-  one printing can differ by it, and it never affects a value: no source hoard
-  reads publishes a per-condition price.
-- **1.1.3** — ADDITION: `card.lang` (Scryfall's language code — `en`, `ja`,
-  `zhs`; absent when hoard has not stored the card's document). Language is
-  part of a printing's identity, since Scryfall mints a distinct id per
-  language, so this names which one `scryfallId` refers to rather than adding
-  a dimension to it.
-- **1.1.2** — ADDITION: `market.comps` — every compared printing's
-  per-vendor comp sheet (tcgplayer market, cardkingdom, manapool, the low
-  ask, the buylist bid, and the spread as a fraction), ordered by value.
-- **1.1.1** — ADDITION: `card.colorIdentity` (Scryfall `color_identity`
-  letters; `[]` means colorless, absent means unknown to hoard) on the
-  holdings, unpriced and movers card objects.
-- **1.1.0** — REVISION: the market analysis re-anchored on tcgplayer's
-  sales-derived market price — `marketUsd`/`belowMarket` replace
-  `dearUsd`/`dearFrom`/`spread`; `ignoredListings` dropped.
-- **1.0.2** — ADDITION: the `watch` document kind (one price-watch check:
-  how many watches were evaluated, which just crossed their thresholds).
-- **1.0.1** — ADDITION: the `report` document kind (dated valuation — totals,
-  per-binder breakdown, top holdings, price-source coverage). Every 1.0.0
-  document remains valid.
-- **1.0.0** — initial model: `summary`, `holdings`, `unpriced`, `movers`,
-  `arbitrage` document kinds under one envelope.
+- **1.0.0** — the first released schema: the `summary`, `holdings`,
+  `unpriced`, `movers`, `market`, `report`, `watch` and `hoard` document kinds
+  under one envelope, and `holdings.rows[].facts` — the sixteen card
+  characteristics hoard derives from a printing's stored Scryfall document
+  (rarity, type line, mana value and cost, oracle and flavor text, power,
+  toughness, loyalty, set name, release date, artist, layout, promo types,
+  printed name, TCGplayer product id). `facts` is absent when hoard has stored
+  no document for the printing, a field inside it is absent when the card has
+  no such value, and a `hoard` document never carries it at all — every
+  printing there already embeds the same document verbatim in
+  `printings[].raw`.
+
+The model went through nine versions before this one. None of them is listed,
+because none of them was ever released: the repository was private throughout,
+the `$id` each of them names has never resolved, and no document carrying one
+reached a consumer who could hold it against a schema. 1.0.0 is the first
+version this file's immutability rule applies to.

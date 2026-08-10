@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/spiffcs/hoard/main/schema/json/schema-1.1.5.json",
+  "$id": "https://raw.githubusercontent.com/spiffcs/hoard/main/schema/json/schema-1.0.0.json",
   "$defs": {
     "Card": {
       "properties": {
@@ -53,6 +53,80 @@
         "finish"
       ],
       "description": "Card identifies one printing in one finish."
+    },
+    "CardFacts": {
+      "properties": {
+        "rarity": {
+          "type": "string",
+          "description": "Rarity is Scryfall's: common, uncommon, rare, mythic, special or bonus."
+        },
+        "typeLine": {
+          "type": "string",
+          "description": "TypeLine is the printed type line (\"Legendary Creature — Elf Druid\"), the front face's on a two-faced card."
+        },
+        "cmc": {
+          "type": "number",
+          "description": "Cmc is the mana value. Zero is a real value — every land has it — so this is absent only when unknown."
+        },
+        "manaCost": {
+          "type": "string",
+          "description": "ManaCost is the printed cost in Scryfall's brace notation (\"{2}{W}{U}\"), absent for a card with no cost."
+        },
+        "oracleText": {
+          "type": "string",
+          "description": "OracleText is the current rules text, newline-separated, with reminder text as Scryfall stores it."
+        },
+        "power": {
+          "type": "string",
+          "description": "Power is the creature's, as printed — text because the game prints \"*\" and \"1+*\" there."
+        },
+        "toughness": {
+          "type": "string",
+          "description": "Toughness is the creature's, as printed, and text for the same reason as power."
+        },
+        "loyalty": {
+          "type": "string",
+          "description": "Loyalty is the planeswalker's starting loyalty, as printed."
+        },
+        "setName": {
+          "type": "string",
+          "description": "SetName is the set's full name (\"Commander 2021\"), so a by-set breakdown reads without a code table."
+        },
+        "releasedAt": {
+          "type": "string",
+          "description": "ReleasedAt is the set's release date (YYYY-MM-DD), which sorts chronologically where a set code does not."
+        },
+        "artist": {
+          "type": "string",
+          "description": "Artist is the illustration's credited artist, as Scryfall spells it."
+        },
+        "layout": {
+          "type": "string",
+          "description": "Layout is Scryfall's layout (\"normal\", \"split\", \"transform\", \"modal_dfc\"), which says how many faces to expect."
+        },
+        "flavorText": {
+          "type": "string",
+          "description": "FlavorText is the printed flavor text, absent on a printing with none."
+        },
+        "promoTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "PromoTypes are Scryfall's variant tags (\"surgefoil\", \"showcase\"), absent on an ordinary printing."
+        },
+        "printedName": {
+          "type": "string",
+          "description": "PrintedName is the name in the card's own language and script, absent on an English printing."
+        },
+        "tcgplayerId": {
+          "type": "integer",
+          "description": "TcgplayerID is TCGplayer's product id for the printing — a marketplace join key, and printing-level, so it does not distinguish finishes."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "CardFacts is one printing's card characteristics, every one of them derived from the Scryfall document hoard has stored for it."
     },
     "Comp": {
       "properties": {
@@ -271,6 +345,10 @@
       "properties": {
         "card": {
           "$ref": "#/$defs/Card"
+        },
+        "facts": {
+          "$ref": "#/$defs/CardFacts",
+          "description": "Facts is what the printing's Scryfall document says the card is —\nrarity, type line, mana value, oracle text and the rest — enough to\ncompute a curve, a rarity breakdown or a text search without fetching\nanything. It is absent when hoard has stored no document for the\nprinting; a field inside it is absent when the card has no such value,\nso an artifact carries no power and an English printing no printedName.\n\nA hoard document never carries it: every printing there embeds its\nScryfall document verbatim in printings[].raw, which is strictly more\nthan this, and adding derived copies would move the content hash `hoard\nmerge` uses to refuse a source it has already applied."
         },
         "count": {
           "type": "integer"

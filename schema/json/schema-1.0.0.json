@@ -2,31 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/spiffcs/hoard/main/schema/json/schema-1.0.0.json",
   "$defs": {
-    "Arbitrage": {
-      "properties": {
-        "comparedPrintings": {
-          "type": "integer",
-          "description": "ComparedPrintings is how many owned printings had two or more vendors;\nIgnoredListings is how many quotes were discarded as unsupported\noutliers. Reported so a consumer knows what was left out."
-        },
-        "ignoredListings": {
-          "type": "integer"
-        },
-        "opportunities": {
-          "items": {
-            "$ref": "#/$defs/Opportunity"
-          },
-          "type": "array"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "comparedPrintings",
-        "ignoredListings",
-        "opportunities"
-      ],
-      "description": "Arbitrage is one pass of vendor disagreement over everything held: the full ranking behind all three tables, not the display's top-N."
-    },
     "Card": {
       "properties": {
         "name": {
@@ -51,6 +26,21 @@
             "foil",
             "etched"
           ]
+        },
+        "condition": {
+          "type": "string",
+          "description": "Condition is the copy's wear — \"nm\", \"lp\", \"mp\", \"hp\", \"dmg\" — absent\nwhen nobody has assessed it, which is most holdings. It describes the\ncopies held rather than the printing, so two entries of one printing can\ndiffer by it.\n\nIt never affects a value in these documents: no source hoard reads\npublishes a per-condition price, so every copy is valued at the\nprinting's price whatever its condition."
+        },
+        "lang": {
+          "type": "string",
+          "description": "Lang is Scryfall's language code for the printing (\"en\", \"ja\", \"zhs\"),\nabsent when hoard has not stored the card's document. Language is part\nof a printing's identity — Scryfall mints a distinct id per language —\nso this names which of them ScryfallID refers to rather than adding a\ndimension to it."
+        },
+        "colorIdentity": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "ColorIdentity is Scryfall's color_identity: WUBRG letters, empty for a\ncolorless card, absent when the identity is not known to hoard (the\ncard's document was never fetched, or the emitting query predates it)."
         }
       },
       "additionalProperties": false,
@@ -63,6 +53,183 @@
         "finish"
       ],
       "description": "Card identifies one printing in one finish."
+    },
+    "CardFacts": {
+      "properties": {
+        "rarity": {
+          "type": "string",
+          "description": "Rarity is Scryfall's: common, uncommon, rare, mythic, special or bonus."
+        },
+        "typeLine": {
+          "type": "string",
+          "description": "TypeLine is the printed type line (\"Legendary Creature — Elf Druid\"), the front face's on a two-faced card."
+        },
+        "cmc": {
+          "type": "number",
+          "description": "Cmc is the mana value. Zero is a real value — every land has it — so this is absent only when unknown."
+        },
+        "manaCost": {
+          "type": "string",
+          "description": "ManaCost is the printed cost in Scryfall's brace notation (\"{2}{W}{U}\"), absent for a card with no cost."
+        },
+        "oracleText": {
+          "type": "string",
+          "description": "OracleText is the current rules text, newline-separated, with reminder text as Scryfall stores it."
+        },
+        "power": {
+          "type": "string",
+          "description": "Power is the creature's, as printed — text because the game prints \"*\" and \"1+*\" there."
+        },
+        "toughness": {
+          "type": "string",
+          "description": "Toughness is the creature's, as printed, and text for the same reason as power."
+        },
+        "loyalty": {
+          "type": "string",
+          "description": "Loyalty is the planeswalker's starting loyalty, as printed."
+        },
+        "setName": {
+          "type": "string",
+          "description": "SetName is the set's full name (\"Commander 2021\"), so a by-set breakdown reads without a code table."
+        },
+        "releasedAt": {
+          "type": "string",
+          "description": "ReleasedAt is the set's release date (YYYY-MM-DD), which sorts chronologically where a set code does not."
+        },
+        "artist": {
+          "type": "string",
+          "description": "Artist is the illustration's credited artist, as Scryfall spells it."
+        },
+        "layout": {
+          "type": "string",
+          "description": "Layout is Scryfall's layout (\"normal\", \"split\", \"transform\", \"modal_dfc\"), which says how many faces to expect."
+        },
+        "flavorText": {
+          "type": "string",
+          "description": "FlavorText is the printed flavor text, absent on a printing with none."
+        },
+        "promoTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "PromoTypes are Scryfall's variant tags (\"surgefoil\", \"showcase\"), absent on an ordinary printing."
+        },
+        "printedName": {
+          "type": "string",
+          "description": "PrintedName is the name in the card's own language and script, absent on an English printing."
+        },
+        "tcgplayerId": {
+          "type": "integer",
+          "description": "TcgplayerID is TCGplayer's product id for the printing — a marketplace join key, and printing-level, so it does not distinguish finishes."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "CardFacts is one printing's card characteristics, every one of them derived from the Scryfall document hoard has stored for it."
+    },
+    "Comp": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "copies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        },
+        "marketUsd": {
+          "type": "number",
+          "description": "MarketUsd is tcgplayer's sales-derived market price."
+        },
+        "cardKingdomUsd": {
+          "type": "number"
+        },
+        "manapoolUsd": {
+          "type": "number"
+        },
+        "lowUsd": {
+          "type": "number"
+        },
+        "lowFrom": {
+          "type": "string"
+        },
+        "buylistUsd": {
+          "type": "number"
+        },
+        "buylistTo": {
+          "type": "string"
+        },
+        "spread": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "copies",
+        "valueUsd",
+        "lowUsd",
+        "lowFrom"
+      ],
+      "description": "Comp is one owned printing's comp sheet: each vendor's USD figure for the owned finish."
+    },
+    "Container": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "binder",
+            "deck"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "description": "Source is the provider a container came from — \"manual\" for a binder,\nthe site's slug for a deck."
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "kind"
+      ],
+      "description": "Container is one binder or deck, carrying the identity a flat holdings row cannot."
+    },
+    "DeckAggregate": {
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "totalCopies": {
+          "type": "integer"
+        },
+        "valueUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "count",
+        "totalCopies",
+        "valueUsd"
+      ],
+      "description": "DeckAggregate rolls every deck into one line, as the report's totals show them; the per-deck split lives in the summary document."
     },
     "DeckTotals": {
       "properties": {
@@ -89,6 +256,35 @@
       ],
       "description": "DeckTotals is one deck's totals, ordered by value as the summary lists them."
     },
+    "FiredWatch": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "under",
+            "over"
+          ]
+        },
+        "thresholdUsd": {
+          "type": "number"
+        },
+        "priceUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "op",
+        "thresholdUsd",
+        "priceUsd"
+      ],
+      "description": "FiredWatch is one alert: the card, the threshold it crossed, and the price that crossed it."
+    },
     "GrandTotal": {
       "properties": {
         "totalCopies": {
@@ -106,10 +302,53 @@
       ],
       "description": "GrandTotal is the whole hoard."
     },
+    "Hoard": {
+      "properties": {
+        "databaseVersion": {
+          "type": "integer",
+          "description": "DatabaseVersion is the source database's SQLite user_version — hoard's\nstorage schema, which versions independently of this document's\nschemaVersion."
+        },
+        "printings": {
+          "items": {
+            "$ref": "#/$defs/Printing"
+          },
+          "type": "array"
+        },
+        "containers": {
+          "items": {
+            "$ref": "#/$defs/Container"
+          },
+          "type": "array"
+        },
+        "holdings": {
+          "$ref": "#/$defs/Holdings"
+        },
+        "watches": {
+          "items": {
+            "$ref": "#/$defs/Watch"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "databaseVersion",
+        "printings",
+        "containers",
+        "holdings",
+        "watches"
+      ],
+      "description": "Hoard is a whole hoard as one interchange document — the payload `hoard merge` moves between two databases."
+    },
     "Holding": {
       "properties": {
         "card": {
           "$ref": "#/$defs/Card"
+        },
+        "facts": {
+          "$ref": "#/$defs/CardFacts",
+          "description": "Facts is what the printing's Scryfall document says the card is —\nrarity, type line, mana value, oracle text and the rest — enough to\ncompute a curve, a rarity breakdown or a text search without fetching\nanything. It is absent when hoard has stored no document for the\nprinting; a field inside it is absent when the card has no such value,\nso an artifact carries no power and an English printing no printedName.\n\nA hoard document never carries it: every printing there embeds its\nScryfall document verbatim in printings[].raw, which is strictly more\nthan this, and adding derived copies would move the content hash `hoard\nmerge` uses to refuse a source it has already applied."
         },
         "count": {
           "type": "integer"
@@ -158,6 +397,35 @@
       ],
       "description": "Holdings is every requested holding, one row per printing-finish-container, in the export's canonical order — the same data as the canonical CSV."
     },
+    "Market": {
+      "properties": {
+        "comparedPrintings": {
+          "type": "integer",
+          "description": "ComparedPrintings is how many owned printings had two or more vendors,\nso a consumer knows how much ground the analysis covered."
+        },
+        "opportunities": {
+          "items": {
+            "$ref": "#/$defs/Opportunity"
+          },
+          "type": "array"
+        },
+        "comps": {
+          "items": {
+            "$ref": "#/$defs/Comp"
+          },
+          "type": "array",
+          "description": "Comps is every compared printing's per-vendor sheet, ordered by\nvalueUsd descending — the data behind the COMPS table."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "comparedPrintings",
+        "opportunities",
+        "comps"
+      ],
+      "description": "Arbitrage is one pass of vendor disagreement over everything held: the full ranking behind all three tables, not the display's top-N."
+    },
     "Movers": {
       "properties": {
         "since": {
@@ -199,7 +467,7 @@
           "enum": [
             "arbitrage",
             "liquid",
-            "spread"
+            "below-market"
           ]
         },
         "buyUsd": {
@@ -208,14 +476,13 @@
         "buyFrom": {
           "type": "string"
         },
-        "dearUsd": {
-          "type": "number"
+        "marketUsd": {
+          "type": "number",
+          "description": "MarketUsd is tcgplayer's market price — computed from actual sales —\nwhen the printing has one; every ranking anchors on it."
         },
-        "dearFrom": {
-          "type": "string"
-        },
-        "spread": {
-          "type": "number"
+        "belowMarket": {
+          "type": "number",
+          "description": "BelowMarket is the fraction the cheapest ask sits under marketUsd."
         },
         "sellUsd": {
           "type": "number"
@@ -225,11 +492,11 @@
         },
         "profitUsd": {
           "type": "number",
-          "description": "ProfitUsd is sellUsd − buyUsd per copy; positive is genuine arbitrage."
+          "description": "ProfitUsd is sellUsd − marketUsd per copy: what a buylist pays over\nthe last-sold price. Positive is genuine arbitrage."
         },
         "liquidity": {
           "type": "number",
-          "description": "Liquidity is the fraction of the cheapest retail a shop will pay."
+          "description": "Liquidity is the fraction of marketUsd a shop will pay."
         }
       },
       "additionalProperties": false,
@@ -240,10 +507,7 @@
         "valueUsd",
         "kind",
         "buyUsd",
-        "buyFrom",
-        "dearUsd",
-        "dearFrom",
-        "spread"
+        "buyFrom"
       ],
       "description": "Opportunity is one owned printing-and-finish with the vendor quotes that make it interesting, tagged with the question it answers: \"arbitrage\" (a shop pays more than the cheapest retail), \"liquid\" (buylist close to retail), or \"spread\" (vendors disagree)."
     },
@@ -280,6 +544,151 @@
         "source"
       ],
       "description": "PriceChange is one printing-and-finish whose per-copy price moved."
+    },
+    "Printing": {
+      "properties": {
+        "scryfallId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "setCode": {
+          "type": "string"
+        },
+        "number": {
+          "type": "string"
+        },
+        "scryfallUrl": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "UpdatedAt is when this row was last refreshed (RFC 3339). A merge keeps\nwhichever side's row is newer, so a stale database cannot overwrite\nfresher prices in the one receiving it."
+        },
+        "mtgjsonUuid": {
+          "type": "string"
+        },
+        "priceUsd": {
+          "type": "number",
+          "description": "Prices are per copy in the named finish, absent when no source prices\nthat finish — absent is not free."
+        },
+        "priceUsdFoil": {
+          "type": "number"
+        },
+        "priceUsdEtched": {
+          "type": "number"
+        },
+        "raw": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "scryfallId",
+        "name",
+        "setCode",
+        "number",
+        "scryfallUrl",
+        "updatedAt"
+      ],
+      "description": "Printing is one row of the card catalog in full, so a hoard receiving this document can accept a card it has never seen without asking Scryfall."
+    },
+    "Report": {
+      "properties": {
+        "asOf": {
+          "type": "string",
+          "description": "AsOf is when the prices were observed (RFC 3339); absent when nothing\nhas ever been priced."
+        },
+        "total": {
+          "$ref": "#/$defs/GrandTotal"
+        },
+        "binder": {
+          "$ref": "#/$defs/Totals"
+        },
+        "decks": {
+          "$ref": "#/$defs/DeckAggregate"
+        },
+        "binders": {
+          "items": {
+            "$ref": "#/$defs/DeckTotals"
+          },
+          "type": "array"
+        },
+        "topHoldings": {
+          "items": {
+            "$ref": "#/$defs/ReportHolding"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/SourceCount"
+          },
+          "type": "array"
+        },
+        "unpriced": {
+          "$ref": "#/$defs/UnpricedCount"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "total",
+        "binder",
+        "decks",
+        "binders",
+        "topHoldings",
+        "sources",
+        "unpriced"
+      ],
+      "description": "Report is the dated valuation: the totals, each binder, the most valuable holdings, and where every price came from."
+    },
+    "ReportHolding": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "copies": {
+          "type": "integer"
+        },
+        "priceUsd": {
+          "type": "number"
+        },
+        "valueUsd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "copies",
+        "valueUsd"
+      ],
+      "description": "ReportHolding is one itemized holding: the per-copy price and what the copies are worth together."
+    },
+    "SourceCount": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "printings": {
+          "type": "integer"
+        },
+        "copies": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "printings",
+        "copies"
+      ],
+      "description": "SourceCount is one price source's coverage: distinct printing-finish combinations and the physical copies they account for."
     },
     "Summary": {
       "properties": {
@@ -342,6 +751,23 @@
       ],
       "description": "Unpriced is every holding no source can price — the copies counting as $0.00 in every total."
     },
+    "UnpricedCount": {
+      "properties": {
+        "printings": {
+          "type": "integer"
+        },
+        "copies": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "printings",
+        "copies"
+      ],
+      "description": "UnpricedCount is the residue no source covers, counted the same way as SourceCount."
+    },
     "UnpricedRow": {
       "properties": {
         "card": {
@@ -365,6 +791,60 @@
         "containers"
       ],
       "description": "UnpricedRow is one unpriced card-and-finish and the containers holding it."
+    },
+    "Watch": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/Card"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "under",
+            "over"
+          ]
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "display": {
+          "type": "string",
+          "description": "Display is the name the alert prints, kept as the source hoard wrote it."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "CreatedAt is when the watch was first set (RFC 3339)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "card",
+        "op",
+        "threshold",
+        "display"
+      ],
+      "description": "Watch is one standing price alert: a threshold on one printing and finish, in one direction."
+    },
+    "WatchCheck": {
+      "properties": {
+        "checked": {
+          "type": "integer"
+        },
+        "fired": {
+          "items": {
+            "$ref": "#/$defs/FiredWatch"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checked",
+        "fired"
+      ],
+      "description": "WatchCheck is one pass over the price watches: how many could be evaluated (an unpriced card answers neither \"under\" nor \"over\" and is not counted), and the watches that just crossed into their condition."
     }
   },
   "properties": {
@@ -378,7 +858,10 @@
         "holdings",
         "unpriced",
         "movers",
-        "arbitrage"
+        "market",
+        "report",
+        "watch",
+        "hoard"
       ]
     },
     "summary": {
@@ -393,8 +876,17 @@
     "movers": {
       "$ref": "#/$defs/Movers"
     },
-    "arbitrage": {
-      "$ref": "#/$defs/Arbitrage"
+    "market": {
+      "$ref": "#/$defs/Market"
+    },
+    "report": {
+      "$ref": "#/$defs/Report"
+    },
+    "watch": {
+      "$ref": "#/$defs/WatchCheck"
+    },
+    "hoard": {
+      "$ref": "#/$defs/Hoard"
     }
   },
   "additionalProperties": false,

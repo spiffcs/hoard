@@ -22,7 +22,15 @@ import (
 // this package emits. MODEL increments on breaking changes, REVISION on
 // compatible reshapes, ADDITION on new optional fields; the matching
 // schema-X.Y.Z.json is immutable once released.
-const SchemaVersion = "1.1.5"
+//
+// 1.0.0 is the first released version. The versions this model passed through
+// before it were pre-release churn in a private repository — no document
+// hoard emitted them into anyone's hands, and the $id every one of them names
+// has never resolved — so the published schema starts from one file rather
+// than inheriting a changelog no consumer could have read. MODEL stays at 1
+// because it is the compatibility kill switch read.go enforces, and nothing
+// about a first release is a break.
+const SchemaVersion = "1.0.0"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -126,12 +134,80 @@ type Holdings struct {
 // Holding is a quantity of one card in one container. PriceUsd is per copy and
 // absent when no source can price the card — absent is not free.
 type Holding struct {
-	Card          Card     `json:"card"`
+	Card Card `json:"card"`
+	// Facts is what the printing's Scryfall document says the card is —
+	// rarity, type line, mana value, oracle text and the rest — enough to
+	// compute a curve, a rarity breakdown or a text search without fetching
+	// anything. It is absent when hoard has stored no document for the
+	// printing; a field inside it is absent when the card has no such value,
+	// so an artifact carries no power and an English printing no printedName.
+	//
+	// A hoard document never carries it: every printing there embeds its
+	// Scryfall document verbatim in printings[].raw, which is strictly more
+	// than this, and adding derived copies would move the content hash `hoard
+	// merge` uses to refuse a source it has already applied.
+	Facts *CardFacts `json:"facts,omitempty"`
+
 	Count         int      `json:"count"`
 	Container     string   `json:"container"`
 	ContainerKind string   `json:"containerKind" jsonschema:"enum=binder,enum=deck"`
 	Board         string   `json:"board"`
 	PriceUsd      *float64 `json:"priceUsd,omitempty"`
+}
+
+// CardFacts is one printing's card characteristics, every one of them derived
+// from the Scryfall document hoard has stored for it.
+//
+// Only this first sentence reaches the schema: AddGoComments runs a type's
+// comment through go/doc's Synopsis, so everything below is for a reader of
+// this file. What a consumer must know is on Holding.Facts instead, which is
+// a field and therefore carried whole.
+//
+// Everything here is a property of the printing, never of the copies held.
+// That is also the line between this and Card beside it: Card carries the
+// identifiers hoard itself stores and joins on — and Finish and Condition,
+// which describe the copies — while these are what hoard reads back out of
+// the printing's document. tcgplayerId sits here for exactly that reason,
+// identifier though it is: TCGplayer mints its product ids per printing, not
+// per finish, so beside the finish-exact ids in Card it would mislead.
+//
+// Coverage varies enormously — type line on everything, loyalty on the
+// planeswalkers, printedName on nothing an English-language collection holds.
+// That is the data and not a gap, which is why every field is omitempty: the
+// cost of a field is proportional to how many cards actually have one.
+type CardFacts struct {
+	// Rarity is Scryfall's: common, uncommon, rare, mythic, special or bonus.
+	Rarity string `json:"rarity,omitempty"`
+	// TypeLine is the printed type line ("Legendary Creature — Elf Druid"), the front face's on a two-faced card.
+	TypeLine string `json:"typeLine,omitempty"`
+	// Cmc is the mana value. Zero is a real value — every land has it — so this is absent only when unknown.
+	Cmc *float64 `json:"cmc,omitempty"`
+	// ManaCost is the printed cost in Scryfall's brace notation ("{2}{W}{U}"), absent for a card with no cost.
+	ManaCost string `json:"manaCost,omitempty"`
+	// OracleText is the current rules text, newline-separated, with reminder text as Scryfall stores it.
+	OracleText string `json:"oracleText,omitempty"`
+	// Power is the creature's, as printed — text because the game prints "*" and "1+*" there.
+	Power string `json:"power,omitempty"`
+	// Toughness is the creature's, as printed, and text for the same reason as power.
+	Toughness string `json:"toughness,omitempty"`
+	// Loyalty is the planeswalker's starting loyalty, as printed.
+	Loyalty string `json:"loyalty,omitempty"`
+	// SetName is the set's full name ("Commander 2021"), so a by-set breakdown reads without a code table.
+	SetName string `json:"setName,omitempty"`
+	// ReleasedAt is the set's release date (YYYY-MM-DD), which sorts chronologically where a set code does not.
+	ReleasedAt string `json:"releasedAt,omitempty"`
+	// Artist is the illustration's credited artist, as Scryfall spells it.
+	Artist string `json:"artist,omitempty"`
+	// Layout is Scryfall's layout ("normal", "split", "transform", "modal_dfc"), which says how many faces to expect.
+	Layout string `json:"layout,omitempty"`
+	// FlavorText is the printed flavor text, absent on a printing with none.
+	FlavorText string `json:"flavorText,omitempty"`
+	// PromoTypes are Scryfall's variant tags ("surgefoil", "showcase"), absent on an ordinary printing.
+	PromoTypes []string `json:"promoTypes,omitempty"`
+	// PrintedName is the name in the card's own language and script, absent on an English printing.
+	PrintedName string `json:"printedName,omitempty"`
+	// TcgplayerID is TCGplayer's product id for the printing — a marketplace join key, and printing-level, so it does not distinguish finishes.
+	TcgplayerID *int64 `json:"tcgplayerId,omitempty"`
 }
 
 // Unpriced is every holding no source can price — the copies counting as

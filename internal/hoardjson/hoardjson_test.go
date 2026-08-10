@@ -36,7 +36,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -82,7 +82,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -130,7 +130,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -170,7 +170,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -216,7 +216,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -250,7 +250,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -344,7 +344,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -428,7 +428,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -458,7 +458,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.5",
+  "schemaVersion": "1.0.0",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -734,11 +734,206 @@ func TestReadRejectsNewerModel(t *testing.T) {
 
 // ReadHoard insists on the kind it names.
 func TestReadHoardRejectsOtherKinds(t *testing.T) {
-	_, err := ReadHoard(strings.NewReader(`{"schemaVersion":"1.1.5","kind":"summary"}`))
+	_, err := ReadHoard(strings.NewReader(`{"schemaVersion":"1.0.0","kind":"summary"}`))
 	if err == nil {
 		t.Fatal("a summary document was accepted as a hoard")
 	}
 	if !strings.Contains(err.Error(), "not a") {
 		t.Errorf("error was %q", err)
+	}
+}
+
+func i64(v int64) *int64 { return &v }
+
+// factRows are the two states the facts object has to keep apart within one
+// printing's worth of data: a creature, which has a power and a toughness, and
+// an artifact, which has neither. Coverage varies field by field — the store
+// reads these out of the printing's Scryfall document, and a card simply does
+// not have every kind of value — so "absent" here must mean "no such value",
+// never "not looked up".
+func factRows() []export.Row {
+	return []export.Row{
+		{Count: 1, Name: "Llanowar Elves", Set: "dom", CollectorNumber: "168",
+			Finish: "nonfoil", ScryfallID: "elf", Container: "Binder",
+			Kind: "binder", Board: "main",
+			Facts: &store.CardFacts{
+				Rarity: "common", TypeLine: "Creature — Elf Druid", CMC: f(1),
+				ManaCost: "{G}", OracleText: "{T}: Add {G}.",
+				Power: "1", Toughness: "1",
+				SetName: "Dominaria", ReleasedAt: "2018-04-27",
+				Artist: "Chris Rahn", Layout: "normal",
+				TCGplayerID: i64(161475),
+			}},
+		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
+			Finish: "foil", ScryfallID: "sol", Container: "Binder",
+			Kind: "binder", Board: "main", PriceUSD: f(2),
+			Facts: &store.CardFacts{
+				Rarity: "uncommon", TypeLine: "Artifact", CMC: f(1),
+				ManaCost: "{1}", OracleText: "{T}: Add {C}{C}.",
+				SetName: "Commander 2021", ReleasedAt: "2021-04-23",
+				Artist: "Mike Bierek", Layout: "normal",
+				PromoTypes:  []string{"surgefoil"},
+				TCGplayerID: i64(235854),
+			}},
+	}
+}
+
+// The holdings document is the one place these fields live, and this is their
+// exact shape: `facts` beside `card`, every field omitted where the card has
+// no such value. Exact bytes, because the emission is a compatibility surface.
+func TestHoldingsDocumentCarriesFacts(t *testing.T) {
+	got := write(t, FromExportRows(factRows()))
+	want := `{
+  "schemaVersion": "1.0.0",
+  "kind": "holdings",
+  "holdings": {
+    "rows": [
+      {
+        "card": {
+          "name": "Llanowar Elves",
+          "scryfallId": "elf",
+          "setCode": "dom",
+          "number": "168",
+          "finish": "nonfoil"
+        },
+        "facts": {
+          "rarity": "common",
+          "typeLine": "Creature — Elf Druid",
+          "cmc": 1,
+          "manaCost": "{G}",
+          "oracleText": "{T}: Add {G}.",
+          "power": "1",
+          "toughness": "1",
+          "setName": "Dominaria",
+          "releasedAt": "2018-04-27",
+          "artist": "Chris Rahn",
+          "layout": "normal",
+          "tcgplayerId": 161475
+        },
+        "count": 1,
+        "container": "Binder",
+        "containerKind": "binder",
+        "board": "main"
+      },
+      {
+        "card": {
+          "name": "Sol Ring",
+          "scryfallId": "sol",
+          "setCode": "c21",
+          "number": "125",
+          "finish": "foil"
+        },
+        "facts": {
+          "rarity": "uncommon",
+          "typeLine": "Artifact",
+          "cmc": 1,
+          "manaCost": "{1}",
+          "oracleText": "{T}: Add {C}{C}.",
+          "setName": "Commander 2021",
+          "releasedAt": "2021-04-23",
+          "artist": "Mike Bierek",
+          "layout": "normal",
+          "promoTypes": [
+            "surgefoil"
+          ],
+          "tcgplayerId": 235854
+        },
+        "count": 2,
+        "container": "Binder",
+        "containerKind": "binder",
+        "board": "main",
+        "priceUsd": 2
+      }
+    ]
+  }
+}
+`
+	if got != want {
+		t.Errorf("holdings document with facts:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A creature carries power and toughness; an artifact must not carry them as
+// empty strings. This is the same defect class as a colorless card reporting
+// an unknown identity: a field the encoder writes where there is nothing to
+// say tells a consumer the card has a value of "".
+func TestFactsOmitFieldsTheCardHasNoValueFor(t *testing.T) {
+	out := write(t, FromExportRows(factRows()))
+	if strings.Count(out, `"power"`) != 1 || strings.Count(out, `"toughness"`) != 1 {
+		t.Errorf("power/toughness must appear once — on the creature only:\n%s", out)
+	}
+	if strings.Contains(out, `""`) {
+		t.Errorf("a field with no value was emitted as an empty string:\n%s", out)
+	}
+	for _, absent := range []string{"loyalty", "flavorText", "printedName"} {
+		if strings.Contains(out, `"`+absent+`"`) {
+			t.Errorf("%s has no value on either card and must be omitted:\n%s", absent, out)
+		}
+	}
+}
+
+// A printing hoard has stored no Scryfall document for has no facts at all —
+// not an object of empty strings, and not an empty object either. The store
+// leaves them nil and that has to survive to the document.
+func TestHoldingsDocumentOmitsFactsWithoutAStoredDocument(t *testing.T) {
+	out := write(t, FromExportRows([]export.Row{
+		{Count: 1, Name: "Unfetched Card", Set: "xxx", CollectorNumber: "1",
+			Finish: "nonfoil", ScryfallID: "unf",
+			Container: "Binder", Kind: "binder", Board: "main"},
+	}))
+	if strings.Contains(out, "facts") {
+		t.Errorf("a printing with no stored document emitted a facts key:\n%s", out)
+	}
+}
+
+// A hoard document must never carry facts, whatever the rows handed to it
+// hold. Every printing in it embeds the same Scryfall document verbatim, so
+// the derived copies would be redundant — and, decisively, `hoard merge`
+// identifies a merge by hashing these bytes and refuses a source already in
+// the ledger. A field added here moves every hash, so every ledger row stops
+// matching and a re-merge doubles every quantity.
+func TestHoardDocumentCarriesNoFacts(t *testing.T) {
+	doc := FromSnapshot(store.Snapshot{Version: 27}, factRows())
+	out := write(t, doc)
+	if strings.Contains(out, "facts") {
+		t.Errorf("the interchange document carried card facts:\n%s", out)
+	}
+	for _, row := range doc.Hoard.Holdings.Rows {
+		if row.Facts != nil {
+			t.Errorf("row %q kept its facts in the hoard document", row.Card.Name)
+		}
+	}
+}
+
+// The other kinds share the Card type, and facts deliberately do not live
+// there: a field on Card lands in eight kinds at once, growing five documents
+// nobody asked to grow — or, worse, being declared in their schemas while
+// their queries never fill it. Their documents must come back untouched.
+func TestKindsSharingCardCarryNoFacts(t *testing.T) {
+	docs := map[string]Document{
+		"summary": FromSummary(store.CollectionTotals{}, nil),
+		"unpriced": FromUnpriced([]store.UnpricedRow{{
+			ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
+			CollectorNumber: "125", Finish: "nonfoil", Copies: 1}}),
+		"movers": FromMovers("2026-06-30T00:00:00Z", "", []store.PriceChange{{
+			ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
+			CollectorNumber: "125", Finish: "foil", Copies: 1, Old: 1, New: 2}}),
+		"report": FromValuation(report.ValuationData{
+			Top: []store.OwnedFinish{{ScryfallID: "sol", Name: "Sol Ring",
+				SetCode: "c21", CollectorNumber: "125", Finish: "foil",
+				Copies: 1, Value: 2}}}),
+		"watch": FromWatchCheck(1, []store.WatchStatus{{
+			Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over"},
+			Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125"}}),
+		"market": FromMarket(market.Result{Compared: 1,
+			Opportunities: []market.Opportunity{{
+				Card: store.OwnedFinish{ScryfallID: "sol", Name: "Sol Ring",
+					SetCode: "c21", CollectorNumber: "125", Finish: "nonfoil",
+					Copies: 1, Value: 2}}}}),
+	}
+	for kind, doc := range docs {
+		if out := write(t, doc); strings.Contains(out, "facts") {
+			t.Errorf("the %s document carried card facts:\n%s", kind, out)
+		}
 	}
 }

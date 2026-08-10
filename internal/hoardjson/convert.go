@@ -48,6 +48,34 @@ func jsonIdentity(ci []string) *[]string {
 	return &ci
 }
 
+// jsonFacts carries the store's derived characteristics onto the row, keeping
+// the one distinction that matters: nil in, nil out, because a printing hoard
+// has stored no document for has no facts at all — and an object of empty
+// strings would claim it had been asked and answered.
+func jsonFacts(f *store.CardFacts) *CardFacts {
+	if f == nil {
+		return nil
+	}
+	return &CardFacts{
+		Rarity:      f.Rarity,
+		TypeLine:    f.TypeLine,
+		Cmc:         f.CMC,
+		ManaCost:    f.ManaCost,
+		OracleText:  f.OracleText,
+		Power:       f.Power,
+		Toughness:   f.Toughness,
+		Loyalty:     f.Loyalty,
+		SetName:     f.SetName,
+		ReleasedAt:  f.ReleasedAt,
+		Artist:      f.Artist,
+		Layout:      f.Layout,
+		FlavorText:  f.FlavorText,
+		PromoTypes:  f.PromoTypes,
+		PrintedName: f.PrintedName,
+		TcgplayerID: f.TCGplayerID,
+	}
+}
+
 func cents(v float64) float64 { return math.Round(v*100) / 100 }
 
 func centsPtr(v *float64) *float64 {
@@ -104,6 +132,7 @@ func FromExportRows(rows []export.Row) Document {
 				Lang:          r.Lang,
 				ColorIdentity: jsonIdentity(r.ColorIdentity),
 			},
+			Facts:         jsonFacts(r.Facts),
 			Count:         r.Count,
 			Container:     r.Container,
 			ContainerKind: r.Kind,
@@ -177,6 +206,22 @@ func FromSnapshot(snap store.Snapshot, rows []export.Row) Document {
 		})
 	}
 	h.Holdings = *FromExportRows(rows).Holdings
+	// The holdings a hoard document carries never carry card facts, and this
+	// is where that is enforced. Two reasons, both load-bearing:
+	//
+	// Every printing above already embeds its Scryfall document verbatim in
+	// Raw, which is strictly more than the sixteen derived fields — so they
+	// would be several hundred kilobytes of redundancy in a payload that is
+	// already the largest hoard emits.
+	//
+	// And `hoard merge` identifies a merge by hashing these exact bytes,
+	// refusing a source it has already applied because holdings accumulate and
+	// a second merge would double every quantity. Adding a field to this
+	// document moves every hash, so every row already in an import ledger
+	// would stop matching and a re-merge would sail past the guard.
+	for i := range h.Holdings.Rows {
+		h.Holdings.Rows[i].Facts = nil
+	}
 
 	doc := envelope(KindHoard)
 	doc.Hoard = h
