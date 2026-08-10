@@ -84,7 +84,7 @@ type Card struct {
 	// ColorIdentity is Scryfall's color_identity: WUBRG letters, empty for a
 	// colorless card, absent when the identity is not known to hoard (the
 	// card's document was never fetched, or the emitting query predates it).
-	ColorIdentity []string `json:"colorIdentity,omitempty"`
+	ColorIdentity *[]string `json:"colorIdentity,omitempty"` // pointer: see jsonIdentity
 }
 
 // Summary is the hoard's totals: the loose collection, each deck, and the

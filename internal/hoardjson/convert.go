@@ -35,6 +35,19 @@ func jsonCondition(c string) string {
 	return c
 }
 
+// jsonIdentity carries a color identity into the document without flattening
+// the one distinction the domain types went to trouble to keep: store.Card
+// leaves the slice nil when no card document has been stored and empty when
+// the card is genuinely colorless, and the schema gives those two states
+// different meanings. Only a pointer can express both, since omitempty reads
+// an empty slice and a nil one as the same zero.
+func jsonIdentity(ci []string) *[]string {
+	if ci == nil {
+		return nil
+	}
+	return &ci
+}
+
 func cents(v float64) float64 { return math.Round(v*100) / 100 }
 
 func centsPtr(v *float64) *float64 {
@@ -89,7 +102,7 @@ func FromExportRows(rows []export.Row) Document {
 				Finish:        r.Finish,
 				Condition:     jsonCondition(r.Condition),
 				Lang:          r.Lang,
-				ColorIdentity: r.ColorIdentity,
+				ColorIdentity: jsonIdentity(r.ColorIdentity),
 			},
 			Count:         r.Count,
 			Container:     r.Container,
@@ -183,7 +196,7 @@ func FromUnpriced(rows []store.UnpricedRow) Document {
 				Number:        r.CollectorNumber,
 				Finish:        r.Finish,
 				Lang:          r.Lang,
-				ColorIdentity: r.ColorIdentity,
+				ColorIdentity: jsonIdentity(r.ColorIdentity),
 			},
 			Copies:     r.Copies,
 			Containers: r.Containers,
@@ -212,7 +225,7 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 				Number:        c.CollectorNumber,
 				Finish:        c.Finish,
 				Lang:          c.Lang,
-				ColorIdentity: c.ColorIdentity,
+				ColorIdentity: jsonIdentity(c.ColorIdentity),
 			},
 			Copies:    c.Copies,
 			OldUsd:    cents(c.Old),
@@ -327,7 +340,7 @@ func FromMarket(res market.Result) Document {
 				Number:        c.Card.CollectorNumber,
 				Finish:        c.Card.Finish,
 				Lang:          c.Card.Lang,
-				ColorIdentity: c.Card.ColorIdentity,
+				ColorIdentity: jsonIdentity(c.Card.ColorIdentity),
 			},
 			Copies:   c.Card.Copies,
 			ValueUsd: cents(c.Card.Value),
@@ -362,7 +375,7 @@ func FromMarket(res market.Result) Document {
 				Number:        r.Card.CollectorNumber,
 				Finish:        r.Card.Finish,
 				Lang:          r.Card.Lang,
-				ColorIdentity: r.Card.ColorIdentity,
+				ColorIdentity: jsonIdentity(r.Card.ColorIdentity),
 			},
 			Copies:   r.Card.Copies,
 			ValueUsd: cents(r.Card.Value),

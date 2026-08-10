@@ -529,6 +529,114 @@ func TestHoldingsDocumentCarriesCondition(t *testing.T) {
 	}
 }
 
+// colorIdentityRows are the three states the field has to keep apart: a
+// colorless card, a card with colors, and a printing whose document hoard has
+// never fetched. store.Card's semantics — nil is unknown, empty is colorless —
+// arrive here through export.Row unchanged.
+func colorIdentityRows() []export.Row {
+	return []export.Row{
+		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
+			Finish: "nonfoil", ScryfallID: "sol", ColorIdentity: []string{},
+			Container: "Binder", Kind: "binder", Board: "main"},
+		{Count: 1, Name: "Swamp", Set: "c21", CollectorNumber: "300",
+			Finish: "nonfoil", ScryfallID: "swp", ColorIdentity: []string{"B"},
+			Container: "Binder", Kind: "binder", Board: "main"},
+		{Count: 1, Name: "Unfetched Card", Set: "xxx", CollectorNumber: "1",
+			Finish: "nonfoil", ScryfallID: "unf",
+			Container: "Binder", Kind: "binder", Board: "main"},
+	}
+}
+
+// identityOf reports what one named row's card says about its identity: the
+// decoded letters, and whether the key was there at all. Absent and `[]` are
+// different answers, so a test cannot ask this question with len() alone.
+func identityOf(t *testing.T, doc string, name string) (letters []string, present bool) {
+	t.Helper()
+	var parsed struct {
+		Holdings struct {
+			Rows []struct {
+				Card map[string]json.RawMessage `json:"card"`
+			} `json:"rows"`
+		} `json:"holdings"`
+	}
+	if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+		t.Fatalf("parsing the emitted document: %v", err)
+	}
+	for _, row := range parsed.Holdings.Rows {
+		var got string
+		if err := json.Unmarshal(row.Card["name"], &got); err != nil {
+			t.Fatalf("parsing a card name: %v", err)
+		}
+		if got != name {
+			continue
+		}
+		raw, ok := row.Card["colorIdentity"]
+		if !ok {
+			return nil, false
+		}
+		if err := json.Unmarshal(raw, &letters); err != nil {
+			t.Fatalf("parsing %s's colorIdentity: %v", name, err)
+		}
+		return letters, true
+	}
+	t.Fatalf("no row for %q in:\n%s", name, doc)
+	return nil, false
+}
+
+// The schema hoard ships gives absence and `[]` different meanings —
+// "identity not known to hoard" and "colorless" — so the emission has to keep
+// them apart. omitempty cannot: it drops an empty slice, which reported every
+// colorless card as one hoard knows nothing about (338 of 1,768 rows on the
+// owner's collection, all of them stored as `[]`). Hence the pointer.
+func TestHoldingsDocumentDistinguishesColorlessFromUnknown(t *testing.T) {
+	out := write(t, FromExportRows(colorIdentityRows()))
+
+	if letters, present := identityOf(t, out, "Sol Ring"); !present || len(letters) != 0 {
+		t.Errorf("a colorless card must emit an empty colorIdentity, got %v (present %v):\n%s",
+			letters, present, out)
+	}
+	if !strings.Contains(out, `"colorIdentity": []`) {
+		t.Errorf("no colorless card emitted the empty array the schema defines:\n%s", out)
+	}
+	if letters, present := identityOf(t, out, "Swamp"); !present || !reflect.DeepEqual(letters, []string{"B"}) {
+		t.Errorf("colored card's identity = %v (present %v), want [B]", letters, present)
+	}
+	if letters, present := identityOf(t, out, "Unfetched Card"); present {
+		t.Errorf("an unfetched printing must omit colorIdentity entirely, got %v:\n%s", letters, out)
+	}
+}
+
+// The distinction has to survive the round trip too. `hoard merge` writes a
+// document, reads it back and plans from what it read, and identifies the
+// merge by hashing those bytes — so re-encoding what was read must reproduce
+// them, colorless rows included.
+func TestColorIdentityRoundTripsAndReEncodesIdentically(t *testing.T) {
+	first := write(t, FromExportRows(colorIdentityRows()))
+
+	doc, err := Read(strings.NewReader(first))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	var again bytes.Buffer
+	if err := Write(&again, doc); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if again.String() != first {
+		t.Fatalf("re-encoding a document that was read back differs:\n got %s\nwant %s",
+			again.String(), first)
+	}
+
+	// Asserted on the re-encoded bytes, not the first ones: a field that
+	// decodes into a state it cannot re-emit passes the emission test and
+	// still loses the fact on the way through.
+	if letters, present := identityOf(t, again.String(), "Sol Ring"); !present || len(letters) != 0 {
+		t.Errorf("colorless became %v (present %v) through the round trip", letters, present)
+	}
+	if _, present := identityOf(t, again.String(), "Unfetched Card"); present {
+		t.Error("an unfetched printing gained a colorIdentity through the round trip")
+	}
+}
+
 // A hoard document survives the round trip that `hoard merge` puts it
 // through — write, read back, plan from what was read. The card document in
 // Raw is the field most likely to be mangled by an encoder, so it is the one
