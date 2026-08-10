@@ -276,13 +276,15 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, 
 
 	// A dry run stops here, with everything it learned and nothing to show
 	// for it in the database: res.ID stays zero because no deck was created,
-	// and the caller must not print it as one. The unresolved cards are
-	// still the partial outcome they would be on the real run — a rehearsal
-	// whose exit code said "clean" while the import it rehearsed would exit
-	// 2 would be the one thing a rehearsal must never do.
+	// and the caller must not print it as one. The skipped lines and the
+	// unresolved cards are still the partial outcome they would be on the
+	// real run — a rehearsal whose exit code said "clean" while the import
+	// it rehearsed would exit 2 would be the one thing a rehearsal must
+	// never do. So this guard counts what the real one below counts; see
+	// there for why unreadable lines are in that count.
 	if o.DryRun {
-		if n := len(res.Unresolved); n > 0 {
-			return res, fmt.Errorf("%d cards would not resolve: %w", n, ErrPartial)
+		if n := len(deck.Skipped) + len(res.Unresolved); n > 0 {
+			return res, fmt.Errorf("%d lines would not resolve: %w", n, ErrPartial)
 		}
 		return res, nil
 	}
@@ -304,8 +306,24 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, 
 	if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
 		return res, err
 	}
-	if n := len(res.Unresolved); n > 0 {
-		return res, fmt.Errorf("%d cards were skipped: %w", n, ErrPartial)
+	// Two ways a decklist line fails to become a card, and both of them are
+	// this import not having imported the list: the line did not parse
+	// (deck.Skipped, counted by the frontend that did the parsing) or it
+	// parsed and nothing answered it (res.Unresolved). Only the second used
+	// to reach the exit status, so a deck restore that read one line of a
+	// 99-card file exited 0 with the other 98 named on stderr — a scripted
+	// restore could not tell that from a clean one. AddList has always
+	// summed both; this is the same condition, and it did not have a second
+	// answer.
+	//
+	// Changing an exit status is a contract change, made deliberately here
+	// on the precedent of c9d5b87, which made exactly this one for `import`
+	// after a canonical export round trip dropped 1,879 of 2,235 copies and
+	// exited green. The argument carries unchanged: exit 2 is hoard's word
+	// for "done, mostly", the receipt still prints, and the lines that did
+	// import are still written.
+	if n := len(deck.Skipped) + len(res.Unresolved); n > 0 {
+		return res, fmt.Errorf("%d lines were skipped: %w", n, ErrPartial)
 	}
 	return res, nil
 }
