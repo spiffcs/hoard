@@ -232,6 +232,23 @@ func TestEnrichedCount(t *testing.T) {
 	}
 }
 
+// An empty catalog is what a fresh hoard has, and it is the case the aggregate
+// gets wrong if it is written carelessly: enrichedExpr is summed rather than
+// counted, and SUM returns NULL over zero rows where COUNT returns 0. The scan
+// into an int fails outright, so this is a first-run defect rather than a
+// wrong number.
+func TestEnrichedCountOnAnEmptyCatalog(t *testing.T) {
+	s := newTestStore(t)
+
+	enriched, total, err := s.EnrichedCount()
+	if err != nil {
+		t.Fatalf("EnrichedCount on an empty catalog: %v", err)
+	}
+	if enriched != 0 || total != 0 {
+		t.Errorf("got %d/%d, want 0/0", enriched, total)
+	}
+}
+
 // "common" is a substring of "uncommon", so a substring match on rarity returns
 // the exact opposite of what was asked for. Rarity is a closed set and is
 // matched exactly.

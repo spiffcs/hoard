@@ -239,12 +239,11 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 	d.Name = strings.TrimSuffix(id, "-id")
 	d.SetCode = "uma"
 	d.CollectorNumber = "85"
-	uri := "http://img.test/" + id
-	d.ImageURI = &uri
+	d.ImageURI = "http://img.test/" + id
 	tcg := int64(12345)
 	d.TCGplayerID = &tcg
-	ck, ckFoil := "https://mtgjson.com/links/plain", "https://mtgjson.com/links/foil"
-	d.CKURL, d.CKFoilURL = &ck, &ckFoil
+	d.CKURL = "https://mtgjson.com/links/plain"
+	d.CKFoilURL = "https://mtgjson.com/links/foil"
 	return d, f.err
 }
 
@@ -2801,10 +2800,10 @@ func TestDetailLinesCardFrameOrder(t *testing.T) {
 	d := detail{card: store.CardDetail{
 		Card: store.Card{Name: "Ulamog, the Infinite Gyre", SetCode: "uma",
 			CollectorNumber: "7", ColorIdentity: []string{}, ManaCost: p("{11}")},
-		TypeLine: p("Legendary Creature — Eldrazi"), Rarity: p("mythic"),
-		OracleText: p("Annihilator 4"), FlavorText: p("A rising dread."),
-		Power: p("10"), Toughness: p("10"),
-		Artist: p("Mark Tedin"), SetName: p("Ultimate Masters"), ReleasedAt: p("2018-12-07"),
+		TypeLine: "Legendary Creature — Eldrazi", Rarity: "mythic",
+		OracleText: "Annihilator 4", FlavorText: "A rising dread.",
+		Power: "10", Toughness: "10",
+		Artist: "Mark Tedin", SetName: "Ultimate Masters", ReleasedAt: "2018-12-07",
 		Enriched: true,
 	}}
 	lines := m.detailLines(d, 80)
@@ -2852,10 +2851,9 @@ func TestDetailImageAttachesToItsCard(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, 2, 4))
 		return img, nil
 	}
-	uri := "https://img/card.jpg"
 	m.detail = &detail{card: store.CardDetail{}}
 	m.detail.card.ScryfallID = "sf1"
-	m.detail.card.ImageURI = &uri
+	m.detail.card.ImageURI = "https://img/card.jpg"
 
 	cmd := m.fetchDetailImage()
 	if cmd == nil {
@@ -2886,16 +2884,75 @@ func TestDetailImageAttachesToItsCard(t *testing.T) {
 	}
 }
 
+// CardDetail's fields carry one absence — the empty string — so the overlay
+// cannot read "nobody has looked" off any of them. Enriched is what says that,
+// and this pins the two halves of the consequence: an unfetched printing gets
+// the refresh hint, and a printing that simply has little to say does not.
+//
+// Without this, converting the fields to plain strings would quietly turn the
+// hint into either a permanent fixture or a dead branch, and every existing
+// detail test would still pass.
+func TestDetailLinesHintOnlyWhenUnfetched(t *testing.T) {
+	m := newTestModel(t, testStore())
+	const hint = "card details not stored yet"
+
+	// Enriched, and sparse: a vanilla creature with no flavor text, no
+	// loyalty, no printed name. Every one of those reads "" — the same as an
+	// unfetched card's — so only Enriched can tell them apart.
+	sparse := detail{card: store.CardDetail{
+		Card:     store.Card{Name: "Grizzly Bears", SetCode: "dom", CollectorNumber: "1"},
+		TypeLine: "Creature — Bear", Rarity: "common",
+		Power: "2", Toughness: "2", Enriched: true,
+	}}
+	if got := strings.Join(m.detailLines(sparse, 80), "\n"); strings.Contains(got, hint) {
+		t.Errorf("a fetched card with sparse data must not be offered a refresh:\n%s", got)
+	}
+
+	// The same emptiness, but nothing was ever stored.
+	unfetched := detail{card: store.CardDetail{
+		Card: store.Card{Name: "Grizzly Bears", SetCode: "dom", CollectorNumber: "1"},
+	}}
+	if got := strings.Join(m.detailLines(unfetched, 80), "\n"); !strings.Contains(got, hint) {
+		t.Errorf("an unfetched printing must be told to refresh:\n%s", got)
+	}
+}
+
+// The art fetch is guarded on there being a URL, and after the conversion that
+// guard is an empty-string test rather than a nil one. Both directions matter:
+// a guard that stopped firing would send the fetcher after an empty URL, and
+// one that always fired would kill card art outright.
+func TestDetailImageNeedsAURL(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m.imgTier = ui.ImageHalfblock
+	m.imageFetch = func(ctx context.Context, id, url string) (image.Image, error) {
+		if url == "" {
+			t.Error("the fetcher was handed an empty image URL")
+		}
+		return image.NewRGBA(image.Rect(0, 0, 2, 4)), nil
+	}
+
+	m.detail = &detail{card: store.CardDetail{}}
+	m.detail.card.ScryfallID = "sf1"
+	if cmd := m.fetchDetailImage(); cmd != nil {
+		cmd() // surfaces the empty URL through the fetcher above
+		t.Error("a printing with no stored image URL must not start a fetch")
+	}
+
+	m.detail.card.ImageURI = "https://img/card.jpg"
+	if m.fetchDetailImage() == nil {
+		t.Error("no fetch started for a printing that does have an image URL")
+	}
+}
+
 // A terminal too narrow for side-by-side stacks the image between the
 // card's details and hoard's HELD/PRICE facts.
 func TestDetailImageStacksWhenNarrow(t *testing.T) {
 	m := newTestModel(t, testStore())
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
 	m = next.(Model)
-	uri := "https://img/x.jpg"
 	m.detail = &detail{card: store.CardDetail{}}
 	m.detail.card.Name = "Sol Ring"
-	m.detail.card.ImageURI = &uri
+	m.detail.card.ImageURI = "https://img/x.jpg"
 	m.detail.image = []string{"IMGROW1", "IMGROW2"}
 
 	out := m.View()

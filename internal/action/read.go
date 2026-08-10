@@ -138,16 +138,25 @@ func (d Deps) ExportRows(binderRef, deckRef string) ([]export.Row, error) {
 	return rows, nil
 }
 
-// factsFor returns one printing's derived characteristics as the export row
+// detailFor returns one printing's derived characteristics as the export row
 // carries them: a pointer to a copy, nil when hoard has stored no Scryfall
-// document for the printing — so the JSON emits no `facts` key rather than an
-// object full of empty strings.
-func factsFor(facts map[string]store.CardFacts, scryfallID string) *store.CardFacts {
-	f, ok := facts[scryfallID]
-	if !ok {
+// document for the printing — so the JSON emits no `detail` key rather than an
+// object full of empty fields.
+//
+// Enriched is the test, and the only one. It is the same signal the browse
+// overlay branches on, so a printing that shows "card details not stored yet"
+// in the TUI is exactly a printing the JSON omits `detail` for — those two
+// used to be decided by different mechanisms and were only accidentally in
+// agreement.
+//
+// A printing missing from the map yields the zero value, whose Enriched is
+// false, so it takes the same branch without a second check to keep in step.
+func detailFor(details map[string]store.CardDetail, scryfallID string) *store.CardDetail {
+	d := details[scryfallID]
+	if !d.Enriched {
 		return nil
 	}
-	return &f
+	return &d
 }
 
 func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
@@ -155,7 +164,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	facts, err := d.Store.CardFactsInContainer(id)
+	details, err := d.Store.CardDetailsInContainer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +180,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			ScryfallID:      r.ScryfallID,
 			MTGJSONUUID:     r.MTGJSONUUID,
 			ColorIdentity:   r.ColorIdentity,
-			Facts:           factsFor(facts, r.ScryfallID),
+			Detail:          detailFor(details, r.ScryfallID),
 			Lang:            r.Lang,
 			Container:       name,
 			Kind:            "binder",
@@ -189,7 +198,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	facts, err := d.Store.CardFactsInContainer(id)
+	details, err := d.Store.CardDetailsInContainer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +214,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 			ScryfallID:      e.Card.ScryfallID,
 			MTGJSONUUID:     e.Card.MTGJSONUUID,
 			ColorIdentity:   e.Card.ColorIdentity,
-			Facts:           factsFor(facts, e.Card.ScryfallID),
+			Detail:          detailFor(details, e.Card.ScryfallID),
 			Lang:            e.Card.Lang,
 			Container:       name,
 			Kind:            "deck",

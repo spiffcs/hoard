@@ -402,10 +402,10 @@ func cardLinks(c store.CardDetail, foil bool) []cardLink {
 	// page — still the exact card — and only then the name search.
 	ck := "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=" + q
 	switch {
-	case foil && deref(c.CKFoilURL) != "":
-		ck = *c.CKFoilURL
-	case deref(c.CKURL) != "":
-		ck = *c.CKURL
+	case foil && c.CKFoilURL != "":
+		ck = c.CKFoilURL
+	case c.CKURL != "":
+		ck = c.CKURL
 	}
 	links := []cardLink{
 		{"tcgplayer.com", tcg},
@@ -486,7 +486,7 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 	}
 	out = append(out, ui.Truncate(name, width))
 
-	if line := joinNonEmpty(" · ", deref(c.TypeLine), deref(c.Rarity)); line != "" {
+	if line := joinNonEmpty(" · ", c.TypeLine, c.Rarity); line != "" {
 		out = append(out, ui.Truncate(line, width))
 	}
 
@@ -496,13 +496,13 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 		out = append(out, dim("card details not stored yet · press : and run UpdatePrices"))
 	}
 
-	if c.OracleText != nil && *c.OracleText != "" {
+	if c.OracleText != "" {
 		out = append(out, "")
-		for _, para := range strings.Split(*c.OracleText, "\n") {
+		for _, para := range strings.Split(c.OracleText, "\n") {
 			out = append(out, wrapHang(para, cardW)...)
 		}
 	}
-	if flavor := deref(c.FlavorText); flavor != "" {
+	if flavor := c.FlavorText; flavor != "" {
 		out = append(out, "")
 		for _, para := range strings.Split(flavor, "\n") {
 			for _, line := range wrap(para, cardW) {
@@ -520,8 +520,8 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 	}
 	// The frame's footer: who drew it, where and when it was printed.
 	footer := joinNonEmpty(" · ",
-		deref(c.Artist), deref(c.SetName),
-		ui.Printing(c.SetCode, c.CollectorNumber), deref(c.ReleasedAt))
+		c.Artist, c.SetName,
+		ui.Printing(c.SetCode, c.CollectorNumber), c.ReleasedAt)
 	out = append(out, dim(ui.Truncate(footer, width)))
 	return out
 }
@@ -909,10 +909,10 @@ func safeFrac(delta, base float64) float64 {
 // statBox is the card's bottom-right stat: "10/10" for a creature,
 // "loyalty 4" for a planeswalker, empty for everything else.
 func statBox(c store.CardDetail) string {
-	if p, t := deref(c.Power), deref(c.Toughness); p != "" || t != "" {
+	if p, t := c.Power, c.Toughness; p != "" || t != "" {
 		return p + "/" + t
 	}
-	if l := deref(c.Loyalty); l != "" {
+	if l := c.Loyalty; l != "" {
 		return "loyalty " + l
 	}
 	return ""
@@ -963,7 +963,11 @@ func wrap(s string, width int) []string {
 	return append(out, line)
 }
 
-// deref is a nullable string as text, empty when unknown.
+// deref is one of store.Card's nullable strings as text, empty when unknown.
+//
+// Card keeps its pointers — it is the listing type, shared far wider than this
+// overlay. CardDetail's own fields need no deref: the empty string is that
+// type's absence, so they are read directly.
 func deref(p *string) string {
 	if p == nil {
 		return ""

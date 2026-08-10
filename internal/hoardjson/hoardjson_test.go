@@ -745,21 +745,24 @@ func TestReadHoardRejectsOtherKinds(t *testing.T) {
 
 func i64(v int64) *int64 { return &v }
 
-// factRows are the two states the facts object has to keep apart within one
+func str(v string) *string { return &v }
+
+// detailRows are the two states the detail object has to keep apart within one
 // printing's worth of data: a creature, which has a power and a toughness, and
 // an artifact, which has neither. Coverage varies field by field — the store
 // reads these out of the printing's Scryfall document, and a card simply does
 // not have every kind of value — so "absent" here must mean "no such value",
 // never "not looked up".
-func factRows() []export.Row {
+func detailRows() []export.Row {
 	return []export.Row{
 		{Count: 1, Name: "Llanowar Elves", Set: "dom", CollectorNumber: "168",
 			Finish: "nonfoil", ScryfallID: "elf", Container: "Binder",
 			Kind: "binder", Board: "main",
-			Facts: &store.CardFacts{
+			Detail: &store.CardDetail{
+				Card:   store.Card{ManaCost: str("{G}")},
 				Rarity: "common", TypeLine: "Creature — Elf Druid", CMC: f(1),
-				ManaCost: "{G}", OracleText: "{T}: Add {G}.",
-				Power: "1", Toughness: "1",
+				OracleText: "{T}: Add {G}.",
+				Power:      "1", Toughness: "1",
 				SetName: "Dominaria", ReleasedAt: "2018-04-27",
 				Artist: "Chris Rahn", Layout: "normal",
 				TCGplayerID: i64(161475),
@@ -767,10 +770,11 @@ func factRows() []export.Row {
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
 			Finish: "foil", ScryfallID: "sol", Container: "Binder",
 			Kind: "binder", Board: "main", PriceUSD: f(2),
-			Facts: &store.CardFacts{
+			Detail: &store.CardDetail{
+				Card:   store.Card{ManaCost: str("{1}")},
 				Rarity: "uncommon", TypeLine: "Artifact", CMC: f(1),
-				ManaCost: "{1}", OracleText: "{T}: Add {C}{C}.",
-				SetName: "Commander 2021", ReleasedAt: "2021-04-23",
+				OracleText: "{T}: Add {C}{C}.",
+				SetName:    "Commander 2021", ReleasedAt: "2021-04-23",
 				Artist: "Mike Bierek", Layout: "normal",
 				PromoTypes:  []string{"surgefoil"},
 				TCGplayerID: i64(235854),
@@ -779,10 +783,10 @@ func factRows() []export.Row {
 }
 
 // The holdings document is the one place these fields live, and this is their
-// exact shape: `facts` beside `card`, every field omitted where the card has
+// exact shape: `detail` beside `card`, every field omitted where the card has
 // no such value. Exact bytes, because the emission is a compatibility surface.
-func TestHoldingsDocumentCarriesFacts(t *testing.T) {
-	got := write(t, FromExportRows(factRows()))
+func TestHoldingsDocumentCarriesDetail(t *testing.T) {
+	got := write(t, FromExportRows(detailRows()))
 	want := `{
   "schemaVersion": "1.0.0",
   "kind": "holdings",
@@ -796,7 +800,7 @@ func TestHoldingsDocumentCarriesFacts(t *testing.T) {
           "number": "168",
           "finish": "nonfoil"
         },
-        "facts": {
+        "detail": {
           "rarity": "common",
           "typeLine": "Creature — Elf Druid",
           "cmc": 1,
@@ -823,7 +827,7 @@ func TestHoldingsDocumentCarriesFacts(t *testing.T) {
           "number": "125",
           "finish": "foil"
         },
-        "facts": {
+        "detail": {
           "rarity": "uncommon",
           "typeLine": "Artifact",
           "cmc": 1,
@@ -849,7 +853,7 @@ func TestHoldingsDocumentCarriesFacts(t *testing.T) {
 }
 `
 	if got != want {
-		t.Errorf("holdings document with facts:\n%s\nwant:\n%s", got, want)
+		t.Errorf("holdings document with detail:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -857,8 +861,8 @@ func TestHoldingsDocumentCarriesFacts(t *testing.T) {
 // empty strings. This is the same defect class as a colorless card reporting
 // an unknown identity: a field the encoder writes where there is nothing to
 // say tells a consumer the card has a value of "".
-func TestFactsOmitFieldsTheCardHasNoValueFor(t *testing.T) {
-	out := write(t, FromExportRows(factRows()))
+func TestDetailOmitsFieldsTheCardHasNoValueFor(t *testing.T) {
+	out := write(t, FromExportRows(detailRows()))
 	if strings.Count(out, `"power"`) != 1 || strings.Count(out, `"toughness"`) != 1 {
 		t.Errorf("power/toughness must appear once — on the creature only:\n%s", out)
 	}
@@ -872,44 +876,47 @@ func TestFactsOmitFieldsTheCardHasNoValueFor(t *testing.T) {
 	}
 }
 
-// A printing hoard has stored no Scryfall document for has no facts at all —
+// A printing hoard has stored no Scryfall document for has no detail at all —
 // not an object of empty strings, and not an empty object either. The store
-// leaves them nil and that has to survive to the document.
-func TestHoldingsDocumentOmitsFactsWithoutAStoredDocument(t *testing.T) {
+// leaves it out of the map, action turns that into a nil row field, and that
+// has to survive to the document: the MISSING OBJECT is the only way this
+// format says "nobody has looked", since an empty field inside it means the
+// much weaker "the card has no such value".
+func TestHoldingsDocumentOmitsDetailWithoutAStoredDocument(t *testing.T) {
 	out := write(t, FromExportRows([]export.Row{
 		{Count: 1, Name: "Unfetched Card", Set: "xxx", CollectorNumber: "1",
 			Finish: "nonfoil", ScryfallID: "unf",
 			Container: "Binder", Kind: "binder", Board: "main"},
 	}))
-	if strings.Contains(out, "facts") {
-		t.Errorf("a printing with no stored document emitted a facts key:\n%s", out)
+	if strings.Contains(out, "detail") {
+		t.Errorf("a printing with no stored document emitted a detail key:\n%s", out)
 	}
 }
 
-// A hoard document must never carry facts, whatever the rows handed to it
+// A hoard document must never carry detail, whatever the rows handed to it
 // hold. Every printing in it embeds the same Scryfall document verbatim, so
 // the derived copies would be redundant — and, decisively, `hoard merge`
 // identifies a merge by hashing these bytes and refuses a source already in
 // the ledger. A field added here moves every hash, so every ledger row stops
 // matching and a re-merge doubles every quantity.
-func TestHoardDocumentCarriesNoFacts(t *testing.T) {
-	doc := FromSnapshot(store.Snapshot{Version: 27}, factRows())
+func TestHoardDocumentCarriesNoDetail(t *testing.T) {
+	doc := FromSnapshot(store.Snapshot{Version: 27}, detailRows())
 	out := write(t, doc)
-	if strings.Contains(out, "facts") {
-		t.Errorf("the interchange document carried card facts:\n%s", out)
+	if strings.Contains(out, "detail") {
+		t.Errorf("the interchange document carried card detail:\n%s", out)
 	}
 	for _, row := range doc.Hoard.Holdings.Rows {
-		if row.Facts != nil {
-			t.Errorf("row %q kept its facts in the hoard document", row.Card.Name)
+		if row.Detail != nil {
+			t.Errorf("row %q kept its detail in the hoard document", row.Card.Name)
 		}
 	}
 }
 
-// The other kinds share the Card type, and facts deliberately do not live
+// The other kinds share the Card type, and detail deliberately does not live
 // there: a field on Card lands in eight kinds at once, growing five documents
 // nobody asked to grow — or, worse, being declared in their schemas while
 // their queries never fill it. Their documents must come back untouched.
-func TestKindsSharingCardCarryNoFacts(t *testing.T) {
+func TestKindsSharingCardCarryNoDetail(t *testing.T) {
 	docs := map[string]Document{
 		"summary": FromSummary(store.CollectionTotals{}, nil),
 		"unpriced": FromUnpriced([]store.UnpricedRow{{
@@ -932,8 +939,8 @@ func TestKindsSharingCardCarryNoFacts(t *testing.T) {
 					Copies: 1, Value: 2}}}}),
 	}
 	for kind, doc := range docs {
-		if out := write(t, doc); strings.Contains(out, "facts") {
-			t.Errorf("the %s document carried card facts:\n%s", kind, out)
+		if out := write(t, doc); strings.Contains(out, "detail") {
+			t.Errorf("the %s document carried card detail:\n%s", kind, out)
 		}
 	}
 }

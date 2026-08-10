@@ -434,14 +434,14 @@ func TestCardLinksCKPerFinish(t *testing.T) {
 	}
 
 	plain, foil := "https://mtgjson.com/links/aa", "https://mtgjson.com/links/bb"
-	c.CKURL, c.CKFoilURL = &plain, &foil
+	c.CKURL, c.CKFoilURL = plain, foil
 	if got := cardLinks(c, false)[2].url; got != plain {
 		t.Errorf("nonfoil link = %q, want the plain page", got)
 	}
 	if got := cardLinks(c, true)[2].url; got != foil {
 		t.Errorf("foil link = %q, want the foil page", got)
 	}
-	c.CKFoilURL = nil
+	c.CKFoilURL = ""
 	if got := cardLinks(c, true)[2].url; got != plain {
 		t.Errorf("foil holding with no foil page = %q, want the plain page", got)
 	}

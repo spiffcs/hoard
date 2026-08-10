@@ -84,14 +84,14 @@ func (m *Model) transmitSettle() tea.Cmd {
 func (m *Model) fetchDetailImage() tea.Cmd {
 	d := m.detail
 	if m.imgTier == ui.ImageNone || m.imageFetch == nil ||
-		d == nil || d.card.ImageURI == nil {
+		d == nil || d.card.ImageURI == "" {
 		return nil
 	}
 	// Fit the card into the rows and columns the overlay actually has:
 	// rows ≈ cols·aspect/2, inverted inside detailImageCols.
 	cols, aspect := m.detailImageCols(), m.artAspect()
 	fetch, tier := m.imageFetch, m.imgTier
-	ctx, id, url := m.ctx, d.card.ScryfallID, *d.card.ImageURI
+	ctx, id, url := m.ctx, d.card.ScryfallID, d.card.ImageURI
 	d.imagePending = true
 
 	return func() tea.Msg {

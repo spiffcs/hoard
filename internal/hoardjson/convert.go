@@ -48,32 +48,48 @@ func jsonIdentity(ci []string) *[]string {
 	return &ci
 }
 
-// jsonFacts carries the store's derived characteristics onto the row, keeping
+// jsonDetail carries the store's derived characteristics onto the row, keeping
 // the one distinction that matters: nil in, nil out, because a printing hoard
-// has stored no document for has no facts at all — and an object of empty
+// has stored no document for has no detail at all — and an object of empty
 // strings would claim it had been asked and answered.
-func jsonFacts(f *store.CardFacts) *CardFacts {
-	if f == nil {
+//
+// Inside the object, empty stays empty and omitempty drops it, which is the
+// store's convention and this document's agreeing: absence of a field says the
+// card has no such value, and only absence of the whole object says nobody has
+// looked.
+func jsonDetail(d *store.CardDetail) *CardDetail {
+	if d == nil {
 		return nil
 	}
-	return &CardFacts{
-		Rarity:      f.Rarity,
-		TypeLine:    f.TypeLine,
-		Cmc:         f.CMC,
-		ManaCost:    f.ManaCost,
-		OracleText:  f.OracleText,
-		Power:       f.Power,
-		Toughness:   f.Toughness,
-		Loyalty:     f.Loyalty,
-		SetName:     f.SetName,
-		ReleasedAt:  f.ReleasedAt,
-		Artist:      f.Artist,
-		Layout:      f.Layout,
-		FlavorText:  f.FlavorText,
-		PromoTypes:  f.PromoTypes,
-		PrintedName: f.PrintedName,
-		TcgplayerID: f.TCGplayerID,
+	return &CardDetail{
+		Rarity:      d.Rarity,
+		TypeLine:    d.TypeLine,
+		Cmc:         d.CMC,
+		ManaCost:    derefString(d.ManaCost),
+		OracleText:  d.OracleText,
+		Power:       d.Power,
+		Toughness:   d.Toughness,
+		Loyalty:     d.Loyalty,
+		SetName:     d.SetName,
+		ReleasedAt:  d.ReleasedAt,
+		Artist:      d.Artist,
+		Layout:      d.Layout,
+		FlavorText:  d.FlavorText,
+		PromoTypes:  d.PromoTypes,
+		PrintedName: d.PrintedName,
+		TcgplayerID: d.TCGplayerID,
 	}
+}
+
+// derefString flattens one of store.Card's nullable strings for emission. Card
+// is a listing type shared far beyond this package and keeps its pointers;
+// inside the detail object the empty string is the absence, so the two meet
+// here rather than either bending to the other.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func cents(v float64) float64 { return math.Round(v*100) / 100 }
@@ -132,7 +148,7 @@ func FromExportRows(rows []export.Row) Document {
 				Lang:          r.Lang,
 				ColorIdentity: jsonIdentity(r.ColorIdentity),
 			},
-			Facts:         jsonFacts(r.Facts),
+			Detail:        jsonDetail(r.Detail),
 			Count:         r.Count,
 			Container:     r.Container,
 			ContainerKind: r.Kind,
@@ -206,7 +222,7 @@ func FromSnapshot(snap store.Snapshot, rows []export.Row) Document {
 		})
 	}
 	h.Holdings = *FromExportRows(rows).Holdings
-	// The holdings a hoard document carries never carry card facts, and this
+	// The holdings a hoard document carries never carry card detail, and this
 	// is where that is enforced. Two reasons, both load-bearing:
 	//
 	// Every printing above already embeds its Scryfall document verbatim in
@@ -220,7 +236,7 @@ func FromSnapshot(snap store.Snapshot, rows []export.Row) Document {
 	// document moves every hash, so every row already in an import ledger
 	// would stop matching and a re-merge would sail past the guard.
 	for i := range h.Holdings.Rows {
-		h.Holdings.Rows[i].Facts = nil
+		h.Holdings.Rows[i].Detail = nil
 	}
 
 	doc := envelope(KindHoard)

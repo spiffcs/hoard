@@ -136,8 +136,18 @@ func (s *Store) MatchingCardIDs(f TraitFilter) (map[string]bool, error) {
 // EnrichedCount reports how many catalogued printings have a stored Scryfall
 // document, so a caller can tell "no card matched" from "no card has traits to
 // match against yet" and point at update-prices instead of at the filter.
+//
+// Counted through enrichedExpr rather than the COUNT(raw_json) this used to
+// open-code. Both spellings happen to agree, which is precisely the problem: a
+// third wording of one rule is a third thing to keep in step, and it read as an
+// independent decision about what "enriched" means.
+//
+// SUM is COALESCEd because it returns NULL over zero rows where COUNT returned
+// 0 — an empty catalog is the state a fresh hoard is in, so that difference
+// would have surfaced on somebody's first run.
 func (s *Store) EnrichedCount() (enriched, total int, err error) {
 	err = s.db.QueryRow(
-		`SELECT COUNT(raw_json), COUNT(*) FROM cards`).Scan(&enriched, &total)
+		`SELECT COALESCE(SUM(`+enrichedExpr+`), 0), COUNT(*) FROM cards c`).
+		Scan(&enriched, &total)
 	return enriched, total, err
 }

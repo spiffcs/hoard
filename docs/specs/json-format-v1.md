@@ -13,13 +13,13 @@ Written against `7883a51`, alongside `docs/specs/json-agent-surface.md`
 ## The decision, up front
 
 Carry **all sixteen** printing characteristics on the **holdings row only**, as
-a new optional `facts` object beside the existing `card` object. Do not put them
+a new optional `detail` object beside the existing `card` object. Do not put them
 on the shared `Card` type. Do not add a `cards` catalog block.
 
 ```json
 {
   "card": { "name": "Sol Ring", "scryfallId": "…", "setCode": "c21", … },
-  "facts": {
+  "detail": {
     "rarity": "uncommon",
     "typeLine": "Artifact",
     "cmc": 1,
@@ -52,7 +52,7 @@ That reasoning is kept below rather than deleted, because it is what makes the
 reset safe: these fields never force a MODEL bump, so resetting the number
 breaks no merge. See [schemaVersion](#schemaversion-100-and-the-rule-going-forward).
 
-| | today | **all 16 in `facts`** | A: on `Card` | C: `cards` block |
+| | today | **all 16 in `detail`** | A: on `Card` | C: `cards` block |
 |---|---|---|---|---|
 | holdings document | 959,393 | **2,035,780** (2.12×) | 1,984,508 (2.07×) | 2,023,354 (2.11×) |
 | `schema --kind holdings` | 3,881 | **6,727** | ~6,400 | ~6,900 |
@@ -64,7 +64,7 @@ breaks no merge. See [schemaVersion](#schemaversion-100-and-the-rule-going-forwa
 
 The shape is decided by blast radius, not by bytes; the field *set* is decided
 by the asymmetry below. Confirmed by measurement, not assumption: with all
-sixteen in `facts`, `unpriced` (3,627), `movers` (4,416), `market` (6,622),
+sixteen in `detail`, `unpriced` (3,627), `movers` (4,416), `market` (6,622),
 `report` (7,484), `watch` (3,921) and `summary` (2,727) all return **exactly**
 their current schemas.
 
@@ -220,7 +220,7 @@ At **sixteen**, the crossover has moved *below* the collection's ratio — the
 block's fixed 129,969 bytes of structure are now recovered by deduplicating a
 much larger payload:
 
-| rows ÷ printings | rows | `facts` per row | catalog + lean rows | winner |
+| rows ÷ printings | rows | `detail` per row | catalog + lean rows | winner |
 |---|---|---|---|---|
 | 1.0612 (today) | 1,768 | 2,035,780 | 1,976,096 | **block by 59,684** |
 | 1.0972 | 1,828 | 2,104,617 | 1,992,581 | block by 112,036 |
@@ -238,7 +238,7 @@ bump and locks out every installed build.
 
 Second, a catalog forecloses the streaming mode in Feature request 2. A
 whole-document structure cannot be expressed one-holding-per-line without either
-repeating it or forcing two passes; `facts` on the row survives NDJSON intact.
+repeating it or forcing two passes; `detail` on the row survives NDJSON intact.
 
 So the honest summary is that size never decides this. At ten fields it was
 close, at sixteen it tilts toward the block, and in both cases the decision is
@@ -300,7 +300,7 @@ It still loses, though by less at sixteen fields than at ten:
 C becomes right if the MODEL boundary is being crossed for some other reason, or
 if a second per-printing consumer appears. Neither is true now.
 
-### B — a `facts` object on the holdings row
+### B — a `detail` object on the holdings row
 
 B repeats printing data per row exactly as A does. It is not a better *model*
 than A; it is the same model with a blast radius that stops at the payload that
@@ -311,16 +311,23 @@ asked for it. That is the whole case for it, and it is enough:
 - One converter (`FromExportRows`) and one store column list (`cardCols`).
 - The merge document does not move (below).
 
-The honest cost: `.facts.typeLine` is a slightly worse jq path than
+The honest cost: `.detail.typeLine` is a slightly worse jq path than
 `.card.typeLine`, and the extra nesting is most of the 51,272 bytes B pays over
 A. Both are real. Neither is worth 564,169 bytes of `movers` and five schemas.
 
-**On the name.** `facts` is deliberately not a rules term. The Magic
-comprehensive rules define "characteristics" narrowly (name, mana cost, type,
-power, toughness, loyalty, rules text) — it excludes rarity, set name and
+**On the name.** The object shipped as `facts` and was renamed to `detail` by
+owner directive before the baseline went public (see the implementation notes at
+the end). The original argument was against `characteristics`, and it still
+holds: the Magic comprehensive rules define that term narrowly (name, mana cost,
+type, power, toughness, loyalty, rules text), excluding rarity, set name and
 release date, which are properties of a *printing*. This set spans both, so
-naming it `characteristics` would misuse a term of art. `card` says which
-printing; `facts` says what is known about it.
+`characteristics` would misuse a term of art.
+
+`detail` avoids that too, and beats `facts` on a point this document did not
+weigh: hoard already had a `CardDetail` type describing the same data for the
+browse overlay. A second name for one concept was the more expensive mistake,
+and `facts` was the half of the pair with no other claim on it. `card` says
+which printing; `detail` says what is known about it.
 
 ## The sixteen fields, costed
 
@@ -349,7 +356,7 @@ of this table is nearly free.
 | `printedName` | **0** | **0%** | the name as printed on a non-English card — free today |
 
 The field bytes sum to **1,025,115**. The document adds **1,076,387** — the
-extra 51,272 is the `facts` wrapper itself (one more object and one more
+extra 51,272 is the `detail` wrapper itself (one more object and one more
 indent level on 1,768 rows), giving a 2,035,780-byte document. That wrapper is
 the price of the blast-radius property argued above, and it is charged once, not
 per field.
@@ -363,11 +370,11 @@ Scryfall bulk download to answer "which of my cards mention graveyard
 recursion" has given that up. 302 KB on disk is cheaper than a network
 dependency.
 
-### Placement: `tcgplayerId` is an identifier, and still belongs in `facts`
+### Placement: `tcgplayerId` is an identifier, and still belongs in `detail`
 
 It is a fair objection — `card` already carries `scryfallId` and `mtgjsonUuid`,
 so an identifier looks like it belongs beside them. It should still go in
-`facts`, for three reasons, two of which are measured.
+`detail`, for three reasons, two of which are measured.
 
 **The blast-radius argument applies to it exactly as to everything else.**
 `Card` is shared by eight kinds. Moving one field there to satisfy a taxonomy
@@ -379,7 +386,7 @@ Nothing about this field is special enough to pay that.
 `scryfallId`, `mtgjsonUuid`, `setCode`, `number`, `finish`, `lang`, `condition`.
 Those are stored columns hoard resolves and merges on. `tcgplayer_id` is a
 VIRTUAL generated column over `raw_json`, like the other fifteen. That is the
-line `facts` actually draws, and it is testable rather than aesthetic: **`facts`
+line `detail` actually draws, and it is testable rather than aesthetic: **`detail`
 is what hoard derives from the printing's Scryfall document; `card` is the
 identity hoard itself stores and joins on.**
 
@@ -387,7 +394,7 @@ identity hoard itself stores and joins on.**
 printing-*and-finish*; `scryfallId` + `finish` names a copy exactly. A TCGplayer
 product id is printing-level, and TCGplayer mints a separate product for etched.
 Placing a finish-ambiguous id beside finish-exact ones would be actively
-misleading. In `facts` — defined as printing-level throughout — it is simply
+misleading. In `detail` — defined as printing-level throughout — it is simply
 accurate.
 
 Measured while checking this, and worth recording because it removes a
@@ -400,9 +407,9 @@ two etched holdings has one. There is no live alternative id to choose between.
 
 That also settles a seventeenth-field question before it is asked: adding
 `tcgplayerEtchedId` would carry no data, and it is finish-specific, so it would
-break the printing-level invariant that keeps `facts` coherent (and keeps a
+break the printing-level invariant that keeps `detail` coherent (and keeps a
 catalog block possible if the ratio ever crosses). If a future refresh
-populates it, it belongs beside `finish` on the row, not in `facts` — a
+populates it, it belongs beside `finish` on the row, not in `detail` — a
 separate decision with its own version bump.
 
 ## schemaVersion: 1.0.0, and the rule going forward
@@ -419,7 +426,7 @@ They do not, so it is not.
 as "a new optional field or document kind", and the changelog contained this
 exact change once already: **1.1.1 added `card.colorIdentity`** to the
 holdings, unpriced and movers card objects and versioned it as an ADDITION.
-`facts` is optional, its absence means "hoard has not stored this printing's
+`detail` is optional, its absence means "hoard has not stored this printing's
 document", and nothing is renamed, removed or redefined. Against a released
 1.1.5 this would have been `1.1.5 → 1.1.6`.
 
@@ -496,7 +503,7 @@ so a source merged under the old format no longer matches its ledger row and a
 re-merge would double it.
 
 This design avoids contributing to that entirely, because **the `hoard` kind
-must not carry `facts` at all**. It already carries strictly more: every
+must not carry `detail` at all**. It already carries strictly more: every
 `Printing` embeds the verbatim Scryfall document in `raw` — measured at
 **8,482,662 bytes across 1,670 printings, 100% non-null**. Every one of the
 sixteen fields is already in there, authoritative, and `planMerge` reads
@@ -505,8 +512,8 @@ of redundancy to an 8.5 MB document *and* move every ledger hash, for nothing.
 
 The implementation consequence: `FromSnapshot` embeds the holdings via
 `FromExportRows` (`convert.go:166`), the same call `export` uses. It must clear
-`Facts` on the rows it embeds, with a comment naming the hash guard as the
-reason. With `Facts` unset and `omitempty`, the hoard document is byte-identical
+`Detail` on the rows it embeds, with a comment naming the hash guard as the
+reason. With `Detail` unset and `omitempty`, the hoard document is byte-identical
 to today and every ledger row stays valid.
 
 Note this hazard is already live this release regardless: the `colorIdentity`
@@ -521,7 +528,7 @@ inspect the exact bytes `ContentHash` consumes, run `merge --dry-run -o FILE`.
 by building each variant and running the real `hoard schema`.
 
 `sliceSchema` keeps the envelope, the named kind's payload, and the transitive
-closure of `$defs` those reach. Under B, `CardFacts` is reachable only from
+closure of `$defs` those reach. Under B, `CardDetail` is reachable only from
 `Holding`, so:
 
 | `--kind` | today | 10 fields | **all 16** |
@@ -538,7 +545,7 @@ closure of `$defs` those reach. Under B, `CardFacts` is reachable only from
 
 Six kinds coming back byte-identical *is* the proof that `reachableDefs` walks
 correctly and the slice stays closed — and it holds at sixteen fields exactly as
-at ten, because `CardFacts` is reachable only from `Holding`.
+at ten, because `CardDetail` is reachable only from `Holding`.
 
 **`--kind holdings` at 6,727 bytes settles the size objection.** That is the
 number that mattered: the whole point of this surface is that a model can be
@@ -564,9 +571,9 @@ Two generation constraints this shape has to respect:
   line and put the rationale on the type or the converter; all schema figures
   above use one-line comments.
 
-`hoard` growing to 10,977 while its documents never carry `facts` is the one
+`hoard` growing to 10,977 while its documents never carry `detail` is the one
 loose thread: the schema will declare a field that kind does not emit. It is
-legal (optional and absent) but it is the shape of Bug 1, so the `CardFacts`
+legal (optional and absent) but it is the shape of Bug 1, so the `CardDetail`
 doc comment must say so outright — "absent in a `hoard` document, where
 `printings[].raw` carries the same data verbatim" — which is generated into the
 schema description where a consumer will actually see it.
@@ -583,7 +590,7 @@ out because the holdings document is the complete itemized list — every other
 kind is a derived view an agent can compute from it — and because the cost was
 measured at +564,169 bytes on `movers` alone even at ten fields, plus five
 schemas and five store queries. If those kinds are wanted later, the same
-`CardFacts` type extends to them one kind at a time, each its own ADDITION.
+`CardDetail` type extends to them one kind at a time, each its own ADDITION.
 
 ## Implementation sketch
 
@@ -601,7 +608,7 @@ indexes several.
    columns and `store.Card` with the matching fields. Feeds all five queries
    that use it, including both export paths (`BinderByFinish`,
    `DeckEntries`). Note `promo_types` is already selected but reaches
-   `store.Card` only as the derived `Treatment`; the raw list is what `facts`
+   `store.Card` only as the derived `Treatment`; the raw list is what `detail`
    needs.
 2. `internal/export/csv.go` — add the fields to `export.Row`. Follows the
    established "rides along for the JSON emission; no CSV writer carries it"
@@ -610,8 +617,8 @@ indexes several.
    shared with the import sniffer.
 3. `internal/action/read.go` — populate the new fields in `binderRows` and
    `deckRows`.
-4. `internal/hoardjson/hoardjson.go` — add `CardFacts` and
-   `Holding.Facts *CardFacts`, one-line comments, everything `omitempty`,
+4. `internal/hoardjson/hoardjson.go` — add `CardDetail` and
+   `Holding.Detail *CardDetail`, one-line comments, everything `omitempty`,
    `Cmc *float64`.
 5. `internal/hoardjson/convert.go` — populate in `FromExportRows`; **clear it in
    `FromSnapshot`**, commented with the hash guard as the reason.
@@ -619,8 +626,8 @@ indexes several.
    `schema/json/README.md` changelog entry and the three versioning rules.
 
 Tests worth having: a holdings row for a printing with no stored document emits
-no `facts` key at all (not an empty object); a `hoard` document carries no
-`facts` whatever the rows handed to it hold, so these fields contribute nothing
+no `detail` key at all (not an empty object); a `hoard` document carries no
+`detail` whatever the rows handed to it hold, so these fields contribute nothing
 to the ledger hash; `--kind` for the five untouched kinds returns byte-identical
 schemas.
 
@@ -628,7 +635,7 @@ That second one was drafted as "byte-identical to the 1.1.5 output, so the
 ledger hash is provably unmoved", and the version reset makes that half wrong in
 a way worth keeping visible: the document is byte-identical *apart from the
 schemaVersion string*, and `ContentHash` covers that string. See the as-built
-section — the hash moves, and not because of `facts`.
+section — the hash moves, and not because of `detail`.
 
 ## The size problem this does not solve
 
@@ -651,7 +658,7 @@ this design — about 30K tokens, comfortably promptable.
 
 The real fix for the size axis is the investigation's Feature request 2 (an
 NDJSON mode, streamable and filterable without a full parse). It is orthogonal
-to this and out of scope here. Worth noting the two compose: `facts` on the row
+to this and out of scope here. Worth noting the two compose: `detail` on the row
 survives one-holding-per-line intact, whereas a `cards` catalog block does not —
 a catalog is a whole-document structure and cannot be expressed in a line-
 oriented format without either repeating it or forcing two passes. **If NDJSON
@@ -712,7 +719,7 @@ economics depend on how much payload there is to deduplicate.
 ## As built
 
 Implemented 2026-08-10 on `impl-card-facts`, off `e08ed79`. The shape is what
-this document decided: all sixteen in a `facts` object on the holdings row, and
+this document decided: all sixteen in a `detail` object on the holdings row, and
 nothing on `Card`. Three things came out differently, and each is recorded here
 rather than left for the next reader to rediscover.
 
@@ -747,14 +754,27 @@ ones, replacing a nil-means-unknown distinction the detail view depends on with
 an empty string that means nothing. It would also load oracle and flavor text
 into every browse listing, which asked for neither.
 
-Instead: `store.CardFacts` and `Store.CardFactsInContainer`, a query scoped to
-one container's printings, called only from the export row builders. One
-statement per container instead of one per row, since the columns are
-`json_extract` over the whole stored document and a binder holds the same
-printing in several finishes. The blast radius stops where the payload that
-asked for it stops — the same argument this document makes for the JSON shape.
+Instead, a query scoped to one container's printings, called only from the
+export row builders. One statement per container instead of one per row, since
+the columns are `json_extract` over the whole stored document and a binder holds
+the same printing in several finishes. The blast radius stops where the payload
+that asked for it stops — the same argument this document makes for the JSON
+shape.
 
-`export.Row` carries `*store.CardFacts` rather than a copy of the type. Sixteen
+**That first shipped as a second type, `store.CardFacts`, and the reasoning
+above for keeping it separate was wrong on its central point.** It claimed the
+collision with `CardDetail` could not be resolved because doing so would replace
+"a nil-means-unknown distinction the detail view depends on" with an empty
+string. There was no such distinction. `CardDetail`'s descriptive columns are
+`json_extract` over the stored document, and `json_extract` returns NULL for a
+key the document lacks exactly as it does when there is no document at all — so
+a planeswalker's power and an unfetched printing's power were *both* already
+nil, and every consumer in `internal/browse` already collapsed them with a
+`deref(...) != ""`. The convention looked careful and described nothing.
+
+The types were folded (below).
+
+`export.Row` carries `*store.CardDetail` rather than a copy of the type. Sixteen
 fields whose only job is to be handed to the encoder unchanged would otherwise
 be transcribed three times.
 
@@ -771,12 +791,12 @@ on the type. Measured against the generator, that is backwards:
 - **A field's comment is carried whole**, newlines and all, and is charged per
   field.
 - **A struct-typed field keeps its description alongside its `$ref`.** So
-  `holdings.rows[].facts` can carry multi-line prose even though `CardFacts`
+  `holdings.rows[].detail` can carry multi-line prose even though `CardDetail`
   itself cannot.
 
 This matters directly to the requirement that the "absent in a `hoard`
 document" disclosure reach a consumer. On the type comment it would have been
-silently dropped. It lives on `Holding.Facts` instead, where it is emitted in
+silently dropped. It lives on `Holding.Detail` instead, where it is emitted in
 full.
 
 **Open, and deliberately not fixed here.** The same truncation is already
@@ -803,13 +823,13 @@ its prediction. The ratios are what the predictions can be judged on.
 | `schema --kind holdings` | 6,727 | **7,942** | +1,215, all prose — see below |
 | `unpriced`/`movers`/`market`/`report`/`watch`/`summary` schemas | byte-identical | **byte-identical** | 3,627 · 4,416 · 6,622 · 7,484 · 3,921 · 2,727, exactly as predicted |
 | those six documents | byte-identical | **byte-identical** | modulo the five characters of `schemaVersion` |
-| `hoard` document | byte-identical | **byte-identical** | 15,337,237 both, carrying no `facts` |
+| `hoard` document | byte-identical | **byte-identical** | 15,337,237 both, carrying no `detail` |
 | one 100-card deck | 121,645 | **123,071** | from 57,370 |
 | canonical/Moxfield/Archidekt CSV | unchanged | **byte-identical** | |
 
 The holdings schema's +1,215 is entirely comment prose, and is the price of the
-two disclosures this document required: the `holdings.rows[].facts` description
-is 676 bytes and the sixteen field descriptions 1,488, against a `CardFacts`
+two disclosures this document required: the `holdings.rows[].detail` description
+is 676 bytes and the sixteen field descriptions 1,488, against a `CardDetail`
 type description of 127 (all that survives Synopsis). It is still 7.9 KB —
 nowhere near the 20 KB that would have damaged the use case.
 
@@ -820,11 +840,67 @@ promoTypes 23.3%, loyalty 1.3%, **printedName 0.0%** — still costing exactly
 zero bytes, still the field a collector needs the first time he buys a Japanese
 card.
 
-### The merge hash moves, and not because of `facts`
+### The merge hash moves, and not because of `detail`
 
-`FromSnapshot` clears `Facts`, so the interchange document is byte-identical to
+`FromSnapshot` clears `Detail`, so the interchange document is byte-identical to
 the baseline's except for the version string. But `ContentHash` covers those
 bytes too, so resetting 1.1.5 to 1.0.0 moves every hash on its own
 (`a56cea8f…` → `3cad631b…` on the owner's database). The hazard this document
 described is real and is now doubly live — the `colorIdentity` fix moves it as
 well. It remains bounded and one-shot, and it should be one release note.
+
+## Renamed to `detail`, and the two types folded — 2026-08-10
+
+By owner directive, before the 1.0.0 baseline went public and while the
+repository was still private: "This is the wrong naming. CardFacts is awkward
+and everything about these should be CardDetail." The window mattered — `facts`
+was part of a declared baseline, and a rename after publication would have been
+a MODEL bump and a compatibility kill switch spent on a spelling.
+
+**The JSON surface.** `hoardjson.CardFacts` → `CardDetail`, `Holding.Facts` →
+`Holding.Detail`, emitted key `facts` → `detail`. `SchemaVersion` stays
+`1.0.0`: this is a rename inside an unreleased baseline, not an increment to a
+lineage anyone can hold a document from.
+
+Measured, not assumed. Of 26 `$defs`, exactly two moved — `CardFacts` became
+`CardDetail`, and `Holding`'s `facts` property became `detail`. The other
+twenty-four hash identically. `CardDetail`'s sixteen field definitions and the
+`required` list are unchanged, so the rename altered no field's shape or
+optionality. Emitting all six kinds that share `Card` gives one file with the
+same SHA-256 before and after; emitting a holdings document with every field
+populated differs on exactly one line, the key.
+
+**The store.** `store.CardFacts` is gone, folded into `store.CardDetail`, which
+gains its two unique fields: `PromoTypes` and `PrintedName`. There is now one
+type and one projection — `cardDetailCols` with `cardDetailScanDest` beside it,
+the pattern `cardCols`/`cardScanDest` already set for `Card` — read by two
+queries that differ only in their `WHERE`: `CardDetail` for one printing, and
+`CardDetailsInContainer` for the export. Two hand-maintained column lists over
+the same table was the drift risk; two `WHERE` clauses is not.
+
+**The absence convention, which is the part worth reading.** One state, spelled
+as the empty string, meaning both "the card has no such value" and "hoard could
+not get the information". Not a simplification imposed on the data — a
+recognition that the data never held two states. Every descriptive column is
+`json_extract` over the stored document, and it yields NULL for a missing key
+just as it does when there is no document. The pointer said more than the
+database could.
+
+What *is* real, and is carried out of band: whether hoard has ever fetched the
+printing. `Enriched` answers it on the single-card read; absence from the map
+answers it on the container read; and a nil `detail` object — never an empty
+field inside one — answers it in the emitted document.
+
+Three exceptions, because for them the empty value would be a lie rather than a
+simplification: `CMC` stays `*float64` (zero is a real mana value, every land
+has it), `TCGplayerID` stays `*int64` (an id has no empty form, and 0 is a
+plausible-looking one), and `Card.ColorIdentity` is untouched — a slice where
+empty and absent genuinely differ, colorless versus never-fetched, which is the
+distinction `2ec5d32` exists to protect.
+
+Two gaps surfaced while proving this, and both are now covered. Nothing
+exercised `action.detailFor`, the seam translating map-absence into the row's
+nil — the `hoardjson` tests build `export.Row` values directly, so a change
+handing back a zero `CardDetail` for an unfetched printing would have passed
+every one of them. And nothing asserted the browse overlay's refresh hint or its
+image-fetch guard, both of which read absence off the converted fields.

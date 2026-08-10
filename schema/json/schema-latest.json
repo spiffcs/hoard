@@ -54,7 +54,7 @@
       ],
       "description": "Card identifies one printing in one finish."
     },
-    "CardFacts": {
+    "CardDetail": {
       "properties": {
         "rarity": {
           "type": "string",
@@ -126,7 +126,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "CardFacts is one printing's card characteristics, every one of them derived from the Scryfall document hoard has stored for it."
+      "description": "CardDetail is one printing's card characteristics, every one of them derived from the Scryfall document hoard has stored for it."
     },
     "Comp": {
       "properties": {
@@ -346,9 +346,9 @@
         "card": {
           "$ref": "#/$defs/Card"
         },
-        "facts": {
-          "$ref": "#/$defs/CardFacts",
-          "description": "Facts is what the printing's Scryfall document says the card is —\nrarity, type line, mana value, oracle text and the rest — enough to\ncompute a curve, a rarity breakdown or a text search without fetching\nanything. It is absent when hoard has stored no document for the\nprinting; a field inside it is absent when the card has no such value,\nso an artifact carries no power and an English printing no printedName.\n\nA hoard document never carries it: every printing there embeds its\nScryfall document verbatim in printings[].raw, which is strictly more\nthan this, and adding derived copies would move the content hash `hoard\nmerge` uses to refuse a source it has already applied."
+        "detail": {
+          "$ref": "#/$defs/CardDetail",
+          "description": "Detail is what the printing's Scryfall document says the card is —\nrarity, type line, mana value, oracle text and the rest — enough to\ncompute a curve, a rarity breakdown or a text search without fetching\nanything. It is absent when hoard has stored no document for the\nprinting; a field inside it is absent when the card has no such value,\nso an artifact carries no power and an English printing no printedName.\n\nA hoard document never carries it: every printing there embeds its\nScryfall document verbatim in printings[].raw, which is strictly more\nthan this, and adding derived copies would move the content hash `hoard\nmerge` uses to refuse a source it has already applied."
         },
         "count": {
           "type": "integer"

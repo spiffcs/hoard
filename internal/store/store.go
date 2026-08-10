@@ -250,6 +250,28 @@ const (
          AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
    OR (e.finish = 'nonfoil'
          AND c.price_usd IS NULL AND a.price_usd IS NULL)`
+
+	// enrichedExpr is THE test for "hoard has stored this printing's Scryfall
+	// document", and the only place a reader should have to look for it.
+	//
+	// It is one fact, so it gets one expression. Spelled out per query it grew
+	// three variants — the projection here, a WHERE clause in the container
+	// read, and a COUNT in the filter summary — and the moment two of them
+	// disagreed about scope, one path decided a printing was unreadable while
+	// another decided it was fine. That is not hypothetical: the container
+	// read used to filter on it and the export then inferred presence from
+	// whether a row came back, while the browse overlay read the projection.
+	// Two mechanisms for one fact.
+	//
+	// It reaches Go as CardDetail.Enriched, and consumers branch on THAT.
+	// Nothing outside this file should test the column to decide whether card
+	// data is present.
+	//
+	// The producer side is a different question and correctly asks directly:
+	// UpsertPrintings fills a NULL raw_json, and IDsNeedingDocuments finds the
+	// rows to fetch. Those look for work to do rather than infer what a
+	// printing can answer.
+	enrichedExpr = `c.raw_json IS NOT NULL`
 )
 
 // cardCols selects the Card fields, in the order cardScanDest reads them.

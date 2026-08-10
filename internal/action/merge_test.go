@@ -114,7 +114,7 @@ func TestMergeHoardCarriesCardDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CardDetail: %v", err)
 	}
-	if detail.TypeLine == nil || *detail.TypeLine != "Legendary Creature" {
+	if detail.TypeLine != "Legendary Creature" {
 		t.Errorf("type line is %v; the generated columns are empty, so raw_json did not cross",
 			detail.TypeLine)
 	}

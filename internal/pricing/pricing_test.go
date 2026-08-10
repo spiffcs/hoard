@@ -145,9 +145,9 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CardDetail: %v", err)
 	}
-	if d.CKURL == nil || *d.CKURL != "https://mtgjson.com/links/aa" ||
-		d.CKFoilURL == nil || *d.CKFoilURL != "https://mtgjson.com/links/bb" {
-		t.Fatalf("links = %v/%v, want both stamped", d.CKURL, d.CKFoilURL)
+	if d.CKURL != "https://mtgjson.com/links/aa" ||
+		d.CKFoilURL != "https://mtgjson.com/links/bb" {
+		t.Fatalf("links = %q/%q, want both stamped", d.CKURL, d.CKFoilURL)
 	}
 
 	// Stamped means done: a second pass fetches nothing (the cache dir is

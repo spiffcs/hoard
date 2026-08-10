@@ -135,7 +135,7 @@ type Holdings struct {
 // absent when no source can price the card — absent is not free.
 type Holding struct {
 	Card Card `json:"card"`
-	// Facts is what the printing's Scryfall document says the card is —
+	// Detail is what the printing's Scryfall document says the card is —
 	// rarity, type line, mana value, oracle text and the rest — enough to
 	// compute a curve, a rarity breakdown or a text search without fetching
 	// anything. It is absent when hoard has stored no document for the
@@ -146,7 +146,7 @@ type Holding struct {
 	// Scryfall document verbatim in printings[].raw, which is strictly more
 	// than this, and adding derived copies would move the content hash `hoard
 	// merge` uses to refuse a source it has already applied.
-	Facts *CardFacts `json:"facts,omitempty"`
+	Detail *CardDetail `json:"detail,omitempty"`
 
 	Count         int      `json:"count"`
 	Container     string   `json:"container"`
@@ -155,12 +155,12 @@ type Holding struct {
 	PriceUsd      *float64 `json:"priceUsd,omitempty"`
 }
 
-// CardFacts is one printing's card characteristics, every one of them derived
+// CardDetail is one printing's card characteristics, every one of them derived
 // from the Scryfall document hoard has stored for it.
 //
 // Only this first sentence reaches the schema: AddGoComments runs a type's
 // comment through go/doc's Synopsis, so everything below is for a reader of
-// this file. What a consumer must know is on Holding.Facts instead, which is
+// this file. What a consumer must know is on Holding.Detail instead, which is
 // a field and therefore carried whole.
 //
 // Everything here is a property of the printing, never of the copies held.
@@ -175,7 +175,7 @@ type Holding struct {
 // planeswalkers, printedName on nothing an English-language collection holds.
 // That is the data and not a gap, which is why every field is omitempty: the
 // cost of a field is proportional to how many cards actually have one.
-type CardFacts struct {
+type CardDetail struct {
 	// Rarity is Scryfall's: common, uncommon, rare, mythic, special or bonus.
 	Rarity string `json:"rarity,omitempty"`
 	// TypeLine is the printed type line ("Legendary Creature — Elf Druid"), the front face's on a two-faced card.

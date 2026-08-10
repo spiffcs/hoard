@@ -184,13 +184,13 @@ empty catalog block costs a fixed ~130 KB of structure. So the block is
 crossover is at a ratio of about 1.079 and this collection sits below it.
 
 Size therefore could not decide it, and the design was settled on blast radius
-instead: a `facts` object beside `card` on the holdings row, rather than fields
+instead: a `detail` object beside `card` on the holdings row, rather than fields
 on the shared `Card` type, because `Card` is reused by `movers`, `report`,
 `market`, `unpriced` and `watch` — putting them there would nearly double
 `movers` and grow five schemas, or leave the fields silently absent in five
 places, which is five fresh instances of Bug 1.
 
-A further argument against the catalog block, independent of size: `facts` on
+A further argument against the catalog block, independent of size: `detail` on
 the row survives an NDJSON mode intact, and a catalog block cannot.
 
 ## Feature request 2 — size, for collections larger than this one

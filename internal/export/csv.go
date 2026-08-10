@@ -38,7 +38,7 @@ type Row struct {
 	// ColorIdentity likewise rides along for the JSON emission only — nil
 	// when unknown, empty for colorless (store.Card's semantics).
 	ColorIdentity []string
-	// Facts are the printing's derived characteristics — rarity, type line,
+	// Detail is the printing's derived characteristics — rarity, type line,
 	// oracle text and the rest — nil when hoard has stored no Scryfall
 	// document for the printing. It rides along for the JSON emission like the
 	// two fields above; no CSV writer carries it.
@@ -46,7 +46,7 @@ type Row struct {
 	// The store's own type rather than a copy of it: sixteen fields whose only
 	// job is to be handed to the JSON encoder unchanged would be sixteen
 	// chances to transcribe one wrong.
-	Facts *store.CardFacts
+	Detail *store.CardDetail
 	// Condition is the card's wear — unknown|nm|lp|mp|hp|dmg. The canonical
 	// CSV carries it; the foreign shapes have their own vocabulary and map it
 	// on the way out.

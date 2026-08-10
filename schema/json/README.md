@@ -63,11 +63,11 @@ absent price field means *unpriced*, never free.
 
 - **1.0.0** — the first released schema: the `summary`, `holdings`,
   `unpriced`, `movers`, `market`, `report`, `watch` and `hoard` document kinds
-  under one envelope, and `holdings.rows[].facts` — the sixteen card
+  under one envelope, and `holdings.rows[].detail` — the sixteen card
   characteristics hoard derives from a printing's stored Scryfall document
   (rarity, type line, mana value and cost, oracle and flavor text, power,
   toughness, loyalty, set name, release date, artist, layout, promo types,
-  printed name, TCGplayer product id). `facts` is absent when hoard has stored
+  printed name, TCGplayer product id). `detail` is absent when hoard has stored
   no document for the printing, a field inside it is absent when the card has
   no such value, and a `hoard` document never carries it at all — every
   printing there already embeds the same document verbatim in

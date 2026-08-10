@@ -33,16 +33,16 @@ func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	if !d.Enriched {
 		t.Fatal("Enriched = false for a card with a stored document")
 	}
-	if d.Rarity == nil || *d.Rarity != "mythic" {
+	if d.Rarity != "mythic" {
 		t.Errorf("Rarity = %v, want mythic", d.Rarity)
 	}
-	if d.TypeLine == nil || *d.TypeLine != "Legendary Creature — Eldrazi" {
+	if d.TypeLine != "Legendary Creature — Eldrazi" {
 		t.Errorf("TypeLine = %v", d.TypeLine)
 	}
 	if d.CMC == nil || *d.CMC != 11.0 {
 		t.Errorf("CMC = %v, want 11", d.CMC)
 	}
-	if d.Artist == nil || *d.Artist != "Mark Tedin" {
+	if d.Artist != "Mark Tedin" {
 		t.Errorf("Artist = %v", d.Artist)
 	}
 	// Identity carries through from the base columns, not the document.
@@ -51,9 +51,13 @@ func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	}
 }
 
-// A card with no stored document must report unknown, not empty. A detail pane
-// that prints "" for rarity is indistinguishable from one printing a real value
-// that happens to be blank, and hides the fact that a refresh would fix it.
+// A card with no stored document reads empty in every descriptive field —
+// CardDetail's one absence — and says so through Enriched, which is the ONLY
+// signal separating "nobody has looked" from "the card has little to say".
+//
+// Enriched is what a detail pane must consult before telling someone to
+// refresh; the fields themselves cannot answer it, and this test fails if
+// Enriched ever starts reporting true for a card with no document.
 func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil { // no Raw
@@ -67,8 +71,8 @@ func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	if d.Enriched {
 		t.Error("Enriched = true without a stored document")
 	}
-	if d.Rarity != nil || d.TypeLine != nil || d.CMC != nil {
-		t.Errorf("want nil descriptive fields, got %v %v %v", d.Rarity, d.TypeLine, d.CMC)
+	if d.Rarity != "" || d.TypeLine != "" || d.CMC != nil {
+		t.Errorf("want empty descriptive fields, got %q %q %v", d.Rarity, d.TypeLine, d.CMC)
 	}
 	// The prices and identity still work; only the derived fields are missing.
 	if d.PriceUSD == nil || *d.PriceUSD != 10.00 {
@@ -117,8 +121,21 @@ func TestParseColorIdentity(t *testing.T) {
 }
 
 // The card-frame fields (migration v11) resolve like the rest of the
-// derived columns: root first, face 0 for multi-faced cards, nil until a
+// derived columns: root first, face 0 for multi-faced cards, empty until a
 // document is stored.
+//
+// This is also where CardDetail's absence convention is pinned. Three routes
+// reach an absent field and ALL THREE must land on the empty string:
+//
+//   - a planeswalker's power — the card simply has none;
+//   - a creature's loyalty, likewise;
+//   - every field of a printing with no stored document at all.
+//
+// They agree because the database cannot tell them apart in the first place:
+// each is json_extract returning NULL, whether the key is missing from the
+// document or there is no document to read. A representation that spelled a
+// difference here would be inventing one. What DOES separate the third case
+// from the first two is Enriched, asserted below and nowhere else.
 func TestCardDetailCardFrameFields(t *testing.T) {
 	s := newTestStore(t)
 	mk := func(id, raw string) scryfall.Card {
@@ -150,32 +167,49 @@ func TestCardDetailCardFrameFields(t *testing.T) {
 	}
 
 	c := get("creature")
-	if deref(c.Power) != "10" || deref(c.Toughness) != "10" {
-		t.Errorf("creature P/T = %v/%v", c.Power, c.Toughness)
+	if c.Power != "10" || c.Toughness != "10" {
+		t.Errorf("creature P/T = %q/%q", c.Power, c.Toughness)
 	}
-	if deref(c.FlavorText) != "A force of nature." {
-		t.Errorf("FlavorText = %v", c.FlavorText)
+	if c.FlavorText != "A force of nature." {
+		t.Errorf("FlavorText = %q", c.FlavorText)
 	}
-	if deref(c.ImageURI) != "https://img/creature.jpg" {
-		t.Errorf("ImageURI = %v", c.ImageURI)
+	if c.ImageURI != "https://img/creature.jpg" {
+		t.Errorf("ImageURI = %q", c.ImageURI)
+	}
+	// The creature has a document but no loyalty: absent, and so empty.
+	if c.Loyalty != "" {
+		t.Errorf("a creature's loyalty = %q, want the empty string", c.Loyalty)
 	}
 
-	if w := get("walker"); deref(w.Loyalty) != "4" || w.Power != nil {
-		t.Errorf("walker loyalty = %v, power = %v", w.Loyalty, w.Power)
+	// The planeswalker is the mirror case — a real loyalty, no power.
+	w := get("walker")
+	if w.Loyalty != "4" || w.Power != "" {
+		t.Errorf("walker loyalty = %q, power = %q — power must be empty", w.Loyalty, w.Power)
 	}
-	if d := get("dfc"); deref(d.Power) != "2" || deref(d.ImageURI) != "https://img/face0.jpg" {
-		t.Errorf("dfc face-0 fallback: power = %v, image = %v", d.Power, d.ImageURI)
-	}
-	if b := get("bare"); b.Power != nil || b.Loyalty != nil || b.FlavorText != nil || b.ImageURI != nil {
-		t.Errorf("unenriched card must read all-nil, got %+v", b)
-	}
-}
 
-func deref(p *string) string {
-	if p == nil {
-		return ""
+	if d := get("dfc"); d.Power != "2" || d.ImageURI != "https://img/face0.jpg" {
+		t.Errorf("dfc face-0 fallback: power = %q, image = %q", d.Power, d.ImageURI)
 	}
-	return *p
+
+	// The third route: no document at all. Same empty fields as the two
+	// above, and Enriched carrying the whole of the difference.
+	b := get("bare")
+	if b.Power != "" || b.Loyalty != "" || b.FlavorText != "" || b.ImageURI != "" {
+		t.Errorf("a printing with no document must read all-empty, got %+v", b)
+	}
+	if b.Enriched {
+		t.Error("Enriched = true for a printing with no stored document")
+	}
+	if !w.Enriched {
+		t.Error("Enriched = false for a planeswalker that has a document but no power")
+	}
+	// Stated as one assertion because it is the property, not a detail of
+	// it: absence reads identically whatever produced it, and Enriched is
+	// the only thing that tells a caller which case it is looking at.
+	if b.Power != w.Power {
+		t.Errorf("absence differs by route: unfetched power %q vs walker power %q",
+			b.Power, w.Power)
+	}
 }
 
 // The listing queries carry the same identity the detail view resolves, so
@@ -392,7 +426,14 @@ func TestCardKingdomLinksNullVsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CardDetail: %v", err)
 	}
-	if d.CKURL == nil || *d.CKURL != "" || d.CKFoilURL == nil || *d.CKFoilURL != "" {
-		t.Errorf("links = %v/%v, want recorded-empty", d.CKURL, d.CKFoilURL)
+	if d.CKURL != "" || d.CKFoilURL != "" {
+		t.Errorf("links = %q/%q, want empty", d.CKURL, d.CKFoilURL)
 	}
+	// Never-asked and asked-and-none are still different states, and the
+	// column still keeps them apart — but the difference is asserted through
+	// KnownCardKingdomLinks above, which is the only caller that needs it and
+	// reads ck_url IS NOT NULL directly. CardDetail answers a narrower
+	// question ("is there a link to open?"), so both cases read empty here.
+	// If the resolver ever stopped recording the empty stamp, the
+	// known["ulamog-id"] assertion above fails; this one would not notice.
 }
