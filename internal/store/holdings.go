@@ -56,7 +56,7 @@ const (
 //
 // Every writer binds condition explicitly rather than leaning on the column
 // default, so the value is visible at the call site — but a zero-valued struct
-// field is a Go idiom the schema should not have to interpret, and `”` is not
+// field is a Go idiom the schema should not have to interpret, and `""` is not
 // in the vocabulary. This is the one place the two meet.
 func orUnknown(condition string) string {
 	if condition == "" {

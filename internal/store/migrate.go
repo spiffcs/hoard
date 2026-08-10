@@ -465,9 +465,15 @@ ALTER TABLE cards ADD COLUMN printed_name TEXT
 //
 // It is deliberately not 'nm' — claiming near mint for an unassessed copy throws
 // away the difference between checked and unchecked, and that difference cannot
-// be recovered later. And deliberately not ”, which in a column somebody is
-// reading by hand is indistinguishable from a NULL, a trimmed value, or a bug.
-// A word says what it means.
+// be recovered later. And deliberately not the empty string, which in a column
+// somebody is reading by hand is indistinguishable from a NULL, a trimmed
+// value, or a bug. A word says what it means.
+//
+// (Spelled out rather than written as a pair of straight quotes: gofmt reads
+// that pair in a doc comment as the old godoc convention for a closing
+// typographic quote and rewrites it to a single curly character, which is how
+// this sentence came to rule out a character that is not a value at all. See
+// internal/sourcehygiene.)
 //
 // **The surrogate id.** Board says where a copy sits, not what it is, so it
 // stops being part of the key. A row now has its own identity, which makes a
