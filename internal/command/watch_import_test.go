@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -66,6 +67,57 @@ func TestCmdWatchImportEndToEnd(t *testing.T) {
 	}
 	if w := watches[0]; w.Threshold != 4 {
 		t.Errorf("threshold = %v, want the re-import's 4", w.Threshold)
+	}
+}
+
+// withStdin points os.Stdin at content for the length of the test. The
+// stdin path is the command's own — nothing else in the package swaps the
+// real stream — so a test that does not swap it cannot reach that branch at
+// all.
+func withStdin(t *testing.T, content string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdin
+	os.Stdin = f
+	t.Cleanup(func() { os.Stdin = saved; f.Close() })
+}
+
+// A lone dash reads the list from stdin, the same spelling `hoard add
+// --file -` has always accepted. The action layer documented its Display as
+// a path or stdin from the day it was written; only the command never
+// delivered the second half.
+func TestCmdWatchImportStdin(t *testing.T) {
+	st := exportStore(t)
+	stubFetch(t, watchCard())
+	withStdin(t, "Name,Direction,Threshold,Finish\nSol Ring,under,5,\n")
+
+	if err := execWatch(context.Background(), st, []string{"import", "-"}, false); err != nil {
+		t.Fatalf("watch import -: %v", err)
+	}
+	watches, err := st.ListWatches()
+	if err != nil || len(watches) != 1 {
+		t.Fatalf("watches = %+v, %v, want 1", watches, err)
+	}
+	if w := watches[0]; w.ScryfallID != "sol" || w.Op != "under" || w.Threshold != 5 {
+		t.Errorf("watch = %+v", w)
+	}
+}
+
+// A file that will not parse names its source, and for a pipe the source is
+// the word stdin — a dash in that sentence would read like a flag.
+func TestCmdWatchImportStdinNamesTheSource(t *testing.T) {
+	st := exportStore(t)
+	withStdin(t, "")
+	err := execWatch(context.Background(), st, []string{"import", "-"}, false)
+	if err == nil || !strings.Contains(err.Error(), "stdin") {
+		t.Fatalf("err = %v, want a parse error naming stdin", err)
 	}
 }
 

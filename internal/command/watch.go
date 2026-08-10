@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -25,28 +26,79 @@ import (
 // this is only the exit status.
 var errWatchFired = fmt.Errorf("a watch fired")
 
+// watchBound is one direction of one watch add.
+//
+// Both bounds at once is a band — alert outside $1 to $5 — and a band is two
+// watches, not one: the store keys on (card, finish, op), so under and over
+// are separate rows with separate ids. That is not an implementation detail
+// to be hidden, because every other watch command already deals in one
+// direction at a time; list shows two lines and rm takes one id.
+type watchBound struct {
+	op        string
+	threshold float64
+}
+
 func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string, under, over float64, foil bool) error {
 	name := strings.TrimSpace(strings.Join(words, " "))
 	if name == "" {
 		return cli.Usagef("watch add needs a card name, e.g. hoard watch add Sol Ring --under 2")
 	}
-	if (under > 0) == (over > 0) {
-		return cli.Usagef("choose exactly one of --under N or --over N")
+	// A zero or negative bound is an unset one: prices are positive, so
+	// there is no threshold either flag could be asking for down there.
+	var bounds []watchBound
+	if under > 0 {
+		bounds = append(bounds, watchBound{"under", under})
 	}
-	op, threshold := "under", under
 	if over > 0 {
-		op, threshold = "over", over
+		bounds = append(bounds, watchBound{"over", over})
 	}
+	if len(bounds) == 0 {
+		return cli.Usagef("watch add needs a threshold: --under N, --over N, or both for a band")
+	}
+	// A band only means anything with a gap in the middle. Reversed or
+	// equal, the two halves cover the whole number line: nothing downstream
+	// can catch that, because each row is individually valid and each one
+	// fires, so the user gets alerts forever from a command that looked
+	// like it worked.
+	if under > 0 && over > 0 && under >= over {
+		return cli.Usagef("a band alerts outside it, so --under must be below --over: "+
+			"under %s and over %s leaves no gap between them and every price is one or the other",
+			ui.Money(under), ui.Money(over))
+	}
+
 	pr := stderrPrinter()
-	res, err := action.WatchAdd(ctx, addDeps(st), pr.Fn(),
-		action.WatchAddOptions{Name: name, Foil: foil, Op: op, Threshold: threshold})
-	pr.Close()
-	if err != nil {
-		return err
+	var res action.WatchAddResult
+	for i, b := range bounds {
+		var err error
+		// Each direction resolves as it stands, so a band names the card
+		// twice. Both land on the same printing — the resolve is the same
+		// query — and the last result speaks for the confirmation.
+		res, err = action.WatchAdd(ctx, addDeps(st), pr.Fn(),
+			action.WatchAddOptions{Name: name, Foil: foil, Op: b.op, Threshold: b.threshold})
+		if err != nil {
+			pr.Close()
+			if i > 0 {
+				// Two writes, and the first one stood. Say so, or a retry
+				// reads as though the whole command did nothing.
+				return fmt.Errorf("the %s watch stood; the %s watch did not: %w",
+					bounds[0].op, b.op, err)
+			}
+			return err
+		}
 	}
-	fmt.Fprintf(env.Out, "Watching %s (%s) %s: %s %s.\n",
+	pr.Close()
+
+	parts := make([]string, 0, len(bounds))
+	for _, b := range bounds {
+		parts = append(parts, fmt.Sprintf("%s %s", b.op, ui.Money(b.threshold)))
+	}
+	fmt.Fprintf(env.Out, "Watching %s (%s) %s: %s.\n",
 		res.Card.Name, ui.Printing(res.Card.Set, res.Card.CollectorNumber),
-		res.Finish, op, ui.Money(threshold))
+		res.Finish, strings.Join(parts, ", "))
+	if len(bounds) > 1 {
+		fmt.Fprintln(env.Out, env.OutEnv.Dim()(
+			"Two watches, one per direction: list and rm take them one at a time."))
+	}
 	fmt.Fprintln(env.Out, env.OutEnv.Dim()("Checks read stored prices: hoard update-prices && hoard watch"))
 	return nil
 }
@@ -55,13 +107,25 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 	if len(pos) != 1 {
 		return cli.Usagef("watch import needs exactly one file (CSV or JSON)")
 	}
-	data, err := os.ReadFile(pos[0])
+	// A lone dash is stdin, spelled the way hoard add --file spells it, so a
+	// watch list can be piped from wherever it was generated. WatchImport
+	// has always documented its Display as a path or stdin; only this line
+	// never delivered the second half.
+	var data []byte
+	var err error
+	display := pos[0]
+	if display == "-" {
+		display = "stdin"
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(pos[0])
+	}
 	if err != nil {
 		return err
 	}
 	pr := stderrPrinter()
 	res, err := action.WatchImport(ctx, addDeps(st), pr.Fn(),
-		action.WatchImportOptions{Data: data, Display: pos[0]})
+		action.WatchImportOptions{Data: data, Display: display})
 	pr.Close()
 	// A partial import still stood its watches; the report renders before
 	// the exit code says "done, mostly". Any other error did not finish.
@@ -202,19 +266,25 @@ func NewCmdWatch(a *app) *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add NAME...",
 		Short: "Alert when a price crosses a threshold",
-		Args:  cobra.MinimumNArgs(1),
+		Example: "hoard watch add Sol Ring --under 2\n" +
+			"hoard watch add Sol Ring --foil --over 30\n" +
+			"hoard watch add Sol Ring --under 1 --over 5",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return watchAdd(c.Context(), a.store, a.env, args, under, over, foil)
 		},
 	}
 	add.Flags().Float64Var(&under, "under", 0, "alert when the price falls below this")
-	add.Flags().Float64Var(&over, "over", 0, "alert when the price rises above this")
+	add.Flags().Float64Var(&over, "over", 0,
+		"alert when the price rises above this (with --under: a band)")
 	add.Flags().BoolVar(&foil, "foil", false, "watch the foil price")
 
 	cmd.AddCommand(
 		add,
 		&cobra.Command{
-			Use: "import FILE", Short: "Import price watches in bulk (CSV or JSON)",
+			Use: "import FILE|-", Short: "Import price watches in bulk (CSV or JSON)",
+			Example: "hoard watch import watches.csv\n" +
+				"pbpaste | hoard watch import -",
 			Args: cobra.ExactArgs(1),
 			RunE: func(c *cobra.Command, args []string) error {
 				return watchImport(c.Context(), a.store, a.env, args)

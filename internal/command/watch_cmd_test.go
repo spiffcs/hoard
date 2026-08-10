@@ -48,9 +48,8 @@ func TestCmdWatchAddRejectsBadFlags(t *testing.T) {
 	stubFetch(t, watchCard())
 	ctx := context.Background()
 	for _, args := range [][]string{
-		{"add", "Sol Ring"}, // no threshold
-		{"add", "Sol Ring", "--under", "2", "--over", "5"}, // both directions
-		{"add", "--under", "2"},                            // no name
+		{"add", "Sol Ring"},     // no threshold at all
+		{"add", "--under", "2"}, // no name
 	} {
 		if err := execWatch(ctx, st, args, false); err == nil {
 			t.Errorf("execWatch(%v) succeeded, want an error", args)
@@ -59,6 +58,101 @@ func TestCmdWatchAddRejectsBadFlags(t *testing.T) {
 	// Subcommands reject --json rather than printing a table at a script.
 	if err := execWatch(ctx, st, []string{"list"}, true); err == nil {
 		t.Error("watch list --json succeeded, want an error")
+	}
+}
+
+// Both bounds at once is a band: alert outside $1–$5. The store has always
+// held it — its key is (card, finish, op), so the two directions are two
+// rows — and the CLI was the only thing forbidding it.
+func TestCmdWatchAddBand(t *testing.T) {
+	st := exportStore(t)
+	stubFetch(t, watchCard())
+	out, err := execCmd(context.Background(), st,
+		[]string{"watch", "add", "Sol Ring", "--under", "1", "--over", "5"}, false)
+	if err != nil {
+		t.Fatalf("band add: %v", err)
+	}
+
+	watches, err := st.ListWatches()
+	if err != nil || len(watches) != 2 {
+		t.Fatalf("watches = %+v, %v, want 2", watches, err)
+	}
+	byOp := map[string]float64{}
+	ids := map[int64]bool{}
+	for _, w := range watches {
+		byOp[w.Op] = w.Threshold
+		ids[int64(w.ID)] = true
+	}
+	if byOp["under"] != 1 || byOp["over"] != 5 {
+		t.Errorf("thresholds = %+v, want under 1 and over 5", byOp)
+	}
+	if len(ids) != 2 {
+		t.Errorf("ids = %v, want two distinct watches", ids)
+	}
+	// One command, one confirmation: both bounds on the line, and a word
+	// about the two rows, because rm and list deal in one direction each.
+	if !strings.Contains(out, "under $1.00, over $5.00") {
+		t.Errorf("confirmation = %q, want both bounds on one line", out)
+	}
+	if !strings.Contains(out, "Two watches") {
+		t.Errorf("confirmation = %q, want it to say the band is two watches", out)
+	}
+}
+
+// The control that matters: --under 5 --over 1 is not a band, it is every
+// price in the world. Nothing downstream can catch it — both rows are
+// individually valid and each will fire — so it has to die at the flag.
+func TestCmdWatchAddRejectsReversedBand(t *testing.T) {
+	st := exportStore(t)
+	stubFetch(t, watchCard())
+	ctx := context.Background()
+	for _, args := range [][]string{
+		{"add", "Sol Ring", "--under", "5", "--over", "1"}, // fires on everything
+		{"add", "Sol Ring", "--under", "5", "--over", "5"}, // fires on all but exactly $5
+	} {
+		err := execWatch(ctx, st, args, false)
+		if err == nil {
+			t.Fatalf("execWatch(%v) succeeded, want a usage error", args)
+		}
+		// The refusal has to say why, or it reads as an arbitrary rule and
+		// the user simply runs the two commands separately.
+		if !strings.Contains(err.Error(), "every price") {
+			t.Errorf("err = %v, want it to explain that the band matches every price", err)
+		}
+		if w, _ := st.ListWatches(); len(w) != 0 {
+			t.Fatalf("watches = %+v, want nothing stood by a refused band", w)
+		}
+	}
+}
+
+// Re-running one direction adjusts that direction and leaves the other
+// standing. Add must never be a silent remove: the upsert keys on op, and a
+// bare --under that cleared the --over would delete a watch nobody named.
+func TestCmdWatchAddBandAdjustsOneDirection(t *testing.T) {
+	st := exportStore(t)
+	stubFetch(t, watchCard())
+	ctx := context.Background()
+	if err := execWatch(ctx, st, []string{"add", "Sol Ring", "--under", "1", "--over", "5"}, false); err != nil {
+		t.Fatalf("band add: %v", err)
+	}
+	if err := execWatch(ctx, st, []string{"add", "Sol Ring", "--under", "2"}, false); err != nil {
+		t.Fatalf("re-add one direction: %v", err)
+	}
+	watches, err := st.ListWatches()
+	if err != nil || len(watches) != 2 {
+		t.Fatalf("watches = %+v, %v, want still 2", watches, err)
+	}
+	for _, w := range watches {
+		switch w.Op {
+		case "under":
+			if w.Threshold != 2 {
+				t.Errorf("under = %v, want the new 2", w.Threshold)
+			}
+		case "over":
+			if w.Threshold != 5 {
+				t.Errorf("over = %v, want the untouched 5", w.Threshold)
+			}
+		}
 	}
 }
 
