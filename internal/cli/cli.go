@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -61,6 +62,15 @@ const AnnotationJSON = "hoard/json"
 // database — version, and anything else worth having when the store is missing
 // or locked.
 const AnnotationNoStore = "hoard/nostore"
+
+// FlagNameJSON is the global flag AnnotationJSON governs.
+//
+// The name lives here rather than only in the package that registers the flag
+// because this package is what refuses it: the help renderer has to hide the
+// flag on exactly the commands CheckJSON would reject, and a second spelling
+// of "json" is how those two would drift into disagreeing about which flag
+// they are talking about.
+const FlagNameJSON = "json"
 
 // JSONCapable declares that cmd honors --json.
 func JSONCapable(cmd *cobra.Command) *cobra.Command { return annotate(cmd, AnnotationJSON) }
@@ -187,6 +197,19 @@ func writeRootHelp(root *cobra.Command, w io.Writer, env ui.Env, tagline string)
 	}
 
 	b.WriteString(t.Render())
+
+	// Root's own flags, then the ones every command inherits. Without this the
+	// only global hoard has — --db, the one safe way to point the binary at a
+	// scratch database — was reachable from nothing but the source: the root
+	// help wrote a command table and stopped, so a flag registered on root was
+	// documented nowhere at all.
+	if f := flagUsages(root.LocalNonPersistentFlags(), env); f != "" {
+		b.WriteString("\n" + bold("Flags:") + "\n" + f)
+	}
+	if f := globalFlagUsages(root, root.PersistentFlags(), env); f != "" {
+		b.WriteString("\n" + bold("Global flags:") + "\n" + f)
+	}
+
 	b.WriteString("\n" + env.Dim()(`Run "hoard CMD --help" for its forms and flags.`) + "\n")
 	fmt.Fprint(w, b.String())
 }
@@ -237,11 +260,51 @@ func writeCommandHelp(cmd *cobra.Command, w io.Writer, env ui.Env) {
 		b.WriteString(t.Render())
 	}
 
-	if f := cmd.LocalFlags().FlagUsages(); f != "" {
+	if f := flagUsages(cmd.LocalFlags(), env); f != "" {
 		b.WriteString("\n" + bold("Flags:") + "\n" + f)
+	}
+	// LocalFlags deliberately excludes what a parent declared, which is right
+	// for the section above and is why --json and --db appeared on no page in
+	// the binary despite working on every one of them. They get their own
+	// heading rather than being folded in, because "these work here" and
+	// "these work everywhere" are different facts about a flag.
+	if f := globalFlagUsages(cmd, cmd.InheritedFlags(), env); f != "" {
+		b.WriteString("\n" + bold("Global flags:") + "\n" + f)
 	}
 
 	fmt.Fprint(w, b.String())
+}
+
+// globalFlagUsages renders the inherited flags cmd will actually accept.
+//
+// --json is refused outright by CheckJSON on any command that did not declare
+// AnnotationJSON, so listing it under every command would leave help as the
+// only place in hoard claiming `hoard binder rename --json` is a thing. The
+// filter is what lets the section stay literally true: every flag printed on a
+// page is a flag that page's command accepts.
+//
+// Discoverability does not pay for that, because root itself is JSONCapable —
+// `hoard --help`, which is where a reader goes to learn what exists at all,
+// still advertises --json. The per-command pages only repeat it where it works.
+func globalFlagUsages(cmd *cobra.Command, flags *pflag.FlagSet, env ui.Env) string {
+	shown := pflag.NewFlagSet("global", pflag.ContinueOnError)
+	flags.VisitAll(func(f *pflag.Flag) {
+		if f.Name == FlagNameJSON && !Has(cmd, AnnotationJSON) {
+			return
+		}
+		shown.AddFlag(f)
+	})
+	return flagUsages(shown, env)
+}
+
+// flagUsages lays a flag block out at the terminal's real width.
+//
+// pflag's unwrapped FlagUsages is the one thing on a help page that ignores the
+// width everything else was fitted to: --db's description alone renders 89
+// columns wide, so a 60-column terminal got a help screen whose tables all fit
+// and whose flags ran off the edge.
+func flagUsages(flags *pflag.FlagSet, env ui.Env) string {
+	return flags.FlagUsagesWrapped(env.Width)
 }
 
 func availableSubs(cmd *cobra.Command) []*cobra.Command {

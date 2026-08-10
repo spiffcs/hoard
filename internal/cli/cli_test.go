@@ -251,6 +251,108 @@ func TestHelpFitsANarrowTerminal(t *testing.T) {
 	}
 }
 
+// A flag a parent declared works on the child, so the child's help has to say
+// so. cobra's LocalFlags is defined to exclude inherited flags, which is why
+// hoard shipped a --json and a --db that worked everywhere and were printed
+// nowhere.
+//
+// The section is filtered by the same annotation CheckJSON enforces: a command
+// that would be told "no JSON output" must not have been told, one screen
+// earlier, that --json was among its flags.
+func TestInheritedFlagsAppearOnlyWhereTheyWork(t *testing.T) {
+	for _, capable := range []bool{true, false} {
+		name := map[bool]string{true: "json-capable", false: "plain"}[capable]
+		t.Run(name, func(t *testing.T) {
+			root, out, _ := newRoot()
+			root.PersistentFlags().String("db", "", "the hoard database to use")
+			root.PersistentFlags().Bool(FlagNameJSON, false, "emit JSON instead of tables")
+
+			sub := &cobra.Command{Use: "report", Run: func(*cobra.Command, []string) {}}
+			if capable {
+				JSONCapable(sub)
+			}
+			root.AddCommand(sub)
+
+			root.SetArgs([]string{"report", "--help"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			got := out.String()
+
+			for _, want := range []string{"Global flags:", "--db", "the hoard database to use"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("command help missing %q; got:\n%s", want, got)
+				}
+			}
+			if has := strings.Contains(got, "--json"); has != capable {
+				t.Errorf("--json listed = %v on a command whose JSONCapable = %v; got:\n%s",
+					has, capable, got)
+			}
+		})
+	}
+}
+
+// The root's own flags were invisible for the same reason by a different route:
+// writeRootHelp emitted a command table and then stopped, so nothing registered
+// on root was documented at all.
+func TestRootHelpListsItsOwnAndItsGlobalFlags(t *testing.T) {
+	root, out, _ := newRoot()
+	root.Flags().BoolP("version", "v", false, "print this build's version")
+	root.PersistentFlags().String("db", "", "the hoard database to use")
+	JSONCapable(root)
+	root.PersistentFlags().Bool(FlagNameJSON, false, "emit JSON instead of tables")
+
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"Flags:", "-v, --version", "print this build's version",
+		"Global flags:", "--db", "--json", "emit JSON instead of tables",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("root help missing %q; got:\n%s", want, got)
+		}
+	}
+	// --version is root's own, not persistent; listing it under both headings
+	// would say it works on every subcommand, which it does not.
+	if n := strings.Count(got, "--version"); n != 1 {
+		t.Errorf("--version listed %d times, want once; got:\n%s", n, got)
+	}
+}
+
+// The flag block is the one part of a help page cobra renders as plain text,
+// and pflag's default FlagUsages does not wrap: a long description ran past
+// the edge of a terminal every other section had been fitted to.
+func TestFlagUsagesWrapToTheTerminal(t *testing.T) {
+	out := &bytes.Buffer{}
+	root := &cobra.Command{Use: "hoard [command]", SilenceUsage: true}
+	root.SetOut(out)
+	InstallHelp(root, "hoard: catalog valuable MTG cards and decks in SQLite",
+		func(io.Writer) ui.Env { return ui.Env{Width: 60, Clamp: true} })
+	root.PersistentFlags().String("db", "",
+		"the hoard database to use (default $HOARD_DB, else the per-user data dir)")
+	sub := &cobra.Command{Use: "export", Run: func(*cobra.Command, []string) {}}
+	sub.Flags().String("format", "csv",
+		"output format: csv (canonical), json, moxfield, or archidekt")
+	root.AddCommand(sub)
+
+	for _, args := range [][]string{{"--help"}, {"export", "--help"}} {
+		out.Reset()
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("execute %q: %v", args, err)
+		}
+		for line := range strings.SplitSeq(out.String(), "\n") {
+			if n := len([]rune(line)); n > 60 {
+				t.Errorf("%q: line %d wide: %q", args, n, line)
+			}
+		}
+	}
+}
+
 // Cobra suggests a near-miss instead of dumping the command list — one of the
 // things adopting it bought outright.
 func TestUnknownCommandSuggestsTheNearMiss(t *testing.T) {

@@ -54,6 +54,11 @@ Every card carries a Scryfall id and an MTGJSON uuid, so a document joins straig
 ecosystem's bulk data. `hoard`, `unpriced`, `movers`, `market`, `report`, `watch` and `export`
 all take `--json` for machine-readable output.
 
+`hoard schema` prints the JSON Schema that output follows, so you can send a model the contract
+instead of the collection — enough to write a correct query with no card data leaving the machine.
+`hoard schema --kind holdings` narrows it to one document kind and its definitions, a few KB
+against the full schema's twenty.
+
 ## Database
 
 | OS | Default location |

@@ -91,7 +91,9 @@ func buildRoot(a *app, envFor func(io.Writer) ui.Env) (*cobra.Command, *globals)
 	root := rootCommand(a)
 	root.PersistentFlags().StringVar(&g.db, "db", "",
 		"the hoard database to use (default $HOARD_DB, else the per-user data dir)")
-	root.PersistentFlags().BoolVar(&g.json, "json", false,
+	// cli.FlagNameJSON rather than a literal: the help renderer hides this flag
+	// on the commands CheckJSON would reject, and it can only match it by name.
+	root.PersistentFlags().BoolVar(&g.json, cli.FlagNameJSON, false,
 		"emit JSON instead of tables, where the command supports it")
 
 	// Help renders through cobra's streams; commands write through the Env's.

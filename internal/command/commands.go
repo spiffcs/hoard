@@ -134,6 +134,8 @@ func rootCommand(a *app) *cobra.Command {
 
 		NewCmdMerge(a),
 
+		NewCmdSchema(a),
+
 		NewCmdVersion(a),
 	)
 
