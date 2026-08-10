@@ -173,6 +173,19 @@ func AddByURL(ctx context.Context, d Deps, p progress.Fn, o AddByURLOptions) (Ad
 	return res, nil
 }
 
+// DeckAddOptions is one deck import as requested. The parsed Deck stays a
+// separate parameter rather than a field here — acquiring it is the
+// frontend's job, as DeckAdd's own comment explains, while this carries only
+// what the caller decided about the import.
+type DeckAddOptions struct {
+	// DryRun resolves the list and reports what it would do, writing
+	// nothing: not the deck, not the printings behind it, not the prices
+	// that would be filled in after. The rehearsal `import --dry-run`
+	// already offers, and the one an LLM-authored decklist most wants before
+	// it lands in somebody's collection.
+	DryRun bool
+}
+
 // DeckAddResult is one deck import.
 type DeckAddResult struct {
 	ID         int64
@@ -182,13 +195,19 @@ type DeckAddResult struct {
 	Refinished int
 	Unresolved []string
 	Gaps       GapReport
+
+	// Replaces names the already-imported deck this import would overwrite,
+	// empty when there is none. Only a dry run fills it: the live path asks
+	// about the overwrite instead, and by the time it returns the overwrite
+	// has happened, so there is nothing left to warn about.
+	Replaces string
 }
 
 // DeckAdd resolves a parsed deck's entries and upserts the whole deck. The
 // caller supplies the Deck — from a provider URL fetch or a text file —
 // because acquiring it is frontend-shaped (file dialogs, pasted URLs); what
 // happens after is not.
-func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck) (DeckAddResult, error) {
+func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, o DeckAddOptions) (DeckAddResult, error) {
 	var res DeckAddResult
 	res.Name, res.Source = deck.Name, deck.Source
 
@@ -199,9 +218,21 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck) 
 	// whether any of it should happen. The CLI wires Confirm to a terminal
 	// prompt (or --refresh); the browser to its confirm surface; a script
 	// with neither declines and gets told how to proceed.
-	if _, name, exists, err := d.Store.DeckBySource(deck.Source, deck.SourceID); err != nil {
+	_, name, exists, err := d.Store.DeckBySource(deck.Source, deck.SourceID)
+	if err != nil {
 		return res, err
-	} else if exists {
+	}
+	switch {
+	// A dry run has nothing to ask permission for, and asking anyway would
+	// hang the unattended rehearsal the flag exists to serve — or, at a
+	// terminal, make the user answer for a replacement that is not going to
+	// happen. So the fact is reported rather than prompted. This is the same
+	// trade import's dry run makes when it skips the re-import ledger: a
+	// rehearsal answers "what would this do", and refusing to rehearse
+	// because the real thing would need a decision answers nothing.
+	case exists && o.DryRun:
+		res.Replaces = name
+	case exists:
 		q := fmt.Sprintf("Deck %q is already imported. Replace its cards (manual edits to them are lost)?", name)
 		if !d.confirm(q) {
 			return res, fmt.Errorf("deck %q is already imported; re-importing replaces its cards and discards manual edits (re-run with --refresh to do it)", name)
@@ -218,8 +249,14 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck) 
 		return res, err
 	}
 	res.Refinished, res.Unresolved = rr.Refinished, rr.Unresolved
-	if err := d.Store.UpsertPrintings(rr.Found); err != nil {
-		return res, err
+	// Even the printings are withheld on a rehearsal. They are only the
+	// catalog rows the deck's entries point at, so keeping them would look
+	// harmless — but they are rows, in tables `hoard` reports on, and a dry
+	// run that leaves any behind cannot honestly print "nothing was written".
+	if !o.DryRun {
+		if err := d.Store.UpsertPrintings(rr.Found); err != nil {
+			return res, err
+		}
 	}
 
 	var entries []store.Entry
@@ -236,6 +273,19 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck) 
 		})
 	}
 	res.Resolved = len(entries)
+
+	// A dry run stops here, with everything it learned and nothing to show
+	// for it in the database: res.ID stays zero because no deck was created,
+	// and the caller must not print it as one. The unresolved cards are
+	// still the partial outcome they would be on the real run — a rehearsal
+	// whose exit code said "clean" while the import it rehearsed would exit
+	// 2 would be the one thing a rehearsal must never do.
+	if o.DryRun {
+		if n := len(res.Unresolved); n > 0 {
+			return res, fmt.Errorf("%d cards would not resolve: %w", n, ErrPartial)
+		}
+		return res, nil
+	}
 
 	res.ID, err = d.Store.UpsertDeck(store.DeckMeta{
 		Name:      deck.Name,

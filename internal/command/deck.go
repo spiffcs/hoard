@@ -26,8 +26,17 @@ func NewCmdDeck(a *app) *cobra.Command {
 		Use:     "deck",
 		GroupID: groupDeck,
 		Short:   "Import, refresh and remove decks",
+		// --dry-run gets a line of its own rather than a fourth bracket on the
+		// --file form: that line is already 57 of the 58 columns a 60-column
+		// terminal leaves after the indent. A continuation line was the other
+		// option — import wraps that way — but the renderer re-indents every
+		// example to two spaces, so a continuation arrives looking like a form
+		// with the command name missing. Better a short real one. It is shown
+		// on the --file form because that is the workflow it is for, the same
+		// way --refresh is shown only on the URL form though both accept it.
 		Example: "hoard deck add <archidekt-url> [--refresh]\n" +
 			"hoard deck add --file <path> [--name NAME] [--source S]\n" +
+			"hoard deck add --file <path> --dry-run\n" +
 			"hoard deck remove <name>\n" +
 			"hoard deck repin <name> <set>",
 		Args: cobra.NoArgs,
@@ -42,38 +51,51 @@ func NewCmdDeck(a *app) *cobra.Command {
 	return cmd
 }
 
+// deckAddOpts are the flags, gathered as import's are so the constructor and
+// the run half do not have to agree on a nine-parameter call.
+type deckAddOpts struct {
+	file    string
+	name    string
+	source  string
+	refresh bool
+	dryRun  bool
+}
+
 func newDeckAddCmd(a *app) *cobra.Command {
-	var file, name, source string
-	var refresh bool
+	var o deckAddOpts
 
 	cmd := &cobra.Command{
 		Use:   "add [URL]",
 		Short: "Import a decklist from a URL or a file",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			return runDeckAdd(c.Context(), a.store, a.env, args, file, name, source, refresh)
+			return runDeckAdd(c.Context(), a.store, a.env, args, o)
 		},
 	}
-	cmd.Flags().StringVar(&file, "file", "",
+	cmd.Flags().StringVar(&o.file, "file", "",
 		"import from a text/exported decklist file instead of a URL")
-	cmd.Flags().StringVar(&name, "name", "",
+	cmd.Flags().StringVar(&o.name, "name", "",
 		"deck name (defaults to the file name for --file imports)")
-	cmd.Flags().StringVar(&source, "source", "",
+	cmd.Flags().StringVar(&o.source, "source", "",
 		"provider label for text imports (e.g. moxfield)")
-	cmd.Flags().BoolVar(&refresh, "refresh", false,
+	cmd.Flags().BoolVar(&o.refresh, "refresh", false,
 		"replace an already-imported deck without asking (discards manual edits to its cards)")
+	// Worded exactly as import's, because it is the same promise: the list is
+	// fetched and resolved for real — only the writing is withheld.
+	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
 	return cmd
 }
 
-func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string,
-	file, name, source string, refresh bool) error {
+func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o deckAddOpts) error {
 	// Acquiring the deck stays here — file paths and pasted URLs are
-	// frontend-shaped; everything after them is the shared capability.
+	// frontend-shaped; everything after them is the shared capability. A dry
+	// run still acquires: a URL that 404s or a file that will not parse is
+	// exactly what the rehearsal is meant to find out.
 	var deck *decksource.Deck
 	var err error
 	switch {
-	case file != "":
-		deck, err = importTextDeck(file, name, source)
+	case o.file != "":
+		deck, err = importTextDeck(o.file, o.name, o.source)
 	case len(args) == 1:
 		deck, err = decksource.Fetch(ctx, args[0])
 	default:
@@ -85,23 +107,38 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 
 	// The re-import gate: an existing deck's entries are replaced wholesale,
 	// so DeckAdd asks first. --refresh pre-answers for scripts; otherwise
-	// the terminal gets the same [y/N] every confirm in hoard speaks.
+	// the terminal gets the same [y/N] every confirm in hoard speaks. A dry
+	// run is never asked at all — DeckAdd reports the collision instead —
+	// so --refresh alongside it is redundant rather than contradictory, and
+	// is accepted in silence the way import accepts --dry-run --again.
 	deps := addDeps(st)
-	if refresh {
+	if o.refresh {
 		deps.Confirm = func(string) bool { return true }
 	} else {
 		deps.Confirm = confirm
 	}
 	pr := stderrPrinter()
-	res, err := action.DeckAdd(ctx, deps, pr.Fn(), deck)
+	res, err := action.DeckAdd(ctx, deps, pr.Fn(), deck, action.DeckAddOptions{DryRun: o.dryRun})
 	pr.Close()
 	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
 	}
 
 	r := env.Report()
-	r.Result("Imported deck #%d %q (%s): %d cards resolved.",
-		res.ID, res.Name, res.Source, res.Resolved)
+	// No "#%d" on a rehearsal: the deck was never created, so there is no id
+	// to name, and printing the zero one would invent a row that does not
+	// exist. Below the headline the two paths say the same things, except
+	// for the replacement warning only a rehearsal is in a position to give.
+	if o.dryRun {
+		r.Result("Would import deck %q (%s): %d cards resolved.", res.Name, res.Source, res.Resolved)
+	} else {
+		r.Result("Imported deck #%d %q (%s): %d cards resolved.",
+			res.ID, res.Name, res.Source, res.Resolved)
+	}
+	if res.Replaces != "" {
+		r.Detail("Would replace the imported deck %q, discarding manual edits to its cards.",
+			res.Replaces)
+	}
 	if res.Refinished > 0 {
 		r.Detail("%d recorded as foil: the list said otherwise but the printing has no non-foil.",
 			res.Refinished)
@@ -117,6 +154,9 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 		for _, sk := range deck.Skipped {
 			r.Item(sk)
 		}
+	}
+	if o.dryRun {
+		r.Hint("Dry run: nothing was written.")
 	}
 	return err
 }

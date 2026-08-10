@@ -45,7 +45,9 @@ func openInBrowser(u string) error {
 // Both deck-import seams — a pasted link, an exported file — differ only in
 // how they get the list, so everything after that is written once.
 func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *decksource.Deck) (browse.OpReport, error) {
-	res, err := action.DeckAdd(ctx, deps, p, deck)
+	// No dry run from the browser: its deck-import prompts commit, and there
+	// is no rehearsal surface to report the result on.
+	res, err := action.DeckAdd(ctx, deps, p, deck, action.DeckAddOptions{})
 	if err != nil && !errors.Is(err, errPartial) {
 		return browse.OpReport{}, err
 	}
