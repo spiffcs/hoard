@@ -512,7 +512,7 @@ final class LinkController: ObservableObject {
         var features = ["torch", "hud", "border"]
         if autoAvailable { features += ["auto", "rearm"] }
         // The build stamp rides on ready so the session log proves which
-        // build is running — build-scan-ios.sh overrides
+        // build is running — scripts/build-scan-ios.sh overrides
         // CURRENT_PROJECT_VERSION with a per-build timestamp, and a phone
         // never reinstalled says so right here instead of via a tuning
         // session spent on stale code.

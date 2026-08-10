@@ -221,13 +221,13 @@ tells you nothing about whether export will work. Separately, there is no
 `Apple Development` and two `Developer ID Application` — so export will fail a
 second time on the certificate once the account is added.
 
-Three files, sibling-script rather than a flag on `build-scan-ios.sh`, because
+Three files, sibling-script rather than a flag on `scripts/build-scan-ios.sh`, because
 the two paths share only their first four steps and diverge completely after:
 
-- `scan-ios-common.sh` — the shared half: xcodegen check, `Signing.xcconfig`
+- `scripts/scan-ios-common.sh` — the shared half: xcodegen check, `Signing.xcconfig`
   template, `ios_team_id()` (env, then the gitignored xcconfig, never a tracked
   file), project generation, build stamp.
-- `release-scan-ios.sh` — archive → export → validate/upload, with a
+- `scripts/release-scan-ios.sh` — archive → export → validate/upload, with a
   credential preflight that fails *before* archiving so a missing key costs no
   build time.
 - `ExportOptions-AppStore.plist` — tracked template with **no team ID**;
@@ -337,7 +337,7 @@ cannot upload. The `.p8` downloads exactly once. Put it in
 `HOARD_ASC_KEY_ID` and `HOARD_ASC_ISSUER_ID`. `*.p8` and `private_keys/` are
 gitignored.
 
-**C2.** `./release-scan-ios.sh --validate` first — Apple's pre-upload checks,
+**C2.** `./scripts/release-scan-ios.sh --validate` first — Apple's pre-upload checks,
 no build spent — then `--upload`.
 
 **C3. TestFlight.** Internal testing needs nothing further. **External** testing
@@ -464,7 +464,7 @@ rather than pointing it at the same page.
   is certainly legal — one to three period-separated non-negative integers — but
   Apple may separately require the first component to be greater than zero for a
   public release. Nobody here has submitted a `0.x` app, so treat this as
-  untested. `./release-scan-ios.sh --validate` runs Apple's own pre-upload
+  untested. `./scripts/release-scan-ios.sh --validate` runs Apple's own pre-upload
   checks and is the cheap way to find out, once the API key exists. If it is
   refused, the smallest honest answer is `1.0.0` in App Store Connect while the
   binary stays at `0.1.0` — but do not pre-emptively concede the point.

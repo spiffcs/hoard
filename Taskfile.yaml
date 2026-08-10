@@ -213,18 +213,18 @@ tasks:
     cmd: ./bin/cardkit-probe --score scan/corpus/manifest.tsv {{ .CLI_ARGS }} ${ARGS:-}
 
   # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
-  # (xcodebuild -downloadPlatform iOS) and a signing team — build-scan-ios.sh
+  # (xcodebuild -downloadPlatform iOS) and a signing team — scripts/build-scan-ios.sh
   # reports whichever is missing. See docs/specs/ios-development.md.
   scan-ios:
     desc: Build the iPhone capture head
     platforms: [darwin]
-    cmd: ./build-scan-ios.sh
+    cmd: ./scripts/build-scan-ios.sh
 
   # Same, then install onto an attached, unlocked iPhone with Developer Mode on.
   scan-ios-install:
     desc: Build and install the iPhone capture head onto an attached iPhone
     platforms: [darwin]
-    cmd: ./build-scan-ios.sh --install
+    cmd: ./scripts/build-scan-ios.sh --install
 
   # The distribution path for the same app: Release archive + signed .ipa.
   #
@@ -238,22 +238,22 @@ tasks:
   # The archive stops short of a signed export until the bundle ID is
   # registered and the team has an Apple Distribution certificate, and the
   # upload needs App Store Connect credentials that no tracked file holds.
-  # release-scan-ios.sh reports whichever is missing, in the same shape
-  # build-scan-ios.sh reports a signing failure. See docs/specs/app-store-release.md.
+  # scripts/release-scan-ios.sh reports whichever is missing, in the same shape
+  # scripts/build-scan-ios.sh reports a signing failure. See docs/specs/app-store-release.md.
   scan-ios-release:
     desc: Archive and export the iPhone capture head for App Store Connect
     platforms: [darwin]
-    cmd: ./release-scan-ios.sh
+    cmd: ./scripts/release-scan-ios.sh
 
   scan-ios-release-validate:
     desc: Archive, export, and run App Store Connect's pre-upload validation
     platforms: [darwin]
-    cmd: ./release-scan-ios.sh --validate
+    cmd: ./scripts/release-scan-ios.sh --validate
 
   scan-ios-release-upload:
     desc: Archive, export, and upload the iPhone capture head to App Store Connect
     platforms: [darwin]
-    cmd: ./release-scan-ios.sh --upload
+    cmd: ./scripts/release-scan-ios.sh --upload
 
   # Run the package's unit tests on the iOS simulator. They are Vision-free and
   # CoreGraphics-only, so they prove the phone's targets still compile and

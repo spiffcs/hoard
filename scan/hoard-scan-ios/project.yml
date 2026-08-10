@@ -11,7 +11,7 @@
 #
 # Signing is deliberately not in this file. DEVELOPMENT_TEAM lives in
 # Signing.xcconfig, which is gitignored, so a team identifier never lands in the
-# repo. build-scan-ios.sh writes a template if it is missing.
+# repo. scripts/build-scan-ios.sh writes a template if it is missing.
 
 name: HoardScan
 options:
@@ -63,7 +63,7 @@ targets:
       properties:
         # The variable reference, quoted so xcodegen writes it into the plist
         # verbatim for Xcode to resolve at build time — written as a literal,
-        # the build stamp build-scan-ios.sh passes lands in a setting nothing
+        # the build stamp scripts/build-scan-ios.sh passes lands in a setting nothing
         # reads, and the phone reports whatever number generation day left
         # here (live: a tuning session ran against "phone=1").
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -136,7 +136,7 @@ targets:
         # its own maturity.
         MARKETING_VERSION: "0.1.0"
         # "0" means an unstamped build — Xcode-GUI builds report phone=0 and
-        # say so honestly; build-scan-ios.sh overrides this with its
+        # say so honestly; scripts/build-scan-ios.sh overrides this with its
         # per-build timestamp, which is the number a tuning session trusts.
         CURRENT_PROJECT_VERSION: "0"
         SWIFT_VERSION: "5.0"

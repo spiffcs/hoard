@@ -90,7 +90,7 @@ cd scan/hoard-scan-ios && xcodegen generate && open HoardScan.xcodeproj
 **Run `make scan-ios` once first.** On a fresh clone `xcodegen generate` fails
 outright — `project.yml` names `Signing.xcconfig` as the config file for both
 build configurations, and that file is gitignored, so it does not exist until
-`build-scan-ios.sh` writes it:
+`scripts/build-scan-ios.sh` writes it:
 
 ```
 2 Spec validations errors:

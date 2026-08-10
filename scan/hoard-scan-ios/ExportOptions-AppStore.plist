@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Export options for `xcodebuild -exportArchive`, App Store Connect flavour.
-  Used by release-scan-ios.sh; see that script for the whole path.
+  Used by scripts/release-scan-ios.sh; see that script for the whole path.
 
   This is a TEMPLATE, not the plist xcodebuild is handed. The script copies it
   into the build directory and writes `teamID` into the copy at run time, from
@@ -57,7 +57,7 @@
 	  NO, and this one matters. It defaults to YES, and YES means Xcode
 	  silently rewrites CFBundleVersion during export to whatever App Store
 	  Connect thinks comes next. That would throw away the timestamp stamp
-	  release-scan-ios.sh passes in — the number that ties an uploaded build
+	  scripts/release-scan-ios.sh passes in — the number that ties an uploaded build
 	  back to a moment and a git rev — and replace it with a counter nothing
 	  local can reproduce. Own the build number or do not; half-owning it is
 	  how you end up unable to say which commit a TestFlight build came from.
