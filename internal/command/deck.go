@@ -155,9 +155,7 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 			r.Item(sk)
 		}
 	}
-	if o.dryRun {
-		r.Hint("Dry run: nothing was written.")
-	}
+	noteDryRun(r, o.dryRun)
 	return err
 }
 

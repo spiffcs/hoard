@@ -81,10 +81,7 @@ func runMerge(a *app, path string, o mergeOpts) error {
 			path, res.SourceVersion, res.BackupPath)
 	}
 
-	verb := "Merged"
-	if o.dryRun {
-		verb = "Would merge"
-	}
+	verb := dryRunVerb(o.dryRun, "Merged", "Would merge")
 	r.Result("%s %d cards from %s.", verb, res.Copies+res.DeckCards, path)
 	for _, name := range sortedKeys(res.PerBinder) {
 		note := ""
@@ -132,9 +129,7 @@ func runMerge(a *app, path string, o mergeOpts) error {
 		}
 		r.Detail("Interchange document written to %s.", o.outPath)
 	}
-	if o.dryRun {
-		r.Hint("Dry run: nothing was written.")
-	}
+	noteDryRun(r, o.dryRun)
 	return nil
 }
 

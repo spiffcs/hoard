@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/spiffcs/hoard/internal/cli"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -27,19 +29,77 @@ func renderHelp(w io.Writer, env ui.Env, args ...string) {
 	_ = root.Execute()
 }
 
+// helpPaths walks the real tree and returns the argv prefix of every page
+// help can render, root (the empty prefix) first.
+//
+// Walking beats a written-out list for the same reason the root help is
+// generated: a list is a second place to forget. A subcommand added tomorrow
+// is width-checked the day it is added, without anyone remembering to add it
+// here.
+//
+// `completion` is the one subtree left out. Its pages are cobra's own prose,
+// several paragraphs of shell instructions hoard neither wrote nor can reword,
+// so checking them would assert something about cobra rather than about
+// hoard's help. The root row that advertises the command is still checked,
+// because that line is rendered by writeRootHelp from the command's Short.
+func helpPaths(t *testing.T) [][]string {
+	t.Helper()
+	env := ui.Env{Width: 60, Clamp: true}
+	root, _ := buildRoot(
+		&app{env: &cli.Env{Out: io.Discard, Err: io.Discard, OutEnv: env, ErrEnv: env}},
+		func(io.Writer) ui.Env { return env },
+	)
+
+	paths := [][]string{nil}
+	var walk func(*cobra.Command, []string)
+	walk = func(parent *cobra.Command, prefix []string) {
+		for _, sub := range parent.Commands() {
+			if !sub.IsAvailableCommand() || sub.Name() == "completion" {
+				continue
+			}
+			path := append(append([]string(nil), prefix...), sub.Name())
+			paths = append(paths, path)
+			walk(sub, path)
+		}
+	}
+	walk(root, nil)
+	return paths
+}
+
 // Help is generated from the command tree, so a command that exists is a
 // command that appears — the hand-written table this replaced was a separate
 // var that nothing checked against the dispatch switch.
 //
 // It responds to the terminal's width: at 60 columns every line fits, with
 // names and descriptions truncated rather than run off the edge.
+//
+// Every page, not just root's. The table the root help draws is laid out by
+// ui.Table, which clamps; a command's own page is not — writeCommandHelp
+// copies Long and Example through verbatim, because they are prose someone
+// wrote by hand and wrapping them would break the alignment of the forms. So
+// the only thing keeping them inside the terminal is that someone counted,
+// and checking root alone checked the half that cannot fail. That gap let a
+// 69-column `deck add` example ship under a green suite; it was caught by an
+// ad-hoc sweep instead.
+//
+// Measure here, through renderHelp, and nowhere else: hoard does not read
+// COLUMNS, and piping the binary's help drops the TTY so detectEnv falls back
+// to 80 columns — a sweep run that way reports every line as fitting.
 func TestUsageFitsANarrowTerminal(t *testing.T) {
-	var b bytes.Buffer
-	renderHelp(&b, ui.Env{Width: 60, Clamp: true})
-	for line := range strings.SplitSeq(b.String(), "\n") {
-		if n := len([]rune(line)); n > 60 {
-			t.Errorf("line %d wide: %q", n, line)
+	for _, path := range helpPaths(t) {
+		name := "hoard"
+		if len(path) > 0 {
+			name = strings.Join(path, " ")
 		}
+		t.Run(name, func(t *testing.T) {
+			var b bytes.Buffer
+			renderHelp(&b, ui.Env{Width: 60, Clamp: true}, path...)
+			for line := range strings.SplitSeq(b.String(), "\n") {
+				if n := len([]rune(line)); n > 60 {
+					t.Errorf("line %d wide: %q", n, line)
+				}
+			}
+		})
 	}
 }
 

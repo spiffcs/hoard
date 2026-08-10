@@ -28,8 +28,13 @@ func NewCmdMovers(a *app) *cobra.Command {
 		GroupID: groupCollection,
 		Short:   "Biggest risers and sinkers you hold",
 		Example: "hoard movers [--since 30d] [--limit N]",
-		Long: "Compares today's price against the last one recorded on or before\n" +
-			"the cutoff. Prices are observed when a refresh runs, not continuously.",
+		// Wrapped to fit 60 columns, the narrowest terminal hoard's help
+		// claims to render in. writeCommandHelp copies Long through
+		// verbatim — the forms above it are aligned by hand and re-wrapping
+		// would break them — so a Long is only as narrow as it was written.
+		Long: "Compares today's price against the last one recorded on\n" +
+			"or before the cutoff. Prices are observed when a refresh\n" +
+			"runs, not continuously.",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runMovers(a.store, a.env, since, limit)

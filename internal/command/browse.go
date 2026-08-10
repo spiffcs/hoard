@@ -161,9 +161,19 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				lines = append(lines, fmt.Sprintf("%d into %s%s", res.PerBinder[name], name, note))
 			}
 			if res.SkippedDeckRows > 0 {
-				lines = append(lines, fmt.Sprintf(
-					"skipped %d deck rows: decks come back via 'hoard deck add', not as loose cards",
-					res.SkippedDeckRows))
+				// The same sentence the CLI's import prints, kept in step with
+				// it by hand because the browser reaches action.Import
+				// directly and never renders through ui.Report. The wording it
+				// replaced — "decks come back via 'hoard deck add'" — was true
+				// and useless: until --format text landed, nothing hoard wrote
+				// could be read back by 'deck add', so it named a route that
+				// did not exist. Three lines rather than one because the text
+				// takeover does not wrap, and the route is two commands.
+				lines = append(lines,
+					fmt.Sprintf("skipped %d deck rows: import fills binders. Restore a deck with:",
+						res.SkippedDeckRows),
+					"  - hoard export --deck NAME --format text",
+					"  - hoard deck add --file")
 			}
 			if res.Refinished > 0 {
 				lines = append(lines, fmt.Sprintf(

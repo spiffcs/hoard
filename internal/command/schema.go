@@ -39,12 +39,18 @@ func NewCmdSchema(a *app) *cobra.Command {
 		Use:     "schema",
 		GroupID: groupInterop,
 		Short:   "The JSON Schema that this build's --json output follows",
-		Long: "The JSON Schema that this build's --json output follows, printed to stdout.\n\n" +
-			"It is the contract rather than the collection: handed to a model or a\n" +
-			"validator, it is enough to write a correct query against hoard's JSON\n" +
-			"without any card data leaving the machine. --kind narrows it to one\n" +
-			"document kind — the envelope, that kind's payload, and the definitions\n" +
-			"they reach — which is a few KB instead of twenty.",
+		// Wrapped to 60 columns, the narrowest terminal hoard's help claims to
+		// render in. writeCommandHelp copies Long through verbatim, so a Long
+		// is only ever as narrow as it was written; this one shipped at 75 and
+		// was found by the tree-wide sweep in usage_test.go, not by eye.
+		Long: "The JSON Schema that this build's --json output follows,\n" +
+			"printed to stdout.\n\n" +
+			"It is the contract rather than the collection: handed to\n" +
+			"a model or a validator, it is enough to write a correct\n" +
+			"query against hoard's JSON without any card data leaving\n" +
+			"the machine. --kind narrows it to one document kind — the\n" +
+			"envelope, that kind's payload, and the definitions they\n" +
+			"reach — which is a few KB instead of twenty.",
 		Example: "hoard schema\n" +
 			"hoard schema --kind holdings",
 		Args: cobra.NoArgs,

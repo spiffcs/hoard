@@ -17,6 +17,7 @@ import (
 	"github.com/spiffcs/hoard/internal/cli"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // importOpts are the flags, gathered so the constructor and the run half do
@@ -36,7 +37,16 @@ func NewCmdImport(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "import FILE",
 		GroupID: groupInterop,
-		Short:   "Add a collection CSV export (ManaBox, Moxfield, Delver Lens, hoard)",
+		// Short is 60 columns or fewer because it is what this command's own
+		// page prints when there is no Long, verbatim and unwrapped. The
+		// sources moved into Long rather than being dropped: which apps hoard
+		// can read is the question this command gets asked, and the root
+		// table — where Short is truncated to fit a column — was never the
+		// place that answered it.
+		Short: "Add a collection CSV from another app, or from hoard",
+		Long: "Adds a collection CSV to a binder. It recognises exports\n" +
+			"from ManaBox, Moxfield, Delver Lens and hoard itself;\n" +
+			"--format names the format when the header does not.",
 		Example: "hoard import FILE [--binder B | --preserve-binders]\n" +
 			"       [--format F] [--dry-run]",
 		// Not cobra.ExactArgs(1): its "accepts 1 arg(s), received 0" says less
@@ -87,10 +97,7 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 	}
 
 	r := env.Report()
-	verb := "Imported"
-	if o.dryRun {
-		verb = "Would import"
-	}
+	verb := dryRunVerb(o.dryRun, "Imported", "Would import")
 	r.Result("%s %d cards (%s format): %d rows resolved.", verb, res.Copies, res.Format, res.Resolved)
 	for _, name := range sortedKeys(res.PerBinder) {
 		note := ""
@@ -124,9 +131,7 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 			r.Item(u)
 		}
 	}
-	if o.dryRun {
-		r.Hint("Dry run: nothing was written.")
-	}
+	noteDryRun(r, o.dryRun)
 	// An import that skipped the file's decks did not restore the file, and
 	// exiting 0 said it did: a backup script pointed at a canonical export
 	// ran green while dropping every deck in it — 1,879 of 2,235 copies on
@@ -139,6 +144,40 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 		err = fmt.Errorf("%d deck rows were skipped: %w", res.SkippedDeckRows, errPartial)
 	}
 	return err
+}
+
+// dryRunVerb picks a headline's verb: the past tense when the command wrote,
+// the conditional when it only rehearsed.
+//
+// Here rather than in each command because there are three rehearsable
+// commands and this is the shape all of them wanted — `import` and `merge`
+// spell it exactly this way, and `deck add` differs only in that its two
+// headlines are not the same sentence with one word swapped (a real run names
+// the deck id the rehearsal has not got), so it keeps its own branch.
+func dryRunVerb(dryRun bool, did, would string) string {
+	if dryRun {
+		return would
+	}
+	return did
+}
+
+// noteDryRun closes a rehearsal's receipt with the line that says so.
+//
+// One copy, deliberately. `import`, `merge` and `deck add` each grew their own
+// literal — the second and third written by agents working in parallel who
+// could not reach the first — and three literals of a sentence this load-
+// bearing is three chances for a user to be told "nothing was written" in a
+// wording that does not match the last command that told them so. The
+// receipt's last line is where a reader looks to find out whether their
+// collection changed; it should read identically wherever they got it.
+//
+// Nothing else in this file is where the caller expects it either — sortedKeys
+// is here and used from three files — so this is the established home for
+// helpers the interop commands share.
+func noteDryRun(r *ui.Report, dryRun bool) {
+	if dryRun {
+		r.Hint("Dry run: nothing was written.")
+	}
 }
 
 func sortedKeys[V any](m map[string]V) []string {
