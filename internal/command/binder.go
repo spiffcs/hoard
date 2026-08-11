@@ -14,14 +14,25 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
+// binderList prints the binders, as a table or as the binders document.
+//
+// The JSON path exists because a binder's id is an argument elsewhere: export,
+// import and add all take --binder as an id, a name or a unique fragment, so
+// discovering what binders there are is a prerequisite to using any of them.
+// Without this, that discovery step was the one place in hoard's machine
+// interface where a caller had to parse a formatted table.
 func binderList(st *store.Store, env *cli.Env) error {
 	binders, err := st.ListBinders()
 	if err != nil {
 		return err
+	}
+	if env.JSON {
+		return hoardjson.Write(env.Out, hoardjson.FromBinders(binders))
 	}
 	fmt.Fprint(env.Out, report.Binders(env.OutEnv, binders))
 	return nil
@@ -71,6 +82,10 @@ func binderRemove(st *store.Store, env *cli.Env, args []string) error {
 
 // NewCmdBinder is a group whose bare form is a shorthand: `hoard binder` lists,
 // which is what it did before the port.
+//
+// The group and its list subcommand are both JSONCapable because both of them
+// list; the annotation does not descend, so new, rename and rm still refuse
+// --json, which is right — they report an action rather than a result.
 func NewCmdBinder(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "binder",
@@ -83,11 +98,11 @@ func NewCmdBinder(a *app) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(
-		&cobra.Command{
+		cli.JSONCapable(&cobra.Command{
 			Use: "list", Short: "Your binders, with counts and value",
 			Args: cobra.NoArgs,
 			RunE: func(*cobra.Command, []string) error { return binderList(a.store, a.env) },
-		},
+		}),
 		&cobra.Command{
 			Use: "new NAME", Short: "Create a named binder",
 			Args: cobra.ExactArgs(1),
@@ -104,5 +119,5 @@ func NewCmdBinder(a *app) *cobra.Command {
 			RunE: func(_ *cobra.Command, args []string) error { return binderRemove(a.store, a.env, args) },
 		},
 	)
-	return cmd
+	return cli.JSONCapable(cmd)
 }

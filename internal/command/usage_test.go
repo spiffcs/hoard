@@ -151,10 +151,14 @@ func TestGlobalFlagsAppearInHelp(t *testing.T) {
 		// A command that declared AnnotationJSON repeats --json, because there
 		// it works.
 		{"export", []string{"export"}, []string{"Global flags:", "--db", "--json"}, nil},
-		// One that did not must not: CheckJSON rejects `hoard binder --json`
-		// outright, so printing it here would make help the only place in
-		// hoard that claims the flag is accepted.
-		{"binder", []string{"binder"}, []string{"Global flags:", "--db"}, []string{"--json"}},
+		// A group whose bare form is a listing carries it too: `hoard binder`
+		// lists, and its ids are what --binder takes elsewhere.
+		{"binder", []string{"binder"}, []string{"Global flags:", "--db", "--json"}, nil},
+		{"binder list", []string{"binder", "list"}, []string{"Global flags:", "--db", "--json"}, nil},
+		// One that did not declare it must not advertise it: CheckJSON rejects
+		// `hoard add --json` outright, so printing it here would make help the
+		// only place in hoard that claims the flag is accepted.
+		{"add", []string{"add"}, []string{"Global flags:", "--db"}, []string{"--json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer

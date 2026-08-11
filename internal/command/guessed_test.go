@@ -6,6 +6,8 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -202,3 +204,97 @@ func TestGuessedCheckedFlagDispatches(t *testing.T) {
 // itoa keeps the id formatting in one place; the listing and the flag have to
 // agree on it or the ids a user reads cannot be typed back in.
 func itoa(id int64) string { return strconv.FormatInt(id, 10) }
+
+// The queue's ids are its whole interface — --checked takes them and nothing
+// else does — so a worklist readable only as a formatted table can be read by
+// an agent but not worked through. This is the round trip: list as JSON, take
+// an id out of the document, retire it, and see the queue shrink.
+func TestGuessedJSONCarriesTheIDsCheckedTakes(t *testing.T) {
+	st := guessedStore(t)
+
+	out, err := execCmd(context.Background(), st, []string{"guessed"}, true)
+	if err != nil {
+		t.Fatalf("guessed --json: %v", err)
+	}
+	var doc struct {
+		Kind    string `json:"kind"`
+		Guessed struct {
+			Rows []struct {
+				ID   int64 `json:"id"`
+				Card struct {
+					Name   string `json:"name"`
+					Finish string `json:"finish"`
+				} `json:"card"`
+				GuessedAt string `json:"guessedAt"`
+			} `json:"rows"`
+		} `json:"guessed"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("guessed --json emitted invalid JSON (%v): %q", err, out)
+	}
+	if doc.Kind != "guessed" {
+		t.Errorf("kind = %q, want %q", doc.Kind, "guessed")
+	}
+	// Two rows for two physical copies of one printing. The fixture is
+	// deliberately the case a natural key cannot address.
+	if len(doc.Guessed.Rows) != 2 {
+		t.Fatalf("rows = %d, want the two banked guesses: %s", len(doc.Guessed.Rows), out)
+	}
+	r := doc.Guessed.Rows[0]
+	if r.Card.Name != "Primal Whisperer" || r.Card.Finish != "nonfoil" || r.GuessedAt == "" {
+		t.Errorf("row is missing what the table shows: %+v", r)
+	}
+
+	// The id read out of the document is the one --checked answers to.
+	env, _, _ := splitEnv()
+	if err := runGuessedChecked(st, env, []int64{r.ID}); err != nil {
+		t.Fatalf("runGuessedChecked(%d): %v", r.ID, err)
+	}
+	if left := guessIDs(t, st); len(left) != 1 {
+		t.Errorf("ids after retiring the one the document named = %v, want one left", left)
+	}
+}
+
+// An emptied queue is a document with no rows. A script draining the list needs
+// to be able to see that it is done, and the prose the table prints instead
+// ("every scanned row was evidence-backed") is not something it can read.
+func TestGuessedJSONOnAnEmptyQueueIsAnEmptyList(t *testing.T) {
+	st := guessedStore(t)
+	env, _, _ := splitEnv()
+	if err := runGuessedChecked(st, env, guessIDs(t, st)); err != nil {
+		t.Fatalf("runGuessedChecked: %v", err)
+	}
+
+	out, err := execCmd(context.Background(), st, []string{"guessed"}, true)
+	if err != nil {
+		t.Fatalf("guessed --json: %v", err)
+	}
+	if !strings.Contains(out, `"rows": []`) {
+		t.Errorf("a drained queue does not emit an empty list:\n%s", out)
+	}
+}
+
+// --checked is the acting half of the command and reports an outcome, which the
+// document model has no kind for. Rather than hand a script prose from a command
+// whose help advertises --json, it says which half the flag belongs to and what
+// to run instead.
+func TestGuessedCheckedRefusesJSON(t *testing.T) {
+	st := guessedStore(t)
+	ids := guessIDs(t, st)
+
+	_, err := execCmd(context.Background(), st,
+		[]string{"guessed", "--checked", itoa(ids[0])}, true)
+	if err == nil {
+		t.Fatal("guessed --checked --json succeeded; it has no document to emit")
+	}
+	if !errors.Is(err, cli.ErrUsage) {
+		t.Errorf("refusal is not a usage error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "hoard guessed --json") {
+		t.Errorf("message does not name the command that does emit one: %v", err)
+	}
+	// And it refused rather than half-acting: the row is still queued.
+	if left := guessIDs(t, st); len(left) != 2 {
+		t.Errorf("ids after the refusal = %v, want both still queued", left)
+	}
+}

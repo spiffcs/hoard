@@ -78,6 +78,7 @@ func TestSchemaKindKeepsOnlyWhatThatKindReaches(t *testing.T) {
 
 	for _, kind := range []string{
 		"summary", "holdings", "unpriced", "movers", "market", "report", "watch", "hoard",
+		"binders", "guessed",
 	} {
 		t.Run(kind, func(t *testing.T) {
 			out, err := runSchemaCmd(t, "--kind", kind)

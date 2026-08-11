@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -33,6 +34,15 @@ func NewCmdGuessed(a *app) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			if len(checked) > 0 {
+				// --checked retires rows and reports what it did, including
+				// which ids named nothing. That is an outcome, not a queue,
+				// and the document model has no kind for it — so rather than
+				// print prose from a command whose help advertises --json,
+				// say which half of the command the flag belongs to.
+				if a.env.JSON {
+					return cli.Usagef("hoard guessed --checked has no JSON output; " +
+						"retire without --json, then hoard guessed --json for what remains")
+				}
 				return runGuessedChecked(a.store, a.env, checked)
 			}
 			return runGuessed(a.store, a.env)
@@ -45,7 +55,10 @@ func NewCmdGuessed(a *app) *cobra.Command {
 	// prints as a default worth stating. The back-quoted word above replaces
 	// the first; clearing DefValue drops the second.
 	cmd.Flags().Lookup("checked").DefValue = ""
-	return cmd
+	// The listing is JSONCapable because the ids it prints are the arguments
+	// --checked takes: a worklist whose only machine-readable form is a table
+	// can be read but not worked through.
+	return cli.JSONCapable(cmd)
 }
 
 // runGuessed lists every scanned holding still standing on a guessed finish —
@@ -61,6 +74,12 @@ func runGuessed(st *store.Store, env *cli.Env) error {
 	rows, err := st.GuessedFinishes()
 	if err != nil {
 		return err
+	}
+	// Before the empty check, not after: an empty queue is a real answer for a
+	// script working the list down, and the prose branch below says the same
+	// thing in a sentence a consumer cannot read.
+	if env.JSON {
+		return hoardjson.Write(env.Out, hoardjson.FromGuessed(rows))
 	}
 	dim := env.OutEnv.Dim()
 	if len(rows) == 0 {
