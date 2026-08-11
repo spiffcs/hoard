@@ -55,6 +55,71 @@ func TestFinishGuessRoundTrip(t *testing.T) {
 	}
 }
 
+// The other way a guess is answered, and the one that decides whether this is
+// a worklist or a growing ledger: the card was checked and the scanner had it
+// right. A correction cannot cover this — nothing gets re-keyed — so without
+// it a correct guess is never retired and the list can only grow.
+func TestConfirmFinishGuessRetiresExactlyTheNamedRow(t *testing.T) {
+	s := newTestStore(t)
+	card := scryfall.Card{ID: "whisperer", Name: "Primal Whisperer", Set: "lgn",
+		CollectorNumber: "135", ScryfallURL: "https://scryfall.com/card/lgn/135"}
+	if err := s.AddCardFinish(card, "nonfoil", 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	cid, err := s.collectionID()
+	if err != nil {
+		t.Fatalf("collectionID: %v", err)
+	}
+	// Two copies, two commits: the rows are identical in every column, which
+	// is why a confirmation is keyed on the id and not on the card.
+	for range 2 {
+		if err := s.RecordFinishGuess(cid, card.ID, "nonfoil"); err != nil {
+			t.Fatalf("RecordFinishGuess: %v", err)
+		}
+	}
+	rows, err := s.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("guesses = %d, want 2", len(rows))
+	}
+
+	ok, err := s.ConfirmFinishGuess(rows[0].ID)
+	if err != nil {
+		t.Fatalf("ConfirmFinishGuess: %v", err)
+	}
+	if !ok {
+		t.Errorf("ConfirmFinishGuess reported nothing retired, want the row it named")
+	}
+	left, err := s.GuessedFinishes()
+	if err != nil {
+		t.Fatalf("GuessedFinishes: %v", err)
+	}
+	if len(left) != 1 || left[0].ID != rows[1].ID {
+		t.Fatalf("remaining = %+v, want only the other copy (#%d)", left, rows[1].ID)
+	}
+
+	// The queue reaches zero once every card has been looked at. An
+	// append-only log cannot, and that is the difference being pinned.
+	if _, err := s.ConfirmFinishGuess(rows[1].ID); err != nil {
+		t.Fatalf("ConfirmFinishGuess: %v", err)
+	}
+	if left, _ := s.GuessedFinishes(); len(left) != 0 {
+		t.Errorf("remaining = %+v, want an empty queue", left)
+	}
+
+	// An id naming nothing is reported, not an error: it is how a caller tells
+	// a retired guess from a stale id typed off an old listing.
+	ok, err = s.ConfirmFinishGuess(rows[0].ID)
+	if err != nil {
+		t.Errorf("ConfirmFinishGuess of nothing: %v", err)
+	}
+	if ok {
+		t.Errorf("ConfirmFinishGuess of an already-retired id reported a retirement")
+	}
+}
+
 // The browse promise: fixing a wrong finish in the detail editor retires the
 // guess it corrects, so `hoard guessed` drains as the pile gets checked.
 func TestMoveEntryFinishClearsTheGuess(t *testing.T) {

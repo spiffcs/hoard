@@ -64,6 +64,36 @@ DELETE FROM finish_guesses WHERE id = (
 	return nil
 }
 
+// ConfirmFinishGuess retires one guess by its row id: a human looked at the
+// physical card and the scanner had it right after all.
+//
+// This is the half ClearFinishGuess was missing. A correction was the only
+// evidence the log could take, so a guess that happened to be correct produced
+// no re-key, kept no way to be answered, and stayed listed for good. The queue
+// could only grow, which made its count a running total of everything ever
+// scanned blind rather than a count of cards still to check. A confirmation is
+// evidence too, and it retires the row the same way a correction does.
+//
+// By row id rather than by container, card and finish, because the log is per
+// commit: two copies of one printing bank two rows that no key can tell apart.
+// A correction may take the newest of them, since it genuinely answers for
+// whichever copy it re-keyed. A confirmation answers for the single card in
+// the reader's hand, so it has to name that row and no other.
+//
+// Reports whether a row was there, so a caller can tell a guess it retired
+// from an id that named nothing.
+func (s *Store) ConfirmFinishGuess(id int64) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM finish_guesses WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("confirming finish guess %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("confirming finish guess %d: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // GuessedFinishes lists every commit still standing on a guessed finish,
 // newest first — the audit queue for a pile scanned under a bad lamp.
 func (s *Store) GuessedFinishes() ([]FinishGuessRow, error) {

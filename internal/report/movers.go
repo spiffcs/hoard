@@ -259,15 +259,28 @@ func spreadCell(env ui.Env, c market.Comp) ui.Cell {
 //
 // window names the period in words ("since 29 Jun"), because prices are observed
 // when a refresh runs rather than continuously.
+//
+// Both summary sentences name the population they counted over, not just the
+// count, because the count is bounded by coverage at least as often as it is
+// bounded by movement. A printing needs a price recorded at or before the
+// cutoff to have a baseline at all; one first priced after it is left out
+// rather than reported as flat. So a wider window can report a smaller number,
+// and it does so on any hoard whose record thins out towards its start: a
+// window reaching past the first heavy refresh compares only the handful of
+// printings priced that early. Said as "N printings moved", that reads as the
+// hoard going quiet, and a reader who widens the window and watches the figure
+// fall concludes the tool is broken. Naming the population says which of the
+// two is happening, and it is the sentence that changes here — nothing about
+// what gets counted does.
 func Movers(env ui.Env, changes []store.PriceChange, limit int, window string) string {
 	if len(changes) == 0 {
-		return env.Dim()("No price changes "+window+".") + "\n"
+		return env.Dim()("No price changes "+window+", among printings priced by then.") + "\n"
 	}
 	var net float64
 	for _, c := range changes {
 		net += c.TotalDelta()
 	}
 	return moversTable(env, moverSections(changes, limit)).Render() + "\n" +
-		env.Dim()(fmt.Sprintf("%s printings moved %s. Net change: %s",
+		env.Dim()(fmt.Sprintf("%s printings moved %s, among those priced by then. Net change: %s",
 			ui.Count(len(changes)), window, ui.SignedMoney(net))) + "\n"
 }

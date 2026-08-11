@@ -27,6 +27,11 @@ func pricedStore(t *testing.T) *store.Store {
 
 // The stdout lock for update-prices: these bytes are the piped contract, and
 // the action migration must never change them.
+//
+// The summary sentence has moved once since, deliberately: it now names the
+// population it counted over, because a printing needs a price recorded at or
+// before the cutoff to have a baseline at all and the old wording reported
+// that shortfall as stillness. See report.Movers. No figure changed.
 func TestRunUpdatePricesStdoutGolden(t *testing.T) {
 	st := pricedStore(t)
 	stubFetch(t, watchCard(), scryfall.Card{ID: "rem", Set: "ice", CollectorNumber: "78",
@@ -37,7 +42,8 @@ func TestRunUpdatePricesStdoutGolden(t *testing.T) {
 	if err := runUpdatePrices(context.Background(), deps, bufEnv(&sb), 10); err != nil {
 		t.Fatalf("runUpdatePrices: %v", err)
 	}
-	want := "Updated prices for 2 of 2 cards.\n\nNo price changes since the last refresh.\n"
+	want := "Updated prices for 2 of 2 cards.\n\n" +
+		"No price changes since the last refresh, among printings priced by then.\n"
 	if sb.String() != want {
 		t.Errorf("stdout:\n%q\nwant:\n%q", sb.String(), want)
 	}
