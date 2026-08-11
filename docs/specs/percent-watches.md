@@ -789,3 +789,222 @@ implementer should do is run the §5.1 subquery against a copy of the real
 database and check the anchors it produces against the five alerts in §2.5 —
 if it does not reproduce those five and only those five, this design is
 wrong somewhere I did not look.
+
+---
+
+## 13. As built
+
+Status: **built and green**, on `percent-watches`, uncommitted. Schema v28,
+`schemaVersion` 1.0.1. This section records what was decided, what it cost,
+and the places the implementation departs from §5.1 — each because running the
+query against the real database found something the design had not.
+
+### 13.1 What the anchor reads
+
+**The anchor reads whichever source hoard's effective price came from**, for
+both ends of the movement — §12.1's option 1. That was not the first answer.
+
+It shipped first as a constant, `store.AnchorSource = "tcgplayer"`, on §2.3's
+reasoning: 90.6% of recorded history, no source flips by construction, and a
+vendor change reported as a price change is the one failure an alert cannot
+survive. Three measurements retired it, and the sequence is more useful than
+the conclusion.
+
+**Restricting only the anchor is worse than not restricting it.** hoard's
+effective price is `COALESCE(scryfall, alt)` and Scryfall now prices 1,871 of
+1,967 printings. A tcgplayer anchor compared against that leaves **6.1% of held
+series already more than ten percent apart on the vendor gap alone** — firing
+on the first check and every check after. That is §2.3's 6% converted from
+occasional to structural. Whatever the anchor reads, the price it is compared
+against has to come from the same series.
+
+**A named vendor is a fact about the past.** The feed changed over in late
+July, and by the most recent week tcgplayer had stopped being written at all:
+
+| week | tcgplayer | scryfall | cardkingdom |
+|---|---:|---:|---:|
+| 2026-W29 | 4,945 | — | — |
+| 2026-W30 | 3,899 | 2,829 | 306 |
+| 2026-W31 | 2,237 | 1,319 | — |
+| 2026-W32 | **0** | 2,198 | — |
+
+The constant was anchoring to a series nothing writes any more.
+
+**The fixed vendor was itself manufacturing the staleness it had to be worked
+around.** Held series with no observation in the last thirty days: **1 of 2,898
+across all sources, 336 of 2,884 restricted to tcgplayer.** The 13.4% blind
+spot that forced §13.3's carry-forward was 96% created by the restriction.
+
+Following the effective price cannot go stale that way, cannot disagree with
+the price hoard displays, and needs no vendor named anywhere. The cost is
+narrower than the fixed vendor's: a printing whose source has just changed and
+whose price has not moved since has no rows in its new series yet, because
+history records transitions. That is 2 of 1,968 held series, it resolves at the
+first real move, and `watch add` says so at the time.
+
+**The shape that made this cheap is worth keeping.** The decision lived in one
+named constant, so reversing it was an expression and a test rather than a
+rewrite. A decision made from a measurement of the past should be stored where
+it can be found again.
+
+### 13.2 §2.5, reproduced and then re-measured
+
+Replaying §5.1's semantics over a read-only copy of `hoard.db`, trailing 10%,
+re-anchoring on fire. First under the vendor rule as originally decided:
+
+| window | source | alerts on the nine |
+|---|---|---:|
+| 90d | all | 10 |
+| 90d | tcgplayer | 7 |
+| 30d | all | 7 |
+| **30d** | **tcgplayer** | **5** |
+
+The 30d/tcgplayer run is §2.5 exactly — same five cards, same dates, same
+anchors, same prices, and the same five silent. **§2.5's heading is wrong**: it
+says "ninety days", and at ninety the same rule fires seven times. The numbers
+in §2.5 are the 30-day run.
+
+Under the shipped rule — effective-source anchor, guard on the printing's
+record — the replay gives **five alerts on the same five cards**, with the same
+five silent, and three of them at different moments:
+
+```
+Urborg, Tomb …      2026-05-30   high  61.54 ->  55.31   (-10.1%)   = §2.5
+Prismatic Vista     2026-07-11   high  38.43 ->  34.57   (-10.0%)   = §2.5
+Warren Soultrader   2026-05-30   low   46.54 ->  54.03   (+16.1%)   §2.5: 05-21, +12%
+Tezzeret, Cruel …   2026-06-12   low   78.27 ->  87.99   (+12.4%)   §2.5: 06-02, +11%
+Warren Soultrader   2026-07-03   low   54.03 ->  59.83   (+10.7%)   §2.5: 06-18, +10%
+```
+
+The three that moved all moved *later*, and to the same boundary: the record
+begins 2026-04-30, so no watch can claim a thirty-day window before 05-30, and
+the guard holds them until it can. That is the dataset's own start showing
+through, not the vendor rule — §2.5 was computed without any history guard at
+all.
+
+### 13.3 The other three open questions
+
+**2. Thin history — guard the record's reach, not its row count, and not the
+anchored slice's reach either.** §12.3 reads Talon Gates of Madara's five
+observations as thin. Measured: that series is **97.9 days old**. It has five
+rows because its price has not moved since 12 May — §2.1's own insight ("few
+rows means a stable price") applied to the card §12.3 cited for the opposite. A
+count of five would have muted **63% of held series**, nearly all of them the
+best-known prices in the collection. Collection-wide, no held series is younger
+than 14 days.
+
+So a percent watch does not fire while **the printing's record**, across every
+source, is younger than the window it claims to summarise. It takes its
+threshold from the watch's own `--since` rather than a number chosen by hand,
+and mutes **5 of 1,968** held series.
+
+The word *printing's* is worth 83% of the collection. Guarding on the anchored
+slice instead — the vendor currently answering — muted **1,652 of 1,968** the
+day the feed changed over, because the new vendor's slice was eleven days old.
+That would also have been guarding the wrong direction: a window truncated to a
+young slice puts the anchor *nearer* the current price, making both a drop and
+a rise harder to reach, not easier. §2.7 measured exactly that, where seven-
+and fourteen-day windows fire zero times on the owner's nine printings. A short
+slice fails closed on its own. The case that genuinely needs a guard is a new
+printing whose first recorded price may be a preorder spike, and the printing's
+own reach is what detects it.
+
+`watch list` shows a guarded row as **waiting on history** rather than
+`waiting`, so a watch that cannot yet fire does not look like one that might.
+
+**3. `min_move` defaults to $0.25.** Simulated over 1,959 held series, 103
+days, trailing 10% drop:
+
+| rule | alerts | per week | binds below | where they land |
+|---|---:|---:|---:|---|
+| none | 1,706 | 115.9 | — | `<$1`:1037 `$1-5`:505 `$5-20`:149 `$20-100`:15 |
+| **$0.25** | **585** | **39.8** | **$2.50** | `$1-5`:378 `$5-20`:149 `<$1`:43 `$20-100`:15 |
+| $0.50 | 362 | 24.6 | $5.00 | `$1-5`:186 `$5-20`:149 `$20-100`:15 |
+| $1.00 | 183 | 12.4 | $10.00 | `$5-20`:108 `$1-5`:53 `$20-100`:15 |
+| $5.00 | 10 | 0.7 | $50.00 | `$1-5`:5 `$20-100`:4 |
+| 0.25 × anchor | 304 | 20.7 | *n/a* | `<$1`:192 `$1-5`:103 `$5-20`:9 |
+
+$0.25 removes 994 of the 1,037 sub-$1 alerts and costs **nothing** above
+$2.50 — the `$5-20` and `$20-100` bands fire 149 and 15 alerts with it and
+without it. What each rule actually demands of a 10% watch:
+
+| rule | $3 card | $136 card | $0.50 card |
+|---|---:|---:|---:|
+| $0.25 | **10.0%** | **10.0%** | 50.0% |
+| $1.00 | 33.3% | 10.0% | 200.0% |
+| $5.00 | 166.7% | 10.0% | 1000.0% |
+| 0.25 × anchor | 25.0% | 25.0% | 25.0% |
+
+$1 and $5 buy quiet by breaking the feature: they silently convert a 10% watch
+on a $3 card into a 33% or 167% one, so the card a user deliberately chose is
+the card that stops answering.
+
+**The price-proportional default §12.4 proposed is degenerate**, and this is
+the numeric proof: a floor of `k × anchor` makes the condition `move ≥ k`, so
+it is a second percentage wearing a dollar sign. Simulated, `0.25 × anchor`
+fired 304 alerts against 293 for a plain 25% watch with no floor, and it
+demands 25% at every price alike — so it cannot tell a $3 card from a $136 one,
+which is the only thing it was proposed to do.
+
+**4. Window stays 30 days.** Not spent on. §13.2 notes it is also what
+reproduces §2.5.
+
+### 13.4 The window carries the price in effect into itself
+
+§2.1 establishes that `MAX(price_usd)` is the exact running high of every price
+*inside* the range. The other half of "history is a change log" is that a
+printing whose price has not moved writes nothing at all, so the range can be
+empty of a series that is perfectly well known.
+
+Under §5.1 as written those watches have a `NULL` anchor and can never fire.
+Worse than never: when the price finally falls, `RecordPrices` writes one row,
+that row is the only thing in the window, `MAX` equals the fallen price, and
+the alert is **lost rather than delayed**. So the window opens at the last
+observation at or before its lower bound.
+
+Under the original tcgplayer rule this was load-bearing — 262 of 1,959 held
+series (13.4%) had nothing in a thirty-day window, Talon Gates among them.
+Anchoring on the effective source drops that to 1 of 2,898. **The carry-forward
+is kept anyway.** "An empty window is not an unknown series" is true whatever
+the anchor reads, a lost alert is worse than a delayed one, and a correctness
+property is in a better place when nothing depends on it.
+
+The window cutoff is computed in SQL from a bound `now`, as
+`strftime('%Y-%m-%dT%H:%M:%SZ', ?, '-' || window_days || ' days')`, because
+`window_days` is per row and one bound parameter cannot carry it. The format is
+explicit and the trap §5.1 measured is covered by a test that fails when it is
+spelled `datetime()`.
+
+### 13.5 A negative control that does not fail is not a control
+
+Four mechanisms have tests that assert the correct behaviour, and each was
+verified by breaking the mechanism and watching the test fail: the history
+guard, the re-anchor, the RFC 3339 bound, and `RecordPrices` not writing
+unchanged prices. A fifth covers the carry-forward.
+
+The fourth is the one worth recording. Its first version **passed with
+`RecordPrices` fully broken**. `appendPrices` deliberately collapses two
+refreshes inside one second onto the primary key — the later price is the truer
+one — so a test that fast watched the spurious write overwrite itself and
+reported green. It was measuring the collision, not the skip. It now walks the
+stored rows back a day between refreshes.
+
+The general form: a test that has never been seen to fail is evidence about
+nothing, and green from a run that could not have gone red is not verification.
+It is worth breaking the mechanism on purpose once, at the time the guard is
+written, while it is still obvious what breaking it should look like.
+
+### 13.6 Input surfaces
+
+`watch add` takes `--drop` and `--rise` as percentages, with `--min-move` and
+`--since`; a movement and a dollar line in one command is a usage error.
+`watch import` takes `Percent`, `Min Move` and `Since` beside `Threshold`, in
+both dialects, with the two size cells mutually exclusive and refused by line
+number. Columns are read by name, so a watch file written before movements
+existed parses unchanged.
+
+The two dialects spell a movement differently and it is deliberate: the CSV's
+`Percent` is a percentage, because a person types it and `store.ParsePercent`
+exists to catch the one who types `0.1` meaning ten percent; the JSON's
+`percent` is a fraction, because that is what `hoardjson.Watch.Percent` means
+and a watch list hoard emitted has to read back unchanged.

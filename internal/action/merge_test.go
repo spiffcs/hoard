@@ -443,7 +443,7 @@ func TestMergeHoardUpgradesSourceOnConsent(t *testing.T) {
 	if err := source.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if err := stampVersion(sourcePath, store.SchemaVersion()-1); err != nil {
+	if err := stampVersion(sourcePath, store.SchemaVersion()-1, v28Undo...); err != nil {
 		t.Fatalf("stamping an old version: %v", err)
 	}
 
@@ -537,14 +537,41 @@ func backdate(t *testing.T, path, scryfallID, when string) error {
 // stampVersion rewrites PRAGMA user_version without migrating, which is the
 // only way to manufacture a schema mismatch. It cannot be parameterized —
 // SQLite pragmas take literals.
-func stampVersion(path string, v int) error {
+//
+// Stamping alone makes the file *claim* an older version while carrying the
+// current schema, and a test that then migrates has to undo the intervening
+// change as well, or the migration re-runs against tables that already have
+// its columns. Migrations are transactional — store's apply() runs a
+// migration's statements and its PRAGMA user_version stamp in one transaction
+// and commits them together — so no real database can be in that state, and
+// this is not evidence of a hazard in the field. Only a fixture that lies
+// about its version can reach it. undo names the statements that make the lie
+// true, and is empty where a migration is idempotent on its own; v27 was
+// (CREATE INDEX IF NOT EXISTS), which is the only reason this worked before
+// v28's ALTER TABLE ADD COLUMN, and why the first non-idempotent migration was
+// always going to be the one that broke it.
+func stampVersion(path string, v int, undo ...string) error {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	for _, s := range undo {
+		if _, err := db.Exec(s); err != nil {
+			return err
+		}
+	}
 	_, err = db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v))
 	return err
+}
+
+// v28Undo returns the schema to v27: percent watches added four columns to
+// watches, and a v27 fixture must genuinely not have them.
+var v28Undo = []string{
+	`ALTER TABLE watches DROP COLUMN pct`,
+	`ALTER TABLE watches DROP COLUMN min_move`,
+	`ALTER TABLE watches DROP COLUMN window_days`,
+	`ALTER TABLE watches DROP COLUMN last_fired_at`,
 }
 
 // rawJSON reads a stored card document verbatim, which no store API exposes.

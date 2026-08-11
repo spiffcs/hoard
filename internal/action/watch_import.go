@@ -58,6 +58,7 @@ func WatchImport(ctx context.Context, d Deps, p progress.Fn, o WatchImportOption
 		ins = append(ins, store.WatchInput{
 			ScryfallID: m.Card.ID, Display: m.Card.Name,
 			Finish: watchFinish(m.Finish, m.Card), Op: r.Op, Threshold: r.Threshold,
+			Pct: r.Pct, MinMove: r.MinMove, WindowDays: r.WindowDays,
 		})
 	}
 	if res.Created, res.Updated, err = d.Store.AddWatches(ins); err != nil {

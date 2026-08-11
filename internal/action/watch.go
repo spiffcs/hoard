@@ -28,10 +28,20 @@ func watchFinish(finish string, c scryfall.Card) string {
 	}
 }
 
-// WatchBound is one direction of one watch: an op and the price it turns on.
+// WatchBound is one direction of one watch: an op and what turns it on.
+//
+// Which field carries that depends on the op's units. under and over are
+// dollar lines and read Threshold; drop and rise are movements and read Pct,
+// as a fraction, with MinMove a floor in dollars and WindowDays the lookback
+// the movement is measured over. The store refuses a bound that fills the
+// wrong one, so a mistake here is a loud error rather than a watch that
+// evaluates against zero.
 type WatchBound struct {
-	Op        string // under|over
-	Threshold float64
+	Op         string // under|over|drop|rise
+	Threshold  float64
+	Pct        float64
+	MinMove    float64
+	WindowDays int
 }
 
 // WatchAddOptions is one card's watches.
@@ -94,12 +104,28 @@ func WatchAdd(ctx context.Context, d Deps, p progress.Fn, o WatchAddOptions) (Wa
 	// Stood grows as they land, because a failure partway through has to be
 	// reportable as what it is.
 	for _, b := range o.Bounds {
-		if err := d.Store.AddWatch(m.Card.ID, m.Card.Name, finish, b.Op, b.Threshold); err != nil {
+		if err := d.Store.AddWatchInput(store.WatchInput{
+			ScryfallID: m.Card.ID, Display: m.Card.Name, Finish: finish,
+			Op: b.Op, Threshold: b.Threshold,
+			Pct: b.Pct, MinMove: b.MinMove, WindowDays: b.WindowDays,
+		}); err != nil {
 			return res, err
 		}
 		res.Stood++
 	}
 	return res, nil
+}
+
+// WatchAnchorable reports whether a printing has any observation in the series
+// a percent watch would anchor on, so `watch add` can say at the time that a
+// movement cannot be measured here.
+//
+// A percent watch reads one vendor for both ends of the movement it reports,
+// and a printing that vendor does not price gets no percent watch at all. On
+// the owner's database that is 9 of 1,968 held priced series — rare, and
+// silent unless said out loud, which is the failure mode this exists to avoid.
+func (d Deps) WatchAnchorable(scryfallID, finish string) (bool, error) {
+	return d.Store.HasAnchorSeries(scryfallID, finish)
 }
 
 // WatchCheck evaluates every watch against stored prices — no network.

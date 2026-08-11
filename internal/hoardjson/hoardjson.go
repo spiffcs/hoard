@@ -30,7 +30,19 @@ import (
 // than inheriting a changelog no consumer could have read. MODEL stays at 1
 // because it is the compatibility kill switch read.go enforces, and nothing
 // about a first release is a break.
-const SchemaVersion = "1.0.0"
+//
+// 1.0.1 adds percent watches: a watch can now name a movement rather than a
+// price, so Watch and FiredWatch carry percent, the anchor it is measured
+// from, and the movement observed. Every added field is optional and no
+// existing field changes meaning, so a 1.0.0 consumer reading a 1.0.1 document
+// sees exactly what it saw before.
+//
+// The one widening is op's enum, from two values to four, and it is still an
+// ADDITION on the emit side: a consumer switching on op with no drop case was
+// already obliged to handle a value it did not know, and reading an enum
+// widening as a REVISION would make every future Kind addition a REVISION too,
+// which the Kind enum's own history contradicts.
+const SchemaVersion = "1.0.1"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -372,13 +384,27 @@ type WatchCheck struct {
 	Fired   []FiredWatch `json:"fired"`
 }
 
-// FiredWatch is one alert: the card, the threshold it crossed, and the price
-// that crossed it.
+// FiredWatch is one alert.
+//
+// An absolute watch crossed a line and reports it. A percent watch reports a
+// movement, which a threshold cannot express — AnchorUsd is the price the move
+// is measured from and AnchorAt is when that price was observed, so a reader
+// can say "down 11% from its 3 July high" without going back to the history
+// table to find out what the alert was even about.
 type FiredWatch struct {
 	Card         Card    `json:"card"`
-	Op           string  `json:"op" jsonschema:"enum=under,enum=over"`
-	ThresholdUsd float64 `json:"thresholdUsd"`
+	Op           string  `json:"op" jsonschema:"enum=under,enum=over,enum=drop,enum=rise"`
+	ThresholdUsd float64 `json:"thresholdUsd,omitempty"`
 	PriceUsd     float64 `json:"priceUsd"`
+	// Percent is the movement the watch asks about, as a fraction.
+	Percent   float64  `json:"percent,omitempty"`
+	AnchorUsd *float64 `json:"anchorUsd,omitempty"`
+	AnchorAt  string   `json:"anchorAt,omitempty"`
+	// MovedPct is the movement actually observed, signed: -0.113 is down
+	// 11.3%. It is derivable from PriceUsd and AnchorUsd and is here anyway,
+	// because it is the entire content of the alert and a consumer should not
+	// have to recompute the thing being reported to it.
+	MovedPct float64 `json:"movedPct,omitempty"`
 }
 
 // Hoard is a whole hoard as one interchange document — the payload `hoard
@@ -452,17 +478,34 @@ type Container struct {
 	Format    string `json:"format,omitempty"`
 }
 
-// Watch is one standing price alert: a threshold on one printing and finish,
-// in one direction.
+// Watch is one standing alert on one printing and finish, in one direction.
+//
+// Op names both the comparison and its units: under and over are dollar lines
+// and read Threshold; drop and rise are movements and read Percent. Exactly
+// one of the two is meaningful, which is why both are omitempty — a document
+// carrying both would not say which one the alert obeys.
+//
+// Threshold gaining omitempty is a change to an existing field, and it is safe
+// in exactly one direction: a threshold of zero is not a meaningful absolute
+// watch, so omitempty can only ever elide a value that was already impossible.
 //
 // It carries no last-fired state. A watch arriving in a hoard that has never
-// alerted on it is new there, and hoard's rule is that a threshold already met
+// alerted on it is new there, and hoard's rule is that a condition already met
 // is worth exactly one alert — so a merged watch evaluates fresh and may fire
-// on the receiving hoard's next check.
+// on the receiving hoard's next check. For a percent watch that is stronger
+// than convenience: without the fire moment it anchors from the receiving
+// hoard's own history, which is the only history it can honestly speak about.
 type Watch struct {
 	Card      Card    `json:"card"`
-	Op        string  `json:"op" jsonschema:"enum=under,enum=over"`
-	Threshold float64 `json:"threshold"`
+	Op        string  `json:"op" jsonschema:"enum=under,enum=over,enum=drop,enum=rise"`
+	Threshold float64 `json:"threshold,omitempty"`
+	// Percent is the movement that fires the alert, as a fraction: 0.1 is a
+	// ten percent move. A fraction rather than 10, because the document is
+	// read by scripts and a percent sign's worth of ambiguity in a number that
+	// multiplies prices is not worth the readability.
+	Percent    float64 `json:"percent,omitempty"`
+	MinMoveUsd float64 `json:"minMoveUsd,omitempty"`
+	SinceDays  int     `json:"sinceDays,omitempty"`
 	// Display is the name the alert prints, kept as the source hoard wrote it.
 	Display string `json:"display"`
 	// CreatedAt is when the watch was first set (RFC 3339).

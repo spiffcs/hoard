@@ -57,6 +57,7 @@ var migrations = []migration{
 	{25, guessContainerRepoint},
 	{26, guessContainerFK},
 	{27, traitFilterIndex},
+	{28, percentWatches},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -606,6 +607,27 @@ CREATE INDEX finish_guesses_card ON finish_guesses(scryfall_id, finish);`
 const traitFilterIndex = `
 CREATE INDEX IF NOT EXISTS cards_trait_filter ON cards(
     type_line, artist, layout, set_name, rarity, cmc, color_identity, scryfall_id);`
+
+// v28: percent watches. A watch can now name a movement rather than a price.
+//
+// The direction vocabulary extends — drop|rise beside under|over — rather than
+// a kind column being added, because op already keys the uniqueness constraint
+// and a second discriminator would let one printing carry two watches that both
+// read "under", one in dollars and one in percent.
+//
+// threshold is deliberately not reused to carry the percent: it is rendered as
+// money in six places, so a polymorphic column would print "$0.10" for a ten
+// percent watch in every one of them, and $0.10 is a plausible enough threshold
+// that the bug would survive review.
+//
+// All four columns take defaults and nothing is rewritten, so the watches
+// already standing keep op in (under, over), read pct as zero, and take the
+// absolute branch of Met exactly as before.
+const percentWatches = `
+ALTER TABLE watches ADD COLUMN pct           REAL    NOT NULL DEFAULT 0;
+ALTER TABLE watches ADD COLUMN min_move      REAL    NOT NULL DEFAULT 0;
+ALTER TABLE watches ADD COLUMN window_days   INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE watches ADD COLUMN last_fired_at TEXT    NOT NULL DEFAULT '';`
 
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the

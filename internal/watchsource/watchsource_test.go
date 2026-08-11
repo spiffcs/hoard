@@ -101,7 +101,7 @@ func TestParseErrors(t *testing.T) {
 		{"blank", "  \n ", "empty file"},
 		{"missing column", "Name,Threshold\nSol Ring,5\n", `watch CSV is missing its "Direction" column (saw: Name, Threshold)`},
 		{"no name", "Name,Direction,Threshold\n,under,5\n", "line 2: no card name"},
-		{"bad direction", "Name,Direction,Threshold\nSol Ring,below,5\n", `line 2 (Sol Ring): direction must be under or over, not "below"`},
+		{"bad direction", "Name,Direction,Threshold\nSol Ring,below,5\n", `line 2 (Sol Ring): direction must be under, over, drop or rise, not "below"`},
 		{"bad threshold", "Name,Direction,Threshold\nSol Ring,under,cheap\n", `line 2 (Sol Ring): cannot parse threshold "cheap"`},
 		{"zero threshold", "Name,Direction,Threshold\nSol Ring,under,0\n", "line 2 (Sol Ring): threshold must be a positive dollar amount"},
 		// A comma inside an unquoted card name shifts every column after it,
@@ -113,7 +113,7 @@ func TestParseErrors(t *testing.T) {
 		{"header only", "Name,Direction,Threshold\n", "no watches found in file"},
 		{"not a list", "[{\"name\": 5}]", "not a watch list: want a JSON array of {name, direction, thresholdUsd} objects"},
 		{"json no name", `[{"direction":"under","thresholdUsd":5}]`, "entry 1: no card name"},
-		{"json bad direction", `[{"name":"Sol Ring","direction":"below","thresholdUsd":5}]`, `entry 1 (Sol Ring): direction must be under or over, not "below"`},
+		{"json bad direction", `[{"name":"Sol Ring","direction":"below","thresholdUsd":5}]`, `entry 1 (Sol Ring): direction must be under, over, drop or rise, not "below"`},
 		{"json no threshold", `[{"name":"Sol Ring","direction":"under"}]`, "entry 1 (Sol Ring): threshold must be a positive dollar amount"},
 		{"json empty array", "[]", "no watches found in file"},
 	}

@@ -48,6 +48,16 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	// No dry run from the browser: its deck-import prompts commit, and there
 	// is no rehearsal surface to report the result on.
 	res, err := action.DeckAdd(ctx, deps, p, deck, action.DeckAddOptions{})
+	// A partial import still did its work, so the sentinel is answered with a
+	// fuller report rather than an error. The CLI answers it with exit 2, and
+	// the browser has no exit code to raise — but that is not the reason this
+	// branch swallows it. onOpDone returns the moment an op reports an error:
+	// it sets the red status line and never opens the text takeover, never
+	// refreshes the panes. Returning the sentinel here would therefore throw
+	// away the very list of dropped lines the reader needs, and leave the
+	// deck absent from the panes it was just imported into. The browser's
+	// error path means "nothing happened"; this is "done, mostly", and the
+	// two report slots below are the surface built to say so.
 	if err != nil && !errors.Is(err, errPartial) {
 		return browse.OpReport{}, err
 	}
@@ -56,11 +66,29 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	if res.Refinished > 0 {
 		r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
 	}
+	// Two ways a decklist line fails to become a card, and DeckAdd counts
+	// both toward the partial outcome: the line parsed and nothing answered
+	// it, or the line never parsed at all. They are separate sentences here
+	// for the same reason `deck add` prints them separately — a line the
+	// parser could not read was never resolved against anything, so calling
+	// it unresolved would name a lookup that never happened.
 	if len(res.Unresolved) > 0 {
 		r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
-		r.Report = append([]string{
-			fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "",
-		}, res.Unresolved...)
+		r.Report = append(r.Report,
+			fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "")
+		r.Report = append(r.Report, res.Unresolved...)
+	}
+	// deck.Skipped is the parser's own tally, carried on the argument rather
+	// than the result: the frontend that read the file is the only thing that
+	// saw the lines it could not read, so DeckAdd never has them to return.
+	if len(deck.Skipped) > 0 {
+		r.Summary += fmt.Sprintf(" · %d unreadable", len(deck.Skipped))
+		if len(r.Report) > 0 {
+			r.Report = append(r.Report, "")
+		}
+		r.Report = append(r.Report,
+			fmt.Sprintf("%d lines could not be read and were skipped:", len(deck.Skipped)), "")
+		r.Report = append(r.Report, deck.Skipped...)
 	}
 	return r, nil
 }

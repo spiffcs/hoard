@@ -229,7 +229,8 @@ CREATE TABLE card_price_history (
 `+
 		// A real v11 database ran v5, whose columns later migrations build on
 		// (v14's generated column, v27's index), so the fixture carries it whole.
-		richCardData+`
+		// Same for v10's watches table, which v28 adds columns to.
+		richCardData+watchesTable+`
 INSERT INTO cards (scryfall_id, set_code, collector_number, name, price_usd,
                    price_usd_foil, scryfall_url, updated_at)
 VALUES ('c1','mh3','1','Fblthp',1.0,NULL,'http://x','x');

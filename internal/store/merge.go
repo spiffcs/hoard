@@ -84,8 +84,9 @@ func (s *Store) ApplyMerge(receipt *ImportReceipt, p MergePlan) (MergeResult, er
 			}
 		}
 	}
-	for _, w := range p.Watches {
-		if err := validateWatch(w.Op, w.Finish); err != nil {
+	for i := range p.Watches {
+		p.Watches[i].normalize()
+		if err := validateWatch(p.Watches[i]); err != nil {
 			return res, err
 		}
 	}
@@ -148,8 +149,12 @@ func (s *Store) ApplyMerge(receipt *ImportReceipt, p MergePlan) (MergeResult, er
 	}
 
 	for _, w := range p.Watches {
-		if _, err := tx.Exec(watchUpsertSQL,
-			w.ScryfallID, w.Display, w.Finish, w.Op, w.Threshold, now()); err != nil {
+		// last_fired_at is deliberately not carried: the document does not
+		// hold it, and a merged percent watch anchors from the receiving
+		// hoard's own history, which is the only history it can honestly
+		// speak about.
+		if _, err := tx.Exec(watchUpsertSQL, w.ScryfallID, w.Display, w.Finish, w.Op,
+			w.Threshold, w.Pct, w.MinMove, w.WindowDays, now()); err != nil {
 			return res, fmt.Errorf("merging watch on %s: %w", w.Display, err)
 		}
 		res.Watches++

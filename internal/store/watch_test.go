@@ -223,7 +223,7 @@ func TestAddWatchesRollsBackOnInvalidRow(t *testing.T) {
 		{ScryfallID: "ulamog-id", Display: "Ulamog", Finish: "nonfoil", Op: "under", Threshold: 12},
 		{ScryfallID: "ulamog-id", Display: "Ulamog", Finish: "nonfoil", Op: "below", Threshold: 9},
 	})
-	if err == nil || !strings.Contains(err.Error(), `watch op must be under or over, not "below"`) {
+	if err == nil || !strings.Contains(err.Error(), `watch op must be under, over, drop or rise, not "below"`) {
 		t.Fatalf("err = %v, want the op validation", err)
 	}
 	watches, err := s.ListWatches()

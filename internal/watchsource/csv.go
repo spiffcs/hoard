@@ -20,6 +20,12 @@ const (
 	colSet      = "Set"
 	colNumber   = "Collector Number"
 	colScryfall = "Scryfall ID"
+	// Movement columns. watchsource looks cells up by header name and never
+	// by position, so these are additive by construction: a file written
+	// before they existed parses unchanged.
+	colPercent = "Percent"
+	colMinMove = "Min Move"
+	colSince   = "Since"
 )
 
 func parseCSV(r io.Reader) ([]Row, error) {
@@ -62,11 +68,19 @@ func parseCSV(r io.Reader) ([]Row, error) {
 		return ""
 	}
 
-	for _, required := range []string{colName, colDir, colThresh} {
+	for _, required := range []string{colName, colDir} {
 		if col(required) < 0 {
 			return nil, fmt.Errorf("watch CSV is missing its %q column (saw: %s)",
 				required, strings.Join(header, ", "))
 		}
+	}
+	// One of the two size columns has to be there. Which one is a per-row
+	// question — a file may carry both columns and fill one per row — but a
+	// file with neither cannot state a single watch, and saying so once about
+	// the header beats saying it about every line.
+	if col(colThresh) < 0 && col(colPercent) < 0 {
+		return nil, fmt.Errorf("watch CSV needs a %q or %q column (saw: %s)",
+			colThresh, colPercent, strings.Join(header, ", "))
 	}
 
 	var out []Row
@@ -90,18 +104,16 @@ func parseCSV(r io.Reader) ([]Row, error) {
 		if err != nil {
 			return nil, fmt.Errorf("line %d (%s): %v", line, name, err)
 		}
-		threshold, err := parseThreshold(get(rec, colThresh))
+		row, err := units(op, get(rec, colThresh), get(rec, colPercent),
+			get(rec, colMinMove), get(rec, colSince))
 		if err != nil {
 			return nil, fmt.Errorf("line %d (%s): %v", line, name, err)
 		}
-
-		out = append(out, Row{
-			Ident:     identFor(get(rec, colScryfall), get(rec, colSet), get(rec, colNumber), name),
-			Name:      name,
-			Finish:    normFinish(get(rec, colFinish)),
-			Op:        op,
-			Threshold: threshold,
-		})
+		row.Ident = identFor(get(rec, colScryfall), get(rec, colSet), get(rec, colNumber), name)
+		row.Name = name
+		row.Finish = normFinish(get(rec, colFinish))
+		row.Op = op
+		out = append(out, row)
 	}
 	if len(out) == 0 {
 		return nil, errors.New("no watches found in file")

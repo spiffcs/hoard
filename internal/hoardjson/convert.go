@@ -94,6 +94,16 @@ func derefString(p *string) string {
 
 func cents(v float64) float64 { return math.Round(v*100) / 100 }
 
+// movedPct is the movement an alert actually observed, signed, as a fraction
+// of the anchor: -0.113 is down 11.3%. Zero for an absolute watch, which has
+// no anchor and reports a crossing rather than a movement.
+func movedPct(anchor *float64, price float64) float64 {
+	if anchor == nil || *anchor == 0 {
+		return 0
+	}
+	return math.Round((price-*anchor) / *anchor * 10000) / 10000
+}
+
 func centsPtr(v *float64) *float64 {
 	if v == nil {
 		return nil
@@ -219,6 +229,12 @@ func FromSnapshot(snap store.Snapshot, rows []export.Row) Document {
 			Threshold: w.Threshold,
 			Display:   w.Display,
 			CreatedAt: w.CreatedAt,
+			// The movement's own terms travel; the anchor does not. An anchor
+			// is a fact about one hoard's price history and would be a claim
+			// the receiving hoard cannot check.
+			Percent:    w.Pct,
+			MinMoveUsd: w.MinMove,
+			SinceDays:  w.WindowDays,
 		})
 	}
 	h.Holdings = *FromExportRows(rows).Holdings
@@ -376,6 +392,10 @@ func FromWatchCheck(checked int, fired []store.WatchStatus) Document {
 			Op:           f.Op,
 			ThresholdUsd: cents(f.Threshold),
 			PriceUsd:     cents(price),
+			Percent:      f.Pct,
+			AnchorUsd:    centsPtr(f.Anchor),
+			AnchorAt:     f.AnchorAt,
+			MovedPct:     movedPct(f.Anchor, price),
 		})
 	}
 	doc := envelope(KindWatch)
