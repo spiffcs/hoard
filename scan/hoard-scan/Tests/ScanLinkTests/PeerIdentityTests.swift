@@ -1,8 +1,8 @@
 // Does a hand-rolled self-signed certificate actually work?
 //
-// docs/scan-transport-encryption.md §8.2 marked this **unverified**: "there is
-// no public Apple API for generating a self-signed X.509 certificate on iOS.
-// High confidence, not exhaustively checked." The design chosen on 2026-08-08
+// The design work marked this **unverified**: there is no public Apple API for
+// generating a self-signed X.509 certificate on iOS — high confidence, not
+// exhaustively checked. The design chosen on 2026-08-08
 // rests entirely on that being surmountable, so it is measured here before
 // anything is built on top of it — the same order that turned the TLS-PSK
 // question from a mystery into two named bugs in an hour.

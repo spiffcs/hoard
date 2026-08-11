@@ -123,12 +123,11 @@ func NewIdentity(commonName string) (*Identity, error) {
 // saving one on first use.
 //
 // A file rather than the macOS keychain, which is what the Swift helper uses
-// (RemoteController.swift:49-54). The trade is deliberate and documented in
-// docs/specs/scan-transport-port.md §6: a file is readable by anything running
-// as the user, where the keychain at least gates on unlock — but hoard already
-// writes pairing codes in cleartext to this same directory, so the private key
-// is the only genuinely new secret, and a file keeps the identity path off the
-// Security framework and portable off macOS.
+// (RemoteController.swift:49-54). The trade is deliberate: a file is readable
+// by anything running as the user, where the keychain at least gates on
+// unlock — but hoard already writes pairing codes in cleartext to this same
+// directory, so the private key is the only genuinely new secret, and a file
+// keeps the identity path off the Security framework and portable off macOS.
 func LoadOrCreateIdentity(path, commonName string) (*Identity, error) {
 	id, err := loadIdentity(path)
 	if err == nil {

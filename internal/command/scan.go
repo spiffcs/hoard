@@ -18,10 +18,9 @@ import (
 type linkScanner struct{}
 
 // client builds the scan client, rooted where the rest of hoard's per-user
-// data lives — beside scan.json rather than in the keychain. The trade is
-// argued in docs/specs/scan-transport-port.md §6; the short version is that
-// this directory already holds hoard's other per-user state, and a file keeps
-// the identity portable and off the Security framework.
+// data lives — beside scan.json rather than in the keychain. That directory
+// already holds hoard's other per-user state, and a file keeps the identity
+// portable and off the Security framework.
 //
 // An error here means there is no data directory at all, which is a condition
 // every other command already fails on, so it is folded into the call rather

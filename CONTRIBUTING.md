@@ -9,10 +9,6 @@ make test      # go test ./...   (no network needed)
 make help      # list every target
 ```
 
-The Makefile is a shim: every target is a [Taskfile](Taskfile.yaml) task, and
-`make <target>` forwards to `task <target>`. Tool versions are pinned in
-[.binny.yaml](.binny.yaml), so CI and your machine run the same binaries.
-
 ## What CI gates on
 
 Every PR runs [validations.yaml](.github/workflows/validations.yaml):
@@ -21,30 +17,32 @@ Every PR runs [validations.yaml](.github/workflows/validations.yaml):
   gofmt, and a `go mod tidy` check
 - `make test` and `make build`
 
-Run both locally before pushing; they are the same commands CI runs.
+Run both before pushing; they are the same commands CI runs.
 
-## The Swift half
+## The Swift scanner
 
-The card scanner (macOS helper + iPhone app under `scan/`) needs **macOS and
-Xcode** and is **not** gated in regular CI — its Taskfile tasks carry
-`platforms: [darwin]` and skip silently on Linux, so a green Linux run proves
-nothing about the Swift side. The scanner gate is local:
+The card scanner — a macOS helper and an iPhone app, both under `scan/` — needs
+macOS and Xcode. Its Taskfile tasks carry `platforms: [darwin]` and skip
+silently on Linux, so a green CI run proves nothing about the Swift side.
+
+Its workflow, [scan.yml](.github/workflows/scan.yml), is **switched off** behind
+an `if: false` guard: macOS runners bill at 10x. Leave it off. The gate is
+local:
 
 ```sh
 make scan-test scan-check
 ```
 
-plus the path-filtered [scan.yml](.github/workflows/scan.yml) workflow on
-macOS runners. See [docs/ios-development.md](docs/ios-development.md) for the
+See [scan/hoard-scan-ios/README.md](scan/hoard-scan-ios/README.md) for the
 iPhone app.
 
 ## Commit messages
 
 Conventional-ish prefixes (`feat:`, `fix:`, `docs:`, `chore:`), which the
-existing history follows and which [chronicle](https://github.com/anchore/chronicle)
-keys off for changelogs.
+existing history follows and which
+[chronicle](https://github.com/anchore/chronicle) keys off for changelogs.
 
 ## Reporting problems
 
-Bug reports should include `hoard version` output — see the issue templates.
-Security issues go through [SECURITY.md](SECURITY.md), not public issues.
+Include `hoard version` output in bug reports. Security issues go through
+[SECURITY.md](SECURITY.md), not public issues.

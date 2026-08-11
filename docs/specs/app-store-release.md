@@ -3,7 +3,7 @@
 **Status: audited 2026-08-06; everything up to an uploadable build done
 2026-08-08.** `make scan-ios-release` produces a signed `HoardScan.ipa` and the
 App Store Connect record exists. The app has never been through TestFlight or
-review. See [ios-development.md](ios-development.md) for building and running
+review. See [the iPhone app README](../../scan/hoard-scan-ios/README.md) for building and running
 it, and **"What is left before review"** below for the remaining work — that
 section is the current one; the blocker write-ups above it are kept for their
 reasoning, not their status.
@@ -22,9 +22,6 @@ than asserted:
   Apple Distribution certificate) were done the same day, and the bundle ID
   registered itself via `-allowProvisioningUpdates` on the first successful
   export.
-- [scan-transport-encryption.md](scan-transport-encryption.md), which answers
-  step 9's exploration half — five options, ranked, with a root-cause theory
-  for the TLS-PSK failure and a one-hour experiment that would settle it.
 - [scanner-limits.md](scanner-limits.md), which step 11 already cited and which
   did not exist. Every number in it was measured on 2026-08-08, not quoted.
 
@@ -55,7 +52,6 @@ work on Apple platforms (TLS 1.2 only, and the selection block's completion
 takes the identity rather than the key). PSK was measured working and then set
 aside in favour of certificates, because a PSK keeps the pairing code
 security-critical for the life of the link and a pinned certificate does not.
-See [scan-transport-encryption.md](scan-transport-encryption.md) §10.
 
 Confirmed at the time: `PeerLink.swift:226` builds `NWParameters.tcp`.
 Plaintext. The `.tls` case at `PeerLink.swift:65` is error-message mapping only
@@ -86,9 +82,8 @@ That control was never built. So the weak code has no backstop, and any scheme
 keyed *only* on the pairing code inherits the same problem; every viable option
 needs an ephemeral Diffie-Hellman.
 
-The options are worked through in
-[scan-transport-encryption.md](scan-transport-encryption.md). Two findings from
-it belong here. Both ends are **Swift** linking the same `ScanLink` target —
+The options were worked through separately and never written up. Two findings
+belong here. Both ends are **Swift** linking the same `ScanLink` target —
 `internal/scan/` does no networking at all, it drives the helper over
 `os/exec` and NDJSON pipes — so a fix is written once, and `crypto/tls`'s lack
 of external PSK does not apply. And `RemoteController.swift:119` reports every

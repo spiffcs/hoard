@@ -9,7 +9,8 @@ package link
 // distinction is the whole point: a misreading reproduced on both sides is a
 // test that passes and a link that hangs.
 //
-// Regenerate with the recipe in docs/specs/scan-transport-port.md §8.5.
+// Regenerate from the Swift implementation under
+// scan/hoard-scan/Sources/ScanLink, never by hand.
 
 import (
 	"bytes"

@@ -3,9 +3,8 @@ package browse
 // The live refresh: cards added in another terminal appear here, without the
 // reader pressing anything.
 //
-// Built to docs/specs/live-browse-refresh.md, which measured it against the
-// owner's real database with a second process writing. Three facts from that
-// document decide everything in this file, and each is worth knowing before
+// Built against a real database with a second process writing. Three measured
+// facts decide everything in this file, and each is worth knowing before
 // changing anything here.
 //
 // One. Detection is free and refreshing is not. `PRAGMA data_version` is a

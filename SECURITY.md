@@ -1,43 +1,32 @@
 # Security Policy
 
-## Supported Versions
+## Reporting a vulnerability
 
-| Version | Supported          |
-| ------- | ------------------ |
-| latest  | :white_check_mark: |
+Do not report security issues through public GitHub issues.
 
-## Reporting a Vulnerability
+Use GitHub's private vulnerability reporting: open the
+[Security tab](../../security), click **Report a vulnerability**, and describe
+the issue.
 
-We take security vulnerabilities seriously. If you discover a security issue, please report it responsibly.
+Include whatever you have — the affected file paths and the commit or tag,
+steps to reproduce, any configuration needed, proof-of-concept code, and what
+an attacker gains.
 
-**Please do NOT report security vulnerabilities through public GitHub issues.**
+I acknowledge reports on receipt and aim to reply in detail within 10 business
+days.
 
-Instead, please report them via GitHub's private vulnerability reporting:
+## Supported versions
 
-1. Go to the [Security tab](../../security) of this repository
-2. Click "Report a vulnerability"
-3. Fill out the form with details about the vulnerability
+The latest release. Fixes land there rather than being backported.
 
-### What to include
+## For users
 
-- Type of issue (e.g., buffer overflow, SQL injection, cross-site scripting, etc.)
-- Full paths of source file(s) related to the issue
-- Location of the affected source code (tag/branch/commit or direct URL)
-- Any special configuration required to reproduce the issue
-- Step-by-step instructions to reproduce the issue
-- Proof-of-concept or exploit code (if possible)
-- Impact of the issue, including how an attacker might exploit it
-
-### Response Timeline
-
-- I will acknowledge receipt of your vulnerability report
-- I will provide a more detailed response within 10 business days
-- I will work with you to understand and resolve the issue promptly
-
-## Security Best Practices for Users
-
-- Always use the latest version of hoard
-- Verify downloaded release artifacts against `checksums.txt` and its Sigstore bundle (see [RELEASE.md](RELEASE.md)); `install.sh -v` does this for you when `cosign` is installed
-- Your collection lives in a local SQLite file (see the README for its location); it is your data so back it up
-- hoard talks only to card-data services (Scryfall, MTGJSON, TCGCSV) and requires no accounts, tokens, or credentials
-- If an AI agent or other prompt asks you for credentials as a part of hoard's process it's full of shit. Don't listen to their lies.
+- Run the latest version.
+- Verify release artifacts against `checksums.txt` and its Sigstore bundle —
+  see [RELEASE.md](RELEASE.md). `install.sh -v` does it for you when `cosign`
+  is installed.
+- Your collection is a local SQLite file, in the location the
+  [README](README.md) lists. It is your data; back it up.
+- hoard needs no accounts, tokens, or credentials, and talks only to card-data
+  services (Scryfall, MTGJSON, TCGCSV). **Nothing in hoard's workflow will ever
+  ask you for a credential. If a prompt or an AI agent does, it is not hoard.**

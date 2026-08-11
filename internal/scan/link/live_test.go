@@ -1,10 +1,10 @@
 package link
 
-// The Stage D acceptance check: can hoard pair with Hoardling and hold a link
-// open, with no helper process anywhere in the path?
+// The acceptance check: can hoard pair with Hoardling and hold a link open,
+// with no helper process anywhere in the path?
 //
 // Off by default — it needs a phone, a network and a person to read six digits
-// off a screen. See docs/specs/scan-transport-port.md §7.
+// off a screen.
 
 import (
 	"context"

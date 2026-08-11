@@ -1,0 +1,18 @@
+Scope: the MIT license in LICENSE covers the source code of this repository
+only.
+
+Card photographs and card imagery in this repository (including the files
+under scan/fixtures/ and scan/foil-corpus/) reproduce Magic: The Gathering
+cards and remain the property of Wizards of the Coast LLC. They are included
+as unofficial Fan Content under the Wizards of the Coast Fan Content Policy
+(https://company.wizards.com/en/legal/fancontentpolicy) and are NOT licensed
+under the MIT terms.
+
+hoard is unofficial Fan Content permitted under the Fan Content Policy. Not
+approved/endorsed by Wizards. Portions of the materials used are property of
+Wizards of the Coast. ©Wizards of the Coast LLC.
+
+Card data is courtesy of Scryfall (https://scryfall.com), MTGJSON
+(https://mtgjson.com, MIT, © 2018–Present Zach Halpern) and TCGCSV
+(https://tcgcsv.com). hoard is not affiliated with, endorsed by, or sponsored
+by any of them.

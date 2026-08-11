@@ -4,7 +4,7 @@ The honest source for any accuracy claim — App Store copy, README, release
 notes. Every number below was measured on the date given, with the command
 given, against a labelled corpus that is in this repo. Where a limit is a
 claim nobody has measured, it says so and is marked unverified. Nothing here
-is quoted from another document; the leads came from `docs/scanner-tuning.md`
+is quoted from another document; the leads came from `docs/specs/scanner-tuning.md`
 and the sprint docs, and each was re-derived from the code or re-run.
 
 **Measured: 2026-08-08**, on the working tree at `02ecda4`+, with
@@ -565,7 +565,7 @@ product.
 | Sleeve behaviour (any kind) | **Unverified.** Nothing in the tree references sleeves; no labelled captures. | Add a sleeved stratum to `scan/foil-corpus/stills-labels.tsv` and re-run `foil-eval` |
 | Glare tolerance | **Unmeasured as a variable.** `clipHigh`/`clipLow` are computed and thrown away. | Gate or bucket by clip fraction and re-score |
 | What separates rig `s5` (69% foil recall) from `s9` (23%) | **Unknown.** The 3× spread is the largest unexplained effect in this document. | The rigs' capture conditions are not recorded in `stills-labels.tsv`; they would have to be reconstructed from session telemetry |
-| Borderless cards in the wild | **Corpus is not valid for this.** The 50% figure in §2 is a full-bleed-scan artifact — a borderless scan has no card-against-desk edge. `docs/scanner-tuning.md` reports a live borderless session reading names fine. Not re-verified today. | A live borderless pile with telemetry |
+| Borderless cards in the wild | **Corpus is not valid for this.** The 50% figure in §2 is a full-bleed-scan artifact — a borderless scan has no card-against-desk edge. `docs/specs/scanner-tuning.md` reports a live borderless session reading names fine. Not re-verified today. | A live borderless pile with telemetry |
 | Real-world (non-corpus) name accuracy | **No end-to-end labelled measurement exists.** The 28 fixtures pin decisions, not correctness. | A labelled live pile scored against ground truth |
 | Japanese/Chinese OCR | **Refuted rather than unverified**, but on n=4. | A larger non-Latin stratum, if it ever matters |
 

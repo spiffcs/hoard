@@ -1,8 +1,8 @@
 // Does Network.framework's TLS-PSK actually complete a handshake between two
 // ends we control?
 //
-// This is stage 1 of the experiment in docs/scan-transport-encryption.md, and
-// it exists because the answer is currently unknown rather than known-no. An
+// This is stage 1 of the transport experiment, and it exists because the
+// answer was unknown rather than known-no at the time. An
 // earlier TLS-PSK attempt was abandoned when both ends sat in `.connecting`
 // forever with no error, but that attempt never reached a commit, so there is
 // no code to read — only a post-mortem, in a doc that has since been deleted
@@ -383,7 +383,7 @@ func tlsPSKHandshake() throws {
                   completeWithIdentity: true, customCiphersuite: 0xD002),
     ]
 
-    var report = "\nTLS-PSK loopback matrix — docs/scan-transport-encryption.md stage 1\n"
+    var report = "\nTLS-PSK loopback matrix — transport experiment stage 1\n"
     var anyPaired = false
 
     for config in configs {

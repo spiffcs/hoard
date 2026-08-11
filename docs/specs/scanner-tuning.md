@@ -16,8 +16,8 @@ at the code it shaped.
 > `bin/cardkit-probe` is the equivalent.
 >
 > **2026-08-09: `ScanKit` was deleted outright**, along with the `hoard-scan`
-> executable and its `.app` bundle — hoard talks to the phone itself now
-> (`docs/specs/scan-transport-port.md`). So *every* `ScanKit` reference below is
+> executable and its `.app` bundle — hoard talks to the phone itself now, in
+> `internal/scan/link`. So *every* `ScanKit` reference below is
 > historical, not only the `Core/` ones. The read-pipeline names that survived
 > the Continuity removal live in `CardKit`; the rest describe code that no
 > longer exists in any target.

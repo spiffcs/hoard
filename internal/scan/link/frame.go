@@ -7,7 +7,7 @@
 // both ends sitting in "connecting" and nothing on either's stderr. That is why
 // the tests here are driven by vectors generated from the Swift implementation
 // rather than by values written out a second time by hand — see
-// testdata/vectors.json and docs/specs/scan-transport-port.md §4.
+// testdata/vectors.json.
 package link
 
 import (

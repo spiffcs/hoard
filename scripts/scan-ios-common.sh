@@ -75,7 +75,7 @@ ios_guess_team() {
 # This has to happen before `xcodegen generate`, not just before the build:
 # project.yml names Signing.xcconfig as the config file for BOTH configurations,
 # and xcodegen fails spec validation outright when the path does not resolve.
-# That is the "invalid config file path" error in docs/ios-development.md, and
+# That is the "invalid config file path" error in scan/hoard-scan-ios/README.md, and
 # it is why the file is created here rather than left to the developer.
 ios_ensure_signing_xcconfig() {
     [ -f "$scan_ios_xcconfig" ] && return 0

@@ -538,7 +538,7 @@ type localOnlySearcher interface {
 // 5500ms sits above the observed median swap and below the p75 of 7047ms, so
 // it fires when a card is genuinely parked and stays quiet when someone is
 // simply working at their own pace. See the remote row in
-// docs/scanner-tuning.md.
+// docs/specs/scanner-tuning.md.
 const nudgeDelay = 5500 * time.Millisecond
 
 // nameTimeout bounds the Scryfall escalation for a line the local catalog could
@@ -1309,7 +1309,7 @@ func moveToFront(cards []scryfall.Card, i int) []scryfall.Card {
 // Measured over scan/corpus the language read answers on a fifth of cards and
 // is right four in five, and its errors are systematic: a line of rules text
 // parses as a set row and donates a language, so "…put it into your hand"
-// yields Italian on a plainly English card (docs/scanner-tuning.md, "Prose
+// yields Italian on a plainly English card (docs/specs/scanner-tuning.md, "Prose
 // fabricates set codes"). But that same fabrication invents the set code beside
 // it, and an invented set code matches no printing — so the bogus language
 // arrives attached to a set that rules it out, and the sibling never enters the
@@ -1772,7 +1772,7 @@ const sameCardFloor = 3 * time.Second
 // whose two classes share a range decides nothing. Identity — the resolve
 // naming the printing just handled — outranks the face everywhere now, and
 // the fast-stacked-copy case the floor once served is the pendingDup key's.
-// History: docs/scanner-tuning.md.
+// History: docs/specs/scanner-tuning.md.
 
 // pendingDup is the last repeat sighting the duplicate rules suppressed, held
 // so the operator can overrule them with one key.

@@ -19,7 +19,7 @@ import (
 )
 
 // Both timing constants were fitted to the 61-capture session recorded in
-// docs/scanner-tuning.md rather than guessed, so the measurements that produced
+// docs/specs/scanner-tuning.md rather than guessed, so the measurements that produced
 // them are what this pins.
 //
 // They used to be chosen per source, the phone's values sitting beside an

@@ -48,8 +48,7 @@ const pairWindow = 15 * time.Second
 // keeps its data.
 type Client struct {
 	StateDir string
-	// Finder is discovery. Nil means dns-sd, which is the only implementation
-	// and the one docs/specs/scan-transport-port.md §8.2 selected.
+	// Finder is discovery. Nil means dns-sd, which is the only implementation.
 	Finder link.Finder
 }
 
@@ -220,8 +219,7 @@ func (c *Client) Open(ctx context.Context, opts OpenOptions) (*Session, error) {
 //
 // Always a fresh resolve, never a cached address: iOS rotates its private
 // .local hostname and takes a new ephemeral port on every launch, so an address
-// from an earlier session is stale as soon as the app restarts. Measured — see
-// docs/specs/scan-transport-port.md §9.
+// from an earlier session is stale as soon as the app restarts. Measured.
 func (c *Client) locate(ctx context.Context, deviceID string) (link.Service, error) {
 	// Named when the caller knows which phone, which is the common case and
 	// the fast one: the browse ends the moment that phone answers instead of

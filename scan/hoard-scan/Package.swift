@@ -12,7 +12,7 @@
 // that browsed for the phone, held the TLS session, and translated its frames
 // into NDJSON on stdout for the Go parent to read off a pipe. `hoard` now does
 // all of that itself in `internal/scan/link`, so the helper, its bundle and its
-// build script are gone — see docs/specs/scan-transport-port.md.
+// build script are gone.
 //
 // Language mode is deliberately v5. The design is main-thread confinement plus
 // one serial analysis queue, expressed with global `let` services that Swift 6's

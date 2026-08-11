@@ -7,8 +7,7 @@ package scan
 // JSON lines off its stdout. What happens now: two TLS connections straight to
 // the phone, carrying the same NDJSON inside frames. The Event surface above
 // this file is unchanged on purpose — the TUI, autoscan, review and auto-commit
-// paths were never the problem and do not move. See
-// docs/specs/scan-transport-port.md.
+// paths were never the problem and do not move.
 
 import (
 	"bytes"

@@ -157,8 +157,7 @@ tasks:
   #
   # There is no `scan` task any more. It built bin/hoard-scan.app, the Mac end
   # of the link to the phone; hoard now does that itself in internal/scan/link,
-  # so the Swift here is the phone's code and the corpus harness only. See
-  # docs/specs/scan-transport-port.md.
+  # so the Swift here is the phone's code and the corpus harness only.
 
   # Replay the checked-in scan fixtures through the reader and diff the
   # extracted card lists against their goldens (macOS only). The reader is
@@ -214,7 +213,7 @@ tasks:
 
   # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
   # (xcodebuild -downloadPlatform iOS) and a signing team — scripts/build-scan-ios.sh
-  # reports whichever is missing. See docs/specs/ios-development.md.
+  # reports whichever is missing. See scan/hoard-scan-ios/README.md.
   scan-ios:
     desc: Build the iPhone capture head
     platforms: [darwin]

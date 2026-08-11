@@ -21,8 +21,8 @@ import (
 // bug reports quote — and it must carry both the resolved version and the Fan
 // Content notice the product is legally required to show. All three spellings
 // route to the same code path, because `--version` and `-v` are what people
-// actually type. The ldflag path itself is proven by the goreleaser snapshot
-// (docs/release-engineering.md §7), not here.
+// actually type. The ldflag path itself is proven by the goreleaser snapshot,
+// not here.
 func TestVersionCommand(t *testing.T) {
 	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
 		oldStdout := os.Stdout

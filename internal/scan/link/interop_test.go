@@ -9,7 +9,7 @@ package link
 // against Security.framework's own answers rather than against Go's alone.
 //
 // testdata/certvectors.json holds both directions, recorded when the vectors
-// were generated (see docs/specs/scan-transport-port.md §8.5):
+// were generated:
 //
 //   - goCert:    a certificate this package minted, handed to
 //                SecCertificateCreateWithData, with whether Security parsed it
@@ -184,7 +184,7 @@ func TestGoAndSwiftCertificatesAreShapeCompatible(t *testing.T) {
 
 // TestDumpIdentityForInterop prints a freshly minted certificate as hex, for
 // feeding to the Swift side when regenerating testdata/certvectors.json.
-// Skipped in normal runs; see docs/specs/scan-transport-port.md §8.5.
+// Skipped in normal runs.
 //
 //	HOARD_LINK_DUMP_CERT=1 go test ./internal/scan/link/ -run TestDumpIdentityForInterop -v
 func TestDumpIdentityForInterop(t *testing.T) {

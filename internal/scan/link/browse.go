@@ -6,8 +6,7 @@ package link
 // preference — a raw multicast socket is refused outright unless the binary
 // carries com.apple.developer.networking.multicast, a managed entitlement
 // Apple grants only on application. Measured: sends fail EHOSTUNREACH and the
-// join succeeds while delivering nothing, with no prompt ever offered. The
-// evidence is in docs/specs/scan-transport-port.md §8.
+// join succeeds while delivering nothing, with no prompt ever offered.
 //
 // So this drives /usr/bin/dns-sd, which is an OS component: nothing hoard
 // ships, builds, signs, or asks anyone to install. That keeps the release

@@ -46,9 +46,9 @@ const (
 	rereadAll rereadScope = iota
 	// rereadLive re-reads the panes only, and puts the cursor back on the
 	// row it was on rather than the index it was at. The exclusions are
-	// §3.2 of docs/specs/live-browse-refresh.md — movers is the longest
-	// lock hold in the program and market needs the network — and the
-	// identity restore is §5.1: holdings sort by value descending, so an
+	// deliberate — movers is the longest lock hold in the program and
+	// market needs the network — and so is the identity restore:
+	// holdings sort by value descending, so an
 	// insert shifts every row beneath it and an index would land the
 	// cursor on a different card without saying so.
 	rereadLive

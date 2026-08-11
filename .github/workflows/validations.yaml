@@ -26,7 +26,7 @@ permissions:
 
 # Both jobs go through ./.github/actions/bootstrap and run make targets, so CI
 # executes the same binny-pinned tools a developer runs locally — the whole
-# argument for the toolchain migration (docs/release-engineering.md §5).
+# argument for the toolchain migration.
 #
 # Everything here is the Go half only: the Swift scanner needs a macOS runner
 # and was gated separately by scan.yml — which is now DISABLED for budget
