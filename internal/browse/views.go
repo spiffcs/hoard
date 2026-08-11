@@ -189,6 +189,12 @@ func (m Model) moversWindow() time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
+// moversCutoff is the instant the current window opens: the one the query asks
+// from, the one the header names, and the one each row's FROM date is judged
+// against. Three readings of the same moment had drifted apart into three
+// expressions of it.
+func (m Model) moversCutoff() time.Time { return m.now().Add(-m.moversWindow()) }
+
 // loadView reads whichever analysis the right pane is showing, into the
 // pristine slice — deriveView narrows it to what is visible.
 //
@@ -206,7 +212,7 @@ func (m *Model) loadView() error {
 				break
 			}
 		}
-		since := m.now().Add(-m.moversWindow()).UTC().Format(time.RFC3339)
+		since := m.moversCutoff().UTC().Format(time.RFC3339)
 		changes, err := m.store.Movers(since)
 		if err != nil {
 			return fmt.Errorf("reading movers: %w", err)
@@ -283,7 +289,7 @@ func (m *Model) deriveView() {
 			rows = append(rows, c)
 		}
 		m.filteredMovers = rows
-		m.moversColW = measureMoverCols(rows)
+		m.moversColW = measureMoverCols(rows, m.moversCutoff())
 		m.applySort() // sorts filteredMovers and re-derives the page
 	case viewWatches:
 		watches := make([]store.WatchStatus, 0, len(m.allWatches))
@@ -420,6 +426,12 @@ func (m Model) moversLines(width int) []string {
 			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.set},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim(), Width: w.fin},
+			// Where each row's own measurement starts, on the rows that start
+			// later than the window did; blank everywhere else, so a window the
+			// history covers drops the column and the table keeps its shape.
+			// It outlives WAS: a date taken away from beside the price it dates
+			// would leave that price looking like the header's.
+			{Title: "FROM", Align: ui.Right, Priority: 3, Style: env.Dim(), Width: w.from},
 			{Title: "WAS", Align: ui.Right, Priority: 4, Style: env.Dim(), Width: w.was},
 			{Title: "NOW", Align: ui.Right, Width: w.now},
 			{Title: "CHANGE", Align: ui.Right, Priority: 3, Style: env.Dim(), Width: w.change},
@@ -431,6 +443,7 @@ func (m Model) moversLines(width int) []string {
 		// color as >/< leaf, and sorting by the column still reads as one
 		// smooth green→gray→red sweep.
 		pctMax, impactMax := store.MoverExtents(m.filteredMovers)
+		cutoff := m.moversCutoff()
 		for _, c := range m.movers {
 			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			changeStyle := env.Diverge(ui.DivergeFrac(c.Pct(), pctMax))
@@ -438,6 +451,7 @@ func (m Model) moversLines(width int) []string {
 			t.Add(ui.Cell{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),
 				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+				ui.C(c.BaselineFrom(cutoff)),
 				ui.C(ui.Money(c.Old)), ui.C(ui.Money(c.New)),
 				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: changeStyle}, ui.C(ui.Qty(c.Copies)),
 				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: impactStyle})
@@ -456,7 +470,7 @@ func (m Model) viewHeader() (title, totals string) {
 		for _, c := range m.filteredMovers {
 			net += c.TotalDelta()
 		}
-		since := m.now().Add(-m.moversWindow()).Local().Format("2 Jan")
+		since := m.moversCutoff().Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since + m.viewScope(),
 			fmt.Sprintf("%s moved · %s", ui.Count(len(m.filteredMovers)), ui.SignedMoney(net)) +
 				m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers))

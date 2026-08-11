@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -65,6 +66,10 @@ func runUpdatePrices(ctx context.Context, deps action.Deps, env *cli.Env, limit 
 		r.Detail("%d cards could not be re-fetched from Scryfall.", res.NotFound)
 	}
 	fmt.Fprintln(env.Out)
-	fmt.Fprint(env.Out, report.Movers(env.OutEnv, res.Changes, limit, "since the last refresh"))
+	// No cutoff to name: a refresh compares against whatever the last one
+	// recorded, whenever that was, so no row can start later than the window
+	// and the FROM column stays out of this table.
+	fmt.Fprint(env.Out, report.Movers(env.OutEnv, res.Changes, limit,
+		"since the last refresh", time.Time{}))
 	return nil
 }

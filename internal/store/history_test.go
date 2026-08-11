@@ -297,15 +297,20 @@ func TestMoversWindow(t *testing.T) {
 		}
 	})
 
-	// A cutoff older than anything recorded still has a baseline: the earliest
-	// observation is at or before it.
+	// A window reaching back further than the record does is answered with the
+	// record: asking for six years of movement from a card with two months of
+	// history gets the two months, measured from where the series starts.
 	t.Run("window older than the history sees the move", func(t *testing.T) {
 		got, err := s.Movers("2020-01-01T00:00:00Z")
 		if err != nil {
 			t.Fatalf("Movers: %v", err)
 		}
-		if len(got) != 0 {
-			t.Errorf("got %+v, want nothing: no observation at or before the cutoff", got)
+		c := changeFor(t, got, "ulamog-id", "nonfoil")
+		if c.Old != 10.00 || c.New != 20.00 {
+			t.Errorf("moved %v -> %v, want 10 -> 20", c.Old, c.New)
+		}
+		if c.OldAsOf != "2026-06-01T00:00:00Z" {
+			t.Errorf("OldAsOf = %q, want the record's own first observation", c.OldAsOf)
 		}
 	})
 }

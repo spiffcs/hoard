@@ -85,7 +85,8 @@ func runMovers(st *store.Store, cmdEnv *cli.Env, since string, limit int) error 
 	// last one recorded on or before that date — which, on a hoard refreshed
 	// every few weeks, may have been recorded well before it. Naming the date
 	// says that; naming the window would imply the move happened inside it.
-	fmt.Fprint(out, report.Movers(env, changes, limit, "since "+cutoff.Local().Format("2 Jan 2006")))
+	fmt.Fprint(out, report.Movers(env, changes, limit,
+		"since "+cutoff.Local().Format("2 Jan 2006"), cutoff))
 
 	// History that does not reach back as far as the window was asked to look is
 	// worth saying: the answer is right for the data, and the data is younger

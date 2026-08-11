@@ -3,10 +3,15 @@ package report
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
+
+// testCutoff is the instant "since 11 Jul 2026" names, for the tests that care
+// where a row's own baseline sits relative to it.
+var testCutoff = time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
 
 // summaryRows is one riser and one sinker, sized so the rendered table is
 // stable enough to compare byte for byte.
@@ -32,47 +37,49 @@ const goldenMoversTable = "" +
 	"  Sol Ring                   c21/1    -        $1.00  →   $0.90  -10.0%  ×40  -$4.00\n" +
 	"\n"
 
-// The defect this pins: a longer window can report a smaller count, because a
-// printing needs a price recorded at or before the cutoff to have a baseline at
-// all and one first priced later is left out rather than reported as flat. On
-// the owner's database a 30-day window compares 1,963 printings and reports
-// 1,661 movers, while a 103-day window compares 499 and reports 474. Said as
-// "474 printings moved", the wider window reads as the hoard going quiet.
+// The sentence has to name the population it counted over, because a count
+// alone cannot say whether a short list means a quiet hoard or a thin record.
 //
-// The sentence has to name the population it counted over. Against the previous
-// wording -- "%s printings moved %s. Net change: %s" -- this fails.
+// The population it names changed with the window rule. It used to be "those
+// priced by then", which was true while a printing without a price at the
+// cutoff was dropped from the answer; a record that starts inside the window is
+// now measured across the part it has, so the only printing left out is one
+// priced exactly once, having nothing to compare against.
 func TestMoversSummaryNamesThePopulationItCountedOver(t *testing.T) {
-	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10, "since 11 Jul 2026")
+	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10, "since 11 Jul 2026", testCutoff)
 	summary := lastLine(t, got)
 
-	want := "2 printings moved since 11 Jul 2026, among those priced by then. Net change: +$3.50"
+	want := "2 printings moved since 11 Jul 2026, among those priced more than once. Net change: +$3.50"
 	if summary != want {
 		t.Errorf("summary = %q,\n   want %q", summary, want)
 	}
-	if strings.HasSuffix(summary, "moved since 11 Jul 2026. Net change: +$3.50") {
-		t.Errorf("summary still claims movement with no population named: %q", summary)
+	if strings.Contains(summary, "priced by then") {
+		t.Errorf("summary still names the population the old rule excluded on: %q", summary)
 	}
 }
 
-// The empty report has the same defect and needs the same repair: with nothing
-// comparable in the window, "No price changes since 29 Apr 2026" asserts the
-// hoard held still when what happened is that nothing had a baseline to be
-// measured from.
+// The empty report names the same population, for the same reason: with nothing
+// to show, "No price changes since 29 Apr 2026" asserts the hoard held still,
+// when what may have happened is that nothing had a second price to be measured
+// against.
 func TestMoversEmptySummaryNamesThePopulationItCountedOver(t *testing.T) {
-	got := Movers(ui.Env{Width: 100, Clamp: true}, nil, 10, "since 29 Apr 2026")
+	got := Movers(ui.Env{Width: 100, Clamp: true}, nil, 10, "since 29 Apr 2026", testCutoff)
 
-	want := "No price changes since 29 Apr 2026, among printings priced by then.\n"
+	want := "No price changes since 29 Apr 2026, among printings priced more than once.\n"
 	if got != want {
 		t.Errorf("empty report = %q,\n          want %q", got, want)
 	}
 }
 
-// The clean-case control. This is a legibility fix, so nothing that was
-// counted may have moved: the table is compared to the captured bytes of the
-// previous revision, and the two figures in the sentence -- the count and the
-// net -- have to be the same two figures that revision printed.
+// The clean-case control, and the one that matters most now that the window
+// rule decides what gets counted: on a window the history covers, nothing about
+// the table may move. Every row here has a baseline at or before the cutoff, so
+// the FROM column has nothing to say on any row and must not appear at all --
+// the table is compared to the captured bytes of the revision before the rule
+// changed, column for column. The two figures in the sentence, the count and
+// the net, have to be the same two figures that revision printed.
 func TestMoversRewordingChangedNoFigure(t *testing.T) {
-	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10, "since 11 Jul 2026")
+	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10, "since 11 Jul 2026", testCutoff)
 
 	table, _, ok := strings.Cut(got, "2 printings moved")
 	if !ok {
@@ -94,11 +101,55 @@ func TestMoversRewordingChangedNoFigure(t *testing.T) {
 // window as a refresh rather than a date, and the sentence is built once for
 // both.
 func TestMoversSummaryReadsForTheRefreshWindow(t *testing.T) {
-	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10, "since the last refresh")
+	got := Movers(ui.Env{Width: 100, Clamp: true}, summaryRows(), 10,
+		"since the last refresh", time.Time{})
 
-	want := "2 printings moved since the last refresh, among those priced by then. Net change: +$3.50"
+	want := "2 printings moved since the last refresh, among those priced more than once. Net change: +$3.50"
 	if summary := lastLine(t, got); summary != want {
 		t.Errorf("summary = %q,\n   want %q", summary, want)
+	}
+}
+
+// A row whose record begins inside the window is measured from where its own
+// record starts, and the table says so on that row rather than letting the
+// header's date speak for it. This is the reported case: at thirty days, a
+// printing first priced four days ago reports its four days.
+func TestMoversDatesARowThatStartsInsideTheWindow(t *testing.T) {
+	rows := summaryRows()
+	rows[0].OldAsOf = "2026-07-30T12:00:00Z" // begins well after the 11 Jul cutoff
+	rows[1].OldAsOf = "2026-07-02T12:00:00Z" // reaches back past it
+
+	got := Movers(ui.Env{Width: 100, Clamp: true}, rows, 10, "since 11 Jul 2026", testCutoff)
+
+	if !strings.Contains(got, "FROM") {
+		t.Errorf("no FROM column for a row measuring less than the window:\n%s", got)
+	}
+	want := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC).Local().Format("2 Jan")
+	if !strings.Contains(got, want) {
+		t.Errorf("row does not name its own start %q:\n%s", want, got)
+	}
+	// The row the window covers says nothing: its figures are the window's, and
+	// a date repeating the header is a column of noise.
+	if unwanted := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC).Local().Format("2 Jan"); strings.Contains(got, unwanted) {
+		t.Errorf("dated a row the window already covers (%q):\n%s", unwanted, got)
+	}
+}
+
+// The equality control stated directly: baselines the window covers produce the
+// table the rule change was required not to touch.
+func TestMoversWithCoveredBaselinesRendersTheOldTable(t *testing.T) {
+	rows := summaryRows()
+	rows[0].OldAsOf = "2026-07-02T12:00:00Z"
+	rows[1].OldAsOf = "2026-06-30T12:00:00Z"
+
+	got := Movers(ui.Env{Width: 100, Clamp: true}, rows, 10, "since 11 Jul 2026", testCutoff)
+	table, _, ok := strings.Cut(got, "2 printings moved")
+	if !ok {
+		t.Fatalf("summary sentence no longer starts with the count:\n%s", got)
+	}
+	if table != goldenMoversTable {
+		t.Errorf("table changed on a window the history covers.\n got %q\nwant %q",
+			table, goldenMoversTable)
 	}
 }
 

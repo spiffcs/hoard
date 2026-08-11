@@ -3,6 +3,7 @@ package report
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -197,7 +198,7 @@ func TestMoversTable(t *testing.T) {
 		{Name: "Ulamog, the Infinite Gyre", SetCode: "uma", CollectorNumber: "7",
 			Finish: "foil", Copies: 3, Old: 10.00, New: 12.50},
 	}
-	got := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(rows, 10)).Render()
+	got := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(rows, 10), time.Time{}).Render()
 
 	for _, want := range []string{
 		"RISERS",
@@ -220,7 +221,7 @@ func TestMoversTable(t *testing.T) {
 // Non-foil is the common case and says nothing worth a column of repetition.
 func TestMoversTableMarksOnlyInterestingFinishes(t *testing.T) {
 	got := moversTable(ui.Env{Width: 100, Clamp: true},
-		moverSections([]store.PriceChange{change("Sol Ring", 1, 2.00, 3.00)}, 10)).Render()
+		moverSections([]store.PriceChange{change("Sol Ring", 1, 2.00, 3.00)}, 10), time.Time{}).Render()
 	if strings.Contains(got, "nonfoil") {
 		t.Errorf("non-foil rows should not spell out the finish:\n%s", got)
 	}
@@ -236,7 +237,7 @@ func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
-	out := moversTable(ui.Env{Width: 70, Clamp: true}, moverSections(changes, 10)).Render()
+	out := moversTable(ui.Env{Width: 70, Clamp: true}, moverSections(changes, 10), time.Time{}).Render()
 
 	var riser, sinker string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -310,7 +311,7 @@ func TestMoversGradientColors(t *testing.T) {
 	}
 	e := ui.Env{Color: true}
 	out := moversTable(ui.Env{Width: 100, Color: true, Clamp: true},
-		moverSections(changes, 10)).Render()
+		moverSections(changes, 10), time.Time{}).Render()
 
 	pctMax, impactMax := 4.0, 40.0
 	for _, line := range strings.Split(out, "\n") {
@@ -336,7 +337,7 @@ func TestMoversGradientColors(t *testing.T) {
 	}
 
 	// Piped (Color:false), the same table emits no escapes at all.
-	plainOut := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(changes, 10)).Render()
+	plainOut := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(changes, 10), time.Time{}).Render()
 	if strings.Contains(plainOut, "\x1b[") {
 		t.Errorf("piped movers output carries escapes:\n%q", plainOut)
 	}
@@ -354,7 +355,7 @@ func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for _, width := range []int{44, 60, 80, 120} {
-		out := moversTable(ui.Env{Width: width, Clamp: true}, moverSections(rows, 10)).Render()
+		out := moversTable(ui.Env{Width: width, Clamp: true}, moverSections(rows, 10), time.Time{}).Render()
 		for line := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 			if len([]rune(line)) > width {
 				t.Errorf("at width %d a line is %d cells wide: %q", width, len([]rune(line)), line)
@@ -377,7 +378,7 @@ func TestMoversTableDropsTheArrowBeforeTheOldPrice(t *testing.T) {
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for width := 40; width <= 120; width++ {
-		out := moversTable(ui.Env{Width: width, Clamp: true}, moverSections(rows, 10)).Render()
+		out := moversTable(ui.Env{Width: width, Clamp: true}, moverSections(rows, 10), time.Time{}).Render()
 		if strings.Contains(out, "→") && !strings.Contains(out, "$20,000.00") {
 			t.Fatalf("at width %d the arrow outlived the price it points from:\n%s", width, out)
 		}

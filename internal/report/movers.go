@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
@@ -51,8 +52,10 @@ func moverSections(changes []store.PriceChange, limit int) []moverSection {
 //
 // Priorities give up columns least-useful-first, so the narrowest terminal keeps
 // the card, its price now, and the impact. The arrow drops before the price it
-// points away from, which keeps a dangling "→" out of a squeezed row.
-func moversTable(env ui.Env, sections []moverSection) ui.Table {
+// points away from, which keeps a dangling "→" out of a squeezed row. FROM
+// outlives WAS, because a baseline date removed from beside the price it dates
+// would leave that price looking like it came from the window's start.
+func moversTable(env ui.Env, sections []moverSection, cutoff time.Time) ui.Table {
 	t := ui.Table{
 		Env:    env,
 		Header: true,
@@ -63,6 +66,11 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim()},
+			// Where each row's own measurement starts, filled only on the rows
+			// that start later than the window did. On a window the history
+			// covers every cell is blank and the table drops the column, which
+			// is why this costs nothing on the ordinary report.
+			{Title: "FROM", Align: ui.Right, Priority: 2, Style: env.Dim()},
 			{Title: "WAS", Align: ui.Right, Priority: 3, Style: env.Dim()},
 			{Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "NOW", Align: ui.Right},
@@ -107,6 +115,7 @@ func moversTable(env ui.Env, sections []moverSection) ui.Table {
 			t.Add(ui.Cell{Text: "  " + c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),
 				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+				ui.C(c.BaselineFrom(cutoff)),
 				ui.C(ui.Money(c.Old)), ui.C("→"), ui.C(ui.Money(c.New)),
 				ui.Cell{Text: ui.SignedPercent(c.Pct()), Style: changeStyle}, ui.C(ui.Qty(c.Copies)),
 				ui.Cell{Text: ui.SignedMoney(c.TotalDelta()), Style: impactStyle})
@@ -258,29 +267,31 @@ func spreadCell(env ui.Env, c market.Comp) ui.Cell {
 // Movers renders the risers and sinkers, and what they did to the hoard.
 //
 // window names the period in words ("since 29 Jun"), because prices are observed
-// when a refresh runs rather than continuously.
+// when a refresh runs rather than continuously. cutoff is the same moment as a
+// time, and only the FROM column reads it; the zero time suits a caller with no
+// cutoff to name, such as update-prices comparing against the last refresh.
 //
 // Both summary sentences name the population they counted over, not just the
-// count, because the count is bounded by coverage at least as often as it is
-// bounded by movement. A printing needs a price recorded at or before the
-// cutoff to have a baseline at all; one first priced after it is left out
-// rather than reported as flat. So a wider window can report a smaller number,
-// and it does so on any hoard whose record thins out towards its start: a
-// window reaching past the first heavy refresh compares only the handful of
-// printings priced that early. Said as "N printings moved", that reads as the
-// hoard going quiet, and a reader who widens the window and watches the figure
-// fall concludes the tool is broken. Naming the population says which of the
-// two is happening, and it is the sentence that changes here — nothing about
-// what gets counted does.
-func Movers(env ui.Env, changes []store.PriceChange, limit int, window string) string {
+// count, because a count alone cannot say whether a small number means a quiet
+// hoard or a thin record. The population is every printing priced more than
+// once: two prices are what a change is made of, and a printing seen exactly
+// once is the one thing there is no way to compare. It is a narrow exclusion
+// and saying so is what stops a reader reading a short list as a broken tool.
+//
+// The sentence used to name a different population — those priced by the cutoff
+// — which was true while a printing without a price at the cutoff was dropped
+// altogether. It is not true now: a window is a range, a record that starts
+// inside it is measured across the part it has, and the count no longer falls
+// away as the window widens past the record's start.
+func Movers(env ui.Env, changes []store.PriceChange, limit int, window string, cutoff time.Time) string {
 	if len(changes) == 0 {
-		return env.Dim()("No price changes "+window+", among printings priced by then.") + "\n"
+		return env.Dim()("No price changes "+window+", among printings priced more than once.") + "\n"
 	}
 	var net float64
 	for _, c := range changes {
 		net += c.TotalDelta()
 	}
-	return moversTable(env, moverSections(changes, limit)).Render() + "\n" +
-		env.Dim()(fmt.Sprintf("%s printings moved %s, among those priced by then. Net change: %s",
+	return moversTable(env, moverSections(changes, limit), cutoff).Render() + "\n" +
+		env.Dim()(fmt.Sprintf("%s printings moved %s, among those priced more than once. Net change: %s",
 			ui.Count(len(changes)), window, ui.SignedMoney(net))) + "\n"
 }

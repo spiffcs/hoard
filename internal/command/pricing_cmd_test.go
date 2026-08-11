@@ -43,7 +43,7 @@ func TestRunUpdatePricesStdoutGolden(t *testing.T) {
 		t.Fatalf("runUpdatePrices: %v", err)
 	}
 	want := "Updated prices for 2 of 2 cards.\n\n" +
-		"No price changes since the last refresh, among printings priced by then.\n"
+		"No price changes since the last refresh, among printings priced more than once.\n"
 	if sb.String() != want {
 		t.Errorf("stdout:\n%q\nwant:\n%q", sb.String(), want)
 	}

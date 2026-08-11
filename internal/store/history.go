@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
 )
@@ -38,6 +39,12 @@ type PriceChange struct {
 	// Lang is the printing's language code ("en", "ja"), empty when the card's
 	// document has not been stored — same semantics as Card.Lang.
 	Lang string
+	// OldAsOf is when Old was observed (RFC 3339), which is not always the
+	// window's cutoff: a printing whose record begins inside the window is
+	// measured from its own first price, so this row spans less time than the
+	// window asked for. Empty where the comparison has no date behind it —
+	// RecordPrices compares against the previous refresh, whatever its date.
+	OldAsOf string
 }
 
 // Delta is the movement in one copy's price.
@@ -56,6 +63,30 @@ func (p PriceChange) Pct() float64 {
 		return 0
 	}
 	return p.Delta() / p.Old
+}
+
+// BaselineFrom is the date to print beside Old on a row that measures less
+// time than the window asked for: the printing's record begins inside the
+// window, so Old is the series' own first price rather than the price at the
+// cutoff, and the row spans from here rather than from the window's start.
+//
+// It is the empty string wherever the window's own date already describes the
+// row — a baseline at or before the cutoff, or a comparison with no date
+// behind it at all. Blank cells are what lets the column disappear entirely on
+// a window the history covers, which is the common case and wants no column.
+//
+// The formatting lives here beside the type for the reason MoverExtents does:
+// two frontends printing different dates for one row is the disagreement this
+// forecloses.
+func (p PriceChange) BaselineFrom(cutoff time.Time) string {
+	if p.OldAsOf == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, p.OldAsOf)
+	if err != nil || !t.After(cutoff) {
+		return ""
+	}
+	return t.Local().Format("2 Jan")
 }
 
 // MoverExtents scans the rows for each delta column's largest absolute
@@ -116,18 +147,36 @@ const ownedByPriceFinish = `
     FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
     GROUP BY sid, pfinish`
 
-// latestPrices is the newest observation per card and finish. The %s takes an
-// optional cutoff, which turns it into "the price as of then".
+// pricesAt is one observation per card and finish — whichever one the %s
+// expression picks out of that series. The expression names an instant; the
+// row carrying it comes back whole, price, source and date together.
 //
-// Only the inner aggregate is filtered: as_of is unique per card and finish, so
-// matching the outer row on it cannot pick up anything past the cutoff.
-const latestPrices = `
-    SELECT h.scryfall_id AS sid, h.finish AS pfinish, h.price_usd AS price, h.source AS source
+// The choice is made in the inner aggregate rather than by filtering the outer
+// join, because as_of is unique per card and finish: matching the outer row on
+// the chosen instant can only ever return that one observation.
+const pricesAt = `
+    SELECT h.scryfall_id AS sid, h.finish AS pfinish, h.price_usd AS price,
+           h.source AS source, h.as_of AS as_of
     FROM card_price_history h
-    JOIN (SELECT scryfall_id, finish, MAX(as_of) AS newest
-          FROM card_price_history %s
+    JOIN (SELECT scryfall_id, finish, %s AS chosen
+          FROM card_price_history
           GROUP BY scryfall_id, finish) t
-      ON t.scryfall_id = h.scryfall_id AND t.finish = h.finish AND t.newest = h.as_of`
+      ON t.scryfall_id = h.scryfall_id AND t.finish = h.finish AND t.chosen = h.as_of`
+
+// newestObservation picks the current price: the last one seen, whenever that
+// was.
+const newestObservation = `MAX(as_of)`
+
+// windowBaseline picks where a price sat when the window opened, as well as the
+// record can say: the last observation at or before the cutoff, or the earliest
+// one the series has when the series itself begins inside the window.
+//
+// One rule, not a rule with an exception. A window is a range to measure
+// movement across, not a precondition a card has to meet: asking for thirty
+// days asks what moved in the last thirty days, not which cards carried a price
+// thirty days ago. A printing first seen four days ago has four days of
+// movement inside a thirty-day window, and those four days are the answer.
+const windowBaseline = `COALESCE(MAX(CASE WHEN as_of <= ? THEN as_of END), MIN(as_of))`
 
 // RecordPrices appends an observation for every card whose effective price
 // differs from the last one recorded, and reports what moved.
@@ -143,7 +192,7 @@ func (s *Store) RecordPrices() ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH eff AS (` + effectivePrices + `),
      owned AS (` + ownedByPriceFinish + `),
-     latest AS (` + fmt.Sprintf(latestPrices, "") + `)
+     latest AS (` + fmt.Sprintf(pricesAt, newestObservation) + `)
 SELECT e.sid, e.pfinish, e.price, e.source, c.name, c.set_code, c.collector_number,
        COALESCE(o.copies, 0), l.price
 FROM eff e
@@ -286,26 +335,36 @@ ON CONFLICT(scryfall_id, finish, as_of) DO UPDATE SET
 	return nil
 }
 
-// Movers reports every held printing whose price differs from what it was at
-// since (an RFC3339 timestamp), newest price against the last one observed at or
-// before that moment.
+// Movers reports every held printing whose price moved inside the window that
+// opens at since (an RFC3339 timestamp): its newest price against where its
+// price sat when the window opened.
 //
-// A card first seen after the cutoff has no baseline and is left out: it has not
-// moved, it has only just arrived, and treating its first price as a rise from
-// nothing would put it top of every list.
+// since is a range to measure across, not a bar a printing has to clear. Where
+// the record reaches back past it the baseline is the last observation at or
+// before it; where the record begins inside the window the baseline is the
+// series' own first price, and the row reports the movement it has. OldAsOf
+// carries which one it was, per row, so a reader is never told a figure came
+// from a date it did not come from.
+//
+// Left out is the one case with nothing to compare: a printing with a single
+// observation. That is what base.as_of < cur.as_of says — a lone price is its
+// own baseline, and a first price read as a rise from nothing would put every
+// newly priced card top of every list. It is stated as a date comparison rather
+// than left to fall out of the price test, because it is a rule about having
+// two prices, not about their happening to differ.
 func (s *Store) Movers(since string) ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH owned AS (`+ownedByPriceFinish+`),
-     cur AS (`+fmt.Sprintf(latestPrices, "")+`),
-     base AS (`+fmt.Sprintf(latestPrices, "WHERE as_of <= ?")+`)
+     cur AS (`+fmt.Sprintf(pricesAt, newestObservation)+`),
+     base AS (`+fmt.Sprintf(pricesAt, windowBaseline)+`)
 SELECT c.scryfall_id, cur.pfinish, c.name, c.set_code, c.collector_number,
        o.copies, base.price, cur.price, cur.source, c.color_identity, c.promo_types,
-       COALESCE(c.lang, '')
+       COALESCE(c.lang, ''), base.as_of
 FROM owned o
 JOIN cur ON cur.sid = o.sid AND cur.pfinish = o.pfinish
 JOIN base ON base.sid = o.sid AND base.pfinish = o.pfinish
 JOIN cards c ON c.scryfall_id = o.sid
-WHERE cur.price <> base.price`, since)
+WHERE base.as_of < cur.as_of AND cur.price <> base.price`, since)
 	if err != nil {
 		return nil, fmt.Errorf("reading movers: %w", err)
 	}
@@ -317,7 +376,7 @@ WHERE cur.price <> base.price`, since)
 		var colors, promos sql.NullString
 		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.Name, &p.SetCode,
 			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors, &promos,
-			&p.Lang); err != nil {
+			&p.Lang, &p.OldAsOf); err != nil {
 			return nil, err
 		}
 		p.ColorIdentity = parseColorIdentity(colors)

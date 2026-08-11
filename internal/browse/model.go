@@ -672,7 +672,7 @@ func (m *Model) deriveMoversPage() {
 // column measures; see the fields on Model.
 type cardColWidths struct{ name, set, fin, qty, price, value int }
 
-type moverColWidths struct{ name, set, fin, was, now, change, qty, impact int }
+type moverColWidths struct{ name, set, fin, from, was, now, change, qty, impact int }
 
 func measureCardCols(rows []card) cardColWidths {
 	var w cardColWidths
@@ -687,12 +687,13 @@ func measureCardCols(rows []card) cardColWidths {
 	return w
 }
 
-func measureMoverCols(rows []store.PriceChange) moverColWidths {
+func measureMoverCols(rows []store.PriceChange, cutoff time.Time) moverColWidths {
 	var w moverColWidths
 	for _, c := range rows {
 		w.name = max(w.name, ansi.StringWidth(c.Name))
 		w.set = max(w.set, ansi.StringWidth(ui.Printing(c.SetCode, c.CollectorNumber)))
 		w.fin = max(w.fin, ansi.StringWidth(ui.FinishTreated(c.Finish, c.Treatment)))
+		w.from = max(w.from, ansi.StringWidth(c.BaselineFrom(cutoff)))
 		w.was = max(w.was, ansi.StringWidth(ui.Money(c.Old)))
 		w.now = max(w.now, ansi.StringWidth(ui.Money(c.New)))
 		w.change = max(w.change, ansi.StringWidth(ui.SignedPercent(c.Pct())))

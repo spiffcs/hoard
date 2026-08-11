@@ -42,7 +42,22 @@ import (
 // already obliged to handle a value it did not know, and reading an enum
 // widening as a REVISION would make every future Kind addition a REVISION too,
 // which the Kind enum's own history contradicts.
-const SchemaVersion = "1.0.1"
+//
+// 1.1.0 adds oldAsOf to a movers change, and it is a REVISION rather than an
+// ADDITION because oldUsd changed meaning underneath it. A movers window is now
+// a range to measure across rather than a bar a printing has to clear: where a
+// printing's record begins inside the window it is reported, measured from its
+// own first price, instead of being dropped for having no price at the cutoff.
+// So a 1.0.1 consumer reading a 1.1.0 document does not see what it saw before
+// — it sees more changes, and some of them span less time than since implies.
+// oldAsOf is what makes that legible, and it is required rather than optional
+// because every change carries one; a consumer that reads it can date every
+// figure it is given, and one that ignores it is the consumer this bump exists
+// to warn.
+//
+// MODEL stays at 1: no field is removed or retyped, and read.go's compatibility
+// gate is about being able to parse the document, which is untouched.
+const SchemaVersion = "1.1.0"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -252,10 +267,17 @@ type Movers struct {
 // ImpactUsd is the move across every copy held (copies × (new − old)) — the
 // figure the ordering sorts on.
 type PriceChange struct {
-	Card      Card    `json:"card"`
-	Copies    int     `json:"copies"`
-	OldUsd    float64 `json:"oldUsd"`
-	NewUsd    float64 `json:"newUsd"`
+	Card   Card    `json:"card"`
+	Copies int     `json:"copies"`
+	OldUsd float64 `json:"oldUsd"`
+	NewUsd float64 `json:"newUsd"`
+	// OldAsOf is when oldUsd was observed (RFC 3339), which is not always the
+	// document's since: a printing whose record begins inside the window is
+	// measured from its own earliest price, so this row spans from here rather
+	// than from the window's start. Read a change against this, not against
+	// since, or rows with younger records are misread as covering the whole
+	// window.
+	OldAsOf   string  `json:"oldAsOf"`
 	ImpactUsd float64 `json:"impactUsd"`
 	// Source names where the new price came from: "scryfall", or the vendor
 	// behind a fallback.

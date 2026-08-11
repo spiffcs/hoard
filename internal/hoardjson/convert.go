@@ -308,6 +308,7 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 			Copies:    c.Copies,
 			OldUsd:    cents(c.Old),
 			NewUsd:    cents(c.New),
+			OldAsOf:   c.OldAsOf,
 			ImpactUsd: cents(c.TotalDelta()),
 			Source:    c.Source,
 		})
