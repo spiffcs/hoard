@@ -1,12 +1,18 @@
 <p align="center">
-    <img src="docs/assets/hoard-logo.png" width="271" alt="A cavern with a mountain of gold — the hoard logo">
+    <img src="docs/assets/hoard-logo.png" width="150" alt="A cavern with a mountain of gold — the hoard logo">
 </p>
 
 # hoard
 
 [![Validations](https://github.com/spiffcs/hoard/actions/workflows/validations.yaml/badge.svg)](https://github.com/spiffcs/hoard/actions/workflows/validations.yaml)
+[![Release](https://img.shields.io/github/v/release/spiffcs/hoard?sort=semver)](https://github.com/spiffcs/hoard/releases)
+[![License](https://img.shields.io/github/license/spiffcs/hoard)](LICENSE)
 
 Track a Magic: The Gathering collection in a single SQLite file on your machine.
+
+<p align="center">
+    <img src="docs/assets/demo.gif" width="100%" alt="A valuation report, then the browser: card detail with price history, the movers, watches and market screens, and a rarity filter">
+</p>
 
 ## Install
 

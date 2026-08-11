@@ -22,6 +22,15 @@ tasks:
     cmds:
       - task: unit
 
+  coverage:
+    desc: Run unit tests with coverage and report the total
+    cmds:
+      # atomic rather than set: the browse and scan packages exercise
+      # concurrent readers, and set mode races on the counters.
+      - go test ./... -coverprofile=coverage.out -covermode=atomic
+      - go tool cover -func=coverage.out | tail -1
+      - 'echo "HTML report: go tool cover -html=coverage.out"'
+
   unit:
     desc: Run unit tests
     cmds:

@@ -2,6 +2,16 @@ version: 2
 
 project_name: hoard
 
+# Shell completions are generated from the binary's own cobra tree, so they can
+# never drift from the commands that exist. Built here rather than checked in,
+# for the same reason.
+before:
+  hooks:
+    - mkdir -p completions
+    - sh -c "go run ./cmd/hoard completion bash > completions/hoard.bash"
+    - sh -c "go run ./cmd/hoard completion zsh > completions/_hoard"
+    - sh -c "go run ./cmd/hoard completion fish > completions/hoard.fish"
+
 builds:
   # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
   # target cross-compiles from the ubuntu runner with no toolchain wrangling.
@@ -9,6 +19,7 @@ builds:
     binary: hoard
     main: ./cmd/hoard
     env: [CGO_ENABLED=0]
+    flags: [-trimpath]
     goos: [linux]
     goarch: [amd64, arm64]
     ldflags: &ldflags
@@ -21,6 +32,7 @@ builds:
     binary: hoard
     main: ./cmd/hoard
     env: [CGO_ENABLED=0]
+    flags: [-trimpath]
     goos: [windows]
     goarch: [amd64, arm64]
     ldflags: *ldflags
@@ -33,6 +45,7 @@ builds:
     binary: hoard
     main: ./cmd/hoard
     env: [CGO_ENABLED=0]
+    flags: [-trimpath]
     goos: [darwin]
     goarch: [amd64, arm64]
     ldflags: *ldflags
@@ -52,13 +65,56 @@ archives:
     files:
       - README.md
       - LICENSE
+      # NOTICE carries the Fan Content carve-out: the card imagery is not under
+      # the MIT terms, and that has to travel with the binary, not just the repo.
+      - NOTICE
+      - src: completions/*
+        dst: completions
+        info: {mode: 0644}
 
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# cosign proves who built the artifact; the SBOM says what is inside it. One
+# without the other leaves a reviewer able to trust the binary's origin and
+# still unable to enumerate its dependencies. syft is pinned in .binny.yaml
+# alongside the rest of the toolchain rather than fetched at release time.
+sboms:
+  - id: archive
+    artifacts: archive
+    cmd: .tool/syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next+{{ .ShortCommit }}"
+
+# Without this, goreleaser lists every commit since the last tag with a full
+# 40-character SHA — including docs and chore commits, and dependabot merges.
+# A reader wants to know what changed for them, not to read the git log.
+changelog:
+  sort: asc
+  abbrev: 7
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^docs\\("
+      - "^test:"
+      - "^chore:"
+      - "^style:"
+      - "^Merge pull request"
+      - "^Merge branch"
 
 # Keyless signing: cosign gets a short-lived Fulcio cert bound to the workflow's
 # OIDC identity, and the signature lands in Rekor. Signing only checksums.txt

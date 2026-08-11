@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
@@ -108,7 +109,16 @@ func parseLine(line string) (Entry, bool) {
 	if qty < 1 {
 		qty = 1
 	}
-	name := strings.TrimSpace(m[3])
+	// Trim format characters as well as whitespace. A zero-width space is not
+	// unicode.IsSpace, so "2 ​" survives the caller's TrimSpace and used
+	// to parse as a card named "​" — which reaches Scryfall as a name
+	// search. Found by FuzzParseLine. A line with no name is not a card.
+	name := strings.TrimFunc(m[3], func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
+	})
+	if name == "" {
+		return Entry{}, false
+	}
 	set, number := m[4], m[5]
 
 	var ident scryfall.Identifier

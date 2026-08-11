@@ -78,3 +78,11 @@ tools:
     method: github-release
     with:
       repo: cli/cli
+
+  # used for generating the SBOM attached to each release
+  - name: syft
+    version:
+      want: v1.33.0
+    method: github-release
+    with:
+      repo: anchore/syft

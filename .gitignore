@@ -91,6 +91,12 @@ scan/corpus/images/
 # refetched, so the part the detector is fitted and scored on — cards/ — is
 # tracked on purpose. Only the bulky derivatives are ignored: full/ is the
 # whole flatten (44 MB) and stills/ the original camera frames (165 MB), both
-# re-derivable from stills/ if it survives. See scan/foil-corpus/README.md.
+# re-derivable from stills/ if it survives.
 scan/foil-corpus/full/
 scan/foil-corpus/stills/
+
+# Generated at release time from the binary's own cobra tree.
+completions/
+
+# Coverage output from `make coverage`.
+coverage.out
