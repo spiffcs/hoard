@@ -123,3 +123,98 @@ func TestBrowseDeckAddCleanDeckReportUnchanged(t *testing.T) {
 		t.Errorf("report = %q, want nothing to say", r.Report)
 	}
 }
+
+// A price refresh that could not re-fetch some cards has to say so. Scryfall
+// dropping an identifier is permanent — those prices never move again — and
+// the browser's line reported only what it found, so the number quietly
+// shrank with nothing to explain it. The CLI has said this since it had a
+// report to say it in.
+func TestBrowseUpdatePricesReportsNotFound(t *testing.T) {
+	got := browseUpdatePricesSummary(action.UpdatePricesResult{
+		Total: 120, Found: 117, NotFound: 3,
+	})
+	if !strings.Contains(got, "3 could not be re-fetched") {
+		t.Errorf("summary = %q, want the 3 cards Scryfall no longer answers for", got)
+	}
+}
+
+// The two counters sit on one line and count different failures: a printing
+// Scryfall stopped answering for, and a printing nothing could price. If the
+// second wording were reused for the first, the line would read as one
+// number split in two.
+func TestBrowseUpdatePricesKeepsNotFoundDistinctFromUnpriced(t *testing.T) {
+	res := action.UpdatePricesResult{Total: 120, Found: 117, NotFound: 3}
+	res.Gaps.Remaining = 8
+	got := browseUpdatePricesSummary(res)
+	const want = "prices updated · 117 printings · 3 could not be re-fetched · 8 still unpriced"
+	if got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
+// The control that must pass before and after: a refresh with nothing to
+// confess produces the line it always produced, to the byte.
+func TestBrowseUpdatePricesCleanSummaryUnchanged(t *testing.T) {
+	got := browseUpdatePricesSummary(action.UpdatePricesResult{Total: 120, Found: 120})
+	const want = "prices updated · 120 printings"
+	if got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+	// The empty hoard's line is the other branch and is equally untouched.
+	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}); got != "no cards yet; nothing to update" {
+		t.Errorf("empty-hoard summary = %q", got)
+	}
+}
+
+// A backfill that could not cover part of the hoard has to say so. The CLI
+// raises both shortfalls as warnings on stderr precisely because they are
+// the partial outcome; the browser has neither stderr nor a report slot on
+// this seam, so silence meant the reader saw only the half that worked.
+func TestBrowseBackfillReportsUnmappedAndUnquoted(t *testing.T) {
+	got := browseBackfillSummary(action.BackfillResult{
+		Printings: 400, Inserted: 9000, Cards: 340, Unmapped: 12, Unquoted: 48,
+	})
+	if !strings.Contains(got, "12 skipped (no MTGJSON id)") {
+		t.Errorf("summary = %q, want the 12 printings with no MTGJSON id", got)
+	}
+	if !strings.Contains(got, "48 with no TCGplayer history") {
+		t.Errorf("summary = %q, want the 48 printings with no price history", got)
+	}
+	// The headline already counts printings. A second count of them would
+	// read as a share of the first rather than a separate shortfall, so
+	// neither counter repeats the noun.
+	if strings.Count(got, "printings") != 1 {
+		t.Errorf("summary = %q, want %q used once, for the headline", got, "printings")
+	}
+	// Only the unmapped half was skipped: the unquoted printings were asked
+	// about and the archive answered with nothing.
+	if strings.Count(got, "skipped") != 1 {
+		t.Errorf("summary = %q, want %q claimed only of the unmapped half", got, "skipped")
+	}
+}
+
+// The control that must pass before and after: a backfill that covered
+// everything produces the line it always produced, to the byte — including
+// the buylist clause, which shares the counter run with the two new ones.
+func TestBrowseBackfillCleanSummaryUnchanged(t *testing.T) {
+	got := browseBackfillSummary(action.BackfillResult{
+		Printings: 400, Inserted: 9000, Cards: 340, BidInserted: 1200,
+	})
+	const want = "backfilled 9,000 observations across 340 printings · 1,200 buylist bids"
+	if got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+	// The three early returns are untouched by the counters below them.
+	for _, tc := range []struct {
+		res  action.BackfillResult
+		want string
+	}{
+		{action.BackfillResult{}, "nothing owned yet"},
+		{action.BackfillResult{Printings: 10, AlreadyToday: "2026-08-10T09:00:00Z"}, "already backfilled today"},
+		{action.BackfillResult{Printings: 10}, "nothing to backfill · history already recorded"},
+	} {
+		if got := browseBackfillSummary(tc.res); got != tc.want {
+			t.Errorf("summary = %q, want %q", got, tc.want)
+		}
+	}
+}
