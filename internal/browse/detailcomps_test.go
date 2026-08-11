@@ -1623,3 +1623,42 @@ func TestDetailHeldFinishEdit(t *testing.T) {
 		t.Error("finish change recorded no undo")
 	}
 }
+
+// The comps table draws one row per sheet it is handed and invents none.
+//
+// This is the display half of the etched-phantom fix: a nonfoil/foil
+// printing whose sheets carry no etched key renders no etched line, and a
+// genuinely etched printing renders one with the etched product's own
+// numbers. The row's presence is decided upstream, in action.CardComps,
+// which is where the phantom was manufactured; this locks the overlay to
+// reporting that decision rather than second-guessing it.
+func TestDetailCompsRowPerSheetOnly(t *testing.T) {
+	m := atAllCards(t, newTestModel(t, testStore()))
+	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, false }
+
+	// Bitterblossom uma/85: sold as nonfoil and foil, and nothing else.
+	d := detail{compsOK: true, comps: map[string]market.Comp{
+		"nonfoil": {Market: 34.47, HasMarket: true, Low: 34.47, LowFrom: "tcgplayer"},
+		"foil": {Market: 45.56, HasMarket: true, CK: 54.99, HasCK: true,
+			Buylist: 27.50, BuylistTo: "cardkingdom", HasBuylist: true,
+			Low: 45.56, LowFrom: "tcgplayer"},
+	}}
+	out := strings.Join(m.hoardLines(d, 140), "\n")
+	if !strings.Contains(out, "non-foil") || !strings.Contains(out, "$45.56") {
+		t.Fatalf("the two real rows are missing:\n%s", out)
+	}
+	if strings.Contains(out, "etched") {
+		t.Errorf("etched row for a nonfoil/foil printing:\n%s", out)
+	}
+
+	// Kaalia mh3/489: sold only as etched, and the vendors price it.
+	d.comps = map[string]market.Comp{
+		"etched": {Market: 11.55, HasMarket: true, CK: 6.99, HasCK: true,
+			Buylist: 3.50, BuylistTo: "cardkingdom", HasBuylist: true,
+			Low: 6.99, LowFrom: "cardkingdom"},
+	}
+	out = strings.Join(m.hoardLines(d, 140), "\n")
+	if !strings.Contains(out, "etched") || !strings.Contains(out, "$6.99") {
+		t.Errorf("a real etched row must still render:\n%s", out)
+	}
+}

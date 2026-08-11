@@ -177,3 +177,103 @@ func TestCardCompsReadsDayCache(t *testing.T) {
 		t.Errorf("foil sheet from nonfoil-only quotes: %+v", comps)
 	}
 }
+
+// writeQuoteCache seeds the day cache the no-network reads serve from.
+func writeQuoteCache(t *testing.T, dir string, quotes map[string][]mtgjson.Quote) {
+	t.Helper()
+	asked := make([]string, 0, len(quotes))
+	for id := range quotes {
+		asked = append(asked, id)
+	}
+	data, err := json.Marshal(map[string]any{"asked": asked, "quotes": quotes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, time.Now().Format("2006-01-02")+"-owned-quotes.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A printing with no etched product gets no etched sheet — the negative
+// control for the phantom row the card detail drew on Bitterblossom
+// (uma/85, finishes nonfoil+foil), where an ETCHED line quoted the foil's
+// numbers to the cent and presented them as a separate thing to buy.
+//
+// The fold behind it is quoteFinish's, and it is right where it lives: an
+// etched copy whose feed knows only a foil price is honestly valued at
+// that price. It only lies here, where the finish was never held or quoted
+// in the first place.
+func TestCardCompsNoEtchedSheetWithoutAnEtchedProduct(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.AddCardFinish(scryfall.Card{
+		ID: "bitter", Name: "Bitterblossom", Set: "uma", CollectorNumber: "85",
+		Finishes: []string{"nonfoil", "foil"},
+	}, "nonfoil", 1); err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := t.TempDir()
+	writeQuoteCache(t, cacheDir, map[string][]mtgjson.Quote{"bitter": {
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "normal", Price: 34.47},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 45.56},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 54.99},
+		{Provider: "cardkingdom", Kind: mtgjson.Buylist, Finish: "foil", Price: 27.50},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 52.98},
+	}})
+
+	comps, ok, err := CardComps(Deps{Store: st, CacheDir: cacheDir}, "bitter")
+	if err != nil || !ok {
+		t.Fatalf("CardComps: ok=%v err=%v", ok, err)
+	}
+	if _, foil := comps["foil"]; !foil {
+		t.Fatalf("comps = %+v, want the foil sheet the feed does quote", comps)
+	}
+	if c, etched := comps["etched"]; etched {
+		t.Errorf("etched sheet for a nonfoil/foil printing: %+v", c)
+	}
+}
+
+// The complementary control, and the one that stops an over-fix: a
+// printing that really does come in etched keeps its etched sheet, with
+// the etched product's own numbers rather than the foil's. Seven printings
+// in the owner's hoard are of this kind.
+func TestCardCompsKeepsARealEtchedSheet(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.AddCardFinish(scryfall.Card{
+		ID: "kaalia", Name: "Kaalia of the Vast", Set: "mh3", CollectorNumber: "489",
+		Finishes: []string{"etched"},
+	}, "etched", 1); err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := t.TempDir()
+	writeQuoteCache(t, cacheDir, map[string][]mtgjson.Quote{"kaalia": {
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 11.55},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "etched", Price: 11.55},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "etched", Price: 6.99},
+		{Provider: "cardkingdom", Kind: mtgjson.Buylist, Finish: "etched", Price: 3.50},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "etched", Price: 10.31},
+	}})
+
+	comps, ok, err := CardComps(Deps{Store: st, CacheDir: cacheDir}, "kaalia")
+	if err != nil || !ok {
+		t.Fatalf("CardComps: ok=%v err=%v", ok, err)
+	}
+	c, etched := comps["etched"]
+	if !etched {
+		t.Fatalf("comps = %+v, want the etched sheet for an etched printing", comps)
+	}
+	if !c.HasCK || c.CK != 6.99 || !c.HasBuylist || c.Buylist != 3.50 {
+		t.Errorf("etched comp = %+v, want the etched product's own quotes", c)
+	}
+	if c.Card.Copies != 1 {
+		t.Errorf("etched comp carries %d copies, want the held row's 1", c.Card.Copies)
+	}
+}

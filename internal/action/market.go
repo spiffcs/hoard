@@ -108,17 +108,31 @@ func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) 
 	// when it is not — the numbers are the card's either way. Etched is its
 	// own sheet, not folded into foil: vendors price the etched product
 	// separately, so folding it would label one card's price as another's.
-	// A finish the printing does not come in quotes nothing and drops out
-	// below on its own.
+	//
+	// A nonfoil or foil sheet the feed does not quote comes back empty and
+	// drops out below on its own. An etched one does not, and that asymmetry
+	// was drawing a product that does not exist: market.quoteFinish reads an
+	// etched holding's foil series when no vendor splits the etched product,
+	// so a bare etched row on (say) Bitterblossom uma/85 — a printing sold
+	// only as nonfoil and foil — came back holding the foil's numbers to the
+	// cent and rendered beside it as a separate thing to buy. The fold is
+	// right where it lives: it is how a real etched copy gets valued at all.
+	// What it cannot answer is whether the etched product exists, so ask that
+	// here, before manufacturing the row. A held copy answers yes, and so
+	// does a vendor quoting the etched series by name.
 	out := map[string]market.Comp{}
 	for _, finish := range []string{"nonfoil", "foil", "etched"} {
 		o := printing
+		heldInFinish := false
 		o.Finish = finish
 		for _, held := range owned {
 			if held.ScryfallID == scryfallID && held.Finish == finish {
-				o = held
+				o, heldInFinish = held, true
 				break
 			}
+		}
+		if finish == "etched" && !heldInFinish && !quotesFinish(qs, "etched") {
+			continue
 		}
 		c := market.AssessComp(o, qs)
 		if c.HasMarket || c.HasCK || c.HasManapool || c.HasBuylist || c.LowFrom != "" {
@@ -126,6 +140,18 @@ func CardComps(d Deps, scryfallID string) (map[string]market.Comp, bool, error) 
 		}
 	}
 	return out, true, nil
+}
+
+// quotesFinish reports whether any vendor priced this finish by name — the
+// evidence that the product is one the trade actually sells separately,
+// rather than one the finish fold would invent a price for.
+func quotesFinish(qs []mtgjson.Quote, finish string) bool {
+	for _, q := range qs {
+		if q.Finish == finish && q.Price > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // MarketCached is Arbitrage from today's quote cache alone: no network,
