@@ -51,7 +51,7 @@ func TestBrowseDeckAddReportsUnreadableLines(t *testing.T) {
 	}
 	// Partial is "done, mostly": the readable line still landed, so the
 	// headline still reads as an import.
-	if !strings.Contains(r.Summary, "1 cards resolved") {
+	if !strings.Contains(r.Summary, "1 card resolved") {
 		t.Errorf("summary = %q, want the one readable line reported as imported", r.Summary)
 	}
 	if !strings.Contains(r.Summary, "2 unreadable") {
@@ -89,10 +89,13 @@ func TestBrowseDeckAddSeparatesUnresolvedFromUnreadable(t *testing.T) {
 		t.Errorf("summary = %q, want both losses counted separately", r.Summary)
 	}
 	body := strings.Join(r.Report, "\n")
-	if !strings.Contains(body, "1 cards could not be resolved and were skipped:") {
+	// Singular, because there is exactly one of each: these sentences land on
+	// the error path, and "1 cards ... were skipped" reads as a bug in the
+	// thing that just told you it lost something.
+	if !strings.Contains(body, "1 card could not be resolved and was skipped:") {
 		t.Errorf("report lost the unresolved-cards sentence:\n%s", body)
 	}
-	if !strings.Contains(body, "1 lines could not be read and were skipped:") {
+	if !strings.Contains(body, "1 line could not be read and was skipped:") {
 		t.Errorf("report lost the unreadable-lines sentence:\n%s", body)
 	}
 	if !strings.Contains(body, "Blrgh Nonsense") {

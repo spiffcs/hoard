@@ -195,7 +195,9 @@ func addList(ctx context.Context, st *store.Store, env *cli.Env, data []byte, di
 		return err
 	}
 	r := env.Report()
-	r.Result("Added %d cards into %s (%d lines resolved).", res.Copies, res.Binder, res.Resolved)
+	r.Result("Added %s into %s (%s resolved).",
+		ui.Plural(res.Copies, "card", "cards"), res.Binder,
+		ui.Plural(res.Resolved, "line", "lines"))
 	if res.Refinished > 0 {
 		r.Detail("%d recorded as foil: the list said otherwise but the printing has no non-foil.",
 			res.Refinished)
@@ -204,7 +206,7 @@ func addList(ctx context.Context, st *store.Store, env *cli.Env, data []byte, di
 		r.Detail("Skipped %s", s)
 	}
 	if len(res.Unresolved) > 0 {
-		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
+		r.Detail("%s", unresolvedHeading(len(res.Unresolved)))
 		for _, u := range res.Unresolved {
 			r.Item(u)
 		}

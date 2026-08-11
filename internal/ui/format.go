@@ -174,6 +174,25 @@ func IdentityKey(colors []string) string {
 	return b.String()
 }
 
+// HeaderIdentity is the column header over a Pips column.
+//
+// It is not "ID". Five tables render identity pips and one renders a binder's
+// integer row id, and until this constant existed all six headed the column
+// "ID" — so `hoard movers` showed an ID of "WR" while `hoard binder list`
+// showed an ID of "1", in a CLI where `guessed --checked <id>` makes "id" a
+// real, typeable thing.
+//
+// It is not "COLOR" either. A card's color identity is not its color: Kessig
+// Wolf Run is a colorless land with a red identity, and a column headed COLOR
+// would state that as fact. WUBRG names the value space instead of claiming to
+// name the card, it is the vocabulary this project already uses for identity
+// (see wubrgOrder, IdentityKey), and it cannot be confused with the separate
+// question of what color the interface paints something.
+//
+// Five characters is also the widest cell the column can ever hold, so the
+// header never widens it past what a five-color card already would.
+const HeaderIdentity = "WUBRG"
+
 // Pips renders a color identity as its pip letters: "WU" for Azorius, "C"
 // for a colorless card, and the em dash for an unknown identity (nil — the
 // card's document was never stored), matching the column convention that a

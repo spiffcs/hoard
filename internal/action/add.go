@@ -14,6 +14,7 @@ import (
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // binderTarget resolves a --binder reference to a container, defaulting to
@@ -84,8 +85,8 @@ func AddList(ctx context.Context, d Deps, p progress.Fn, o AddListOptions) (AddL
 	res.Skipped = skipped
 	if len(entries) == 0 {
 		if len(skipped) > 0 {
-			return res, fmt.Errorf("no card lines found in %s; %d lines could not be read (e.g. %s)",
-				o.Display, len(skipped), skipped[0])
+			return res, fmt.Errorf("no card lines found in %s; %s could not be read (e.g. %s)",
+				o.Display, ui.Plural(len(skipped), "line", "lines"), skipped[0])
 		}
 		return res, fmt.Errorf("no card lines found in %s", o.Display)
 	}
@@ -120,7 +121,7 @@ func AddList(ctx context.Context, d Deps, p progress.Fn, o AddListOptions) (AddL
 		}
 	}
 	if n := len(res.Skipped) + len(res.Unresolved); n > 0 {
-		return res, fmt.Errorf("%d lines were skipped: %w", n, ErrPartial)
+		return res, fmt.Errorf("%s skipped: %w", ui.Plural(n, "line was", "lines were"), ErrPartial)
 	}
 	return res, nil
 }
@@ -284,7 +285,8 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, 
 	// there for why unreadable lines are in that count.
 	if o.DryRun {
 		if n := len(deck.Skipped) + len(res.Unresolved); n > 0 {
-			return res, fmt.Errorf("%d lines would not resolve: %w", n, ErrPartial)
+			return res, fmt.Errorf("%s would not resolve: %w",
+				ui.Plural(n, "line", "lines"), ErrPartial)
 		}
 		return res, nil
 	}
@@ -323,7 +325,7 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, 
 	// for "done, mostly", the receipt still prints, and the lines that did
 	// import are still written.
 	if n := len(deck.Skipped) + len(res.Unresolved); n > 0 {
-		return res, fmt.Errorf("%d lines were skipped: %w", n, ErrPartial)
+		return res, fmt.Errorf("%s skipped: %w", ui.Plural(n, "line was", "lines were"), ErrPartial)
 	}
 	return res, nil
 }

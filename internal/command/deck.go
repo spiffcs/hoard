@@ -17,6 +17,7 @@ import (
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // NewCmdDeck builds `hoard deck`, a group with no bare form: unlike binder and
@@ -133,10 +134,11 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	// exist. Below the headline the two paths say the same things, except
 	// for the replacement warning only a rehearsal is in a position to give.
 	if o.dryRun {
-		r.Result("Would import deck %q (%s): %d cards resolved.", res.Name, res.Source, res.Resolved)
+		r.Result("Would import deck %q (%s): %s resolved.",
+			res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
 	} else {
-		r.Result("Imported deck #%d %q (%s): %d cards resolved.",
-			res.ID, res.Name, res.Source, res.Resolved)
+		r.Result("Imported deck #%d %q (%s): %s resolved.",
+			res.ID, res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
 	}
 	if res.Replaces != "" {
 		r.Detail("Would replace the imported deck %q, discarding manual edits to its cards.",
@@ -147,13 +149,13 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 			res.Refinished)
 	}
 	if len(res.Unresolved) > 0 {
-		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
+		r.Detail("%s", unresolvedHeading(len(res.Unresolved)))
 		for _, u := range res.Unresolved {
 			r.Item(u)
 		}
 	}
 	if len(deck.Skipped) > 0 {
-		r.Detail("%d lines could not be read and were skipped:", len(deck.Skipped))
+		r.Detail("%s", unreadableHeading(len(deck.Skipped)))
 		for _, sk := range deck.Skipped {
 			r.Item(sk)
 		}
@@ -234,8 +236,9 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 
 	r := env.Report()
 	if res.Repinned == 0 && len(res.Missing) == 0 {
-		r.Success("Deck #%d %q is already on %s (%d printings).",
-			res.DeckID, res.Deck, strings.ToUpper(res.SetCode), res.Total)
+		r.Success("Deck #%d %q is already on %s (%s).",
+			res.DeckID, res.Deck, strings.ToUpper(res.SetCode),
+			ui.Plural(res.Total, "printing", "printings"))
 		return nil
 	}
 	r.Result("Re-pinned deck #%d %q to %s: %d of %d printings moved, %d already there.",
@@ -244,8 +247,15 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 		r.Detail("Run `hoard update-prices` to price the corrected printings.")
 	}
 	if len(res.Missing) > 0 {
-		r.Detail("%d cards have no printing in %s and were left untouched:",
-			len(res.Missing), strings.ToUpper(res.SetCode))
+		// The set code sits mid-sentence, so the two halves that agree with
+		// the count are separated by it and cannot share one Plural call.
+		left := "were left untouched:"
+		if len(res.Missing) == 1 {
+			left = "was left untouched:"
+		}
+		r.Detail("%s no printing in %s and %s",
+			ui.Plural(len(res.Missing), "card has", "cards have"),
+			strings.ToUpper(res.SetCode), left)
 		for _, name := range res.Missing {
 			r.Item(name)
 		}

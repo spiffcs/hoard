@@ -88,7 +88,7 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 		Cols: []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 20},
 			// Identity pips beside the name; the first column to drop.
-			{Title: "ID", Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
+			{Title: ui.HeaderIdentity, Align: ui.Left, Priority: 6, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Style: env.Dim()},
 			{Title: "COPIES", Align: ui.Right},
@@ -106,9 +106,16 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 			ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
 			ui.C(ui.FinishTreated(r.Finish, r.Treatment)), ui.C(ui.Count(r.Copies)), ui.C(r.HeldIn))
 	}
+	// Three agreements in one sentence, and the verb takes its number from
+	// the copies rather than from the cards standing next to it.
+	verb := "count"
+	if copies == 1 {
+		verb = "counts"
+	}
 	return t.Render() + env.Dim()(fmt.Sprintf(
-		"\n%s copies across %s cards count as $0.00.",
-		ui.Count(copies), ui.Count(len(rows)))) + "\n"
+		"\n%s across %s %s as $0.00.",
+		ui.PluralCount(copies, "copy", "copies"),
+		ui.PluralCount(len(rows), "card", "cards"), verb)) + "\n"
 }
 
 // UnpricedAdvice is what to do about unpriced holdings — separate from the

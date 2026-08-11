@@ -61,8 +61,8 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	if err != nil && !errors.Is(err, errPartial) {
 		return browse.OpReport{}, err
 	}
-	r := browse.OpReport{Summary: fmt.Sprintf("imported deck %q (%s) · %d cards resolved",
-		res.Name, res.Source, res.Resolved)}
+	r := browse.OpReport{Summary: fmt.Sprintf("imported deck %q (%s) · %s resolved",
+		res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))}
 	if res.Refinished > 0 {
 		r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
 	}
@@ -75,7 +75,7 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	if len(res.Unresolved) > 0 {
 		r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
 		r.Report = append(r.Report,
-			fmt.Sprintf("%d cards could not be resolved and were skipped:", len(res.Unresolved)), "")
+			unresolvedHeading(len(res.Unresolved)), "")
 		r.Report = append(r.Report, res.Unresolved...)
 	}
 	// deck.Skipped is the parser's own tally, carried on the argument rather
@@ -87,7 +87,7 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 			r.Report = append(r.Report, "")
 		}
 		r.Report = append(r.Report,
-			fmt.Sprintf("%d lines could not be read and were skipped:", len(deck.Skipped)), "")
+			unreadableHeading(len(deck.Skipped)), "")
 		r.Report = append(r.Report, deck.Skipped...)
 	}
 	return r, nil
@@ -234,15 +234,17 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			var already *action.AlreadyImportedError
 			if errors.As(ierr, &already) {
 				return browse.OpReport{AlreadyImported: fmt.Sprintf(
-					"already imported on %s (%d cards)", already.When, already.Cards)}, nil
+					"already imported on %s (%s)", already.When,
+					ui.Plural(already.Cards, "card", "cards"))}, nil
 			}
 			// A partial import still did its work; the outcome reports the
 			// skips rather than erroring away a committed result.
 			if ierr != nil && !errors.Is(ierr, errPartial) {
 				return browse.OpReport{}, ierr
 			}
-			r := browse.OpReport{Summary: fmt.Sprintf("imported %d cards (%s format) · %d rows resolved",
-				res.Copies, res.Format, res.Resolved)}
+			r := browse.OpReport{Summary: fmt.Sprintf("imported %s (%s format) · %s resolved",
+				ui.Plural(res.Copies, "card", "cards"), res.Format,
+				ui.Plural(res.Resolved, "row", "rows"))}
 			var lines []string
 			for _, name := range sortedKeys(res.PerBinder) {
 				note := ""
@@ -272,13 +274,12 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 					res.Refinished))
 			}
 			for _, field := range sortedKeys(res.Dropped) {
-				lines = append(lines, fmt.Sprintf("dropped %s on %d rows: hoard could not carry it",
-					field, res.Dropped[field]))
+				lines = append(lines, fmt.Sprintf("dropped %s on %s: hoard could not carry it",
+					field, ui.Plural(res.Dropped[field], "row", "rows")))
 			}
 			if len(res.Unresolved) > 0 {
 				r.Summary += fmt.Sprintf(" · %d skipped", len(res.Unresolved))
-				lines = append(lines, fmt.Sprintf("%d cards could not be resolved and were skipped:",
-					len(res.Unresolved)))
+				lines = append(lines, unresolvedHeading(len(res.Unresolved)))
 				for _, u := range res.Unresolved {
 					lines = append(lines, "  - "+u)
 				}
@@ -398,8 +399,9 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if werr != nil && !errors.Is(werr, errPartial) {
 				return browse.OpReport{}, werr
 			}
-			r := browse.OpReport{Summary: fmt.Sprintf("imported %d watches · %d new · %d adjusted",
-				res.Created+res.Updated, res.Created, res.Updated)}
+			r := browse.OpReport{Summary: fmt.Sprintf("imported %s · %d new · %d adjusted",
+				ui.Plural(res.Created+res.Updated, "watch", "watches"),
+				res.Created, res.Updated)}
 			var lines []string
 			if res.Refinished > 0 {
 				lines = append(lines, fmt.Sprintf(
@@ -408,8 +410,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			if len(res.Unresolved) > 0 {
 				r.Summary += fmt.Sprintf(" · %d skipped", len(res.Unresolved))
-				lines = append(lines, fmt.Sprintf("%d cards could not be resolved and were skipped:",
-					len(res.Unresolved)))
+				lines = append(lines, unresolvedHeading(len(res.Unresolved)))
 				for _, u := range res.Unresolved {
 					lines = append(lines, "  - "+u)
 				}

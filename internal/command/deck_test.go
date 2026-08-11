@@ -116,9 +116,9 @@ func TestDeckAddDryRunNamesUnresolvedAndExitsTwo(t *testing.T) {
 	// same file, and a rehearsal that showed one but not the other would
 	// send the user back for a second round trip.
 	for _, want := range []string{
-		"1 cards could not be resolved and were skipped:",
+		"1 card could not be resolved and was skipped:",
 		"Card That Does Not Exist",
-		"1 lines could not be read and were skipped:",
+		"1 line could not be read and was skipped:",
 		"~~~ not a decklist line ~~~",
 		"Dry run: nothing was written.",
 	} {
