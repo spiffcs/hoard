@@ -753,47 +753,6 @@ func (m *Model) undoRecorded() {
 // previous one.
 func (m *Model) undoable(a undoAction) { m.undoStack = &a }
 
-// refresh re-reads both panes after an edit, keeping the cursor where it was.
-//
-// Totals live on the container rows, so an edit to one card changes the left
-// pane as well as the right; re-reading only the cards would leave the
-// collection's value stale on screen while the row under the cursor showed the
-// new number.
-func (m *Model) refresh() {
-	// Whatever prompted the refresh may have moved prices or holdings;
-	// caches keyed on the old world are done.
-	m.dataGen++
-	cards, containers := m.cursor[paneCards], m.cursor[paneContainers]
-	page := m.cardsPage
-	if err := m.loadContainers(); err != nil {
-		m.setError(err)
-		return
-	}
-	if err := m.rebuildEntryIndex(); err != nil {
-		m.setError(err)
-		return
-	}
-	m.cursor[paneContainers] = containers
-	m.clampCursor(paneContainers)
-	if err := m.loadCards(); err != nil {
-		m.setError(err)
-		return
-	}
-	// The page comes back like the cursor: an edit three pages in must not
-	// drop the reader on page one (loadCards resets both for a *new*
-	// container; this is the same one re-read). deriveCardsPage clamps
-	// against a total the edit may have shrunk.
-	m.cardsPage = page
-	m.deriveCardsPage()
-	m.cursor[paneCards] = cards
-	m.clampCursor(paneCards)
-	// A container verb can run while an analytical view shows, and the
-	// view's rows filter through the membership this edit changed.
-	if m.view != viewHoldings {
-		if err := m.loadView(); err != nil {
-			m.setError(err)
-			return
-		}
-	}
-	m.scrollIntoView()
-}
+// refresh, the re-read every edit here ends with, lives in reread.go beside
+// the r key's reload — the two used to be separate bodies that disagreed
+// about what a re-read costs the reader.

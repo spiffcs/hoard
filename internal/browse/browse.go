@@ -104,6 +104,13 @@ type Store interface {
 	// loadPennyFilters.
 	Settings() (map[string]string, error)
 	SaveSettings(map[string]string) error
+
+	// DataVersion is the live refresh's change signal: a header read that
+	// moves when another process commits, and never for our own writes.
+	// Required rather than injected like the network capabilities, because
+	// unlike those it is answered by the same handle everything else here
+	// reads through — there is nothing to be absent. See live.go.
+	DataVersion() (int64, error)
 }
 
 // Option configures the browser.

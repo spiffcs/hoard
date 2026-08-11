@@ -66,6 +66,21 @@ type fakeStore struct {
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
 
+	// The live refresh's change signal; see DataVersion below. slowRead, when
+	// set, is how long AllByFinish takes — the only way to make a refresh
+	// blow its budget without a seam that exists solely for the test.
+	dataVersion      int64
+	dataVersionReads int
+	slowRead         time.Duration
+
+	// Read counters, so a test can assert what a refresh did and did not
+	// touch. binderListCalls counts whole re-reads (every one loads the
+	// containers); the other two are the reads the live refresh must never
+	// make.
+	binderListCalls int
+	watchListCalls  int
+	unpricedCalls   int
+
 	// bidSeries backs BidSeries, keyed "scryfallID|finish".
 	bidSeries map[string][]store.PricePoint
 	// holdingsByName backs HoldingsOfName, keyed by card name.
@@ -110,7 +125,21 @@ func (f *fakeStore) MatchingCardIDs(tf store.TraitFilter) (map[string]bool, erro
 func (f *fakeStore) Movers(since string) ([]store.PriceChange, error) {
 	return f.movers, f.err
 }
-func (f *fakeStore) Unpriced() ([]store.UnpricedRow, error) { return f.unpriced, f.err }
+func (f *fakeStore) Unpriced() ([]store.UnpricedRow, error) {
+	f.unpricedCalls++
+	return f.unpriced, f.err
+}
+
+// DataVersion stands in for the SQLite header read the live refresh polls.
+// dataVersion is what a test moves to say "another process committed", and
+// dataVersionReads counts the polls so a test can prove the read is skipped
+// when it should be. Never fails on f.err: the real one is a header read
+// that does not touch a table, and making it fail with every other query
+// would test a coupling that is not there.
+func (f *fakeStore) DataVersion() (int64, error) {
+	f.dataVersionReads++
+	return f.dataVersion, nil
+}
 
 func (f *fakeStore) EnrichedCount() (int, int, error) {
 	return f.enriched, len(f.collection), f.err
@@ -145,6 +174,7 @@ func (f *fakeStore) setRowsIn(cid int64, rows []store.CollectionRow) {
 }
 
 func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
+	f.binderListCalls++
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -314,6 +344,7 @@ func (f *fakeStore) AllByFinish() ([]store.CollectionRow, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	time.Sleep(f.slowRead)
 	out := append([]store.CollectionRow(nil), f.collection...)
 	for _, entries := range f.deckCards {
 		for _, e := range entries {
@@ -385,7 +416,10 @@ func (f *fakeStore) SetByFinish(code string) ([]store.CollectionRow, error) {
 	return out, nil
 }
 
-func (f *fakeStore) ListWatches() ([]store.WatchStatus, error) { return f.watches, f.err }
+func (f *fakeStore) ListWatches() ([]store.WatchStatus, error) {
+	f.watchListCalls++
+	return f.watches, f.err
+}
 
 func (f *fakeStore) WouldFire() ([]store.WatchStatus, error) {
 	if f.err != nil {

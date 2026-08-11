@@ -396,6 +396,26 @@ type Model struct {
 	// being a map.
 	helpRowsMemo map[helpRowsKey]int
 
+	// The live refresh (live.go). liveVersion is the last data_version this
+	// connection read and liveKnown is false until the first poll takes a
+	// baseline; liveGen numbers the quiescence timers so only the newest
+	// one fires; livePending parks a refresh that came due while a takeover
+	// owned the keyboard; liveOff retires the feature for the session once
+	// a refresh blows liveRefreshBudget, with liveMissed counting the
+	// changes seen since, for the notice that replaces it.
+	liveVersion int64
+	liveKnown   bool
+	liveGen     int
+	livePending bool
+	liveOff     bool
+	liveMissed  int
+
+	// rowGone records that the last re-read could not find the row the
+	// cursor was on, so the status line can say the selection was lost
+	// rather than letting the cursor land somewhere else in silence. Set
+	// and read within one refresh; see reread.
+	rowGone bool
+
 	status    string
 	statusErr bool
 
@@ -868,7 +888,10 @@ func (m *Model) clampCursor(p pane) {
 // Init arms the confirm-bridge pump (nil without WithConfirm). Everything
 // else is loaded before the first frame.
 func (m Model) Init() tea.Cmd {
-	init := awaitConfirm(m.ctx, m.confirmCh)
+	// The live refresh's poll chain starts here and re-arms itself for the
+	// life of the program; the first tick only takes a baseline. See
+	// live.go for why it is always on and has no flag.
+	init := tea.Batch(awaitConfirm(m.ctx, m.confirmCh), livePoll())
 	// The first-run catalog download starts itself: its whole value is
 	// fast lookups in the add flow, so it belongs before the first add —
 	// visible in the ordinary op slot, cancellable like any operation.
@@ -926,6 +949,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onOpConfirm(msg)
 	case retransmitMsg:
 		return m.onRetransmit(msg)
+	case livePollMsg:
+		return m.onLivePoll()
+	case liveQuietMsg:
+		return m.onLiveQuiet(msg)
 	case spinner.TickMsg:
 		// Delivered to both models: bubbles tags ticks with the owning
 		// spinner's ID and each Update rejects foreign ones, so the two
@@ -1493,34 +1520,6 @@ func (m *Model) onCursorMoved() {
 		return
 	}
 	m.deriveView()
-}
-
-// reload re-reads both panes, keeping the cursor where it was. This is what
-// makes an edit made elsewhere — or an update-prices in another terminal —
-// visible without restarting.
-func (m *Model) reload() {
-	m.dataGen++
-	if err := m.loadContainers(); err != nil {
-		m.setError(err)
-		return
-	}
-	if err := m.rebuildEntryIndex(); err != nil {
-		m.setError(err)
-		return
-	}
-	if err := m.loadCards(); err != nil {
-		m.setError(err)
-		return
-	}
-	// The analytical views re-read too: they now depend on the membership
-	// this reload may have changed, and "reloaded" must not mean "except
-	// the rows you are looking at".
-	if err := m.loadView(); err != nil {
-		m.setError(err)
-		return
-	}
-	m.status = "reloaded"
-	m.statusErr = false
 }
 
 // setError puts a failure on the status line rather than ending the session.

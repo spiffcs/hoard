@@ -74,9 +74,15 @@ func pump(t *testing.T, m Model, cmd tea.Cmd) Model {
 		case nil:
 		case tea.BatchMsg:
 			queue = append(queue, msg...)
-		case spinner.TickMsg, cursor.BlinkMsg:
-			// Animation traffic: feeding either back re-arms a sleeping
-			// tick, and neither affects any assertion here.
+		case spinner.TickMsg, cursor.BlinkMsg, livePollMsg, liveQuietMsg:
+			// Self-re-arming traffic: feeding any of these back schedules
+			// another sleeping tick, and none affects an assertion here.
+			// It matters more than it reads — this loop calls each command
+			// synchronously, so a tea.Tick blocks for its whole delay,
+			// where the real program runs it in a goroutine. The live
+			// poll's chain would otherwise spend the entire 64-command
+			// budget at 500ms a turn. live_test.go drives those two
+			// directly instead.
 		default:
 			next, c2 := m.Update(msg)
 			m = next.(Model)
