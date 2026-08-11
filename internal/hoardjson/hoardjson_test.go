@@ -36,7 +36,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -82,7 +82,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -130,7 +130,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -175,7 +175,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				OldAsOf: "2026-06-30T00:00:00Z"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -194,6 +194,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
         "newUsd": 1.5,
         "oldAsOf": "2026-06-30T00:00:00Z",
         "impactUsd": -20,
+        "pctChange": -0.25,
         "source": "cardkingdom"
       },
       {
@@ -209,6 +210,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
         "newUsd": 32,
         "oldAsOf": "2026-07-05T00:00:00Z",
         "impactUsd": 2,
+        "pctChange": 0.06666666666666667,
         "source": "scryfall"
       }
     ]
@@ -223,7 +225,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -257,7 +259,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -351,7 +353,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -435,7 +437,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -465,7 +467,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -795,7 +797,7 @@ func detailRows() []export.Row {
 func TestHoldingsDocumentCarriesDetail(t *testing.T) {
 	got := write(t, FromExportRows(detailRows()))
 	want := `{
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.1.1",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -1085,5 +1087,191 @@ func TestEveryKindAgreesOnACardsIdentity(t *testing.T) {
 					kind, name, got.letters, w.letters)
 			}
 		}
+	}
+}
+
+// A percentage is what the movers text view has always printed and the
+// document has always left out, so every consumer recomputed it — and each one
+// decided for itself what a rise from nothing means. This pins that hoard now
+// decides that once.
+func TestMoversDocumentCarriesThePercentage(t *testing.T) {
+	got := write(t, FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
+		[]store.PriceChange{
+			{ScryfallID: "a", Name: "Cryptolith Rite", SetCode: "soi", CollectorNumber: "200",
+				Finish: "nonfoil", Copies: 3, Old: 6.31, New: 13.54, Source: "scryfall",
+				OldAsOf: "2026-06-30T00:00:00Z"},
+		}))
+	// +114.6% is what the table prints for this row; the document carries the
+	// quotient whole, so a consumer formatting it to a tenth of a percent lands
+	// on the same figure the table shows rather than beside it.
+	if !strings.Contains(got, `"pctChange": 1.1458003169572109`) {
+		t.Errorf("movers document has no pctChange for a normal row:\n%s", got)
+	}
+}
+
+// The case every consumer had to decide alone, which is the whole reason the
+// field is worth carrying: a printing with no price at the start of the window
+// has no percentage, only an infinite one.
+//
+// Absent rather than null or 0. Null cannot be spelled here — a field without
+// omitempty is REQUIRED and non-nullable in the generated schema, so a document
+// carrying one would fail hoard's own published contract — and 0 is the value a
+// printing that did not move would carry, which is the opposite claim.
+func TestMoversDocumentOmitsThePercentageOfARiseFromNothing(t *testing.T) {
+	got := write(t, FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
+		[]store.PriceChange{
+			{ScryfallID: "b", Name: "Barrowgoyf", SetCode: "mh3", CollectorNumber: "185",
+				Finish: "foil", Copies: 1, Old: 0, New: 12, Source: "scryfall",
+				OldAsOf: "2026-07-01T09:00:00Z"},
+		}))
+	if strings.Contains(got, "pctChange") {
+		t.Errorf("a rise from $0 carries a percentage; it has none:\n%s", got)
+	}
+	// The row itself is still reported — omitting the field is not omitting
+	// the change.
+	if !strings.Contains(got, `"newUsd": 12`) {
+		t.Errorf("the change itself was dropped along with its percentage:\n%s", got)
+	}
+}
+
+// The document's figure comes from the accessor the CHANGE column renders,
+// not from a second (newUsd-oldUsd)/oldUsd written beside it. A reimplementation
+// would agree on every ordinary row and diverge on exactly the rows that matter,
+// so this checks agreement across a spread of them including the undefined one.
+func TestMoversPercentageTracksTheStoreAccessor(t *testing.T) {
+	changes := []store.PriceChange{
+		{ScryfallID: "a", Name: "Up", Finish: "nonfoil", Copies: 1, Old: 6.31, New: 13.54},
+		{ScryfallID: "b", Name: "Down", Finish: "nonfoil", Copies: 1, Old: 2, New: 1.5},
+		{ScryfallID: "c", Name: "Tiny", Finish: "nonfoil", Copies: 1, Old: 0.02, New: 0.03},
+		{ScryfallID: "d", Name: "FromZero", Finish: "nonfoil", Copies: 1, Old: 0, New: 5},
+	}
+	doc := FromMovers("2026-06-30T00:00:00Z", "", changes)
+	byID := map[string]PriceChange{}
+	for _, c := range doc.Movers.Changes {
+		byID[c.Card.ScryfallID] = c
+	}
+	for _, c := range changes {
+		got := byID[c.ScryfallID]
+		if !c.PctDefined() {
+			if got.PctChange != nil {
+				t.Errorf("%s: pctChange = %v, want absent", c.Name, *got.PctChange)
+			}
+			continue
+		}
+		if got.PctChange == nil {
+			t.Fatalf("%s: pctChange absent, want %v", c.Name, c.Pct())
+		}
+		// Bit-identical to the accessor, not merely close to it: the point of
+		// the field is that there is one computation, and a second one written
+		// beside it would agree to several decimal places.
+		if *got.PctChange != c.Pct() {
+			t.Errorf("%s: pctChange = %v, want %v — the document is not reading store.Pct",
+				c.Name, *got.PctChange, c.Pct())
+		}
+	}
+}
+
+// A binder's id is the argument --binder takes on export, import and add. The
+// document exists so that discovering one does not mean parsing a table.
+func TestBindersDocumentCarriesIDs(t *testing.T) {
+	got := write(t, FromBinders([]store.DeckSummary{
+		{Container: store.Container{ID: 1, Name: "Binder"}, IsDefault: true,
+			DistinctCards: 679, TotalCopies: 915, Value: 3797.1899999999996},
+		{Container: store.Container{ID: 4, Name: "Trade Stock"},
+			DistinctCards: 12, TotalCopies: 30, Value: 61.5},
+	}))
+	want := `{
+  "schemaVersion": "1.1.1",
+  "kind": "binders",
+  "binders": {
+    "rows": [
+      {
+        "id": 1,
+        "name": "Binder",
+        "isDefault": true,
+        "distinctCards": 679,
+        "totalCopies": 915,
+        "valueUsd": 3797.19
+      },
+      {
+        "id": 4,
+        "name": "Trade Stock",
+        "isDefault": false,
+        "distinctCards": 12,
+        "totalCopies": 30,
+        "valueUsd": 61.5
+      }
+    ]
+  }
+}
+`
+	if got != want {
+		t.Errorf("binders document:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// An empty list is [] and not null: null tells a consumer the field is missing,
+// which for a hoard whose binders were all removed is a different claim.
+func TestBindersDocumentEmitsAnEmptyList(t *testing.T) {
+	got := write(t, FromBinders(nil))
+	if !strings.Contains(got, `"rows": []`) {
+		t.Errorf("no binders emitted null rather than an empty list:\n%s", got)
+	}
+}
+
+// The guessed queue is a worklist keyed by row id, and its rows are per commit:
+// two copies of one printing scanned on the same default are two rows identical
+// in every field but the id, and both are cards somebody has to pick up. A
+// converter that deduplicated them would lose one of the two.
+func TestGuessedDocumentKeepsRowsWithIdenticalCards(t *testing.T) {
+	got := write(t, FromGuessed([]store.FinishGuessRow{
+		{ID: 13, ScryfallID: "whisperer", Name: "Primal Whisperer", Set: "lgn",
+			Number: "135", Finish: "nonfoil", GuessedAt: "2026-08-09T18:20:00Z"},
+		{ID: 12, ScryfallID: "whisperer", Name: "Primal Whisperer", Set: "lgn",
+			Number: "135", Finish: "nonfoil", GuessedAt: "2026-08-09T18:20:00Z"},
+	}))
+	want := `{
+  "schemaVersion": "1.1.1",
+  "kind": "guessed",
+  "guessed": {
+    "rows": [
+      {
+        "id": 13,
+        "card": {
+          "name": "Primal Whisperer",
+          "scryfallId": "whisperer",
+          "setCode": "lgn",
+          "number": "135",
+          "finish": "nonfoil"
+        },
+        "guessedAt": "2026-08-09T18:20:00Z"
+      },
+      {
+        "id": 12,
+        "card": {
+          "name": "Primal Whisperer",
+          "scryfallId": "whisperer",
+          "setCode": "lgn",
+          "number": "135",
+          "finish": "nonfoil"
+        },
+        "guessedAt": "2026-08-09T18:20:00Z"
+      }
+    ]
+  }
+}
+`
+	if got != want {
+		t.Errorf("guessed document:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// An emptied queue is the answer a script working the list down is waiting for,
+// so it is a document with no rows rather than a sentence about there being
+// none.
+func TestGuessedDocumentEmitsAnEmptyList(t *testing.T) {
+	got := write(t, FromGuessed(nil))
+	if !strings.Contains(got, `"rows": []`) {
+		t.Errorf("an empty queue emitted null rather than an empty list:\n%s", got)
 	}
 }

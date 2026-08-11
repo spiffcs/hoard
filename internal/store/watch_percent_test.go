@@ -550,3 +550,80 @@ func TestRecordPricesSkipsUnchangedPrices(t *testing.T) {
 		t.Fatalf("a changed price wrote %d rows, want %d", got, first+1)
 	}
 }
+
+// FINDING #4, the half the demo report's suggested wording would have got
+// wrong: a percent watch does NOT wait for the price to cross back.
+//
+// The report proposed documenting "it re-arms when the price crosses back",
+// and flagged that it had not verified the rule. For under and over that is
+// right. For drop and rise it is not: firing writes last_fired_at, which
+// becomes the anchor's lower bound, so the anchor collapses to about the price
+// that fired and the very next check reads unmet — with no new observation, no
+// price change, and nothing for the user to do. The watch is re-armed at the
+// new level and speaks again only on a further move of its own size.
+//
+// A single sentence covering both ops would therefore have been false about
+// half of them.
+func TestPercentReArmsOnFiringAlone(t *testing.T) {
+	s := newTestStore(t)
+	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
+	observe(t, s, "nonfoil", 50.00, longAgo)
+	observe(t, s, "nonfoil", 40.00, beforeNow) // -20%: the alert
+
+	if fired := checkAt(t, s, testNow); len(fired) != 1 {
+		t.Fatalf("the fall fired %d alerts, want 1", len(fired))
+	}
+	if w := watchAt(t, s, testNow); w.LastState != "met" || w.LastFiredAt == "" {
+		t.Fatalf("after firing: last_state=%q last_fired_at=%q", w.LastState, w.LastFiredAt)
+	}
+
+	// Nothing happens. No observation, no price change, no user action — and
+	// the watch is armed again, because the anchor moved with the alert.
+	if fired := checkAt(t, s, testNow); len(fired) != 0 {
+		t.Fatalf("the second check fired %d alerts, want 0", len(fired))
+	}
+	w := watchAt(t, s, testNow)
+	if w.State() != "waiting" {
+		t.Errorf("state = %q with no price change, want waiting: firing re-anchors", w.State())
+	}
+	if w.Anchor == nil || *w.Anchor != 40.00 {
+		t.Errorf("anchor = %v, want it collapsed to the price that fired (40.00)", w.Anchor)
+	}
+	if w.LastState != "unmet" {
+		t.Errorf("last_state = %q, want unmet — re-armed with no crossing back", w.LastState)
+	}
+
+	// And it speaks again on a further fall of its own size, measured from the
+	// new level rather than from the old high. The observation has to be later
+	// than the fire moment — an anchor cannot read a price recorded before the
+	// bound it was re-anchored at, which is the same carry-forward rule that
+	// makes the collapse above work.
+	observe(t, s, "nonfoil", 35.00, "2026-08-10T23:00:00Z") // -12.5% from 40
+	if fired := checkAt(t, s, "2026-08-11T00:00:00Z"); len(fired) != 1 {
+		t.Error("a further 12.5% fall did not fire: the watch did not re-arm")
+	}
+}
+
+// The negative control's mirror: an absolute watch on the same shape stays
+// latched, so the difference between the two ops is the behaviour and not the
+// fixture.
+func TestAbsoluteDoesNotReArmOnFiringAlone(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	priceIs(t, s, "nonfoil", 40.00)
+	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 45); err != nil {
+		t.Fatalf("AddWatch: %v", err)
+	}
+	if fired := checkAt(t, s, testNow); len(fired) != 1 {
+		t.Fatalf("the first check fired %d, want 1", len(fired))
+	}
+	if fired := checkAt(t, s, testNow); len(fired) != 0 {
+		t.Fatalf("the second check fired %d, want 0", len(fired))
+	}
+	if w := watchAt(t, s, testNow); w.State() != "met" || w.LastState != "met" {
+		t.Errorf("state=%q last_state=%q, want an absolute watch still latched at met",
+			w.State(), w.LastState)
+	}
+}

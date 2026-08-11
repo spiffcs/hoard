@@ -106,11 +106,33 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				CollectorNumber: "236", Finish: "foil", Copies: 1, Old: 30, New: 32,
 				Source: "scryfall"}}),
 		"movers-empty": hoardjson.FromMovers("2026-06-30T00:00:00Z", "", nil),
+		// The other side of pctChange: a printing that was unpriced at the
+		// window's start has no percentage, and the field is absent rather
+		// than null or zero.
+		"movers-from-zero": hoardjson.FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
+			[]store.PriceChange{{ScryfallID: "b", Name: "Black Lotus", SetCode: "lea",
+				CollectorNumber: "232", Finish: "nonfoil", Copies: 1, Old: 0, New: 5,
+				Source: "scryfall"}}),
 		"watch": hoardjson.FromWatchCheck(2, []store.WatchStatus{{
 			Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over", Threshold: 10},
 			Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125", PriceUSD: f(12.5),
 		}}),
 		"watch-quiet": hoardjson.FromWatchCheck(0, nil),
+		// Both sides of every optional field: an absolute watch with a price
+		// and no anchor, and a movement with an anchor, a fire moment and no
+		// price at all.
+		"watches": hoardjson.FromWatchList([]store.WatchStatus{{
+			Watch: store.Watch{ID: 1, ScryfallID: "sol", Display: "Sol Ring",
+				Finish: "foil", Op: "over", Threshold: 10, WindowDays: 30,
+				CreatedAt: "2026-08-09T00:00:00Z", LastState: "met",
+				LastFiredAt: "2026-08-10T00:00:00Z"},
+			Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125", PriceUSD: f(12.5),
+		}, {
+			Watch: store.Watch{ID: 2, ScryfallID: "rem", Display: "Mystic Remora",
+				Finish: "nonfoil", Op: "drop", Pct: 0.1, MinMove: 0.25, WindowDays: 30},
+			Name: "Mystic Remora", SetCode: "ice", CollectorNumber: "78",
+		}}),
+		"watches-empty": hoardjson.FromWatchList(nil),
 		"report": hoardjson.FromValuation(report.ValuationData{
 			AsOf:   "2026-07-30T09:00:00Z",
 			Binder: store.CollectionTotals{DistinctCards: 2, TotalCopies: 3, Value: 16.5},

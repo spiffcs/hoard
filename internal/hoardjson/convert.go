@@ -104,6 +104,26 @@ func movedPct(anchor *float64, price float64) float64 {
 	return math.Round((price-*anchor) / *anchor * 10000) / 10000
 }
 
+// moverPct is a change's percentage for the document: the same accessor the
+// CHANGE column renders, so the table and the document cannot print different
+// numbers for one row, and nil where the store says there is no percentage to
+// report at all.
+//
+// Unrounded, per the rule beside cents: a ratio is not money. It has no
+// canonical denomination to snap to, and rounding one costs more than the
+// tidiness is worth — at 4dp, a printing that rose 11.2527% stores as 0.1125,
+// which a consumer formatting to a tenth of a percent renders as 11.3% or
+// 11.2% depending on its rounding mode, against the table's 11.3%. Carrying the
+// quotient whole is what lets a consumer reproduce the displayed figure instead
+// of landing next to it.
+func moverPct(c store.PriceChange) *float64 {
+	if !c.PctDefined() {
+		return nil
+	}
+	p := c.Pct()
+	return &p
+}
+
 func centsPtr(v *float64) *float64 {
 	if v == nil {
 		return nil
@@ -310,6 +330,7 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 			NewUsd:    cents(c.New),
 			OldAsOf:   c.OldAsOf,
 			ImpactUsd: cents(c.TotalDelta()),
+			PctChange: moverPct(c),
 			Source:    c.Source,
 		})
 	}
@@ -407,6 +428,48 @@ func FromWatchCheck(checked int, fired []store.WatchStatus) Document {
 	return doc
 }
 
+// FromWatchList builds the watches document: every standing watch and where
+// it stands, in the order the list table shows them.
+//
+// It reads State and WouldFire off the store's own row rather than restating
+// either here. A document that computed "met" its own way would be a second
+// opinion about the same database, and the one place a consumer cannot check
+// it is the place it is most likely to be wrong.
+func FromWatchList(watches []store.WatchStatus) Document {
+	w := &Watches{Rows: make([]WatchRow, 0, len(watches))}
+	for _, s := range watches {
+		w.Rows = append(w.Rows, WatchRow{
+			ID: s.ID,
+			Card: Card{
+				Name:          s.Name,
+				ScryfallID:    s.ScryfallID,
+				MTGJSONUUID:   s.MTGJSONUUID,
+				SetCode:       s.SetCode,
+				Number:        s.CollectorNumber,
+				Finish:        s.Finish,
+				Lang:          s.Lang,
+				ColorIdentity: jsonIdentity(s.ColorIdentity),
+			},
+			Op:           s.Op,
+			Display:      s.Display,
+			ThresholdUsd: cents(s.Threshold),
+			Percent:      s.Pct,
+			MinMoveUsd:   cents(s.MinMove),
+			SinceDays:    s.WindowDays,
+			PriceUsd:     centsPtr(s.PriceUSD),
+			AnchorUsd:    centsPtr(s.Anchor),
+			AnchorAt:     s.AnchorAt,
+			State:        s.State(),
+			WouldFire:    s.WouldFire(),
+			LastFiredAt:  s.LastFiredAt,
+			CreatedAt:    s.CreatedAt,
+		})
+	}
+	doc := envelope(KindWatches)
+	doc.Watches = w
+	return doc
+}
+
 // FromMarket builds the arbitrage document: the full ranking of every
 // opportunity, per question, without the display's top-N truncation.
 func FromMarket(res market.Result) Document {
@@ -485,5 +548,60 @@ func FromMarket(res market.Result) Document {
 	}
 	doc := envelope(KindMarket)
 	doc.Market = a
+	return doc
+}
+
+// FromBinders builds the binders document: every binder with its counts and
+// value, in ListBinders' order — the default binder first, then the rest by
+// name, which is the order the table prints and the order a reader will have
+// seen.
+//
+// The id is the payload's reason for existing. --binder elsewhere in the CLI
+// takes an id, a name or a unique fragment, and only the first of those is
+// unambiguous forever; a script that discovers binders here and passes their
+// ids back never has to guess which "Modern" was meant.
+func FromBinders(binders []store.DeckSummary) Document {
+	b := &Binders{Rows: make([]Binder, 0, len(binders))}
+	for _, x := range binders {
+		b.Rows = append(b.Rows, Binder{
+			ID:        x.ID,
+			Name:      x.Name,
+			IsDefault: x.IsDefault,
+			Totals: Totals{
+				DistinctCards: x.DistinctCards,
+				TotalCopies:   x.TotalCopies,
+				ValueUsd:      cents(x.Value),
+			},
+		})
+	}
+	doc := envelope(KindBinders)
+	doc.Binders = b
+	return doc
+}
+
+// FromGuessed builds the guessed document: the scanner's unchecked finish
+// guesses in the order GuessedFinishes returns them, newest first.
+//
+// Rows are carried one for one, including rows identical in every field but
+// their id. Collapsing those would be the one transformation this converter
+// must not make: the queue is per commit, so two such rows are two physical
+// cards to look at, and --checked retires them one id at a time.
+func FromGuessed(rows []store.FinishGuessRow) Document {
+	g := &Guessed{Rows: make([]GuessedRow, 0, len(rows))}
+	for _, r := range rows {
+		g.Rows = append(g.Rows, GuessedRow{
+			ID: r.ID,
+			Card: Card{
+				Name:       r.Name,
+				ScryfallID: r.ScryfallID,
+				SetCode:    r.Set,
+				Number:     r.Number,
+				Finish:     r.Finish,
+			},
+			GuessedAt: r.GuessedAt,
+		})
+	}
+	doc := envelope(KindGuessed)
+	doc.Guessed = g
 	return doc
 }

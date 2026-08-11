@@ -57,7 +57,27 @@ import (
 //
 // MODEL stays at 1: no field is removed or retyped, and read.go's compatibility
 // gate is about being able to parse the document, which is untouched.
-const SchemaVersion = "1.1.0"
+//
+// 1.1.1 adds three kinds and one field, every one of them purely additive, so
+// a 1.1.0 consumer reading a 1.1.1 document sees exactly what it saw before.
+//
+// The kinds are watches, binders and guessed, and they close one shape of gap.
+// Each was previously drawn only as a table, while the rest of the CLI takes
+// the ids in those tables as arguments: `watch rm`, `--binder` and `--checked`
+// are all typed against values a caller could otherwise reach only by parsing
+// columns. watches carries the standing state of every watch, which is the half
+// of the story a check cannot tell — firing is edge triggered, so a supervisor
+// reading exit codes alone cannot tell a threshold that never crossed from one
+// that crossed and was already reported.
+//
+// The field is a movers change's pctChange, which the text view has always
+// shown and the document has always omitted.
+//
+// It is a bump rather than a widening of 1.1.0 because 1.1.0 is already
+// committed on main: any document a build from HEAD has emitted carries that
+// number, and a version meaning one thing yesterday and another today is the
+// one thing a version must never be.
+const SchemaVersion = "1.1.1"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -71,14 +91,17 @@ const (
 	KindMarket   Kind = "market"
 	KindReport   Kind = "report"
 	KindWatch    Kind = "watch"
+	KindWatches  Kind = "watches"
 	KindHoard    Kind = "hoard"
+	KindBinders  Kind = "binders"
+	KindGuessed  Kind = "guessed"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard,enum=watches,enum=binders,enum=guessed"`
 
 	Summary  *Summary    `json:"summary,omitempty"`
 	Holdings *Holdings   `json:"holdings,omitempty"`
@@ -88,6 +111,9 @@ type Document struct {
 	Report   *Report     `json:"report,omitempty"`
 	Watch    *WatchCheck `json:"watch,omitempty"`
 	Hoard    *Hoard      `json:"hoard,omitempty"`
+	Watches  *Watches    `json:"watches,omitempty"`
+	Binders  *Binders    `json:"binders,omitempty"`
+	Guessed  *Guessed    `json:"guessed,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -279,6 +305,18 @@ type PriceChange struct {
 	// window.
 	OldAsOf   string  `json:"oldAsOf"`
 	ImpactUsd float64 `json:"impactUsd"`
+	// PctChange is the move as a fraction of oldUsd, signed: 1.1458 is up
+	// 114.58%. It is derivable from oldUsd and newUsd and is here for the same
+	// reason impactUsd beside it is — the text view prints it, so a consumer
+	// reading the document was reproducing a figure hoard had already computed.
+	//
+	// It is absent, not zero, when oldUsd is 0: a rise from nothing is an
+	// infinite percentage rather than a large one, and the whole point of
+	// carrying the field is that hoard decides that once instead of every
+	// caller deciding it differently. Absent is the model's word for "no such
+	// value" throughout — priceUsd, spread and belowMarket all use it — and a
+	// zero here would be indistinguishable from a printing that did not move.
+	PctChange *float64 `json:"pctChange,omitempty"`
 	// Source names where the new price came from: "scryfall", or the vendor
 	// behind a fallback.
 	Source string `json:"source"`
@@ -429,6 +467,78 @@ type FiredWatch struct {
 	MovedPct float64 `json:"movedPct,omitempty"`
 }
 
+// Watches is every standing watch and where each one stands — the machine
+// reading of `hoard watch list`.
+//
+// It is a separate kind from watch rather than a field on it because the two
+// answer different questions at different moments. A watch document is the
+// result of one check: what crossed, just now, and nothing else. This is the
+// standing state, readable at any time and without side effects — no crossing
+// is consumed by reading it.
+//
+// That distinction is what makes the pair usable from a cron. A watch fires
+// once per crossing and then holds; an agent that misses one exit 3 has lost
+// the event, and only this document can tell it that a threshold is still met
+// and was merely already reported.
+type Watches struct {
+	Rows []WatchRow `json:"rows"`
+}
+
+// WatchRow is one standing watch: the rule, the price it is judged against,
+// and where it stands.
+//
+// Op names both the rule and its units, as it does everywhere else: under and
+// over are dollar lines and read thresholdUsd, drop and rise are movements and
+// read percent, and exactly one of the two is meaningful.
+type WatchRow struct {
+	// ID is the handle `hoard watch rm` takes. The text table deliberately has
+	// no ID column — an ambiguous name fragment prints the ids at the moment
+	// they are needed, which is better targeted than a column on every row —
+	// but that reasoning is about a terminal's width budget and does not reach
+	// a document, where the id is the only unambiguous way to name a row.
+	ID   int64  `json:"id"`
+	Card Card   `json:"card"`
+	Op   string `json:"op" jsonschema:"enum=under,enum=over,enum=drop,enum=rise"`
+	// Display is the name the alert prints, as resolved when the watch was set.
+	Display      string  `json:"display"`
+	ThresholdUsd float64 `json:"thresholdUsd,omitempty"`
+	// Percent is the movement that fires the alert, as a fraction: 0.1 is ten
+	// percent, matching Watch.Percent rather than the flag's "10%".
+	Percent    float64 `json:"percent,omitempty"`
+	MinMoveUsd float64 `json:"minMoveUsd,omitempty"`
+	SinceDays  int     `json:"sinceDays,omitempty"`
+	// PriceUsd is hoard's effective price for the watched finish, absent when
+	// no source prices it — absent is not free, and a watch with no price
+	// answers none of the four questions.
+	PriceUsd *float64 `json:"priceUsd,omitempty"`
+	// AnchorUsd is the extreme a movement is measured from and AnchorAt when it
+	// was observed; both absent for an absolute watch, and for a movement whose
+	// series has no observation to anchor on.
+	AnchorUsd *float64 `json:"anchorUsd,omitempty"`
+	AnchorAt  string   `json:"anchorAt,omitempty"`
+	// State is where the watch stands right now: "met" when the condition
+	// holds, "waiting" when it does not, "waiting-on-history" for a movement
+	// whose record does not reach back as far as its own window — which can
+	// never fire until it does — and "unpriced" when nothing prices the card.
+	State string `json:"state" jsonschema:"enum=unpriced,enum=waiting,enum=waiting-on-history,enum=met"`
+	// WouldFire reports whether the next `hoard watch` would alert on this row.
+	//
+	// It is not the same question as state == "met", and the difference is the
+	// one thing about watches that surprises everybody: firing is edge
+	// triggered, so a watch that crossed yesterday is still met today and will
+	// say nothing. A supervisor loop reading exit codes alone cannot tell those
+	// apart. This field can.
+	WouldFire bool `json:"wouldFire"`
+	// LastFiredAt is when the alert last went out (RFC 3339), absent on a watch
+	// that has never fired. For a movement it is also the lower bound the next
+	// anchor is drawn from — firing re-anchors — so it dates the baseline as
+	// well as the alert.
+	LastFiredAt string `json:"lastFiredAt,omitempty"`
+	// CreatedAt is when the watch was set (RFC 3339). A movement cannot measure
+	// a move that predates it, so this bounds the anchor too.
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
 // Hoard is a whole hoard as one interchange document — the payload `hoard
 // merge` moves between two databases. Where the holdings document answers
 // "what do you own", this one answers "what is in that database", and carries
@@ -532,6 +642,55 @@ type Watch struct {
 	Display string `json:"display"`
 	// CreatedAt is when the watch was first set (RFC 3339).
 	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+// Binders is every binder with its rolled-up counts and value, the default
+// binder first and the rest by name — the order `hoard binder list` prints.
+type Binders struct {
+	Rows []Binder `json:"rows"`
+}
+
+// Binder is one binder, carrying the id the rest of the CLI takes as an
+// argument. --binder on export, import and add accepts an id, a name or a
+// unique fragment; the id is the only one of the three that cannot become
+// ambiguous when a second binder is created, so a script that reads this
+// document and passes ids back is the stable form.
+//
+// The counts are the same three the summary reports for a container:
+// distinctCards is printings and totalCopies is physical cards, so a binder
+// holding a card in two finishes counts once and twice respectively.
+type Binder struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// IsDefault marks the built-in binder every database starts with — the one
+	// `hoard binder rm` refuses. It is on the row rather than implied by
+	// position so a consumer need not rely on the ordering to know which.
+	IsDefault bool `json:"isDefault"`
+	Totals
+}
+
+// Guessed is the audit queue the hands-free scanner's nonfoil default creates:
+// scanned rows committed on a default rather than on evidence, newest first.
+type Guessed struct {
+	Rows []GuessedRow `json:"rows"`
+}
+
+// GuessedRow is one unchecked guess. ID is what `hoard guessed --checked` takes.
+//
+// Two rows can be identical in every field but ID, and that is the data rather
+// than a duplicate to collapse: the queue is per commit, so two copies of one
+// printing scanned on the same default are two cards to physically check and
+// two rows to retire. A consumer that keys this list by card loses one of them.
+//
+// The card carries no colorIdentity or lang: the queue is read from the guess
+// log joined to the catalog on identity alone, so those are unknown here in the
+// model's sense of the word rather than absent from the printing.
+type GuessedRow struct {
+	ID   int64 `json:"id"`
+	Card Card  `json:"card"`
+	// GuessedAt is when the scanner committed the row, as the guess log stores
+	// it — the column the text listing prints beside each row.
+	GuessedAt string `json:"guessedAt"`
 }
 
 // Write emits one document: two-space indented, HTML left unescaped (card

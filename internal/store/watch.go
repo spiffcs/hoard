@@ -170,6 +170,47 @@ func (w WatchStatus) Met() bool {
 	return false
 }
 
+// State names where the watch stands, in one word per case, for every reader
+// that has to say so — the list table and the JSON document alike.
+//
+// It exists as one function because the two used to be one switch in the
+// command and one nothing at all: `watch list --json` was refused outright, so
+// the state a machine most needed was the one only the table could show. Two
+// switches would have been the obvious way to give it one, and the obvious way
+// for the table and the document to start disagreeing about what "waiting"
+// means.
+//
+// The vocabulary is the machine's — hyphens, no spaces, matching the enum the
+// schema publishes — and watchList renders it for a person. That direction
+// round-trips; the other does not.
+func (w WatchStatus) State() string {
+	switch {
+	case w.PriceUSD == nil:
+		return "unpriced"
+	// A percent watch whose record does not reach back far enough is not
+	// waiting on a price — it is waiting on history, and saying "waiting" for
+	// both would leave the one that can never fire looking exactly like the
+	// one that might.
+	case w.WaitingOnHistory():
+		return "waiting-on-history"
+	case w.Met():
+		return "met"
+	default:
+		return "waiting"
+	}
+}
+
+// WouldFire reports whether the next `hoard watch` would alert on this row:
+// the condition holds now and did not at the last check.
+//
+// It is the difference between "met" and "you are about to be told", and
+// without it a reader cannot tell a fresh crossing from one already reported —
+// which is the whole of what latching does and the whole of why it surprises
+// people. The store's WouldFire is this predicate over every row.
+func (w WatchStatus) WouldFire() bool {
+	return w.PriceUSD != nil && w.Met() && w.LastState != "met"
+}
+
 // Percent reports whether the watch measures a movement rather than a line.
 func (w Watch) Percent() bool { return w.Op == "drop" || w.Op == "rise" }
 
@@ -696,6 +737,71 @@ SELECT EXISTS(
 	return ok, nil
 }
 
+// HeldPrinting is one printing of a card name the collection actually holds,
+// with how many copies stand behind it.
+//
+// Copies counts one finish — the one a watch is being set on — and AnyCopies
+// counts every finish. Both, because the two answer different halves of the
+// same question: a foil watch belongs on a printing held in foil if there is
+// one, and on a printing held at all before it belongs on a printing held
+// nowhere.
+type HeldPrinting struct {
+	ScryfallID      string
+	SetCode         string
+	CollectorNumber string
+	Copies          int
+	AnyCopies       int
+}
+
+// HeldPrintingsOfName reports every printing of a card name the collection
+// holds, best candidate for a watch first.
+//
+// It exists because a bare name is not a printing and Scryfall answers one
+// anyway. `hoard watch add Bitterblossom` asks Scryfall's /cards/collection
+// for the name and gets back whichever printing *it* considers the card's
+// newest — 2x2/69 — which may be a printing the owner has never touched. A
+// watch on that is not merely useless; it is an alert about someone else's
+// card, reported in the first person. This query is what lets the watch layer
+// prefer a printing the collection can actually point at.
+//
+// The name matches case-insensitively, because the name reaching this query
+// came off a command line rather than out of the catalog, and an agent that
+// lowercases its input should not silently fall through to the Scryfall
+// answer. Every container counts, deck and binder alike: a card committed to a
+// deck is held.
+//
+// The order is the tie-break, and it is a rule rather than a preference:
+// copies in the watched finish, then copies in any finish, then set and
+// collector number. The first two rank by how much of the printing the owner
+// actually has; the last is there so the answer is the same on every run,
+// which matters more than which printing wins — an agent standing the same
+// watch twice must not get two different printings.
+func (s *Store) HeldPrintingsOfName(name, finish string) ([]HeldPrinting, error) {
+	rows, err := s.db.Query(`
+SELECT c.scryfall_id, c.set_code, c.collector_number,
+       COALESCE(SUM(CASE WHEN e.finish = ? THEN e.quantity END), 0) AS copies,
+       COALESCE(SUM(e.quantity), 0) AS any_copies
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+WHERE c.name = ? COLLATE NOCASE
+GROUP BY c.scryfall_id, c.set_code, c.collector_number
+ORDER BY copies DESC, any_copies DESC, c.set_code, c.collector_number`, finish, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading held printings of %q: %w", name, err)
+	}
+	defer rows.Close()
+	var out []HeldPrinting
+	for rows.Next() {
+		var h HeldPrinting
+		if err := rows.Scan(&h.ScryfallID, &h.SetCode, &h.CollectorNumber,
+			&h.Copies, &h.AnyCopies); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // RemoveWatch deletes one watch by id.
 func (s *Store) RemoveWatch(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM watches WHERE id = ?`, id)
@@ -727,7 +833,7 @@ func (s *Store) wouldFireAt(ts string) ([]WatchStatus, error) {
 	}
 	var fired []WatchStatus
 	for _, w := range all {
-		if w.PriceUSD != nil && w.Met() && w.LastState != "met" {
+		if w.WouldFire() {
 			fired = append(fired, w)
 		}
 	}

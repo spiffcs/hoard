@@ -134,3 +134,69 @@ func TestCmdWatchImportArgErrors(t *testing.T) {
 		t.Error("import of a missing file must error")
 	}
 }
+
+// The bulk path has the same defect `watch add` had, and a worse chance of
+// being caught: a file of bare names is exactly what an agent generates, and
+// the receipt counts watches rather than naming printings. A row that names a
+// set and number asked for a printing and keeps it.
+func TestCmdWatchImportPrefersHeldPrintings(t *testing.T) {
+	st := exportStore(t)
+	held, other := bitterblossom()
+	if err := st.AddCardFinish(held, "nonfoil", 4); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	stubFetch(t, watchCard(), held, other)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "watches.csv")
+	csv := "Name,Direction,Threshold,Set,Collector Number\n" +
+		"Bitterblossom,over,1,,\n" +
+		"Sol Ring,under,5,,\n"
+	if err := os.WriteFile(path, []byte(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execCmd(context.Background(), st, []string{"watch", "import", path}, false)
+	if err != nil {
+		t.Fatalf("watch import: %v", err)
+	}
+	byID := map[string]bool{}
+	watches, _ := st.ListWatches()
+	for _, w := range watches {
+		byID[w.ScryfallID] = true
+	}
+	if !byID["bb-uma"] || byID["bb-2x2"] {
+		t.Errorf("watches = %+v, want the held uma printing and not 2x2", watches)
+	}
+	// Sol Ring is held too (exportStore holds it), so both rows count.
+	if !strings.Contains(out, "2 named only a card and follow a printing you hold") {
+		t.Errorf("receipt = %q, want the held-printing count", out)
+	}
+}
+
+// A row that states a printing is a request, not a hint: set and collector
+// number must survive even when the collection holds a different printing of
+// the same card.
+func TestCmdWatchImportKeepsAnExplicitPrinting(t *testing.T) {
+	st := exportStore(t)
+	held, other := bitterblossom()
+	if err := st.AddCardFinish(held, "nonfoil", 4); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	stubFetch(t, held, other)
+	path := filepath.Join(t.TempDir(), "watches.csv")
+	csv := "Name,Direction,Threshold,Set,Collector Number\n" +
+		"Bitterblossom,over,1,2x2,69\n"
+	if err := os.WriteFile(path, []byte(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execCmd(context.Background(), st, []string{"watch", "import", path}, false)
+	if err != nil {
+		t.Fatalf("watch import: %v", err)
+	}
+	w, _ := st.ListWatches()
+	if len(w) != 1 || w[0].ScryfallID != "bb-2x2" {
+		t.Errorf("watches = %+v, want the printing the file named", w)
+	}
+	if strings.Contains(out, "named only a card") {
+		t.Errorf("receipt = %q, want no held-printing note for an explicit printing", out)
+	}
+}

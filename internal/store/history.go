@@ -55,11 +55,21 @@ func (p PriceChange) Delta() float64 { return p.New - p.Old }
 // than a $20 rise on a single copy.
 func (p PriceChange) TotalDelta() float64 { return float64(p.Copies) * p.Delta() }
 
-// Pct is the movement as a fraction of the old price, and is 0 when the card
-// was previously worth nothing (any rise from zero is an infinite percentage,
-// which is not a useful thing to sort or print).
+// PctDefined reports whether Pct is a real figure. It is not when the card was
+// previously worth nothing: any rise from zero is an infinite percentage, which
+// is neither sortable nor printable.
+//
+// This is a predicate rather than an `if p.Old == 0` at each site because the
+// two frontends want different things from the same answer — the table prints
+// 0 so the column stays aligned, the document omits the field so no consumer
+// reads a rise from nothing as no movement — and the one thing they must not do
+// is disagree about which rows have a percentage at all.
+func (p PriceChange) PctDefined() bool { return p.Old != 0 }
+
+// Pct is the movement as a fraction of the old price, and is 0 where
+// PctDefined is false.
 func (p PriceChange) Pct() float64 {
-	if p.Old == 0 {
+	if !p.PctDefined() {
 		return 0
 	}
 	return p.Delta() / p.Old

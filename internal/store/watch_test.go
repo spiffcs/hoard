@@ -284,3 +284,87 @@ func TestWatchStatusCarriesColorIdentity(t *testing.T) {
 		t.Errorf("an unfetched printing's ColorIdentity = %v, want nil", got["Unfetched Card"])
 	}
 }
+
+// FINDING #4: what actually re-arms a met watch.
+//
+// The demo report guessed "it re-arms when the price crosses back" and said
+// outright that the re-arm condition was not verified. For an absolute watch
+// the guess is right, and this pins it: three checks against an unchanged
+// price give one alert and then silence — the state stays "met" the whole
+// time, so a supervisor loop reading exit codes alone would conclude the
+// threshold is no longer crossed when it still is.
+func TestWatchAbsoluteLatchesUntilThePriceCrossesBack(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 12); err != nil {
+		t.Fatalf("AddWatch: %v", err)
+	}
+	// The reporter's transcript, exactly: three runs, unchanged prices.
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Fatalf("first check fired %d, want 1", len(fired))
+	}
+	for i := range 2 {
+		if fired, _ := checkWatches(t, s); len(fired) != 0 {
+			t.Fatalf("check %d fired %d alerts against an unchanged price", i+2, len(fired))
+		}
+	}
+	// Still met, and still latched: this is the pair of facts the exit code
+	// cannot express and `watch list` can.
+	w, err := s.ListWatches()
+	if err != nil || len(w) != 1 {
+		t.Fatalf("ListWatches = %+v, %v", w, err)
+	}
+	if w[0].State() != "met" {
+		t.Errorf("state = %q after three checks, want it still met", w[0].State())
+	}
+	if w[0].WouldFire() {
+		t.Error("wouldFire is true on a watch already reported")
+	}
+	if w[0].LastState != "met" {
+		t.Errorf("last_state = %q, want met — the latch", w[0].LastState)
+	}
+
+	// The only thing that re-arms it: the price leaving the condition. A check
+	// while it is out re-arms; a check is required, because last_state is
+	// written by checking and by nothing else.
+	reprice(t, s, 15)
+	if fired, _ := checkWatches(t, s); len(fired) != 0 {
+		t.Fatal("leaving the threshold fired an alert")
+	}
+	if w, _ := s.ListWatches(); w[0].LastState != "unmet" {
+		t.Errorf("last_state = %q after the price left, want unmet", w[0].LastState)
+	}
+	reprice(t, s, 11)
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Error("re-crossing did not fire: nothing re-arms the watch")
+	}
+}
+
+// The second thing that re-arms an absolute watch, and the one a user has a
+// hand on: re-adding it. The upsert clears last_state, so the same question
+// restated is a question not yet answered.
+func TestWatchReAddReArmsALatchedWatch(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 12); err != nil {
+		t.Fatalf("AddWatch: %v", err)
+	}
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Fatal("setup: the first check should fire")
+	}
+	if fired, _ := checkWatches(t, s); len(fired) != 0 {
+		t.Fatal("setup: the second check should be quiet")
+	}
+	// The same threshold, not a new one: re-arming must not require changing
+	// the question, or the documented escape hatch is not one.
+	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 12); err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	if fired, _ := checkWatches(t, s); len(fired) != 1 {
+		t.Error("re-adding the same watch did not re-arm it")
+	}
+}

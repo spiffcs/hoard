@@ -138,6 +138,7 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	fmt.Fprintf(env.Out, "Watching %s (%s) %s: %s.\n",
 		res.Card.Name, ui.Printing(res.Card.Set, res.Card.CollectorNumber),
 		res.Finish, strings.Join(parts, ", "))
+	watchPrintingNotes(env, res)
 	if len(bounds) > 1 {
 		fmt.Fprintln(env.Out, env.OutEnv.Dim()(
 			"Two watches, one per direction: list and rm take them one at a time."))
@@ -147,6 +148,87 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	}
 	fmt.Fprintln(env.Out, env.OutEnv.Dim()("Checks read stored prices: hoard update-prices && hoard watch"))
 	return nil
+}
+
+// watchPrintingNotes says which printing the watch landed on and why it was
+// that one.
+//
+// A bare card name is not a printing, and the answer to one is Scryfall's
+// rather than hoard's: `watch add Bitterblossom` stood a watch on 2x2/69 while
+// the owner held uma/85, printed a line that read like a success, and would
+// have alerted about a card nobody owns. WatchAdd now prefers a held printing;
+// this is the half that makes the outcome legible either way, because in a
+// transcript a silent right answer and a silent wrong one look identical —
+// which is precisely how the original went unnoticed.
+//
+// Nothing is said when the collection holds exactly the printing asked for and
+// nothing else: the confirmation line already names it, and a note on the one
+// case that needs no warning is how a reader learns to skip the notes.
+func watchPrintingNotes(env *cli.Env, res action.WatchAddResult) {
+	dim := env.OutEnv.Dim()
+	say := func(format string, a ...any) {
+		fmt.Fprintln(env.Out, dim(fmt.Sprintf(format, a...)))
+	}
+	switch {
+	case len(res.Held) == 0:
+		say("You hold no copy of %s: this is the printing Scryfall names for the bare "+
+			"name, not one of yours.", res.Card.Name)
+	case !res.Owned:
+		// The held printing was asked for by id and something else came back,
+		// which resolve only does when Scryfall no longer knows that id and the
+		// name retry answered instead. Rare — and exactly the substitution the
+		// old silence hid, so it is the loudest line here.
+		say("Scryfall did not answer for the printing you hold (%s), so this watch "+
+			"follows its own choice of printing instead.", heldPrintings(res.Held, ""))
+	case len(res.Held) > 1:
+		// The winning count goes on the line that states the rule. Without it
+		// the reader is told a tie-break was applied and shown only the losers,
+		// which is the one arrangement that makes a correct pick look arbitrary.
+		say("You hold %d printings of %s; watching the one you hold most of (%s).",
+			len(res.Held), res.Card.Name, ui.Qty(heldAny(res.Held, res.Card.ID)))
+		say("Also held: %s.", heldPrintings(res.Held, res.Card.ID))
+		say("To watch one of those instead, name it by set and collector " +
+			"number through hoard watch import.")
+	case heldCopies(res.Held, res.Card.ID) == 0:
+		say("Watching a printing you hold, though no copy of it is %s.", res.Finish)
+	}
+}
+
+// heldPrintings lists held printings as "uma/85 ×4", skipping the one already
+// named on the confirmation line.
+func heldPrintings(held []store.HeldPrinting, skipID string) string {
+	parts := make([]string, 0, len(held))
+	for _, h := range held {
+		if h.ScryfallID == skipID {
+			continue
+		}
+		parts = append(parts, ui.Printing(h.SetCode, h.CollectorNumber)+" "+ui.Qty(h.AnyCopies))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// heldCopies is how many copies of one printing are held in the watched
+// finish. Zero with the printing still in the list means it is held in some
+// other finish — a foil watch on a card owned only in non-foil, most often.
+func heldCopies(held []store.HeldPrinting, id string) int {
+	for _, h := range held {
+		if h.ScryfallID == id {
+			return h.Copies
+		}
+	}
+	return 0
+}
+
+// heldAny is heldCopies across every finish, which is the number the "also
+// held" list shows and therefore the one the chosen row has to be comparable
+// against.
+func heldAny(held []store.HeldPrinting, id string) int {
+	for _, h := range held {
+		if h.ScryfallID == id {
+			return h.AnyCopies
+		}
+	}
+	return 0
 }
 
 // watchRule phrases one bound the way the row will read it back.
@@ -228,6 +310,13 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 		r.Detail("%d watch the foil price: the file said otherwise but the printing has no non-foil.",
 			res.Refinished)
 	}
+	// The rows that named only a card. Said because the alternative is what
+	// `watch add` used to do silently: point the alert at whichever printing
+	// Scryfall calls the card's newest, which may be one nobody owns.
+	if res.Held > 0 {
+		r.Detail("%d named only a card and follow a printing you hold; "+
+			"give a Set and Collector Number to pin a different one.", res.Held)
+	}
 	if len(res.Unresolved) > 0 {
 		r.Detail("%d cards could not be resolved and were skipped:", len(res.Unresolved))
 		for _, u := range res.Unresolved {
@@ -244,6 +333,12 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		return err
 	}
 	out, env := cmdEnv.Out, cmdEnv.OutEnv
+	// Before the empty-list hint, because "no watches" is an answer a script
+	// needs as much as a person does, and an empty rows array says it in the
+	// shape the caller already knows how to read.
+	if cmdEnv.JSON {
+		return hoardjson.Write(out, hoardjson.FromWatchList(watches))
+	}
 	if len(watches) == 0 {
 		fmt.Fprintln(out, env.Dim()("No watches. Add one: hoard watch add <name> --under N | --over N"))
 		return nil
@@ -280,22 +375,14 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		},
 	}
 	for _, w := range watches {
-		price, state := "", "unpriced"
+		price := ""
 		if w.PriceUSD != nil {
 			price = ui.Money(*w.PriceUSD)
-			switch {
-			// A percent watch whose record does not reach back far enough is
-			// not waiting on a price — it is waiting on history, and saying
-			// "waiting" for both would leave the one that can never fire
-			// looking exactly like the one that might.
-			case w.WaitingOnHistory():
-				state = "waiting on history"
-			case w.Met():
-				state = "met"
-			default:
-				state = "waiting"
-			}
 		}
+		// The state is the store's word, spaced out for reading. One direction
+		// only: the machine vocabulary is what the schema publishes, and this
+		// column is the rendering of it rather than a second opinion.
+		state := strings.ReplaceAll(w.State(), "-", " ")
 		anchor := "—"
 		if w.Anchor != nil {
 			anchor = ui.Money(*w.Anchor)
@@ -413,7 +500,9 @@ func watchAlert(env ui.Env, w store.WatchStatus, finish string) string {
 // `hoard watch list` lists.
 //
 // The --json split that cmdWatch enforced by hand is now structural: the group
-// is JSONCapable and none of its subcommands are.
+// is JSONCapable, and of its subcommands only list is — a check and a listing
+// are both machine-readable questions, while add, import and rm are writes
+// whose receipts are prose.
 func NewCmdWatch(a *app) *cobra.Command {
 	var fl watchFlags
 
@@ -421,7 +510,37 @@ func NewCmdWatch(a *app) *cobra.Command {
 		Use:     "watch",
 		GroupID: groupCollection,
 		Short:   "Check price watches (no network; exit 3 = fired)",
-		Example: "hoard watch\nhoard watch [add|import|list|rm]",
+		// Wrapped to 60 columns, the narrowest terminal hoard's help claims
+		// to render in: writeCommandHelp copies Long through verbatim, so a
+		// Long is only ever as narrow as it was written.
+		//
+		// The latch is the subject because it is the one thing about this
+		// command that a correct-looking supervisor loop gets wrong, and the
+		// old help said "exit 3 = fired" and stopped. Both re-arm rules are
+		// stated because they differ by op — see TestWatchAbsoluteLatches-
+		// UntilThePriceCrossesBack and TestPercentReArmsOnFiringAlone, which
+		// is where each of these sentences is demonstrated.
+		Long: "Checks every standing watch against stored prices —\n" +
+			"no network, so the cron pairing is\n" +
+			"hoard update-prices && hoard watch.\n\n" +
+			"Exit 3 means something crossed on this run. Exit 0\n" +
+			"does not mean nothing is crossed: an alert fires once\n" +
+			"per crossing and the watch then holds at \"met\", so a\n" +
+			"loop reading exit codes alone will read a standing\n" +
+			"alert as a threshold no longer met. Ask\n" +
+			"hoard watch list --json instead — every row carries\n" +
+			"its state and whether the next check would fire.\n\n" +
+			"What re-arms a held watch depends on its rule:\n\n" +
+			"  under, over  a check taken while the price is back\n" +
+			"               outside the threshold, or re-adding\n" +
+			"               the watch, which clears the state\n" +
+			"               whatever the price is doing.\n" +
+			"  drop, rise   firing itself. The alert re-anchors\n" +
+			"               the movement to the price that fired,\n" +
+			"               so the watch is armed again at that\n" +
+			"               level and speaks on a further move of\n" +
+			"               its own size.",
+		Example: "hoard watch\nhoard watch --json\nhoard watch [add|import|list|rm]",
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return watchCheck(a.store, a.env)
@@ -470,11 +589,15 @@ func NewCmdWatch(a *app) *cobra.Command {
 				return watchImport(c.Context(), a.store, a.env, args)
 			},
 		},
-		&cobra.Command{
+		// The one subcommand that honors --json. `watch` answers what a check
+		// just did; `watch list` answers what is standing, and a script that
+		// misses an exit 3 has no other way to ask.
+		cli.JSONCapable(&cobra.Command{
 			Use: "list", Short: "Your watches",
-			Args: cobra.NoArgs,
-			RunE: func(*cobra.Command, []string) error { return watchList(a.store, a.env) },
-		},
+			Example: "hoard watch list\nhoard watch list --json",
+			Args:    cobra.NoArgs,
+			RunE:    func(*cobra.Command, []string) error { return watchList(a.store, a.env) },
+		}),
 		&cobra.Command{
 			Use: "rm ID|NAME", Short: "Remove a watch",
 			Args: cobra.ExactArgs(1),

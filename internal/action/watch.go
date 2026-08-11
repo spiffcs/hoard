@@ -67,6 +67,41 @@ type WatchAddResult struct {
 	// direction stood: a band whose second write failed did not do nothing,
 	// and reporting it as nothing makes the retry add a row twice.
 	Stood int
+	// Held is every printing of the name the collection holds, best watch
+	// candidate first — empty when the card is not held at all. Owned reports
+	// whether Card is one of them.
+	//
+	// Both are here so the caller can *say what happened* rather than what was
+	// intended. Preferring a held printing is a request the resolve pipeline
+	// can decline — a Scryfall id the API no longer knows falls through to the
+	// name retry, which lands wherever it lands — so Owned is computed from the
+	// printing that came back, not from the one that was asked for.
+	Held  []store.HeldPrinting
+	Owned bool
+}
+
+// preferHeld points a watch at a printing the collection actually holds.
+//
+// This is the whole of the fix for "watch add watches a printing you don't
+// own", and the reason it lives here rather than in resolve is that resolve is
+// right as it stands. A bare name goes to Scryfall's /cards/collection as a
+// name identifier and Scryfall answers with its own choice of printing —
+// hoard never picks, and never had a line of code that could. For `deck add`
+// and `import` that is correct: a decklist that says "Bitterblossom" means the
+// card, and any printing of it plays the same. A watch is the one caller for
+// which it is wrong, because a watch's entire premise is *my* copy's price.
+//
+// So the preference is expressed as an identifier, not as a filter over
+// answers: resolving by the held printing's Scryfall id costs the same single
+// request the name did, and the typed name rides along as Request.Name so
+// resolve's existing name-retry still catches an id Scryfall has forgotten.
+func preferHeld(d Deps, name, finish string, req *resolve.Request) ([]store.HeldPrinting, error) {
+	held, err := d.Store.HeldPrintingsOfName(name, finish)
+	if err != nil || len(held) == 0 {
+		return nil, err
+	}
+	req.Ident = scryfall.Identifier{ID: held[0].ScryfallID}
+	return held, nil
 }
 
 // WatchAdd resolves a card name once, now, through the same pipeline deck
@@ -75,6 +110,11 @@ type WatchAddResult struct {
 // threshold asked for against that one printing. The card joins the catalog
 // so update-prices keeps its price fresh even when no copy is owned:
 // watching a card you are hoping to buy is the --under case entirely.
+//
+// Which printing a bare name means is the question preferHeld answers: a held
+// one where the collection has one, and Scryfall's own pick otherwise. Both
+// outcomes are reported on the result, because the second one is a
+// substitution and the caller has to be able to say so.
 func WatchAdd(ctx context.Context, d Deps, p progress.Fn, o WatchAddOptions) (WatchAddResult, error) {
 	var res WatchAddResult
 	if len(o.Bounds) == 0 {
@@ -84,8 +124,12 @@ func WatchAdd(ctx context.Context, d Deps, p progress.Fn, o WatchAddOptions) (Wa
 	if o.Foil {
 		finish = "foil"
 	}
-	rr, err := d.resolver(p).Resolve(ctx, []resolve.Request{
-		{Ident: scryfall.Identifier{Name: o.Name}, Name: o.Name, Finish: finish}})
+	req := resolve.Request{Ident: scryfall.Identifier{Name: o.Name}, Name: o.Name, Finish: finish}
+	held, err := preferHeld(d, o.Name, finish, &req)
+	if err != nil {
+		return res, err
+	}
+	rr, err := d.resolver(p).Resolve(ctx, []resolve.Request{req})
 	if err != nil {
 		return res, err
 	}
@@ -94,7 +138,13 @@ func WatchAdd(ctx context.Context, d Deps, p progress.Fn, o WatchAddOptions) (Wa
 	}
 	m := rr.Matches[0]
 	finish = watchFinish(m.Finish, m.Card)
-	res.Card, res.Finish = m.Card, finish
+	res.Card, res.Finish, res.Held = m.Card, finish, held
+	for _, h := range held {
+		if h.ScryfallID == m.Card.ID {
+			res.Owned = true
+			break
+		}
+	}
 
 	if err := d.Store.UpsertPrintings(rr.Found); err != nil {
 		return res, err

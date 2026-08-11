@@ -59,7 +59,7 @@ func NewCmdSchema(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "",
-		"only what one document kind needs (summary, holdings, unpriced, movers, market, report, watch, hoard)")
+		"only what one document kind needs (summary, holdings, unpriced, movers, market, report, watch, watches, hoard)")
 	return cli.NoStore(cli.JSONCapable(cmd))
 }
 
