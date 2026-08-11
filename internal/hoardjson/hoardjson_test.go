@@ -944,3 +944,139 @@ func TestKindsSharingCardCarryNoDetail(t *testing.T) {
 		}
 	}
 }
+
+// identity is what one kind says about one card's color: the decoded letters,
+// and whether the key was there at all. Absent and `[]` are different answers
+// — "not known to hoard" and "colorless" — so no assertion can ask this with
+// len() alone.
+type identity struct {
+	letters []string
+	present bool
+}
+
+// identitiesAt reads every card in one array of card-bearing objects, found by
+// path because the kinds keep their cards in different places. The path is the
+// argument rather than a search so a test names the array it means: a hoard
+// document carries cards under both holdings and watches, and a search would
+// answer about whichever came first.
+func identitiesAt(t *testing.T, doc string, path ...string) map[string]identity {
+	t.Helper()
+	var tree any
+	if err := json.Unmarshal([]byte(doc), &tree); err != nil {
+		t.Fatalf("parsing the emitted document: %v", err)
+	}
+	at := tree
+	for _, key := range path {
+		obj, ok := at.(map[string]any)
+		if !ok {
+			t.Fatalf("%s is not an object on the way to %v:\n%s", key, path, doc)
+		}
+		at = obj[key]
+	}
+	list, ok := at.([]any)
+	if !ok {
+		t.Fatalf("%v is not an array:\n%s", path, doc)
+	}
+	out := map[string]identity{}
+	for _, e := range list {
+		card, ok := e.(map[string]any)["card"].(map[string]any)
+		if !ok {
+			t.Fatalf("an entry under %v carries no card:\n%s", path, doc)
+		}
+		name, _ := card["name"].(string)
+		raw, present := card["colorIdentity"]
+		got := identity{present: present}
+		if present {
+			letters, ok := raw.([]any)
+			if !ok {
+				t.Fatalf("%s's colorIdentity is not an array:\n%s", name, doc)
+			}
+			got.letters = []string{}
+			for _, l := range letters {
+				got.letters = append(got.letters, l.(string))
+			}
+		}
+		out[name] = got
+	}
+	return out
+}
+
+// identityWatches are the same three states colorIdentityRows describes, as
+// the watch paths carry them: WatchStatus is what both the interchange
+// document and the fired-alert document are built from.
+func identityWatches() []store.WatchStatus {
+	return []store.WatchStatus{
+		{Watch: store.Watch{ScryfallID: "sol", Finish: "nonfoil", Op: "over", Threshold: 1},
+			Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
+			ColorIdentity: []string{}, PriceUSD: f(2)},
+		{Watch: store.Watch{ScryfallID: "swp", Finish: "nonfoil", Op: "over", Threshold: 1},
+			Name: "Swamp", SetCode: "c21", CollectorNumber: "300",
+			ColorIdentity: []string{"B"}, PriceUSD: f(2)},
+		{Watch: store.Watch{ScryfallID: "unf", Finish: "nonfoil", Op: "over", Threshold: 1},
+			Name: "Unfetched Card", SetCode: "xxx", CollectorNumber: "1", PriceUSD: f(2)},
+	}
+}
+
+// identityTop is those three states as the report's biggest holdings carry
+// them. OwnedFinish has always had the field; report.topHoldings simply did
+// not read it.
+func identityTop() []store.OwnedFinish {
+	return []store.OwnedFinish{
+		{ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
+			Finish: "nonfoil", Copies: 1, Value: 2, ColorIdentity: []string{}},
+		{ScryfallID: "swp", Name: "Swamp", SetCode: "c21", CollectorNumber: "300",
+			Finish: "nonfoil", Copies: 1, Value: 1, ColorIdentity: []string{"B"}},
+		{ScryfallID: "unf", Name: "Unfetched Card", SetCode: "xxx", CollectorNumber: "1",
+			Finish: "nonfoil", Copies: 1, Value: 3},
+	}
+}
+
+// One run tells one story. The kinds share the Card type and the schema that
+// documents it, so a card that is `["B"]` in holdings and absent from
+// topHoldings makes one document say hoard both knows and does not know the
+// same fact — which is what the owner's database produced: Bitterblossom was
+// ["B"] in holdings, absent from report.topHoldings, and ["B"] in the row the
+// query read.
+//
+// Asserted across kinds rather than per kind because that is the property. A
+// kind can only be checked against the schema's words; checked against another
+// kind from the same run, a disagreement is a contradiction no reading excuses.
+func TestEveryKindAgreesOnACardsIdentity(t *testing.T) {
+	rows, watches := colorIdentityRows(), identityWatches()
+	kinds := map[string]map[string]identity{
+		"holdings": identitiesAt(t,
+			write(t, FromExportRows(rows)), "holdings", "rows"),
+		"report.topHoldings": identitiesAt(t,
+			write(t, FromValuation(report.ValuationData{Top: identityTop()})),
+			"report", "topHoldings"),
+		"hoard.watches": identitiesAt(t,
+			write(t, FromSnapshot(store.Snapshot{Version: 27, Watches: watches}, rows)),
+			"hoard", "watches"),
+		"watch.fired": identitiesAt(t,
+			write(t, FromWatchCheck(len(watches), watches)), "watch", "fired"),
+	}
+	// Both states, because the bug is about telling them apart: a fix that
+	// hard-coded a non-empty slice would satisfy the colored card alone.
+	want := map[string]identity{
+		"Swamp":          {letters: []string{"B"}, present: true},
+		"Sol Ring":       {letters: []string{}, present: true},
+		"Unfetched Card": {present: false},
+	}
+	for kind, cards := range kinds {
+		for name, w := range want {
+			got, ok := cards[name]
+			if !ok {
+				t.Fatalf("%s carries no card named %q", kind, name)
+			}
+			if got.present != w.present {
+				t.Errorf("%s: %s colorIdentity present = %v, want %v — %q says the opposite",
+					kind, name, got.present, w.present, "holdings")
+				continue
+			}
+			if w.present && !reflect.DeepEqual(got.letters, w.letters) {
+				t.Errorf("%s: %s colorIdentity = %v, want %v",
+					kind, name, got.letters, w.letters)
+			}
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -232,5 +233,54 @@ func TestAddWatchesRollsBackOnInvalidRow(t *testing.T) {
 	}
 	if len(watches) != 0 {
 		t.Fatalf("watches = %+v, want the valid row rolled back too", watches)
+	}
+}
+
+// A watch carries its card's identity, in all three states the column has.
+//
+// The read is what makes it possible: WatchStatus is the only thing the
+// interchange document and the fired-alert document see, so a query that does
+// not select the column leaves both of them asserting hoard does not know a
+// color it stored. nil and empty stay apart here for the same reason they do
+// everywhere else — the schema gives them opposite meanings, and
+// parseColorIdentity is what keeps them apart.
+func TestWatchStatusCarriesColorIdentity(t *testing.T) {
+	s := newTestStore(t)
+	swamp := scryfall.Card{ID: "swp", Set: "c21", CollectorNumber: "300",
+		Name: "Swamp", PriceUSD: f(1), Raw: []byte(`{"color_identity":["B"]}`)}
+	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125",
+		Name: "Sol Ring", PriceUSD: f(2), Raw: []byte(`{"color_identity":[]}`)}
+	// No document at all: the generated column reads NULL, which is the one
+	// case that must stay absent rather than becoming colorless.
+	unfetched := scryfall.Card{ID: "unf", Set: "xxx", CollectorNumber: "1",
+		Name: "Unfetched Card", PriceUSD: f(3)}
+	for _, c := range []scryfall.Card{swamp, sol, unfetched} {
+		if err := s.AddCardFinish(c, "nonfoil", 1); err != nil {
+			t.Fatalf("AddCardFinish %s: %v", c.Name, err)
+		}
+		if err := s.AddWatch(c.ID, c.Name, "nonfoil", "over", 0.01); err != nil {
+			t.Fatalf("AddWatch %s: %v", c.Name, err)
+		}
+	}
+
+	watches, err := s.ListWatches()
+	if err != nil {
+		t.Fatalf("ListWatches: %v", err)
+	}
+	got := map[string][]string{}
+	nilFor := map[string]bool{}
+	for _, w := range watches {
+		got[w.Name] = w.ColorIdentity
+		nilFor[w.Name] = w.ColorIdentity == nil
+	}
+	if want := []string{"B"}; !slices.Equal(got["Swamp"], want) {
+		t.Errorf("Swamp ColorIdentity = %v, want %v", got["Swamp"], want)
+	}
+	if len(got["Sol Ring"]) != 0 || nilFor["Sol Ring"] {
+		t.Errorf("a colorless card's ColorIdentity = %v (nil %v), want an empty non-nil slice",
+			got["Sol Ring"], nilFor["Sol Ring"])
+	}
+	if !nilFor["Unfetched Card"] {
+		t.Errorf("an unfetched printing's ColorIdentity = %v, want nil", got["Unfetched Card"])
 	}
 }

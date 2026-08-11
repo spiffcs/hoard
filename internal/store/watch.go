@@ -70,6 +70,11 @@ type WatchStatus struct {
 	// Lang is the printing's language code ("en", "ja"), empty when the card's
 	// document has not been stored — same semantics as Card.Lang.
 	Lang string
+	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
+	// same semantics as Card.ColorIdentity. Carried because a watch travels:
+	// the interchange document and the fired-alert document both name the
+	// card, and a kind that omits the identity asserts hoard does not know it.
+	ColorIdentity []string
 	// PriceUSD is hoard's effective price, the same figure every other screen
 	// shows. A percent watch compares it against an anchor drawn from the
 	// series that produced it — see effSourceExpr — so both ends of the
@@ -491,7 +496,7 @@ ws AS (
     SELECT w.*,
            c.name AS card_name, c.set_code, c.collector_number,
            COALESCE(c.mtgjson_uuid, '') AS uuid, c.promo_types,
-           COALESCE(c.lang, '') AS card_lang,
+           COALESCE(c.lang, '') AS card_lang, c.color_identity,
            CASE WHEN w.finish = 'etched' THEN ` + effPriceEtched + `
                 WHEN w.finish = 'foil'   THEN ` + effPriceFoil + `
                 ELSE ` + effPriceUSD + ` END AS price,
@@ -507,7 +512,7 @@ SELECT ws.id, ws.scryfall_id, ws.display, ws.finish, ws.op, ws.threshold,
        ws.pct, ws.min_move, ws.window_days, ws.created_at, ws.last_state,
        ws.last_fired_at,
        ws.card_name, ws.set_code, ws.collector_number, ws.uuid,
-       ws.promo_types, ws.card_lang, ws.price,
+       ws.promo_types, ws.card_lang, ws.color_identity, ws.price,
        CASE WHEN ws.op IN ('drop','rise') THEN
                  (SELECT CASE WHEN ws.op = 'drop' THEN MAX(h.price_usd)
                               ELSE MIN(h.price_usd) END ` + anchorSeries + `
@@ -535,16 +540,17 @@ func (s *Store) listWatchesAt(at string) ([]WatchStatus, error) {
 	var out []WatchStatus
 	for rows.Next() {
 		var w WatchStatus
-		var promos sql.NullString
+		var promos, colors sql.NullString
 		if err := rows.Scan(&w.ID, &w.ScryfallID, &w.Display, &w.Finish, &w.Op,
 			&w.Threshold, &w.Pct, &w.MinMove, &w.WindowDays, &w.CreatedAt,
 			&w.LastState, &w.LastFiredAt,
 			&w.Name, &w.SetCode, &w.CollectorNumber, &w.MTGJSONUUID,
-			&promos, &w.Lang, &w.PriceUSD,
+			&promos, &w.Lang, &colors, &w.PriceUSD,
 			&w.Anchor, &w.AnchorAt, &w.HistorySince, &w.WindowFrom); err != nil {
 			return nil, err
 		}
 		w.Treatment = FoilTreatment(promos)
+		w.ColorIdentity = parseColorIdentity(colors)
 		out = append(out, w)
 	}
 	return out, rows.Err()
