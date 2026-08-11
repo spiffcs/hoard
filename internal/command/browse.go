@@ -93,6 +93,69 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	return r, nil
 }
 
+// browseUpdatePricesSummary is the status line a finished price refresh
+// leaves behind. Split from the operation that produced it, on the precedent
+// of runUpdatePrices — the render half apart from the dependency glue, so a
+// test can drive it against a fixture and read what it wrote.
+//
+// One line and no report: the browser's price-refresh seam hands back a
+// string, and everything this has to say is a count. UpdatePricesResult
+// carries no list of the identifiers Scryfall stopped answering for, so
+// there is no detail a report block could hold that this line does not.
+func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
+	if res.Total == 0 {
+		return "no cards yet; nothing to update"
+	}
+	s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
+	// Scryfall no longer answering for a printing is not the same failure as
+	// a printing nothing can price, and the two counters sit side by side —
+	// so this one keeps the CLI's verb rather than borrowing "unpriced".
+	// Silence here is how prices go stale without anyone being told: the
+	// refresh reports what it found and the cards it can never refresh again
+	// simply stop appearing in the number.
+	if res.NotFound > 0 {
+		s += fmt.Sprintf(" · %d could not be re-fetched", res.NotFound)
+	}
+	if res.Gaps.Remaining > 0 {
+		s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
+	}
+	return s
+}
+
+// browseBackfillSummary is the status line a finished history import leaves
+// behind, split from the operation for the same reason as the one above.
+//
+// The CLI raises the two shortfalls as warnings on stderr; the browser has
+// one line and no stderr, so they ride the summary as counters. Each names
+// its own reason rather than a noun: the headline already counts printings,
+// and a second "printings" would read as a share of the first.
+func browseBackfillSummary(res action.BackfillResult) string {
+	switch {
+	case res.Printings == 0:
+		return "nothing owned yet"
+	case res.AlreadyToday != "":
+		return "already backfilled today"
+	case res.Inserted == 0 && res.BidInserted == 0:
+		return "nothing to backfill · history already recorded"
+	}
+	summary := fmt.Sprintf("backfilled %s observations across %s printings",
+		ui.Count(res.Inserted), ui.Count(res.Cards))
+	if res.BidInserted > 0 {
+		summary += fmt.Sprintf(" · %s buylist bids", ui.Count(res.BidInserted))
+	}
+	// Skipped is the CLI's own word for the unmapped half and not for the
+	// other: a printing with no MTGJSON id was never asked about, while one
+	// with an id and no history was asked and answered with nothing. Saying
+	// skipped for both would claim the archive was never consulted.
+	if res.Unmapped > 0 {
+		summary += fmt.Sprintf(" · %s skipped (no MTGJSON id)", ui.Count(res.Unmapped))
+	}
+	if res.Unquoted > 0 {
+		summary += fmt.Sprintf(" · %s with no TCGplayer history", ui.Count(res.Unquoted))
+	}
+	return summary
+}
+
 // cmdBrowse is what `hoard` with no arguments does: the browser at a terminal,
 // the summary table when piped, so `hoard | grep` keeps working.
 //
@@ -280,14 +343,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if err != nil {
 				return "", err
 			}
-			if res.Total == 0 {
-				return "no cards yet; nothing to update", nil
-			}
-			s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
-			if res.Gaps.Remaining > 0 {
-				s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
-			}
-			return s, nil
+			return browseUpdatePricesSummary(res), nil
 		}),
 		browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.RepairFinishes(ctx, deps, p)
@@ -317,20 +373,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if err != nil {
 				return "", err
 			}
-			switch {
-			case res.Printings == 0:
-				return "nothing owned yet", nil
-			case res.AlreadyToday != "":
-				return "already backfilled today", nil
-			case res.Inserted == 0 && res.BidInserted == 0:
-				return "nothing to backfill · history already recorded", nil
-			}
-			summary := fmt.Sprintf("backfilled %s observations across %s printings",
-				ui.Count(res.Inserted), ui.Count(res.Cards))
-			if res.BidInserted > 0 {
-				summary += fmt.Sprintf(" · %s buylist bids", ui.Count(res.BidInserted))
-			}
-			return summary, nil
+			return browseBackfillSummary(res), nil
 		}),
 		browse.WithWatchAddByName(func(ctx context.Context, p progress.Fn,
 			name, op string, threshold float64) (string, error) {

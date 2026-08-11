@@ -248,11 +248,23 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		fmt.Fprintln(out, env.Dim()("No watches. Add one: hoard watch add <name> --under N | --over N"))
 		return nil
 	}
+	// No ID column, and that is safe for a reason worth writing down because it
+	// is not obvious: watch rm takes an id, so dropping the column looks like
+	// it strands anyone whose name fragment is ambiguous. It does not, because
+	// WatchByRef's ambiguity error prints the ids itself —
+	//
+	//	"Ancient Tomb" matches 2 watches:
+	//	  12: Ancient Tomb foil over $149.86
+	//	  13: Ancient Tomb foil under $122.62
+	//	use the id
+	//
+	// — so the id is offered at the moment it is needed, by the command that
+	// needs it, and only then. A column carrying it on every row of every
+	// listing was the worse-targeted answer to a question most rows never ask.
 	t := ui.Table{
 		Env:    env,
 		Header: true,
 		Cols: []ui.Col{
-			{Title: "ID", Align: ui.Right, Priority: 2, Style: env.Dim()},
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 12},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 3, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 4, Style: env.Dim()},
@@ -288,7 +300,7 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		if w.Anchor != nil {
 			anchor = ui.Money(*w.Anchor)
 		}
-		t.Add(ui.C(fmt.Sprintf("%d", w.ID)), ui.C(w.Name),
+		t.Add(ui.C(w.Name),
 			ui.C(ui.Printing(w.SetCode, w.CollectorNumber)), ui.C(ui.Finish(w.Finish)),
 			ui.C(watchCell(w)), ui.C(anchor), ui.C(price), ui.C(state))
 	}
