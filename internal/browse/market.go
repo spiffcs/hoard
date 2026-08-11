@@ -200,9 +200,11 @@ func (m Model) marketLines(width int) []string {
 	if width <= 0 {
 		return nil
 	}
-	if m.marketTotalRows() == 0 && (!m.marketLoaded || !filtered) {
+	if m.marketTotalRows() == 0 && (!m.marketLoaded || (!filtered && m.filter.empty())) {
 		// Not loaded (the status line explains the fetch states), or loaded
-		// and genuinely empty hoard-wide.
+		// and genuinely empty hoard-wide. A query counts alongside the
+		// container filter here: emptied by something the reader typed, the
+		// screen has to keep its headings and say so, not go blank.
 		return nil
 	}
 	env := ui.Env{Width: width, Color: m.env.Color, Clamp: true}
@@ -214,10 +216,7 @@ func (m Model) marketLines(width int) []string {
 	// dimmed card, not a remembered place.
 	cursorSec, cursorIdx := m.marketCursorPos()
 	hasCursor := m.focus == paneCards
-	emptyNote := "nothing today"
-	if filtered {
-		emptyNote = "none in this collection"
-	}
+	emptyNote := m.marketEmptyNote(filtered)
 
 	var out []string
 	for i, sec := range secs {
@@ -265,6 +264,33 @@ func (m Model) marketLines(width int) []string {
 		}
 	}
 	return out
+}
+
+// marketEmptyNote is one table's reason for being empty: a refused term
+// first, then the query, then the container filter, then the standing
+// reason. The middle three are the precedence the watches screen established
+// (watchEmptyNote), for its reason — "nothing today" is a claim about what
+// the vendors did, and it would be a lie about the hoard when a typed query
+// is what emptied the table, reading as a day with no arbitrage in it and
+// sending the reader to F to refetch prices they already have.
+func (m Model) marketEmptyNote(filtered bool) string {
+	// A refused term outranks the query that carried it, and it is the one
+	// rung this chain has that the watches screen's does not need. Emptied by
+	// price<5, "none match price<5" claims no card on this screen costs under
+	// five dollars — a lie about the hoard, and a worse one than the standing
+	// note would have been, since the term was declined rather than answered.
+	// The bar's own sentence, verbatim: the reader saw it a keystroke ago and
+	// a paraphrase here would read as a second, different objection.
+	if note := m.filterUnsupported(); note != "" {
+		return note
+	}
+	if !m.filter.empty() {
+		return "none match " + m.filter.raw
+	}
+	if filtered {
+		return "none in this collection"
+	}
+	return "nothing today"
 }
 
 // marketSectionHead is one table's heading and its explanatory note, in
@@ -380,6 +406,20 @@ func (m Model) marketStatus() string {
 		return m.theme.Help.Render(
 			"vendor quotes may need a download, so the view waits to be asked · press F")
 	case m.marketTotalRows() == 0:
+		// marketEmptyNote's chain, on the status line: a refused term, then
+		// the query, then the container, then the standing reason. It has to
+		// be the same order — the tables under this line are drawing their
+		// own notes off that chain, and a status line reaching a different
+		// rung would disagree with them in the same frame. The query outranks
+		// the container because it is the most recent thing the reader did
+		// and the one thing esc undoes.
+		if note := m.filterUnsupported(); note != "" {
+			return m.theme.Err.Render(note)
+		}
+		if !m.filter.empty() {
+			return m.theme.Help.Render(fmt.Sprintf(
+				"nothing matches %s · esc clears the filter", m.filter.raw))
+		}
 		if sel := m.selectedContainer(); sel != nil && sel.Kind != kindAllCards {
 			return m.theme.Help.Render(fmt.Sprintf(
 				"no market rows in %s · All Cards shows every container", sel.Name))
@@ -412,17 +452,26 @@ func (m Model) marketStatus() string {
 	// On an empty heading there is no Nth-of-M to report and no row note to
 	// print: the table itself is the selection, so the line names it.
 	title, _ := m.marketSectionHead(sec)
-	line := fmt.Sprintf("%s · empty · %s", title, suffix)
+	line := fmt.Sprintf("%s · empty", title)
 	if secs[sec].count > 0 {
-		line = fmt.Sprintf("%d/%d · %s · %s",
-			idx+1, secs[sec].count, m.selectedMarketNote(), suffix)
+		line = fmt.Sprintf("%d/%d · %s", idx+1, secs[sec].count, m.selectedMarketNote())
 	}
 	// The selection leads here too — the container on the left, the row's
 	// card on the right — matching the generic position line.
 	if name := m.selectedItemName(); name != "" {
 		line = name + " · " + line
 	}
-	return m.theme.Help.Render(line)
+	// A live query goes ahead of the standing note, where the holdings and
+	// watches lines put it last. Measured, not preferred: this line alone
+	// carries a teaching suffix and already runs past a 100-column pane
+	// unclamped, so the tail is the part that falls off the edge. Once the
+	// bar closes this phrase is the only thing on screen saying the tables
+	// hold a subset, while the suffix explains a column the reader can see
+	// either way — so the perishable half takes the safe slot.
+	if !m.filter.empty() {
+		line += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
+	}
+	return m.theme.Help.Render(line + " · " + suffix)
 }
 
 // selectedMarketNote is one sentence on why the row under the cursor is
@@ -530,6 +579,29 @@ func (m *Model) applyMarketRows() {
 			}
 		}
 		res = scoped
+	}
+	// The typed query last, so it sees the container-scoped Copies and Value
+	// the blocks above rewrote and `qty` describes the same copies the rest of
+	// the screen does — the order movers and the watches screen apply it in.
+	// Before the ranking, like the scopes: a query gets its own top rows,
+	// rather than whatever survived the hoard-wide cut and happens to match.
+	//
+	// One projection and one matcher for both row types (see marketAsCard).
+	// A second filter beside filter.matches is how this bug family started,
+	// and the two lists would answer the same query differently.
+	if !m.filter.empty() {
+		queried := market.Result{Compared: res.Compared}
+		for _, o := range res.Opportunities {
+			if m.filter.matches(marketAsCard(o.Card), m.allowed) {
+				queried.Opportunities = append(queried.Opportunities, o)
+			}
+		}
+		for _, c := range res.Comps {
+			if m.filter.matches(marketAsCard(c.Card), m.allowed) {
+				queried.Comps = append(queried.Comps, c)
+			}
+		}
+		res = queried
 	}
 	// The whole ranking, not a top-N: paging owns the truncation now, so
 	// every section keeps its full run and shows pageSize at a time.

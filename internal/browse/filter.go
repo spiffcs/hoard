@@ -323,11 +323,74 @@ func (f filter) unsupportedOnWatches() string {
 	return ""
 }
 
+// marketAsCard projects one owned printing onto the shape matches reads, so
+// the market view narrows through the same grammar and the same code as the
+// holdings pane — the movers treatment (see moverAsCard) applied to the last
+// screen whose filter bar took a query nothing consumed.
+//
+// One projection covers all three of that screen's tables: an opportunity's
+// card and a comp sheet's are the same store.OwnedFinish, so the two Kind
+// tables and the comp sheet cannot answer a card query differently.
+//
+// Quantity and Value are the copies held and what hoard says they are worth,
+// summed across every container by store.OwnedByFinish and rescaled to the
+// selection by applyMarketRows — the same per-copy figure the M floor already
+// filters this screen by. Price stays nil deliberately: a market row carries
+// four prices and none of them is the answer, which unsupportedOnMarket
+// reports by name. Board is left empty for the reason it is on a mover row —
+// the printing sums every holding of that card and finish.
+func marketAsCard(c store.OwnedFinish) card {
+	return card{
+		ScryfallID:      c.ScryfallID,
+		Name:            c.Name,
+		SetCode:         c.SetCode,
+		CollectorNumber: c.CollectorNumber,
+		Finish:          c.Finish,
+		Quantity:        c.Copies,
+		Value:           c.Value,
+		ColorIdentity:   c.ColorIdentity,
+		Treatment:       c.Treatment,
+	}
+}
+
+// unsupportedOnMarket names the first term this screen cannot answer and why,
+// both empty when the query asks nothing of it. It returns the reason as well
+// as the key because this screen refuses two terms for two unrelated reasons,
+// where movers and watches each have one.
+//
+// price is refused because it is ambiguous here, not because it is missing.
+// Everywhere else in hoard a card has one price, so the term is unambiguous;
+// a market row has four — the sales-derived anchor, the cheapest ask, the
+// best buylist bid, and the ratio between two of them — and the gap between
+// them is the entire purpose of the screen. Answering price<5 with any one of
+// the four would be silently wrong for the other three, in the one view whose
+// job is that they differ. Naming the refusal is the same choice movers made
+// for board and the watches screen made for qty and value.
+//
+// board is refused for movers' reason exactly: a row is an owned printing
+// summed across every holding of that card and finish, so no row has one.
+//
+// Everything else works. name, set and finish read off the printing; qty and
+// value are the copies and hoard's valuation of them, carried by both row
+// types because both are a store.OwnedFinish; and the trait half is an id set
+// every row carries a scryfall id for.
+func (f filter) unsupportedOnMarket() (key, why string) {
+	switch {
+	case len(f.nums["price"]) > 0:
+		return "price", "a row here carries four prices, not one"
+	case len(f.boards) > 0:
+		return "board", "a market row sums every board"
+	}
+	return "", ""
+}
+
 // filterMatchCount is how many rows the query selects in the list the
 // current view is showing — the whole result, not the page. It returns -1
-// on the views that do not consume the query at all, so the bar can decline
+// on a view that does not consume the query at all, so the bar can decline
 // to give a number rather than quote the holdings pane's count over a table
-// the query is not touching.
+// the query is not touching. No view answers -1 today: market was the last
+// one, and the branch stays for the next view added, which will arrive not
+// consuming the query and must not inherit a wrong number by default.
 func (m Model) filterMatchCount() int {
 	switch m.view {
 	case viewHoldings:
@@ -339,6 +402,12 @@ func (m Model) filterMatchCount() int {
 		// showing all three tables, and a count for whichever one the cursor
 		// happened to be in would read as the answer for the lot.
 		return m.watchTotalRows()
+	case viewMarket:
+		// One number for this screen too, and over the full rankings rather
+		// than the pages on show: market pages at pageSize a table, so
+		// marketTotalRows would report at most 150 of a wider result and read
+		// as the answer.
+		return len(m.marketAllRows) + len(m.marketAllComps)
 	}
 	return -1
 }
@@ -354,6 +423,12 @@ func (m Model) filterUnsupported() string {
 	case viewWatches:
 		if k := m.filter.unsupportedOnWatches(); k != "" {
 			return k + ": does not apply on the watches screen · a watch is a line on a printing, not on copies"
+		}
+	case viewMarket:
+		// Two refused terms with two unrelated reasons, so the reason travels
+		// with the key rather than being one sentence for the screen.
+		if k, why := m.filter.unsupportedOnMarket(); k != "" {
+			return k + ": does not apply on market · " + why
 		}
 	}
 	return ""

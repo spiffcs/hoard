@@ -208,9 +208,11 @@ func TestMoversFilterSaysWhatItCannotAnswer(t *testing.T) {
 	}
 }
 
-// The bar gives no count on a view the query does not narrow: a number
-// describing the holdings pane, over a table the query is not touching, is
-// worse than no number.
+// Every view the query narrows counts for itself, and each counts its own
+// whole result — a number describing the holdings pane, quoted over a table
+// the query is not touching, would be worse than no number. With market
+// fixed there is no view left returning -1, and the -1 path stays for the
+// next one added rather than because a view uses it today.
 func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 	st := moversFilterStore()
 	m := atAllCards(t, newTestModel(t, st))
@@ -232,8 +234,11 @@ func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 				t.Errorf("watches count = %d, want %d", got, m.watchTotalRows())
 			}
 		default:
-			if got != -1 {
-				t.Errorf("%v count = %d, want -1 (the query does not narrow it)", v, got)
+			// Market counts the same way, over the full rankings rather than
+			// the three pages on screen.
+			want := len(m.marketAllRows) + len(m.marketAllComps)
+			if got != want {
+				t.Errorf("market count = %d, want %d", got, want)
 			}
 		}
 	}
