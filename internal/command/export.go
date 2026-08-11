@@ -21,9 +21,36 @@ func writeHoldingsJSON(w io.Writer, rows []export.Row) error {
 	return hoardjson.Write(w, hoardjson.FromExportRows(rows))
 }
 
+// onceString is a string flag that remembers how often it was given.
+//
+// pflag's StringVar is last-wins and records nothing about the loser, and
+// Flag.Changed cannot stand in for a count: it is a bool that every occurrence
+// sets to the same true, so the tool that fixed --format csv --json — asking
+// whether the user spoke rather than what they said — cannot tell one --deck
+// from two. A Value gets its Set called once per occurrence, which is the only
+// place in pflag the repeat is still visible.
+//
+// Type is "string" so the help page is unchanged: a reader of `--deck string`
+// is being told the truth, since a second one is refused rather than collected.
+type onceString struct {
+	value string
+	count int
+}
+
+func (s *onceString) String() string { return s.value }
+
+func (s *onceString) Type() string { return "string" }
+
+func (s *onceString) Set(v string) error {
+	s.value = v
+	s.count++
+	return nil
+}
+
 // NewCmdExport builds `hoard export`.
 func NewCmdExport(a *app) *cobra.Command {
-	var format, binder, deck, outPath string
+	var format, outPath string
+	var binder, deck onceString
 	var all bool
 
 	cmd := &cobra.Command{
@@ -34,14 +61,27 @@ func NewCmdExport(a *app) *cobra.Command {
 			"       [--format csv|json|text|moxfield|archidekt]",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			// Before the scopes are reconciled, because a repeat is not a
+			// combination with a right answer either — it is the same question
+			// asked twice with different answers.
+			for _, f := range []struct {
+				name string
+				v    *onceString
+			}{{"binder", &binder}, {"deck", &deck}} {
+				if f.v.count > 1 {
+					return cli.Usagef(
+						"--%s given more than once; an export names one container — choose one, or --all for every binder and deck",
+						f.name)
+				}
+			}
 			return runExport(a.store, a.env, format, c.Flags().Changed("format"),
-				binder, deck, outPath, all)
+				binder.value, deck.value, outPath, all)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "csv",
 		"output format: csv (canonical), json, text (a decklist 'deck add --file' reads), moxfield, or archidekt")
-	cmd.Flags().StringVar(&binder, "binder", "", "export one binder (id, name, or unique fragment)")
-	cmd.Flags().StringVar(&deck, "deck", "", "export one deck (id, name, or unique fragment)")
+	cmd.Flags().Var(&binder, "binder", "export one binder (id, name, or unique fragment)")
+	cmd.Flags().Var(&deck, "deck", "export one deck (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&all, "all", false, "export every binder and deck (the default)")
 	// See NewCmdReport on why -o hangs off a long name.
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "write to FILE instead of stdout")

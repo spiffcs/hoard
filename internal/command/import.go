@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,17 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
+
+// importFormats is every value --format accepts, in the order the help and the
+// error text list them.
+//
+// A restatement of collsource's own spec table, which is unexported, plus the
+// sniff pseudo-format that table has no row for. The duplication is guarded by
+// a test that asks collsource to accept each name, so this list cannot come to
+// promise a parser that does not exist; the other direction — a dialect added
+// there and not named here — is a change to that package, made by someone with
+// this line in their diff.
+var importFormats = []string{"auto", "manabox", "moxfield", "delver", "hoard"}
 
 // importOpts are the flags, gathered so the constructor and the run half do
 // not have to agree on a seven-parameter call.
@@ -43,9 +55,17 @@ func NewCmdImport(a *app) *cobra.Command {
 		// table — where Short is truncated to fit a column — was never the
 		// place that answered it.
 		Short: "Add a collection CSV from another app, or from hoard",
+		// The second paragraph exists because the first one's last word is a
+		// trap: hoard names both a CSV dialect and the JSON interchange
+		// document, and --format offers only the first. An agent reading this
+		// page would otherwise reasonably try --format hoard on a .json file
+		// and spend ten minutes on the answer.
 		Long: "Adds a collection CSV to a binder. It recognises exports\n" +
 			"from ManaBox, Moxfield, Delver Lens and hoard itself;\n" +
-			"--format names the format when the header does not.",
+			"--format names the format when the header does not.\n\n" +
+			"Every format here is a CSV dialect: --format hoard means\n" +
+			"the CSV hoard exports, not the JSON document of the same\n" +
+			"name, which import does not read.",
 		Example: "hoard import FILE [--binder B | --preserve-binders]\n" +
 			"       [--format F] [--dry-run]\n" +
 			"pbpaste | hoard import -",
@@ -62,7 +82,7 @@ func NewCmdImport(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&o.format, "format", "auto",
-		"file format: auto (sniff the header), manabox, moxfield, delver, or hoard")
+		"CSV dialect: auto (sniff the header), manabox, moxfield, delver, or hoard (hoard's own CSV, not its JSON)")
 	cmd.Flags().StringVar(&o.binderRef, "binder", "",
 		"add everything to this binder (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
@@ -76,6 +96,18 @@ func NewCmdImport(a *app) *cobra.Command {
 func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, o importOpts) error {
 	if o.binderRef != "" && o.preserve {
 		return cli.Usagef("--binder and --preserve-binders name different destinations; choose one")
+	}
+	// Before the file is opened, not after it is parsed. collsource already
+	// refuses a format it has no spec for — but only from inside Parse, which
+	// lexes the whole file as CSV first, so a value like json handed a JSON
+	// file died on a bare quote in line 2 and sent the reader hunting a
+	// quoting problem that was not there. The flag is wrong whatever the file
+	// turns out to hold, and that is the cheaper, more certain diagnosis.
+	//
+	// Shaped after schema --kind, which is the tree's answer to this question:
+	// name the value that could not be honoured, then list the ones that can.
+	if !slices.Contains(importFormats, o.format) {
+		return cli.Usagef("unknown format %q (want %s)", o.format, strings.Join(importFormats, ", "))
 	}
 
 	// A lone dash is stdin, spelled the way add --file spells it, so a

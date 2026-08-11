@@ -251,6 +251,48 @@ func TestCmdExportTextRefusesMoreThanOneContainer(t *testing.T) {
 	}
 }
 
+// A scope flag given twice used to take the last one without a word, so
+// `--deck A --deck B` answered with B's container alone: a smaller document
+// that is a plausible answer to a question nobody asked. Both names exist and
+// both hold cards here, because a repeat whose second name is a typo errors on
+// its own and hides the defect.
+func TestCmdExportRefusesARepeatedScopeFlag(t *testing.T) {
+	st := exportStore(t)
+	if _, err := st.UpsertDeck(store.DeckMeta{Name: "Goblins", Source: "manual", SourceID: "deck:goblins"},
+		[]store.Entry{{ScryfallID: "sol", Finish: "nonfoil", Board: "main", Quantity: 1}}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+	for _, args := range [][]string{
+		{"--deck", "Fish", "--deck", "Goblins"},
+		{"--binder", "Binder", "--binder", "Trade"},
+	} {
+		out, err := execCmd(context.Background(), st, append([]string{"export"}, args...), false)
+		if err == nil {
+			t.Errorf("hoard export %v succeeded, want a usage error; wrote:\n%s", args, out)
+			continue
+		}
+		if !strings.Contains(err.Error(), args[0]) {
+			t.Errorf("hoard export %v: err = %v, want it to name the flag given twice", args, err)
+		}
+	}
+}
+
+// The clean case the refusal must not touch: one --deck writes exactly the
+// bytes it always wrote. Asserted whole rather than by substring, because the
+// risk a validation change carries is refusing something that used to work.
+func TestCmdExportOneScopeFlagIsUnchanged(t *testing.T) {
+	st := exportStore(t)
+	got := mustExec(t, context.Background(), st, []string{"export", "--deck", "Fish"})
+	want := strings.Join([]string{
+		"Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD",
+		"1,Mystic Remora,ice,78,nonfoil,,rem,Fish,deck,main,",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("export --deck Fish:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // --json with a foreign --format is a contradiction, not a precedence puzzle.
 func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
 	st := exportStore(t)

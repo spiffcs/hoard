@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/collsource"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -320,6 +321,87 @@ func TestCmdImportRefusesRepeats(t *testing.T) {
 	totals, _ = st.CollectionTotals()
 	if totals.TotalCopies != 2*first {
 		t.Errorf("copies after --again = %d, want %d (an explicit double)", totals.TotalCopies, 2*first)
+	}
+}
+
+// --format names one of five CSV dialects. An unknown value used to be carried
+// all the way to the CSV lexer, so `--format json` over a JSON file answered
+// with a complaint about a bare quote on line 2 and sent the reader looking for
+// a quoting problem that was not there.
+func TestCmdImportRejectsAnUnknownFormat(t *testing.T) {
+	st := importStore(t)
+	path := filepath.Join(t.TempDir(), "holdings.json")
+	if err := os.WriteFile(path, []byte(`{
+  "schemaVersion": "1.0.1",
+  "kind": "holdings",
+  "holdings": {"rows": []}
+}
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	err := importCmd(st, "--format", "json", path)
+	if err == nil {
+		t.Fatal("hoard import --format json succeeded, want a usage error")
+	}
+	// The value it could not honour, then the set it can, in `schema --kind`'s
+	// shape — not a lexing complaint about the file, which is well-formed.
+	if !strings.Contains(err.Error(), `unknown format "json"`) {
+		t.Errorf("err = %v, want it to name the value it refused", err)
+	}
+	for _, format := range []string{"auto", "manabox", "moxfield", "delver", "hoard"} {
+		if !strings.Contains(err.Error(), format) {
+			t.Errorf("err = %v, want it to list %q as an accepted format", err, format)
+		}
+	}
+}
+
+// The empty string is refused with the rest. It was a synonym for auto by
+// accident — collsource sniffs on anything falsy — and nothing ever offered it,
+// so the only way to send it is an unset variable in --format "$FMT", which is
+// this bug's own shape: a value the caller did not mean, honoured as something
+// plausible instead of questioned.
+func TestCmdImportRejectsAnEmptyFormat(t *testing.T) {
+	st := importStore(t)
+	err := importCmd(st, "--format", "", manaboxFixture)
+	if err == nil {
+		t.Fatal("hoard import --format (empty) succeeded, want a usage error")
+	}
+	if !strings.Contains(err.Error(), "unknown format") {
+		t.Errorf("err = %v, want the unknown-format sentence", err)
+	}
+}
+
+// importFormats restates a table collsource keeps to itself, so the restatement
+// is checked rather than trusted: every name the command accepts must be one
+// the parser will dispatch on. A missing column is the parser having got past
+// the name; an unknown-format complaint is this list having invented one.
+func TestImportFormatsAreAllRealToTheParser(t *testing.T) {
+	for _, format := range importFormats {
+		if format == "auto" {
+			continue // not a spec — the instruction to sniff for one
+		}
+		_, err := collsource.Parse(strings.NewReader("a,b\n"), format)
+		if err != nil && strings.Contains(err.Error(), "unknown format") {
+			t.Errorf("--format %s is offered but collsource has no such parser: %v", format, err)
+		}
+	}
+}
+
+// The clean case: a named format that is real still imports exactly as it did.
+// The fixture is ManaBox's, named rather than sniffed, so the check that runs
+// first cannot have swallowed a file the parser would have accepted.
+func TestCmdImportNamedFormatIsUnchanged(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	if err := importCmd(st, "--format", "manabox", manaboxFixture); err != nil {
+		t.Fatalf("hoard import --format manabox: %v", err)
+	}
+	totals, err := st.CollectionTotals()
+	if err != nil {
+		t.Fatalf("CollectionTotals: %v", err)
+	}
+	if totals.TotalCopies != 4 {
+		t.Errorf("imported %d copies, want 4", totals.TotalCopies)
 	}
 }
 
