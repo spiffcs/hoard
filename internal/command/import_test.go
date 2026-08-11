@@ -1,16 +1,19 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/collsource"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // manaboxFixture is collsource's ManaBox sample, addressed relative to this
@@ -402,6 +405,141 @@ func TestCmdImportNamedFormatIsUnchanged(t *testing.T) {
 	}
 	if totals.TotalCopies != 4 {
 		t.Errorf("imported %d copies, want 4", totals.TotalCopies)
+	}
+}
+
+// A hoard CSV round trip is card-exact and value-approximate, and only the
+// first half was ever written down. 915 cards out, 915 cards in, $3,797.19 ->
+// $3,797.53: the whole 34 cents was one card whose price had moved between the
+// export and the import, because no importer reads a price from a file — every
+// dialect's price column is dropped, and hoard's own is not even mapped. That
+// is the right behaviour and it is indistinguishable, from the outside, from a
+// rounding bug in a program that handles money. The help page is where someone
+// checks before they decide which one they are looking at.
+//
+// Asserted on the page rather than left as prose in the source, because an
+// undocumented behaviour and a documented one differ only in a paragraph that
+// nothing keeps honest.
+func TestCmdImportHelpSaysPricesAreReDerived(t *testing.T) {
+	var b bytes.Buffer
+	renderHelp(&b, ui.Env{Width: 100}, "import")
+	help := b.String()
+	for _, want := range []string{"re-derived", "Price", "catalog"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("hoard import --help does not mention %q; a round trip that\n"+
+				"comes back a few cents different has to say why somewhere", want)
+		}
+	}
+}
+
+// A destination that does not exist is knowable from the store alone, and the
+// import used to find that out last: --binder with a typo resolved all 678 rows
+// of a real collection over the network — 4.6 seconds, with a progress counter
+// climbing to 75/678 — and only then asked whether the binder existed. The cost
+// is the smaller half. The counter is the larger one: it reports work being
+// done successfully, so the operator's read of the run is "it's working" right
+// up until the refusal, and a typo becomes five seconds of misplaced confidence.
+//
+// The resolver's call count is the assertion, not the elapsed time. A timing
+// test would measure the stub, which is instant either way; "the network was
+// never consulted" is the property the fix actually establishes, and it holds on
+// any machine.
+func TestCmdImportChecksTheBinderBeforeResolvingAnything(t *testing.T) {
+	st := importStore(t)
+	calls := stubFetch(t, importFixtures()...)
+
+	err := importCmd(st, "--binder", "NoSuchBinder", manaboxFixture)
+	if err == nil {
+		t.Fatal("hoard import --binder NoSuchBinder succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `no binder matching "NoSuchBinder"`) {
+		t.Errorf("err = %v, want it to name the binder it could not find", err)
+	}
+	if *calls != 0 {
+		t.Errorf("the resolver ran %d time(s) for an import that had nowhere to go;\n"+
+			"the destination check belongs above the resolve, not below it", *calls)
+	}
+
+	// The refusal names the way out. Both commands are real — `hoard binder new
+	// NAME` and `hoard binder list` are in the binder command's own tree — and a
+	// test is what keeps that true, since an error message is the one place a
+	// command that does not exist can be advertised for a release without
+	// anything failing.
+	for _, want := range []string{"hoard binder new", "hoard binder list"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to name %q as the fix", err, want)
+		}
+	}
+
+	totals, terr := st.CollectionTotals()
+	if terr != nil {
+		t.Fatalf("CollectionTotals: %v", terr)
+	}
+	if totals.TotalCopies != 0 {
+		t.Errorf("a refused import wrote %d copies", totals.TotalCopies)
+	}
+}
+
+// The create-it advice is attached to exactly one refusal. An ambiguous
+// fragment is the other way BinderByRef says no, and there "create it with
+// binder new" is advice to make a third binder named like the two that already
+// matched — the reader's problem is that they have too many, not none.
+func TestCmdImportDoesNotAdviseCreatingAnAmbiguousBinder(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	for _, name := range []string{"Trade Alpha", "Trade Beta"} {
+		if _, err := st.CreateBinder(name); err != nil {
+			t.Fatalf("CreateBinder(%q): %v", name, err)
+		}
+	}
+
+	err := importCmd(st, "--binder", "Trade", manaboxFixture)
+	if err == nil {
+		t.Fatal("hoard import --binder Trade succeeded, want an ambiguity refusal")
+	}
+	if !strings.Contains(err.Error(), "matches 2 binders") {
+		t.Fatalf("err = %v, want the store's ambiguity refusal", err)
+	}
+	if strings.Contains(err.Error(), "binder new") {
+		t.Errorf("err = %v, want no create-it advice: the name matched two binders,\n"+
+			"so creating a third is not the fix", err)
+	}
+}
+
+// The guard's date is the one date in the CLI a user ever saw as RFC 3339 in
+// UTC, which on a US clock reads as tomorrow — an otherwise excellent refusal
+// undermined by looking like it had the wrong day.
+//
+// Checked through the command so the assertion covers the sentence a user
+// actually reads; ledger_test.go pins the conversion itself against a fixed
+// zone, which is the half that can be got wrong invisibly on a UTC machine.
+func TestCmdImportRefusalDatesReadLikeEveryOtherDate(t *testing.T) {
+	st := importStore(t)
+	stubFetch(t, importFixtures()...)
+	if err := importCmd(st, manaboxFixture); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+
+	err := importCmd(st, manaboxFixture)
+	if err == nil {
+		t.Fatal("second import succeeded, want an already-imported refusal")
+	}
+	const marker = "already imported on "
+	msg := err.Error()
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		t.Fatalf("err = %v, want the ledger's refusal", err)
+	}
+	stamp := msg[i+len(marker):]
+	if j := strings.Index(stamp, " ("); j >= 0 {
+		stamp = stamp[:j]
+	}
+	if strings.ContainsAny(stamp, "TZ") {
+		t.Errorf("refusal stamp = %q, still raw RFC 3339 — every other date in the\n"+
+			"CLI renders like '10 Aug 2026'", stamp)
+	}
+	if _, perr := time.Parse("2 Jan 2006 15:04", stamp); perr != nil {
+		t.Errorf("refusal stamp = %q, want the CLI's own date format: %v", stamp, perr)
 	}
 }
 

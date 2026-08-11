@@ -75,6 +75,33 @@ type ImportResult struct {
 	Gaps            GapReport
 }
 
+// missingBinderAdvice names the fix on the one BinderByRef refusal that has
+// one. A --binder that matches nothing is nearly always a typo, and neither
+// command that resolves it is reachable from the refusal itself: the reader is
+// told the name is wrong and left to guess whether binders are created by a
+// flag, by the import, or at all.
+//
+// Only that refusal. BinderByRef also rejects an *ambiguous* fragment ("Trade"
+// matching three binders), where "create it" is advice to duplicate a binder
+// that already exists, and it surfaces database errors, where the advice is
+// noise. So the sentence is matched, not the error type: store returns a bare
+// fmt.Errorf with no sentinel to test for, and inventing a second way to decide
+// "this binder is absent" — re-scanning ListBinders under rules that must match
+// containerByRef's id/exact/alias/fragment ladder exactly — is the version that
+// can disagree with the store and hand out wrong advice. The coupling is one
+// string, locked by a test; if store rewords it the advice stops appearing and
+// the plain refusal stands, which is the safe direction to fail.
+//
+// The name is quoted inside the suggestion because `binder new` is ExactArgs(1)
+// and binder names contain spaces ("Trade Binder"); an unquoted suggestion
+// would be a command that fails for the reader who pastes it.
+func missingBinderAdvice(err error, ref string) error {
+	if err == nil || err.Error() != fmt.Sprintf("no binder matching %q", ref) {
+		return err
+	}
+	return fmt.Errorf("%w. Create it with 'hoard binder new %q', or see 'hoard binder list'", err, ref)
+}
+
 // ImportCollection adds a collection CSV export — ManaBox, Moxfield, Delver
 // Lens, or hoard's own — to the binder of your choice, as one transaction.
 func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOptions) (ImportResult, error) {
@@ -106,6 +133,52 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		keptRows = append(keptRows, r)
 	}
 	coll.Rows = keptRows
+
+	// Destinations, before the resolve rather than after it. ListBinders puts
+	// the default binder first, and its display names are what ManaBox-style
+	// binder columns are matched on.
+	//
+	// The order is the point: this block reads only the store and the options,
+	// so a mistyped --binder is knowable before a single card is looked up.
+	// Resolving first meant a typo cost a full network resolve — 4.6s and a
+	// progress counter climbing to 75/678 — before the destination was even
+	// consulted, so the operator watched what looked like a working import
+	// right up until it wasn't. Nothing below feeds this block and nothing
+	// this block produces feeds the resolve; only the position changed.
+	binders, err := d.Store.ListBinders()
+	if err != nil {
+		return res, err
+	}
+	// Same guard as binderTarget: the default binder's existence is enforced
+	// three call-frames away, and an empty list here must fail the import
+	// before the write plan indexes into it.
+	if len(binders) == 0 {
+		return res, fmt.Errorf("no default binder exists to import into; the database is missing its collection container")
+	}
+	targetID, targetName := binders[0].ID, binders[0].Name
+	if o.BinderRef != "" {
+		b, err := d.Store.BinderByRef(o.BinderRef)
+		if err != nil {
+			return res, missingBinderAdvice(err, o.BinderRef)
+		}
+		targetID, targetName = b.ID, b.Name
+	}
+	binderIDs := make(map[string]int64, len(binders))
+	binderNames := make(map[int64]string, len(binders))
+	for _, b := range binders {
+		binderIDs[strings.ToLower(b.Name)] = b.ID
+		binderNames[b.ID] = b.Name
+	}
+	// The reserved aliases land in the default binder even after a rename, so
+	// a pre-rename export whose Container column says "Binder" round-trips
+	// into it instead of creating a second binder by that name. A legacy
+	// binder that actually owns one of these names (possible before they were
+	// reserved) keeps its claim via the map entry made above.
+	for _, alias := range store.ReservedBinderNames {
+		if _, taken := binderIDs[strings.ToLower(alias)]; !taken {
+			binderIDs[strings.ToLower(alias)] = binders[0].ID
+		}
+	}
 
 	// Resolve every row through the shared pipeline — bulk lookup, name
 	// retry for set+number pairs Scryfall does not know, finish correction.
@@ -139,43 +212,6 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 			condition: r.Condition, qty: r.Quantity})
 	}
 	res.Resolved = len(adds)
-
-	// Destinations. ListBinders puts the default binder first, and its
-	// display names are what ManaBox-style binder columns are matched on.
-	binders, err := d.Store.ListBinders()
-	if err != nil {
-		return res, err
-	}
-	// Same guard as binderTarget: the default binder's existence is enforced
-	// three call-frames away, and an empty list here must fail the import
-	// before the write plan indexes into it.
-	if len(binders) == 0 {
-		return res, fmt.Errorf("no default binder exists to import into; the database is missing its collection container")
-	}
-	targetID, targetName := binders[0].ID, binders[0].Name
-	if o.BinderRef != "" {
-		b, err := d.Store.BinderByRef(o.BinderRef)
-		if err != nil {
-			return res, err
-		}
-		targetID, targetName = b.ID, b.Name
-	}
-	binderIDs := make(map[string]int64, len(binders))
-	binderNames := make(map[int64]string, len(binders))
-	for _, b := range binders {
-		binderIDs[strings.ToLower(b.Name)] = b.ID
-		binderNames[b.ID] = b.Name
-	}
-	// The reserved aliases land in the default binder even after a rename, so
-	// a pre-rename export whose Container column says "Binder" round-trips
-	// into it instead of creating a second binder by that name. A legacy
-	// binder that actually owns one of these names (possible before they were
-	// reserved) keeps its claim via the map entry made above.
-	for _, alias := range store.ReservedBinderNames {
-		if _, taken := binderIDs[strings.ToLower(alias)]; !taken {
-			binderIDs[strings.ToLower(alias)] = binders[0].ID
-		}
-	}
 
 	// Plan every write first, then hand the whole batch to the store as one
 	// transaction: an interrupted import must be nothing rather than half,

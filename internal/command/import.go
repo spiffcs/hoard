@@ -65,7 +65,22 @@ func NewCmdImport(a *app) *cobra.Command {
 			"--format names the format when the header does not.\n\n" +
 			"Every format here is a CSV dialect: --format hoard means\n" +
 			"the CSV hoard exports, not the JSON document of the same\n" +
-			"name, which import does not read.",
+			"name, which import does not read.\n\n" +
+			// The round trip is card-exact and value-approximate, and
+			// only the first half was ever stated. Re-exporting a
+			// hoard export came back a few cents off — 34 on a 915-card
+			// collection, one card whose price had moved — which is
+			// correct behaviour that looks exactly like a rounding bug
+			// if you have not been told which of the two it is. Said
+			// here rather than in the receipt because the difference is
+			// a rounding error's size, and a line of runtime output on
+			// every import would be a louder claim than the facts
+			// support.
+			"Cards round-trip exactly; value is re-derived. No import\n" +
+			"reads a price from a file — prices come from the local\n" +
+			"catalog as each card resolves — so re-importing an export\n" +
+			"values it at today's prices, not the ones in its Price\n" +
+			"USD column.",
 		Example: "hoard import FILE [--binder B | --preserve-binders]\n" +
 			"       [--format F] [--dry-run]\n" +
 			"pbpaste | hoard import -",
@@ -86,8 +101,13 @@ func NewCmdImport(a *app) *cobra.Command {
 	cmd.Flags().StringVar(&o.binderRef, "binder", "",
 		"add everything to this binder (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
+	// "creating any this hoard does not have" is the half that was never said,
+	// and it is the half that surprises: --binder refuses a name it cannot
+	// match, so a reader who has met that refusal has been taught that import
+	// does not make binders. This flag does, and the only place that was
+	// visible was the receipt, after the fact.
 	cmd.Flags().BoolVar(&o.preserve, "preserve-binders", false,
-		"recreate the file's own binders instead of using one destination")
+		"recreate the file's own binders, creating any this hoard does not have, instead of using one destination")
 	cmd.Flags().BoolVar(&o.again, "again", false,
 		"import a file this hoard has already imported, adding its cards a second time")
 	return cmd
