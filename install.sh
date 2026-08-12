@@ -111,10 +111,21 @@ verify_checksum() {
   checksums="$2"
 
   archive_name=$(basename "$archive")
-  want=$(grep "$archive_name" "$checksums" | cut -d ' ' -f 1)
+  # Anchored, and matching the whole trailing field. checksums.txt lists the
+  # SBOM beside every archive — "hoard_X_os_arch.tar.gz.sbom.json" — so the
+  # archive's own name is a *prefix* of another line. An unanchored grep matched
+  # both, $want became two hashes separated by a newline, and every install
+  # aborted with "checksum mismatch" against a checksum that was in fact correct.
+  want=$(grep " ${archive_name}$" "$checksums" | cut -d ' ' -f 1)
 
   if [ -z "$want" ]; then
     log_err "checksum not found for $archive_name"
+    return 1
+  fi
+  # Belt and braces: if the pattern ever matches more than one line again, fail
+  # loudly here rather than through a confusing mismatch further down.
+  if [ "$(printf '%s\n' "$want" | wc -l | tr -d ' ')" != "1" ]; then
+    log_err "ambiguous checksum entry for $archive_name"
     return 1
   fi
 
