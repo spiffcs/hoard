@@ -903,7 +903,100 @@ func (m Model) Init() tea.Cmd {
 }
 
 // Update handles keys and resizes.
+// handleMouse turns a wheel notch or trackpad gesture into scrolling.
+//
+// Mouse capture is only ever on while the detail overlay is open (see Update),
+// because claiming the mouse is what stops the terminal doing its own text
+// selection and copy-on-select. The pane branch below is still needed: capture
+// is released as the overlay closes, and an event already in flight lands after
+// the detail is gone.
+//
+//   - Over the overlay, the wheel scrolls the text. It cannot just replay
+//     arrows: the overlay's arrows drive the held-list cursor, so they would
+//     move a cursor instead of revealing PRICE.
+//   - Otherwise, replay the arrow keys the terminal's alternate-scroll used to
+//     synthesise, through the same handleKey the keyboard uses, so the wheel
+//     inherits the panes' clamping and scroll-into-view rather than becoming a
+//     second definition of "down".
+//
+// Three lines a notch: the convention, and what alternate-scroll sent.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	const wheelStep = 3
+
+	if m.detail != nil {
+		// Clamping down is the render's job — detailView knows the line count
+		// — so only the top needs a floor here.
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.detail.scroll = max(m.detail.scroll-wheelStep, 0)
+		case tea.MouseButtonWheelDown:
+			m.detail.scroll += wheelStep
+		}
+		return m, nil
+	}
+
+	var key tea.KeyMsg
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		key = tea.KeyMsg{Type: tea.KeyUp}
+	case tea.MouseButtonWheelDown:
+		key = tea.KeyMsg{Type: tea.KeyDown}
+	default:
+		// Clicks and drags are deliberately unwired: a click that moved the
+		// cursor would let a stray trackpad tap destroy the reader's place.
+		return m, nil
+	}
+	cur := m
+	var cmds []tea.Cmd
+	for range wheelStep {
+		next, cmd := cur.handleKey(key)
+		cmds = append(cmds, cmd)
+		// Checked rather than asserted: handleKey returns tea.Model, and every
+		// path through it returns this Model today. If one ever stops doing so,
+		// handing that model straight back beats a panic mid-gesture.
+		n, ok := next.(Model)
+		if !ok {
+			return next, tea.Batch(cmds...)
+		}
+		cur = n
+	}
+	return cur, tea.Batch(cmds...)
+}
+
+// Update wraps the real handler to keep mouse capture tied to the overlay.
+//
+// The mouse is claimed only while the detail overlay is open, and released the
+// moment it closes. That is the whole trick to not making people hold shift:
+// claiming the mouse is what stops the terminal doing its own text selection
+// and copy-on-select, so hoard claims it for the one view that needs a scroll
+// gesture and hands it back everywhere else. In the panes — where card names
+// and prices are what anyone would want to copy — selection behaves as it does
+// in any other program, and the terminal's own alternate-scroll keeps
+// translating the wheel into the arrow keys the panes already answer.
+//
+// Derived here rather than emitted from the open and close sites: there is one
+// place the overlay opens and four where it closes, and a fifth added later
+// would silently leave the mouse captured over the panes.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	had := m.detail != nil
+	next, cmd := m.update(msg)
+	n, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	switch now := n.detail != nil; {
+	case now && !had:
+		return n, tea.Batch(cmd, tea.EnableMouseCellMotion)
+	case !now && had:
+		return n, tea.Batch(cmd, tea.DisableMouse)
+	}
+	return n, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -930,6 +1023,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.transmitSettle())
 		}
 		return m, tea.Batch(cmds...)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case marketMsg:
@@ -1032,14 +1127,60 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.detail = nil
 	case "tab":
-		// Deep in a long held list the only route back to the links was ↓
-		// past every remaining row; tab flips zones directly from anywhere,
-		// scrolling the newly active zone into view.
+		// A tab order, not a zone toggle: the row's fields in turn, then the
+		// links, then back to the row. Tab means "the next thing" everywhere
+		// else, and a key that jumped straight past four editable fields to a
+		// different strip of the overlay did not.
+		//
+		// ←/→ still walk the fields and ↑/↓ still walk the rows, so nothing
+		// here is the only way to reach anything: tab is what you press when
+		// you do not want to think about which axis you are on. Deep in a long
+		// held list the links are at most heldFieldCount presses away, which is
+		// what this replaced ↓-past-every-row with.
 		if m.detail.zone == zoneHeld {
+			if m.detail.heldField < heldFieldCount-1 {
+				m.detail.heldField++
+				break
+			}
+			// Out of the row and onto the first link, not merely into the
+			// zone: landing on whichever link the cursor last sat on would
+			// skip the ones before it, and the order would depend on history.
 			m.detail.zone = zoneLinks
+			m.detail.linkCursor = 0
 			m.detail.scroll = 1 << 20 // the links render last; clamped at render
-		} else if len(m.detail.holdings) > 0 {
+			break
+		}
+		if n := len(m.detail.links); m.detail.linkCursor < n-1 {
+			m.detail.linkCursor++
+			break
+		}
+		// Past the last link, back to the top of the row.
+		if len(m.detail.holdings) > 0 {
 			m.detail.zone = zoneHeld
+			m.detail.heldField = 0
+			m.detail.scrollHeldIntoView = true
+		}
+	case "shift+tab":
+		// The same order backwards. A tab order without a reverse strands
+		// anyone who overshoots by one.
+		if m.detail.zone == zoneHeld {
+			if m.detail.heldField > 0 {
+				m.detail.heldField--
+				break
+			}
+			// Before the first field is the last link.
+			m.detail.zone = zoneLinks
+			m.detail.linkCursor = max(len(m.detail.links)-1, 0)
+			m.detail.scroll = 1 << 20
+			break
+		}
+		if m.detail.linkCursor > 0 {
+			m.detail.linkCursor--
+			break
+		}
+		if len(m.detail.holdings) > 0 {
+			m.detail.zone = zoneHeld
+			m.detail.heldField = heldFieldCount - 1
 			m.detail.scrollHeldIntoView = true
 		}
 	case "up", "k":

@@ -6,7 +6,9 @@ package browse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1398,7 +1400,7 @@ func TestFoilTreatmentDisplays(t *testing.T) {
 // tab flips which zone the arrows drive — from anywhere in a long held
 // list, not just off its bottom edge — scrolling the activated zone into
 // view.
-func TestDetailTabTogglesZones(t *testing.T) {
+func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
@@ -1417,9 +1419,18 @@ func TestDetailTabTogglesZones(t *testing.T) {
 		t.Fatalf("setup: detail should open in the links zone")
 	}
 
-	m = key(m, "tab")
+	// Tab is a single cycle through every stop — each link, then each field of
+	// the held row — so reaching the held zone means walking out of the links
+	// rather than one press. Bounded, so a regression that never arrives fails
+	// here instead of spinning.
+	for range len(m.detail.links) + 1 {
+		if m.detail.zone == zoneHeld {
+			break
+		}
+		m = key(m, "tab")
+	}
 	if m.detail.zone != zoneHeld || !m.detail.scrollHeldIntoView {
-		t.Fatalf("tab should enter the held zone and request a scroll: zone=%d scroll=%v",
+		t.Fatalf("tab should walk out of the links into the held zone and request a scroll: zone=%d scroll=%v",
 			m.detail.zone, m.detail.scrollHeldIntoView)
 	}
 	// ←/→ now drive the field cursor, not the links.
@@ -1430,17 +1441,26 @@ func TestDetailTabTogglesZones(t *testing.T) {
 			m.detail.heldField, m.detail.linkCursor)
 	}
 
-	m = key(m, "tab")
+	// And back out of the fields to the links, the same way.
+	for range heldFieldCount + 1 {
+		if m.detail.zone == zoneLinks {
+			break
+		}
+		m = key(m, "tab")
+	}
 	if m.detail.zone != zoneLinks {
-		t.Fatalf("tab should return to the links zone, got %d", m.detail.zone)
+		t.Fatalf("tab should walk out of the fields to the links zone, got %d", m.detail.zone)
 	}
 	if m.detail.scroll == 0 {
 		t.Errorf("tab to links should scroll toward them (clamped at render)")
 	}
+	// Captured here, not earlier: tab now walks the link cursor itself, so a
+	// value read before the traversal is stale by the time → is pressed.
+	atLinks := m.detail.linkCursor
 	m = key(m, "right")
-	if m.detail.linkCursor != was+1 {
+	if m.detail.linkCursor != atLinks+1 {
 		t.Errorf("right in the links zone moved link %d→%d, want %d",
-			was, m.detail.linkCursor, was+1)
+			atLinks, m.detail.linkCursor, atLinks+1)
 	}
 }
 
@@ -1660,5 +1680,233 @@ func TestDetailCompsRowPerSheetOnly(t *testing.T) {
 	out = strings.Join(m.hoardLines(d, 140), "\n")
 	if !strings.Contains(out, "etched") || !strings.Contains(out, "$6.99") {
 		t.Errorf("a real etched row must still render:\n%s", out)
+	}
+}
+
+// The overlay's lower half — PRICE, COMPS, LINKS — is reachable by pgdn, and
+// pgdn is not a key most people know is there. The arrow keys cannot stand in
+// for it: they drive the held-list cursor, so the oracle text and the art have
+// nothing to walk. The wheel is the affordance that needs no instruction.
+func TestDetailScrollsOnWheel(t *testing.T) {
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	m = next.(Model)
+
+	wheel := func(m Model, b tea.MouseButton) Model {
+		next, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: b})
+		return next.(Model)
+	}
+
+	m = wheel(m, tea.MouseButtonWheelDown)
+	if m.detail.scroll == 0 {
+		t.Fatal("wheel down did not scroll the overlay")
+	}
+	down := m.detail.scroll
+
+	m = wheel(m, tea.MouseButtonWheelUp)
+	if m.detail.scroll >= down {
+		t.Errorf("wheel up left scroll at %d, want less than %d", m.detail.scroll, down)
+	}
+
+	// The top is a floor, not a cliff: over-scrolling up must not drive the
+	// offset negative and index off the front of the line slice.
+	for range 10 {
+		m = wheel(m, tea.MouseButtonWheelUp)
+	}
+	if m.detail.scroll != 0 {
+		t.Errorf("scroll = %d after over-scrolling up, want 0", m.detail.scroll)
+	}
+
+	// A wheel event with no overlay open must not panic or scroll anything.
+	m.detail = nil
+	_ = wheel(m, tea.MouseButtonWheelDown)
+}
+
+// Claiming the mouse silences the terminal's alternate-scroll translation, so
+// the panes stop scrolling the moment mouse reporting is switched on unless
+// hoard replays what the terminal used to send. That regression shipped once;
+// this is the guard.
+func TestPanesScrollOnWheel(t *testing.T) {
+	m := newTestModel(t, testStore())
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = next.(Model)
+
+	wheel := func(m Model, b tea.MouseButton) Model {
+		next, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: b})
+		return next.(Model)
+	}
+
+	start := m.cursor[paneContainers]
+	m = wheel(m, tea.MouseButtonWheelDown)
+	if m.cursor[paneContainers] == start {
+		t.Fatalf("wheel down left the cursor at %d — the panes are not scrolling", start)
+	}
+	moved := m.cursor[paneContainers]
+
+	m = wheel(m, tea.MouseButtonWheelUp)
+	if m.cursor[paneContainers] >= moved {
+		t.Errorf("wheel up left the cursor at %d, want less than %d", m.cursor[paneContainers], moved)
+	}
+
+	// The wheel must land on the same path the arrow keys use, so it inherits
+	// their clamping rather than needing its own.
+	for range 20 {
+		m = wheel(m, tea.MouseButtonWheelUp)
+	}
+	if got := m.cursor[paneContainers]; got < 0 {
+		t.Errorf("cursor = %d after over-scrolling up, want it clamped", got)
+	}
+}
+
+// Claiming the mouse is what takes the terminal's text selection and
+// copy-on-select away, so it is claimed only while the overlay is open. Getting
+// this wrong is invisible in a test that only checks scrolling: the feature
+// works and selection is quietly broken everywhere.
+func TestMouseCaptureFollowsTheOverlay(t *testing.T) {
+	// tea.EnableMouseCellMotion and tea.DisableMouse are funcs, not values, so
+	// the batch is inspected by running it and reading the messages back.
+	msgs := func(cmd tea.Cmd) []string {
+		var out []string
+		if cmd == nil {
+			return out
+		}
+		switch v := cmd().(type) {
+		case tea.BatchMsg:
+			for _, c := range v {
+				if c == nil {
+					continue
+				}
+				out = append(out, fmt.Sprintf("%T", c()))
+			}
+		default:
+			out = append(out, fmt.Sprintf("%T", v))
+		}
+		return out
+	}
+	has := func(got []string, want string) bool {
+		return slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, want) })
+	}
+
+	m := newTestModel(t, testStore())
+	m = key(m, "tab")
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	if got := msgs(cmd); !has(got, "enableMouseCellMotion") {
+		t.Errorf("opening the overlay sent %v, want the mouse enabled", got)
+	}
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.detail != nil {
+		t.Fatal("overlay still open")
+	}
+	if got := msgs(cmd); !has(got, "disableMouse") {
+		t.Errorf("closing the overlay sent %v, want the mouse released", got)
+	}
+}
+
+// Tab walks the held row's fields and then falls through to the links, rather
+// than jumping straight past every field to a different zone. The arrows must
+// keep working unchanged — tab is a convenience, never the only route.
+func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
+	// The overlay needs a holding to have fields at all, and an opener for the
+	// links to exist: with neither, tab has nowhere to go.
+	st := testStore()
+	st.holdingsByName = map[string][]store.Holding{
+		"Bitterblossom": {{
+			ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
+			Finish: "nonfoil", Quantity: 4,
+			ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85",
+		}},
+	}
+	m := newTestModel(t, st)
+	m.openURL = func(string) error { return nil }
+	m = key(m, "tab")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.detail == nil {
+		t.Fatal("no detail")
+	}
+	if len(m.detail.holdings) == 0 {
+		t.Fatal("no holdings — the fixture is wrong, not the tab order")
+	}
+	links := len(m.detail.links)
+	if links < 2 {
+		t.Fatalf("fixture has %d links; need at least 2 to prove tab walks them", links)
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+
+	// The overlay opens on the links, so that is where the cycle starts.
+	if m.detail.zone != zoneLinks || m.detail.linkCursor != 0 {
+		t.Fatalf("opened at zone=%d link=%d, want the first link", m.detail.zone, m.detail.linkCursor)
+	}
+
+	// One tab per remaining link, in order, without leaving the zone.
+	for want := 1; want < links; want++ {
+		m = key(m, "tab")
+		if m.detail.zone != zoneLinks || m.detail.linkCursor != want {
+			t.Fatalf("tab gave zone=%d link=%d, want link %d", m.detail.zone, m.detail.linkCursor, want)
+		}
+	}
+
+	// Past the last link, into the row at its first field.
+	m = key(m, "tab")
+	if m.detail.zone != zoneHeld || m.detail.heldField != fieldQty {
+		t.Fatalf("zone=%d field=%d after the last link, want the row's first field",
+			m.detail.zone, m.detail.heldField)
+	}
+
+	// One tab per field, in order, without leaving the zone.
+	for want := fieldSet; want < heldFieldCount; want++ {
+		m = key(m, "tab")
+		if m.detail.zone != zoneHeld || m.detail.heldField != want {
+			t.Fatalf("tab gave zone=%d field=%d, want field %d", m.detail.zone, m.detail.heldField, want)
+		}
+	}
+
+	// Past the last field, back to the FIRST link — not wherever the cursor was
+	// left, or the order would depend on history.
+	m = key(m, "tab")
+	if m.detail.zone != zoneLinks || m.detail.linkCursor != 0 {
+		t.Fatalf("zone=%d link=%d after the last field, want the first link",
+			m.detail.zone, m.detail.linkCursor)
+	}
+
+	// shift+tab is the same cycle backwards.
+	m = key(m, "shift+tab")
+	if m.detail.zone != zoneHeld || m.detail.heldField != heldFieldCount-1 {
+		t.Fatalf("shift+tab gave zone=%d field=%d, want the row's last field",
+			m.detail.zone, m.detail.heldField)
+	}
+	for range heldFieldCount - 1 {
+		m = key(m, "shift+tab")
+	}
+	if m.detail.zone != zoneHeld || m.detail.heldField != fieldQty {
+		t.Fatalf("shift+tab gave zone=%d field=%d, want the row's first field",
+			m.detail.zone, m.detail.heldField)
+	}
+	m = key(m, "shift+tab")
+	if m.detail.zone != zoneLinks || m.detail.linkCursor != links-1 {
+		t.Fatalf("shift+tab gave zone=%d link=%d, want the last link",
+			m.detail.zone, m.detail.linkCursor)
+	}
+
+	// The arrows are untouched: ←/→ still walk their zone's cursor, so nobody
+	// has to tab through everything to move one step.
+	before := m.detail.linkCursor
+	m = key(m, "left")
+	if m.detail.linkCursor != before-1 {
+		t.Errorf("← gave link %d, want %d — the arrows must keep working", m.detail.linkCursor, before-1)
 	}
 }

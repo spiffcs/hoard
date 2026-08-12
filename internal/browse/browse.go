@@ -202,6 +202,12 @@ func Run(ctx context.Context, st Store, opts ...Option) (tui.Summary, error) {
 		return tui.Summary{}, err
 	}
 	m.ctx = ctx
+	// No mouse capture at startup. It is switched on only while the detail
+	// overlay is open (see Model.Update) and off again when it closes, because
+	// capturing the mouse is what takes the terminal's own text selection and
+	// copy-on-select away. The panes keep both, and keep scrolling through the
+	// terminal's alternate-scroll translation, which is what was moving their
+	// cursors before hoard handled a mouse event at all.
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	final, err := p.Run()
 	if err != nil {
