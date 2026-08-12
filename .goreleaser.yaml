@@ -88,7 +88,13 @@ checksum:
 sboms:
   - id: archive
     artifacts: archive
-    cmd: .tool/syft
+    # `../` because GoReleaser runs SBOM commands with dist/ as the working
+    # directory, so a repo-relative path resolves to dist/.tool/syft and fails
+    # with "no such file or directory" — which is what happened on the first
+    # release ever attempted, after the binaries were built, signed and
+    # notarized. dist/ is a sibling of .tool/ at the repo root, so one level up
+    # is the toolchain. Reproduce with: goreleaser release --snapshot --clean.
+    cmd: ../.tool/syft
     args: ["$artifact", "--output", "spdx-json=$document"]
     documents:
       - "{{ .ArtifactName }}.sbom.json"
