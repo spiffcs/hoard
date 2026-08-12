@@ -8,6 +8,7 @@ package hoardjson
 
 import (
 	"math"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/market"
@@ -314,6 +315,9 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 		RecordedSince: recordedSince,
 		Changes:       make([]PriceChange, 0, len(changes)),
 	}
+	// One instant for the whole document: judged per row, a run crossing
+	// midnight could mark two rows of the same set differently.
+	now := time.Now()
 	for _, c := range store.MoversByImpact(changes) {
 		m.Changes = append(m.Changes, PriceChange{
 			Card: Card{
@@ -332,6 +336,7 @@ func FromMovers(since, recordedSince string, changes []store.PriceChange) Docume
 			ImpactUsd: cents(c.TotalDelta()),
 			PctChange: moverPct(c),
 			Source:    c.Source,
+			Settling:  c.Settling(now),
 		})
 	}
 	doc := envelope(KindMovers)

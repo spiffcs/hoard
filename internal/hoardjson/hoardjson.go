@@ -87,7 +87,20 @@ import (
 // from one the catalog supplied — which is precisely the confusion a
 // correction must not create. A consumer totalling holdings can now ask which
 // of its figures hoard substituted, and what each one replaced.
-const SchemaVersion = "1.1.2"
+//
+// 1.1.3 adds settling to a movers change, optional and absent where the row
+// counts normally, so a 1.1.2 consumer reading a 1.1.3 document sees exactly
+// what it saw before. Bumped rather than folded into 1.1.2 for the reason
+// given above: 1.1.2 is committed on main.
+//
+// The field marks a row whose set is too new for its price to mean anything —
+// a market price averages completed sales, and a freshly released set has an
+// average over none. hoard's own net holds those rows out, so without the
+// field a consumer summing impactUsd would reach a number hoard never prints
+// and have no way to see why. The rows stay in the document: they are real
+// movement, and which totals they belong in is the consumer's call to make
+// with the same fact hoard used.
+const SchemaVersion = "1.1.3"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -332,6 +345,16 @@ type PriceChange struct {
 	// Source names where the new price came from: "scryfall", or the vendor
 	// behind a fallback.
 	Source string `json:"source"`
+	// Settling marks a row whose set is too new for its prices to carry
+	// information — a market price averages completed sales, and a set with
+	// none has an average over nothing. hoard's own totals hold these rows
+	// out; the field is here so a consumer summing impactUsd can reach the
+	// same figure instead of a different one.
+	//
+	// Absent rather than false when the row counts normally, which keeps it
+	// optional in the emitted schema — schemagen makes a field without
+	// omitempty required, and every document already written lacks it.
+	Settling bool `json:"settling,omitempty"`
 }
 
 // Arbitrage is one pass of vendor disagreement over everything held: the full

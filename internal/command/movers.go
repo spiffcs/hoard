@@ -34,7 +34,13 @@ func NewCmdMovers(a *app) *cobra.Command {
 		// would break them — so a Long is only as narrow as it was written.
 		Long: "Compares today's price against the last one recorded on\n" +
 			"or before the cutoff. Prices are observed when a refresh\n" +
-			"runs, not continuously.",
+			"runs, not continuously.\n\n" +
+			"The net holds out sets released in the last " +
+			strconv.Itoa(store.DefaultSettlingDays) + " days: a\n" +
+			"market price averages completed sales, and a set with\n" +
+			"none has an average over nothing. The rows stay listed.\n" +
+			"Set " + store.SettlingDaysEnv + " to change the window,\n" +
+			"or to 0 to count every set.",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runMovers(a.store, a.env, since, limit)

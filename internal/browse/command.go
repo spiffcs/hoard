@@ -418,6 +418,18 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
 		},
 		{
+			// Offered on the sets lens as well as the movers view: the window
+			// is what puts the mark beside a set row, so a reader who is
+			// looking at the mark and wondering about it can reach the dial
+			// from there rather than having to know it lives under movers.
+			id: "movers.settling", title: "SetSettlingWindow",
+			aliases: "settling new set release days window hold out net exclude preorder",
+			desc:    "Days a new set is held out of the movers net. 0 counts every set.",
+			where:   func(m *Model) bool { return m.view == viewMovers || m.setsMode },
+			rank:    onView(viewMovers, 1),
+			run:     func(m *Model) tea.Cmd { m.promptSetSettlingWindow(); return nil },
+		},
+		{
 			id: "market.pennies", title: "TogglePennyFilter",
 			aliases: "pennies cheap bulk noise floor show hide",
 			desc:    "Show or hide market rows whose low ask sits under the floor. Hidden by default.",

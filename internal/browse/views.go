@@ -466,9 +466,22 @@ func (m Model) viewHeader() (title, totals string) {
 	case viewMovers:
 		// Count and net speak for the whole filtered ranking, not the page
 		// on screen; the page phrase beside them says where the reader is.
+		//
+		// The net holds out sets still settling after release, because this
+		// figure is what a collection gets read by and a set's first weeks of
+		// price discovery would swamp it. The one place it does not is that
+		// set's own view: scoped there, the reader is asking about the set,
+		// and holding out the whole table would leave a net of nothing. The
+		// count is never held out — the rows are all still on screen.
+		now := m.now()
 		var net float64
-		for _, c := range m.filteredMovers {
-			net += c.TotalDelta()
+		var heldOut int
+		if sel := m.selectedContainer(); sel != nil && sel.settling(now) {
+			for _, c := range m.filteredMovers {
+				net += c.TotalDelta()
+			}
+		} else {
+			net, heldOut = store.NetMoved(m.filteredMovers, now)
 		}
 		// The summary trails the page phrase so the net lands at the far
 		// right, where these totals are anchored — directly over IMPACT, the
@@ -492,6 +505,10 @@ func (m Model) viewHeader() (title, totals string) {
 		}
 		summary := fmt.Sprintf("%s moved · %s",
 			ui.Count(len(m.filteredMovers)), env.Diverge(sign)(ui.SignedMoney(net)))
+		if heldOut > 0 {
+			summary += " · " + ui.PluralCount(heldOut,
+				"settling set held out", "settling sets held out")
+		}
 		since := m.moversCutoff().Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since + m.viewScope(),
 			joinPhrases(m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers)), summary)

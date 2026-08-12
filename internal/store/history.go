@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
@@ -24,10 +28,14 @@ type PriceChange struct {
 	Name            string
 	SetCode         string
 	CollectorNumber string
-	Finish          string
-	Copies          int
-	Old             float64
-	New             float64
+	// ReleasedAt is the printing's release date (YYYY-MM-DD), empty when the
+	// card's document has not been stored — same semantics as Lang. Settling
+	// reads it.
+	ReleasedAt string
+	Finish     string
+	Copies     int
+	Old        float64
+	New        float64
 	// Source names where the new price came from: "scryfall", or the vendor
 	// behind a fallback.
 	Source string
@@ -55,6 +63,147 @@ func (p PriceChange) Delta() float64 { return p.New - p.Old }
 // figure worth sorting on: a $2 rise on a card owned forty times matters more
 // than a $20 rise on a single copy.
 func (p PriceChange) TotalDelta() float64 { return float64(p.Copies) * p.Delta() }
+
+// DefaultSettlingDays is how many days a set's movement is held out of
+// collection-wide totals, counted from its release date, when nothing
+// overrides it.
+const DefaultSettlingDays = 90
+
+// SettlingDaysEnv names the override. A bare count of days, read once per
+// process; 0 turns the window off and every set counts, which is the supported
+// way to see the unexcluded net beside the excluded one.
+const SettlingDaysEnv = "HOARD_SETTLING_DAYS"
+
+// settlingDays is the window in force, -1 until something resolves it. It is
+// process-global rather than carried on a Store because every reader of the
+// rule — the sidebar, both nets, the JSON row — has to see one answer; a
+// window that differed between two surfaces of the same frame is the exact
+// disagreement Settling exists to prevent.
+//
+// Atomic rather than plain: browse's long operations run on their own
+// goroutines and render from the model while they do.
+var settlingDays = func() *atomic.Int64 {
+	var v atomic.Int64
+	v.Store(-1)
+	return &v
+}()
+
+// settlingDaysFrom parses the override, falling back to the default on
+// anything it cannot use.
+//
+// Unset and unusable are the same answer on purpose, matching the scanner's
+// tuning knobs: these are operator dials, and a typo in one must not stop a
+// command that would otherwise work. A negative count is refused rather than
+// clamped — it reads as an attempt to say something the dial cannot say, and
+// silently treating it as "off" would hide the mistake behind a plausible
+// behavior. Zero IS meaningful and is honored.
+func settlingDaysFrom(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultSettlingDays
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return DefaultSettlingDays
+	}
+	return n
+}
+
+// SettlingDays is the window in force. Unresolved, it takes the environment's
+// answer — so a command that never thinks about the window still gets the
+// override for free.
+func SettlingDays() int {
+	if v := settlingDays.Load(); v >= 0 {
+		return int(v)
+	}
+	settlingDays.CompareAndSwap(-1, int64(settlingDaysFrom(os.Getenv(SettlingDaysEnv))))
+	return int(settlingDays.Load())
+}
+
+// SetSettlingDays moves the window for the rest of this process.
+//
+// It is what the browser's dial writes, and it deliberately outranks the
+// environment: a reader changing the window while looking at the table sees
+// the table change under the answer, so the most recent explicit instruction
+// is the one that must win. The environment still decides where a run starts —
+// see the browser's own resolution order.
+//
+// A negative is refused for the reason settlingDaysFrom refuses one: it says
+// something the dial cannot say, and quietly reading it as "off" would hide
+// the mistake.
+func SetSettlingDays(days int) {
+	if days < 0 {
+		days = DefaultSettlingDays
+	}
+	settlingDays.Store(int64(days))
+}
+
+// Settling reports whether this row belongs to a set too new for its prices to
+// carry information yet.
+//
+// A market price is an average over COMPLETED SALES, so a set with no sales
+// behind it has an average over an empty set — a non-price, not a low one. As
+// real sales land in the weeks after release, every printing corrects at once,
+// and that correction is large enough to dominate a whole collection's net
+// while saying nothing about the collection. Held out of the roll-up, it stays
+// visible everywhere a set is being read on its own terms.
+//
+// A row whose set has no release date is NOT settling. An unknown date has to
+// count normally rather than drop out of a total in silence — the same call
+// unpricedPredicate makes when it scores an unpriceable card $0 instead of
+// dropping the row.
+//
+// The window is its first SettlingDays days, so a set released exactly that
+// long ago has cleared. The comparison is on ISO dates, which sort
+// chronologically as strings (see backfill.go); a release date in the future —
+// a set still on preorder, the sharpest case there is — compares greater than
+// the cutoff and is settling, needing no case of its own.
+func (p PriceChange) Settling(now time.Time) bool { return Settling(p.ReleasedAt, now) }
+
+// Settling is the rule behind PriceChange.Settling, reachable without a row.
+// The sidebar marks a set from a SetSummary and the net holds one out from a
+// PriceChange; those two must never disagree about which sets are settling, so
+// there is one rule and two ways in rather than two copies of a date
+// comparison.
+func Settling(releasedAt string, now time.Time) bool {
+	return settlingWithin(releasedAt, now, SettlingDays())
+}
+
+// settlingWithin is Settling with the window handed to it, so the rule can be
+// tested across windows without an environment to set.
+//
+// A window of zero holds nothing out: no set is newer than a window with no
+// days in it, and the mark, the held-out clause and the exclusion all fall
+// away together because each reads this one answer.
+func settlingWithin(releasedAt string, now time.Time, days int) bool {
+	if releasedAt == "" || days <= 0 {
+		return false
+	}
+	return releasedAt > now.AddDate(0, 0, -days).Format(time.DateOnly)
+}
+
+// NetMoved sums the movement that counts toward a collection-wide total, and
+// reports how many distinct sets it held out so the caller can say so rather
+// than quietly print a smaller number.
+//
+// It lives here beside MoverExtents for the reason that one does: two
+// frontends reporting different nets for one collection is the disagreement
+// this forecloses. A caller already scoped to a single set wants the plain sum
+// instead — that view is exactly where a settling set's movement belongs.
+func NetMoved(rows []PriceChange, now time.Time) (net float64, heldOutSets int) {
+	var held map[string]struct{}
+	for _, c := range rows {
+		if c.Settling(now) {
+			if held == nil {
+				held = make(map[string]struct{})
+			}
+			held[c.SetCode] = struct{}{}
+			continue
+		}
+		net += c.TotalDelta()
+	}
+	return net, len(held)
+}
 
 // PctDefined reports whether Pct is a real figure. It is not when the card was
 // previously worth nothing: any rise from zero is an infinite percentage, which
@@ -236,7 +385,7 @@ WITH eff AS (` + effectivePrices + `),
      owned AS (` + ownedByPriceFinish + `),
      latest AS (` + fmt.Sprintf(pricesAt, newestObservation) + `)
 SELECT e.sid, e.pfinish, e.price, e.source, c.name, c.set_code, c.collector_number,
-       COALESCE(o.copies, 0), l.price
+       COALESCE(c.released_at, ''), COALESCE(o.copies, 0), l.price
 FROM eff e
 JOIN cards c ON c.scryfall_id = e.sid
 LEFT JOIN latest l ON l.sid = e.sid AND l.pfinish = e.pfinish
@@ -253,7 +402,7 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 		var p PriceChange
 		var old sql.NullFloat64
 		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.New, &p.Source, &p.Name,
-			&p.SetCode, &p.CollectorNumber, &p.Copies, &old); err != nil {
+			&p.SetCode, &p.CollectorNumber, &p.ReleasedAt, &p.Copies, &old); err != nil {
 			return nil, err
 		}
 		seen = append(seen, p)
@@ -401,7 +550,7 @@ WITH owned AS (`+ownedByPriceFinish+`),
      base AS (`+fmt.Sprintf(pricesAt, windowBaseline)+`)
 SELECT c.scryfall_id, cur.pfinish, c.name, c.set_code, c.collector_number,
        o.copies, base.price, cur.price, cur.source, c.color_identity, c.promo_types,
-       COALESCE(c.lang, ''), base.as_of
+       COALESCE(c.lang, ''), COALESCE(c.released_at, ''), base.as_of
 FROM owned o
 JOIN cur ON cur.sid = o.sid AND cur.pfinish = o.pfinish
 JOIN base ON base.sid = o.sid AND base.pfinish = o.pfinish
@@ -418,7 +567,7 @@ WHERE base.as_of < cur.as_of AND cur.price <> base.price`, since)
 		var colors, promos sql.NullString
 		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.Name, &p.SetCode,
 			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors, &promos,
-			&p.Lang, &p.OldAsOf); err != nil {
+			&p.Lang, &p.ReleasedAt, &p.OldAsOf); err != nil {
 			return nil, err
 		}
 		p.ColorIdentity = parseColorIdentity(colors)

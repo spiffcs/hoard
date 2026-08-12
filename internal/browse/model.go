@@ -57,6 +57,10 @@ type container struct {
 	// pretty set name, which several sets could theoretically share).
 	setCode string
 
+	// releasedAt is a kindSet row's release date (YYYY-MM-DD), empty when
+	// unknown. It is what marks the row as still settling — see settling.
+	releasedAt string
+
 	// meta is what a deck needs to be recreated after it is removed. Carried on
 	// the row rather than re-read at deletion time because by then the container
 	// is gone and there is nothing left to read it from.
@@ -448,6 +452,7 @@ func New(st Store, opts ...Option) (Model, error) {
 		opt(&m)
 	}
 	m.loadPennyFilters()
+	m.loadSettlingWindow()
 	if err := m.loadContainers(); err != nil {
 		return Model{}, err
 	}

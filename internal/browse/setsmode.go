@@ -12,10 +12,15 @@ package browse
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // loadSetContainers reads the left pane in sets mode: All Cards, then one
@@ -36,7 +41,8 @@ func (m *Model) loadSetContainers() error {
 			// (positive) container id.
 			ID:   allCardsID - 1 - int64(i),
 			Name: s.Name, Kind: kindSet, setCode: s.Code,
-			Copies: s.Copies, Value: s.Value,
+			releasedAt: s.ReleasedAt,
+			Copies:     s.Copies, Value: s.Value,
 		})
 		out[0].Copies += s.Copies
 		out[0].Value += s.Value
@@ -44,6 +50,111 @@ func (m *Model) loadSetContainers() error {
 	m.containers = out
 	m.clampCursor(paneContainers)
 	return nil
+}
+
+// settlingMark is what a set row wears while its prices are too new to count
+// toward the collection's net. It leads the row in a column of its own — see
+// containerLines for why it cannot trail the name — and it is the reason the
+// sets-mode help gutter grows a legend.
+//
+// Note for whoever wires up ui.Estimated in this package: that helper spends
+// the same asterisk on a different meaning (a price the primary source could
+// not supply). Nothing in browse calls it today, so the two do not collide
+// yet — but they would, in the same table.
+const settlingMark = "*"
+
+// setSettlingDays is the settling window's preference key. It persists for the
+// reason the penny filters do: a window moved during a session should still be
+// the window tomorrow.
+const setSettlingDays = "movers.settlingDays"
+
+// loadSettlingWindow resolves the window this run starts on, in the order
+// environment → stored preference → default.
+//
+// The environment wins at startup because it is an instruction about this run
+// specifically, given before anything was on screen. It does not win for the
+// whole run: SetSettlingWindow overrides it live, since a reader moving the
+// dial watches the table change under the answer and the most recent explicit
+// instruction is the one that has to hold. A garbled stored value leaves the
+// default standing — a preference is never worth failing a launch over.
+func (m *Model) loadSettlingWindow() {
+	if strings.TrimSpace(os.Getenv(store.SettlingDaysEnv)) != "" {
+		return // store.SettlingDays reads it for itself
+	}
+	s, err := m.store.Settings()
+	if err != nil {
+		return
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(s[setSettlingDays])); err == nil && n >= 0 {
+		store.SetSettlingDays(n)
+	}
+}
+
+// promptSetSettlingWindow opens the window's prompt, prefilled with the days
+// in force. Committing re-derives, so the held-out clause and the sidebar
+// marks answer in the same frame the number changes.
+func (m *Model) promptSetSettlingWindow() {
+	m.prompt = &prompt{
+		label:    "hold new sets out of the net for",
+		text:     strconv.Itoa(store.SettlingDays()),
+		help:     "days since release, like 90 (0 counts every set) · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parseSettlingDays(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			n, err := parseSettlingDays(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			store.SetSettlingDays(n)
+			m.deriveView()
+			if n == 0 {
+				m.status, m.statusErr = "settling window off · every set counts", false
+			} else {
+				m.status, m.statusErr = fmt.Sprintf("settling window %s · new sets held out of the movers net",
+					ui.Plural(n, "day", "days")), false
+			}
+			if err := m.store.SaveSettings(map[string]string{setSettlingDays: strconv.Itoa(n)}); err != nil {
+				m.status, m.statusErr = "saving settling window: "+err.Error(), true
+			}
+			return nil
+		},
+	}
+}
+
+// parseSettlingDays reads the prompt's answer. It refuses what the dial
+// cannot say rather than falling back the way the environment does: a person
+// who just typed the value is owed the correction, where a stale export line
+// is owed a working command.
+func parseSettlingDays(text string) (int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, fmt.Errorf("give a number of days, or 0 to count every set")
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a whole number of days", text)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("a window cannot be negative; 0 counts every set")
+	}
+	return n, nil
+}
+
+// settling reports whether this row is a set still inside its settling window,
+// where store.Settling is the one judgement and this is only the row's way in.
+func (c container) settling(now time.Time) bool {
+	return c.Kind == kindSet && store.Settling(c.releasedAt, now)
+}
+
+// anySettling reports whether the left pane is showing a settling set, which
+// is what decides whether the legend explaining the mark is worth a line.
+func (m Model) anySettling(now time.Time) bool {
+	for _, c := range m.containers {
+		if c.settling(now) {
+			return true
+		}
+	}
+	return false
 }
 
 // toggleSetsMode flips the left pane between binders/decks and sets. The

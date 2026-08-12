@@ -287,11 +287,17 @@ func Movers(env ui.Env, changes []store.PriceChange, limit int, window string, c
 	if len(changes) == 0 {
 		return env.Dim()("No price changes "+window+", among printings priced more than once.") + "\n"
 	}
-	var net float64
-	for _, c := range changes {
-		net += c.TotalDelta()
+	// The net is the roll-up figure, so it holds out sets still settling after
+	// release; the table above it does not, because a set's own movement is
+	// real and worth reading. That gap is the reason the sentence names how
+	// many sets it left out rather than printing a quieter number in silence.
+	net, heldOut := store.NetMoved(changes, time.Now())
+	settling := ""
+	if heldOut > 0 {
+		settling = fmt.Sprintf(", holding out %s released in the last %d days",
+			ui.PluralCount(heldOut, "set", "sets"), store.SettlingDays())
 	}
 	return moversTable(env, moverSections(changes, limit), cutoff).Render() + "\n" +
-		env.Dim()(fmt.Sprintf("%s printings moved %s, among those priced more than once. Net change: %s",
-			ui.Count(len(changes)), window, ui.SignedMoney(net))) + "\n"
+		env.Dim()(fmt.Sprintf("%s printings moved %s, among those priced more than once. Net change: %s%s",
+			ui.Count(len(changes)), window, ui.SignedMoney(net), settling)) + "\n"
 }

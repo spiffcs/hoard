@@ -309,14 +309,36 @@ func (m Model) helpRows() int {
 
 // helpRowsKey names everything the five per-view help lines can differ on
 // under helpRows' guard (no palette/filter/pick/overlay, confirm and prompt
-// blanked): the wrap width, the market view's fetch state, and the holdings
-// line's focus/lens/read-only variants.
+// blanked): the wrap width, the market view's fetch state, the holdings
+// line's focus/lens/read-only variants, and whether the sets pane is showing
+// the settling legend.
+//
+// settling earns a field because it is the one entry whose presence turns on
+// data rather than on a key press: a cache keyed without it would hand back a
+// height measured while no set was settling, and the gutter would clip the
+// row the legend had just been given.
 type helpRowsKey struct {
 	width                       int
 	marketLoaded, marketLoading bool
 	focus                       pane
 	setsMode                    bool
 	selKind                     string
+	settling                    bool
+}
+
+// helpRowsKeyFor reads the current state into a key. It is a method rather
+// than three lines inside tallestViewHelpRows so a test can assert that two
+// states which render different help do not collide in the memo — the failure
+// this key exists to prevent is invisible from the outside, since a stale
+// height clips a row rather than raising anything.
+func (m Model) helpRowsKeyFor() helpRowsKey {
+	key := helpRowsKey{width: m.width, focus: m.focus, setsMode: m.setsMode,
+		marketLoaded: m.marketLoaded, marketLoading: m.marketLoading,
+		settling: m.anySettling(m.now())}
+	if sel := m.selectedContainer(); sel != nil {
+		key.selKind = sel.Kind
+	}
+	return key
 }
 
 // tallestViewHelpRows is the gutter reservation: the tallest wrapped help
@@ -327,11 +349,7 @@ type helpRowsKey struct {
 // the per-frame value copies of Model share one cache; a Model built
 // without New (tests) has a nil map and simply recomputes.
 func (m Model) tallestViewHelpRows() int {
-	key := helpRowsKey{width: m.width, focus: m.focus, setsMode: m.setsMode,
-		marketLoaded: m.marketLoaded, marketLoading: m.marketLoading}
-	if sel := m.selectedContainer(); sel != nil {
-		key.selKind = sel.Kind
-	}
+	key := m.helpRowsKeyFor()
 	if rows, ok := m.helpRowsMemo[key]; ok {
 		return rows
 	}
@@ -535,18 +553,41 @@ func (m Model) paneLines(p pane, width int, build func(env ui.Env) ui.Table) []s
 // containerLines renders the left pane, one line per container. On views
 // that grey out containers with nothing to show, the ineligible rows dim —
 // the cursor skips them, and a row that cannot be selected must look it.
+//
+// A set still settling after release wears settlingMark, because its movement
+// is held out of the collection's net and a total that disagrees with the rows
+// above it has to say where the difference went. The mark is text rather than
+// a style, so it survives being read aloud, copied, or run without color.
+//
+// It leads the row in a column of its own rather than trailing the name, which
+// is where it started and where it did not work: NAME is the flexed column, so
+// a name too long for the pane is truncated with an ellipsis — and a mark
+// sitting on the end of that name is the first thing the ellipsis eats. Marvel
+// Super Heroes went unmarked on the owner's own hoard while The Hobbit beside
+// it was marked, which is worse than not marking either. A column ahead of the
+// flex is never the thing that gets cut.
+//
+// Priority makes it pay its own way: blank in every row, the engine drops the
+// column and its gutter entirely, so a hoard with nothing settling is laid out
+// exactly as it was before any of this existed.
 func (m Model) containerLines(width int) []string {
+	now := m.now()
 	return m.paneLines(paneContainers, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
+			{Title: "", Align: ui.Left, Priority: 1},
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8},
 			{Title: "VALUE", Align: ui.Right},
 		}}
 		for i, c := range m.containers {
+			mark := ""
+			if c.settling(now) {
+				mark = settlingMark
+			}
 			if !m.containerEligible(i) {
-				t.AddStyled(env.Dim(), ui.C(c.Name), ui.C(ui.Money(c.Value)))
+				t.AddStyled(env.Dim(), ui.C(mark), ui.C(c.Name), ui.C(ui.Money(c.Value)))
 				continue
 			}
-			t.Add(ui.C(c.Name), ui.C(ui.Money(c.Value)))
+			t.Add(ui.C(mark), ui.C(c.Name), ui.C(ui.Money(c.Value)))
 		}
 		return t
 	})
@@ -926,9 +967,17 @@ func (m Model) helpLine() string {
 		// The sets pane is a read-only lens: no create/rename/remove verbs,
 		// just the toggle back.
 		if m.setsMode {
-			return ui.Help(tail(ui.HelpCommands, ui.K("tab", "cards"),
+			e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", "cards"),
 				ui.K("B", "binders/decks"), ui.K("a", "add cards"), ui.K("/", "filter"),
-				ui.K("M", "floor"), ui.K("F", "refresh prices"), ui.K("v", "views"))...)
+				ui.K("M", "floor"), ui.K("F", "refresh prices"), ui.K("v", "views")}
+			// The mark says nothing on its own and it changes what the net
+			// counts, so it is explained wherever it can be seen — and only
+			// while it can be, since a legend for a symbol nowhere on screen
+			// costs a gutter row to teach nothing.
+			if m.anySettling(m.now()) {
+				e = append(e, ui.Say(settlingMark+" new set: held out of movers net"))
+			}
+			return ui.Help(tail(e...)...)
 		}
 		e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", "cards"), ui.K("B", "by set"),
 			ui.K("n", "new binder"), ui.K("a", "add cards")}
