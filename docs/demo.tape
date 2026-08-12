@@ -29,16 +29,21 @@ Enter
 # this repository — and the recording would show its behaviour, not main's.
 Type `export PATH="$PWD:$PATH"`
 Enter
-# Pin the image tier instead of letting hoard detect it. vhs inherits the
-# environment of whatever terminal launched it, so recording from Ghostty (or
-# kitty, or WezTerm) leaks TERM_PROGRAM through and hoard reasonably concludes it
-# may send kitty graphics — which vhs renders via xterm.js, which cannot display
-# them, so the card art came out as a block of purple garbage.
+# No card art in the recording. Detection cannot be trusted here in either
+# direction — vhs inherits the launching terminal's environment, so recording
+# from Ghostty leaks TERM_PROGRAM through and hoard sends kitty graphics that
+# xterm.js renders as purple garbage; and vhs sets no COLORTERM, so plain
+# detection lands on ImageNone anyway. So the tier is named explicitly.
 #
-# halfblock rather than merely unsetting the leak: vhs sets no COLORTERM either,
-# so detection on its own lands on ImageNone and the detail view shows no art at
-# all. Naming the tier is the only way to actually film the card images.
-Type `export HOARD_CARD_IMAGES=halfblock`
+# `off` rather than `halfblock`, deliberately. Halfblocks draw one pixel per
+# column and two per row, so even at a generous width the card is a few thousand
+# pixels of a 488x680 scan — legible as "a card", mush as an image. What a real
+# user sees in Ghostty or kitty is the terminal scaling the full-resolution
+# image, and no recording vhs can make will show that. Given the choice between
+# filming something worse than the product and filming the layout without it,
+# this films the layout: with art off, HELD, PRICE with all three sparklines,
+# COMPS and LINKS fit on one screen with nothing scrolled off.
+Type `export HOARD_CARD_IMAGES=off`
 Enter
 Type `export HOARD_DB="$(mktemp -d)/demo.db"`
 Enter

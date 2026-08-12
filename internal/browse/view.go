@@ -863,7 +863,7 @@ func (m Model) helpLine() string {
 		if m.detail.zone == zoneHeld {
 			return ui.Help(ui.K("↑/↓", "held rows"), ui.K("←/→", "field"),
 				ui.K("enter", "edit"), ui.K("+/-", "qty"), ui.K("d", "remove"),
-				ui.K("tab", "links"), ui.K("esc", "back"), ui.K(quit, "quit"))
+				ui.K("tab", "next field"), ui.K("esc", "back"), ui.K(quit, "quit"))
 		}
 		var e []ui.HelpEntry
 		if len(m.detail.holdings) > 0 {

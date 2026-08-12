@@ -28,8 +28,14 @@ func WithCardImage(f CardImageFunc) Option {
 
 // artColsMax is the art at its widest, in the overflow layout that runs
 // it down the right edge beside HELD and PRICE. The tuning knob: ~0.7
-// rows of height per column of width (a 40-col card is ~27 rows).
-const artColsMax = 40
+// rows of height per column of width (a 42-col card is ~29 rows).
+//
+// 42 and not more, because this is also the width at which the layout
+// changes shape: the overflow layout needs width - art - 2 >= artMinTextCols,
+// so at 43 a 140-column terminal stops putting the art beside the analysis
+// and stacks it underneath instead. 42 is the largest card that costs no
+// terminal its side-by-side layout.
+const artColsMax = 42
 
 // artMinTextCols is the text column's floor in the overflow layout: the
 // widest un-truncated hoard row (the PRICE spread caption, ~95 cells at

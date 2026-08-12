@@ -49,26 +49,24 @@ prompt; [RELEASE.md](RELEASE.md) covers verifying them.
 Want to look before importing anything? `hoard demo` opens the browser on a
 small sample collection, in a database of its own — your hoard is never opened.
 
-## Bring your collection in
+## Bring Your Collection In
 
 Most people arrive with an export from somewhere else. `hoard import` reads
-ManaBox, Moxfield and Delver Lens CSVs, and hoard's own. It sniffs the header,
-so the format usually needs no naming:
+ManaBox, Moxfield and Delver Lens CSVs. It's also backwards compatible with 
+hoard's own format. It sniffs the header, so the format usually needs no naming:
 
 ```console
 $ hoard import manabox-export.csv
 ✓ Imported 1,284 cards (manabox format): 1,284 rows resolved.
 ```
 
-Decks come from a decklist URL, or from a pasted list:
-
+Decks can also be imported a decklist URL, or from a pasted list:
 ```console
 $ hoard deck add https://moxfield.com/decks/xxxxxxxxxxxxxxxxxxxxxx
 $ pbpaste | hoard deck add --file - --name "Modern Burn"
 ```
 
-Loose cards go in one at a time, by Scryfall link:
-
+Loose cards can go in one at a time by Scryfall link:
 ```console
 $ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre
 ✓ Added 1× Ulamog, the Infinite Gyre (uma/7) as nonfoil into Binder · $37.35
@@ -80,8 +78,8 @@ everything in one.
 
 ## Try It
 
-Run `hoard` with no arguments for the browser, or `hoard help` for every command.
-With nothing imported yet, `hoard demo` shows the same browser on sample data;
+Run `hoard` with no arguments to see the browser, or `hoard help` for every command.
+With nothing imported yet, `hoard demo` shows the same browser with sample data;
 `hoard demo --reset` starts that sample over.
 
 <p align="center">
