@@ -1,13 +1,17 @@
 package browse
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // moversFilterStore seeds three movers whose names, sets and finishes are
@@ -252,4 +256,91 @@ func moverNames(rows []store.PriceChange) []string {
 		out = append(out, r.Name)
 	}
 	return out
+}
+
+// The header's summary trails the page phrase, so the net lands at the far
+// right where these totals are anchored — directly over IMPACT, the column it
+// is the sum of. Order, not just presence: every other assertion on this
+// header uses Contains and would pass either way round.
+func TestMoversHeaderPutsTheNetLast(t *testing.T) {
+	st := testStore()
+	for i := range 80 {
+		st.movers = append(st.movers, mover(fmt.Sprintf("M%02d-id", i), "nonfoil", 1, 10, 12))
+	}
+	m := atAllCards(t, newTestModel(t, st))
+	m = key(m, "v")
+
+	_, totals := m.viewHeader()
+	page := strings.Index(totals, " of 80")
+	moved := strings.Index(totals, "80 moved")
+	if page < 0 || moved < 0 {
+		t.Fatalf("totals = %q, want both the page phrase and the summary", totals)
+	}
+	if page > moved {
+		t.Errorf("totals = %q, want the page phrase before the summary", totals)
+	}
+	if strings.HasPrefix(totals, " · ") {
+		t.Errorf("totals = %q, want no leading separator", totals)
+	}
+}
+
+// A collection small enough not to page has no page phrase at all, and the
+// summary must not inherit its separator.
+func TestMoversHeaderWithoutPaging(t *testing.T) {
+	m := onMovers(t, moversFilterStore())
+	_, totals := m.viewHeader()
+	if strings.HasPrefix(totals, " · ") || strings.HasPrefix(totals, "·") {
+		t.Errorf("totals = %q, want the summary to lead cleanly", totals)
+	}
+	if !strings.HasPrefix(totals, "3 moved") {
+		t.Errorf("totals = %q, want it to open with the count", totals)
+	}
+}
+
+// The net wears the movers ramp's own endpoint, so the header agrees with the
+// IMPACT column it totals. Direction only — a lone total has no distribution
+// to grade against — and an unmoved hoard takes the ramp's neutral gray.
+func TestMoversHeaderColorsTheNet(t *testing.T) {
+	// A test binary has no TTY, so lipgloss resolves to Ascii and renders every
+	// style to bare text — the assertions below would compare "" against "" and
+	// pass on a header that colors nothing. theme_test.go pins the profile for
+	// the same reason.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	paint := func(t *testing.T, rows []store.PriceChange) string {
+		t.Helper()
+		st := testStore()
+		st.movers = rows
+		m := atAllCards(t, newTestModel(t, st))
+		m.env.Color = true
+		m = key(m, "v")
+		_, totals := m.viewHeader()
+		return totals
+	}
+	gain := paint(t, []store.PriceChange{mover("up-id", "nonfoil", 1, 10, 12)})
+	loss := paint(t, []store.PriceChange{mover("dn-id", "nonfoil", 1, 12, 10)})
+	flat := paint(t, []store.PriceChange{
+		mover("up-id", "nonfoil", 1, 10, 12), mover("dn-id", "nonfoil", 1, 12, 10)})
+
+	env := ui.Env{Color: true}
+	for _, tc := range []struct {
+		name, totals, money string
+		frac                float64
+	}{
+		{"a net gain", gain, "+$2.00", 1},
+		{"a net loss", loss, "-$2.00", -1},
+		{"a net of nothing", flat, "$0.00", 0},
+	} {
+		want := env.Diverge(tc.frac)(tc.money)
+		if !strings.Contains(tc.totals, want) {
+			t.Errorf("%s: totals = %q, want it to carry %q", tc.name, tc.totals, want)
+		}
+	}
+	// The colors have to differ, or the assertions above would pass against a
+	// single style that says nothing about direction.
+	if env.Diverge(1)("x") == env.Diverge(-1)("x") {
+		t.Fatal("the ramp paints gains and losses the same; this test proves nothing")
+	}
 }

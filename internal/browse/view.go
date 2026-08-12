@@ -462,6 +462,11 @@ func (m Model) header(left, right, tableW int) string {
 	name, totals := m.viewHeader()
 
 	totals += m.opBadge()
+	// Restyle rather than Render: the movers header colors its net, and a
+	// plain Render would let that segment's reset switch the faint off for
+	// everything after it — the op badge, on the one view that has both.
+	// Restyle re-asserts the faint past any embedded sequence, so the color
+	// and the chrome coexist instead of cancelling.
 	// The totals hug the table's right edge, not the pane's: on a wide
 	// window the table ends long before the terminal does, and counts
 	// parked at the far corner read as furniture from some other surface
@@ -486,7 +491,7 @@ func (m Model) header(left, right, tableW int) string {
 	}
 	return m.paneTitle(paneContainers).Render(fit(leftTitle, left)) +
 		strings.Repeat(" ", paneGap) +
-		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + m.theme.Help.Render(totals)
+		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + ui.Restyle(totals, m.theme.Help)
 }
 
 // maxLineWidth is the widest rendered content line — the right pane's true

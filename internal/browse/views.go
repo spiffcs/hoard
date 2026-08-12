@@ -470,10 +470,31 @@ func (m Model) viewHeader() (title, totals string) {
 		for _, c := range m.filteredMovers {
 			net += c.TotalDelta()
 		}
+		// The summary trails the page phrase so the net lands at the far
+		// right, where these totals are anchored — directly over IMPACT, the
+		// right-aligned column it is the sum of. Leading it, the net sat above
+		// the middle of the table and read as a measurement of some other
+		// column.
+		//
+		// It wears the movers ramp's own endpoint rather than a fresh color:
+		// this figure is the total of a column already painted on that ramp,
+		// and a header in a second red would claim to mean something different.
+		// The endpoints rather than a graded shade, because a lone total has no
+		// distribution to be graded against — only a direction. A net of
+		// exactly zero takes the ramp's neutral gray, which is the honest
+		// reading of no movement.
+		env := ui.Env{Color: m.env.Color}
+		sign := 0.0
+		if net > 0 {
+			sign = 1
+		} else if net < 0 {
+			sign = -1
+		}
+		summary := fmt.Sprintf("%s moved · %s",
+			ui.Count(len(m.filteredMovers)), env.Diverge(sign)(ui.SignedMoney(net)))
 		since := m.moversCutoff().Local().Format("2 Jan")
 		return "MOVERS · SINCE " + since + m.viewScope(),
-			fmt.Sprintf("%s moved · %s", ui.Count(len(m.filteredMovers)), ui.SignedMoney(net)) +
-				m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers))
+			joinPhrases(m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers)), summary)
 	case viewMarket:
 		return m.marketHeader()
 	case viewWatches:
@@ -485,4 +506,21 @@ func (m Model) viewHeader() (title, totals string) {
 				m.tablePagePhrase(len(m.cards), m.cardsPage, len(m.filteredCards))
 	}
 	return "CARDS", ""
+}
+
+// joinPhrases strings header fragments together on the " · " separator,
+// dropping the empty ones.
+//
+// It exists because pagePhrase returns its fragments already carrying a
+// leading separator — convenient while the page phrase was always last, and
+// wrong the moment something follows it. Trimming that prefix at the one call
+// site that reorders keeps pagePhrase's shape for every other caller.
+func joinPhrases(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p = strings.TrimPrefix(p, " · "); p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " · ")
 }
