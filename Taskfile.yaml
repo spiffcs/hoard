@@ -169,16 +169,48 @@ tasks:
     platforms: [darwin]
     cmd: ./scripts/asset-review.sh
 
-  # Re-render the og:image GitHub serves for link unfurls. The upload itself is
-  # by hand — GitHub has no API for it — at Settings → General → Social preview.
+  # Headless Chrome exits 0 whether or not it did anything — a missing input file
+  # and an unwritable output path both come back 0, measured. So the exit status
+  # proves nothing here and the artifact is the only evidence: render to .tmp,
+  # check what landed, and only then move it into docs/. Without that, a renamed
+  # HTML file would print "Wrote ..." and leave the previous card in place, to be
+  # committed and shipped as though it had been rebuilt.
+  #
+  # Chrome also writes "Trying to load the allocator multiple times" and some
+  # task_policy_set lines to stderr on every run. Both are benign macOS noise,
+  # and the output is byte-identical across runs; ignore them.
   social-preview:
     desc: Re-render the social preview card (macOS)
     platforms: [darwin]
     cmds:
+      # Check the input, because Chrome will not. Handed a path that does not
+      # exist it renders its own error page — at the requested size, as a valid
+      # PNG, exit 0 — which passes every check made on the output alone. This is
+      # the failure that actually happens, and it is caught here or not at all.
+      - cmd: 'test -f docs/social-preview.html || (echo "social-preview: docs/social-preview.html is missing"; exit 1)'
+        silent: true
+      # Clear the staging file first, or a leftover from a previous run would
+      # satisfy the checks below and certify a render that never happened.
+      - mkdir -p .tmp && rm -f .tmp/social-preview.png
       - >-
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         --headless --disable-gpu --hide-scrollbars --window-size=1280,640
-        --screenshot=docs/assets/social-preview.png docs/social-preview.html
+        --screenshot=.tmp/social-preview.png docs/social-preview.html
+      # Dimensions, because a wrong --window-size still produces a valid PNG that
+      # GitHub would letterbox.
+      - cmd: >-
+          sips -g pixelWidth -g pixelHeight .tmp/social-preview.png 2>/dev/null |
+          grep -q "pixelWidth: 1280" ||
+          (echo "social-preview: not 1280 wide"; exit 1)
+        silent: true
+      # And weight, as a blank-render tripwire. The card is ~300KB of artwork and
+      # gradient; anything Chrome renders when the page did not load is nearly
+      # flat colour and compresses to a fraction of that (an error page measured
+      # 17KB at the same dimensions). 100KB sits an order of magnitude clear of
+      # the failure and well under the real thing.
+      - cmd: 'test "$(stat -f %z .tmp/social-preview.png)" -gt 100000 || (echo "social-preview: render looks blank - did the page load?"; exit 1)'
+        silent: true
+      - mv .tmp/social-preview.png docs/assets/social-preview.png
       - cmd: echo "Wrote docs/assets/social-preview.png — upload it in Settings → General → Social preview"
         silent: true
 
@@ -261,10 +293,18 @@ tasks:
     platforms: [darwin]
     deps: [scan-ios-icon]
     cmds:
+      # Staged and checked for the same reason the card is: `sips` exits 0 when
+      # its input does not exist (measured — it only reports a failure it cannot
+      # write, exit 13). A renamed master would otherwise leave the old copy in
+      # docs/ and report success.
+      - mkdir -p .tmp && rm -f .tmp/hoard-logo.png
       # 640px serves both consumers with headroom — the README shows it at 150,
       # the social card at 420 — while the master stays full size for the icon,
       # which needs 840px of artwork on its long side and may want more later.
-      - sips --resampleWidth 640 docs/assets/logo-master.png --out docs/assets/hoard-logo.png >/dev/null
+      - sips --resampleWidth 640 docs/assets/logo-master.png --out .tmp/hoard-logo.png >/dev/null
+      - cmd: 'test -s .tmp/hoard-logo.png || (echo "logo: sips wrote nothing - is docs/assets/logo-master.png there?"; exit 1)'
+        silent: true
+      - mv .tmp/hoard-logo.png docs/assets/hoard-logo.png
       - cmd: echo "Wrote docs/assets/hoard-logo.png — rerun 'make social-preview' if the card should follow"
         silent: true
 

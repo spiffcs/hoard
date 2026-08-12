@@ -8,6 +8,23 @@ as unofficial Fan Content under the Wizards of the Coast Fan Content Policy
 (https://company.wizards.com/en/legal/fancontentpolicy) and are NOT licensed
 under the MIT terms.
 
+The hoard logo (docs/assets/logo-master.png, and the app icon and social card
+generated from it) is machine-generated artwork, not a Wizards of the Coast
+property and not derived from any Magic: The Gathering card. It is stated here
+because provenance for artwork is worth recording rather than assumed, and
+because the answer differs from the rest of this file: the imagery above belongs
+to someone else, while this belongs to nobody in particular. Purely
+machine-generated images are widely held to lack the human authorship that
+copyright requires, so no claim of copyright is made over the logo and it is not
+part of the carve-out described above. Use it to refer to this project; do not
+use it to imply the project endorses yours.
+
+If you are an illustrator and this looks like work you would want to try: the
+maintainer would rather pay a person for it. The generated mark is a
+placeholder, reached for out of impatience to ship rather than chosen over the
+alternative, and commissioning a real one is an outcome he would welcome.
+Open an issue or write to cphillips918@gmail.com.
+
 hoard is unofficial Fan Content permitted under the Fan Content Policy. Not
 approved/endorsed by Wizards. Portions of the materials used are property of
 Wizards of the Coast. ©Wizards of the Coast LLC.
