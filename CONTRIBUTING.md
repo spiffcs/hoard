@@ -34,7 +34,11 @@ make scan-test scan-check
 ```
 
 `scan-check` replays 28 camera frames through the reader and diffs the result
-against checked-in goldens. **The frames are not in git** — they are ~58MB, and
+against checked-in goldens. It needs `oras` (`brew install oras`) to fetch them —
+deliberately not in the pinned toolchain, because that is bootstrapped by every
+CI job including the release, and this is a darwin-only check CI never runs.
+
+**The frames are not in git** — they are ~58MB, and
 charging every contributor for them on clone was unfair when the check needs
 macOS, Xcode and a Swift build and CI never runs it. `make scan-fixtures`
 downloads them once (it is a dependency of `scan-check`, so you rarely call it

@@ -35,11 +35,14 @@ REF=$(awk '/^ref:/{print $2}' "$MANIFEST")
 DIGEST=$(awk '/^digest:/{print $2}' "$MANIFEST")
 [ -n "$REF" ] && [ -n "$DIGEST" ] || { echo "$MANIFEST is incomplete" >&2; exit 1; }
 
-# Prefer the pinned copy: `make tools` puts it there, so the version is the one
-# the project chose rather than whatever a developer happens to have.
+# Deliberately NOT pinned in .binny.yaml. That toolchain is bootstrapped by every
+# CI job including the release, and oras is needed by exactly one darwin-gated,
+# hand-run task that CI never executes — putting it there made an intermittent
+# Linux install failure able to break a release. `make scan-check` already needs
+# macOS, Xcode and a Swift toolchain, so one brew install is proportionate.
 ORAS=".tool/oras"
 [ -x "$ORAS" ] || ORAS=$(command -v oras || true)
-[ -n "$ORAS" ] || { echo "oras not found — run: make tools" >&2; exit 1; }
+[ -n "$ORAS" ] || { echo "oras not found — run: brew install oras" >&2; exit 1; }
 
 # Already correct? Say so and stop. This runs as a dependency of scan-check, so
 # it has to be cheap and quiet on the common path.
