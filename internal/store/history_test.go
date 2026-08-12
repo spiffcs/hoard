@@ -1035,3 +1035,60 @@ func TestBackfillRetiresOnlyTheIncomingFinish(t *testing.T) {
 		t.Errorf("foil series = %v from %q, want untouched by the nonfoil import", p, src)
 	}
 }
+
+// A price series for a finish the printing does not come in is not a price
+// series. Manapool files one product under `normal` for a foil-only printing,
+// and the unpivot used to take that at face value — the surge foil Aragorn and
+// Arwen carried a "non-foil" history at $125.04 beside its real foil series,
+// drawn as a second sparkline for a copy that cannot exist.
+func TestRecordPricesSkipsFinishesThePrintingLacks(t *testing.T) {
+	s := newTestStore(t)
+	// A foil-only printing that nonetheless carries a non-foil figure, exactly
+	// as the fallback leaves one when a vendor mis-buckets its single product.
+	c := ulamog()
+	c.Raw = []byte(`{"finishes":["foil"]}`)
+	if err := s.AddCardFinish(c, "foil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("RecordPrices: %v", err)
+	}
+
+	rows, err := s.db.Query(`SELECT finish FROM card_price_history`)
+	if err != nil {
+		t.Fatalf("reading history: %v", err)
+	}
+	defer rows.Close()
+	var finishes []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		finishes = append(finishes, f)
+	}
+	if slices.Contains(finishes, "nonfoil") {
+		t.Errorf("recorded finishes %v; the printing has no non-foil copy", finishes)
+	}
+	if !slices.Contains(finishes, "foil") {
+		t.Errorf("recorded finishes %v, want the foil series it does have", finishes)
+	}
+}
+
+// The negative control, and the one that keeps the gate honest: a printing
+// whose Scryfall document has never been stored has an unknown finishes list,
+// which is a gap and not a denial. Reading it as "comes in no finish at all"
+// would silently stop recording history for every un-enriched printing.
+func TestRecordPricesKeepsSeriesForUnknownFinishes(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if _, err := s.RecordPrices(); err != nil {
+		t.Fatalf("RecordPrices: %v", err)
+	}
+	if n := observationCount(t, s); n != 2 {
+		t.Errorf("recorded %d observations, want 2 — a printing with no stored "+
+			"document must keep both priced series", n)
+	}
+}

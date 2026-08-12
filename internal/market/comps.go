@@ -220,23 +220,33 @@ func hasFinish(qs []mtgjson.Quote, finish string) bool {
 	return false
 }
 
-// listingOutlierRatio matches the pricing layer's troll-listing guard: a
-// marketplace's "lowest ask" can be a joke listing (a $7,362,059.74
-// Legion Loyalty, observed live), and a comp sheet quoting it beside the
-// $2.49 the card actually sells for is noise wearing a money column.
-const listingOutlierRatio = 20
-
-// trollListing is the clamp itself, shared by the comp sheet and Assess so
-// the two tables the market command renders can never disagree about which
-// quotes are jokes. A lone figure is trusted — with one voice there is
-// nothing to compare — hence the figure count in the signature.
-func trollListing(price, cheapest float64, figures int) bool {
-	return figures > 1 && cheapest > 0 && price > cheapest*listingOutlierRatio
+// nonPrice is the clamp, shared by the comp sheet and Assess so the two tables
+// the market command renders can never disagree about which quotes are jokes.
+//
+// Both directions, because both produce the same defect. Upward, a
+// marketplace's "lowest ask" can be a joke listing (a $7,362,059.74 Legion
+// Loyalty, observed live) and a comp sheet quoting it beside the $2.49 the card
+// actually sells for is noise wearing a money column. Downward, a market price
+// averaged over no sales at all walks into BuyAt and the sheet reports a $0.56
+// surge foil as the cheapest way to buy a card nobody will part with under
+// $97.55 — a data defect rendered as an opportunity.
+//
+// The rule and its ratio both come from mtgjson rather than a copy here. This
+// file used to declare its own threshold, and one that drifts from the one the
+// pricing layer rejects on would show the owner a figure no valuation used.
+func nonPrice(price float64, figures []float64) bool {
+	return mtgjson.NonPrice(price, figures)
 }
 
-// dropTrollListings clears any sale figure over listingOutlierRatio times
-// the cheapest other one on the sheet, and re-derives Low without it. A
+// dropTrollListings clears any sale figure too far from the others on the
+// sheet to be a price, in either direction, and re-derives Low without it. A
 // lone figure is trusted — with one voice there is nothing to compare.
+//
+// Dropping rather than marking, because a comp is a comparison and the sheet's
+// job is to make the vendors' real disagreement legible. A figure hoard has
+// decided is not a price would only widen SaleSpread on a card the vendors
+// actually agree about. The refusal is not lost: `hoard refused` lists every
+// substituted price beside the figure it replaced.
 func (c *Comp) dropTrollListings() {
 	type figure struct {
 		p   *float64
@@ -252,17 +262,13 @@ func (c *Comp) dropTrollListings() {
 	if len(present) < 2 {
 		return
 	}
-	cheapest := present[0]
-	for _, p := range present {
-		cheapest = min(cheapest, p)
-	}
 	c.Low, c.LowFrom = 0, ""
 	names := []string{MarketProvider, "cardkingdom", "manapool"}
 	for i, f := range figs {
 		if !*f.has {
 			continue
 		}
-		if trollListing(*f.p, cheapest, len(present)) {
+		if nonPrice(*f.p, present) {
 			*f.p, *f.has = 0, false
 			continue
 		}

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,13 +55,31 @@ var providerOrder = []string{"tcgplayer", "cardkingdom", "manapool"}
 // rarely fires.
 var foilProviderOrder = []string{"tcgplayer", "manapool", "cardkingdom"}
 
-// listingOutlierRatio rejects marketplace troll listings: a vendor's
-// quote more than this many times the cheapest other vendor's quote for
-// the same finish is a joke listing surfacing as a "lowest ask" (a
-// $7,362,059.74 Legion Loyalty, observed live), not a price — the pick
-// moves to the next vendor. Only fires when another vendor quotes the
-// finish: with one voice there is nothing to compare against.
-const listingOutlierRatio = 20
+// ListingOutlierRatio is how far a figure may sit from its corroboration
+// before it stops counting as a price at all.
+//
+// Upward it rejects marketplace troll listings: a vendor's quote more than
+// this many times the cheapest other vendor's quote for the same finish is
+// a joke listing surfacing as a "lowest ask" (a $7,362,059.74 Legion
+// Loyalty, observed live), not a price — the pick moves to the next vendor.
+// Only fires when another vendor quotes the finish: with one voice there is
+// nothing to compare against.
+//
+// Downward it rejects a market price taken over no sales at all — the same
+// judgement, and measurement puts the boundary in the same place. Across
+// 2,604 owned TCGplayer products, 39 quote a market price under the
+// cheapest ask and 38 of those are healthy illiquid foils topping out at
+// 3.3x; the one real defect sits at 174x. Across 2,099 owned series with
+// two or more vendors, nothing but that same card exceeds 5.7x. Twenty
+// leaves roughly six times' margin on the healthy side and eight on the
+// broken side, which is why both directions can share one number and why
+// it is not an operator-facing knob.
+//
+// Exported so the pricing and market layers read this constant rather than
+// keeping copies: it was already duplicated once, and a threshold that
+// drifts between the layer that rejects and the layer that displays would
+// show the owner a figure no valuation used.
+const ListingOutlierRatio = 20
 
 // Price is one card's USD paper prices and the vendor behind each.
 //
@@ -1036,13 +1055,13 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 		if len(cands) == 0 {
 			return nil
 		}
-		cheapest := cands[0].latest
+		latests := make([]float64, 0, len(cands))
 		for _, c := range cands {
-			cheapest = min(cheapest, c.latest)
+			latests = append(latests, c.latest)
 		}
 		pickName := cands[0].name
 		for _, c := range cands {
-			if len(cands) > 1 && cheapest > 0 && c.latest > cheapest*listingOutlierRatio {
+			if NonPrice(c.latest, latests) {
 				continue
 			}
 			pickName = c.name
@@ -1100,13 +1119,13 @@ func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 		if len(quotes) == 0 {
 			return nil, ""
 		}
-		cheapest := quotes[0].p
+		prices := make([]float64, 0, len(quotes))
 		for _, q := range quotes {
-			cheapest = min(cheapest, q.p)
+			prices = append(prices, q.p)
 		}
 		for _, q := range quotes {
-			if len(quotes) > 1 && cheapest > 0 && q.p > cheapest*listingOutlierRatio {
-				continue // a troll listing, not a price
+			if NonPrice(q.p, prices) {
+				continue // a troll listing, or an average over no sales
 			}
 			p := q.p
 			return &p, q.name
@@ -1139,4 +1158,63 @@ func latest(byDate map[string]float64) *float64 {
 	}
 	v := byDate[newest]
 	return &v
+}
+
+// NonPrice reports whether one figure among several sits too far from the rest
+// to be a price at all — in either direction. figures is every quote for the
+// finish, including price itself.
+//
+// Upward this is the troll-listing guard: a seven-figure Legion Loyalty
+// standing beside a $29.99 one is a joke, not a lowest ask. Downward it is the
+// same judgement applied to a market price averaged over no completed sales: a
+// $0.56 surge foil beside a $59.99 and a $120.51 is not cheap, it is empty.
+//
+// The two directions cannot share an anchor, and that is the whole subtlety
+// here. The upward test can anchor on the cheapest figure because a troll
+// listing is never the cheapest. Anchoring downward the same way is circular —
+// the cheapest quote is never twenty times below itself, so the guard could
+// never fire on the one figure that needs testing. Worse, the cheapest anchor
+// actively protects the defect: with 0.56 setting the bar, both honest vendors
+// above it are themselves rejected as trolls and the pick falls back to 0.56.
+//
+// So from three figures up, both directions are measured against the median,
+// which a single absurd quote in either direction cannot drag with it. At two
+// there is no majority to appeal to and no way to tell which figure is the
+// broken one, so the older, narrower rule stands: assume the cheaper is real
+// and only a wild upward figure is refused. That is the case the shipped guard
+// has always covered, and it stays covered unchanged.
+//
+// A lone figure is trusted, as ever: with one voice there is nothing to
+// compare against.
+func NonPrice(price float64, figures []float64) bool {
+	if price <= 0 || len(figures) < 2 {
+		return false
+	}
+	if len(figures) == 2 {
+		cheapest := min(figures[0], figures[1])
+		return cheapest > 0 && price > cheapest*ListingOutlierRatio
+	}
+	mid := median(figures)
+	if mid <= 0 {
+		return false
+	}
+	return price/mid >= ListingOutlierRatio || mid/price >= ListingOutlierRatio
+}
+
+// median is the middle of a small set of quotes, averaging the two middle
+// values on an even count.
+//
+// Sorts a copy: the caller's slice is built from a map iteration whose order is
+// already arbitrary, but a helper that reorders its argument is a trap waiting
+// for the next caller.
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := slices.Clone(xs)
+	slices.Sort(s)
+	if n := len(s); n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }

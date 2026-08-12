@@ -1,9 +1,9 @@
 package browse
 
-// Sets mode: the left pane's second lens. B flips the COLLECTION listing
-// (binders and decks) to SETS — one row per Magic set the hoard holds
-// cards from, newest release first — and back. A selected set scopes the
-// right pane and every analytical view exactly like a binder would.
+// Sets mode: the lens the left pane opens on (see New). SETS is one row per
+// Magic set the hoard holds cards from, newest release first; B flips it to
+// the COLLECTION listing (binders and decks) and back. A selected set scopes
+// the right pane and every analytical view exactly like a binder would.
 //
 // A set row is not a place, so its cards are edited by resolving each row
 // back to the binders that actually hold it (setRowHoldings) rather than
@@ -68,7 +68,7 @@ func (m *Model) toggleSetsMode() {
 	if m.setsMode {
 		m.status, m.statusErr = "browsing by set · newest first · B returns to binders and decks", false
 	} else {
-		m.status, m.statusErr = "browsing binders and decks", false
+		m.status, m.statusErr = "browsing binders and decks · B returns to sets", false
 	}
 }
 

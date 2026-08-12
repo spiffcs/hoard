@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -111,6 +112,25 @@ func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
 	return pctMax, impactMax
 }
 
+// printedInFinish restricts a query to printings Scryfall says come in the
+// named finish, assuming `c` is the cards table.
+//
+// A price series for a finish a printing does not exist in is not a price
+// series. Manapool files one product's price under `normal` for a printing sold
+// only as a foil, and the unpivot below took that at face value: the surge foil
+// Aragorn and Arwen carried a "non-foil" history at $125.04 beside its real
+// foil series, drawn as a second sparkline for a card that has no non-foil
+// copy. Five such series existed in a live hoard.
+//
+// An unknown finishes list emits the row rather than suppressing it. Only a
+// positive "this printing does not come that way" may drop a series; a printing
+// whose Scryfall document has not been stored is a gap, and treating a gap as a
+// denial would silently stop recording history for it.
+func printedInFinish(finish string) string {
+	return `(json_extract(c.raw_json, '$.finishes') IS NULL
+         OR json_extract(c.raw_json, '$.finishes') LIKE '%"` + finish + `"%')`
+}
+
 // effectivePrices is every card's current price per finish, with the MTGJSON
 // fallback applied, as one row per finish per card.
 //
@@ -124,19 +144,31 @@ func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
 // product's history; now it gets its own. Emitting it unconditionally would
 // instead duplicate the foil series under a second name for the tens of
 // thousands of printings that have no etched product at all.
-const effectivePrices = `
+//
+// A var rather than a const only because printedInFinish is a function; the
+// fragment is still assembled once and read everywhere, which is the property
+// that matters.
+// A correction names itself first, in the same order the price resolves. It
+// has to: the source recorded here is what a percent watch anchors its series
+// on (effSourceExpr), so a corrected price filed under 'scryfall' would put an
+// observation in a series the anchor query then cannot find, and the figure
+// would be permanently mislabelled in the one table that keeps a record.
+var effectivePrices = `
     SELECT c.scryfall_id AS sid, 'nonfoil' AS pfinish, ` + effPriceUSD + ` AS price,
-           CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
+           CASE WHEN o.price_usd IS NOT NULL THEN o.source
+                WHEN c.price_usd IS NOT NULL THEN 'scryfall'
                 ELSE COALESCE(a.source_usd, 'fallback') END AS source
-    FROM cards c ` + altJoinCards + `
+    FROM cards c ` + altJoinCards + ` WHERE ` + printedInFinish("nonfoil") + `
     UNION ALL
     SELECT c.scryfall_id, 'foil', ` + effPriceFoil + `,
-           CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
+           CASE WHEN o.price_usd_foil IS NOT NULL THEN o.source
+                WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                 ELSE COALESCE(a.source_usd_foil, 'fallback') END
-    FROM cards c ` + altJoinCards + `
+    FROM cards c ` + altJoinCards + ` WHERE ` + printedInFinish("foil") + `
     UNION ALL
-    SELECT c.scryfall_id, 'etched', c.price_usd_etched, 'scryfall'
-    FROM cards c WHERE c.price_usd_etched IS NOT NULL`
+    SELECT c.scryfall_id, 'etched', COALESCE(o.price_usd_etched, c.price_usd_etched),
+           CASE WHEN o.price_usd_etched IS NOT NULL THEN o.source ELSE 'scryfall' END
+    FROM cards c ` + altJoinCards + ` WHERE c.price_usd_etched IS NOT NULL`
 
 // ownedByPriceFinish is how many copies of each printing are held, in the
 // finishes prices come in. It spans the loose collection and every deck, because
@@ -495,10 +527,22 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	}
 	defer stmt.Close()
 
+	// The same rule the live unpivot applies (printedInFinish): an import
+	// carries whatever buckets the vendor filed, and a vendor that files one
+	// product under `normal` for a foil-only printing would otherwise
+	// reconstruct ninety days of a series that describes no card anyone owns.
+	printed, err := printedFinishes(tx)
+	if err != nil {
+		return 0, 0, err
+	}
+
 	for sid, obs := range normalized {
 		var wrote bool
 		bound := func(finish string) string { return firstLive[sid+"|"+finish] }
 		for _, o := range compactSeries(obs, bound) {
+			if f, known := printed[sid]; known && !f[o.Finish] {
+				continue
+			}
 			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
 			if err != nil {
 				return 0, 0, fmt.Errorf("backfilling %s for %s: %w", table, sid, err)
@@ -654,4 +698,46 @@ func compactSeries(obs []mtgjson.Observation, before func(finish string) string)
 		}
 	}
 	return kept
+}
+
+// printedFinishes maps each printing to the finishes Scryfall says it comes
+// in. A printing absent from the map has no stored document, and the caller
+// must treat that as "unknown" rather than "none" — see printedInFinish.
+//
+// Etched is deliberately folded in with foil rather than read literally.
+// Scryfall lists "etched" as its own finish, but the history table stores an
+// etched observation under 'etched' only where the printing carries an etched
+// price of its own; everywhere else effPriceEtched values it as the foil, and
+// dropping a foil-bucket import for an etched-only printing would leave that
+// holding with no series at all.
+func printedFinishes(tx *sql.Tx) (map[string]map[string]bool, error) {
+	rows, err := tx.Query(`
+SELECT scryfall_id, json_extract(raw_json, '$.finishes')
+FROM cards WHERE json_extract(raw_json, '$.finishes') IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]bool{}
+	for rows.Next() {
+		var sid, list string
+		if err := rows.Scan(&sid, &list); err != nil {
+			return nil, err
+		}
+		var finishes []string
+		if err := json.Unmarshal([]byte(list), &finishes); err != nil {
+			continue // an unreadable list is not a denial
+		}
+		set := make(map[string]bool, len(finishes)+1)
+		for _, f := range finishes {
+			set[storeFinish(f)] = true
+		}
+		if set["etched"] {
+			set["foil"] = true
+		}
+		if len(set) > 0 {
+			out[sid] = set
+		}
+	}
+	return out, rows.Err()
 }

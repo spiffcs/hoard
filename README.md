@@ -84,7 +84,7 @@ With nothing imported yet, `hoard demo` shows the same browser with sample data;
 view the main command palette.
 
 <p align="center">
-    <img src="docs/assets/browse.png" width="100%" alt="The browser: binders and decks listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
+    <img src="docs/assets/browse.png" width="100%" alt="The browser: the sets you own cards from listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
 </p>
 
 ## Your data

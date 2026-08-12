@@ -169,42 +169,121 @@ type priceRows struct {
 	Results []struct {
 		ProductID   int     `json:"productId"`
 		MarketPrice float64 `json:"marketPrice"`
+		LowPrice    float64 `json:"lowPrice"`
+		MidPrice    float64 `json:"midPrice"`
+		HighPrice   float64 `json:"highPrice"`
 		SubTypeName string  `json:"subTypeName"`
 	} `json:"results"`
 }
 
-// foilMarket reduces a price list to productID → market price, preferring
-// each product's Foil row. A treated product usually lists only as Foil;
-// its Normal row, when that is all there is, still describes the treated
-// product, so it stands in.
-func foilMarket(b []byte) (map[string]float64, error) {
+// Quote is one product's figures for a day, as TCGplayer publishes them.
+//
+// Market and the ask figures answer different questions and can disagree
+// without either being wrong. Market is an average over *completed sales*;
+// Low, Mid and High describe the *listings* standing right now. An illiquid
+// card whose last sale undercuts today's cheapest listing is ordinary — 39
+// of 2,604 owned products quote Market under Low, and 38 of those are
+// healthy. Only the magnitude separates that from a market price taken over
+// no sales at all, so the asks are carried here rather than dropped: a
+// reader that sees only Market cannot tell the two apart.
+type Quote struct {
+	// Market is the volume-weighted average of recent sales, and is the
+	// figure Scryfall republishes as its USD price.
+	Market float64
+	// Low, Mid and High describe the live listings: the cheapest ask, the
+	// midpoint, and the dearest. Low is what a buyer would actually pay.
+	Low, Mid, High float64
+}
+
+// The two subtypes TCGplayer files a Magic listing under. One product id
+// carries both, so a printing's foil and non-foil prices arrive as sibling
+// rows rather than as separate products.
+const (
+	Normal = "Normal"
+	Foil   = "Foil"
+)
+
+// allQuotes decodes a price list to productID → subtype → quote, keeping
+// both subtypes apart.
+//
+// A row with no market price contributes nothing, as it always has: it is
+// not a price.
+func allQuotes(b []byte) (map[string]map[string]Quote, error) {
 	var d priceRows
 	if err := json.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("decoding tcgcsv prices: %w", err)
 	}
-	out := map[string]float64{}
+	out := map[string]map[string]Quote{}
 	for _, r := range d.Results {
 		if r.MarketPrice <= 0 {
 			continue
 		}
 		id := strconv.Itoa(r.ProductID)
-		if _, ok := out[id]; !ok || r.SubTypeName == "Foil" {
-			out[id] = r.MarketPrice
+		if out[id] == nil {
+			out[id] = map[string]Quote{}
+		}
+		out[id][r.SubTypeName] = Quote{
+			Market: r.MarketPrice,
+			Low:    r.LowPrice,
+			Mid:    r.MidPrice,
+			High:   r.HighPrice,
 		}
 	}
 	return out, nil
 }
 
-// GroupPrices returns today's market price per product id for one group,
-// Foil rows preferred.
-func GroupPrices(ctx context.Context, o Options, groupID int) (map[string]float64, error) {
-	b, err := get(ctx, o,
-		fmt.Sprintf("%s/tcgplayer/%d/%d/prices", o.base(), magicCategory, groupID),
-		fmt.Sprintf("prices-%d.json", groupID))
+// foilQuotes reduces a price list to productID → quote, preferring each
+// product's Foil row. A treated product usually lists only as Foil; its
+// Normal row, when that is all there is, still describes the treated
+// product, so it stands in.
+//
+// This is the overlay's view, where the product id already names the treated
+// foil and the subtype is noise. A caller that needs to tell a printing's foil
+// price from its non-foil one wants GroupQuotes instead — collapsing the two
+// here would hand it the foil figure for both.
+func foilQuotes(b []byte) (map[string]Quote, error) {
+	all, err := allQuotes(b)
 	if err != nil {
 		return nil, err
 	}
-	return foilMarket(b)
+	out := make(map[string]Quote, len(all))
+	for id, bySub := range all {
+		if q, ok := bySub[Foil]; ok {
+			out[id] = q
+			continue
+		}
+		for _, q := range bySub {
+			out[id] = q
+		}
+	}
+	return out, nil
+}
+
+// GroupPrices returns today's quote per product id for one group, Foil
+// rows preferred.
+func GroupPrices(ctx context.Context, o Options, groupID int) (map[string]Quote, error) {
+	b, err := groupBody(ctx, o, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return foilQuotes(b)
+}
+
+// GroupQuotes returns today's quotes for one group with the Normal and Foil
+// subtypes kept apart, keyed product id → subtype. Same download and same day
+// cache as GroupPrices, so asking for both costs one fetch.
+func GroupQuotes(ctx context.Context, o Options, groupID int) (map[string]map[string]Quote, error) {
+	b, err := groupBody(ctx, o, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return allQuotes(b)
+}
+
+func groupBody(ctx context.Context, o Options, groupID int) ([]byte, error) {
+	return get(ctx, o,
+		fmt.Sprintf("%s/tcgplayer/%d/%d/prices", o.base(), magicCategory, groupID),
+		fmt.Sprintf("prices-%d.json", groupID))
 }
 
 // archiveKeepDays bounds the immutable archive-extraction cache: the
@@ -243,12 +322,12 @@ var readArchiveMembers = func(path string, want map[string]bool) (map[string][]b
 	return out, nil
 }
 
-// ArchivePrices returns one past day's market price per product id for
-// each requested group, from that day's archive. The archive downloads
-// once (~4 MB) and only the requested groups' members are extracted and
+// ArchivePrices returns one past day's quote per product id for each
+// requested group, from that day's archive. The archive downloads once
+// (~4 MB) and only the requested groups' members are extracted and
 // kept; the 7z itself is deleted after extraction. Groups absent from
 // that day's archive come back missing, not as an error.
-func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) (map[int]map[string]float64, error) {
+func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) (map[int]map[string]Quote, error) {
 	if o.CacheDir == "" {
 		return nil, fmt.Errorf("archive reads need a cache directory")
 	}
@@ -257,7 +336,7 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 		return nil, err
 	}
 
-	out := map[int]map[string]float64{}
+	out := map[int]map[string]Quote{}
 	var missing []int
 	for _, gid := range groupIDs {
 		path := filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid))
@@ -266,7 +345,7 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 			missing = append(missing, gid)
 			continue
 		}
-		prices, err := foilMarket(b)
+		prices, err := foilQuotes(b)
 		if err != nil {
 			// A cache file that does not parse is not an answer, it is damage
 			// (a torn write from before these were atomic, a bad disk). Kept,
@@ -311,7 +390,7 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 			writeFileAtomic(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), []byte("{}"))
 			continue
 		}
-		prices, err := foilMarket(b)
+		prices, err := foilQuotes(b)
 		if err != nil {
 			// A member that does not parse is a bad archive day. Left uncached
 			// so a later, repaired archive can still answer; caching it would

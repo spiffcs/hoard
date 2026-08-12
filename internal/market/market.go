@@ -162,13 +162,14 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 	op.Card = o
 	finish := quoteFinish(o, qs)
 
-	// The troll-listing prepass, on the comp sheet's rule (trollListing): a
-	// marketplace's "lowest ask" can be a joke figure, and without this clamp
-	// one polluted vendor number walks straight into Market or BuyAt — the
-	// sections then report a data defect as an opportunity while the comps
-	// table beside them filters it, and the two disagree about the same card.
-	var cheapest float64
-	retailFigures := 0
+	// The non-price prepass, on the comp sheet's rule (nonPrice): a
+	// marketplace's "lowest ask" can be a joke figure and a market price can be
+	// an average over no sales, and without this clamp either walks straight
+	// into Market or BuyAt — the sections then report a data defect as an
+	// opportunity while the comps table beside them filters it, and the two
+	// disagree about the same card. Every retail figure has to be collected
+	// before any is judged, since the rule reads them against each other.
+	var retail []float64
 	for _, q := range qs {
 		if q.Kind != mtgjson.Retail || q.Finish != finish || q.Price <= 0 {
 			continue
@@ -176,10 +177,7 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 		if !productVerified(q.Provider, o) {
 			continue
 		}
-		retailFigures++
-		if cheapest == 0 || q.Price < cheapest {
-			cheapest = q.Price
-		}
+		retail = append(retail, q.Price)
 	}
 
 	for _, q := range qs {
@@ -191,7 +189,7 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 		}
 		switch q.Kind {
 		case mtgjson.Retail:
-			if trollListing(q.Price, cheapest, retailFigures) {
+			if nonPrice(q.Price, retail) {
 				continue
 			}
 			retailCount++

@@ -77,7 +77,17 @@ import (
 // committed on main: any document a build from HEAD has emitted carries that
 // number, and a version meaning one thing yesterday and another today is the
 // one thing a version must never be.
-const SchemaVersion = "1.1.1"
+//
+// 1.1.2 adds the refused kind, purely additive on the same terms as 1.1.1 and
+// bumped for the same reason: 1.1.1 is committed on main.
+//
+// refused lists the prices hoard declined to report and the figure it used
+// instead, and it exists because the holdings document alone cannot say so. A
+// corrected price appears there as an ordinary priceUsd, indistinguishable
+// from one the catalog supplied — which is precisely the confusion a
+// correction must not create. A consumer totalling holdings can now ask which
+// of its figures hoard substituted, and what each one replaced.
+const SchemaVersion = "1.1.2"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -95,13 +105,14 @@ const (
 	KindHoard    Kind = "hoard"
 	KindBinders  Kind = "binders"
 	KindGuessed  Kind = "guessed"
+	KindRefused  Kind = "refused"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard,enum=watches,enum=binders,enum=guessed"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard,enum=watches,enum=binders,enum=guessed,enum=refused"`
 
 	Summary  *Summary    `json:"summary,omitempty"`
 	Holdings *Holdings   `json:"holdings,omitempty"`
@@ -114,6 +125,7 @@ type Document struct {
 	Watches  *Watches    `json:"watches,omitempty"`
 	Binders  *Binders    `json:"binders,omitempty"`
 	Guessed  *Guessed    `json:"guessed,omitempty"`
+	Refused  *Refused    `json:"refused,omitempty"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
@@ -701,4 +713,31 @@ func Write(w io.Writer, doc Document) error {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// Refused is the price-correction worklist: every figure hoard declined to
+// report because the asks on the card's own TCGplayer listing contradicted it.
+type Refused struct {
+	Rows []RefusedRow `json:"rows"`
+}
+
+// RefusedRow is one correction in force.
+//
+// Both figures are carried, and refusedUsd is not optional, because a consumer
+// reading only the price hoard settled on cannot tell a correction from an
+// ordinary quote — which is the whole failure this surface exists to make
+// visible.
+type RefusedRow struct {
+	Card Card `json:"card"`
+	// Copies is how many are held in this finish.
+	Copies int `json:"copies"`
+	// PriceUsd is the figure now in use, and RefusedUsd the one it replaced.
+	PriceUsd   float64 `json:"priceUsd"`
+	RefusedUsd float64 `json:"refusedUsd"`
+	// Source names where PriceUsd came from and Reason why the refusal
+	// happened, both stable identifiers rather than prose.
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+	// AsOf is when the correction was recorded, RFC 3339.
+	AsOf string `json:"asOf"`
 }

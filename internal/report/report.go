@@ -128,3 +128,45 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 func UnpricedAdvice(env ui.Env) string {
 	return env.Dim()("Try: hoard repair-finishes, then hoard update-prices") + "\n"
 }
+
+// Refused renders the price corrections in force: what hoard declined to
+// report, and the figure it used instead.
+//
+// The refused figure is shown beside the substitute rather than replaced by
+// it, because the correction is the claim being made and a claim the owner
+// cannot check is worth very little. The multiple is what makes a row
+// legible at a glance — "$0.56 → $97.55" only reads as absurd once you have
+// done the division yourself.
+func Refused(env ui.Env, rows []store.PriceOverrideRow) string {
+	if len(rows) == 0 {
+		return env.Dim()("No prices were refused; every figure agrees with the asks beside it.") + "\n"
+	}
+	t := ui.Table{
+		Env:    env,
+		Header: true,
+		Cols: []ui.Col{
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 20},
+			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim()},
+			{Title: "FINISH", Align: ui.Left, Style: env.Dim()},
+			{Title: "COPIES", Align: ui.Right, Priority: 5},
+			{Title: "REFUSED", Align: ui.Right, Style: env.Dim()},
+			{Title: "USING", Align: ui.Right},
+			{Title: "UNDER BY", Align: ui.Right, Priority: 3, Style: env.Dim()},
+			{Title: "SOURCE", Align: ui.Left, Priority: 6, Style: env.Dim()},
+		},
+	}
+	for _, r := range rows {
+		under := ""
+		if r.Refused > 0 {
+			under = fmt.Sprintf("%.0fx", r.Price/r.Refused)
+		}
+		t.Add(ui.C(r.Name),
+			ui.C(ui.Printing(r.SetCode, r.CollectorNumber)),
+			ui.C(r.Finish), ui.C(ui.Count(r.Quantity)),
+			ui.C(ui.Money(r.Refused)), ui.C(ui.Money(r.Price)),
+			ui.C(under), ui.C(r.Source))
+	}
+	return t.Render() + env.Dim()(fmt.Sprintf(
+		"\n%s priced from the cheapest ask instead of a market price no sale stands behind.",
+		ui.PluralCount(len(rows), "holding", "holdings"))) + "\n"
+}

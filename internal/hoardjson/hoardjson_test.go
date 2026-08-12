@@ -36,7 +36,7 @@ func TestSummaryDocument(t *testing.T) {
 			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
 		}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -82,7 +82,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -130,7 +130,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -175,7 +175,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				OldAsOf: "2026-06-30T00:00:00Z"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -225,7 +225,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -259,7 +259,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -353,7 +353,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -437,7 +437,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -467,7 +467,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -797,7 +797,7 @@ func detailRows() []export.Row {
 func TestHoldingsDocumentCarriesDetail(t *testing.T) {
 	got := write(t, FromExportRows(detailRows()))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -1181,7 +1181,7 @@ func TestBindersDocumentCarriesIDs(t *testing.T) {
 			DistinctCards: 12, TotalCopies: 30, Value: 61.5},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "binders",
   "binders": {
     "rows": [
@@ -1231,7 +1231,7 @@ func TestGuessedDocumentKeepsRowsWithIdenticalCards(t *testing.T) {
 			Number: "135", Finish: "nonfoil", GuessedAt: "2026-08-09T18:20:00Z"},
 	}))
 	want := `{
-  "schemaVersion": "1.1.1",
+  "schemaVersion": "1.1.2",
   "kind": "guessed",
   "guessed": {
     "rows": [

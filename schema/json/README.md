@@ -57,6 +57,8 @@ Prices are USD throughout. An absent price field means *unpriced*, never free.
   rather than a bar a printing has to clear.
 - **1.1.1** — the `watches`, `binders` and `guessed` kinds, plus `pctChange` on
   a movers change.
+- **1.1.2** — the `refused` kind: prices hoard declined to report because the
+  asks on the card's own listing contradicted them, and what it used instead.
 
 The reasoning behind each bump is in the `SchemaVersion` doc comment in
 [internal/hoardjson/hoardjson.go](../../internal/hoardjson/hoardjson.go).

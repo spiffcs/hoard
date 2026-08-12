@@ -353,6 +353,12 @@ func exportModel(t *testing.T, calls *[]exportCall) Model {
 		t.Fatalf("New: %v", err)
 	}
 	m.ctx = context.Background()
+	// Leave the sets lens the browser opens on: a set row is not exportable
+	// (TestExportRefusesSetRow), and these tests export the binder.
+	m.setsMode = false
+	if err := m.loadContainers(); err != nil {
+		t.Fatalf("loadContainers: %v", err)
+	}
 	// Step past the merged all-cards row: these tests export the binder.
 	m.cursor[paneContainers] = 1
 	if err := m.loadCards(); err != nil {

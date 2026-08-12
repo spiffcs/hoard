@@ -454,15 +454,25 @@ func (s *Store) AddWatches(ws []WatchInput) (created, updated int, err error) {
 // it also dissolves a staleness the fixed vendor created: 336 of 2,884 series
 // had no tcgplayer observation in the last thirty days against 1 of 2,898
 // across all sources.
+//
+// A correction outranks the catalog here for the same reason it does in the
+// price itself: effectivePrices files a corrected observation under the
+// correction's own source, so an anchor still looking for 'scryfall' would
+// search a series that has stopped being written and read the watch as waiting
+// on history forever.
 const effSourceExpr = `
     CASE WHEN w.finish = 'etched' THEN
-              CASE WHEN c.price_usd_etched IS NOT NULL
-                     OR c.price_usd_foil   IS NOT NULL THEN 'scryfall'
+              CASE WHEN o.price_usd_etched IS NOT NULL THEN o.source
+                   WHEN c.price_usd_etched IS NOT NULL THEN 'scryfall'
+                   WHEN o.price_usd_foil IS NOT NULL THEN o.source
+                   WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                    ELSE COALESCE(a.source_usd_foil, '') END
          WHEN w.finish = 'foil' THEN
-              CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
+              CASE WHEN o.price_usd_foil IS NOT NULL THEN o.source
+                   WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                    ELSE COALESCE(a.source_usd_foil, '') END
-         ELSE CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
+         ELSE CASE WHEN o.price_usd IS NOT NULL THEN o.source
+                   WHEN c.price_usd IS NOT NULL THEN 'scryfall'
                    ELSE COALESCE(a.source_usd, '') END END`
 
 // anchorSeries is the observations a percent watch may read: one printing, one

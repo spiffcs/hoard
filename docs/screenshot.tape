@@ -39,7 +39,9 @@ Enter
 Sleep 2s
 Show
 
-# Bare `hoard` opens the browser on holdings — the view the README is selling.
+# Bare `hoard` opens the browser on holdings, left pane on the sets lens — the
+# view the README is selling. vhs will not overwrite an existing Screenshot
+# target: delete docs/assets/browse.png first or this run writes nothing.
 Type "hoard"
 Enter
 Sleep 5s

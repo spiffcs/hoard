@@ -63,14 +63,40 @@ func TestGroupPricesPrefersFoilRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GroupPrices: %v", err)
 	}
-	if got["553005"] != 17.56 {
-		t.Errorf("553005 = %v, want the Foil row preferred", got["553005"])
+	if got["553005"].Market != 17.56 {
+		t.Errorf("553005 = %v, want the Foil row preferred", got["553005"].Market)
 	}
-	if got["552925"] != 15.33 {
-		t.Errorf("552925 = %v, want the Normal-only row standing in", got["552925"])
+	if got["552925"].Market != 15.33 {
+		t.Errorf("552925 = %v, want the Normal-only row standing in", got["552925"].Market)
 	}
 	if _, ok := got["500000"]; ok {
 		t.Error("a zero market price is no price")
+	}
+}
+
+// The ask figures ride along with the market price. A reader that sees only
+// the market price cannot tell a thin market from no market at all, which is
+// the whole reason these three fields are decoded.
+func TestGroupPricesCarriesAsks(t *testing.T) {
+	o := serve(t, map[string]string{
+		"/tcgplayer/1/24691/prices": `{"results": [
+			{"productId": 707290, "marketPrice": 0.56, "lowPrice": 97.55,
+			 "midPrice": 100.07, "highPrice": 435.00, "subTypeName": "Foil"},
+			{"productId": 707291, "marketPrice": 4.20, "subTypeName": "Foil"}]}`,
+	})
+	got, err := GroupPrices(context.Background(), o, 24691)
+	if err != nil {
+		t.Fatalf("GroupPrices: %v", err)
+	}
+	want := Quote{Market: 0.56, Low: 97.55, Mid: 100.07, High: 435.00}
+	if got["707290"] != want {
+		t.Errorf("707290 = %+v, want %+v", got["707290"], want)
+	}
+	// A feed row that omits the asks is not an error: the quote carries the
+	// market price and zeroes, and the contradiction check needs a positive
+	// ask before it will refuse anything.
+	if q := got["707291"]; q.Market != 4.20 || q.Low != 0 {
+		t.Errorf("707291 = %+v, want the market price alone", q)
 	}
 }
 
@@ -141,7 +167,7 @@ func TestArchivePrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ArchivePrices: %v", err)
 	}
-	if got[23445]["553005"] != 16.90 {
+	if got[23445]["553005"].Market != 16.90 {
 		t.Errorf("day prices = %v, want the extracted group's figure", got)
 	}
 	if _, ok := got[24554]; ok {
@@ -162,7 +188,7 @@ func TestArchivePrices(t *testing.T) {
 		t.Errorf("second read hit the network %d times and extracted %v, want cache only",
 			archiveHits, extracted)
 	}
-	if got[23445]["553005"] != 16.90 {
+	if got[23445]["553005"].Market != 16.90 {
 		t.Errorf("cached day prices = %v", got)
 	}
 }
@@ -202,7 +228,7 @@ func TestArchivePricesRefetchesUnparseableCache(t *testing.T) {
 	if archiveHits != 1 {
 		t.Errorf("archive downloads = %d, want the torn cache file re-fetched", archiveHits)
 	}
-	if got[23445]["553005"] != 16.90 {
+	if got[23445]["553005"].Market != 16.90 {
 		t.Errorf("prices = %v, want the re-extracted figure", got)
 	}
 	// And the replacement extraction answers the next read.

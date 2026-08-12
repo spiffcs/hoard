@@ -9,8 +9,9 @@ import "fmt"
 
 // VacuumPrintings deletes every orphaned printing — no holding, no watch
 // points at it — and compacts the file. The schema's cascade takes the
-// orphan's price history, bid history, gap markers, and fallback prices
-// with it: deliberate, despite the keep-history warning on the schema,
+// orphan's price history, bid history, gap markers, fallback prices and
+// price corrections with it: deliberate, despite the keep-history warning
+// on the schema,
 // because an orphan's observations are junk from a misresolved import,
 // not years of data about a card owned. Held and watched printings are
 // structurally exempt — card_entries and watches reference cards without

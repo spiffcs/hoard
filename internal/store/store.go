@@ -189,27 +189,66 @@ type DeckSummary struct {
 // They assume `c` is the cards table and `a` is card_prices_alt, joined by
 // altJoinCards or altJoinEntries.
 const (
-	altJoinCards   = `LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id`
-	altJoinEntries = `LEFT JOIN card_prices_alt a ON a.scryfall_id = e.scryfall_id`
+	altJoinCards = `LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
+    LEFT JOIN card_price_overrides o ON o.scryfall_id = c.scryfall_id`
+	altJoinEntries = `LEFT JOIN card_prices_alt a ON a.scryfall_id = e.scryfall_id
+    LEFT JOIN card_price_overrides o ON o.scryfall_id = e.scryfall_id`
 
 	// effPriceUSD, effPriceFoil and effPriceEtched are the price to use for
-	// each finish: the Scryfall figure when there is one, else the fallback.
+	// each finish: the correction when one was recorded, else the Scryfall
+	// figure, else the fallback.
+	//
+	// The fallback fills a NULL; the override replaces a number. That is the
+	// whole difference between the two side tables and the reason they sit on
+	// opposite sides of the catalog in this chain. card_prices_alt answers
+	// "Scryfall knew nothing"; card_price_overrides answers "Scryfall's figure
+	// was contradicted by the asks on its own product" — a $0.56 surge foil
+	// with a $97.55 cheapest ask, which no ordering that lets the catalog win
+	// could ever correct. See migration v29.
 	//
 	// Etched reads its own column first and falls back to the foil one, since
 	// not every source splits the product — a printing the feed knows only as a
 	// foil is valued exactly as it was before etched had a column of its own.
 	// card_prices_alt has no etched column, so its foil fallback serves both.
-	effPriceUSD    = `COALESCE(c.price_usd, a.price_usd)`
-	effPriceFoil   = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
-	effPriceEtched = `COALESCE(c.price_usd_etched, c.price_usd_foil, a.price_usd_foil)`
+	// A finish-specific figure outranks a correction made to a different
+	// finish: an etched price Scryfall published is about the etched product,
+	// where the foil override is not.
+	effPriceUSD    = `COALESCE(o.price_usd, ` + catalogPriceUSD + `)`
+	effPriceFoil   = `COALESCE(o.price_usd_foil, ` + catalogPriceFoil + `)`
+	effPriceEtched = `COALESCE(o.price_usd_etched, c.price_usd_etched,
+        o.price_usd_foil, c.price_usd_foil, a.price_usd_foil)`
 
-	// altSourceExpr names the vendor behind a fallback price, and is empty when
-	// Scryfall priced the card. Display code uses it to mark estimates.
+	// catalogPriceUSD, catalogPriceFoil and catalogPriceEtched are the same
+	// three prices with the corrections left out — what hoard would report if
+	// card_price_overrides did not exist.
+	//
+	// The sweep that writes those corrections reads these, and that is the
+	// whole reason they are spelled separately. A detector fed the effective
+	// price would be judging its own last answer: the correction it wrote
+	// yesterday agrees with the ask it was derived from, the contradiction
+	// disappears, and the correction deletes itself on the next run. Reading
+	// the uncorrected price instead makes the sweep idempotent and lets a
+	// correction lapse on its own the day the feed's figure becomes sane —
+	// which for a preorder is the day the card starts selling.
+	catalogPriceUSD    = `COALESCE(c.price_usd, a.price_usd)`
+	catalogPriceFoil   = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
+	catalogPriceEtched = `COALESCE(c.price_usd_etched, c.price_usd_foil, a.price_usd_foil)`
+
+	// altSourceExpr names the vendor behind a price that did not come from the
+	// catalog, and is empty when Scryfall priced the card. Display code uses it
+	// to mark estimates.
+	//
+	// An override is checked before the fallback, matching the order the price
+	// itself is resolved in: a substituted figure that displayed as Scryfall's
+	// would be hoard quietly restating a number it refused. A correction is the
+	// one price the owner most needs attributed.
 	//
 	// This form is for queries with no single finish in scope, such as the
 	// collection listing where a row aggregates both. It reports whichever
 	// finish is actually falling back.
 	altSourceExpr = `COALESCE(CASE
+        WHEN o.price_usd IS NOT NULL OR o.price_usd_foil IS NOT NULL
+             OR o.price_usd_etched IS NOT NULL THEN o.source
         WHEN c.price_usd IS NULL AND a.price_usd IS NOT NULL THEN a.source_usd
         WHEN c.price_usd_foil IS NULL AND a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
     END, '')`
@@ -217,14 +256,19 @@ const (
 	// altSourceForEntry is the same idea where the row's finish is known, so it
 	// names the vendor that supplied *that* finish. A card's two finishes can
 	// come from different shops, and crediting the wrong one beside a price is
-	// worse than saying nothing.
+	// worse than saying nothing — which is why each branch below asks about the
+	// override column its own finish would actually read.
 	altSourceForEntry = `COALESCE(CASE
         WHEN e.finish = 'etched' THEN
-            CASE WHEN c.price_usd_etched IS NULL AND c.price_usd_foil IS NULL
-                 THEN a.source_usd_foil END
+            CASE WHEN o.price_usd_etched IS NOT NULL THEN o.source
+                 WHEN c.price_usd_etched IS NOT NULL THEN NULL
+                 WHEN o.price_usd_foil IS NOT NULL THEN o.source
+                 WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
         WHEN e.finish = 'foil' THEN
-            CASE WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
-        ELSE CASE WHEN c.price_usd IS NULL THEN a.source_usd END
+            CASE WHEN o.price_usd_foil IS NOT NULL THEN o.source
+                 WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
+        ELSE CASE WHEN o.price_usd IS NOT NULL THEN o.source
+                  WHEN c.price_usd IS NULL THEN a.source_usd END
     END, '')`
 
 	// entryValue values one card_entries row by its finish. Every total hoard
@@ -243,13 +287,21 @@ const (
 	// Etched is unpriced only when its own column, the foil column and the
 	// fallback are all empty — mirroring effPriceEtched, so a card this
 	// predicate calls unpriced is exactly one entryValue scores at zero.
+	//
+	// The override columns are named here for that reason and not because a
+	// correction is a common way to be priced. hoard can record one for a
+	// printing Scryfall never priced at all, and then the catalog and the
+	// fallback are both NULL while entryValue returns real money — the exact
+	// disagreement between these two expressions this comment exists to forbid.
 	unpricedPredicate = `(e.finish = 'etched'
-         AND c.price_usd_etched IS NULL
-         AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
+         AND o.price_usd_etched IS NULL AND c.price_usd_etched IS NULL
+         AND o.price_usd_foil IS NULL AND c.price_usd_foil IS NULL
+         AND a.price_usd_foil IS NULL)
    OR (e.finish = 'foil'
-         AND c.price_usd_foil IS NULL AND a.price_usd_foil IS NULL)
+         AND o.price_usd_foil IS NULL AND c.price_usd_foil IS NULL
+         AND a.price_usd_foil IS NULL)
    OR (e.finish = 'nonfoil'
-         AND c.price_usd IS NULL AND a.price_usd IS NULL)`
+         AND o.price_usd IS NULL AND c.price_usd IS NULL AND a.price_usd IS NULL)`
 
 	// enrichedExpr is THE test for "hoard has stored this printing's Scryfall
 	// document", and the only place a reader should have to look for it.

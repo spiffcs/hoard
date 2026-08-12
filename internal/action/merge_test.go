@@ -443,7 +443,7 @@ func TestMergeHoardUpgradesSourceOnConsent(t *testing.T) {
 	if err := source.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if err := stampVersion(sourcePath, store.SchemaVersion()-1, v28Undo...); err != nil {
+	if err := stampVersion(sourcePath, store.SchemaVersion()-1, newestUndo...); err != nil {
 		t.Fatalf("stamping an old version: %v", err)
 	}
 
@@ -565,14 +565,22 @@ func stampVersion(path string, v int, undo ...string) error {
 	return err
 }
 
-// v28Undo returns the schema to v27: percent watches added four columns to
-// watches, and a v27 fixture must genuinely not have them.
-var v28Undo = []string{
-	`ALTER TABLE watches DROP COLUMN pct`,
-	`ALTER TABLE watches DROP COLUMN min_move`,
-	`ALTER TABLE watches DROP COLUMN window_days`,
-	`ALTER TABLE watches DROP COLUMN last_fired_at`,
-}
+// newestUndo takes a freshly created database back one schema version, so a
+// fixture stamped SchemaVersion()-1 genuinely lacks the newest migration's
+// schema rather than merely claiming to. Without it the upgrade under test
+// runs against a database that already has everything, and proves nothing.
+//
+// This has to be revisited every time a migration is added — it undoes the last
+// entry in store.migrations. The failure when it is forgotten is loud but
+// misleading: the merge fails inside some unrelated query naming a column the
+// skipped migration was supposed to add.
+//
+// Empty today because the last entry, v30, only deletes rows — there is no
+// schema to take away, and a fixture created at v30 already matches v29's shape
+// exactly. Re-running v30's deletes over a database that has already had them is
+// the no-op it should be. Put the DROPs back the moment a structural migration
+// lands on the end.
+var newestUndo []string
 
 // rawJSON reads a stored card document verbatim, which no store API exposes.
 func rawJSON(t *testing.T, path, scryfallID string) string {

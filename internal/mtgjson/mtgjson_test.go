@@ -565,7 +565,7 @@ func TestFoilPrefersManapoolOverCardKingdom(t *testing.T) {
 }
 
 // A marketplace's "lowest ask" can be a troll listing — a seven-figure
-// Legion Loyalty, observed live. A quote over listingOutlierRatio times
+// Legion Loyalty, observed live. A quote over ListingOutlierRatio times
 // the cheapest other vendor's is skipped, today and in the archive; a
 // lone vendor is trusted (nothing to compare against).
 func TestFoilSkipsTrollListings(t *testing.T) {
@@ -780,5 +780,87 @@ func TestMergeExtraDoesNotOverwriteTheFeed(t *testing.T) {
 	}
 	if got := v.Retail.Foil["2026-07-27"]; got != 5.40 {
 		t.Errorf("foil = %v, want the overlay to fill the hole", got)
+	}
+}
+
+// The two-sided guard, and its asymmetry.
+//
+// Every figure here was measured live on 2026-08-12. The case that matters is
+// the third one: with a cheapest-anchored rule, 0.56 could never be refused
+// (nothing is twenty times below itself) and both honest vendors above it were
+// themselves rejected as trolls, so the pick fell back to 0.56 — the guard
+// protecting the defect it existed to catch.
+func TestNonPrice(t *testing.T) {
+	cases := []struct {
+		name    string
+		price   float64
+		figures []float64
+		want    bool
+	}{
+		// One voice: nothing to compare against, so nothing is refused.
+		{"lone vendor", 500.00, []float64{500.00}, false},
+
+		// Two figures: no majority, so the older rule stands — the cheaper is
+		// assumed real and only a wild upward figure is refused.
+		{"troll listing, two figures", 7362059.74, []float64{29.99, 7362059.74}, true},
+		{"the sane figure beside it", 29.99, []float64{29.99, 7362059.74}, false},
+		{"two figures far apart downward", 0.56, []float64{0.56, 120.51}, false},
+
+		// Three figures: both directions measured against the median.
+		{"market averaged over no sales", 0.56, []float64{0.56, 59.99, 120.51}, true},
+		{"cardkingdom beside it", 59.99, []float64{0.56, 59.99, 120.51}, false},
+		{"manapool beside it", 120.51, []float64{0.56, 59.99, 120.51}, false},
+		{"troll listing, three figures", 7362059.74, []float64{2.49, 2.99, 7362059.74}, true},
+		{"the cheapest beside it", 2.49, []float64{2.49, 2.99, 7362059.74}, false},
+
+		// Ordinary vendor disagreement, which must survive untouched. The last
+		// is the regression a cheapest-anchored rule caused: a $1 outlier drags
+		// the anchor to $20 and calls a perfectly normal $25 ask a troll.
+		{"healthy thin market", 3.89, []float64{3.89, 12.98, 17.36}, false},
+		{"worst healthy spread measured", 0.56, []float64{0.56, 1.85}, false},
+		{"cheap outlier does not condemn the dear", 25, []float64{1, 15, 25}, false},
+
+		// Nothing to judge.
+		{"zero price", 0, []float64{0, 10, 20}, false},
+		{"no figures", 5, nil, false},
+	}
+	for _, tc := range cases {
+		if got := NonPrice(tc.price, tc.figures); got != tc.want {
+			t.Errorf("NonPrice(%v, %v) = %v, want %v — %s",
+				tc.price, tc.figures, got, tc.want, tc.name)
+		}
+	}
+}
+
+// End to end through bestUSD: the shape that started this. TCGplayer's figure
+// is an average over no sales, so the foil price comes from the next vendor in
+// preference order rather than from the cheapest number on the sheet.
+func TestFoilSkipsMarketPriceWithNoSalesBehindIt(t *testing.T) {
+	body := `{
+ "meta": {"date": "2026-08-12", "version": "5.3.0"},
+ "data": {
+  "uuid-preorder": {"paper": {
+    "tcgplayer":   {"currency": "USD", "retail": {"foil": {"2026-08-11": 0.56}}},
+    "manapool":    {"currency": "USD", "retail": {"foil": {"2026-08-11": 120.51}}},
+    "cardkingdom": {"currency": "USD", "retail": {"foil": {"2026-08-11": 59.99}}}
+  }}
+ }
+}`
+	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, body)})
+
+	got, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-preorder": true})
+	if err != nil {
+		t.Fatalf("TodayPrices: %v", err)
+	}
+	p := got["uuid-preorder"]
+	if p.Foil == nil {
+		t.Fatal("no foil price at all; refusing a figure must not unprice the card")
+	}
+	if *p.Foil == 0.56 {
+		t.Error("foil price is still 0.56, the market price no sale stands behind")
+	}
+	if *p.Foil != 120.51 || p.FoilSource != "manapool" {
+		t.Errorf("foil = %v from %q, want manapool's 120.51 (next in foilProviderOrder)",
+			*p.Foil, p.FoilSource)
 	}
 }

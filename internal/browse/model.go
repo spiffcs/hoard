@@ -145,9 +145,10 @@ type Model struct {
 
 	containers []container
 
-	// setsMode flips the left pane from binders and decks to the sets the
-	// hoard holds cards from — a second lens over the same hoard, toggled
-	// with B. Session-only; nothing persists it.
+	// setsMode flips the left pane between the sets the hoard holds cards
+	// from and the binders and decks it keeps them in — two lenses over the
+	// same hoard, toggled with B. Sets is where the browser opens (see New).
+	// Session-only; nothing persists it.
 	setsMode bool
 
 	// The holdings pane's three levels, market-style: allCards is what the
@@ -428,13 +429,20 @@ type Model struct {
 // New builds a model with the container list already loaded, so the first frame
 // has content rather than a spinner over a database read that takes a
 // millisecond.
+//
+// The browser opens on the SETS lens: a hoard's sets are a property of the
+// cards themselves, so that pane reads the same on a first run as on a
+// twentieth, while binders and decks are a filing choice that a new hoard has
+// not made yet (one default binder, no decks — a left pane with nothing to
+// choose from). B is the flip to that listing and back, so the filing view is
+// one keystroke away rather than the thing every session starts by leaving.
 func New(st Store, opts ...Option) (Model, error) {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
-		cellAspect: ui.CellAspectOverride(),
-		commands:   commands(), moversPennyLimit: defaultPennyLimit,
+		cellAspect: ui.CellAspectOverride(), setsMode: true,
+		commands: commands(), moversPennyLimit: defaultPennyLimit,
 		marketFloor: defaultMarketFloor, helpRowsMemo: map[helpRowsKey]int{}}
 	for _, opt := range opts {
 		opt(&m)

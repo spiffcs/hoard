@@ -59,7 +59,8 @@ Show
 Type "hoard"
 Enter
 Sleep 3s
-Type B
+# No B here: the browser opens on the sets lens, cursor on All Cards, which is
+# exactly where B used to leave it. B is now the flip to binders and decks.
 Down@400ms 7
 Sleep 700ms
 

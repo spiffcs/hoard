@@ -605,3 +605,28 @@ func FromGuessed(rows []store.FinishGuessRow) Document {
 	doc.Guessed = g
 	return doc
 }
+
+// FromRefused builds the price-correction worklist document.
+func FromRefused(rows []store.PriceOverrideRow) Document {
+	r := &Refused{Rows: make([]RefusedRow, 0, len(rows))}
+	for _, row := range rows {
+		r.Rows = append(r.Rows, RefusedRow{
+			Card: Card{
+				Name:       row.Name,
+				ScryfallID: row.ScryfallID,
+				SetCode:    row.SetCode,
+				Number:     row.CollectorNumber,
+				Finish:     row.Finish,
+			},
+			Copies:     row.Quantity,
+			PriceUsd:   row.Price,
+			RefusedUsd: row.Refused,
+			Source:     row.Source,
+			Reason:     row.Reason,
+			AsOf:       row.AsOf,
+		})
+	}
+	doc := envelope(KindRefused)
+	doc.Refused = r
+	return doc
+}

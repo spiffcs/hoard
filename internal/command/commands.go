@@ -121,6 +121,8 @@ func rootCommand(a *app) *cobra.Command {
 
 		NewCmdUnpriced(a),
 
+		NewCmdRefused(a),
+
 		NewCmdGuessed(a),
 
 		NewCmdRepairFinishes(a),

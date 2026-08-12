@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // setRowAt finds the sets-pane row for a code, failing if absent.
@@ -33,6 +36,43 @@ func atSet(t *testing.T, m Model, code string) Model {
 	}
 	m.deriveView()
 	return m
+}
+
+// The browser opens on the sets lens, before any key is pressed. newTestModel
+// steps back to the binder pane for every other test in the package, so this
+// one reads New's own result.
+func TestLaunchesInSetsMode(t *testing.T) {
+	m, err := New(testStore(), WithEnv(ui.Env{Color: true}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Error, not Fatal: each line below is a separate claim about the opening
+	// frame, and a regression that flips the default should name all of them
+	// rather than stopping at the flag.
+	if !m.setsMode {
+		t.Error("the browser must open on the sets lens")
+	}
+	if m.containers[0].Kind != kindAllCards {
+		t.Fatalf("first row = %+v, want All Cards", m.containers[0])
+	}
+	for i, want := range []string{"c21", "mh3", "uma"} {
+		if c := m.containers[i+1]; c.Kind != kindSet || c.setCode != want {
+			t.Errorf("row %d = %+v, want set %s", i+1, c, want)
+		}
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	if v := next.(Model).View(); !strings.Contains(v, "SETS") {
+		t.Error("the first frame's pane title must say SETS")
+	}
+	// One B is the whole way to the filing view — the flip is not a detour
+	// through some third state.
+	m = key(m, "B")
+	if m.setsMode {
+		t.Error("B did not leave sets mode")
+	}
+	if m.containers[1].Kind != store.KindCollection {
+		t.Errorf("row 1 = %+v, want the binder", m.containers[1])
+	}
 }
 
 // B flips the pane to sets — All Cards first, then the store's rows in its

@@ -58,6 +58,8 @@ var migrations = []migration{
 	{26, guessContainerFK},
 	{27, traitFilterIndex},
 	{28, percentWatches},
+	{29, contradictedPrices},
+	{30, purgePhantomFinishSeries},
 }
 
 // schemaVersion is the version a database is brought up to.
@@ -629,6 +631,41 @@ ALTER TABLE watches ADD COLUMN min_move      REAL    NOT NULL DEFAULT 0;
 ALTER TABLE watches ADD COLUMN window_days   INTEGER NOT NULL DEFAULT 30;
 ALTER TABLE watches ADD COLUMN last_fired_at TEXT    NOT NULL DEFAULT '';`
 
+// v29: prices refused for contradicting the asks standing on the same product,
+// and the figure substituted for each.
+//
+// This is the first table that can outrank Scryfall. Everywhere else the
+// fallback only fills a NULL — card_prices_alt is consulted when the catalog
+// said nothing — and that ordering is why a wrong Scryfall figure had no way to
+// be challenged: a $0.56 surge foil against a $97.55 cheapest ask on its own
+// TCGplayer product, carried into every total hoard reports. So this one is
+// consulted first, and it earns that by never holding an opinion, only a
+// correction hoard can point at a source for.
+//
+// Shaped like card_prices_alt — one row per printing, a column per finish —
+// rather than a row per (printing, finish). The effective-price expressions
+// project all three finishes at once with no finish in scope, so the row-per-
+// finish form would need three joins in every query that values a card, where
+// this needs one beside the fallback join that is already there.
+//
+// It carries the refused figure as well as the substitute because a correction
+// the owner cannot inspect is indistinguishable from hoard inventing prices.
+// Etched gets its own column, unlike card_prices_alt: the compromise there is
+// that its source has no etched series to store, which does not apply here.
+const contradictedPrices = `
+CREATE TABLE IF NOT EXISTS card_price_overrides (
+    scryfall_id        TEXT PRIMARY KEY REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    price_usd          REAL,
+    price_usd_foil     REAL,
+    price_usd_etched   REAL,
+    refused_usd        REAL,
+    refused_usd_foil   REAL,
+    refused_usd_etched REAL,
+    source             TEXT NOT NULL,
+    reason             TEXT NOT NULL,
+    as_of              TEXT NOT NULL
+);`
+
 // v9: the hoard's total value over time, one row per observation. Per-card
 // history answers "what did this card do"; a value chart needs "what did the
 // whole hoard do", and deriving that on the fly would revalue every entry
@@ -1113,3 +1150,42 @@ SELECT ?, scryfall_id, 'foil', 'main', qty_foil FROM cards_legacy WHERE qty_foil
 	}
 	return tx.Commit()
 }
+
+// v30: delete price and bid history for finishes the printing does not come in.
+//
+// A vendor can file one product's price under a bucket the card has no copy of
+// — Manapool quoted the surge-foil-only Aragorn and Arwen under `normal`, and
+// the unpivot recorded it as a non-foil series at $125.04 beside the card's
+// real foil series, drawn as a second sparkline for a copy that cannot exist.
+// Five such series stood in a live hoard, two non-foil and three foil.
+//
+// This deletes from card_price_history, which the schema calls the one table
+// worth protecting, and that is deliberate rather than careless. The rule here
+// is not "this price looks wrong" — a wrong price is still a fact about what a
+// vendor said, and those rows stay. It is "this printing has no such copy", so
+// the series describes a card nobody can own and no query can correctly join
+// to. Nothing values it, nothing charts it truthfully, and leaving it in place
+// only preserves the ability to draw it again.
+//
+// Etched is left alone. It is stored under 'foil' wherever the printing has no
+// etched price of its own (see effPriceEtched), so a literal reading of the
+// finishes list would delete series that are working exactly as intended.
+//
+// A printing whose Scryfall document was never stored has an unknown finishes
+// list and is skipped: only a positive denial may delete anything.
+const purgePhantomFinishSeries = `
+DELETE FROM card_price_history WHERE rowid IN (
+  SELECT h.rowid FROM card_price_history h JOIN cards c ON c.scryfall_id = h.scryfall_id
+   WHERE h.finish IN ('nonfoil','foil')
+     AND json_extract(c.raw_json, '$.finishes') IS NOT NULL
+     AND json_extract(c.raw_json, '$.finishes') NOT LIKE '%"' || h.finish || '"%'
+     AND NOT (h.finish = 'foil'
+              AND json_extract(c.raw_json, '$.finishes') LIKE '%"etched"%'));
+
+DELETE FROM card_bid_history WHERE rowid IN (
+  SELECT b.rowid FROM card_bid_history b JOIN cards c ON c.scryfall_id = b.scryfall_id
+   WHERE b.finish IN ('nonfoil','foil')
+     AND json_extract(c.raw_json, '$.finishes') IS NOT NULL
+     AND json_extract(c.raw_json, '$.finishes') NOT LIKE '%"' || b.finish || '"%'
+     AND NOT (b.finish = 'foil'
+              AND json_extract(c.raw_json, '$.finishes') LIKE '%"etched"%'));`

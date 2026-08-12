@@ -802,6 +802,15 @@ func newTestModel(t *testing.T, st Store) Model {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// The browser opens on SETS (TestLaunchesInSetsMode owns that fact); most
+	// tests here exercise the binders-and-decks pane underneath it, so drop
+	// back to it. The field and a reload rather than toggleSetsMode: the
+	// toggle writes a status line, and the tests that read m.status expect
+	// New's own (the fired-watch banner) to have survived construction.
+	m.setsMode = false
+	if err := m.loadContainers(); err != nil {
+		t.Fatalf("loadContainers: %v", err)
+	}
 	// The merged all-cards row leads the pane; most tests exercise the
 	// default binder, so step past it (the merged view has its own tests).
 	m.cursor[paneContainers] = 1

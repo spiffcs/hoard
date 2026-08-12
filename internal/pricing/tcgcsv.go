@@ -122,7 +122,8 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids 
 			continue
 		}
 		for _, n := range needs {
-			add(n, todayDate(), prices[n.product])
+			price, _ := Resolve(prices[n.product])
+			add(n, todayDate(), price)
 		}
 	}
 	if days <= 1 || len(gids) == 0 {
@@ -167,7 +168,8 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids 
 					continue
 				}
 				for _, n := range needs {
-					add(n, date, prices[n.product])
+					price, _ := Resolve(prices[n.product])
+					add(n, date, price)
 				}
 			}
 		}()

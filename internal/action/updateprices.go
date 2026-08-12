@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -95,6 +96,10 @@ type UpdatePricesResult struct {
 	// false means every price was fetched live.
 	CatalogUsed bool
 	Gaps        GapReport
+	// Refused counts prices this run declined to report because the asks on
+	// their own TCGplayer product contradicted them, and substituted the
+	// cheapest of those asks for instead.
+	Refused int
 	// Changes feeds the movers rendering: what moved since the last refresh.
 	Changes []store.PriceChange
 }
@@ -140,10 +145,46 @@ func UpdatePrices(ctx context.Context, d Deps, p progress.Fn) (UpdatePricesResul
 		return res, err
 	}
 
+	// Third, and after the gap fill for the same reason the history pass runs
+	// last: the check reads the price a card would be reported at, and a
+	// holding priced from MTGJSON moments ago only has one once that pass has
+	// committed.
+	res.Refused, err = RefuseContradictedPrices(ctx, d, p)
+	if err != nil {
+		return res, err
+	}
+
 	// After the gap fill, not before: a card priced from MTGJSON this run has
 	// its effective price only once that pass has committed, and recording
 	// first would log the gap and call the fill a change on the next run.
+	// After the corrections too, so the history keeps the figure hoard
+	// actually reports rather than the one it refused.
 	p.Emit(progress.Event{Step: "recording history"})
 	res.Changes, err = d.Store.RecordPrices()
 	return res, err
+}
+
+// RefuseContradictedPrices replaces the price corrections in force with the
+// ones today's asks justify, and reports how many are standing.
+//
+// A failure to reach TCGplayer's catalog leaves the corrections alone rather
+// than clearing them: the previous answer is stale but was measured, where an
+// empty sweep from an unreachable source is not evidence that anything has
+// been fixed. Only a sweep that actually ran may retire a correction.
+func RefuseContradictedPrices(ctx context.Context, d Deps, p progress.Fn) (int, error) {
+	f := d.pricer().WithProgress(func(msg string) {
+		p.Emit(progress.Event{Step: "checking prices against asks", Note: msg})
+	})
+	sweep, err := f.Contradictions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := d.Store.ReplacePriceOverrides(sweep.Overrides, sweep.Checked); err != nil {
+		return 0, err
+	}
+	if n := len(sweep.Overrides); n > 0 {
+		p.Emit(progress.Event{Step: "checking prices against asks", Note: fmt.Sprintf(
+			"%d refused for sitting below the cheapest ask on their own listing; using the ask instead.", n)})
+	}
+	return len(sweep.Overrides), nil
 }
