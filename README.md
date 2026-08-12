@@ -23,6 +23,24 @@ from MTGJSON and TCGCSV. Metadata and card information come from Scryfall.
 curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b /usr/local/bin
 ```
 
+`tools.aithirne.com` is the maintainer's. The script it serves is
+[`install.sh`](install.sh) from this repository — the release workflow uploads
+that exact file — so you can read it here before running it, or check the two
+match without taking anyone's word for it:
+
+```sh
+diff <(curl -sSfL https://tools.aithirne.com/hoard/install.sh) \
+     <(curl -sSfL https://raw.githubusercontent.com/spiffcs/hoard/main/install.sh)
+```
+
+It downloads from this repository's releases and verifies the SHA-256; add `-v`
+to verify the Sigstore signature too, if you have cosign. A trailing tag pins the
+version instead of taking the latest:
+
+```sh
+curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -v -b /usr/local/bin v0.1.0
+```
+
 Or `go install github.com/spiffcs/hoard/cmd/hoard@latest` (Go 1.26+), or take an
 archive from the [releases page](https://github.com/spiffcs/hoard/releases). The
 macOS binaries are signed and notarized, so they open without a Gatekeeper

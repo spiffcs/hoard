@@ -79,6 +79,16 @@ tools:
     with:
       repo: cli/cli
 
+  # used to publish and fetch the scanner's fixture frames as an OCI artifact
+  # on ghcr.io — see scripts/fetch-scan-fixtures.sh. Pinned here so `make tools`
+  # provides it and a contributor installs nothing extra to run `make scan-check`.
+  - name: oras
+    version:
+      want: v1.3.0
+    method: github-release
+    with:
+      repo: oras-project/oras
+
   # used for generating the SBOM attached to each release
   - name: syft
     version:

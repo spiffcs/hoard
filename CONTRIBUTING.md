@@ -33,6 +33,25 @@ local:
 make scan-test scan-check
 ```
 
+`scan-check` replays 28 camera frames through the reader and diffs the result
+against checked-in goldens. **The frames are not in git** — they are ~58MB, and
+charging every contributor for them on clone was unfair when the check needs
+macOS, Xcode and a Swift build and CI never runs it. `make scan-fixtures`
+downloads them once (it is a dependency of `scan-check`, so you rarely call it
+yourself) and verifies the archive against the tracked
+[`scan/fixtures/frames.oci`](scan/fixtures/frames.oci) before extracting.
+
+The goldens stay in the repository, because they are the assertions and they
+diff readably in review. If you change the frames, push a new artifact and put
+the printed digest in that manifest, in the same commit as whatever changed
+them — the manifest file documents the two commands.
+
+The artifact is pinned by **manifest digest**, not by tag: in a registry the
+digest is the content's address, so a pull cannot return other bytes and there
+is no checksum to keep in sync. Note that a package's visibility is separate
+from the repository's — a public repo does not make its packages public, and an
+anonymous `oras pull` fails until that is set on the package itself.
+
 See [scan/hoard-scan-ios/README.md](scan/hoard-scan-ios/README.md) for the
 iPhone app.
 

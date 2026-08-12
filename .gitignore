@@ -99,5 +99,11 @@ scan/foil-corpus/stills/
 completions/
 manpages/
 
+# The scanner's fixture frames: ~58MB of camera stills fetched by
+# `make scan-fixtures`, not carried in the repository. The goldens beside them
+# ARE tracked — they are the assertions, and they diff readably. See
+# scan/fixtures/frames.oci.
+scan/fixtures/frames/
+
 # Coverage output from `make coverage`.
 coverage.out

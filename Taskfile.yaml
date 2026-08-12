@@ -229,10 +229,19 @@ tasks:
   # Replay the checked-in scan fixtures through the reader and diff the
   # extracted card lists against their goldens (macOS only). The reader is
   # cardkit-probe, so this depends on `cardkit` rather than `scan`.
+  # Download the fixture frames the sweep replays. They are not in git — ~58MB
+  # read by one macOS-only check that CI never runs, so carrying them charged
+  # every contributor for a gate almost none of them would use. The goldens stay
+  # tracked; only the inputs are fetched. Pinned by digest in scan/fixtures/frames.oci.
+  scan-fixtures:
+    desc: Download the scanner fixture frames (~58MB, once)
+    platforms: [darwin]
+    cmd: ./scripts/fetch-scan-fixtures.sh
+
   scan-check:
     desc: Replay scan fixtures against their goldens
     platforms: [darwin]
-    deps: [cardkit]
+    deps: [cardkit, scan-fixtures]
     cmd: ./scan/fixtures/sweep.sh
 
   # Unit-test the Swift side's pure logic — the trigger state machine, the text

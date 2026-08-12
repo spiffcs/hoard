@@ -35,9 +35,19 @@ set -u
 
 dir=$(cd "$(dirname "$0")" && pwd)
 helper=${HELPER:-"$dir/../../bin/cardkit-probe"}
+frames="$dir/frames"
 
 if [ ! -x "$helper" ]; then
     echo "reader not built at $helper — run: make cardkit" >&2
+    exit 2
+fi
+
+# The frames are fetched, not checked in — see frames.oci. Refuse rather than
+# sweep zero files: a glob over an empty directory would exit 0 and report a
+# clean run against nothing, which is the one outcome a regression suite must
+# never produce.
+if [ ! -d "$frames" ] || [ -z "$(ls "$frames"/*.png 2>/dev/null)" ]; then
+    echo "no fixture frames in $frames — run: make scan-fixtures" >&2
     exit 2
 fi
 
@@ -75,7 +85,7 @@ print(json.dumps(out, indent=2, sort_keys=True))
 }
 
 fail=0
-for png in "$dir"/*.png; do
+for png in "$frames"/*.png; do
     name=$(basename "$png" .png)
     golden="$dir/$name.golden.json"
     got=$("$helper" --image "$png" --rotate 0 2>/dev/null | normalize)

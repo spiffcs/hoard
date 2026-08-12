@@ -1,0 +1,21 @@
+# The scanner's fixture frames — 28 camera stills that sweep.sh replays.
+#
+# Not in git: ~58MB read by one macOS-only check that CI never runs, so carrying
+# them charged every contributor on clone for a gate almost none of them would
+# use. `make scan-fixtures` fetches them. The goldens beside this file ARE
+# tracked — they are the assertions, and they diff readably in review.
+#
+# Pinned by manifest digest, not by tag. The digest IS the content's address, so
+# the registry cannot hand back different bytes under it; there is no checksum
+# here to keep in sync because there is nothing left to assert. A tag would be
+# mutable and this file would be back to taking someone's word for it.
+#
+# To publish a new set:
+#   tar -czf scan-fixtures.tar.gz -C scan/fixtures/frames $(cd scan/fixtures/frames 2>/dev/null && ls *.png | tr '\n' ' ')
+#   oras push ghcr.io/spiffcs/hoard/scan-fixtures:vN \
+#     --artifact-type application/vnd.hoard.scan-fixtures.v1 \
+#     scan-fixtures.tar.gz:application/gzip
+# then put the printed digest below, in the same commit as whatever changed the
+# frames.
+ref: ghcr.io/spiffcs/hoard/scan-fixtures
+digest: sha256:9a53391aacd019ff57aeba0fc6759b9553a874dbabe6c50e435e518fc1b7c0d5

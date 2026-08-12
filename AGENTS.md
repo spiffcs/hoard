@@ -63,6 +63,7 @@ anywhere.
 | `internal/store` | SQLite: every query lives here |
 | `internal/browse` | The TUI |
 | `scan/` | The Swift card scanner — macOS and iPhone. Needs Xcode |
+| `scan/fixtures/` | Goldens for the reader. The frames they replay are fetched, not tracked — `make scan-fixtures` |
 | `schema/` | The published JSON Schema and the SQLite schema docs |
 
 ## Licensing
