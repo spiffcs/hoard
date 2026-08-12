@@ -20,14 +20,14 @@ func newRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	root := &cobra.Command{
 		Use:           "hoard [command]",
-		Short:         "hoard: catalog valuable MTG cards and decks in SQLite",
+		Short:         "a terminal collection tracker for Magic: The Gathering",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.AddGroup(&cobra.Group{ID: "collection", Title: "Collection commands:"})
-	InstallHelp(root, "hoard: catalog valuable MTG cards and decks in SQLite", pipeEnv)
+	InstallHelp(root, "a terminal collection tracker for Magic: The Gathering", pipeEnv)
 	return root, out, errOut
 }
 
@@ -211,7 +211,7 @@ func TestRootHelpIsGeneratedFromTheTree(t *testing.T) {
 	got := out.String()
 
 	for _, want := range []string{
-		"hoard: catalog valuable MTG cards and decks in SQLite",
+		"a terminal collection tracker for Magic: The Gathering",
 		"Collection commands:",
 		"movers", "Biggest risers",
 		"report", "Dated valuation",
@@ -232,7 +232,7 @@ func TestHelpFitsANarrowTerminal(t *testing.T) {
 	root := &cobra.Command{Use: "hoard [command]", SilenceUsage: true}
 	root.SetOut(out)
 	root.AddGroup(&cobra.Group{ID: "collection", Title: "Collection commands:"})
-	InstallHelp(root, "hoard: catalog valuable MTG cards and decks in SQLite",
+	InstallHelp(root, "a terminal collection tracker for Magic: The Gathering",
 		func(io.Writer) ui.Env { return ui.Env{Width: 60, Clamp: true} })
 	root.AddCommand(&cobra.Command{
 		Use: "backfill-prices", GroupID: "collection",
@@ -330,7 +330,7 @@ func TestFlagUsagesWrapToTheTerminal(t *testing.T) {
 	out := &bytes.Buffer{}
 	root := &cobra.Command{Use: "hoard [command]", SilenceUsage: true}
 	root.SetOut(out)
-	InstallHelp(root, "hoard: catalog valuable MTG cards and decks in SQLite",
+	InstallHelp(root, "a terminal collection tracker for Magic: The Gathering",
 		func(io.Writer) ui.Env { return ui.Env{Width: 60, Clamp: true} })
 	root.PersistentFlags().String("db", "",
 		"the hoard database to use (default $HOARD_DB, else the per-user data dir)")

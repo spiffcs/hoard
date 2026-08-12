@@ -1,5 +1,5 @@
-// Command hoard catalogs valuable Magic: The Gathering cards in a local SQLite
-// database. Loose cards are added by their Scryfall page URL; whole decks are
+// Command hoard is a terminal collection tracker for Magic: The Gathering,
+// holding a collection in a local SQLite database. Loose cards are added by their Scryfall page URL; whole decks are
 // imported from a deck-list link (or a pasted/exported text list). The tool
 // records how many of each card you own (across the collection and every deck)
 // and their current market prices.

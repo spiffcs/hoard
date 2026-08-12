@@ -23,9 +23,9 @@ from MTGJSON and TCGCSV. Metadata and card information come from Scryfall.
 curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b /usr/local/bin
 ```
 
-`tools.aithirne.com` is the maintainer's. The script it serves is
-[`install.sh`](install.sh) from this repository — the release workflow uploads
-that exact file — so you can read it here before running it, or check the two
+`tools.aithirne.com` is from the maintainer (see [triage](https://github.com/spiffcs/triage) as well). The script it serves is
+[`install.sh`](install.sh) from this repository. The release workflow uploads
+that exact file so you can read it here before running it, or check the two
 match without taking anyone's word for it:
 
 ```sh
@@ -80,7 +80,8 @@ everything in one.
 
 Run `hoard` with no arguments to see the browser, or `hoard help` for every command.
 With nothing imported yet, `hoard demo` shows the same browser with sample data;
-`hoard demo --reset` starts that sample over.
+`hoard demo --reset` starts that sample over. When you're in the main browser you can use `:` to
+view the main command palette.
 
 <p align="center">
     <img src="docs/assets/browse.png" width="100%" alt="The browser: binders and decks listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
