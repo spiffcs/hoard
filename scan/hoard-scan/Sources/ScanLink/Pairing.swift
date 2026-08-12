@@ -6,11 +6,22 @@
 // database — not a dramatic exploit, but a real one, and the kind that is much
 // harder to add a gate to later than now.
 //
-// So the link is TLS with a pre-shared key derived from a six-digit code shown
-// on the phone. Six digits is not a lot of entropy; it is not meant to be. It
-// is a gate against the coffee-shop network and the housemate's laptop, on a
-// link that is usually a cable, and it is what a person will actually type. If
-// this ever leaves a home network, replace the code — not the TLS.
+// So the link is TLS with self-signed certificates, pinned on first use — the
+// model KDE Connect and Syncthing use for the same problem. PeerIdentity mints
+// the certificate, PeerTrust holds the pins, and the proof below is bound to the
+// peer's certificate fingerprint so a relay cannot forward it.
+//
+// This comment used to say "TLS with a pre-shared key", which was never true of
+// any tree that shipped. TLS-PSK was built first, measured working, and set
+// aside: a PSK keeps the six-digit code security-critical for the life of the
+// link, and a pinned certificate does not. That distinction is the whole reason
+// the code below can be per-launch and single-use — an already-pinned peer is
+// never asked for one at all.
+//
+// Six digits is not a lot of entropy; it is not meant to be. It gates the
+// coffee-shop network and the housemate's laptop for the one exchange that
+// establishes a pin, on a link that is usually a cable, and it is what a person
+// will actually type. What protects the session afterwards is the pin.
 
 import CryptoKit
 import Foundation

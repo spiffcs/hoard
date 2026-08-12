@@ -43,8 +43,8 @@ forward it; and an already-pinned peer is not asked for the code at all, which
 is what let the six-digit code become **per-launch and single-use** instead of
 permanent. Landed in `64b6702`, 211/211 package tests green.
 
-⚠️ **Loopback only. It has never run on real hardware** — see A2 in "What is
-left before review", which is a gate on shipping any build to a tester.
+✅ **Confirmed on hardware 2026-08-12.** The loopback-only caveat that stood
+here is discharged; see A2 below.
 
 The original analysis follows. Its *conclusion* was right and two of its
 premises were not: the failure was never a mystery, and TLS-PSK does in fact
@@ -278,8 +278,14 @@ submission, because that is the order it bites in.
 
 ### A. Engineering — must be true of the build that ships
 
-**A1. The reviewer has no Mac, and today the app shows them nothing.**
-*This is the one most likely to get the app rejected, and it has no owner yet.*
+**A1. The reviewer has no Mac, and today the app shows them nothing. — DONE,
+verified 2026-08-12.** `SessionView.swift:296` now shows the read whenever no Mac
+is connected, in a larger face than the developer-mode line, and the whole path
+behind it is unconditional: `:147` starts the trigger when `!link.connected`,
+and `shoot()` carries no connection guard, so `readCard` runs and `:509` assigns
+`lastRead` with or without a Mac. The account below is kept because its
+reasoning is still the reason the code looks the way it does.
+*(The line reference in the original note said 237; the code has moved.)*
 The read pipeline runs entirely on-device, so the app genuinely works alone —
 it identifies a card without any network at all. It just never says so:
 `SessionView.swift:237` gates the read line behind `developerMode`, so a
@@ -295,8 +301,11 @@ there is no queue to watch and nothing else on screen, so the objection does
 not apply. Decide and build before uploading; a demo video in review notes is
 a weaker substitute, not an equivalent.
 
-**A2. The TLS transport has never run on hardware.** Shipped in `64b6702`,
-green on loopback only. `includePeerToPeer` over AWDL and the iOS
+**A2. ~~The TLS transport has never run on hardware.~~ — CONFIRMED ON HARDWARE
+2026-08-12.** Shipped in `64b6702`, and now exercised on real devices rather than
+loopback. The session it had to survive is kept below, because it is also the
+regression run for any future change to the transport. Originally: green on
+loopback only. `includePeerToPeer` over AWDL and the iOS
 suspend/restart path at `PeerEnds.swift:94` have never been through TLS, and
 the USB-C tether is both likeliest to break and most used. **Both ends must be
 rebuilt and re-paired together** — a phone on the new build against a Mac on
@@ -308,8 +317,9 @@ reconnect without pairing → relaunch the phone, proving a rotated code does no
 break the pinned Mac → USB-C tether → background and foreground mid-session →
 then a real box of cards.
 
-**A3. `docs/scanner-limits.md` is untracked.** Every accuracy claim in the
-store description has to trace to it, and it is not in the repository.
+**A3. ~~`docs/scanner-limits.md` is untracked.~~ — DONE.** It is tracked, at
+`docs/specs/scanner-limits.md`. Every accuracy claim in the store description
+still has to trace to it.
 
 ### B. App Store Connect — the fields review will not start without
 
@@ -377,6 +387,26 @@ is fixed by Wizards** — see [data-licensing.md](data-licensing.md) §7, which
 records it as the clearest single gap in that audit. It must appear in the
 description. It is not optional and it is not paraphrasable.
 
+### Subtitle (30 characters)
+
+26 characters.
+
+```
+Scan MTG cards to your Mac
+```
+
+It spends the field on the Mac dependency on purpose. The description's "WHAT
+YOU NEED" paragraph is called out below as the single most important sentence
+for review, because a reviewer without a Mac has to understand immediately why
+the app is built this way — and the same is true of a stranger deciding whether
+to install. A subtitle is the last thing read before that decision, so setting
+the expectation here is what stops a one-star "does not work on its own".
+
+It also has to be searchable, and the App Store indexes the subtitle. The
+earlier draft, `Card scanner for hoard`, spent 22 characters naming a product
+nobody has heard of yet: the only unsearchable word in it was the one doing the
+most work.
+
 ### Promotional Text (170 characters, editable without a submission)
 
 161 characters. One paragraph, one line — see the warning below about line
@@ -436,14 +466,36 @@ be false, and it is exactly the sentence a reviewer will test.
 
 ### Keywords (100 character limit, commas, no spaces)
 
-87 characters.
+96 characters. No spaces after the commas — each one costs a character and buys
+nothing.
 
 ```
-mtg,magic,trading card,scanner,collection,inventory,catalog,tcg,binder,cards,price,deck
+magic,gathering,tcg,trading,collection,tracker,inventory,binder,deck,catalog,price,scanner,hoard
 ```
 
-86 characters. Deliberately excludes "Hoardling" and the category name — both
-are already indexed, so spending characters on them is waste.
+Nothing here repeats the app name or the subtitle. Apple indexes both
+separately, so spending keyword budget on them is waste.
+
+**`mtg` and `cards` were dropped when the subtitle changed.** The earlier draft
+carried both, correctly, while the subtitle was `Card scanner for hoard`. The
+subtitle is now `Scan MTG cards to your Mac`, which indexes them — so they moved
+from earning reach to costing 10 characters for none. Any future subtitle change
+has to be re-checked against this list for the same reason. (That draft was also
+labelled 87 characters and then 86 in consecutive lines; it was 87.)
+
+`magic` and `gathering` are separate tokens from `MTG` and catch the full
+spelling; `scanner` is a separate token from `scan`; `hoard` catches anyone who
+found the desktop tool first.
+
+Checked against [scanner-limits.md](scanner-limits.md) §13: none of `grade`,
+`condition`, `foil`, `multilingual`, `language`, `exact printing` or `sleeve`
+appear. A keyword is a claim of relevance, and matching a search for "card
+grading" with an app that grades nothing is how a one-star review is earned.
+
+`magic` and `gathering` are Wizards trademarks. That is consistent with how the
+app presents itself everywhere else — the description names the game in full and
+carries the mandatory Fan Content notice — but it is Apple's call. If they push
+back, drop those two tokens rather than reworking anything else.
 
 ### Support URL / Marketing URL
 
@@ -572,7 +624,7 @@ Worth recording so nobody re-solves it:
 
 | Where | Spelling |
 | --- | --- |
-| App Store name | `Hoardling`, subtitle `Card scanner for hoard` |
+| App Store name | `Hoardling`, subtitle `Scan MTG cards to your Mac` (26 of 30 chars) |
 | `CFBundleDisplayName` | `hoardling` — lowercase, as `hoard` presents itself |
 | Prose and UI copy | `Hoardling` — a coined proper noun |
 | The macOS helper bundle | `hoard`. It is not Hoardling; only the phone app is |
