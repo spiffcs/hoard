@@ -36,8 +36,12 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-      # The app icon, derived from the macOS helper's .icns by make-icon.swift
-      # so both platforms ship the same artwork from one source file.
+      # The app icon, built by make-icon.swift from docs/assets/logo-master.png
+      # — the same artwork the README shows, so the phone and the project can
+      # not end up wearing different faces. The master is full size because the
+      # icon needs 840px of artwork on its long side; the README gets a smaller
+      # copy from the same file. Regenerate both with `make logo` after changing
+      # the artwork — nothing checks that they still match.
       #
       # PrivacyInfo.xcprivacy lives here too and is picked up by this same
       # directory entry — xcodegen walks the folder, and an extension it does

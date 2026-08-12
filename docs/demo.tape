@@ -24,6 +24,22 @@ Set Framerate 24
 Hide
 Type `make build >/dev/null 2>&1`
 Enter
+# Film the binary just built, not whatever `hoard` is installed on PATH. An
+# installed copy can be arbitrarily old — even built from a commit no longer in
+# this repository — and the recording would show its behaviour, not main's.
+Type `export PATH="$PWD:$PATH"`
+Enter
+# Pin the image tier instead of letting hoard detect it. vhs inherits the
+# environment of whatever terminal launched it, so recording from Ghostty (or
+# kitty, or WezTerm) leaks TERM_PROGRAM through and hoard reasonably concludes it
+# may send kitty graphics — which vhs renders via xterm.js, which cannot display
+# them, so the card art came out as a block of purple garbage.
+#
+# halfblock rather than merely unsetting the leak: vhs sets no COLORTERM either,
+# so detection on its own lands on ImageNone and the detail view shows no art at
+# all. Naming the tier is the only way to actually film the card images.
+Type `export HOARD_CARD_IMAGES=halfblock`
+Enter
 Type `export HOARD_DB="$(mktemp -d)/demo.db"`
 Enter
 Type `cp "$HOME/Library/Application Support/hoard/hoard.db" "$HOARD_DB"`
@@ -33,48 +49,36 @@ Enter
 Sleep 2s
 Show
 
-# 1. A dated valuation of the whole collection.
-Type "hoard report"
-Enter
-Sleep 5s
-Type "clear"
-Enter
-Sleep 500ms
-
-# 2. The browser is what `hoard` with no arguments opens, and it is the half
+# The browser is what `hoard` with no arguments opens, and it is the half
 #    no static example conveys.
 Type "hoard"
 Enter
 Sleep 3s
-Down@400ms 6
-Sleep 1500ms
+Type B
+Down@400ms 7
+Sleep 700ms
 
-# 3. Card detail: the printing, its price history and its comps.
+# Card detail: the printing, its price history and its comps.
 Enter
 Sleep 4s
+Enter
+Sleep 4s
+PageDown 2
+Sleep 3s
 Escape
 Sleep 1s
 
 # 4. tab cycles the four screens: holdings, movers, watches, market.
-Tab
+Type v
 Sleep 3s
-Tab
+Type v
 Sleep 3s
-Tab
+Type v
 Sleep 3s
-Tab
-Sleep 1500ms
-
-# 5. `/` filters any screen. The grammar takes name, set, rarity, type,
-#    artist, colour, cmc, price, value, qty, finish, board, layout, setname.
-Type "/"
-Sleep 700ms
-Type "rarity:mythic"
-Sleep 700ms
-Enter
-Sleep 3500ms
+Type v
+Sleep 1000ms
 
 Escape
-Sleep 1s
+Sleep 500ms
 Type "q"
-Sleep 1s
+Sleep 500ms

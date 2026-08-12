@@ -112,7 +112,7 @@ func TestUsagePipedListsEveryCommand(t *testing.T) {
 	out := b.String()
 
 	for _, want := range []string{
-		"hoard: catalog valuable MTG cards and decks in SQLite",
+		"a terminal collection tracker for Magic: The Gathering",
 		"Browse the hoard",
 		"Collection commands:", "Binder commands:", "Deck commands:", "Interop commands:",
 		"add", "update-prices", "movers", "backfill-prices", "unpriced", "guessed",

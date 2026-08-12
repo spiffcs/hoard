@@ -156,6 +156,32 @@ tasks:
       - cmd: .github/scripts/go-mod-tidy-check.sh && echo "go.mod and go.sum are tidy!"
         silent: true
 
+  ## Shipped images #################################
+  #
+  # macOS-only, both of them: sips, `open`, and headless Chrome. They are not
+  # part of `all` and never run in CI — an image is checked by eye or not at
+  # all, and these exist to make that cheap enough to actually do.
+
+  # Open every shipped image at the size it is really seen, and say which ones
+  # are older than the source they are generated from.
+  asset-review:
+    desc: Review every shipped image (macOS)
+    platforms: [darwin]
+    cmd: ./scripts/asset-review.sh
+
+  # Re-render the og:image GitHub serves for link unfurls. The upload itself is
+  # by hand — GitHub has no API for it — at Settings → General → Social preview.
+  social-preview:
+    desc: Re-render the social preview card (macOS)
+    platforms: [darwin]
+    cmds:
+      - >-
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        --headless --disable-gpu --hide-scrollbars --window-size=1280,640
+        --screenshot=docs/assets/social-preview.png docs/social-preview.html
+      - cmd: echo "Wrote docs/assets/social-preview.png — upload it in Settings → General → Social preview"
+        silent: true
+
   ## Native / scan tasks (hoard-only) #################################
   #
   # Every task in this group carries `platforms: [darwin]`: on the Linux CI
@@ -219,6 +245,36 @@ tasks:
     platforms: [darwin]
     deps: [cardkit]
     cmd: ./bin/cardkit-probe --score scan/corpus/manifest.tsv {{ .CLI_ARGS }} ${ARGS:-}
+
+  # Everything derived from the logo, from the one file that is the logo.
+  #
+  # docs/assets/logo-master.png is the source of truth and the only hand-authored
+  # image here; the README's copy and the iPhone icon are both generated from it.
+  # Two hand-maintained copies of one logo is two things that drift, and they are
+  # tracked PNGs — a stale one is simply committed, because nothing downstream
+  # notices. `make asset-review` reports their freshness for the same reason.
+  #
+  # Not a dependency of scan-ios: a build should not quietly rewrite tracked
+  # assets, and these are meant to be looked at before they are committed.
+  logo:
+    desc: Rebuild the README logo and the app icon from the master artwork
+    platforms: [darwin]
+    deps: [scan-ios-icon]
+    cmds:
+      # 640px serves both consumers with headroom — the README shows it at 150,
+      # the social card at 420 — while the master stays full size for the icon,
+      # which needs 840px of artwork on its long side and may want more later.
+      - sips --resampleWidth 640 docs/assets/logo-master.png --out docs/assets/hoard-logo.png >/dev/null
+      - cmd: echo "Wrote docs/assets/hoard-logo.png — rerun 'make social-preview' if the card should follow"
+        silent: true
+
+  scan-ios-icon:
+    desc: Regenerate the iPhone app icon from the master artwork
+    platforms: [darwin]
+    dir: scan/hoard-scan-ios
+    cmd: >-
+      swift make-icon.swift ../../docs/assets/logo-master.png
+      Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
 
   # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
   # (xcodebuild -downloadPlatform iOS) and a signing team — scripts/build-scan-ios.sh

@@ -35,7 +35,23 @@ type app struct {
 	dbPath string
 }
 
-const tagline = "hoard: catalog valuable MTG cards and decks in SQLite"
+// The one-line description, and the only copy of it in the Go tree. It is the
+// root's Short, which means it is also the NAME line of every generated man
+// page — and cobra writes that line as "hoard - <Short>". A Short beginning
+// "hoard:" therefore produced "hoard - hoard: ...", so the program name is
+// deliberately absent here; the help prints it on the Usage line directly below.
+//
+// KEEP IT UNDER 60 CHARACTERS. The help renderer writes this line verbatim
+// rather than wrapping it, and TestUsageFitsANarrowTerminal asserts no help
+// line exceeds 60 columns. This is prose, so it is the one string here a
+// rewrite is likely to lengthen without anyone thinking about the terminal.
+//
+// The same sentence is the README's first line, the social card's subtitle and
+// the GitHub description. It leads with the category rather than the selling
+// point on purpose: a one-liner is read to answer "what kind of thing is this",
+// and what makes hoard worth choosing — daily prices, a file you own — belongs
+// in the paragraph under it, which is where the README puts it.
+const tagline = "a terminal collection tracker for Magic: The Gathering"
 
 // Command groups, in the order the root help reads them.
 const (
@@ -131,6 +147,10 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdImport(a),
 
 		NewCmdMerge(a),
+
+		// Ungrouped, with schema and version: none of the four groups is about
+		// a hoard you do not have yet.
+		NewCmdDemo(a),
 
 		NewCmdSchema(a),
 

@@ -25,7 +25,7 @@ patch release is always cheaper.
 
 ## What gets published
 
-Each release carries `hoard_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows),
+Each release carries `hoard_<version>_<os>_<arch>.tar.gz` for macOS and Linux,
 `checksums.txt`, and `checksums.txt.sigstore.json`. Signing `checksums.txt`
 covers every archive it hashes, so one signature verifies all of them.
 

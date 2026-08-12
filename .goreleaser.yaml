@@ -2,15 +2,20 @@ version: 2
 
 project_name: hoard
 
-# Shell completions are generated from the binary's own cobra tree, so they can
-# never drift from the commands that exist. Built here rather than checked in,
-# for the same reason.
+# Completions and man pages are generated from the binary's own cobra tree, so
+# they can never drift from the commands that exist. Built here rather than
+# checked in, for the same reason.
 before:
   hooks:
     - mkdir -p completions
     - sh -c "go run ./cmd/hoard completion bash > completions/hoard.bash"
     - sh -c "go run ./cmd/hoard completion zsh > completions/_hoard"
     - sh -c "go run ./cmd/hoard completion fish > completions/hoard.fish"
+    # SOURCE_DATE_EPOCH pins the date in each page's .TH line to the commit's
+    # own timestamp. Cobra otherwise stamps the day of the build, which is the
+    # one thing that would make two builds of the same tag differ — everything
+    # else here is already reproducible via -trimpath and the pinned toolchain.
+    - sh -c "SOURCE_DATE_EPOCH={{ .CommitTimestamp }} go run ./internal/tools/genman manpages"
 
 builds:
   # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
@@ -28,14 +33,12 @@ builds:
       - -X github.com/spiffcs/hoard/internal/buildinfo.GitCommit={{ .Commit }}
       - -X github.com/spiffcs/hoard/internal/buildinfo.BuildDate={{ .Date }}
 
-  - id: hoard-windows
-    binary: hoard
-    main: ./cmd/hoard
-    env: [CGO_ENABLED=0]
-    flags: [-trimpath]
-    goos: [windows]
-    goarch: [amd64, arm64]
-    ldflags: *ldflags
+  # No windows target. It cross-compiled for free — modernc.org/sqlite is pure
+  # Go, so there was nothing to wrangle — but a binary nobody has ever run is
+  # not a supported platform, and publishing one on the releases page is a claim
+  # of support rather than an offer of convenience. The code still resolves the
+  # windows data directory (internal/command/command.go), so anyone who wants to
+  # build it themselves can; hoard just does not hand it out.
 
   # Split out for the post hook: quill signs the Mach-O binary with the
   # Developer ID cert and submits it to Apple's notary service. Snapshot builds
@@ -58,9 +61,6 @@ builds:
 archives:
   - id: default
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -70,6 +70,11 @@ archives:
       - NOTICE
       - src: completions/*
         dst: completions
+        info: {mode: 0644}
+      # Section 1, so `man ./manpages/hoard.1` works straight out of the
+      # archive and a packager can drop the tree into $MANPATH unchanged.
+      - src: manpages/*
+        dst: manpages
         info: {mode: 0644}
 
 checksum:

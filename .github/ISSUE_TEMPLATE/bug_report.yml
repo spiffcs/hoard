@@ -27,7 +27,7 @@ body:
     id: os
     attributes:
       label: OS and terminal
-      placeholder: "macOS 15.5, iTerm2 / Ubuntu 24.04, gnome-terminal / Windows 11, Windows Terminal"
+      placeholder: "macOS 15.5, iTerm2 / Ubuntu 24.04, gnome-terminal"
     validations:
       required: true
 

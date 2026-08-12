@@ -97,6 +97,36 @@ func TestHalfblocks(t *testing.T) {
 	}
 }
 
+// The detail overlay downscales a 488×680 card into 40×54, so a destination
+// pixel covers a 12×12 block. Taking one pixel out of that block is a random
+// sample rather than an approximation, and it turned rules text into speckle.
+// This checks the property at the smallest size that can show it.
+func TestSampleAveragesTheBlockItCovers(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	// Each 2×2 quadrant gets four values whose mean is exact, so the assertion
+	// needs no rounding tolerance. Point sampling would return each quadrant's
+	// bottom-right pixel — the largest of its four — so it cannot pass by luck.
+	for qy := range 2 {
+		for qx := range 2 {
+			base := uint8(10 + 40*(qy*2+qx))
+			for i, v := range []uint8{base, base + 10, base + 20, base + 30} {
+				img.Set(qx*2+i%2, qy*2+i/2, color.RGBA{v, v, v, 255})
+			}
+		}
+	}
+
+	got := sample(img, 2, 2)
+	for qy := range 2 {
+		for qx := range 2 {
+			want := uint8(10 + 40*(qy*2+qx) + 15) // mean of base..base+30
+			if p := got[qy][qx]; p.r != want || p.g != want || p.b != want {
+				t.Errorf("cell (%d,%d) = %v, want %d on every channel — the mean of its 2×2 block",
+					qx, qy, p, want)
+			}
+		}
+	}
+}
+
 func TestKittyImage(t *testing.T) {
 	transmit, placeholder, err := KittyImage(testImage(), 91, 2, 2)
 	if err != nil {

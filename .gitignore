@@ -97,6 +97,7 @@ scan/foil-corpus/stills/
 
 # Generated at release time from the binary's own cobra tree.
 completions/
+manpages/
 
 # Coverage output from `make coverage`.
 coverage.out

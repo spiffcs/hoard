@@ -1,31 +1,61 @@
-// Derive the iOS app icon from the macOS helper's .icns.
+// Build the iOS app icon from the project logo.
 //
-// One artwork, two platforms, and they want opposite things from it:
+//   swift make-icon.swift ../../docs/assets/logo-master.png \
+//       Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
 //
-//   macOS ships the rounded squircle itself, with transparent margin around it,
-//   because the Dock draws exactly the pixels given.
-//   iOS wants a full-bleed opaque square and applies its own mask. Handing it
-//   the macOS icon would render a small rounded card inside another rounded
-//   card, with the transparent corners flattened to whatever is behind them.
+// One artwork for the README and the app, because two copies of a logo are two
+// things that drift. The README wants it on transparency at whatever size the
+// page asks for; iOS wants the opposite — a full-bleed, fully opaque square,
+// which it then masks into a squircle itself. This is the conversion.
 //
-// So this finds the artwork inside the squircle, takes the largest square that
-// contains no transparent pixel, and writes it opaque at 1024.
+// Alpha is the part that is not negotiable. An icon submitted with an alpha
+// channel is rejected, and that rejection arrives at the end, after everything
+// else is ready. So the output context has no alpha component at all rather
+// than an alpha channel that happens to be full: there is no way to get it
+// subtly wrong.
 //
-// Cropping to the squircle's *bounding box* instead was tried, to keep more
-// resolution — 408px of the 512 rather than 356 — on the reasoning that Apple
-// rounds by about the same proportion on both platforms, so the transparent
-// corners would land under the iOS mask. Measured, they do not: the macOS
-// template's radius is visibly larger than the iOS mask cuts, and the filled
-// corners show as four dark wedges. Full-bleed artwork with more upscaling
-// looks better than more pixels with visible corners.
-//
-// A script rather than a checked-in second copy: the .icns is the source of
-// truth for this artwork, and two PNGs that must not drift is a worse problem
-// than a build step.
+// The earlier version of this script solved the reverse problem — it read the
+// macOS helper's .icns, which was already a squircle with a transparent margin,
+// and cut the largest opaque square out of the middle. That .icns is gone, and
+// with it the assumption that the input arrives pre-composed. Artwork on a
+// transparent field has no opaque square to find, so that algorithm would have
+// looked for one until it ran out of image and exited.
 
-import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+
+// The square's edge, and what the App Store asks for.
+let out = 1024
+
+// How much of that edge the mark's longest side may occupy. iOS masks the
+// corners at roughly 22% of the side, so a mark pushed to the edges loses its
+// corners; the remaining margin is also what stops the icon reading as a sticker
+// crammed into its own frame. 0.82 is a judgement, not a requirement — it is the
+// one number here worth re-rendering and eyeballing if the artwork changes.
+let coverage = 0.82
+
+// Two alpha thresholds, because the artwork's ink and its bounds are not the
+// same question.
+//
+//   solid  — what a viewer calls "the logo". Frames the icon: this box is what
+//            gets centered and scaled.
+//   bleed  — every pixel that must still be drawn, including the drop shadow's
+//            outer falloff. Cutting at `solid` would slice the shadow and leave
+//            a hard edge where it was truncated.
+//
+// One threshold for both was the bug this replaces. The shadow falls to the
+// right and not the left, so bounding the whole image and centering that box
+// pushed the chest measurably left of center — the icon looked off and the
+// cause was invisible, because the empty space doing the pushing is transparent.
+let solid: UInt8 = 128
+let bleed: UInt8 = 8
+
+// The field behind the artwork. Near-black rather than a color from the mark
+// itself: the chest is red and gold, and both need something dark and neutral
+// to stay legible against, on a home screen the owner has covered in wallpaper.
+let background = CGColor(red: 0x15 / 255.0, green: 0x16 / 255.0, blue: 0x1C / 255.0, alpha: 1)
 
 let args = CommandLine.arguments
 guard args.count == 3 else {
@@ -38,8 +68,11 @@ guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFUR
     exit(2)
 }
 
-// Read the alpha channel so the crop is measured rather than guessed. The
-// margin and corner radius of Apple's icon template have changed before.
+// Measure the artwork rather than trusting the file's edges. A logo exported
+// with whatever padding the drawing tool felt like would otherwise decide the
+// icon's margins for it, and the result would change every time the artwork was
+// re-exported. Reading the alpha channel makes the framing a property of the
+// mark, not of the export.
 let w = img.width, h = img.height
 var px = [UInt8](repeating: 0, count: w * h * 4)
 px.withUnsafeMutableBytes { raw in
@@ -49,46 +82,63 @@ px.withUnsafeMutableBytes { raw in
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
 }
-func opaque(_ x: Int, _ y: Int) -> Bool { px[(y * w + x) * 4 + 3] > 250 }
 
-// Grow an inset inward until every pixel on the square's border is opaque.
-// Testing the border alone is enough: the artwork is solid, so the only
-// transparency is the template's margin and its rounded corners.
-var inset = 0
-while inset < w / 2 {
-    let lo = inset, hi = w - 1 - inset
-    var clean = true
-    for t in stride(from: lo, through: hi, by: 1) {
-        if !opaque(t, lo) || !opaque(t, hi) || !opaque(lo, t) || !opaque(hi, t) {
-            clean = false
-            break
+struct Box { var minX: Int, minY: Int, maxX: Int, maxY: Int
+    var width: Int { maxX - minX + 1 }
+    var height: Int { maxY - minY + 1 }
+}
+
+func bounds(over threshold: UInt8) -> Box? {
+    var b = Box(minX: w, minY: h, maxX: -1, maxY: -1)
+    for y in 0..<h {
+        for x in 0..<w where px[(y * w + x) * 4 + 3] > threshold {
+            if x < b.minX { b.minX = x }
+            if x > b.maxX { b.maxX = x }
+            if y < b.minY { b.minY = y }
+            if y > b.maxY { b.maxY = y }
         }
     }
-    if clean { break }
-    inset += 1
+    return b.maxX >= b.minX && b.maxY >= b.minY ? b : nil
 }
-let side = w - inset * 2
-guard side > w / 2 else {
-    FileHandle.standardError.write(Data("no opaque square found\n".utf8))
+
+guard let ink = bounds(over: solid), let all = bounds(over: bleed) else {
+    FileHandle.standardError.write(Data("input has no opaque artwork\n".utf8))
     exit(2)
 }
 
-// 1024 is what the App Store asks for. The source is 512, so this upscales —
-// worth stating plainly: it is the best the tracked artwork allows, and a
-// larger original would be a straight improvement.
-let out = 1024
+let crop = img.cropping(to: CGRect(x: all.minX, y: all.minY,
+                                   width: all.width, height: all.height))!
+
+// Fit the *mark* inside the coverage box on its long side, so a wide logo and a
+// tall one are framed by the same rule and neither is stretched.
+let scale = Double(out) * coverage / Double(max(ink.width, ink.height))
+
+// Place the crop so the mark's center lands on the icon's center, letting the
+// shadow hang off wherever it falls. Both offsets are measured from the crop's
+// top-left, because that is the origin CGImage.cropping and the pixel buffer
+// agree on — but CGContext's y runs the other way, so the vertical placement is
+// expressed through the rect's top edge (maxY) rather than its origin.
+let dx = Double(ink.minX - all.minX), dy = Double(ink.minY - all.minY)
+let drawW = Double(all.width) * scale, drawH = Double(all.height) * scale
+let originX = Double(out) / 2 - (dx + Double(ink.width) / 2) * scale
+let topY = Double(out) / 2 + (dy + Double(ink.height) / 2) * scale
+let rect = CGRect(x: originX, y: topY - drawH, width: drawW, height: drawH)
+
 let ctx = CGContext(data: nil, width: out, height: out, bitsPerComponent: 8,
                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                    // No alpha at all. An icon with an alpha channel is
-                    // rejected at submission, and it is the kind of rejection
-                    // that arrives after everything else is ready.
                     bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
 ctx.interpolationQuality = .high
-let crop = img.cropping(to: CGRect(x: inset, y: inset, width: side, height: side))!
-ctx.draw(crop, in: CGRect(x: 0, y: 0, width: out, height: out))
+ctx.setFillColor(background)
+ctx.fill(CGRect(x: 0, y: 0, width: out, height: out))
+ctx.draw(crop, in: rect)
 
 let dest = CGImageDestinationCreateWithURL(
-    URL(fileURLWithPath: args[2]) as CFURL, "public.png" as CFString, 1, nil)!
+    URL(fileURLWithPath: args[2]) as CFURL, UTType.png.identifier as CFString, 1, nil)!
 CGImageDestinationAddImage(dest, ctx.makeImage()!, nil)
 guard CGImageDestinationFinalize(dest) else { exit(2) }
-print("cropped \(w)x\(h) inset \(inset) -> \(side)x\(side) -> \(out)x\(out) opaque")
+let upscale = Double(out) * coverage / Double(max(ink.width, ink.height))
+print("""
+mark \(ink.width)x\(ink.height) (bleed \(all.width)x\(all.height)) from \(w)x\(h) \
+-> \(Int(Double(ink.width) * scale))x\(Int(Double(ink.height) * scale)) \
+on \(out)x\(out) opaque, \(String(format: "%.2f", upscale))x
+""")

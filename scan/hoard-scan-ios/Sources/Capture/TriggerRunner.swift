@@ -183,7 +183,39 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         motion.stopDeviceMotionUpdates()
         // The trigger's own state is queue-confined; every touch of it from
         // the main actor hops, the way tune() always did.
-        queue.async { self.trigger.disarm() }
+        queue.async {
+            self.trigger.disarm()
+            // Say so. `disarm` clears the trigger's own cue and phase, but the
+            // view draws from the last values *raised*, and clearing `armed`
+            // above means `captureOutput` returns before it can raise
+            // anything ever again — so without this the brackets the operator
+            // was last shown stay on screen for the rest of the session, and
+            // the footer keeps claiming the trigger is waiting for a card.
+            //
+            // Raised from inside the hop rather than beside it, and through
+            // the same main queue the sample path uses. Both queues are FIFO:
+            // a sample already in flight is enqueued ahead of this block, so
+            // its box is enqueued ahead of this nil, and the clear lands last
+            // rather than being overwritten by the frame that beat it.
+            self.raise(box: nil)
+            self.raise(phase: self.trigger.phase)
+        }
+    }
+
+    /// Hands a box or a phase to the main actor in the order it was decided.
+    ///
+    /// `DispatchQueue.main`, never an unstructured `Task` — Tasks enqueued to
+    /// an actor carry no ordering guarantee, so a stale value could land after
+    /// a fresh one. That mattered visibly for the box at 30 samples a second
+    /// (the brackets would step backwards a frame); it matters for the phase
+    /// because `stop` has to be the last word, and a `.stabilizing` from the
+    /// sample before it must not arrive afterwards.
+    private func raise(box: CGRect?) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.onBox?(box) } }
+    }
+
+    private func raise(phase: TriggerPhase) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.onPhase?(phase) } }
     }
 
     /// captureBegan parks the trigger for the duration of a shutter.
@@ -222,8 +254,7 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             // motionless card reading as motionless.
             self.trigger.captureFinished(scene: self.lastScene, cardScene: cardFace, cardBox: cardBox)
             self.busy.clear()
-            let phase = self.trigger.phase
-            Task { @MainActor in self.onPhase?(phase) }
+            self.raise(phase: self.trigger.phase)
         }
     }
 
@@ -242,16 +273,14 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     func rearmForResult() {
         queue.async {
             self.trigger.forceRearm(cause: .none)
-            let phase = self.trigger.phase
-            Task { @MainActor in self.onPhase?(phase) }
+            self.raise(phase: self.trigger.phase)
         }
     }
 
     func nudge() {
         queue.async {
             self.trigger.forceRearm()
-            let phase = self.trigger.phase
-            Task { @MainActor in self.onPhase?(phase) }
+            self.raise(phase: self.trigger.phase)
         }
     }
 
@@ -337,7 +366,7 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             // staging area look like a card.
             let armed = trigger.snapshot
             Task { @MainActor in self.onTrace?("trigger armed \(armed.line)") }
-            Task { @MainActor in self.onPhase?(self.trigger.phase) }
+            raise(phase: trigger.phase)
             return
         }
 
@@ -345,11 +374,7 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         // Raised for every sample rather than only on a decision: the box moves
         // continuously while the phase does not, and the cue tracks the box.
         let cue = trigger.snapshot.cue
-        // DispatchQueue rather than an unstructured Task: Tasks enqueued to an
-        // actor carry no ordering guarantee, and at 30 samples a second a
-        // reorder would show as the brackets stepping backwards a frame. The
-        // main queue is FIFO.
-        DispatchQueue.main.async { MainActor.assumeIsolated { self.onBox?(cue) } }
+        raise(box: cue)
 
         switch decision {
         case .fire:
@@ -373,7 +398,7 @@ final class TriggerRunner: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
                 self.onFire?()
             }
         case .phaseChanged(let phase):
-            Task { @MainActor in self.onPhase?(phase) }
+            raise(phase: phase)
         case .nothing:
             break
         }

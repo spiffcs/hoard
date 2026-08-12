@@ -98,19 +98,54 @@ func Halfblocks(img image.Image, cols int) []string {
 
 type rgb struct{ r, g, b uint8 }
 
-// sample scales img to w×h with nearest-neighbour box centres — crude next
-// to a real resampler, but this is thumbnail duty, and it keeps the image
-// path dependency-free.
+// sample scales img to w×h by averaging every source pixel that lands in each
+// destination cell.
+//
+// This took the single pixel at each cell's centre until it was looked at, which
+// is the wrong operation at the ratio this actually runs at. The detail overlay
+// renders a 488×680 card scan into 40×54, so one destination pixel stands for a
+// 12×12 block of 144 source pixels; point-sampling kept one and discarded 143.
+// That is not an approximation of the image, it is a random sample of it, and it
+// showed: a card's rules text came out as black-and-white speckle — each pixel
+// landing on either a glyph stroke or the paper — instead of the even grey a
+// reader reads as text.
+//
+// Averaging first is the cheapest correct answer. Decimating a signal without
+// low-passing it aliases, and a box filter is the simplest low-pass there is.
+// The cost is that this now walks the source once rather than the destination,
+// which for a card scan is a few hundred thousand pixels on image arrival and on
+// resize — unmeasurable next to the fetch that delivered it.
+//
+// Still dependency-free, and unchanged where it was already right: at 1:1 or on
+// an upscale every cell covers exactly one pixel, and an average of one pixel is
+// that pixel.
 func sample(img image.Image, w, h int) [][]rgb {
 	b := img.Bounds()
 	out := make([][]rgb, h)
 	for y := range h {
 		out[y] = make([]rgb, w)
-		sy := b.Min.Y + (2*y+1)*b.Dy()/(2*h)
+		// Half-open cell bounds in source space. The +1 floor matters only when
+		// upscaling, where two consecutive edges can land on the same pixel and
+		// the range would otherwise be empty — and an empty range divides by zero.
+		y0 := b.Min.Y + y*b.Dy()/h
+		y1 := max(b.Min.Y+(y+1)*b.Dy()/h, y0+1)
 		for x := range w {
-			sx := b.Min.X + (2*x+1)*b.Dx()/(2*w)
-			r, g, bl, _ := img.At(sx, sy).RGBA()
-			out[y][x] = rgb{uint8(r >> 8), uint8(g >> 8), uint8(bl >> 8)}
+			x0 := b.Min.X + x*b.Dx()/w
+			x1 := max(b.Min.X+(x+1)*b.Dx()/w, x0+1)
+
+			// uint64 rather than uint32: the accumulator holds n×255, and a
+			// large enough source would silently wrap a 32-bit one.
+			var sr, sg, sb, n uint64
+			for sy := y0; sy < y1; sy++ {
+				for sx := x0; sx < x1; sx++ {
+					r, g, bl, _ := img.At(sx, sy).RGBA()
+					sr += uint64(r >> 8)
+					sg += uint64(g >> 8)
+					sb += uint64(bl >> 8)
+					n++
+				}
+			}
+			out[y][x] = rgb{uint8(sr / n), uint8(sg / n), uint8(sb / n)}
 		}
 	}
 	return out

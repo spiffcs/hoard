@@ -1,0 +1,65 @@
+<!--
+  The repository's social preview card — the image GitHub serves as og:image, so
+  a link to hoard pasted into Slack, Discord or X unfurls as this instead of a
+  grey placeholder. Rendered, not drawn by hand, so it tracks the logo:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --hide-scrollbars --window-size=1280,640 \
+      --screenshot=docs/assets/social-preview.png docs/social-preview.html
+
+  GitHub has no API for the upload. It goes in Settings → General → Social
+  preview, by hand, once — which is also why this file exists: without the
+  source, the only copy of the design would be inside a PNG.
+
+  1280×640 is GitHub's recommended size and the aspect every unfurl assumes.
+  The real constraint is not this size but the ~440px a link card actually gets:
+  checked at 440 and 280, where the name and the tagline still read and the
+  chips blur into texture. That is the intended order of sacrifice — anything
+  load-bearing has to survive a third of its drawn size.
+-->
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:640px;overflow:hidden;
+       background:#0d1117;
+       font-family:-apple-system,"SF Pro Display",Helvetica,sans-serif;
+       display:flex;align-items:center;gap:56px;padding:0 88px;position:relative}
+  /* A warm bloom behind the mark, tying the card's field to the logo's gold.
+     Sized larger than the art so its falloff never shows an edge. */
+  .glow{position:absolute;left:40px;top:50%;transform:translateY(-50%);
+        width:620px;height:620px;border-radius:50%;
+        background:radial-gradient(circle,rgba(226,163,42,.18) 0%,rgba(226,163,42,0) 65%)}
+  .art{flex:0 0 auto;position:relative}
+  /* Relative to this file, so the card is regenerated from the same logo the
+     README and the app icon use. An absolute path would work exactly once, on
+     the machine it was written on. */
+  /* No drop-shadow. The artwork's own baked shadow was removed because it read
+     badly on a dark field, and adding a CSS one back would reintroduce exactly
+     the thing that was wrong. The bloom behind the mark carries the depth. */
+  .art img{width:420px;display:block}
+  .txt{position:relative;flex:1}
+  h1{font-size:132px;font-weight:800;letter-spacing:-5px;color:#f0f3f8;line-height:.95}
+  .rule{width:96px;height:7px;border-radius:4px;background:#E2A32A;margin:22px 0 26px}
+  p{font-size:35px;line-height:1.34;color:#9ba6b6;max-width:600px;font-weight:500}
+  /* "Magic: The Gathering" is one name and must never break across lines. Held
+     with nowrap rather than by tuning max-width, so it survives a rewrite of
+     the sentence around it. */
+  .name{white-space:nowrap}
+  .chips{display:flex;gap:13px;margin-top:36px;flex-wrap:nowrap}
+  /* nowrap on both: without it "TUI + CLI" and "macOS · Linux" break mid-phrase,
+     which reads as a layout bug rather than a line break. */
+  .chip{font:600 21px ui-monospace,"SF Mono",Menlo,monospace;color:#c3ccd9;
+        border:2px solid #2a313c;border-radius:999px;padding:9px 20px;
+        background:#151a22;white-space:nowrap}
+</style>
+<div class="glow"></div>
+<div class="art"><img src="assets/hoard-logo.png" alt="The hoard logo: an ornate red and gold treasure chest, a gold dragon crest on its lid"></div>
+<div class="txt">
+  <h1>hoard</h1>
+  <div class="rule"></div>
+  <p>A terminal collection tracker for <span class="name">Magic: The Gathering</span>.</p>
+  <div class="chips">
+    <span class="chip">TUI + CLI</span>
+    <span class="chip">SQLite</span>
+    <span class="chip">macOS · Linux</span>
+  </div>
+</div>
