@@ -151,17 +151,26 @@ targets:
         # The one place the marketing version is written; the plist above
         # points here.
         #
-        # Tracks the Go binary, deliberately: hoard and Hoardling are one
-        # product in two halves that have to be paired to do anything, so a
-        # phone at 1.0 talking to a helper at 0.1.0 invites the question of
-        # which number the user is meant to quote in a bug report. They move
-        # together.
+        # 1.0.0, and NOT the Go binary's number. This used to track hoard on the
+        # argument that two halves which only work paired should not carry two
+        # different numbers in a bug report. That argument was sound and is
+        # overruled by a harder constraint: App Store Connect groups uploaded
+        # builds by CFBundleShortVersionString, and a build that does not match
+        # the version being submitted is not offered for it. The store version
+        # is 1.0.0, so this has to be 1.0.0 — the alternative is an .ipa that
+        # cannot be attached to the release it was built for.
         #
-        # 0.1.0 rather than 1.0 because that is what the thing actually is.
-        # Nothing about a first App Store submission requires calling it 1.0,
-        # and doing so would be the only place in the project that overstates
-        # its own maturity.
-        MARKETING_VERSION: "0.1.0"
+        # So the two halves now diverge on purpose: Hoardling 1.0.0 against
+        # hoard 0.1.0. A bug report should name both, which it had to anyway —
+        # the old scheme made the numbers equal, never made them unambiguous.
+        #
+        # An earlier note here reasoned that calling it 1.0 "would be the only
+        # place in the project that overstates its own maturity." That reading
+        # does not survive contact with the store: on the App Store a leading
+        # zero is not read as modesty, it is read as a beta, and App Review has
+        # its own conventions about first releases. Do not revert this to 0.x
+        # without also changing the version in App Store Connect.
+        MARKETING_VERSION: "1.0.0"
         # "0" means an unstamped build — Xcode-GUI builds report phone=0 and
         # say so honestly; scripts/build-scan-ios.sh overrides this with its
         # per-build timestamp, which is the number a tuning session trusts.
