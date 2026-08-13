@@ -48,6 +48,15 @@ type Options struct {
 	// (pruned like the MTGJSON cache), archive extractions date-keyed and
 	// immutable (pruned past archiveKeepDays).
 	CacheDir string
+	// Note receives a line about a route this package chose or abandoned —
+	// narration a caller may show and may ignore. Nil is silent.
+	Note func(string)
+}
+
+func (o Options) say(format string, args ...any) {
+	if o.Note != nil {
+		o.Note(fmt.Sprintf(format, args...))
+	}
 }
 
 func (o Options) base() string {

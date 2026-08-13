@@ -306,17 +306,24 @@ tasks:
   # Everything derived from the logo, from the one file that is the logo.
   #
   # docs/assets/logo-master.png is the source of truth and the only hand-authored
-  # image here; the README's copy and the iPhone icon are both generated from it.
-  # Two hand-maintained copies of one logo is two things that drift, and they are
-  # tracked PNGs — a stale one is simply committed, because nothing downstream
-  # notices. `make asset-review` reports their freshness for the same reason.
+  # image here, and the README's copy is generated from it. It is a tracked PNG —
+  # a stale one is simply committed, because nothing downstream notices — so
+  # `make asset-review` reports its freshness.
+  #
+  # The iPhone icon used to be generated from this master too, and is not any
+  # more: it is now hand-authored, full-bleed artwork committed directly at
+  # scan/hoard-scan-ios/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png.
+  # The generator assumed artwork floating on transparency and found the mark by
+  # its alpha bounding box; a finished icon is opaque edge to edge, so that box
+  # is the whole image and the composition came back shrunk to 82% and
+  # letterboxed (measured). The two faces can now drift, which is the price of
+  # the phone wearing a design the README cannot use.
   #
   # Not a dependency of scan-ios: a build should not quietly rewrite tracked
   # assets, and these are meant to be looked at before they are committed.
   logo:
-    desc: Rebuild the README logo and the app icon from the master artwork
+    desc: Rebuild the README logo from the master artwork
     platforms: [darwin]
-    deps: [scan-ios-icon]
     cmds:
       # Staged and checked for the same reason the card is: `sips` exits 0 when
       # its input does not exist (measured — it only reports a failure it cannot
@@ -332,14 +339,6 @@ tasks:
       - mv .tmp/hoard-logo.png docs/assets/hoard-logo.png
       - cmd: echo "Wrote docs/assets/hoard-logo.png — rerun 'make social-preview' if the card should follow"
         silent: true
-
-  scan-ios-icon:
-    desc: Regenerate the iPhone app icon from the master artwork
-    platforms: [darwin]
-    dir: scan/hoard-scan-ios
-    cmd: >-
-      swift make-icon.swift ../../docs/assets/logo-master.png
-      Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
 
   # Build the iPhone capture head. Needs xcodegen, the iOS platform payload
   # (xcodebuild -downloadPlatform iOS) and a signing team — scripts/build-scan-ios.sh
@@ -421,6 +420,15 @@ tasks:
   generate-sqlite-schema:
     desc: Regenerate schema/sqlite/ from the store migrations
     cmd: go run ./schema/sqlite/generate
+
+  # Regenerate internal/demo/history.json — the ninety days of prices
+  # `hoard demo` seeds so its movers view is populated without a download.
+  # Reaches MTGJSON, and freezes at the moment it runs: re-run it whenever
+  # collection.json is regenerated, and before a release, or the demo opens
+  # movers on a series that has aged out of the window it is asked for.
+  generate-demo-history:
+    desc: Regenerate the sample collection's price history from a live backfill
+    cmd: go run ./internal/demo/gen internal/demo/history.json
 
   ## Changelog tasks #################################
 

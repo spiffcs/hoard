@@ -122,6 +122,32 @@ func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
 	return s
 }
 
+// browseCorrectPricesSummary is what the deferred half of a price update adds
+// to the line the refresh already left behind.
+//
+// Empty when nothing was refused, and the browser then keeps the earlier
+// summary unchanged. That silence is the right answer here rather than a
+// reassuring "0 refused": the pass runs after every refresh, it finds nothing
+// on almost all of them, and a counter that reads zero forever teaches the
+// reader to stop seeing the line it sits on. A refusal is news; the absence of
+// one is the ordinary state of a hoard.
+func browseCorrectPricesSummary(res action.UpdatePricesResult) string {
+	if res.Refused == 0 && res.Repaired == 0 {
+		return ""
+	}
+	if res.Refused == 0 {
+		// Repairs without refusals are the retirement case: a correction that
+		// yesterday's asks justified and today's do not. The reader is owed the
+		// same notice, because the same series just changed shape.
+		return fmt.Sprintf("%s observation(s) corrected", ui.Count(res.Repaired))
+	}
+	s := fmt.Sprintf("%s refused for sitting below the cheapest ask", ui.Count(res.Refused))
+	if res.Repaired > 0 {
+		s += fmt.Sprintf(" · %s observation(s) corrected", ui.Count(res.Repaired))
+	}
+	return s
+}
+
 // browseBackfillSummary is the status line a finished history import leaves
 // behind, split from the operation for the same reason as the one above.
 //
@@ -339,12 +365,23 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		}),
 		browse.WithOpenURL(openInBrowser),
 		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
+		// The two halves of a price update, injected apart so the browser can
+		// put the first one's numbers on screen before starting the second.
+		// The CLI's `update-prices` still runs action.UpdatePrices, which is
+		// both of these back to back.
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
-			res, err := action.UpdatePrices(ctx, deps, p)
+			res, err := action.RefreshPrices(ctx, deps, p)
 			if err != nil {
 				return "", err
 			}
 			return browseUpdatePricesSummary(res), nil
+		}),
+		browse.WithCorrectPrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			res, err := action.CorrectPrices(ctx, deps, p, action.UpdatePricesResult{})
+			if err != nil {
+				return "", err
+			}
+			return browseCorrectPricesSummary(res), nil
 		}),
 		browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.RepairFinishes(ctx, deps, p)

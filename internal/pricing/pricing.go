@@ -26,6 +26,16 @@ type Ref struct {
 	// MTGJSONUUID is the id already stored for this printing, empty if unknown.
 	// Supplying it avoids a set-file download.
 	MTGJSONUUID string
+	// Finish is the one finish this ref stands for — "nonfoil", "foil" or
+	// "etched" — and empty means every finish the printing has.
+	//
+	// It exists for the treated-foil overlay, whose price is not a field in a
+	// file already being read but a download of its own: ninety daily archives
+	// to reconstruct one product's series. Empty is the honest default for the
+	// readers that quote every finish (comps, the market sheet); the backfill
+	// sets it, because reconstructing a foil series for a card held only in
+	// non-foil is ninety downloads for rows no view can display.
+	Finish string
 }
 
 // DefaultCacheDir is where downloaded MTGJSON bundles belong: the OS cache
@@ -176,15 +186,41 @@ func (f *Fetcher) RefreshQuotes(ctx context.Context, refs []Ref) (map[string][]m
 	return out, err
 }
 
-// History returns up to ninety days of observations for each printing, keyed by
+// History returns days' worth of observations for each printing, keyed by
 // Scryfall id, plus how many refs had an id to ask with. Reads a ~150 MB
 // archive, so it is only for a deliberate backfill.
-func (f *Fetcher) History(ctx context.Context, refs []Ref) (map[string]mtgjson.CardHistory, int, error) {
+//
+// days bounds the treated-foil overlay, which pays one download per day it
+// reconstructs; the MTGJSON archive itself costs the same at any depth and is
+// clipped by the caller. Zero or out of range means the archive's full reach.
+func (f *Fetcher) History(ctx context.Context, refs []Ref, days int) (map[string]mtgjson.CardHistory, int, error) {
+	if days <= 0 || days > historyDays {
+		days = historyDays
+	}
 	uuids, err := f.resolve(ctx, refs)
 	if err != nil {
 		return nil, 0, err
 	}
-	extra := f.treatedExtra(ctx, refs, historyDays, uuids)
+
+	// The archive download runs during the treated-foil sweep rather than after
+	// it. They are the two long waits in a backfill and they are unrelated:
+	// forty seconds of paced tcgcsv requests and six seconds of mtgjson
+	// bandwidth, on different hosts with a request pacer each. Sequenced, the
+	// second was six seconds of an idle network at the end of a run that had
+	// spent forty seconds not using it.
+	//
+	// The prefetch only warms the cache, so a failure is silent here and the
+	// read below simply downloads as it always did.
+	warm := make(chan struct{})
+	go func() {
+		defer close(warm)
+		if err := mtgjson.PrefetchPriceHistory(ctx, f.options()); err != nil {
+			f.say("fetching the price archive: %v", err)
+		}
+	}()
+	extra := f.treatedExtra(ctx, refs, days, uuids)
+	<-warm
+
 	return remap(f, ctx, refs, uuids, "price history", mtgjson.PriceHistoryWith(extra))
 }
 

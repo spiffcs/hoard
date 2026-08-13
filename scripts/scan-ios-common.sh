@@ -18,7 +18,16 @@
 
 # The repository root, resolved from this file rather than from $0, so it is
 # correct no matter which script sourced it or from where.
-scan_ios_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+#
+# The `/..` is load-bearing and was missed when these scripts moved from the
+# repo root into scripts/ (d802742): that move was a pure rename, so this line
+# kept resolving to "the directory holding this file" while the name and the
+# comment kept claiming repository root. Every derived path gained a phantom
+# scripts/ segment, and the first one to be *written* rather than read —
+# Signing.xcconfig — failed with "No such file or directory" on a path that
+# nothing in the repo refers to. The sibling scripts here all say dirname/..
+# for the same reason; keep this in step with them.
+scan_ios_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 scan_ios_proj_dir="$scan_ios_root/scan/hoard-scan-ios"
 scan_ios_xcconfig="$scan_ios_proj_dir/Signing.xcconfig"
 

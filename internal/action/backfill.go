@@ -55,16 +55,23 @@ type BackfillResult struct {
 // the treated-foil TCGplayer overlay (tcgcsv), v8 made the overlay's
 // archive reads pure Go, v9 taught the import to retire a reconstructed
 // series when its vendor changes (the v8 run was silently bounded by the
-// old Manapool rows) — a stale "done" would otherwise leave a polluted
-// series standing for a day.
+// old Manapool rows), v10 narrowed the overlay to held finishes — a stale
+// "done" would otherwise leave a polluted series standing for a day.
+//
+// The identity is per finish, not per printing. It always described the
+// holdings loosely — acquiring the foil of a card already held in non-foil
+// changed nothing in the key, so the same day's re-run was skipped and the
+// new finish went without history until tomorrow — and now that the overlay
+// only reconstructs finishes that are held, the loose key would make that
+// silence the normal outcome of every first foil.
 func backfillKey(owned []store.OwnedFinish, days int) string {
 	ids := make([]string, 0, len(owned))
 	for _, o := range owned {
-		ids = append(ids, o.ScryfallID)
+		ids = append(ids, o.ScryfallID+"|"+o.Finish)
 	}
 	sort.Strings(ids)
 	day := time.Now().Format("2006-01-02")
-	return ContentHash([]byte(fmt.Sprintf("backfill|v9|%s|%d|%s", day, days, strings.Join(ids, ","))))
+	return ContentHash(fmt.Appendf(nil, "backfill|v10|%s|%d|%s", day, days, strings.Join(ids, ",")))
 }
 
 // BackfillPrices loads the ~90 days of prices MTGJSON kept while hoard was
@@ -106,10 +113,15 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 		return res, nil
 	}
 
+	// One ref per held finish, and the finish rides along: OwnedByFinish
+	// already answers per finish, and dropping it here was what sent the
+	// treated-foil overlay reconstructing ninety days of a foil series for a
+	// card held only in non-foil.
 	refs := make([]pricing.Ref, len(owned))
 	printings := map[string]bool{}
 	for i, o := range owned {
-		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode, MTGJSONUUID: o.MTGJSONUUID}
+		refs[i] = pricing.Ref{ScryfallID: o.ScryfallID, SetCode: o.SetCode,
+			MTGJSONUUID: o.MTGJSONUUID, Finish: o.Finish}
 		printings[o.ScryfallID] = true
 	}
 	res.Printings = len(printings)
@@ -125,7 +137,7 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 			p.Emit(progress.Event{Step: "downloading price history",
 				Done: done, Total: total, Unit: progress.UnitBytes})
 		})
-	byCard, resolvable, err := f.History(ctx, refs)
+	byCard, resolvable, err := f.History(ctx, refs, days)
 	if err != nil {
 		return res, err
 	}

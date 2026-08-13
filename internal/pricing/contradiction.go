@@ -151,15 +151,30 @@ func (f *Fetcher) Contradictions(ctx context.Context) (ContradictionSweep, error
 		byGroup[gid] = append(byGroup[gid], c)
 	}
 
+	// One bulk read rather than a request per group. tcgcsv publishes the same
+	// figures as one file per group and as a daily archive of all of them, and
+	// which is cheaper depends on how many groups this hoard still needs today;
+	// GroupQuotesBulk measures both and picks. A group it could not read comes
+	// back absent, which is the same shape a failed per-group fetch had and the
+	// reason the loop below can still tell "not checked" from "checked clean".
+	gids := make([]int, 0, len(byGroup))
+	for gid := range byGroup {
+		gids = append(gids, gid)
+	}
+	byGID, err := tcgcsv.GroupQuotesBulk(ctx, opts, gids)
+	if err != nil {
+		f.say("skipping the contradicted-price check: %v", err)
+		return sweep, nil
+	}
+
 	seen := map[string]bool{}
 	for gid, group := range byGroup {
 		if ctx.Err() != nil {
 			break
 		}
-		quotes, err := tcgcsv.GroupQuotes(ctx, opts, gid)
-		if err != nil {
-			f.say("skipping the contradicted-price check for group %d: %v", gid, err)
-			continue
+		quotes, ok := byGID[gid]
+		if !ok {
+			continue // unread, so unchecked — its corrections stand
 		}
 		for _, c := range group {
 			// Checked covers the printing whether or not it was corrected: a

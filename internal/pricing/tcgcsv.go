@@ -36,7 +36,7 @@ var todayDate = func() string { return time.Now().Format("2006-01-02") }
 // tcgcsvOptions derives the overlay client's cache home: a sibling of the
 // MTGJSON cache, empty when caching is off.
 func (f *Fetcher) tcgcsvOptions() tcgcsv.Options {
-	o := tcgcsv.Options{BaseURL: f.tcgcsvBase}
+	o := tcgcsv.Options{BaseURL: f.tcgcsvBase, Note: func(msg string) { f.say("%s", msg) }}
 	if f.cacheDir != "" {
 		o.CacheDir = filepath.Join(filepath.Dir(f.cacheDir), "tcgcsv")
 	}
@@ -49,6 +49,14 @@ func (f *Fetcher) tcgcsvOptions() tcgcsv.Options {
 // treated or the source is unreachable. uuids is the caller's resolve
 // result, threaded in because resolve is whole-catalog scans and every op
 // that builds an overlay follows it with a remap over the same refs.
+//
+// A ref that names a finish is asked about in that finish alone. The archive
+// half of this is the most expensive thing a backfill does — one ~4 MB
+// download and a PPMd decode per day reconstructed, measured at 39s of a 53s
+// cold run on a twelve-card hoard — and it was being spent on the foil series
+// of cards held only in non-foil, which Movers joins against holdings and can
+// never show. Refs with no finish still ask about every treatment, which is
+// what the comps sheet and the market view want.
 func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids map[string]string) mtgjson.ExtraSeries {
 	foilIDs, etchedIDs, _, err := f.st.TCGAltProducts()
 	if err != nil || (len(foilIDs) == 0 && len(etchedIDs) == 0) {
@@ -72,9 +80,10 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids 
 			"foil":   foilIDs[r.ScryfallID],
 			"etched": etchedIDs[r.ScryfallID],
 		} {
-			if pid != "" {
-				bySet[code] = append(bySet[code], need{uuid, pid, finish})
+			if pid == "" || (r.Finish != "" && r.Finish != finish) {
+				continue
 			}
+			bySet[code] = append(bySet[code], need{uuid, pid, finish})
 		}
 	}
 	if len(bySet) == 0 {
@@ -178,7 +187,23 @@ func (f *Fetcher) treatedExtra(ctx context.Context, refs []Ref, days int, uuids 
 	return extra
 }
 
-// archiveWorkers bounds the concurrent archive reads: enough to overlap
-// paced downloads with PPMd decodes, few enough that memory stays boring
-// and the sweep never reads as scraper traffic to the volunteer mirror.
-const archiveWorkers = 3
+// archiveWorkers bounds the concurrent archive reads.
+//
+// It is not the politeness knob, and treating it as one was costing time for
+// nothing: tcgcsv's own request pacer already holds every start 250 ms apart
+// across the whole package, so the mirror sees four requests a second whatever
+// this number is. All this decides is how many downloads and PPMd decodes may
+// be in flight behind that fixed drip.
+//
+// Three could not keep up with it. Ninety days of archives is 22.3s of pure
+// pacing, and a cold sweep measured 40.3s — eighteen seconds of the pacer
+// waiting on workers rather than the other way round. Each archive costs about
+// 1.35s of download and decode, so keeping four starts a second busy needs
+// between five and six; six reaches the floor and more would only idle.
+//
+// It is paired with tcgcsv.ppmdMaxMemory, which is a ceiling on what a hostile
+// archive header may make the decoder allocate and was chosen against this
+// count ("times three concurrent backfill workers"). Doubling the workers
+// halves that ceiling, so the worst case a corrupt archive can ask for across
+// the whole sweep is what it always was.
+const archiveWorkers = 6

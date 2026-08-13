@@ -31,15 +31,20 @@ func init() {
 // maintainer dependencies — and the ppmd package allocates whatever they ask
 // for. These ceilings are what a genuine archive can plausibly need, so a
 // hostile or corrupt header fails as a bad archive instead of as an
-// arbitrary allocation (times three concurrent backfill workers).
+// arbitrary allocation (times however many concurrent backfill workers
+// pricing.archiveWorkers allows).
 const (
 	// PPMd var.H model orders run 2..64 by the format's own definition;
 	// 7-Zip produces 6 for these archives.
 	ppmdMinOrder = 2
 	ppmdMaxOrder = 64
 	// The model allocation. 7-Zip's UI tops out at 1 GB, but these archives
-	// use 16 MB; a quarter of a gigabyte is already indulgent.
-	ppmdMaxMemory = 256 << 20
+	// use 16 MB; an eighth of a gigabyte is already indulgent.
+	//
+	// Halved when pricing.archiveWorkers went from three to six, so the
+	// aggregate a hostile header can demand across a concurrent sweep is
+	// unchanged. The two numbers are a pair; move one and move the other.
+	ppmdMaxMemory = 128 << 20
 	// The decoded member size. A whole day's extraction is ~4 MB compressed;
 	// a member claiming to inflate past a gigabyte is not price data.
 	ppmdMaxOutput = 1 << 30

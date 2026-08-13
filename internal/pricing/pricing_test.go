@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
@@ -408,5 +409,126 @@ func TestRefreshQuotesBypassesTheDayCache(t *testing.T) {
 	cached, ok := f.CachedQuotes(refs)
 	if !ok || !hasTCGFoil(cached) {
 		t.Errorf("cached after refresh = ok %v %+v, want the fresh bundle saved back", ok, cached["ripple-id"])
+	}
+}
+
+// The treated-foil overlay reconstructs a series one archive download per day,
+// which made it the most expensive thing a backfill does: 39 seconds of a 53
+// second cold run on a twelve-card hoard, measured before this narrowing. It was
+// being paid for the foil series of cards held only in non-foil, which movers
+// joins against holdings and can never display.
+//
+// A ref that names a finish is asked about in that finish alone, and the
+// negative control is the whole test: the foil half must still sweep, or an
+// overlay that had simply stopped working would pass just as well.
+func TestHistoryOverlaySweepsOnlyHeldFinishes(t *testing.T) {
+	gz := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) {
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(body))
+			zw.Close()
+		}
+	}
+	plain := func(body string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) { w.Write([]byte(body)) }
+	}
+	routes := map[string]func(w http.ResponseWriter){
+		"/M3C.json.gz": gz(`{"data": {"cards": [
+			{"uuid": "uuid-akroma", "identifiers": {"scryfallId": "ripple-id",
+			 "tcgplayerAlternativeFoilProductId": "553005"}}
+		]}}`),
+		"/AllPrices.json.gz": gz(`{"meta": {"date": "2026-08-01"}, "data": {
+			"uuid-akroma": {"paper": {
+			  "tcgplayer": {"currency": "USD", "retail": {"normal": {"2026-08-01": 14.87}}}
+			}}}}`),
+		"/tcgplayer/1/groups": plain(`{"results": [
+			{"groupId": 23445, "name": "Commander: Modern Horizons 3", "abbreviation": "M3C"}]}`),
+		"/tcgplayer/1/23445/prices": plain(`{"results": [
+			{"productId": 553005, "marketPrice": 17.56, "subTypeName": "Foil"}]}`),
+	}
+
+	// days=4 asks for three days behind today, so a sweep that runs is three
+	// archive downloads and a sweep that does not is none — a count, not a
+	// boolean, so a half-narrowed overlay cannot pass.
+	const days = 4
+	sweep := func(t *testing.T, finish string) int {
+		t.Helper()
+		s := newStore(t)
+		if err := s.AddCardFinish(unpricedFoil(), finish, 1); err != nil {
+			t.Fatalf("AddCard: %v", err)
+		}
+		var archives int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/archive/tcgplayer/") {
+				archives++
+				w.WriteHeader(http.StatusNotFound) // a missing day is a hole, not a failure
+				return
+			}
+			h, ok := routes[r.URL.Path]
+			if !ok {
+				t.Errorf("unexpected fetch: %s", r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			h(w)
+		}))
+		defer srv.Close()
+
+		f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
+		if _, _, err := f.History(context.Background(),
+			[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", Finish: finish}}, days); err != nil {
+			t.Fatalf("History: %v", err)
+		}
+		return archives
+	}
+
+	if n := sweep(t, "nonfoil"); n != 0 {
+		t.Errorf("a non-foil holding pulled %d treated-foil archives; want none", n)
+	}
+	if n := sweep(t, "foil"); n != days-1 {
+		t.Errorf("a foil holding pulled %d treated-foil archives; want %d", n, days-1)
+	}
+}
+
+// A ref that names no finish still asks about every treatment: the comps sheet
+// and the market view quote finishes nobody holds on purpose, and narrowing
+// them would have been a silent loss of the thing the overlay was built for.
+func TestHistoryOverlaySweepsEveryFinishWhenRefSaysNothing(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
+		t.Fatalf("AddCard: %v", err)
+	}
+	var archives int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/archive/tcgplayer/"):
+			archives++
+			w.WriteHeader(http.StatusNotFound)
+		case r.URL.Path == "/M3C.json.gz":
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(`{"data": {"cards": [
+				{"uuid": "uuid-akroma", "identifiers": {"scryfallId": "ripple-id",
+				 "tcgplayerAlternativeFoilProductId": "553005"}}]}}`))
+			zw.Close()
+		case r.URL.Path == "/AllPrices.json.gz":
+			zw := gzip.NewWriter(w)
+			zw.Write([]byte(`{"data": {"uuid-akroma": {"paper": {
+				"tcgplayer": {"currency": "USD", "retail": {"normal": {"2026-08-01": 14.87}}}}}}}`))
+			zw.Close()
+		case r.URL.Path == "/tcgplayer/1/groups":
+			w.Write([]byte(`{"results": [{"groupId": 23445, "abbreviation": "M3C"}]}`))
+		default:
+			w.Write([]byte(`{"results": [{"productId": 553005, "marketPrice": 17.56, "subTypeName": "Foil"}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
+	if _, _, err := f.History(context.Background(),
+		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c"}}, 4); err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if archives != 3 {
+		t.Errorf("a finishless ref pulled %d treated-foil archives; want 3", archives)
 	}
 }

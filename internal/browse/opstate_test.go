@@ -212,3 +212,108 @@ func TestOpStatusShowsNewestPieceOnly(t *testing.T) {
 		t.Fatalf("step must be replaced by the note, not stacked: %q", line)
 	}
 }
+
+// The contradicted-price sweep is one paced vendor request per owned TCGplayer
+// group — twenty seconds on a large hoard — and none of it is needed to put
+// today's numbers on screen. Every price operation chains it as a follow-up,
+// and the ordering assertion is the point: a sweep that ran inside the refresh
+// would still finish, still refresh and still report, and would have changed
+// nothing about the wait.
+func TestPriceOpRunsTheCorrectionSweepAfterTheRefresh(t *testing.T) {
+	var refreshDone, sweepStarted bool
+	m, err := New(testStore(),
+		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			if sweepStarted {
+				t.Error("the correction sweep started before the refresh finished")
+			}
+			refreshDone = true
+			return "prices updated · 2 printings", nil
+		}),
+		WithCorrectPrices(func(ctx context.Context, p progress.Fn) (string, error) {
+			if !refreshDone {
+				t.Error("the correction sweep started before the refresh finished")
+			}
+			sweepStarted = true
+			return "1 refused for sitting below the cheapest ask", nil
+		}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(Model)
+	m.clock = func() time.Time { return time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC) }
+
+	m, cmd := runPaletteCommand(t, m, "op.update-prices")
+	m = pump(t, m, cmd)
+
+	if !sweepStarted {
+		t.Fatal("the correction sweep never ran; the refresh dropped its follow-up")
+	}
+	if m.op != nil {
+		t.Errorf("an op is still running after both halves: %q", m.op.title)
+	}
+	// Two operations, not one. This is the assertion that separates deferring
+	// the sweep from merely calling it last: a sweep run inside the refresh
+	// would set the flag above, produce the same summary and leave the same
+	// panes — and would still have made the reader wait for it.
+	if m.opGen != 2 {
+		t.Errorf("%d operation(s) ran; want 2 — the refresh, then the sweep after it", m.opGen)
+	}
+	// The sweep's completion extends the refresh's line rather than replacing
+	// it twenty seconds later with something narrower.
+	for _, want := range []string{"prices updated · 2 printings", "1 refused"} {
+		if !strings.Contains(m.status, want) {
+			t.Errorf("final status = %q, want it to carry %q", m.status, want)
+		}
+	}
+}
+
+// While the sweep runs the line still holds the reader's answer: statusLine
+// puts a transient status above op progress precisely so a finished result is
+// not shoved aside by the housekeeping that follows it, and the header badge is
+// what says something is still going.
+func TestDeferredSweepKeepsTheFinishedSummaryOnTheLine(t *testing.T) {
+	m := opModel(t, func(ctx context.Context, p progress.Fn) (string, error) {
+		return "prices updated · 2 printings", nil
+	})
+	m.opCorrectPrices = func(ctx context.Context, p progress.Fn) (string, error) {
+		return "1 refused for sitting below the cheapest ask", nil
+	}
+	m, _ = runPaletteCommand(t, m, "op.update-prices")
+	gen := m.op.gen
+
+	next, _ := m.Update(opDoneMsg{gen: gen, outcome: opOutcome{
+		summary: "prices updated · 2 printings",
+		then:    &followUp{title: "checking prices against asks", fn: m.opCorrectPrices},
+	}})
+	m = next.(Model)
+
+	if m.op == nil {
+		t.Fatal("the correction sweep did not start after the refresh")
+	}
+	if m.op.gen == gen {
+		t.Error("the follow-up reused the refresh's generation; it is a separate operation")
+	}
+	if !strings.Contains(m.status, "prices updated · 2 printings") {
+		t.Errorf("status = %q, want the refresh's summary kept while the sweep runs", m.status)
+	}
+	if out := m.View(); !strings.Contains(out, "checking prices against asks") {
+		t.Error("no header badge for the running sweep")
+	}
+}
+
+// Without an injected sweep the price ops behave exactly as they did: one
+// operation, no follow-up, and refreshed prices under the corrections already
+// in force.
+func TestPriceOpWithoutACorrectionSweepChainsNothing(t *testing.T) {
+	m := opModel(t, func(ctx context.Context, p progress.Fn) (string, error) {
+		return "prices updated · 2 printings", nil
+	})
+	m, _ = runPaletteCommand(t, m, "op.update-prices")
+	gen := m.op.gen
+	next, _ := m.Update(opDoneMsg{gen: gen, outcome: opOutcome{summary: "prices updated · 2 printings"}})
+	m = next.(Model)
+	if m.op != nil {
+		t.Errorf("an op is running after done with no follow-up injected: %q", m.op.title)
+	}
+}

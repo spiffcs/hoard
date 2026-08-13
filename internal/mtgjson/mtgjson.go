@@ -634,6 +634,31 @@ const (
 	archiveFile = "AllPrices.json.gz"
 )
 
+// PrefetchPriceHistory lands the ~142 MB price archive in the day cache
+// without reading it, so a caller with unrelated work to do first can have the
+// download happening during it rather than after.
+//
+// It exists because the two halves of a backfill sit on different hosts and
+// neither is CPU-bound: the treated-foil overlay is forty seconds of paced
+// tcgcsv requests, and this is six seconds of mtgjson bandwidth that used to
+// wait politely behind all of it. Each host keeps its own request pacer, so
+// overlapping them adds no load to either.
+//
+// Best effort by construction. It writes the cache and reports what went
+// wrong; the real read runs afterwards and will download again if this failed,
+// so nothing here is load-bearing. Without a cache directory there is nothing
+// to warm, and downloading the archive twice would be worse than waiting.
+func PrefetchPriceHistory(ctx context.Context, o Options) error {
+	if o.CacheDir == "" {
+		return nil
+	}
+	body, err := fetch(ctx, o, archiveFile)
+	if err != nil {
+		return err
+	}
+	return body.Close()
+}
+
 // streamPrices walks one of the price archives, handing each wanted record to
 // visit.
 //

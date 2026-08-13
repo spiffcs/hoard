@@ -1,4 +1,4 @@
-package demodata
+package demo
 
 import (
 	"bytes"
@@ -66,5 +66,53 @@ func TestCollectionIsAUsableHoardDocument(t *testing.T) {
 	}
 	if priced == 0 {
 		t.Error("no printing carries a price: the demo would value the whole collection at nothing")
+	}
+}
+
+// The two documents are a pair, and the failure mode when they drift is silent:
+// the history seeds against printings the collection no longer holds, nothing
+// lands, and the demo opens on an empty movers view. Nothing about that fails to
+// compile, and the generator that produces the history is run by hand — so the
+// pairing is asserted here rather than trusted.
+func TestHistoryDescribesTheCollection(t *testing.T) {
+	doc, err := ReadHistory(bytes.NewReader(History))
+	if err != nil {
+		t.Fatalf("embedded history: %v", err)
+	}
+	if len(doc.Retail) == 0 {
+		t.Fatal("no retail series: movers would open empty")
+	}
+
+	h, err := hoardjson.ReadHoard(bytes.NewReader(Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := map[string]bool{}
+	for _, p := range h.Printings {
+		known[p.ScryfallID] = true
+	}
+	for _, s := range append(append([]HistorySeries(nil), doc.Retail...), doc.Bids...) {
+		if !known[s.ScryfallID] {
+			t.Errorf("history carries a series for %s (%s), which the collection does not hold — "+
+				"regenerate it: task generate-demo-history", s.ScryfallID, s.Finish)
+		}
+		if len(s.Points) == 0 {
+			t.Errorf("%s (%s) has an empty series", s.ScryfallID, s.Finish)
+		}
+		if s.Source == "" {
+			t.Errorf("%s (%s) names no vendor", s.ScryfallID, s.Finish)
+		}
+	}
+
+	// Held printings must be represented, or movers has fewer rows than the
+	// collection has cards and no test above would notice.
+	covered := map[string]bool{}
+	for _, s := range doc.Retail {
+		covered[s.ScryfallID] = true
+	}
+	for id := range known {
+		if !covered[id] {
+			t.Errorf("no price history for printing %s; movers cannot chart it", id)
+		}
 	}
 }

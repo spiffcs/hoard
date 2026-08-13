@@ -9,8 +9,9 @@ import (
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/cli"
-	"github.com/spiffcs/hoard/internal/demodata"
+	"github.com/spiffcs/hoard/internal/demo"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 // NewCmdDemo builds `hoard demo`.
@@ -41,9 +42,10 @@ func NewCmdDemo(a *app) *cobra.Command {
 			"at any time; --reset does it for you. Edits made in\n" +
 			"the demo persist, so it is a place to try adding and\n" +
 			"removing cards without consequence.\n\n" +
-			"The sample is real card data with prices frozen when\n" +
-			"this build was made. It shows the shape of a populated\n" +
-			"hoard; it does not price anything.",
+			"The sample is real card data with prices, and ninety\n" +
+			"days of their history, frozen when this build was\n" +
+			"made. It shows the shape of a populated hoard; it\n" +
+			"does not price anything.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runDemo(c, a, reset)
@@ -85,12 +87,32 @@ func runDemo(c *cobra.Command, a *app, reset bool) error {
 
 	r := a.env.Report()
 	if fresh {
-		res, err := action.SeedHoard(st, demodata.Collection, "the sample collection")
+		res, err := action.SeedHoard(st, demo.Collection, "the sample collection")
 		if err != nil {
 			return err
 		}
-		r.Result("Built a demo hoard: %d printings, %d copies, %d deck cards.",
-			res.Printings, res.Copies, res.DeckCards)
+		// The history goes in with the cards, not on demand. Movers is the one
+		// view a seeded hoard could not show — it charts a card against its own
+		// past, and a database built a second ago has none — and the only way
+		// to give it one was a ~150 MB download the demo has no business
+		// making. Seeded here, the view is populated before the browser opens.
+		hist, err := demo.SeedEmbeddedHistory(st)
+		if err != nil {
+			return err
+		}
+		r.Result("Built a demo hoard: %d printings, %d copies, %d deck cards, %s price observations.",
+			res.Printings, res.Copies, res.DeckCards, ui.Count(hist.Inserted+hist.BidInserted))
+	} else {
+		// An older demo database predates the compiled-in history and would
+		// open movers empty forever otherwise; demo.TopUpHistory decides.
+		hist, seeded, err := demo.TopUpHistory(st)
+		if err != nil {
+			return err
+		}
+		if seeded {
+			r.Result("Added %s sample price observations, so the movers view has something to chart.",
+				ui.Count(hist.Inserted+hist.BidInserted))
+		}
 	}
 	r.Detail("This is sample data in %s — not your collection. Delete it any time, or use --reset.", path)
 

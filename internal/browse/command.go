@@ -158,7 +158,7 @@ func commands() []command {
 				}
 				return 2
 			},
-			run: func(m *Model) tea.Cmd { return m.startOp("updating prices", m.opUpdatePrices) },
+			run: func(m *Model) tea.Cmd { return m.startPriceOp("updating prices", m.opUpdatePrices) },
 		},
 		{
 			id: "op.backfill", title: "BackfillPriceHistory30",
@@ -611,7 +611,7 @@ func (m *Model) populateView() tea.Cmd {
 	case viewWatches:
 		return m.populateWatches()
 	}
-	return m.startOp("updating prices", m.opUpdatePrices)
+	return m.startPriceOp("updating prices", m.opUpdatePrices)
 }
 
 // startBackfill runs the price-history import at one window.
@@ -630,7 +630,7 @@ func (m *Model) populateMovers() tea.Cmd {
 		m.status, m.statusErr = "price operations are unavailable in this build", true
 		return nil
 	}
-	return m.startOp("populating price history", func(ctx context.Context, p progress.Fn) (string, error) {
+	return m.startPriceOp("populating price history", func(ctx context.Context, p progress.Fn) (string, error) {
 		var parts []string
 		if up != nil {
 			s, err := up(ctx, p)
@@ -664,7 +664,7 @@ func (m *Model) populateWatches() tea.Cmd {
 		m.status, m.statusErr = "price operations are unavailable in this build", true
 		return nil
 	}
-	return m.startOp("populating prices", func(ctx context.Context, p progress.Fn) (string, error) {
+	return m.startPriceOp("populating prices", func(ctx context.Context, p progress.Fn) (string, error) {
 		var parts []string
 		if up != nil {
 			s, err := up(ctx, p)

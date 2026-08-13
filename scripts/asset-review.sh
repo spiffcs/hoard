@@ -108,7 +108,7 @@ cat >> "$OUT" <<EOF
 </div></section>
 
 <section><h2>2 · iPhone app icon <span>$(facts "$ICON")</span></h2>
-<div class=ask>Is the chest centred and big enough in the frame, and does it still read at 40px? The knob is <code>coverage</code> in make-icon.swift.</div>
+<div class=ask>Does the mark still read at 40px? This icon is hand-authored full-bleed artwork, not generated — there is no knob, so fixing it means redrawing it and copying the new 1024×1024 over <code>icon-1024.png</code>.</div>
 <div class=wall>
  <figure><img src="../$ICON" width=180 height=180><figcaption>180</figcaption></figure>
  <figure><img src="../$ICON" width=120 height=120><figcaption>120 · home screen</figcaption></figure>

@@ -30,6 +30,20 @@ type OpFunc func(ctx context.Context, p progress.Fn) (summary string, err error)
 // WithUpdatePrices supplies the price-refresh operation.
 func WithUpdatePrices(f OpFunc) Option { return func(m *Model) { m.opUpdatePrices = f } }
 
+// WithCorrectPrices supplies the pass that re-checks refreshed prices against
+// the asks standing on their own listings, and records the observation.
+//
+// Injected apart from the refresh because it runs apart from it: it is the
+// slowest thing a price update does — one paced vendor request per owned
+// TCGplayer group, twenty seconds on a large hoard — and none of it is needed
+// to put today's numbers on screen. Every operation that refreshes prices
+// chains it as a follow-up, so it starts after the panes have already been
+// redrawn with the result the reader was waiting for.
+//
+// Nil is a supported state: the follow-up simply does not run, and the browser
+// shows refreshed prices under the corrections already in force.
+func WithCorrectPrices(f OpFunc) Option { return func(m *Model) { m.opCorrectPrices = f } }
+
 // WithRepairFinishes supplies the finish-repair operation.
 func WithRepairFinishes(f OpFunc) Option { return func(m *Model) { m.opRepairFinishes = f } }
 
@@ -113,6 +127,18 @@ type opOutcome struct {
 	summary string
 	report  []string        // non-nil: opens the text takeover after the refresh
 	confirm *pendingConfirm // staged last, e.g. import's run-again question
+	// then is a second operation to start once this one's results are on
+	// screen. Not a continuation — the panes are refreshed and the summary
+	// posted in between, which is the entire point of separating them.
+	then *followUp
+}
+
+// followUp is the deferred half of an operation: work that has to happen, does
+// not have to happen first, and would otherwise be a long wait in front of a
+// result the reader already has.
+type followUp struct {
+	title string
+	fn    OpFunc
 }
 
 // opState is one operation in flight.
@@ -149,6 +175,44 @@ func (m *Model) startOp(title string, fn OpFunc) tea.Cmd {
 		summary, err := fn(ctx, p)
 		return opOutcome{summary: summary}, err
 	})
+}
+
+// startPriceOp is startOp for the operations that refresh prices, which all
+// owe the same slow tail: re-checking the refreshed figures against the asks
+// standing on their own listings, and recording the observation that follows
+// from it.
+//
+// The tail rides as a follow-up rather than inside fn so it runs after the
+// panes carry the new numbers. It is twenty seconds on a large hoard — one
+// paced vendor request per owned TCGplayer group — and every second of it used
+// to be spent in front of a result that was already computed.
+func (m *Model) startPriceOp(title string, fn OpFunc) tea.Cmd {
+	correct := m.opCorrectPrices
+	if fn == nil || correct == nil {
+		return m.startOp(title, fn)
+	}
+	return m.startOpReport(title, func(ctx context.Context, p progress.Fn) (opOutcome, error) {
+		summary, err := fn(ctx, p)
+		if err != nil {
+			return opOutcome{}, err
+		}
+		return opOutcome{summary: summary, then: &followUp{
+			title: "checking prices against asks", fn: correct}}, nil
+	})
+}
+
+// startFollowUp starts a deferred half without taking the status line.
+//
+// The line already holds the summary of the operation that just finished, and
+// that summary is the reader's answer; the header badge is what says something
+// is still running. statusLine's own precedence contract puts a transient
+// status above op progress for exactly this reason, so the follow-up simply
+// puts back what startOp cleared.
+func (m *Model) startFollowUp(f *followUp) tea.Cmd {
+	status, statusErr := m.status, m.statusErr
+	cmd := m.startOp(f.title, f.fn)
+	m.status, m.statusErr = status, statusErr
+	return cmd
 }
 
 // startOpReport is startOp for operations whose outcome is richer than a
@@ -245,6 +309,28 @@ func (m Model) onOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		// somehow up, dropping the follow-up is safe — the summary already
 		// says what happened, and the action can be re-run.
 		m.confirm = msg.outcome.confirm
+	}
+	// Last, after the refresh above and after the summary was posted: the
+	// deferred half starts with the reader's result already on screen, which
+	// is the only reason it was deferred. It carries the finished summary
+	// forward so its own completion extends that line instead of replacing it
+	// twenty seconds later with something narrower.
+	if f := msg.outcome.then; f != nil && f.fn != nil {
+		done := msg.outcome.summary
+		tail := f.fn
+		f = &followUp{title: f.title, fn: func(ctx context.Context, p progress.Fn) (string, error) {
+			s, err := tail(ctx, p)
+			switch {
+			case err != nil:
+				return "", err
+			case s == "":
+				return done, nil
+			case done == "":
+				return s, nil
+			}
+			return done + " · " + s, nil
+		}}
+		return m, tea.Batch(compsCmd, m.startFollowUp(f))
 	}
 	return m, compsCmd
 }

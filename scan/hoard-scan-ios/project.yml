@@ -36,12 +36,18 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-      # The app icon, built by make-icon.swift from docs/assets/logo-master.png
-      # — the same artwork the README shows, so the phone and the project can
-      # not end up wearing different faces. The master is full size because the
-      # icon needs 840px of artwork on its long side; the README gets a smaller
-      # copy from the same file. Regenerate both with `make logo` after changing
-      # the artwork — nothing checks that they still match.
+      # The app icon: hand-authored, full-bleed 1024×1024 artwork committed as
+      # icon-1024.png. Nothing generates it. It used to be derived from
+      # docs/assets/logo-master.png so the phone and the README could not wear
+      # different faces, but a finished icon is opaque edge to edge and that
+      # generator located the mark by its alpha bounding box — so it shrank the
+      # whole composition to 82% and letterboxed it. The two faces can drift
+      # now, and nothing checks that they match.
+      #
+      # Replacing it is a file copy. Two properties are not negotiable: exactly
+      # 1024×1024, and no alpha channel — an icon submitted with alpha is
+      # rejected, and the rejection arrives at the end of a submission.
+      # `make asset-review` renders it down to 40px to be looked at.
       #
       # PrivacyInfo.xcprivacy lives here too and is picked up by this same
       # directory entry — xcodegen walks the folder, and an extension it does

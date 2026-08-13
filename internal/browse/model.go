@@ -216,6 +216,7 @@ type Model struct {
 	// The injected long-running operations (nil = unavailable) and the one
 	// in flight; see opstate.go.
 	opUpdatePrices   OpFunc
+	opCorrectPrices  OpFunc
 	opRepairFinishes OpFunc
 	opCatalogUpdate  OpFunc
 	catalogOffer     bool
