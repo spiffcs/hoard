@@ -87,7 +87,13 @@ targets:
         # value is 0.1" was backwards.) Pointing at the setting makes
         # MARKETING_VERSION below the one place the number is written.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleDisplayName: hoardling
+        # Capitalised, unlike `hoard` itself. The CLI is a command you type and
+        # wears the lowercase every command wears; this is an icon on a home
+        # screen, sitting in a grid where everything else is a proper noun, and
+        # a lowercase label there reads as a mistake rather than as a style. It
+        # also now agrees with the App Store listing, which was always
+        # `Hoardling` — the two spellings used to disagree.
+        CFBundleDisplayName: Hoardling
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -105,18 +111,29 @@ targets:
           - _hoardscan._tcp
         # Export compliance, answered once here instead of on every upload.
         #
-        # The app's only cryptography is ScanLink/Pairing.swift: HKDF-SHA256 to
-        # stretch the six-digit pairing code into a key, and HMAC-SHA256 to
-        # prove knowledge of that key over a per-connection session id, checked
-        # with isValidAuthenticationCode. That is authentication and key
-        # derivation and nothing else — there is no cipher anywhere in the tree,
-        # no AES, no ChaChaPoly, no sealed box, because the link deliberately
-        # carries plaintext (the long note at the top of Pairing.swift explains
-        # why, and why TLS-PSK is not there). Nothing encrypts payload data, so
-        # the authentication-only exemption applies honestly.
+        # The answer stays `false`, but the exemption underneath it moved, and
+        # this note was rewritten to match. It used to argue that there was "no
+        # cipher anywhere in the tree, because the link deliberately carries
+        # plaintext." That was true when it was written and is now false:
+        # PeerLink.swift builds NWProtocolTLS.Options() and the link runs TLS
+        # with self-signed certificates pinned on first use. The payload is
+        # encrypted. An authentication-only exemption no longer applies.
         #
-        # If a cipher ever lands on the wire, this key has to be revisited
-        # before the next upload; it is a declaration, not a description.
+        # What applies instead is narrower and still honest: every cryptographic
+        # call in this app is the operating system's own. CryptoKit for
+        # HKDF-SHA256 and HMAC-SHA256 (ScanLink/Pairing.swift), Security for the
+        # P-256 key pair and its signature (ScanLink/PeerIdentity.swift), and
+        # Network for the TLS itself (ScanLink/PeerTrust.swift, PeerLink.swift).
+        #
+        # That is the exact case App Store Connect asks about — whether standard
+        # algorithms are used *instead of, or in addition to* the encryption
+        # within Apple's operating system. Nothing here is. Package.swift
+        # declares no `.package(url:)` at all, so no third-party crypto library
+        # is linked, and no cipher is written by hand anywhere in the tree.
+        #
+        # This is a legal declaration, not a description of the code. Re-read it
+        # if a dependency lands or someone hand-rolls a cipher: either would
+        # break the exemption above, and neither would break the build.
         ITSAppUsesNonExemptEncryption: false
         # File sharing. These two make the app's Documents/ directory browsable
         # from the Files app, which is how a session's numbers get recovered by

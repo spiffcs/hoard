@@ -25,7 +25,7 @@ const (
 // The tier lines, in dollars — fixed. The knobs that once moved them (the
 // HOARD_SCAN_WIN / HOARD_SCAN_JACKPOT environment variables and the capture
 // step's `win 5` command line) are gone: sound configuration lives on the
-// phone now, in hoardling's Settings tab, which re-tiers every priced card
+// phone now, in Hoardling's Settings tab, which re-tiers every priced card
 // from the amount this side already sends. What is decided here only feeds
 // the wire's three-tier verdict — kept for the macOS helper's HUD and for
 // older phone builds that still take the wire's word.

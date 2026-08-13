@@ -237,7 +237,7 @@ final class CameraSession: NSObject, ObservableObject {
 
     func start() async {
         guard await AVCaptureDevice.requestAccess(for: .video) else {
-            status = "Camera access denied. Grant it in Settings › hoardling"
+            status = "Camera access denied. Grant it in Settings › Hoardling"
             failure = status
             return
         }

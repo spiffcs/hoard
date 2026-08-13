@@ -9,7 +9,7 @@
 // unchanged; a shrug is not a price.
 //
 // Four price tiers here against the Mac's three: the phone splits the top of
-// the range into a big win and a jackpot, because that is the distinction a
+// the range into Mythic and Staple, because that is the distinction a
 // person sorting a box by ear actually wants — "set it aside" versus "stop and
 // look". Review is a fifth tier here and is not a price at all: it is the Mac
 // asking a question, and it now picks its own voice like the rest. It used to
@@ -39,12 +39,24 @@ enum Tier: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// What the Settings tab calls this tier.
+    ///
+    /// Labels only, and deliberately not matched by a rename of the cases. A
+    /// `rawValue` here is load-bearing in three places that have nothing to do
+    /// with what is on screen: it builds `storageKey`, so moving it would
+    /// silently reset every voice already picked; it is the vocabulary the Mac
+    /// sends (`tierJackpot` in `internal/tui/hud.go`); and `PriceOverlay` and
+    /// `CardOutline` switch on the same strings. So `.jackpot` reads "Staple"
+    /// to a person and stays `jackpot` everywhere a string crosses a boundary.
+    ///
+    /// The names are the collector's ladder rather than the casino's, which is
+    /// the vocabulary someone sorting a box is already thinking in.
     var label: String {
         switch self {
         case .bulk: return "Bulk"
-        case .win: return "Win"
-        case .big: return "Big Win"
-        case .jackpot: return "Jackpot"
+        case .win: return "Rare"
+        case .big: return "Mythic"
+        case .jackpot: return "Staple"
         case .review: return "Review"
         }
     }

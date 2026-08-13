@@ -33,7 +33,6 @@ struct SettingsView: View {
                 ForEach(Tier.allCases) { tier in
                     TierSection(
                         tier: tier,
-                        subtitle: subtitle(for: tier),
                         voice: Binding(
                             get: { settings.voice(for: tier) },
                             set: { settings.setVoice($0, for: tier) }),
@@ -45,27 +44,9 @@ struct SettingsView: View {
                     Button("Reset to Defaults", role: .destructive) {
                         settings.reset()
                     }
-                } footer: {
-                    Text("Prices come from the Mac; which sound plays is decided here. "
-                         + "Each tier has its own sounds — a jackpot run cannot be "
-                         + "assigned to bulk. Any tier can be set to Silent, and "
-                         + "setting all five makes the app silent.")
                 }
             }
             .navigationTitle("Settings")
-        }
-    }
-
-    /// What the tier covers, said in the header beside its name.
-    private func subtitle(for tier: Tier) -> String {
-        switch tier {
-        case .bulk: return "under \(dollars(settings.winAt))"
-        case .win: return "\(dollars(settings.winAt)) and up"
-        case .big: return "\(dollars(settings.bigAt)) and up"
-        case .jackpot: return "\(dollars(settings.jackpotAt)) and up"
-        // No dollar figure, because there is no line: this is the Mac asking
-        // rather than pricing.
-        case .review: return "queued for a decision"
         }
     }
 
@@ -79,16 +60,11 @@ struct SettingsView: View {
         case .bulk, .review: return nil
         }
     }
-
-    private func dollars(_ amount: Double) -> String {
-        String(format: "$%.2f", amount)
-    }
 }
 
 /// One tier's card: where it starts, and what it sounds like.
 private struct TierSection: View {
     let tier: Tier
-    let subtitle: String
     @Binding var voice: String
     /// Nil for the tiers with no line of their own.
     let threshold: Binding<Double>?
@@ -134,7 +110,12 @@ private struct TierSection: View {
             }
             .disabled(isSilent)
         } header: {
-            Text("\(tier.label) · \(subtitle)")
+            // The name alone. The header used to carry the tier's range beside
+            // it — "Win · $1.00 and up" — which was the only place the line was
+            // visible before "Starts at" became editable. Now it is stated once,
+            // in the field that sets it, and a header repeating it is a second
+            // copy that can disagree with the first.
+            Text(tier.label)
         }
         .onChange(of: voice) { _, picked in
             // Picking Silent makes no sound, and needs no test for it here:

@@ -400,8 +400,13 @@ tasks:
     desc: Run the scan package's unit tests on the iOS simulator
     platforms: [darwin]
     vars:
+      # `$` needs no escaping here. A Taskfile is not a Makefile: `sh:` hands the
+      # string to the shell as written, so the `$$` this used to carry became the
+      # shell's own PID and `sed 's/ *<pid>//'` stripped nothing. The name kept
+      # its trailing space, no destination matched it, and the task failed with
+      # exit 70 and a list of the very simulator it had just asked for.
       SIM_NAME:
-        sh: "xcrun simctl list devices available | grep -m1 -o 'iPhone [A-Za-z0-9 ]*' | sed 's/ *$$//'"
+        sh: "xcrun simctl list devices available | grep -m1 -o 'iPhone [A-Za-z0-9 ]*' | sed 's/ *$//'"
     cmd: >
       cd scan/hoard-scan && xcodebuild test -scheme hoard-scan-Package
       -destination 'platform=iOS Simulator,name={{ .SIM_NAME }}' CODE_SIGNING_ALLOWED=NO
