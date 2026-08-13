@@ -7,6 +7,7 @@
 [![Validations](https://github.com/spiffcs/hoard/actions/workflows/validations.yaml/badge.svg)](https://github.com/spiffcs/hoard/actions/workflows/validations.yaml)
 [![Release](https://img.shields.io/github/v/release/spiffcs/hoard?sort=semver)](https://github.com/spiffcs/hoard/releases)
 [![License](https://img.shields.io/github/license/spiffcs/hoard)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/spiffcs/hoard/badge)](https://scorecard.dev/viewer/?uri=github.com/spiffcs/hoard)
 
 A TUI collection tracker for Magic: The Gathering.
 
