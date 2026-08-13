@@ -29,6 +29,13 @@ SOCIAL=docs/assets/social-preview.png
 DEMO=docs/assets/demo.gif
 ICON=scan/hoard-scan-ios/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
 
+# The width the README actually draws the logo at, read out of the README rather
+# than repeated here. This page's whole claim is "at the size it is actually
+# seen", and a hardcoded copy goes on claiming it after the README moves — the
+# one failure that looks exactly like success. Falls back if the tag is reshaped.
+LOGO_W=$(sed -n 's/.*hoard-logo\.png" width="\([0-9]*\)".*/\1/p' README.md | head -1)
+: "${LOGO_W:=190}"
+
 mkdir -p .tmp
 
 # "1280x640 · 280K", for the header of each section.
@@ -94,10 +101,10 @@ fi
 
 cat >> "$OUT" <<EOF
 <section><h2>1 · Logo in the README <span>$(facts "$LOGO")</span></h2>
-<div class=ask>Does it read on <b>both</b> themes, and is 150px right beside the title?</div>
+<div class=ask>Does it read on <b>both</b> themes, and is ${LOGO_W}px right beside the title?</div>
 <div class=split>
- <div class="half lt"><img src="../$LOGO" width=150><div style="font:800 30px -apple-system">hoard</div><div class=cap>light · width=150</div></div>
- <div class="half dk"><img src="../$LOGO" width=150><div style="font:800 30px -apple-system">hoard</div><div class=cap>dark · width=150</div></div>
+ <div class="half lt"><img src="../$LOGO" width=$LOGO_W><div style="font:800 30px -apple-system">hoard</div><div class=cap>light · width=$LOGO_W</div></div>
+ <div class="half dk"><img src="../$LOGO" width=$LOGO_W><div style="font:800 30px -apple-system">hoard</div><div class=cap>dark · width=$LOGO_W</div></div>
 </div></section>
 
 <section><h2>2 · iPhone app icon <span>$(facts "$ICON")</span></h2>

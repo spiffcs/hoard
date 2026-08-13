@@ -75,8 +75,9 @@ func (r *Resolver) fetch(ctx context.Context, ids []scryfall.Identifier) ([]scry
 }
 
 // Resolve answers every request in two bulk passes: the identifiers as given,
-// then — for set+number pairs Scryfall does not know (a vendor's set code, a
-// renumbered promo) that carry a name — a retry by that name. The retry's
+// then a retry by bare name for those the first pass could not place — a
+// set+number pair Scryfall does not know (a vendor's set code, a renumbered
+// promo), or a name whose set is wrong or whose halves are joined. The retry's
 // printing is whichever Scryfall picks, which beats losing the card entirely.
 func (r *Resolver) Resolve(ctx context.Context, reqs []Request) (*Result, error) {
 	idents := make([]scryfall.Identifier, len(reqs))
@@ -96,10 +97,20 @@ func (r *Resolver) Resolve(ctx context.Context, reqs []Request) (*Result, error)
 	var retry []scryfall.Identifier
 	queued := make(map[string]bool)
 	for _, q := range reqs {
-		if _, ok := byKey[q.Ident.Key()]; ok || q.Ident.Name != "" || q.Name == "" {
+		if _, ok := byKey[q.Ident.Key()]; ok || q.Name == "" {
 			continue
 		}
-		ident := scryfall.Identifier{Name: q.Name}
+		// A name-only identifier has nothing left to drop: retrying it would
+		// repeat the request that just failed. A name *narrowed by a set* does
+		// — the set is the part that failed, and the bare name asks a different
+		// question. Both halves of that are real, measured against Scryfall:
+		// {"name":"Ancient Brontodon","set":"mb1"} is not found while the bare
+		// name is, and split cards ("Wear // Tear") are not found with their own
+		// set attached but are found without it.
+		if q.Ident.Name != "" && q.Ident.Set == "" {
+			continue
+		}
+		ident := scryfall.Identifier{Name: frontFace(q.Name)}
 		if !queued[ident.Key()] {
 			queued[ident.Key()] = true
 			retry = append(retry, ident)
@@ -145,6 +156,24 @@ func (r *Resolver) Resolve(ctx context.Context, reqs []Request) (*Result, error)
 		res.Matches[i] = Match{OK: true, Card: card, Finish: finish, Refinished: changed}
 	}
 	return res, nil
+}
+
+// frontFace reduces a split or double-faced card's printed name to the half
+// Scryfall's collection endpoint will answer to.
+//
+// Every decklist site writes these cards with both halves — "Wear // Tear",
+// "Branchloft Pathway // Boulderloft Pathway" — and /cards/collection matches
+// none of them by that name. It matches the front face, and answers with the
+// full name, so the reply still indexes under what the list called it. Measured:
+// {"name":"Fire // Ice"} is not found, {"name":"Wear"} returns "Wear // Tear".
+//
+// Only the retry pass uses this. The first pass sends what the list wrote, which
+// is right whenever the list also gave a set and number.
+func frontFace(name string) string {
+	if front, _, ok := strings.Cut(name, " // "); ok {
+		return strings.TrimSpace(front)
+	}
+	return name
 }
 
 // indexIDs indexes the cards the bulk lookup returned under every key form an

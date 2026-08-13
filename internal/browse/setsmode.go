@@ -12,7 +12,6 @@ package browse
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +77,10 @@ const setSettlingDays = "movers.settlingDays"
 // instruction is the one that has to hold. A garbled stored value leaves the
 // default standing — a preference is never worth failing a launch over.
 func (m *Model) loadSettlingWindow() {
-	if strings.TrimSpace(os.Getenv(store.SettlingDaysEnv)) != "" {
+	// Asked, not merely set: a typo in the variable must not throw away a
+	// preference the reader saved on purpose and leave the default standing
+	// as though they had never set one.
+	if _, pinned := store.SettlingDaysEnvAsk(); pinned {
 		return // store.SettlingDays reads it for itself
 	}
 	s, err := m.store.Settings()
@@ -107,9 +109,19 @@ func (m *Model) promptSetSettlingWindow() {
 			}
 			store.SetSettlingDays(n)
 			m.deriveView()
-			if n == 0 {
+			switch env, pinned := store.SettlingDaysEnvAsk(); {
+			// The change holds for this run and is saved, but the environment
+			// is read again at the next launch and will win there. Said here
+			// because the alternative is a dial that visibly works, quietly
+			// does not stick, and never explains which of the two the reader
+			// should believe. It replaces the tail rather than extending it:
+			// the status line is not clamped, so appended text falls off.
+			case pinned:
+				m.status, m.statusErr = fmt.Sprintf("settling window %s · %s=%d wins at next launch",
+					ui.Plural(n, "day", "days"), store.SettlingDaysEnv, env), false
+			case n == 0:
 				m.status, m.statusErr = "settling window off · every set counts", false
-			} else {
+			default:
 				m.status, m.statusErr = fmt.Sprintf("settling window %s · new sets held out of the movers net",
 					ui.Plural(n, "day", "days")), false
 			}

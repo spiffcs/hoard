@@ -50,16 +50,22 @@ func FuzzParseLine(f *testing.F) {
 			t.Fatalf("board %q from %q", e.Board, line)
 		}
 
-		// The identifier is either a set+number pair or a name, never a
-		// half-filled mixture: a resolve given a set with no number searches
-		// the whole set and picks arbitrarily.
+		// The identifier must pin a card down: a set+number pair, or a name
+		// that a set may narrow. What it must never be is a set on its own —
+		// that resolve searches the whole set and picks arbitrarily.
+		//
+		// Name+set is a shape Scryfall's collection endpoint accepts and
+		// answers exactly (verified against the live API: {"name":"Arcane
+		// Signet","set":"c21"} returns c21/234, not some other printing). It
+		// is what Archidekt's text export gives, since that carries a set for
+		// every line and a collector number for none.
 		hasPair := e.Ident.Set != "" && e.Ident.CollectorNumber != ""
 		hasName := e.Ident.Name != ""
 		if !hasPair && !hasName {
 			t.Fatalf("entry identifies nothing, from %q", line)
 		}
-		if e.Ident.Set != "" && e.Ident.CollectorNumber == "" {
-			t.Fatalf("set %q with no collector number, from %q", e.Ident.Set, line)
+		if e.Ident.Set != "" && e.Ident.CollectorNumber == "" && !hasName {
+			t.Fatalf("set %q with neither a collector number nor a name, from %q", e.Ident.Set, line)
 		}
 
 		// Set codes are lowercased at the boundary so a later comparison

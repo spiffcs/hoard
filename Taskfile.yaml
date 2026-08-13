@@ -156,6 +156,22 @@ tasks:
       - cmd: .github/scripts/go-mod-tidy-check.sh && echo "go.mod and go.sum are tidy!"
         silent: true
 
+  ## Docs preview #################################
+
+  # Render a Markdown file through GitHub's own /markdown endpoint and open it.
+  # macOS-only for `open`, and never part of `all`: it needs the network and an
+  # authenticated gh, so it is a thing you run while editing prose, not a gate.
+  #
+  #   make readme-preview                        # README.md
+  #   task readme-preview -- CONTRIBUTING.md     # any other file
+  #
+  # The argument form is `task`: the make shim forwards only the target name, so
+  # `make readme-preview -- CONTRIBUTING.md` quietly previews the README instead.
+  readme-preview:
+    desc: Preview a Markdown file as GitHub will render it (macOS)
+    platforms: [darwin]
+    cmd: ./scripts/readme-preview.sh {{ .CLI_ARGS }}
+
   ## Shipped images #################################
   #
   # macOS-only, both of them: sips, `open`, and headless Chrome. They are not
@@ -307,7 +323,7 @@ tasks:
       # write, exit 13). A renamed master would otherwise leave the old copy in
       # docs/ and report success.
       - mkdir -p .tmp && rm -f .tmp/hoard-logo.png
-      # 640px serves both consumers with headroom — the README shows it at 150,
+      # 640px serves both consumers with headroom — the README shows it at 190,
       # the social card at 420 — while the master stays full size for the icon,
       # which needs 840px of artwork on its long side and may want more later.
       - sips --resampleWidth 640 docs/assets/logo-master.png --out .tmp/hoard-logo.png >/dev/null

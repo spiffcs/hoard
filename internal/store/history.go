@@ -98,16 +98,36 @@ var settlingDays = func() *atomic.Int64 {
 // silently treating it as "off" would hide the mistake behind a plausible
 // behavior. Zero IS meaningful and is honored.
 func settlingDaysFrom(raw string) int {
+	if n, ok := settlingDaysAsked(raw); ok {
+		return n
+	}
+	return DefaultSettlingDays
+}
+
+// settlingDaysAsked is settlingDaysFrom's other half: the window asked for,
+// and whether anything usable was asked at all.
+//
+// The two answers have to be separable, because "the environment is pinning
+// the window" and "the environment is set to something" are different facts
+// and only the first should outrank a stored preference. Read as presence, a
+// typo in the variable would silently throw away a preference the reader saved
+// deliberately — and leave the default standing as if they had never set one.
+func settlingDaysAsked(raw string) (int, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return DefaultSettlingDays
+		return 0, false
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		return DefaultSettlingDays
+		return 0, false
 	}
-	return n
+	return n, true
 }
+
+// SettlingDaysEnvAsk reports the window the environment asks for, and whether
+// it asked usably. A caller with its own source of the window consults this to
+// find out whether it is about to be outranked at the next launch.
+func SettlingDaysEnvAsk() (int, bool) { return settlingDaysAsked(os.Getenv(SettlingDaysEnv)) }
 
 // SettlingDays is the window in force. Unresolved, it takes the environment's
 // answer — so a command that never thinks about the window still gets the

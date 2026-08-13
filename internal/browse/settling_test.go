@@ -356,6 +356,45 @@ func TestSetSettlingWindowMovesTheNetAndPersists(t *testing.T) {
 	}
 }
 
+// THE OTHER BUG: with the variable pinning the window, a palette change took
+// effect and was saved, and then the next launch read the variable again and
+// silently reverted it. The dial visibly worked and quietly did not stick,
+// with nothing on screen saying which of the two to believe.
+func TestSettlingWindowSaysWhenTheEnvironmentWillWinNextLaunch(t *testing.T) {
+	pinWindow(t, store.DefaultSettlingDays)
+	t.Setenv(store.SettlingDaysEnv, "7")
+	st := settlingStore()
+	m := onSettlingMovers(t, onSettlingSets(t, st))
+
+	m.promptSetSettlingWindow()
+	m.prompt.commit(&m, "60")
+
+	if got := store.SettlingDays(); got != 60 {
+		t.Errorf("window = %d, want the dial to win for this run", got)
+	}
+	if !strings.Contains(m.status, store.SettlingDaysEnv) {
+		t.Errorf("status = %q, want it to name the variable that outranks this "+
+			"at the next launch", m.status)
+	}
+	// Still saved: the reader's preference is theirs again the moment the
+	// variable is out of the way.
+	if got := st.settings[setSettlingDays]; got != "60" {
+		t.Errorf("persisted %q, want \"60\"", got)
+	}
+
+	// And with no variable set, the notice is not there to puzzle over.
+	t.Run("silent when nothing outranks it", func(t *testing.T) {
+		pinWindow(t, store.DefaultSettlingDays)
+		t.Setenv(store.SettlingDaysEnv, "")
+		m := onSettlingMovers(t, onSettlingSets(t, settlingStore()))
+		m.promptSetSettlingWindow()
+		m.prompt.commit(&m, "60")
+		if strings.Contains(m.status, store.SettlingDaysEnv) {
+			t.Errorf("status = %q, want no notice when nothing outranks the dial", m.status)
+		}
+	})
+}
+
 // The prompt corrects a person who just typed the value, where the
 // environment silently falls back for a stale line in a script.
 func TestParseSettlingDaysRefusesWhatTheDialCannotSay(t *testing.T) {
@@ -392,6 +431,21 @@ func TestSettlingWindowStartupPrecedence(t *testing.T) {
 		onSettlingSets(t, st)
 		if got := store.SettlingDays(); got == 30 {
 			t.Error("stored preference overrode the environment at startup")
+		}
+	})
+
+	// THE BUG: the startup check read the variable as present rather than
+	// usable, so a typo in it threw away a preference the reader had saved on
+	// purpose and left the default standing as if they had never set one.
+	t.Run("a garbled environment does not discard the stored preference", func(t *testing.T) {
+		pinWindow(t, store.DefaultSettlingDays)
+		t.Setenv(store.SettlingDaysEnv, "banana")
+		st := settlingStore()
+		st.settings = map[string]string{setSettlingDays: "45"}
+		onSettlingSets(t, st)
+		if got := store.SettlingDays(); got != 45 {
+			t.Errorf("window = %d, want the stored 45 — an unusable variable is "+
+				"not an instruction, and must not outrank a saved preference", got)
 		}
 	})
 

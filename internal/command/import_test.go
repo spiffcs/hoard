@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +24,14 @@ import (
 // while the package sits at the module root — which stopped being true when
 // the commands moved under internal/.
 const manaboxFixture = "../collsource/testdata/manabox.csv"
+
+// The other two third-party exports, beside ManaBox's. collsource owns all
+// three so that the parser tests and these read the same bytes: a fixture that
+// drifted to suit one layer would quietly stop describing the other.
+const (
+	moxfieldFixture = "../collsource/testdata/moxfield.csv"
+	delverFixture   = "../collsource/testdata/delver.csv"
+)
 
 // stubFetch swaps the resolver's Scryfall lookup for an in-memory one over
 // the given cards, matching by the same keys the resolver indexes. Covers
@@ -621,6 +631,111 @@ func TestCmdImportStdin(t *testing.T) {
 	}
 	if totals.TotalCopies != 4 {
 		t.Errorf("imported %d copies, want the fixture's 4", totals.TotalCopies)
+	}
+}
+
+// The three third-party exports, each imported end to end into a database of
+// its own.
+//
+// collsource's tests prove the headers sniff and the rows parse; they stop at
+// the parser. These carry each fixture the rest of the way — resolve, then
+// store — because that is where a format's compatibility is actually decided,
+// and until now only ManaBox was taken that far: Moxfield reached a database
+// only through a synthetic one-row CSV written to exercise the name fallback,
+// and Delver reached one never.
+//
+// Asserted as the complete set of holdings rather than as a total, because a
+// total hides the two failures that actually happen — a row silently dropped
+// and a row imported twice — by letting them cancel. Sorted by name and finish
+// rather than taken in the store's own order, which is by value, so that a
+// price change in the fixtures cannot reorder the expectation.
+//
+// Condition rides along deliberately. These three apps do not share a
+// vocabulary — ManaBox speaks Cardmarket's seven ("excellent"), Moxfield and
+// Delver TCGplayer's five ("Lightly Played", "Played") — and nothing else
+// proves both scales survive as far as the database rather than folding to
+// unknown somewhere past the parser.
+func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
+	type holding struct {
+		Name      string
+		Finish    string
+		Quantity  int
+		Condition string
+	}
+	for _, tc := range []struct {
+		format  string
+		fixture string
+		want    []holding
+	}{
+		{
+			format:  "manabox",
+			fixture: manaboxFixture,
+			want: []holding{
+				// Cardmarket's "excellent" folds onto lp; "near_mint" is nm.
+				{"Lightning Bolt", "foil", 1, "lp"},
+				{"Mystic Remora", "nonfoil", 1, "nm"},
+				{"Sol Ring", "nonfoil", 2, "nm"},
+			},
+		},
+		{
+			format:  "moxfield",
+			fixture: moxfieldFixture,
+			want: []holding{
+				// The quoted comma in this name has to survive the CSV reader,
+				// the resolver's name-keyed pass and the insert to land here.
+				{"Borrowing 100,000 Arrows", "nonfoil", 1, "nm"},
+				{"Lightning Bolt", "foil", 1, "lp"},
+				{"Sol Ring", "nonfoil", 2, "nm"},
+			},
+		},
+		{
+			format:  "delver",
+			fixture: delverFixture,
+			want: []holding{
+				// "Played" is Cardmarket's word but TCGplayer's position: mp.
+				{"Lightning Bolt", "foil", 1, "mp"},
+				// Written "2x" in the fixture.
+				{"Sol Ring", "nonfoil", 2, "nm"},
+			},
+		},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			st := importStore(t)
+			// The shared fixtures plus the one card only the Moxfield export
+			// names. Added here rather than to importFixtures() because that
+			// list is the resolver's whole universe for every other test in
+			// this file, and widening it would weaken their unresolved paths.
+			stubFetch(t, append(importFixtures(), scryfall.Card{
+				ID: "arrows-id-1", Set: "ptk", CollectorNumber: "31",
+				Name: "Borrowing 100,000 Arrows", ScryfallURL: "http://arrows",
+				PriceUSD: f(0.5), Finishes: []string{"nonfoil"},
+			})...)
+
+			// Sniffed, not named. --format would prove the parser runs; it
+			// would not prove hoard recognizes the file a user actually has.
+			if err := importCmd(st, tc.fixture); err != nil {
+				t.Fatalf("hoard import %s: %v", tc.fixture, err)
+			}
+
+			rows, err := st.AllByFinish()
+			if err != nil {
+				t.Fatalf("AllByFinish: %v", err)
+			}
+			got := make([]holding, 0, len(rows))
+			for _, r := range rows {
+				got = append(got, holding{r.Name, r.Finish, r.Quantity, r.Condition})
+			}
+			sort.Slice(got, func(i, j int) bool {
+				if got[i].Name != got[j].Name {
+					return got[i].Name < got[j].Name
+				}
+				return got[i].Finish < got[j].Finish
+			})
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("holdings after importing the %s fixture:\n got %+v\nwant %+v",
+					tc.format, got, tc.want)
+			}
+		})
 	}
 }
 

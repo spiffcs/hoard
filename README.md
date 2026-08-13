@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="docs/assets/hoard-logo.png" width="150" alt="The hoard logo: an ornate red and gold treasure chest, a gold dragon crest on its lid">
+    <img src="docs/assets/hoard-logo.png" width="190" alt="The hoard logo: an ornate red and gold treasure chest, a gold dragon crest on its lid">
 </p>
 
 # hoard
@@ -8,10 +8,10 @@
 [![Release](https://img.shields.io/github/v/release/spiffcs/hoard?sort=semver)](https://github.com/spiffcs/hoard/releases)
 [![License](https://img.shields.io/github/license/spiffcs/hoard)](LICENSE)
 
-A terminal collection tracker for Magic: The Gathering.
+A TUI collection tracker for Magic: The Gathering.
 
 Your cards and decks live in a single SQLite file on your machine, priced daily
-from MTGJSON and TCGCSV. Metadata and card information come from Scryfall.
+from [MTGJSON](mtgjson.com) and [TCGCSV](https://tcgcsv.com/). Metadata and card information come from [Scryfall](https://scryfall.com/).
 
 <p align="center">
     <img src="docs/assets/demo.gif" width="100%" alt="A valuation report, then the browser: card detail with price history, the movers, watches and market screens, and a rarity filter">
@@ -33,38 +33,49 @@ diff <(curl -sSfL https://tools.aithirne.com/hoard/install.sh) \
      <(curl -sSfL https://raw.githubusercontent.com/spiffcs/hoard/main/install.sh)
 ```
 
-It downloads from this repository's releases and verifies the SHA-256; add `-v`
-to verify the Sigstore signature too, if you have cosign. A trailing tag pins the
-version instead of taking the latest:
+It downloads from this repository's releases and verifies the SHA-256. You can add `-v`
+to verify the Sigstore signature too if you have cosign. A trailing tag pins the
+version instead of taking the latest.
 
 ```sh
 curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -v -b /usr/local/bin v0.1.0
 ```
 
-Or `go install github.com/spiffcs/hoard/cmd/hoard@latest` (Go 1.26+), or take an
+#### Golang/Github Specific
+`go install github.com/spiffcs/hoard/cmd/hoard@latest` (Go 1.26+), or take an
 archive from the [releases page](https://github.com/spiffcs/hoard/releases). The
-macOS binaries are signed and notarized, so they open without a Gatekeeper
+macOS binaries are signed and notarized and should open without a Gatekeeper
 prompt; [RELEASE.md](RELEASE.md) covers verifying them.
 
-Want to look before importing anything? `hoard demo` opens the browser on a
-small sample collection, in a database of its own — your hoard is never opened.
+If you want to look at the TUI before importing anything? `hoard demo` opens the browser on a small sample collection that is a database of its own your main hoard DB is never opened or clobbered.
 
 ## Bring Your Collection In
 
 Most people arrive with an export from somewhere else. `hoard import` reads
 ManaBox, Moxfield and Delver Lens CSVs. It's also backwards compatible with 
-hoard's own format. It sniffs the header, so the format usually needs no naming:
+hoard's own format. Import sniffs the header, so the format usually needs no naming:
 
 ```console
 $ hoard import manabox-export.csv
 ✓ Imported 1,284 cards (manabox format): 1,284 rows resolved.
 ```
 
-Decks can also be imported a decklist URL, or from a pasted list:
+Decks can be imported from an Archidekt URL, or from a pasted list:
 ```console
-$ hoard deck add https://moxfield.com/decks/xxxxxxxxxxxxxxxxxxxxxx
+$ hoard deck add https://archidekt.com/decks/1234567/my-deck
 $ pbpaste | hoard deck add --file - --name "Modern Burn"
 ```
+
+Archidekt is the only site with a URL importer — Moxfield's API is behind
+Cloudflare, and most others have none. Everywhere else, export the deck to text
+and pipe it in: the plain `1 Sol Ring` / `1x Sol Ring (C21) 125` shape that
+Moxfield, MTGGoldfish, TappedOut, EDHREC and Scryfall all export is read
+directly, foil markers (`*F*`) and `SB:` sideboard lines included.
+
+Archidekt's and Deckstats' text exports keep their sectioning: Archidekt's
+`[Category]` blocks put the commander in the command zone and leave anything
+marked `{noDeck}` on the maybeboard, and Deckstats' `//Commander` headers do the
+same. Both are read as exported, categories and all.
 
 Loose cards can go in one at a time by Scryfall link:
 ```console

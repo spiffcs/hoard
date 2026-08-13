@@ -1,0 +1,6 @@
+# EDH deck exported from Archidekt
+1x Arcane Signet (c21) [Rock/Dork,Artifact] 
+1x Atla Palani, Nest Tender (c19) *F*  [Plan,Creature] 
+1x Austere Command (cmr) [Maybeboard{noDeck}{noPrice}]  ^Getting,#2ccce4^
+1x Battlefield Forge (ori)
+1x Gishath, Sun's Avatar (sld) [Commander{top}] 

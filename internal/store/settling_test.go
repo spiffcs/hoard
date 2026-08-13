@@ -83,6 +83,26 @@ func TestSettlingDaysFromEnvValue(t *testing.T) {
 	}
 }
 
+// "Set to something" and "asking for a window" are different facts, and only
+// the second may outrank a stored preference. A caller that conflated them
+// would let a typo throw the preference away.
+func TestSettlingDaysAskedSeparatesPresenceFromUsability(t *testing.T) {
+	for _, raw := range []string{"0", "30", " 90 "} {
+		if _, ok := settlingDaysAsked(raw); !ok {
+			t.Errorf("settlingDaysAsked(%q) reported no ask, want one", raw)
+		}
+	}
+	for _, raw := range []string{"", "  ", "-1", "90d", "ninety", "9.5"} {
+		if n, ok := settlingDaysAsked(raw); ok {
+			t.Errorf("settlingDaysAsked(%q) = (%d, true), want no ask", raw, n)
+		}
+	}
+	// Zero asks for a real window; it must not read as absence.
+	if n, ok := settlingDaysAsked("0"); !ok || n != 0 {
+		t.Errorf("settlingDaysAsked(\"0\") = (%d, %v), want (0, true)", n, ok)
+	}
+}
+
 // A window of zero holds nothing out, whatever the date. The mark, the
 // held-out clause and the exclusion all read this one answer, so they fall
 // away together rather than one of them being left behind.

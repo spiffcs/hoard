@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -120,19 +121,43 @@ func archidektToDeck(id, sourceURL string, ad *archidektDeck) *Deck {
 	return d
 }
 
-// boardFromCategories maps Archidekt's built-in categories to a board.
+// boardFromCategories maps Archidekt's built-in categories to a board, falling
+// back to the main deck when none of them names one.
 func boardFromCategories(categories []string) string {
-	for _, cat := range categories {
-		switch strings.ToLower(cat) {
-		case "commander":
-			return BoardCommander
-		case "sideboard":
-			return BoardSide
-		case "maybeboard":
-			return BoardMaybe
-		}
+	if b, ok := namedBoard(categories); ok {
+		return b
 	}
 	return BoardMain
+}
+
+// archidektModifierRE matches the brace modifiers Archidekt's *text* export
+// writes into a category name — "Commander{top}", "Maybeboard{noDeck}{noPrice}".
+// The JSON API sends the bare name, so this only ever fires for the text path;
+// it lives here so both paths agree on what a category is called.
+var archidektModifierRE = regexp.MustCompile(`\{[^}]*\}`)
+
+// namedBoard reports the board Archidekt's built-in categories name, and whether
+// any of them named one at all.
+//
+// The "whether" is the point. boardFromCategories answers for the JSON API,
+// where every card carries its categories and a silence genuinely means the main
+// deck. A text line's categories are optional, and there the same silence means
+// "this line said nothing" — which must leave the section header standing rather
+// than dragging the card back to the main deck. Collapsing the two is how a
+// custom category under a Sideboard heading ends up in the deck.
+func namedBoard(categories []string) (string, bool) {
+	for _, cat := range categories {
+		cat = strings.TrimSpace(archidektModifierRE.ReplaceAllString(cat, ""))
+		switch strings.ToLower(cat) {
+		case "commander":
+			return BoardCommander, true
+		case "sideboard":
+			return BoardSide, true
+		case "maybeboard":
+			return BoardMaybe, true
+		}
+	}
+	return "", false
 }
 
 func normalizeFinish(modifier string) string {
