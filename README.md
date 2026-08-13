@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="docs/assets/hoard-logo.png" width="190" alt="The hoard logo: an ornate red and gold treasure chest, a gold dragon crest on its lid">
+    <img src="docs/assets/hoard-logo.png" width="250" alt="The hoard logo: an ornate red and gold treasure chest, a gold dragon crest on its lid">
 </p>
 
 # hoard
@@ -22,19 +22,13 @@ from [MTGJSON](mtgjson.com) and [TCGCSV](https://tcgcsv.com/). Metadata and card
 ```sh
 curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b "$HOME/.local/bin"
 ```
-
-`$HOME/.local/bin` because you own it, and most shells already have it on
-`PATH` — if yours does not, add it. `/usr/local/bin` is root-owned on a stock
-macOS, so installing there needs `sudo`, and `sudo` goes **after** the pipe.
-Before it, it elevates the download and leaves the install unprivileged, which
-is the wrong half:
-
+`/usr/local/bin` is root-owned on stock macOS, so installing there needs `sudo`
 ```sh
 curl -sSfL https://tools.aithirne.com/hoard/install.sh | sudo sh -s -- -b /usr/local/bin
 ```
 
-`tools.aithirne.com` is from the maintainer (see [triage](https://github.com/spiffcs/triage) as well). The script it serves is
-[`install.sh`](install.sh) from this repository. The release workflow uploads
+`tools.aithirne.com` is from the maintainer (see [triage](https://github.com/spiffcs/triage) as well).
+The script it serves is [`install.sh`](install.sh) from this repository. The release workflow uploads
 that exact file so you can read it here before running it, or check the two
 match without taking anyone's word for it:
 
