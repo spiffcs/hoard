@@ -228,11 +228,38 @@ EOF
   verify_checksum "$tmp_dir/$archive_name" "$tmp_dir/checksums.txt" || exit 1
 
   # extract and install
+  #
+  # Every step above this point is guarded with `|| exit 1`. These last three
+  # were not, and the gap was not theoretical: `install` into a root-owned
+  # /usr/local/bin — the default on a fresh macOS — fails with "Permission
+  # denied", and the script printed "installed /usr/local/bin/hoard" directly
+  # over the top of that failure. The user is then told the tool is installed
+  # and gets "command not found" from the very next command.
+  #
+  # That is the worst possible first contact with a project, and it is on the
+  # README's front page, so the guards belong here rather than in a note.
   log_info "extracting..."
-  tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
+  tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir" || {
+    log_err "could not extract $archive_name"
+    exit 1
+  }
 
-  mkdir -p "$install_dir"
-  install "$tmp_dir/${PROJECT_NAME}" "$install_dir/"
+  # mkdir is guarded too. It is what fails first when $install_dir's parent is
+  # unwritable, and leaving it bare only means the install error becomes the
+  # second confusing message instead of the first clear one.
+  mkdir -p "$install_dir" || {
+    log_err "could not create $install_dir"
+    exit 1
+  }
+
+  # The message names both ways out, because the right one depends on where the
+  # directory is: a system path wants sudo, a home path wants a different -b.
+  # Telling someone only "permission denied" leaves them to guess which.
+  install "$tmp_dir/${PROJECT_NAME}" "$install_dir/" || {
+    log_err "could not write to $install_dir"
+    log_err "re-run with a writable directory (-b \"\$HOME/.local/bin\") or with sudo"
+    exit 1
+  }
 
   log_info "installed ${install_dir}/${PROJECT_NAME}"
 }

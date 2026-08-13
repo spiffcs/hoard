@@ -20,7 +20,17 @@ from [MTGJSON](mtgjson.com) and [TCGCSV](https://tcgcsv.com/). Metadata and card
 ## Install
 
 ```sh
-curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b /usr/local/bin
+curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -b "$HOME/.local/bin"
+```
+
+`$HOME/.local/bin` because you own it, and most shells already have it on
+`PATH` — if yours does not, add it. `/usr/local/bin` is root-owned on a stock
+macOS, so installing there needs `sudo`, and `sudo` goes **after** the pipe.
+Before it, it elevates the download and leaves the install unprivileged, which
+is the wrong half:
+
+```sh
+curl -sSfL https://tools.aithirne.com/hoard/install.sh | sudo sh -s -- -b /usr/local/bin
 ```
 
 `tools.aithirne.com` is from the maintainer (see [triage](https://github.com/spiffcs/triage) as well). The script it serves is
@@ -38,7 +48,7 @@ to verify the Sigstore signature too if you have cosign. A trailing tag pins the
 version instead of taking the latest.
 
 ```sh
-curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -v -b /usr/local/bin v0.1.0
+curl -sSfL https://tools.aithirne.com/hoard/install.sh | sh -s -- -v -b "$HOME/.local/bin" v0.1.0
 ```
 
 #### Golang/Github Specific
