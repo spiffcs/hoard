@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/boundedio"
 	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/progress"
@@ -347,11 +348,20 @@ func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.
 	// Counted before decompression, so Done measures the same thing the
 	// listing's compressed size promises and the bar cannot overshoot 100%.
 	cr := &countingReader{r: resp.Body}
-	zr, err := gzip.NewReader(cr)
+	// Counts the same compressed bytes cr does, for the expansion bound below.
+	// A second counter rather than a method on cr: cr's count drives the
+	// progress bar and is read on another goroutine, and the bound must not
+	// start depending on that.
+	bc := &boundedio.Counter{R: cr}
+	zr, err := gzip.NewReader(bc)
 	if err != nil {
 		return 0, fmt.Errorf("decompressing the card bundle: %w", err)
 	}
 	defer zr.Close()
+	// Bounded against bytes actually transferred, not against `size`. The
+	// listing that declares `size` comes from the same host as the bundle, so
+	// trusting it would let whoever serves one serve the other to match.
+	bundle := boundedio.LimitRatio(zr, bc, "the card bundle")
 
 	tx, err := c.db.Begin()
 	if err != nil {
@@ -376,7 +386,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	// row against a table that is still being written.
 	names := map[string]string{}
 
-	sc := bufio.NewScanner(zr)
+	sc := bufio.NewScanner(bundle)
 	// Some cards — long oracle text, many faces, many rulings links — exceed the
 	// scanner's 64 KB default, and a line that does not fit is a silent short
 	// read rather than an error.

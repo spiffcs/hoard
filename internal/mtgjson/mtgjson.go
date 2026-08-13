@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/boundedio"
 	"github.com/spiffcs/hoard/internal/buildinfo"
 )
 
@@ -431,14 +432,20 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	}
 	defer body.Close()
 
-	zr, err := gzip.NewReader(body)
+	// Bounded against bytes actually transferred. fetch() abstracts over the
+	// cache file and the network, so no declared size reaches here — and a
+	// declared size would be the weaker bound anyway, being chosen by whoever
+	// serves the response.
+	bc := &boundedio.Counter{R: body}
+	zr, err := gzip.NewReader(bc)
 	if err != nil {
 		return nil, fmt.Errorf("decompressing %s: %w", setCode, err)
 	}
 	defer zr.Close()
+	bounded := boundedio.LimitRatio(zr, bc, "the "+setCode+" set file")
 
 	var sf setFile
-	if err := json.NewDecoder(zr).Decode(&sf); err != nil {
+	if err := json.NewDecoder(bounded).Decode(&sf); err != nil {
 		return nil, fmt.Errorf("decoding %s: %w", setCode, err)
 	}
 
@@ -679,13 +686,15 @@ func streamPrices(ctx context.Context, o Options, file string, want map[string]b
 	}
 	defer body.Close()
 
-	zr, err := gzip.NewReader(body)
+	bc := &boundedio.Counter{R: body}
+	zr, err := gzip.NewReader(bc)
 	if err != nil {
 		return fmt.Errorf("decompressing prices: %w", err)
 	}
 	defer zr.Close()
+	bounded := boundedio.LimitRatio(zr, bc, "the price file")
 
-	return scanKeyedObjects(zr, want, func(uuid string, raw []byte) error {
+	return scanKeyedObjects(bounded, want, func(uuid string, raw []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

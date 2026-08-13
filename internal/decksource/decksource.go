@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/resolve"
+	"github.com/spiffcs/hoard/internal/safetext"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
@@ -53,6 +54,53 @@ type Deck struct {
 	Skipped []string
 }
 
+// clean strips the characters a terminal acts on from every string in d that
+// came from outside hoard — see internal/safetext for what and why.
+//
+// This is a method on Deck rather than a call at each field the providers
+// assign, because the providers are the thing that grows: archidekt.go builds
+// a Deck in one place, textlist.go in another, and a Moxfield provider would
+// be a third. Cleaning at the exits from this package means a new provider is
+// covered by construction, and cannot forget.
+//
+// EVERY EXPORTED FUNCTION THAT RETURNS A Deck OR AN Entry MUST CALL THIS.
+// There are three today: Fetch, ParseText and ParseLoose.
+//
+// Skipped is included and is not an afterthought — it is the most direct sink
+// of the three. Those lines are the ones the parser could NOT read, and they
+// are quoted straight back to the terminal ("1 lines could not be read (e.g.
+// line 1: ...)"), so a line crafted to be unparseable is a line guaranteed to
+// be echoed.
+//
+// The identifier's fields go too. A set code or collector number that fails to
+// resolve is repeated in the miss message, which makes them the same kind of
+// sink as the name.
+func (d *Deck) clean() *Deck {
+	if d == nil {
+		return nil
+	}
+	d.Name = safetext.Clean(d.Name)
+	d.Format = safetext.Clean(d.Format)
+	d.SourceID = safetext.Clean(d.SourceID)
+	d.SourceURL = safetext.Clean(d.SourceURL)
+	cleanEntries(d.Entries)
+	for i, s := range d.Skipped {
+		d.Skipped[i] = safetext.Clean(s)
+	}
+	return d
+}
+
+// cleanEntries is split out so ParseLoose, which returns entries with no Deck
+// around them, cleans them the same way.
+func cleanEntries(es []Entry) {
+	for i := range es {
+		es[i].Name = safetext.Clean(es[i].Name)
+		es[i].Ident.Name = safetext.Clean(es[i].Ident.Name)
+		es[i].Ident.Set = safetext.Clean(es[i].Ident.Set)
+		es[i].Ident.CollectorNumber = safetext.Clean(es[i].Ident.CollectorNumber)
+	}
+}
+
 // Provider imports decks from one kind of URL.
 type Provider interface {
 	// Matches reports whether this provider handles the given URL.
@@ -74,7 +122,13 @@ func Fetch(ctx context.Context, rawURL string) (*Deck, error) {
 	}
 	for _, p := range providers {
 		if p.Matches(u) {
-			return p.Fetch(ctx, u)
+			d, err := p.Fetch(ctx, u)
+			if err != nil {
+				return nil, err
+			}
+			// The remote boundary: every string below this line was chosen by
+			// whoever built the deck being fetched.
+			return d.clean(), nil
 		}
 	}
 	return nil, fmt.Errorf("no importer for host %q; for sites without an open API "+

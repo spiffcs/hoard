@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/spiffcs/hoard/internal/safetext"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
@@ -196,6 +197,11 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
+	// Before the checks below, not at the return: the error a few lines down
+	// quotes d.Skipped[0] straight into a message that reaches the terminal, so
+	// cleaning only the success path would leave the failure path — the one an
+	// attacker controls by making a line unparseable — as the open sink.
+	d.clean()
 	if len(d.Entries) == 0 {
 		if len(d.Skipped) > 0 {
 			return nil, fmt.Errorf("no cards found in decklist; %d lines could not be read (e.g. %s)",
@@ -290,6 +296,13 @@ func ParseLoose(r io.Reader) (entries []Entry, skipped []string, err error) {
 	}
 	if err := sc.Err(); err != nil {
 		return nil, nil, err
+	}
+	// No Deck to hang clean() off here, so the two halves are cleaned directly.
+	// skipped matters for the same reason it does in ParseText: the caller
+	// reports those lines back to the person who ran the import.
+	cleanEntries(entries)
+	for i, s := range skipped {
+		skipped[i] = safetext.Clean(s)
 	}
 	return entries, skipped, nil
 }

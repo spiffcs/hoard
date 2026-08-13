@@ -28,6 +28,7 @@ import (
 
 	"github.com/bodgit/sevenzip"
 
+	"github.com/spiffcs/hoard/internal/boundedio"
 	"github.com/spiffcs/hoard/internal/buildinfo"
 )
 
@@ -312,6 +313,14 @@ var readArchiveMembers = func(path string, want map[string]bool) (map[string][]b
 		return nil, fmt.Errorf("opening %s: %w", filepath.Base(path), err)
 	}
 	defer r.Close()
+	// The archive's own size, which bounds what any member of it may expand to.
+	// A stat failure leaves archiveBytes at zero, and a zero limit would refuse
+	// every member — so fall back to a fixed ceiling rather than turning a
+	// missing stat into a broken price update.
+	var archiveBytes int64 = 16 << 20
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		archiveBytes = fi.Size()
+	}
 	out := map[string][]byte{}
 	for _, f := range r.File {
 		if !want[f.Name] {
@@ -321,7 +330,16 @@ var readArchiveMembers = func(path string, want map[string]bool) (map[string][]b
 		if err != nil {
 			return nil, fmt.Errorf("extracting %s: %w", f.Name, err)
 		}
-		b, err := io.ReadAll(rc)
+		// The only fully-buffered decompression in hoard: this one reads a
+		// member into memory rather than streaming it, so an archive built to
+		// expand has nowhere to be caught downstream. The whole archive is
+		// ~4 MB, and MaxExpansion of that is generous for a member of it.
+		//
+		// The bound is on the archive's size ON DISK, which is a fact about a
+		// file already downloaded rather than a claim in a header — there is no
+		// compressed-side reader to count here, because sevenzip owns it.
+		b, err := io.ReadAll(boundedio.Limit(rc, archiveBytes*boundedio.MaxExpansion,
+			"the price archive member "+f.Name))
 		rc.Close()
 		if err != nil {
 			return nil, fmt.Errorf("extracting %s: %w", f.Name, err)
