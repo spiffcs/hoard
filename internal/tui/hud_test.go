@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/cardname"
@@ -10,8 +11,7 @@ import (
 )
 
 func TestTierFor(t *testing.T) {
-	// The lines are fixed Go-side ($1 / $20); the phone re-tiers priced cards
-	// against its own Settings, so this table only pins the wire's verdict.
+
 	cases := []struct {
 		price *float64
 		want  string
@@ -31,7 +31,6 @@ func TestTierFor(t *testing.T) {
 	}
 }
 
-// hudSession is openCapture plus a ready event advertising the hud feature.
 func hudSession(t *testing.T, m model) (model, *fakeSession) {
 	t.Helper()
 	got, sess := openCapture(t, m)
@@ -44,13 +43,6 @@ func hudSession(t *testing.T, m model) (model, *fakeSession) {
 	return got, sess
 }
 
-// The decision ceiling flushes a held flash without waiting for the nudge.
-//
-// The nudge clock answers "has the scene gone quiet" at swap cadence — 5.5s,
-// doubled by echo backoff — and a held review flash was riding it. Measured
-// across four sessions, every second look that ever rescued a card landed
-// within 0.9s of its queue, so a stop still unanswered at 2.5s is a stop the
-// operator should be told about.
 func TestDecisionCeilingFlushesTheHeldFlash(t *testing.T) {
 	ev := confidentEvent()
 	ev.SetCode, ev.CollectorNumber = "", ""
@@ -72,7 +64,6 @@ func TestDecisionCeilingFlushesTheHeldFlash(t *testing.T) {
 			m.deferredFlashFor, sess.results)
 	}
 
-	// The ceiling lapses: the flash lands now, not at the nudge.
 	mm, _ = m.Update(flashDeadlineMsg{name: "Sol Ring"})
 	m = mm.(model)
 	if len(sess.results) != 1 || sess.results[0].Tier != tierReview {
@@ -82,7 +73,6 @@ func TestDecisionCeilingFlushesTheHeldFlash(t *testing.T) {
 		t.Error("the flash was sent and must not still be held")
 	}
 
-	// A stale deadline — the flash long since resolved — is a no-op.
 	mm, _ = m.Update(flashDeadlineMsg{name: "Sol Ring"})
 	m = mm.(model)
 	if len(sess.results) != 1 {
@@ -90,8 +80,6 @@ func TestDecisionCeilingFlushesTheHeldFlash(t *testing.T) {
 	}
 }
 
-// An auto-commit celebrates once — amount, tier, and the post-commit total in
-// one result — and never also chimes.
 func TestAutoCommitCelebratesWithTotal(t *testing.T) {
 	ev, _ := confidentFixture()
 	fs := fakeSearcher{
@@ -124,17 +112,6 @@ func TestAutoCommitCelebratesWithTotal(t *testing.T) {
 	}
 }
 
-// An unverified printing holds the phone's review flash until the second look
-// has had its turn.
-//
-// The card goes into the queue immediately — if the retry never answers it must
-// already be there — but the *phone* is told nothing yet. A "Needs Review" flash
-// is a stop, and flashing one on a card we are about to photograph again showed
-// the operator a stop that the retry usually removes. Live: every card that
-// queued this way in one session read correctly in another.
-//
-// Here the retry never comes, so the quiet period expires and the flash lands
-// after all. That timeout is the guarantee that holding it is safe.
 func TestHeldReviewFlashLandsWhenTheRetryNeverComes(t *testing.T) {
 	ev := confidentEvent()
 	ev.SetCode, ev.CollectorNumber = "", ""
@@ -163,8 +140,6 @@ func TestHeldReviewFlashLandsWhenTheRetryNeverComes(t *testing.T) {
 			sess.chimes, sess.results)
 	}
 
-	// The quiet period elapses with no capture in it, which is what "the retry
-	// never came" looks like from here.
 	m.autoCapable = true
 	mm, _ = m.onNudge(nudgeMsg{gen: m.nudgeGen})
 	m = mm.(model)
@@ -180,12 +155,6 @@ func TestHeldReviewFlashLandsWhenTheRetryNeverComes(t *testing.T) {
 	}
 }
 
-// A queue reason a second look cannot fix flashes at once, exactly as before.
-//
-// The hold is scoped to an unverified printing — the failure another photograph
-// repairs. Here the printing is pinned and it is the *name* that is shaky, so
-// there is nothing for a retry to improve on and delaying the flash would be
-// latency bought for nothing.
 func TestAShakyNameFlashesImmediately(t *testing.T) {
 	ev := confidentEvent()
 	ev.SetCode, ev.CollectorNumber = "", "123"
@@ -216,14 +185,12 @@ func TestAShakyNameFlashesImmediately(t *testing.T) {
 	}
 }
 
-// A manual add while the camera is open syncs the HUD total silently: total
-// only, no tier, no sound — it never asked a question on the camera window.
 func TestConfirmAddSyncsHudTotal(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m, sess := hudSession(t, m)
 	card := scryfall.Card{ID: "a", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil"}, PriceUSD: price(2.00)}
-	m.chosen, m.finish = &card, "nonfoil"
+	m.chosen, m.finish = &card, finish.Nonfoil
 	m.qtyInput.SetValue("3")
 	mm, _ := m.confirmAdd()
 	m = mm.(model)
@@ -243,15 +210,13 @@ func TestConfirmAddSyncsHudTotal(t *testing.T) {
 	}
 }
 
-// Confirming a queued card answers its resolve-time question: the confirmed
-// amount (qty-weighted) flashes with its tier's sound, total riding along.
 func TestReviewConfirmCelebratesAmount(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m, sess := hudSession(t, m)
 	card := scryfall.Card{ID: "a", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil"}, PriceUSD: price(12)}
-	m.current = &queueItem{} // the cascade is reviewing a queued card
-	m.chosen, m.finish = &card, "nonfoil"
+	m.current = &queueItem{}
+	m.chosen, m.finish = &card, finish.Nonfoil
 	m.qtyInput.SetValue("2")
 	mm, _ := m.confirmAdd()
 	m = mm.(model)
@@ -271,10 +236,8 @@ func TestReviewConfirmCelebratesAmount(t *testing.T) {
 	}
 }
 
-// An unpriced card resolves as a shrug: unpriced tier, no amount, and no
-// total — $0-because-unpriced must never read as bulk-with-$0.00.
 func TestUnpricedResolvesAsUnpriced(t *testing.T) {
-	ev, fs := confidentFixture() // solRingPrints carry no prices
+	ev, fs := confidentFixture()
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := hudSession(t, m)
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
@@ -292,8 +255,6 @@ func TestUnpricedResolvesAsUnpriced(t *testing.T) {
 	}
 }
 
-// A helper that never advertised the hud feature keeps getting the plain
-// chime — never a result it would answer with an error event.
 func TestNoHudFeatureFallsBackToChime(t *testing.T) {
 	ev, fs := confidentFixture()
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
@@ -313,8 +274,6 @@ func TestNoHudFeatureFallsBackToChime(t *testing.T) {
 	}
 }
 
-// The silence rules survive the upgrade: a nudge echo of an already-processed
-// card makes no sound and no flash.
 func TestDropsSendNoResult(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := hudSession(t, m)
@@ -333,27 +292,18 @@ func TestDropsSendNoResult(t *testing.T) {
 	}
 }
 
-// Review confirms routinely happen after the camera closed; the total sync
-// must cope with the session being gone.
 func TestConfirmAfterCameraClosedDoesNotPanic(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
-	m.hudCapable = true // was capable while the camera lived
+	m.hudCapable = true
 	card := scryfall.Card{ID: "a", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil"}, PriceUSD: price(2.00)}
-	m.chosen, m.finish = &card, "nonfoil"
+	m.chosen, m.finish = &card, finish.Nonfoil
 	m.qtyInput.SetValue("1")
 	if mm, _ := m.confirmAdd(); mm.(model).addedValue != 2.00 {
 		t.Errorf("confirm with no session should still account the value")
 	}
 }
 
-// The payoff: the retry reads the card properly, and the phone never hears
-// about a review that turned out not to be one.
-//
-// This is the whole reason the flash is held. Before, a card whose footer
-// failed one photograph flashed "Needs Review" on the phone and then quietly
-// committed a second later — a stop the operator saw and reacted to, for a
-// question that had already answered itself.
 func TestARescuedCardNeverFlashesReview(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "a", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
@@ -368,7 +318,6 @@ func TestARescuedCardNeverFlashesReview(t *testing.T) {
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := hudSession(t, m)
 
-	// First look: no collector number survived, so the printing is unverified.
 	blind := confidentEvent()
 	blind.SetCode, blind.CollectorNumber = "", ""
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
@@ -378,8 +327,6 @@ func TestARescuedCardNeverFlashesReview(t *testing.T) {
 			len(m.review), m.deferredFlashFor)
 	}
 
-	// Second look: the number reads, the card commits, and upgradeQueued takes
-	// the queued entry back out.
 	good := confidentEvent()
 	good.SetCode, good.CollectorNumber = "", "123"
 	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: good})

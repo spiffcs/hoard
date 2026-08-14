@@ -1,16 +1,7 @@
 package store
 
-// The by-set reads behind the browser's sets mode: the left pane's per-set
-// rollup and one set's holdings. A set is a lens over the hoard, not a
-// container — nothing here touches card_entries beyond reading it.
-
 import "fmt"
 
-// SetSummary is one Magic set the hoard holds cards from, with rolled-up
-// copies and value. Name falls back to the upper-cased code and ReleasedAt
-// to "" until a price run stores the printings' Scryfall documents —
-// set_name and released_at are generated columns over raw_json and read
-// NULL before then.
 type SetSummary struct {
 	Code       string
 	Name       string
@@ -19,10 +10,6 @@ type SetSummary struct {
 	Value      float64
 }
 
-// SetsHeld returns every set with at least one held card, newest release
-// first; sets whose release date is unknown sort last (SQLite treats NULL
-// as smallest, so DESC pushes it to the bottom), then by code for a stable
-// order. MAX skips NULLs, so one enriched printing names the whole set.
 func (s *Store) SetsHeld() ([]SetSummary, error) {
 	rows, err := s.db.Query(`
 SELECT c.set_code,
@@ -50,10 +37,6 @@ ORDER BY MAX(c.released_at) DESC, c.set_code`)
 	return out, rows.Err()
 }
 
-// SetByFinish returns one set's holdings across every container, one row
-// per printing and finish — AllByFinish narrowed to a set. Distinct
-// printings stay distinct: a set listing is about which printings you
-// hold, so nothing merges by name.
 func (s *Store) SetByFinish(setCode string) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,

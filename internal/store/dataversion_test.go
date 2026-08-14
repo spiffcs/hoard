@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// TestDataVersionSeesOnlyOtherConnections pins the three properties the
-// browser's live refresh is built on: our own reads and our own writes leave
-// the counter alone, and another connection's commit moves it. Lose the
-// middle one and the browser refreshes itself in a loop every time the user
-// edits a card.
 func TestDataVersionSeesOnlyOtherConnections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
 	mine, err := Open(path)
@@ -17,8 +12,7 @@ func TestDataVersionSeesOnlyOtherConnections(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer mine.Close()
-	// Opened up front so its own migration and singleton-collection writes
-	// land before the baseline, not inside the measurement.
+
 	theirs, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open (second connection): %v", err)

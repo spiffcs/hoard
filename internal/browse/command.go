@@ -1,18 +1,5 @@
 package browse
 
-// The command registry: every deliberate action the browser offers, defined
-// once. Direct keybindings and the palette both read this table, so the
-// palette's key-hint column can never drift from what the keys actually do,
-// and a new capability added here appears in both surfaces for free.
-//
-// Named command rather than action: internal/action is the capability layer
-// this package deliberately does not import, and one word doing two jobs
-// would make every conversation about either ambiguous.
-//
-// Navigation (cursor movement, pane focus, paging) is not in the registry:
-// moving around is not a command you'd search for, and the palette listing
-// "down" would be noise.
-
 import (
 	"context"
 	"fmt"
@@ -29,43 +16,26 @@ import (
 
 type command struct {
 	id string
-	// title is what the palette shows and fuzzy-matches. Plain verbs, no
-	// trailing ellipsis: nearly every command here asks a question or opens
-	// a prompt, so the marker distinguished nothing and read as clutter.
+
 	title string
-	// aliases are extra fuzzy fodder, never displayed.
+
 	aliases string
-	// desc is the one-line explanation shown under the palette's help line
-	// while the command is highlighted. Every palette-visible command has
-	// one; unhidden commands without a desc render nothing there.
+
 	desc string
-	// key is the direct binding, shown as the palette's hint column; ""
-	// means palette-only.
+
 	key string
-	// hidden keeps a command out of the palette while its key keeps
-	// working — for the pure key reflexes (sort, floor, view cycling) the
-	// palette listing was noise beside the verbs that do something.
+
 	hidden bool
-	// hide is hidden's contextual sibling: true keeps an applicable
-	// command out of the palette right now, key still bound. For commands
-	// that earn their listing on some views and are noise on others —
-	// where would unbind the key along with the listing. Nil means never.
+
 	hide func(*Model) bool
-	// where reports whether the command applies right now; nil means
-	// always. Hidden commands are absent from the palette and their keys
-	// fall through. Finer contextual refusals belong in run as status
-	// messages — the palette must not need a second copy of every guard.
+
 	where func(*Model) bool
-	// rank orders the empty-query palette: higher first, so the commands
-	// that help the current view lead the list. Nil means 0. A fuzzy query
-	// overrides it entirely — typing means the user knows what they want.
+
 	rank func(*Model) int
-	// run performs the command. It may stage a confirm or a prompt.
+
 	run func(*Model) tea.Cmd
 }
 
-// commands is the registry, in palette display order: the everyday verbs
-// first, view jumps after.
 func commands() []command {
 	return []command{
 		{
@@ -73,23 +43,19 @@ func commands() []command {
 			desc: "Open the add flow: type a card name, or scan with your iPhone.",
 			key:  "a",
 			rank: onView(viewHoldings, 3),
-			// The cascade runs as an embedded child takeover, so ops keep
-			// running behind it and nothing quits.
+
 			run: func(m *Model) tea.Cmd { return m.openAddCascade() },
 		},
 		{
 			id: "remove", title: "RemoveSelected", aliases: "delete card deck",
 			desc: "Remove the selected card or deck, after a y/n confirm.",
 			key:  "d",
-			// Off the watches and market palettes; on watches the key still
-			// removes the watch under the cursor.
+
 			hide: func(m *Model) bool { return m.view == viewWatches || m.view == viewMarket },
 			run:  func(m *Model) tea.Cmd { m.askRemoval(); return nil },
 		},
 		{
-			// No where guard: an empty undo stack answers "nothing to undo"
-			// through run — the feedback is the point, and hiding the command
-			// would swallow it.
+
 			id: "undo", title: "UndoLastEdit", aliases: "revert restore",
 			desc: "Put back whatever the last quantity edit or removal changed.",
 			key:  "u",
@@ -101,9 +67,7 @@ func commands() []command {
 			key: "s", hidden: true,
 			run: func(m *Model) tea.Cmd {
 				if singleTableView(m.view) {
-					// Page first, then sort: the new order's first rows
-					// live on page one (the multi-table panes reset their
-					// own inside cycleSort).
+
 					m.cardsPage, m.moversPage = 0, 0
 				}
 				m.cycleSort()
@@ -163,8 +127,7 @@ func commands() []command {
 		{
 			id: "op.backfill", title: "BackfillPriceHistory30",
 			aliases: "backdate movers history mtgjson import past",
-			// The archive's size lives in the description as prose, not a
-			// number — a hardcoded figure goes stale the day MTGJSON grows.
+
 			desc:  "Download MTGJSON's daily price archive (a large file) and record the past 30 days.",
 			where: func(m *Model) bool { return m.opBackfill != nil },
 			rank: func(m *Model) int {
@@ -179,8 +142,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.startBackfill(30) },
 		},
 		{
-			// The deeper window lives beside the movers view it feeds; the
-			// collection palette keeps the one everyday choice.
+
 			id: "op.backfill.90", title: "BackfillPriceHistory90",
 			aliases: "backdate movers history mtgjson import past quarter",
 			desc:    "Download MTGJSON's daily price archive (a large file) and record the past 90 days.",
@@ -193,11 +155,7 @@ func commands() []command {
 			desc:  "Move cards stored in a finish their printing lacks onto one it has.",
 			key:   "f",
 			where: func(m *Model) bool { return m.opRepairFinishes != nil },
-			// Listed where its symptom shows — the collection, and the
-			// watches screen, which now carries the unpriced table — not on
-			// movers, whose rows are all priced. The card detail keeps it:
-			// its palette is the price refreshers. The f key works
-			// everywhere regardless.
+
 			hide: func(m *Model) bool { return m.detail == nil && m.view == viewMovers },
 			rank: onView(viewWatches, 4),
 			run:  func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
@@ -234,20 +192,17 @@ func commands() []command {
 				if sel == nil {
 					return nil
 				}
-				// The merged view is everything, so exporting it is the
-				// export-everything flow under this container's name.
+
 				if sel.Kind == kindAllCards {
 					m.promptExport("", "", "hoard-export")
 					return nil
 				}
-				// A set is a lens, not a container: its synthetic id would
-				// export as a binder ref that matches nothing.
+
 				if sel.Kind == kindSet {
 					m.status, m.statusErr = "sets can't be exported directly · ExportEverything writes the whole hoard", true
 					return nil
 				}
-				// Refs by id, not name: a name is a fragment match and can
-				// be ambiguous; the id under the cursor never is.
+
 				ref := strconv.FormatInt(sel.ID, 10)
 				binderRef, deckRef := "", ""
 				if sel.Kind == store.KindDeck {
@@ -304,8 +259,7 @@ func commands() []command {
 			id: "view.populate", title: "FetchViewData", aliases: "populate refresh load",
 			desc: "Run whatever fills this view: quotes, prices, history, repairs.",
 			key:  "F",
-			// Leads the analytical views, where F is the verb that makes an
-			// empty pane useful; on holdings the collection verbs matter more.
+
 			rank: func(m *Model) int {
 				if m.view == viewHoldings {
 					return 1
@@ -324,8 +278,7 @@ func commands() []command {
 				case viewWatches:
 					return 4
 				case viewMovers:
-					// A mover is the card you'd want an alert on — watching
-					// it outranks the everyday holdings verbs here.
+
 					return 1
 				}
 				return onView(viewHoldings, 2)(m)
@@ -335,31 +288,25 @@ func commands() []command {
 		{
 			id: "watch.pick", title: "AddWatchFromCollection", aliases: "alert threshold new pick choose",
 			desc: "Pick a card from your holdings and set its price alert.",
-			// Watches-only: every other view can reach a card and press w
-			// (or run "Watch this card") on it directly; the watches view
-			// is the one place with no collection rows to point at.
+
 			where: func(m *Model) bool { return m.view == viewWatches },
 			rank:  onView(viewWatches, 5),
 			run:   func(m *Model) tea.Cmd { return m.startWatchPick() },
 		},
 		{
-			// The by-name path stays for cards you don't own yet — the
-			// picker above only offers what is already held.
+
 			id: "watch.add-by-name", title: "AddWatchForAnyCard", aliases: "alert threshold new unowned by name",
 			desc: "Resolve any card by name, owned or not, and set a price alert.",
-			// Watches-only, like the collection picker: everywhere else the
-			// card under the cursor is the watch you'd want.
+
 			where: func(m *Model) bool { return m.opWatchAdd != nil && m.view == viewWatches },
-			// Same rank as the picker: the registry order breaks the tie, so
-			// the two add-a-watch verbs sit together, picker first.
+
 			rank: onView(viewWatches, 5),
 			run:  func(m *Model) tea.Cmd { m.promptWatchByName(); return nil },
 		},
 		{
 			id: "watch.import", title: "ImportWatchList", aliases: "bulk file csv json alert thresholds",
 			desc: "Import price watches in bulk from a CSV or JSON file.",
-			// Watches-only, beside the other two add-a-watch verbs; the
-			// registry order keeps the single-card paths first.
+
 			where: func(m *Model) bool { return m.opWatchImport != nil && m.view == viewWatches },
 			rank:  onView(viewWatches, 5),
 			run:   func(m *Model) tea.Cmd { m.promptWatchImportPath(); return nil },
@@ -418,10 +365,7 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
 		},
 		{
-			// Offered on the sets lens as well as the movers view: the window
-			// is what puts the mark beside a set row, so a reader who is
-			// looking at the mark and wondering about it can reach the dial
-			// from there rather than having to know it lives under movers.
+
 			id: "movers.settling", title: "SetSettlingWindow",
 			aliases: "settling new set release days window hold out net exclude preorder",
 			desc:    "Days a new set is held out of the movers net. 0 counts every set.",
@@ -443,8 +387,7 @@ func commands() []command {
 				}
 				m.status, m.statusErr = fmt.Sprintf("penny filter < %s %s",
 					ui.Money(m.marketFloor), state), false
-				// After the receipt: a day-cache miss replaces it with the
-				// fresh-fetch ask, which is the truer answer.
+
 				m.refreshMarketFloor()
 				m.persistPennyFilters()
 				return nil
@@ -459,8 +402,7 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { m.promptSetMarketFloor(); return nil },
 		},
 		{
-			// Both multi-table panes answer these: market's three questions
-			// and the watches screen's overs/unders/unpriced.
+
 			id: "table.next", aliases: "next table section",
 			key: "]", hidden: true,
 			where: func(m *Model) bool { return m.view == viewMarket || m.view == viewWatches },
@@ -489,12 +431,7 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
 		},
 		{
-			// 'b' flips the table the cursor is in — the band here, the comps
-			// side below — and does nothing on a table with no second face.
-			// The guard needs no exception for an empty band: the cursor
-			// visits the heading of a table with no rows under it, which is
-			// how the other band stays reachable when the one on show is
-			// empty. See marketSection.
+
 			id: "market.buylist.band", aliases: "buylist lowball band good bad scam pays side",
 			key: "b", hidden: true,
 			where: func(m *Model) bool {
@@ -506,18 +443,12 @@ func commands() []command {
 			},
 			run: func(m *Model) tea.Cmd {
 				m.liquidLowball = !m.liquidLowball
-				// The bands rank by opposite ends of one column, so the flip
-				// lands on "pays" in the direction that reproduces the band's
-				// own arrival order — best first for near-market, worst first
-				// for lowball. Same reasoning as the comps side below.
+
 				m.marketSortIdx[market.KindLiquid] = 0
 				m.marketSortRev[market.KindLiquid] = m.liquidLowball
-				// Re-ranks and re-pages every section back to its top, which
-				// is what a swapped row set wants anyway.
+
 				m.applyMarketRows()
-				// The flip is a gesture made on this table, so the hand stays
-				// on it — including when the band flipped to has no rows and
-				// the heading is all there is to stand on.
+
 				m.cursor[paneCards] = m.marketSections()[market.KindLiquid].curStart
 				m.scrollIntoView()
 				if m.liquidLowball {
@@ -531,16 +462,11 @@ func commands() []command {
 		{
 			id: "market.comps.side", aliases: "comps buy sell asks bids side",
 			key: "b", hidden: true,
-			// Scoped to the comp sheets for the same reason the band above is
-			// scoped to the buylist table: 'b' flips whichever table the
-			// cursor is in, so the gesture means one thing and the reader
-			// never has to remember which table owns the key.
+
 			where: func(m *Model) bool { return m.view == viewMarket && m.selectedComp() != nil },
 			run: func(m *Model) tea.Cmd {
 				m.compsBuySide = !m.compsBuySide
-				// The sides sort by their own columns; an order chosen for
-				// one is meaningless on the other, so the flip lands on the
-				// value ranking.
+
 				m.compsSortIdx, m.compsSortRev = 0, false
 				m.sortCompRows()
 				if m.compsBuySide {
@@ -554,11 +480,9 @@ func commands() []command {
 	}
 }
 
-// cycleMoversWindow advances the movers lookback and re-queries — a
-// milliseconds-cheap read, exactly what the CLI's --since parameterizes.
 func (m *Model) cycleMoversWindow() tea.Cmd {
 	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(moversWindowDays)
-	m.moversPage = 0 // a new window reads from its first page
+	m.moversPage = 0
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 		return nil
@@ -569,16 +493,10 @@ func (m *Model) cycleMoversWindow() tea.Cmd {
 	return nil
 }
 
-// singleTableView reports whether the right pane is one table the cursor
-// walks end to end. The two multi-table panes are excluded: each keeps a
-// sort per table and lands the cursor on the sorted table itself, so the
-// shared "back to row zero" reset would drag the hand onto the first
-// table's heading and sort something the user is no longer looking at.
 func singleTableView(v viewMode) bool {
 	return v != viewMarket && v != viewWatches
 }
 
-// jumpSection sends ]/[ to whichever multi-table pane is showing.
 func (m *Model) jumpSection(dir int) {
 	if m.view == viewWatches {
 		m.jumpWatchSection(dir)
@@ -587,7 +505,6 @@ func (m *Model) jumpSection(dir int) {
 	m.jumpMarketSection(dir)
 }
 
-// onView is a rank helper: n on one view, 0 elsewhere.
 func onView(v viewMode, n int) func(*Model) int {
 	return func(m *Model) int {
 		if m.view == v {
@@ -597,11 +514,6 @@ func onView(v viewMode, n int) func(*Model) int {
 	}
 }
 
-// populateView runs whatever fills the current view with fresh data — the
-// per-view F key: arbitrage fetches quotes, movers refreshes prices and
-// backfills history, the watches screen refreshes prices and repairs
-// finishes, everything else refreshes prices. One key, and the view knows
-// what it needs.
 func (m *Model) populateView() tea.Cmd {
 	switch m.view {
 	case viewMarket:
@@ -614,16 +526,12 @@ func (m *Model) populateView() tea.Cmd {
 	return m.startPriceOp("updating prices", m.opUpdatePrices)
 }
 
-// startBackfill runs the price-history import at one window.
 func (m *Model) startBackfill(days int) tea.Cmd {
 	bf := m.opBackfill
 	return m.startOp("backfilling price history",
 		func(ctx context.Context, p progress.Fn) (string, error) { return bf(ctx, p, days) })
 }
 
-// populateMovers is the movers pipeline: refresh today's prices, then
-// backfill the history the view charts against — composed into one
-// operation so a single F populates an empty view end to end.
 func (m *Model) populateMovers() tea.Cmd {
 	up, bf := m.opUpdatePrices, m.opBackfill
 	if up == nil && bf == nil {
@@ -650,14 +558,6 @@ func (m *Model) populateMovers() tea.Cmd {
 	})
 }
 
-// populateWatches is the watches screen's pipeline: refresh prices first —
-// which is also what re-decides every watch's state, and what most $0 rows
-// are missing — then repair finishes, the other cause of an unpriced row.
-// Composed like the movers pipeline so one F serves all three tables.
-//
-// It replaced a cheap re-read against stored prices when the unpriced table
-// arrived here: two of the three tables need the network to change, so a
-// local reload would have answered F with an unchanged screen.
 func (m *Model) populateWatches() tea.Cmd {
 	up, rf := m.opUpdatePrices, m.opRepairFinishes
 	if up == nil && rf == nil {
@@ -684,11 +584,8 @@ func (m *Model) populateWatches() tea.Cmd {
 	})
 }
 
-// applies reports whether a command is available right now.
 func (c command) applies(m *Model) bool { return c.where == nil || c.where(m) }
 
-// runCommand dispatches a registry key press, reporting whether the key was
-// one.
 func (m *Model) runCommand(key string) (tea.Cmd, bool) {
 	for i := range m.commands {
 		c := &m.commands[i]
@@ -699,16 +596,12 @@ func (m *Model) runCommand(key string) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// showView switches the right pane to one view — the body the 'v' key has
-// always had, callable with a destination so the palette can jump straight
-// there.
 func (m *Model) showView(v viewMode) tea.Cmd {
 	if v != viewHoldings {
-		// Leaving holdings abandons a watch pick in progress.
+
 		m.watchPick = false
 	}
-	// Leaving arbitrage abandons any fetch still running: the answer is no
-	// longer wanted, and a download that outlives the view is a surprise.
+
 	m.cancelMarketFetch()
 	m.marketLoading = false
 	m.view = v
@@ -719,20 +612,11 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	}
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
 	if v == viewWatches {
-		// Three tables, and row zero is the OVERS heading — which is a place
-		// to navigate to, never one to be dropped into. Arrive on the first
-		// table that actually has rows, with every region scrolled to its
-		// top.
+
 		m.watchSecOffset = [watchSectionCount]int{}
 		m.cursor[paneCards] = m.firstWatchCursor()
 	}
-	// Naming the sort with the view answers the "why is this order
-	// different" beat before it lands — each view keeps its own sort, and
-	// arriving somewhere sorted by a column you chose last week reads as
-	// wrong data until the label says otherwise. Market is the exception:
-	// its four tables each keep their own sort, and naming the cursor's
-	// would claim more than it says. Movers with the penny filter armed
-	// names the filter too — rows silently absent read as missing data.
+
 	m.status = "showing " + m.view.String()
 	if v != viewMarket {
 		m.status += " · sorted by " + m.sortLabel()
@@ -744,9 +628,7 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 		m.status += " · penny filter < " + ui.Money(m.marketFloor)
 	}
 	m.statusErr = false
-	// A selection this view greys out cannot stay selected — the cursor
-	// would rest on a row advertised as unselectable, over a pane whose
-	// emptiness reads as "none exist anywhere". Snap to All Cards and say so.
+
 	if !m.containerEligible(m.cursor[paneContainers]) {
 		sel := m.selectedContainer()
 		m.cursor[paneContainers], m.offset[paneContainers] = 0, 0
@@ -760,10 +642,7 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 		}
 	}
 	if v == viewMarket {
-		// An earlier session's quotes beat an empty pane; with nothing
-		// cached at all the fetch starts itself — an empty table inviting a
-		// keypress is a chore, not a choice (owner's call). Refreshing
-		// data that already exists stays deliberate: that is what F is for.
+
 		m.loadCachedMarket()
 		if !m.marketLoaded && !m.marketLoading && m.marketFetch != nil {
 			return m.startMarketFetch()

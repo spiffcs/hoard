@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-# asset-review.sh — look at every image the project ships, at the size it is
-# actually seen.
-#
-#   make asset-review
-#
-# The images are checked by eye or not at all. `sips` will confirm an app icon
-# is 1024x1024 forever while the artwork inside it sits visibly off-centre,
-# because the pixels doing the pushing are transparent; and no tool can tell you
-# whether a screenshot publishes more of your collection than you meant to. So
-# this builds one page that puts each asset in its real context — the logo on
-# both README themes, the app icon under an iOS squircle at the sizes iOS uses
-# it, the social card at the width a link unfurl actually gets — and opens it.
-#
-# It also reports which generated assets are older than the source they are
-# generated from, which is the failure nothing else catches: every one of these
-# is a tracked file, so a stale one is simply committed and shipped.
-#
-# Output goes to .tmp/, which is gitignored. Nothing here writes to docs/.
-
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,16 +10,11 @@ SOCIAL=docs/assets/social-preview.png
 DEMO=docs/assets/demo.gif
 ICON=scan/hoard-scan-ios/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
 
-# The width the README actually draws the logo at, read out of the README rather
-# than repeated here. This page's whole claim is "at the size it is actually
-# seen", and a hardcoded copy goes on claiming it after the README moves — the
-# one failure that looks exactly like success. Falls back if the tag is reshaped.
 LOGO_W=$(sed -n 's/.*hoard-logo\.png" width="\([0-9]*\)".*/\1/p' README.md | head -1)
 : "${LOGO_W:=190}"
 
 mkdir -p .tmp
 
-# "1280x640 · 280K", for the header of each section.
 facts() {
   local dims
   dims=$(sips -g pixelWidth -g pixelHeight "$1" 2>/dev/null |
@@ -47,8 +23,6 @@ facts() {
   printf '%s · %s' "$dims" "$(du -h "$1" | cut -f1 | tr -d ' ')"
 }
 
-# A generated asset older than its source is stale. Every asset here is tracked,
-# so nothing downstream ever notices — it just gets committed as-is.
 STALE=""
 freshness() {
   local built=$1 source=$2 how=$3
@@ -61,7 +35,6 @@ freshness() {
 freshness "$DEMO"   docs/demo.tape           "vhs docs/demo.tape"
 freshness "$BROWSE" docs/screenshot.tape     "vhs docs/screenshot.tape"
 freshness "$SOCIAL" docs/social-preview.html "make social-preview"
-# Both of these derive from the master, not from each other.
 freshness "$LOGO"   "$MASTER"                "make logo"
 freshness "$ICON"   "$MASTER"                "make logo"
 

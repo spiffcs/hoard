@@ -1,12 +1,5 @@
 package report
 
-// Tables for the commands whose layouts used to live inline in the command
-// files. They belong here with the rest so a column spec exists exactly once —
-// the browse package renders its own pane-shaped variants on purpose (a
-// scrolling half-width pane earns different priorities than a full terminal),
-// but a CLI table has no such excuse. Everything here follows the package
-// contract: pure functions from domain values to a string.
-
 import (
 	"fmt"
 
@@ -14,7 +7,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// Binders lists every binder with its rolled-up counts and value.
 func Binders(env ui.Env, binders []store.DeckSummary) string {
 	t := ui.Table{
 		Env: env, Header: true,
@@ -32,7 +24,6 @@ func Binders(env ui.Env, binders []store.DeckSummary) string {
 	return t.Render()
 }
 
-// FinishRepairs lists the entries repair-finishes corrected.
 func FinishRepairs(env ui.Env, fixed []store.FinishFix) string {
 	t := ui.Table{
 		Env:    env,
@@ -49,7 +40,7 @@ func FinishRepairs(env ui.Env, fixed []store.FinishFix) string {
 	}
 	for _, f := range fixed {
 		t.Add(ui.C(f.Name), ui.C(ui.Printing(f.SetCode, f.CollectorNumber)),
-			ui.C(ui.Count(f.Quantity)), ui.C(f.From), ui.C(f.To), ui.C(f.Container))
+			ui.C(ui.Count(f.Quantity)), ui.C(f.From.String()), ui.C(f.To.String()), ui.C(f.Container))
 	}
 	return t.Render()
 }

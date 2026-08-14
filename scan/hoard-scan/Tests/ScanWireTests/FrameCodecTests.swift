@@ -1,11 +1,3 @@
-// Framing, tested against the ways a TCP stream actually arrives.
-//
-// The interesting cases are not "does a frame round-trip" — that one works in
-// every implementation, including the broken ones. They are the arrival
-// patterns: a header split across two reads, three frames in one read, a
-// payload dribbling in a byte at a time. Those are what fail under load, which
-// is when a scanning session is doing something worth not losing.
-
 import Foundation
 import Testing
 
@@ -33,9 +25,6 @@ func everyKind() throws {
 
 @Test("a payload containing newlines is intact")
 func newlinesSurvive() throws {
-    // The entire reason this codec exists: NDJSON cannot carry a JPEG, and a
-    // JPEG contains newlines. If this ever fails, the framing has quietly
-    // reverted to line-splitting.
     let jpegish = Data([0xFF, 0xD8, 0x0A, 0x0A, 0x0D, 0x0A, 0xFF, 0xD9])
     let frame = Frame(kind: .preview, payload: jpegish)
     var reader = FrameReader()
@@ -59,8 +48,6 @@ func coalescedReads() throws {
 func splitAnywhere() throws {
     let frame = Frame(kind: .still, payload: Data(repeating: 0xAB, count: 1000))
     let bytes = try encode(frame)
-    // Every possible split point, including mid-header — a length field
-    // straddling two reads is the classic way this breaks.
     for cut in 1..<bytes.count {
         var reader = FrameReader()
         var got = try reader.append(bytes.prefix(cut))
@@ -83,9 +70,6 @@ func dribble() throws {
 
 @Test("an unknown kind fails loudly rather than being skipped")
 func unknownKind() {
-    // A newer peer sending a type this build never heard of means the two ends
-    // disagree about the protocol. Skipping reads the next header out of the
-    // middle of a payload — the stream is already lost, so say so.
     var reader = FrameReader()
     let bogus = Data([99, 0, 0, 0, 1, 0x41])
     #expect(throws: FrameCodecError.unknownKind(99)) { _ = try reader.append(bogus) }
@@ -94,15 +78,12 @@ func unknownKind() {
 @Test("an absurd length is refused before anything is allocated for it")
 func absurdLength() {
     var reader = FrameReader()
-    // 0x7FFFFFFF, well past the ceiling.
     let header = Data([FrameKind.still.rawValue, 0x7F, 0xFF, 0xFF, 0xFF])
     #expect(throws: FrameCodecError.self) { _ = try reader.append(header) }
 }
 
 @Test("encoding refuses an oversized payload rather than truncating it")
 func oversizedEncode() {
-    // Constructed rather than allocated: the point is the guard, and a 64 MB
-    // allocation in a unit test is rude.
     #expect(maxFramePayload == 64 * 1024 * 1024)
     let frame = Frame(kind: .still, payload: Data())
     #expect(throws: Never.self) { _ = try encode(frame) }

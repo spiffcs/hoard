@@ -1,7 +1,5 @@
 package command
 
-// `hoard update-prices`: today's prices for everything held, and what moved.
-
 import (
 	"context"
 	"fmt"
@@ -15,7 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/report"
 )
 
-// NewCmdUpdatePrices builds `hoard update-prices`.
 func NewCmdUpdatePrices(a *app) *cobra.Command {
 	var limit int
 
@@ -41,10 +38,6 @@ func NewCmdUpdatePrices(a *app) *cobra.Command {
 	return cmd
 }
 
-// runUpdatePrices is the render half of the command, split from the flag and
-// dependency glue so a test can drive it against a fixture and read what it
-// wrote. Everything goes to the Env's streams: the movers table used to sniff
-// os.Stdout for its width even when the output was a test buffer.
 func runUpdatePrices(ctx context.Context, deps action.Deps, env *cli.Env, limit int) error {
 	pr := stderrPrinter()
 	res, err := action.UpdatePrices(ctx, deps, pr.Fn())
@@ -66,9 +59,7 @@ func runUpdatePrices(ctx context.Context, deps action.Deps, env *cli.Env, limit 
 		r.Detail("%d cards could not be re-fetched from Scryfall.", res.NotFound)
 	}
 	fmt.Fprintln(env.Out)
-	// No cutoff to name: a refresh compares against whatever the last one
-	// recorded, whenever that was, so no row can start later than the window
-	// and the FROM column stays out of this table.
+
 	fmt.Fprint(env.Out, report.Movers(env.OutEnv, res.Changes, limit,
 		"since the last refresh", time.Time{}))
 	return nil

@@ -7,10 +7,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// Cells are looked up by header name and never by position, so the movement
-// columns are additive by construction: this file states two watches in
-// different units side by side, and an old file with neither column still
-// parses (TestParse, unchanged).
 func TestCSVPercentColumns(t *testing.T) {
 	rows, err := Parse([]byte(
 		"Name,Direction,Threshold,Percent,Min Move,Since\n" +
@@ -29,19 +25,16 @@ func TestCSVPercentColumns(t *testing.T) {
 	if r := rows[1]; r.Op != "drop" || r.Pct != 0.10 || r.MinMove != 5 || r.WindowDays != 60 {
 		t.Errorf("drop row = %+v", r)
 	}
-	// A bare number is a percentage, and 2w is a fortnight of days.
+
 	if r := rows[2]; r.Op != "rise" || r.Pct != 0.125 || r.WindowDays != 14 {
 		t.Errorf("rise row = %+v", r)
 	}
-	// Silence about the floor and the window means what watch add would mean.
+
 	if rows[2].MinMove != store.DefaultMinMove {
 		t.Errorf("min move = %v, want the default %v", rows[2].MinMove, store.DefaultMinMove)
 	}
 }
 
-// The document's percent is a fraction, because this is the dialect hoard
-// itself emits and a watch list it wrote has to read back unchanged. The CSV's
-// is a percentage, because a person types it.
 func TestJSONPercentIsAFraction(t *testing.T) {
 	rows, err := Parse([]byte(
 		`[{"name":"Ancient Tomb","direction":"drop","percent":0.1,"minMoveUsd":5,"sinceDays":60},
@@ -57,9 +50,6 @@ func TestJSONPercentIsAFraction(t *testing.T) {
 	}
 }
 
-// A row that fills both size cells has not said which one the alert obeys, so
-// it is refused by line rather than resolved by precedence — the same reason
-// normDirection infers nothing from a blank direction.
 func TestPercentUnitsAreExclusive(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"both cells", "Name,Direction,Threshold,Percent\nSol Ring,drop,5,10\n",
@@ -92,9 +82,6 @@ func TestPercentUnitsAreExclusive(t *testing.T) {
 	}
 }
 
-// A watch list written before movements existed carries neither column and has
-// to keep parsing exactly as it did — the columns are read by name, so this is
-// structural rather than a courtesy.
 func TestOldWatchFilesStillParse(t *testing.T) {
 	rows, err := Parse([]byte("Name,Direction,Threshold\nSol Ring,under,5\n"))
 	if err != nil {
@@ -103,8 +90,7 @@ func TestOldWatchFilesStillParse(t *testing.T) {
 	if len(rows) != 1 || rows[0].Threshold != 5 || rows[0].Pct != 0 {
 		t.Fatalf("rows = %+v", rows)
 	}
-	// The movement fields stay zero on an absolute row: they are inert there,
-	// and the store refuses a row that fills the wrong one.
+
 	if rows[0].MinMove != 0 || rows[0].WindowDays != 0 {
 		t.Errorf("absolute row carried movement defaults: %+v", rows[0])
 	}

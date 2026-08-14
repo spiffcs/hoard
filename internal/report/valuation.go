@@ -1,10 +1,5 @@
 package report
 
-// The valuation report: what the hoard is worth, itemized and dated, in a
-// form worth handing to an insurer or a buyer. Everything here is
-// deterministic for the same data — the report is meant to live in a folder
-// (or git) and its diffs to mean something.
-
 import (
 	"cmp"
 	"encoding/csv"
@@ -19,25 +14,17 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// ValuationData is everything the valuation report states. The caller
-// assembles it from the store; Top is already sliced to the rows the report
-// should itemize (the full list is the CSV's job).
 type ValuationData struct {
-	// AsOf is when the prices were observed (RFC 3339), empty when nothing
-	// has ever been priced.
 	AsOf    string
 	Binder  store.CollectionTotals
 	Binders []store.DeckSummary
 	Decks   []store.DeckSummary
 	Top     []store.OwnedFinish
-	// Sources is where the prices come from; Unpriced is the residue no
-	// source covers (its Source field is empty).
+
 	Sources  []store.SourceCount
 	Unpriced store.SourceCount
 }
 
-// SortOwned pins the store's value-descending order with a full tiebreak, so
-// equal-value rows cannot reshuffle between two reports over the same data.
 func SortOwned(owned []store.OwnedFinish) []store.OwnedFinish {
 	out := append([]store.OwnedFinish(nil), owned...)
 	slices.SortStableFunc(out, func(a, b store.OwnedFinish) int {
@@ -50,14 +37,11 @@ func SortOwned(owned []store.OwnedFinish) []store.OwnedFinish {
 		if c := strings.Compare(a.ScryfallID, b.ScryfallID); c != 0 {
 			return c
 		}
-		return strings.Compare(a.Finish, b.Finish)
+		return strings.Compare(a.Finish.String(), b.Finish.String())
 	})
 	return out
 }
 
-// asOfDate renders an RFC 3339 stamp as the date a reader wants; a stamp that
-// does not parse is shown raw rather than dropped — a wrong-looking date on a
-// valuation is better than no date.
 func asOfDate(stamp string) string {
 	if t, err := time.Parse(time.RFC3339, stamp); err == nil {
 		return t.Local().Format("2 Jan 2006")
@@ -65,7 +49,6 @@ func asOfDate(stamp string) string {
 	return stamp
 }
 
-// Valuation renders the report as text.
 func Valuation(env ui.Env, d ValuationData) string {
 	var b strings.Builder
 	title := "VALUATION"
@@ -75,7 +58,6 @@ func Valuation(env ui.Env, d ValuationData) string {
 	b.WriteString(env.Bold()(title) + "\n\n")
 	b.WriteString(Summary(env, d.Binder, d.Decks))
 
-	// A breakdown of one binder restates the BINDER line above it.
 	if len(d.Binders) > 1 {
 		b.WriteString("\n" + env.Bold()("BINDERS") + "\n")
 		t := ui.Table{
@@ -141,8 +123,6 @@ func Valuation(env ui.Env, d ValuationData) string {
 	return b.String()
 }
 
-// unitPrice is one copy's price, recovered from the row's total. Value is
-// quantity × price by construction, so the division is exact to the cent.
 func unitPrice(o store.OwnedFinish) float64 {
 	if o.Copies == 0 {
 		return 0
@@ -150,10 +130,6 @@ func unitPrice(o store.OwnedFinish) float64 {
 	return o.Value / float64(o.Copies)
 }
 
-// ValuationCSV writes the full itemized valuation — every owned
-// printing-finish with its price, not the display's top-N — dated on every
-// row, because a CSV file separated from the command that made it should
-// still say when its prices were true.
 func ValuationCSV(w io.Writer, asOf string, owned []store.OwnedFinish) error {
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"Name", "Set", "Collector Number", "Finish", "Copies",
@@ -164,7 +140,7 @@ func ValuationCSV(w io.Writer, asOf string, owned []store.OwnedFinish) error {
 	}
 	for _, o := range SortOwned(owned) {
 		cw.Write([]string{
-			o.Name, o.SetCode, o.CollectorNumber, o.Finish,
+			o.Name, o.SetCode, o.CollectorNumber, o.Finish.String(),
 			strconv.Itoa(o.Copies),
 			strconv.FormatFloat(unitPrice(o), 'f', 2, 64),
 			strconv.FormatFloat(o.Value, 'f', 2, 64),

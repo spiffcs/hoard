@@ -4,26 +4,19 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-// An outage during resolution must not be recorded as "MTGJSON had no price":
-// that stamp silences re-asks for a week, and the only recovery is editing the
-// database by hand. The failure here is a set file that is valid gzip but not
-// JSON — reachable without the network, and exactly as unresolvable as a dead
-// host.
 func TestFillGapsDoesNotStampGapsWhenResolutionFails(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 
-	// The card's set file, cached for today, gzip-valid and JSON-broken — so
-	// SetIdentifiers fails with a real error rather than ErrNoSuchSet, before
-	// any network I/O.
 	cacheDir := t.TempDir()
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)

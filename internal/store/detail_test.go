@@ -1,14 +1,13 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// enriched is a card carrying a Scryfall document, so its generated columns
-// resolve the way a refreshed catalog's do.
 func enriched() scryfall.Card {
 	c := ulamog()
 	c.Raw = []byte(`{"id":"ulamog-id","name":"Ulamog, the Infinite Gyre",
@@ -22,7 +21,7 @@ func enriched() scryfall.Card {
 
 func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(enriched(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(enriched(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -45,22 +44,15 @@ func TestCardDetailResolvesDescriptiveFields(t *testing.T) {
 	if d.Artist != "Mark Tedin" {
 		t.Errorf("Artist = %v", d.Artist)
 	}
-	// Identity carries through from the base columns, not the document.
+
 	if d.Name != "Ulamog, the Infinite Gyre" || d.SetCode != "uma" {
 		t.Errorf("identity wrong: %+v", d.Card)
 	}
 }
 
-// A card with no stored document reads empty in every descriptive field —
-// CardDetail's one absence — and says so through Enriched, which is the ONLY
-// signal separating "nobody has looked" from "the card has little to say".
-//
-// Enriched is what a detail pane must consult before telling someone to
-// refresh; the fields themselves cannot answer it, and this test fails if
-// Enriched ever starts reporting true for a card with no document.
 func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil { // no Raw
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -74,21 +66,17 @@ func TestCardDetailReportsUnenrichedCards(t *testing.T) {
 	if d.Rarity != "" || d.TypeLine != "" || d.CMC != nil {
 		t.Errorf("want empty descriptive fields, got %q %q %v", d.Rarity, d.TypeLine, d.CMC)
 	}
-	// The prices and identity still work; only the derived fields are missing.
+
 	if d.PriceUSD == nil || *d.PriceUSD != 10.00 {
 		t.Errorf("PriceUSD = %v, want 10", d.PriceUSD)
 	}
 }
 
-// Identity has three states, and two of them look alike in a slice: a
-// colorless card is empty-but-known ([]), a never-enriched card is nil
-// (unknown). slices.Equal treats those as equal, so nil-ness is asserted
-// separately.
 func TestParseColorIdentity(t *testing.T) {
 	s := newTestStore(t)
 	for _, tc := range []struct {
 		name    string
-		json    string // "" stores no document at all
+		json    string
 		want    []string
 		wantNil bool
 	}{
@@ -120,22 +108,6 @@ func TestParseColorIdentity(t *testing.T) {
 	}
 }
 
-// The card-frame fields (migration v11) resolve like the rest of the
-// derived columns: root first, face 0 for multi-faced cards, empty until a
-// document is stored.
-//
-// This is also where CardDetail's absence convention is pinned. Three routes
-// reach an absent field and ALL THREE must land on the empty string:
-//
-//   - a planeswalker's power — the card simply has none;
-//   - a creature's loyalty, likewise;
-//   - every field of a printing with no stored document at all.
-//
-// They agree because the database cannot tell them apart in the first place:
-// each is json_extract returning NULL, whether the key is missing from the
-// document or there is no document to read. A representation that spelled a
-// difference here would be inventing one. What DOES separate the third case
-// from the first two is Enriched, asserted below and nowhere else.
 func TestCardDetailCardFrameFields(t *testing.T) {
 	s := newTestStore(t)
 	mk := func(id, raw string) scryfall.Card {
@@ -176,12 +148,11 @@ func TestCardDetailCardFrameFields(t *testing.T) {
 	if c.ImageURI != "https://img/creature.jpg" {
 		t.Errorf("ImageURI = %q", c.ImageURI)
 	}
-	// The creature has a document but no loyalty: absent, and so empty.
+
 	if c.Loyalty != "" {
 		t.Errorf("a creature's loyalty = %q, want the empty string", c.Loyalty)
 	}
 
-	// The planeswalker is the mirror case — a real loyalty, no power.
 	w := get("walker")
 	if w.Loyalty != "4" || w.Power != "" {
 		t.Errorf("walker loyalty = %q, power = %q — power must be empty", w.Loyalty, w.Power)
@@ -191,8 +162,6 @@ func TestCardDetailCardFrameFields(t *testing.T) {
 		t.Errorf("dfc face-0 fallback: power = %q, image = %q", d.Power, d.ImageURI)
 	}
 
-	// The third route: no document at all. Same empty fields as the two
-	// above, and Enriched carrying the whole of the difference.
 	b := get("bare")
 	if b.Power != "" || b.Loyalty != "" || b.FlavorText != "" || b.ImageURI != "" {
 		t.Errorf("a printing with no document must read all-empty, got %+v", b)
@@ -203,22 +172,18 @@ func TestCardDetailCardFrameFields(t *testing.T) {
 	if !w.Enriched {
 		t.Error("Enriched = false for a planeswalker that has a document but no power")
 	}
-	// Stated as one assertion because it is the property, not a detail of
-	// it: absence reads identically whatever produced it, and Enriched is
-	// the only thing that tells a caller which case it is looking at.
+
 	if b.Power != w.Power {
 		t.Errorf("absence differs by route: unfetched power %q vs walker power %q",
 			b.Power, w.Power)
 	}
 }
 
-// The listing queries carry the same identity the detail view resolves, so
-// the browse tables can tint names without a per-row detail read.
 func TestListingsCarryColorIdentity(t *testing.T) {
 	s := newTestStore(t)
 	c := ulamog()
 	c.Raw = []byte(`{"color_identity":["W","U"],"mana_cost":"{1}{W}{U}"}`)
-	if err := s.AddCardFinish(c, "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(c, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -237,17 +202,15 @@ func TestListingsCarryColorIdentity(t *testing.T) {
 	}
 }
 
-// The question neither `list` nor `deck show` could answer: four copies of a
-// card spread across the collection and two decks.
 func TestHoldingsOfSpansContainers(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	for _, name := range []string{"Deck A", "Deck B"} {
 		if _, err := s.UpsertDeck(
 			DeckMeta{Name: name, Source: "text", SourceID: name},
-			[]Entry{{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 2}},
+			[]Entry{{ScryfallID: "ulamog-id", Finish: finish.Nonfoil, Board: "main", Quantity: 2}},
 		); err != nil {
 			t.Fatalf("UpsertDeck %s: %v", name, err)
 		}
@@ -269,8 +232,7 @@ func TestHoldingsOfSpansContainers(t *testing.T) {
 	if total != 5 {
 		t.Errorf("total copies = %d, want 5", total)
 	}
-	// The collection sorts first, so a reader sees what they hold loose before
-	// what is committed to decks.
+
 	if kinds[0] != KindCollection {
 		t.Errorf("kinds = %v, want the collection first", kinds)
 	}
@@ -292,7 +254,7 @@ func TestHoldingsOfUnheldCard(t *testing.T) {
 
 func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -309,22 +271,22 @@ func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 		t.Fatalf("RecordPrices: %v", err)
 	}
 
-	series, err := s.PriceSeries("ulamog-id", "nonfoil")
+	series, err := s.PriceSeries("ulamog-id", finish.Nonfoil)
 	if err != nil {
 		t.Fatalf("PriceSeries: %v", err)
 	}
 	if len(series) != 2 {
 		t.Fatalf("got %d points, want 2: %+v", len(series), series)
 	}
-	// Oldest first, so a sparkline reads left to right without reversing.
+
 	if series[0].Price != 10.00 || series[1].Price != 12.00 {
 		t.Errorf("series = %+v, want 10 then 12", series)
 	}
 	if series[0].AsOf >= series[1].AsOf {
 		t.Errorf("series not in chronological order: %+v", series)
 	}
-	// The foil series is its own; the non-foil move must not appear in it.
-	foil, err := s.PriceSeries("ulamog-id", "foil")
+
+	foil, err := s.PriceSeries("ulamog-id", finish.Foil)
 	if err != nil {
 		t.Fatalf("PriceSeries foil: %v", err)
 	}
@@ -333,23 +295,20 @@ func TestPriceSeriesReturnsTheWholeSeries(t *testing.T) {
 	}
 }
 
-// HoldingsOfName spans printings: ten Forests across two printings and
-// three containers come back one row each, printing named, collection
-// first.
 func TestHoldingsOfNameSpansPrintings(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	alt := ulamog()
 	alt.ID = "ulamog-alt-id"
 	alt.Set = "roe"
 	alt.CollectorNumber = "8"
-	if err := s.AddCardFinish(alt, "foil", 1); err != nil {
+	if err := s.AddCardFinish(alt, finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish alt: %v", err)
 	}
 	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]Entry{{ScryfallID: "ulamog-alt-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		[]Entry{{ScryfallID: "ulamog-alt-id", Finish: finish.Foil, Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 
@@ -372,13 +331,11 @@ func TestHoldingsOfNameSpansPrintings(t *testing.T) {
 	}
 }
 
-// v14 surfaces TCGplayer's product id from the stored Scryfall document —
-// nil until enrichment stores one, the id after.
 func TestCardDetailCarriesTCGplayerID(t *testing.T) {
 	s := newTestStore(t)
 	c := ulamog()
 	c.Raw = []byte(`{"tcgplayer_id": 33365, "rarity": "mythic"}`)
-	if err := s.AddCardFinish(c, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(c, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	d, err := s.CardDetail("ulamog-id")
@@ -390,7 +347,7 @@ func TestCardDetailCarriesTCGplayerID(t *testing.T) {
 	}
 
 	bare := solRing()
-	if err := s.AddCardFinish(bare, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(bare, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	d, err = s.CardDetail("sol-id")
@@ -402,12 +359,9 @@ func TestCardDetailCarriesTCGplayerID(t *testing.T) {
 	}
 }
 
-// v15's null-vs-empty contract: NULL means the set file was never read
-// for this card, an empty string means it was and carried no link — the
-// distinction that stops absence from re-fetching the file forever.
 func TestCardKingdomLinksNullVsEmpty(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 
@@ -429,11 +383,5 @@ func TestCardKingdomLinksNullVsEmpty(t *testing.T) {
 	if d.CKURL != "" || d.CKFoilURL != "" {
 		t.Errorf("links = %q/%q, want empty", d.CKURL, d.CKFoilURL)
 	}
-	// Never-asked and asked-and-none are still different states, and the
-	// column still keeps them apart — but the difference is asserted through
-	// KnownCardKingdomLinks above, which is the only caller that needs it and
-	// reads ck_url IS NOT NULL directly. CardDetail answers a narrower
-	// question ("is there a link to open?"), so both cases read empty here.
-	// If the resolver ever stopped recording the empty stamp, the
-	// known["ulamog-id"] assertion above fails; this one would not notice.
+
 }

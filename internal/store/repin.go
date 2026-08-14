@@ -1,16 +1,7 @@
 package store
 
-// Re-pointing a deck's entries at different printings of the same cards —
-// the write half of `deck repin`, which corrects name-only imports that
-// resolved to arbitrary printings instead of the set the deck came from.
-
 import "fmt"
 
-// RepointDeckPrintings moves the container's entries from one printing to
-// another, per the mapping (old scryfall id → new). Rows merge when the
-// target printing is already held in the same finish and board — two
-// listings of one physical pile must sum, not conflict. Returns how many
-// entry rows moved. The caller has already upserted the target printings.
 func (s *Store) RepointDeckPrintings(containerID int64, mapping map[string]string) (int, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

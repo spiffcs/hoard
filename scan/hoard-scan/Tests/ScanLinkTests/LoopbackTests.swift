@@ -1,14 +1,3 @@
-// The link, tested against itself.
-//
-// A listener and a browser in one process, over the loopback interface, with a
-// real Bonjour advertisement and a real handshake. Not a mock: the things that
-// go wrong here are the two connections of a session pairing to the wrong
-// partner, the pairing check not actually checking, and framing breaking across
-// a real socket's read boundaries — and a mock reproduces none of them.
-//
-// These are slower than the rest of the suite (a second or two) and they earn
-// it. The alternative is finding out with a phone in one hand.
-
 import CryptoKit
 import Foundation
 import Network
@@ -17,9 +6,6 @@ import Testing
 
 @testable import ScanLink
 
-/// Waits for `check` to become true, pumping the run loop. Returns whether it
-/// did — never a bare sleep, so a passing test is fast and a failing one is not
-/// a guess about how long to wait.
 private func waitFor(_ seconds: Double = 5, _ check: () -> Bool) -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
     while !check(), Date() < deadline {
@@ -28,12 +14,6 @@ private func waitFor(_ seconds: Double = 5, _ check: () -> Bool) -> Bool {
     return check()
 }
 
-/// Opens one half of a session, correctly proved.
-///
-/// `PeerBrowser.connect` always opens both, which is right for the Mac and
-/// useless for testing the interval between them — the whole point here is a
-/// listener holding a verified connection whose partner has not come. Same body
-/// as `connect`'s inner `open`, one role at a time.
 private func openHalf(
     to service: PeerService, role: PeerRole, code: PairingCode, session: String
 ) -> PeerLink {
@@ -47,7 +27,6 @@ private func openHalf(
     return link
 }
 
-/// Finds a listener that has just started advertising, by name prefix.
 private func resolve(prefix: String) throws -> PeerService {
     let services = PeerBrowser().browse(seconds: 4)
     return try #require(
@@ -68,8 +47,6 @@ func codeShape() {
 
 @Test("a generated code is always six digits, leading zeros included")
 func generatedCodes() {
-    // String(n) would drop a leading zero and produce a five-digit code that
-    // PairingCode itself then refuses — a bug that shows up one time in ten.
     for _ in 0..<200 {
         let code = PairingCode.random()
         #expect(code.digits.count == 6)
@@ -87,7 +64,6 @@ func keyDerivation() {
     let a = PairingCode("123456")!, b = PairingCode("123456")!, c = PairingCode("654321")!
     #expect(a.key == b.key)
     #expect(a.key != c.key)
-    // Stretched, not the digits themselves.
     #expect(a.key != SymmetricKeyFromDigits("123456"))
 }
 
@@ -117,9 +93,6 @@ func loopbackSession() throws {
     let client = browser.connect(to: service, code: code)
     defer { client.cancel() }
 
-    // Track the client's own view of the handshake. Without this a failure here
-    // says only "no session", which is equally consistent with the service not
-    // resolving, TLS never completing, and the hello never being read.
     var states: [String] = []
     client.control.onState = { states.append("control \($0)") }
     client.preview.onState = { states.append("preview \($0)") }
@@ -134,13 +107,9 @@ func loopbackSession() throws {
         """)
     let server = try #require(accepted)
 
-    // The roles landed on the right connections. Getting this backwards would
-    // put preview JPEGs on the Nagle-disabled control channel and shutter verbs
-    // behind them, which is the exact failure two connections exist to prevent.
     #expect(server.control.role == .control)
     #expect(server.preview.role == .preview)
 
-    // Control, phone to Mac.
     var received: [Frame] = []
     client.control.onFrame = { received.append($0) }
     let event = Event(event: "ready", device: "loopback", features: ["auto"])
@@ -149,7 +118,6 @@ func loopbackSession() throws {
     #expect(received.first?.kind == .ndjson)
     #expect(received.first?.text?.contains("\"device\":\"loopback\"") == true)
 
-    // Preview, with a payload full of the newlines NDJSON could not have carried.
     var previews: [Frame] = []
     client.preview.onFrame = { previews.append($0) }
     let jpegish = Data([0xFF, 0xD8] + Array(repeating: UInt8(0x0A), count: 4096) + [0xFF, 0xD9])
@@ -176,9 +144,6 @@ func wrongCodeRejected() throws {
     let client = browser.connect(to: service, code: PairingCode("222222")!)
     defer { client.cancel() }
 
-    // The gate. A peer that cannot prove it knows the code is dropped before it
-    // reaches a session — the scanner auto-commits, so a stranger who can
-    // connect can write to the collection.
     _ = waitFor(3) { accepted != nil }
     #expect(accepted == nil, "a peer with the wrong code was given a session")
     #expect(rejected != nil, "the wrong code was not reported as a failed pairing")
@@ -203,12 +168,8 @@ func verifiedBeforePartner() throws {
     let control = openHalf(to: service, role: .control, code: code, session: UUID().uuidString)
     defer { control.cancel() }
 
-    // The point of the whole change: this fires without the preview connection
-    // ever existing. If it needed both, the phone's screen would go on saying
-    // "Not connected" for a second TCP connect and round trip.
     #expect(waitFor { verified == [.control] },
             "a verified control connection was not reported; saw \(verified)")
-    // And it is genuinely early — the session is still half-assembled.
     #expect(accepted == nil, "a session was handed over with only one connection")
     #expect(!lost, "the half-session was dropped before its timeout")
 }
@@ -218,7 +179,6 @@ func verifiedBeforePartner() throws {
 func halfSessionTimesOut() throws {
     let code = PairingCode.random()
     let listener = PeerListener(name: "hoard-half-\(UUID().uuidString.prefix(8))", code: code)
-    // Short enough to test, long enough not to race the hello it is waiting on.
     listener.halfSessionTimeout = 0.5
 
     var lost = false
@@ -232,13 +192,8 @@ func halfSessionTimesOut() throws {
     let control = openHalf(to: service, role: .control, code: code, session: UUID().uuidString)
     defer { control.cancel() }
 
-    // Claiming a session on one connection means being able to give it back.
-    // Without this the phone shows a green "hoard connected" over a link that
-    // was never assembled, which is worse than the delay this all removes.
     #expect(waitFor { lost }, "a half-session was never dropped")
     #expect(accepted == nil)
-    // Dropped means dropped: the parked connection is cancelled, not merely
-    // forgotten. Forgetting it is the leak that was already here.
     #expect(waitFor { control.state == .cancelled || isFailed(control.state) },
             "the parked connection was left open; it is \(control.state)")
 }
@@ -253,8 +208,6 @@ func proofBinding() {
     let code = PairingCode("424242")!
     let p = proof(session: "session-a", code: code)
     #expect(verifyProof(p, session: "session-a", code: code))
-    // Replaying a captured proof against a different session must fail, or the
-    // check is a password sent in the clear rather than a challenge.
     #expect(!verifyProof(p, session: "session-b", code: code))
     #expect(!verifyProof(p, session: "session-a", code: PairingCode("999999")!))
     #expect(!verifyProof("not base64 at all", session: "session-a", code: code))
@@ -263,14 +216,9 @@ func proofBinding() {
 
 @Test("the restart schedule tries three times and then stops")
 func restartScheduleIsBounded() {
-    // Immediate, then spaced. The first attempt answers the common death — a
-    // blink of the network — while the operator is still holding the card.
     #expect(PeerListener.restartDelay(after: 0) == 0)
     #expect(PeerListener.restartDelay(after: 1) == 1)
     #expect(PeerListener.restartDelay(after: 2) == 4)
-    // And then it gives up, which is the half that has to be right. A schedule
-    // with no end is a loop against a permanent failure: the battery goes, and
-    // every attempt briefly looks like recovery to anything watching.
     #expect(PeerListener.restartDelay(after: 3) == nil)
     #expect(PeerListener.restartDelay(after: 99) == nil)
     #expect(PeerListener.restartDelay(after: -1) == nil)
@@ -292,22 +240,6 @@ func deadListenerComesBack() throws {
     #expect(waitFor { health.contains(.up) },
             "the listener never reported that it was advertising")
 
-    // The death, made real, in two halves — and both halves are needed.
-    //
-    // Cancelling the NWListener is what actually takes the phone off the air;
-    // injecting the state is the report the framework would have made, which
-    // is the one thing a test cannot arrange (an NWListener does not fail to
-    // order). Injecting alone would prove nothing: the original listener would
-    // still be advertising underneath, so the connect below would succeed with
-    // no fix present at all.
-    //
-    // Measured against the fix removed — `recover` cut back to the `onError`
-    // line it replaced — this fails on the restart expectation and then again
-    // on the browse, which saw no service at all. The reachability check below
-    // is still the one that has to be there: a cancelled listener is served
-    // from the mDNS cache often enough that visibility alone has passed for a
-    // phone that was answering nothing (see TrustedSessionTests' reconnect
-    // test, where it was measured doing exactly that).
     health.removeAll()
     listener.listener?.cancel()
     listener.listenerStateChanged(.failed(.posix(.ENETDOWN)))
@@ -317,8 +249,6 @@ func deadListenerComesBack() throws {
     #expect(!health.contains(where: { if case .down = $0 { return true } else { return false } }),
             "a recovered death was reported as unrecoverable")
 
-    // Reachable, not merely visible. A fresh browser, because PeerBrowser
-    // accumulates into `found` and never removes.
     let service = try resolve(prefix: "hoard-revive-")
     let client = PeerBrowser().connect(to: service, code: code)
     defer { client.cancel() }
@@ -338,10 +268,6 @@ func stopWinsOverAPendingRestart() throws {
     try listener.start()
     #expect(waitFor { health.contains(.up) }, "the listener never advertised")
 
-    // A death and an immediate `stop()` — "Forget all Macs" landing in the same
-    // instant as a failure. The restart is already scheduled at this point, and
-    // a listener that came back after the app deliberately took it down would
-    // be advertising a code the app has already rotated away from.
     health.removeAll()
     listener.listenerStateChanged(.failed(.posix(.ENETDOWN)))
     listener.stop()

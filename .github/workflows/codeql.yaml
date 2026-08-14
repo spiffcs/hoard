@@ -1,23 +1,13 @@
 name: "CodeQL"
 
-# Static application security testing. CodeQL compiles the Go source into a
-# queryable database and runs GitHub's security query pack over it — taint
-# tracking from untrusted input to a dangerous sink, which is a different
-# question from the one `make static-analysis` asks.
-#
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
-  # CodeQL's query packs are updated independently of this repository, so an
-  # unchanged tree can grow a new finding. The weekly run is what catches those;
-  # without it the analysis is only ever as current as the last commit.
-  # Offset from the Scorecard cron so the two do not queue behind each other.
   schedule:
     - cron: '40 7 * * 2'
 
-# Read-only by default; the one job widens only what it needs.
 permissions: read-all
 
 concurrency:
@@ -29,13 +19,8 @@ jobs:
     name: "Analyze"
     runs-on: ubuntu-latest
     permissions:
-      # Upload the SARIF results to the Security tab. This is the only write
-      # this workflow performs, and it is why the job scopes permissions rather
-      # than inheriting the read-all above.
       security-events: write
       contents: read
-      # CodeQL reads the workflow definitions to report which one produced a
-      # finding.
       actions: read
 
     steps:
@@ -43,12 +28,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # The repository's own Go setup rather than whatever the runner ships.
-      # go.mod requires 1.26 and the ubuntu image lags; autobuild below runs a
-      # real `go build`, so it fails on a toolchain that cannot parse go.mod.
-      #
-      # tools: false because binny and the project tooling are for `make`
-      # targets — CodeQL only needs a compiler and the module cache.
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
         with:
@@ -58,13 +37,7 @@ jobs:
         uses: github/codeql-action/init@c16c0f3f2812ec4bb3750a5ed64873fe2ce0fbef # codeql-bundle-v2.26.3
         with:
           languages: go
-          # autobuild runs `go build ./...`, which is what this project's build
-          # already is. A manual build step would be a second place to keep the
-          # build command correct.
           build-mode: autobuild
-          # security-extended over the default pack: the default is tuned for
-          # low noise in a busy monorepo, and this tree is small enough that the
-          # extra queries cost minutes rather than triage hours.
           queries: security-extended
 
       - name: Perform CodeQL analysis

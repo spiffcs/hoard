@@ -8,9 +8,6 @@ import (
 	"time"
 )
 
-// A stray 502 mid-run must not discard the chunks already fetched: a big
-// import is dozens of requests, and before this retry a single transient
-// failure on the last one threw away minutes of resolution.
 func TestFetchCollectionRetriesTransientFailures(t *testing.T) {
 	oldPause := transientPause
 	transientPause = time.Millisecond
@@ -39,8 +36,6 @@ func TestFetchCollectionRetriesTransientFailures(t *testing.T) {
 	}
 }
 
-// A 4xx is the caller's mistake, not weather — retrying it would only repeat
-// the same answer three times slower.
 func TestFetchCollectionDoesNotRetryClientErrors(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,8 +55,6 @@ func TestFetchCollectionDoesNotRetryClientErrors(t *testing.T) {
 	}
 }
 
-// A persistent outage still fails after the bounded attempts, with the real
-// error — not a hang, and not a success with missing cards.
 func TestFetchCollectionGivesUpAfterBoundedRetries(t *testing.T) {
 	oldPause := transientPause
 	transientPause = time.Millisecond

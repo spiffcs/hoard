@@ -1,10 +1,5 @@
 package browse
 
-// The interop prompts: importing and exporting cross the program boundary
-// (a URL, a file on disk), so each collects its input through the ordinary
-// prompt machinery and hands the real work to an injected closure — the
-// network and the filesystem stay outside browse.
-
 import (
 	"context"
 	"fmt"
@@ -18,8 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 )
 
-// expandPath resolves a leading ~/ against the home directory; everything
-// else passes through untouched.
 func expandPath(s string) string {
 	if strings.HasPrefix(s, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -29,15 +22,6 @@ func expandPath(s string) string {
 	return s
 }
 
-// promptDeckURL asks for a deck link and runs the import as an operation.
-// Validation stays light — scheme and host — because decksource.Fetch's
-// provider errors (including the Moxfield-blocked message) are better than
-// anything a prompt could pre-empt, and they surface through the op's
-// error path.
-//
-// The help spends two rows because the second is the way out: the reader who
-// pasted a Moxfield link needs a next step, and AddDeckFromFile is one esc
-// away rather than a trip back to the shell.
 func (m *Model) promptDeckURL() {
 	m.prompt = &prompt{
 		label: "deck URL",
@@ -57,8 +41,6 @@ func (m *Model) promptDeckURL() {
 	}
 }
 
-// startDeckAdd runs the injected deck import: fetch and resolve both happen
-// inside the op, off the UI thread.
 func (m *Model) startDeckAdd(deckURL string) tea.Cmd {
 	fn := m.opDeckAdd
 	return m.startOpReport("importing deck", func(ctx context.Context, p progress.Fn) (opOutcome, error) {
@@ -70,12 +52,6 @@ func (m *Model) startDeckAdd(deckURL string) tea.Cmd {
 	})
 }
 
-// promptDeckFile asks for an exported decklist and runs the import as an
-// operation. This is the other half of deck import: the providers that block
-// fetching still export, and a file is the only thing they hand over.
-//
-// The deck's name and provider are the closure's business — it takes them
-// from the file — so the prompt stays one answer, like every other.
 func (m *Model) promptDeckFile() {
 	m.prompt = &prompt{
 		label: "deck file",
@@ -89,8 +65,6 @@ func (m *Model) promptDeckFile() {
 	}
 }
 
-// startDeckAddFile runs the injected file import: parsing and resolving both
-// happen inside the op, off the UI thread.
 func (m *Model) startDeckAddFile(path string) tea.Cmd {
 	fn := m.opDeckAddFile
 	return m.startOpReport("importing deck", func(ctx context.Context, p progress.Fn) (opOutcome, error) {
@@ -102,9 +76,6 @@ func (m *Model) startDeckAddFile(path string) tea.Cmd {
 	})
 }
 
-// existingFile is the validation every file prompt shares: named, present,
-// and not a directory. The prompts differ in what they do with the path, not
-// in what makes one answerable.
 func existingFile(path string) error {
 	if path == "" {
 		return fmt.Errorf("name a file")
@@ -119,9 +90,6 @@ func existingFile(path string) error {
 	return nil
 }
 
-// promptImportPath asks for a collection file and runs the import as an
-// operation. The prompt validates existence; format sniffing and the ledger
-// check live in the injected closure.
 func (m *Model) promptImportPath() {
 	m.prompt = &prompt{
 		label: "import which file (CSV)",
@@ -134,10 +102,6 @@ func (m *Model) promptImportPath() {
 	}
 }
 
-// promptWatchImportPath asks for a watch-list file and runs the import as an
-// operation. The prompt validates existence; format sniffing lives in the
-// injected closure. No ledger, no again: watch import upserts, so re-running
-// a file is how thresholds move.
 func (m *Model) promptWatchImportPath() {
 	m.prompt = &prompt{
 		label: "import watches from (CSV or JSON)",
@@ -150,8 +114,6 @@ func (m *Model) promptWatchImportPath() {
 	}
 }
 
-// startWatchImport runs the injected watch import: reading and resolving
-// both happen inside the op, off the UI thread.
 func (m *Model) startWatchImport(path string) tea.Cmd {
 	fn := m.opWatchImport
 	return m.startOpReport("importing watches", func(ctx context.Context, p progress.Fn) (opOutcome, error) {
@@ -163,12 +125,8 @@ func (m *Model) startWatchImport(path string) tea.Cmd {
 	})
 }
 
-// exportFormats is what the format prompt accepts.
 var exportFormats = map[string]bool{"csv": true, "json": true, "moxfield": true, "archidekt": true}
 
-// formatFromExt prefills the format prompt from the path's extension: a
-// .json path almost certainly wants JSON, everything else defaults to the
-// canonical CSV.
 func formatFromExt(path string) string {
 	if strings.EqualFold(filepath.Ext(path), ".json") {
 		return "json"
@@ -176,7 +134,6 @@ func formatFromExt(path string) string {
 	return "csv"
 }
 
-// slugify turns a container name into a filename fragment.
 func slugify(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {
@@ -194,9 +151,6 @@ func slugify(name string) string {
 	return "hoard-" + s
 }
 
-// promptExport chains path → format, then an overwrite confirm when the
-// file already exists — safer than the CLI's silent truncate, and cheap
-// with the machinery already here.
 func (m *Model) promptExport(binderRef, deckRef, slug string) {
 	m.prompt = &prompt{
 		label: "export to (file path)",
@@ -244,7 +198,6 @@ func (m *Model) promptExport(binderRef, deckRef, slug string) {
 	}
 }
 
-// runExport calls the injected writer and reports on the status line.
 func (m *Model) runExport(binderRef, deckRef, format, path string) {
 	summary, err := m.exportFn(binderRef, deckRef, format, path)
 	if err != nil {
@@ -254,10 +207,6 @@ func (m *Model) runExport(binderRef, deckRef, format, path string) {
 	m.status, m.statusErr = summary, false
 }
 
-// startImport runs the injected import. The ledger's run-again question is
-// built here — the one place path is still in scope — and rides the done
-// message as data; answering yes re-runs the same import with the doubling
-// acknowledged.
 func (m *Model) startImport(path string, again bool) tea.Cmd {
 	fn := m.opImport
 	title := "importing " + filepath.Base(path)

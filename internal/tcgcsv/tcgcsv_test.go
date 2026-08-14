@@ -27,8 +27,6 @@ func serve(t *testing.T, routes map[string]string) Options {
 	return Options{BaseURL: srv.URL, CacheDir: t.TempDir()}
 }
 
-// Groups keys TCGplayer's group list by upper-cased abbreviation — the
-// join to Scryfall set codes.
 func TestGroups(t *testing.T) {
 	o := serve(t, map[string]string{
 		"/tcgplayer/1/groups": `{"results": [
@@ -48,9 +46,6 @@ func TestGroups(t *testing.T) {
 	}
 }
 
-// GroupPrices prefers each product's Foil row — a treated product usually
-// lists only as Foil, but a Normal-only row still describes the treated
-// product and stands in.
 func TestGroupPricesPrefersFoilRow(t *testing.T) {
 	o := serve(t, map[string]string{
 		"/tcgplayer/1/23445/prices": `{"results": [
@@ -74,9 +69,6 @@ func TestGroupPricesPrefersFoilRow(t *testing.T) {
 	}
 }
 
-// The ask figures ride along with the market price. A reader that sees only
-// the market price cannot tell a thin market from no market at all, which is
-// the whole reason these three fields are decoded.
 func TestGroupPricesCarriesAsks(t *testing.T) {
 	o := serve(t, map[string]string{
 		"/tcgplayer/1/24691/prices": `{"results": [
@@ -92,16 +84,12 @@ func TestGroupPricesCarriesAsks(t *testing.T) {
 	if got["707290"] != want {
 		t.Errorf("707290 = %+v, want %+v", got["707290"], want)
 	}
-	// A feed row that omits the asks is not an error: the quote carries the
-	// market price and zeroes, and the contradiction check needs a positive
-	// ask before it will refuse anything.
+
 	if q := got["707291"]; q.Market != 4.20 || q.Low != 0 {
 		t.Errorf("707291 = %+v, want the market price alone", q)
 	}
 }
 
-// The day cache: one download per day per file, and yesterday's entries
-// sweep on the next write.
 func TestDayCache(t *testing.T) {
 	oldToday := today
 	today = func() string { return "2026-08-02" }
@@ -131,10 +119,6 @@ func TestDayCache(t *testing.T) {
 	}
 }
 
-// ArchivePrices extracts only the requested groups from a day's archive,
-// keeps the extractions (immutable, date-keyed), deletes the archive, and
-// records absent groups so the next run does not re-download to relearn
-// an absence.
 func TestArchivePrices(t *testing.T) {
 	oldRead := readArchiveMembers
 	defer func() { readArchiveMembers = oldRead }()
@@ -177,8 +161,6 @@ func TestArchivePrices(t *testing.T) {
 		t.Error("the archive should be deleted after extraction")
 	}
 
-	// A second read serves both groups from the extraction cache: no
-	// download, no extraction — the absence marker answers for 24554.
 	extracted = nil
 	got, err = ArchivePrices(context.Background(), o, "2026-07-25", []int{23445, 24554})
 	if err != nil {
@@ -193,9 +175,6 @@ func TestArchivePrices(t *testing.T) {
 	}
 }
 
-// A cache file that fails to parse — a torn write from a kill mid-extraction,
-// disk damage — must read as absent, not as that group-day's answer: kept, it
-// would silently hole the treated-foil history for that day forever.
 func TestArchivePricesRefetchesUnparseableCache(t *testing.T) {
 	oldRead := readArchiveMembers
 	defer func() { readArchiveMembers = oldRead }()
@@ -215,7 +194,6 @@ func TestArchivePricesRefetchesUnparseableCache(t *testing.T) {
 	defer srv.Close()
 	o := Options{BaseURL: srv.URL, CacheDir: t.TempDir()}
 
-	// The truncated JSON a pre-atomic write could leave behind.
 	dir := filepath.Join(o.CacheDir, "archive")
 	os.MkdirAll(dir, 0o755)
 	torn := filepath.Join(dir, "2026-07-25-23445.json")
@@ -231,17 +209,13 @@ func TestArchivePricesRefetchesUnparseableCache(t *testing.T) {
 	if got[23445]["553005"].Market != 16.90 {
 		t.Errorf("prices = %v, want the re-extracted figure", got)
 	}
-	// And the replacement extraction answers the next read.
+
 	b, err := os.ReadFile(torn)
 	if err != nil || !strings.Contains(string(b), "553005") {
 		t.Errorf("cache file after refetch = %q, %v; want the good extraction", b, err)
 	}
 }
 
-// The coder properties and uncompressed size come from the archive's own
-// headers. A hostile or corrupt archive naming an absurd model order, memory
-// size, or output size must be refused as a bad archive rather than handed to
-// the decoder as an allocation request.
 func TestLenientPPMdRefusesImplausibleHeaders(t *testing.T) {
 	reader := func() []io.ReadCloser {
 		return []io.ReadCloser{io.NopCloser(bytes.NewReader(nil))}
@@ -263,32 +237,24 @@ func TestLenientPPMdRefusesImplausibleHeaders(t *testing.T) {
 	}
 }
 
-// The lenient PPMd decompressor accepts the seven-byte coder properties
-// the tcgcsv archives carry (five canonical bytes plus trailing zeros)
-// and still refuses genuinely short ones.
 func TestLenientPPMdProperties(t *testing.T) {
 	one := []io.ReadCloser{io.NopCloser(bytes.NewReader(nil))}
 	if _, err := lenientPPMd([]byte{8, 0, 0}, 10, one); err == nil ||
 		!strings.Contains(err.Error(), "not enough properties") {
 		t.Errorf("err = %v, want genuinely short properties refused", err)
 	}
-	// The archives' seven-byte shape clears the property check; a wrong
-	// reader count then refuses, which exercises the parse without a real
-	// PPMd stream.
+
 	if _, err := lenientPPMd([]byte{8, 0, 0, 0, 1, 0, 0}, 10, nil); err == nil ||
 		!strings.Contains(err.Error(), "one reader") {
 		t.Errorf("err = %v, want the reader-count refusal", err)
 	}
 }
 
-// TestMain zeroes the request pacer: politeness delays are for the real
-// mirror, not for httptest.
 func TestMain(m *testing.M) {
 	requestGap = 0
 	os.Exit(m.Run())
 }
 
-// The pacer spaces request starts and never touches a cache hit.
 func TestRequestPacing(t *testing.T) {
 	oldGap, oldSleep := requestGap, paceSleep
 	defer func() {
@@ -305,8 +271,6 @@ func TestRequestPacing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Uncached back-to-back requests: the first rides free, the second
-	// waits out the gap.
 	bare := Options{BaseURL: srv.URL}
 	for range 2 {
 		if _, err := Groups(context.Background(), bare); err != nil {
@@ -317,7 +281,6 @@ func TestRequestPacing(t *testing.T) {
 		t.Fatalf("slept %v, want one near-full gap between two fresh requests", slept)
 	}
 
-	// A cache hit answers from disk: no request, no wait.
 	cached := Options{BaseURL: srv.URL, CacheDir: t.TempDir()}
 	if _, err := Groups(context.Background(), cached); err != nil {
 		t.Fatalf("Groups (fill cache): %v", err)

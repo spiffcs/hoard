@@ -1,6 +1,7 @@
 package decksource
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 )
@@ -29,25 +30,24 @@ Maybeboard
 		t.Fatalf("entries = %d, want 5", len(d.Entries))
 	}
 
-	// Commander line: set+number identifier, commander board.
 	e := d.Entries[0]
 	if e.Board != BoardCommander || e.Ident.Set != "mm3" || e.Ident.CollectorNumber != "216" || e.Quantity != 1 {
 		t.Errorf("commander entry wrong: %+v", e)
 	}
-	// "2 Sol Ring" → name identifier, main board.
+
 	if d.Entries[1].Ident.Name != "Sol Ring" || d.Entries[1].Quantity != 2 || d.Entries[1].Board != BoardMain {
 		t.Errorf("sol ring entry wrong: %+v", d.Entries[1])
 	}
-	// "1x Lightning Bolt" → the x-form quantity.
+
 	if d.Entries[2].Ident.Name != "Lightning Bolt" || d.Entries[2].Quantity != 1 {
 		t.Errorf("bolt entry wrong: %+v", d.Entries[2])
 	}
-	// Ulamog: set+number and foil finish.
+
 	u := d.Entries[3]
-	if u.Ident.Set != "uma" || u.Ident.CollectorNumber != "7" || u.Finish != "foil" {
+	if u.Ident.Set != "uma" || u.Ident.CollectorNumber != "7" || u.Finish != finish.Foil {
 		t.Errorf("ulamog entry wrong: %+v", u)
 	}
-	// Maybeboard line.
+
 	if d.Entries[4].Board != BoardMaybe || d.Entries[4].Ident.Name != "Mana Crypt" {
 		t.Errorf("maybe entry wrong: %+v", d.Entries[4])
 	}
@@ -72,10 +72,6 @@ func TestParseTextErrors(t *testing.T) {
 	}
 }
 
-// One odd line must not refuse a whole file: the unreadable lines are
-// collected with their numbers and the cards around them import. A file where
-// nothing parses still errors (TestParseTextErrors) — an all-skips "success"
-// would import an empty deck silently.
 func TestParseTextSkipsUnreadableLines(t *testing.T) {
 	in := `2 Sol Ring
 what even is this line
@@ -93,8 +89,6 @@ what even is this line
 	}
 }
 
-// MTGO-style .dek exports mark the sideboard per line ("SB: 2 Duress") rather
-// than with a section header; the marker beats the section the line sits in.
 func TestParseTextReadsSBPrefix(t *testing.T) {
 	in := `4 Thoughtseize
 SB: 2 Duress
@@ -118,8 +112,6 @@ sb: 1x Leyline of the Void (M20) 107
 	}
 }
 
-// ParseLoose is the paste reader: headers vanish (a binder has no boards),
-// bad lines are reported rather than fatal, and everything lands on main.
 func TestParseLoose(t *testing.T) {
 	in := `Deck
 4 Sol Ring (C21) 125
@@ -145,7 +137,7 @@ Sideboard
 	if entries[0].Quantity != 4 || entries[0].Ident.Set != "c21" {
 		t.Errorf("first entry = %+v", entries[0])
 	}
-	if entries[1].Finish != "foil" {
+	if entries[1].Finish != finish.Foil {
 		t.Errorf("Bolt finish = %q, want the *F* marker honored", entries[1].Finish)
 	}
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "line 3") {

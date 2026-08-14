@@ -2,6 +2,7 @@ package browse
 
 import (
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 
@@ -12,32 +13,14 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// undoAction is how to put back what the last edit changed.
-//
-// One action, not a stack. Undo exists for the keystroke you did not mean —
-// leaning on `-`, hitting `d` on the wrong row — and one level covers that. A
-// stack invites the question of how far back it goes and, worse, tempts you to
-// treat a keystroke-driven browser as a place where changes are provisional.
-// They are not: every edit is committed before the frame is drawn.
 type undoAction struct {
-	// desc is what will be undone, phrased for the status line.
 	desc string
-	// undo performs the restoration. Returning an error leaves the action in
-	// place so it can be tried again.
+
 	undo func(Editor) error
 }
 
-// editable reports whether the selected container's cards can be changed here,
-// explaining itself when they cannot.
-//
-// Deck entries are deliberately read-only. A deck is owned by the list it was
-// imported from, and editing it here would silently diverge from that source
-// until the next `deck add` overwrote the change without warning.
 func (m Model) editable() (bool, string) {
-	// The analytical views list different rows than the holdings pane, so the
-	// cursor indexes a different slice. Editing here would silently change
-	// whichever holding happened to sit at the same offset — a card the reader
-	// is not looking at and did not name.
+
 	if m.view != viewHoldings {
 		return false, "editing works on holdings · press v to come back"
 	}
@@ -48,10 +31,7 @@ func (m Model) editable() (bool, string) {
 	if sel.Kind == kindAllCards {
 		return false, "this list merges every container · edit the card in its binder or deck"
 	}
-	// A set row's cards are editable, but not through here: the selected
-	// container's id is synthetic, so the verbs resolve each row back to its
-	// binders and branch before this gate (see setsmode.go). This stays as
-	// the backstop for any caller that does not.
+
 	if sel.Kind == kindSet {
 		return false, "this list is every printing from " + sel.Name + " · edit the card in its binder or deck"
 	}
@@ -61,10 +41,8 @@ func (m Model) editable() (bool, string) {
 	return true, ""
 }
 
-// adjustQuantity changes the selected holding by delta.
 func (m *Model) adjustQuantity(delta int) {
-	// A set row has no container to edit through — it resolves to whichever
-	// binders hold the printing.
+
 	if sel := m.selectedContainer(); m.view == viewHoldings && sel != nil && sel.Kind == kindSet {
 		m.adjustSetQuantity(delta)
 		return
@@ -109,7 +87,6 @@ func (m *Model) adjustQuantity(delta int) {
 	m.refresh()
 }
 
-// removeCard drops every finish of the selected printing from the collection.
 func (m *Model) removeCard() {
 	ok, why := m.editable()
 	if !ok {
@@ -138,10 +115,6 @@ func (m *Model) removeCard() {
 	m.refresh()
 }
 
-// heldEditable is the held row under the detail's cursor when the overlay
-// can edit it, explaining the refusal when it cannot — the detail's
-// editable(). Deck rows are owned by their imported lists, exactly as on
-// the holdings pane.
 func (m *Model) heldEditable() (store.Holding, bool) {
 	d := m.detail
 	if d == nil || len(d.holdings) == 0 {
@@ -156,9 +129,6 @@ func (m *Model) heldEditable() (store.Holding, bool) {
 	return h, true
 }
 
-// adjustHeldQuantity changes the held row under the detail cursor by
-// delta — the overlay's +/-. Seeing the real count is exactly when a wrong
-// one gets noticed, so the edit lives where the reader already is.
 func (m *Model) adjustHeldQuantity(delta int) tea.Cmd {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -167,9 +137,6 @@ func (m *Model) adjustHeldQuantity(delta int) tea.Cmd {
 	return m.setHeldQuantity(h, max(h.Quantity+delta, 0), m.detail.card.Name)
 }
 
-// editHeldField opens the edit prompt for the held row's highlighted
-// field — enter in the overlay's held zone. Each field asks its own
-// question: a new count, a new set code, a new binder.
 func (m *Model) editHeldField() {
 	switch m.detail.heldField {
 	case fieldSet:
@@ -185,8 +152,6 @@ func (m *Model) editHeldField() {
 	}
 }
 
-// promptHeldQuantity asks for the held row's new count, prefilled with
-// the current one.
 func (m *Model) promptHeldQuantity() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -209,7 +174,6 @@ func (m *Model) promptHeldQuantity() {
 	}
 }
 
-// parseQuantity reads a held count: a plain whole number, zero removing.
 func parseQuantity(text string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(text))
 	if err != nil || n < 0 || n > 9999 {
@@ -218,10 +182,6 @@ func parseQuantity(text string) (int, error) {
 	return n, nil
 }
 
-// setHeldQuantity commits a held row's new count, undo included — the
-// shared tail of the overlay's +/- and its quantity prompt. The returned
-// command is reloadDetail's comp refetch, and dropping it is what left the
-// COMPS section on "reading today's vendor quotes…" with no read in flight.
 func (m *Model) setHeldQuantity(h store.Holding, want int, name string) tea.Cmd {
 	if want == h.Quantity {
 		return nil
@@ -253,10 +213,6 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) tea.Cmd 
 	return cmd
 }
 
-// promptHeldFinish asks for the held row's finish — the fix for copies
-// recorded in the wrong one (an import that missed a foil marker). The
-// vocabulary is the enum the database speaks: - (plain nonfoil), foil,
-// etched.
 func (m *Model) promptHeldFinish() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -279,25 +235,19 @@ func (m *Model) promptHeldFinish() {
 	}
 }
 
-// parseFinish reads a finish: the stored enum, with the display dash (or
-// nothing) accepted for plain nonfoil.
-func parseFinish(text string) (string, error) {
+func parseFinish(text string) (finish.Finish, error) {
 	switch strings.ToLower(strings.TrimSpace(text)) {
 	case "-", "", "nonfoil", "non-foil":
-		return "nonfoil", nil
+		return finish.Nonfoil, nil
 	case "foil":
-		return "foil", nil
+		return finish.Foil, nil
 	case "etched":
-		return "etched", nil
+		return finish.Etched, nil
 	}
-	return "", fmt.Errorf("a finish is - (plain), foil, or etched")
+	return finish.Finish{}, fmt.Errorf("a finish is - (plain), foil, or etched")
 }
 
-// moveHeldFinish re-keys the held row's finish, merging with copies already
-// held in the target finish, undo included. The overlay's cursor follows
-// the row to its new finish, and the links refresh with it — Card
-// Kingdom's page is per finish.
-func (m *Model) moveHeldFinish(h store.Holding, name, want string) tea.Cmd {
+func (m *Model) moveHeldFinish(h store.Holding, name string, want finish.Finish) tea.Cmd {
 	if want == h.Finish {
 		m.status, m.statusErr = "already "+ui.Finish(h.Finish), false
 		return nil
@@ -334,10 +284,6 @@ func (m *Model) moveHeldFinish(h store.Holding, name, want string) tea.Cmd {
 	return cmd
 }
 
-// promptHeldCondition asks what condition the held row's copies are in — the
-// one fact about a card that hoard cannot learn for itself. A camera cannot
-// judge wear, and no feed carries it, so this prompt is where an assessment
-// enters the hoard at all.
 func (m *Model) promptHeldCondition() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -360,9 +306,6 @@ func (m *Model) promptHeldCondition() {
 	}
 }
 
-// conditionInput prefills the prompt. An unassessed row starts empty rather
-// than with the word "unknown": the field is being asked to state something,
-// and the commonest answer is a grade, not a re-assertion that nobody knows.
 func conditionInput(condition string) string {
 	if condition == "" || condition == store.ConditionUnknown {
 		return ""
@@ -370,13 +313,6 @@ func conditionInput(condition string) string {
 	return condition
 }
 
-// parseCondition reads a condition: the stored vocabulary, the words the
-// marketplaces spell it with, and the display dash (or nothing) for unassessed.
-//
-// It deliberately accepts more than it stores. Somebody typing here has just
-// read "Lightly Played" off a Moxfield page or a seller's listing, and refusing
-// the words in favour of the two-letter code would be pedantry — the same
-// generosity normCondition shows a CSV.
 func parseCondition(text string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(text)) {
 	case "-", "", "unknown", "?":
@@ -396,10 +332,6 @@ func parseCondition(text string) (string, error) {
 	return "", fmt.Errorf("a condition is nm, lp, mp, hp, dmg, or - for unknown")
 }
 
-// moveHeldCondition re-keys the held row's condition, merging with copies
-// already held in the target condition, undo included. The mirror of
-// moveHeldFinish, down to the two-step undo: the merge destroyed a quantity
-// that has to come back before the source row does.
 func (m *Model) moveHeldCondition(h store.Holding, name, want string) tea.Cmd {
 	from := h.Condition
 	if from == "" {
@@ -442,9 +374,6 @@ func (m *Model) moveHeldCondition(h store.Holding, name, want string) tea.Cmd {
 	return cmd
 }
 
-// promptHeldSet asks which set the held row should be attributed to — the
-// fix for a printing that resolved to the wrong set on import (a name-only
-// decklist line lands on whatever printing Scryfall answers with).
 func (m *Model) promptHeldSet() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -469,8 +398,6 @@ func (m *Model) promptHeldSet() {
 	}
 }
 
-// repointHeldSet moves the held row onto the named set's printing of the
-// same card, re-pointing the overlay at the result.
 func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 	code := strings.ToLower(strings.TrimSpace(text))
 	if strings.EqualFold(code, h.SetCode) {
@@ -511,13 +438,10 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 		name, ui.Printing(pick.Set, pick.CollectorNumber), h.ContainerName)
 	m.statusErr = false
 	m.refresh()
-	// reloadDetail's comp fetch answers the printing the overlay showed;
-	// loadPrinting below re-points at the corrected one and marks its comps
-	// pending, so that fetch must run too — dropping either left the COMPS
-	// section pending forever on whichever printing lost its command.
+
 	var cmds []tea.Cmd
 	cmds = append(cmds, m.reloadDetail())
-	// The overlay follows the corrected printing, art included.
+
 	d := m.detail
 	if d == nil {
 		return tea.Batch(cmds...)
@@ -540,8 +464,6 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// lowestPrintIn picks the set's printing with the lowest collector number
-// — deterministic; ok=false when the set never printed the card.
 func lowestPrintIn(prints []scryfall.Card, setCode string) (scryfall.Card, bool) {
 	var best scryfall.Card
 	found := false
@@ -556,8 +478,6 @@ func lowestPrintIn(prints []scryfall.Card, setCode string) (scryfall.Card, bool)
 	return best, found
 }
 
-// collectorLess orders collector numbers numerically where they are
-// numbers, falling back to the string for suffixed forms ("142a").
 func collectorLess(a, b string) bool {
 	an, aerr := strconv.Atoi(a)
 	bn, berr := strconv.Atoi(b)
@@ -572,7 +492,6 @@ func collectorLess(a, b string) bool {
 	return a < b
 }
 
-// promptHeldLocation asks which binder the held row should live in.
 func (m *Model) promptHeldLocation() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -593,8 +512,6 @@ func (m *Model) promptHeldLocation() {
 	}
 }
 
-// moveHeldTo moves the held row into another binder, merging with copies
-// already there.
 func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {
 	want := strings.TrimSpace(text)
 	if strings.EqualFold(want, h.ContainerName) {
@@ -613,8 +530,7 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {
 			break
 		}
 	}
-	// The reserved aliases keep meaning the default binder after a rename,
-	// matching what `--binder Binder` and imports resolve to.
+
 	if target == nil && store.IsReservedBinderName(want) {
 		for i := range binders {
 			if binders[i].IsDefault {
@@ -649,8 +565,6 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {
 	return m.reloadDetail()
 }
 
-// askHeldRemoval stages the removal of the held row under the detail
-// cursor — y/n first, like every other remove.
 func (m *Model) askHeldRemoval() {
 	h, ok := m.heldEditable()
 	if !ok {
@@ -665,7 +579,6 @@ func (m *Model) askHeldRemoval() {
 	}
 }
 
-// removeHeld zeroes the confirmed held row and records the undo.
 func (m *Model) removeHeld(h store.Holding, name string) tea.Cmd {
 	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, 0)
 	if err != nil {
@@ -688,7 +601,6 @@ func (m *Model) removeHeld(h store.Holding, name string) tea.Cmd {
 	return cmd
 }
 
-// removeDeck deletes the selected deck.
 func (m *Model) removeDeck() {
 	sel := m.selectedContainer()
 	if sel == nil || sel.Kind == store.KindCollection {
@@ -696,8 +608,6 @@ func (m *Model) removeDeck() {
 		return
 	}
 
-	// Read the entries before the delete, not after: RemoveContainer cascades
-	// to card_entries, so afterwards there is nothing left to reconstruct from.
 	views, err := m.store.DeckEntries(sel.ID)
 	if err != nil {
 		m.setError(err)
@@ -719,10 +629,7 @@ func (m *Model) removeDeck() {
 	m.undoable(undoAction{
 		desc: name,
 		undo: func(st Editor) error {
-			// Recreated rather than resurrected: the deck comes back with a new
-			// container id. Its identity to the rest of hoard is (source,
-			// source_id), which the metadata carries, so a later re-import still
-			// updates this deck rather than adding a second copy of it.
+
 			_, err := st.UpsertDeck(meta, entries)
 			return err
 		},
@@ -732,7 +639,6 @@ func (m *Model) removeDeck() {
 	m.refresh()
 }
 
-// undoRecorded restores whatever the last edit changed.
 func (m *Model) undoRecorded() {
 	if m.undoStack == nil {
 		m.status, m.statusErr = "nothing to undo", false
@@ -749,10 +655,4 @@ func (m *Model) undoRecorded() {
 	m.refresh()
 }
 
-// undoable records how to reverse the edit that just happened, replacing any
-// previous one.
 func (m *Model) undoable(a undoAction) { m.undoStack = &a }
-
-// refresh, the re-read every edit here ends with, lives in reread.go beside
-// the r key's reload — the two used to be separate bodies that disagreed
-// about what a re-read costs the reader.

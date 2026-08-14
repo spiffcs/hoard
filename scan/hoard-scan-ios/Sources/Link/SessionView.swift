@@ -1,38 +1,16 @@
-// A scanning session, as the phone sees it.
-//
-// The camera, one number, and a pairing code until the Mac connects. Everything
-// else — the queue, the tally, the review cascade, the running total — is in the
-// terminal, because that is where the person's attention is once the rig is set
-// up and their hands are full of cards.
-//
-// The phone is deliberately not a second control surface. There is no shutter
-// button here: the terminal drives, exactly as it does for the Continuity
-// Camera path, and a phone that also captured would be a third place to drive
-// the session from.
-
 import CardKit
 import ScanWire
 import SwiftUI
 
 struct SessionView: View {
-    /// Owned by the app so the phone advertises whenever it is open, not only
-    /// while this tab is on screen. See HoardScanApp.
     @ObservedObject var link: LinkController
 
     @StateObject private var camera = CameraSession()
     @State private var busy = false
     @State private var lastRead = ""
     @State private var autoPhase: TriggerPhase = .off
-    /// The brackets' own observable leaf. Held here but never read in this
-    /// body, so a rect changing thirty times a second invalidates the overlay
-    /// and nothing else.
     @State private var cue = CardCue()
-    /// Converts a Vision box into preview-layer coordinates. Handed over by the
-    /// preview once its layer exists, because only the layer knows the gravity
-    /// and rotation involved.
     @State private var toLayer: ((CGRect) -> CGRect)?
-    /// Set on the Pair tab. Gates the two readouts that are an account of the
-    /// machinery rather than an answer about a card.
     @AppStorage(DevMode.key) private var developerMode = false
 
     var body: some View {
@@ -45,10 +23,6 @@ struct SessionView: View {
                 onConverter: { toLayer = $0 },
                 onTap: { camera.refocus(at: $0) })
             .aspectRatio(camera.previewAspect, contentMode: .fit)
-            // As an overlay on the fitted preview, not a ZStack sibling: the
-            // converted rect is in the preview layer's coordinates, and the
-            // other children of the ZStack fill the whole screen rather than
-            // the letterboxed picture. A sibling would be off by the letterbox.
             .overlay {
                 GeometryReader { geo in
                     ZStack {
@@ -63,10 +37,6 @@ struct SessionView: View {
                 }
             }
 
-            // Only once a card has actually resolved. Rendering the empty
-            // result on appear flashed a neutral "$—" at launch, which reads as
-            // the app having scanned something before the camera was even up.
-
             VStack {
                 header
                 Spacer()
@@ -77,34 +47,16 @@ struct SessionView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: link.dupOffer)
         }
-        // The result flash is driven by a result arriving, not by the trigger's
-        // hold phase. Hold runs until the card is disturbed, which can be many
-        // seconds; the flash is a moment. Keeping them separate is what makes
-        // "brief flash, then clear" possible without touching the trigger.
         .onChange(of: link.priceSequence) { _, seq in
             cue.tier = link.price.tier
             cue.resultSequence = seq
-            // The sheen rides the result rather than the capture's own read.
-            //
-            // It first fired off `reading.printing.finish`, which is only
-            // whether a star was seen between the set code and the language —
-            // half a second earlier, but a weaker claim. The parent has the
-            // catalog: it knows whether the printing comes in foil at all, and
-            // what it therefore wrote down. A cue about what was recorded
-            // should follow what was recorded.
             if link.price.finish == "foil" {
                 cue.foilSequence += 1
             }
         }
         .statusBarHidden()
-        // Who is arming the trigger. Exactly one of the two, never both: a Mac
-        // that connects mid-session would otherwise inherit a trigger it never
-        // armed and has no record of, and its first `auto off` would look like
-        // it had failed to take effect.
         .onChange(of: link.connected) { _, connected in
             if connected {
-                // Stop, and let the Mac arm it with its own verb. That keeps
-                // the protocol exactly as it was: the terminal drives.
                 camera.stopTrigger()
             } else {
                 camera.startTrigger()
@@ -112,12 +64,6 @@ struct SessionView: View {
         }
         .task {
             await camera.start()
-            // Only the capture hook is wired here: the camera lives on this
-            // screen, so this is the one thing the link cannot do without it.
-            // Starting and stopping the listener is the app's job.
-            // Advertised only once the camera is up, so the feature list
-            // reflects whether a video tap actually attached rather than
-            // promising a trigger that can never fire.
             link.setAutoAvailable(camera.autoAvailable)
             link.onCapture = { shoot(auto: false) }
             link.onAuto = { on in
@@ -129,27 +75,14 @@ struct SessionView: View {
             link.onTorch = { on in camera.setTorch(on ? 1 : 0) }
             camera.onFire = { shoot(auto: true) }
             camera.onTriggerTrace = { link.trace($0) }
-            // The brackets follow the trigger's own cue, converted into the
-            // preview's coordinates by the layer that owns them.
             camera.onCue = { box in
                 cue.rect = box.flatMap { b in toLayer.map { $0(b) } }
             }
             link.onTune = { camera.tuneTrigger(stable: $0, interval: $1) }
-            // Nothing above arms the trigger. `link.onAuto` does, and it is a
-            // verb from the Mac — so with no Mac the camera runs, the preview
-            // is live, and not one frame is ever captured or read. The app
-            // looks like it is working and is doing nothing, which is exactly
-            // what an App Store reviewer with no Mac would have seen.
-            //
-            // So: drive it locally while unpaired. The terminal is still the
-            // authority whenever it is present (see this file's header) —
-            // `linkTookOver` hands control back the moment one connects.
             if !link.connected { camera.startTrigger() }
             camera.onPhase = { phase in
                 autoPhase = phase
                 cue.phase = phase
-                // Only settled phases go on the wire; searching↔stabilizing
-                // flapping is a visual thing, not a protocol event.
                 let wire: String
                 switch phase {
                 case .searching, .stabilizing: wire = "armed"
@@ -159,27 +92,9 @@ struct SessionView: View {
                 }
                 link.sendAuto(state: wire)
             }
-            // Armed last, once every handler above is in place: the trigger can
-            // fire on its first sample, and a fire that arrives before onFire
-            // is assigned is simply lost.
-            //
-            // On by default, rather than waiting to be told. It is what the rig
-            // is for — a phone in a stand exists so cards can be put down
-            // instead of shutters pressed — and the terminal's auto-on can
-            // arrive before this screen has finished setting up, landing on a
-            // nil handler and being dropped. Same race as the ready event, and
-            // the same fix: do not depend on a message whose timing is not ours.
             camera.startTrigger()
-            // The rig is a phone in a stand for hours; letting it sleep
-            // mid-box would end the session silently.
             UIApplication.shared.isIdleTimerDisabled = true
         }
-        // The mirror of .task, which re-wires everything on the way back in.
-        // Every handler above captures this view; left standing after the
-        // screen goes they retain a dead view snapshot — and through its
-        // StateObject, the camera session itself, which kept running into
-        // nothing. Camera off, handlers cleared, and the screen may sleep
-        // again while the camera tab is not the one showing.
         .onDisappear {
             camera.stop()
             link.onCapture = nil
@@ -193,8 +108,6 @@ struct SessionView: View {
         }
     }
 
-    /// Until the Mac connects, the code is the only thing on screen that
-    /// matters, so it is large and unmissable. After that it is out of the way.
     @ViewBuilder private var header: some View {
         if link.connected {
             HStack(spacing: 6) {
@@ -207,10 +120,6 @@ struct SessionView: View {
             .padding(.horizontal)
             .padding(.top, 8)
         } else {
-            // Not connected. The code itself lives on the Pair tab: it is
-            // needed once per Mac and then never again, so keeping it here
-            // would put a six-digit secret on screen for every card scanned
-            // afterwards.
             HStack(spacing: 6) {
                 Circle().fill(.orange).frame(width: 8, height: 8)
                 Text("Not connected").font(.caption)
@@ -222,18 +131,6 @@ struct SessionView: View {
         }
     }
 
-    /// The second-copy offer, made answerable where the operator is looking.
-    /// The terminal has always printed "press + if that's a second copy"; in
-    /// a hands-free session nobody reads the terminal, so every offer of one
-    /// live session expired unseen. Deliberately quiet — the suppression it
-    /// reports was silent by design, and a tone would turn every *correct*
-    /// suppression into a stop.
-    ///
-    /// It carries both answers, because it now waits to be answered. "Second
-    /// copy" is yes; the dismiss X is no, and exists so that a banner which no
-    /// longer withdraws itself mid-question cannot become something to scan
-    /// around. Both are hit targets in a hands-free session where the other
-    /// hand is holding a card, so the X is padded well past its glyph.
     private func dupOfferBanner(_ text: String) -> some View {
         HStack(spacing: 10) {
             Text(text)
@@ -264,35 +161,11 @@ struct SessionView: View {
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 12)
-        // The offer appears mid-pile in peripheral vision; a hard cut reads as
-        // a glitch, and — more to the point — a banner that fades out is one
-        // the operator can tell they are losing rather than one that was
-        // simply gone the next time they looked up.
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var footer: some View {
         VStack(spacing: 6) {
-            // Behind developer mode, both of the lines this footer used to show
-            // unconditionally.
-            //
-            // "Sol Ring  LEA 270" is a check on the reader, and "(nothing read)"
-            // is the same check reporting a miss — neither is something to do
-            // anything about mid-box, and the miss in particular reads as an
-            // error when it is usually just a card halfway onto the mat. The
-            // read goes to the wire and to SessionLog either way, so nothing is
-            // lost by not saying it here.
-            //
-            // Both of those hold *while a Mac is driving*, and only then. The
-            // queue, the tally and the running total are on the terminal, so
-            // the phone repeating the read is noise, and a miss mid-box reads
-            // as an error when it is usually a card halfway onto the mat.
-            //
-            // Unpaired, every one of those premises is false. There is no
-            // terminal, no queue, and nothing else on screen — the read is the
-            // only evidence the app works at all, and hiding it is why an App
-            // Store reviewer would conclude it does not. Shown larger there
-            // for the same reason: it is the answer, not a diagnostic.
             if !link.connected, !lastRead.isEmpty {
                 Text(lastRead)
                     .font(.callout.weight(.semibold).monospaced())
@@ -303,28 +176,10 @@ struct SessionView: View {
             } else if developerMode, !lastRead.isEmpty {
                 Text(lastRead).font(.caption2.monospaced()).lineLimit(1)
             }
-            // The per-capture timing used to sit here — "163ms shutter · 299ms
-            // read · 4032x3024" — on the reasoning that tuning the rig means
-            // watching it change while moving the phone, and that a log on
-            // another machine is not something anyone reads while holding a
-            // card. That reasoning was sound when this was the only copy.
-            //
-            // It no longer is: the same line goes to the wire as a trace and to
-            // SessionLog, which the Pair tab can share off the device. So what
-            // is left on the scanning screen is a developer's readout on a
-            // surface whose whole job is a price, in an app whose whole job is
-            // capture.
-            // Audio can be silently silent in several ways — muted device,
-            // failed engine, wrong session category — and every one of them
-            // looks like "the Mac never sent a result". Say which.
             if !link.sounds.isWorking {
                 Label(link.sounds.status, systemImage: "speaker.slash.fill")
                     .font(.caption2).foregroundStyle(.orange)
             }
-            // The registered card's name, pinned just above the controls so
-            // the operator reads what committed without leaving the pile for
-            // the terminal. Keyed to the same result the chime answers; blank
-            // until the first commit and across review results.
             if let name = link.price.name, !name.isEmpty {
                 Text(name)
                     .font(.callout.weight(.semibold))
@@ -333,9 +188,6 @@ struct SessionView: View {
                     .background(.black.opacity(0.55), in: Capsule())
                     .foregroundStyle(.white)
             }
-            // Hands-free, by hand. The terminal arms this on connect, but a
-            // toggle on the phone is the difference between "it is not working"
-            // and knowing which half is not working.
             HStack(spacing: 10) {
                 if camera.autoAvailable {
                     Button(camera.autoOn ? "Auto: on" : "Auto: off") { camera.toggleAuto() }
@@ -349,12 +201,6 @@ struct SessionView: View {
                         .font(.caption2).foregroundStyle(.orange)
                 }
             }
-            // The trigger's running commentary — "Waiting for a card",
-            // "Holding still…", "Focused · tap to focus" — is a window onto the
-            // state machine, and watching it is tuning work. A camera that
-            // never opened is not: that line stays, in the colour the sound
-            // warning above uses, because it is the only explanation the person
-            // holding the phone would get for a preview that never appears.
             if developerMode {
                 Text(autoStatus)
                     .font(.caption2)
@@ -367,12 +213,9 @@ struct SessionView: View {
         .padding(.bottom, 10)
     }
 
-    /// What the trigger is doing, in words for someone glancing at the phone.
     private var autoStatus: String {
         guard camera.locked else { return camera.status + " · tap to focus" }
         switch autoPhase {
-        // No lens position. It is a normalised float nobody holding cards can
-        // act on, and it reads as a debug overlay left switched on.
         case .off: return "Manual"
         case .searching: return "Waiting for a card"
         case .stabilizing: return "Holding still…"
@@ -381,9 +224,6 @@ struct SessionView: View {
         }
     }
 
-    /// shoot captures, reads, and reports. The read happens here rather than on
-    /// the Mac because the pixels are here — a 24 MP still crossing the wire per
-    /// card would cost more than the whole read does.
     private func shoot(auto: Bool) {
         guard !busy else { return }
         busy = true
@@ -399,25 +239,11 @@ struct SessionView: View {
             guard #available(iOS 18, *) else { return }
             let reading = await readCard(uprighted(frame.image, frame.orientation))
             let read = Date()
-            // The trigger's own account of why it fired travels with the read.
-            // A manual shutter sends none: nobody watched a card arrive, the
-            // operator simply pressed the button.
-            // The measurements ride the same gate as the cause for the same
-            // reason: on a manual shutter there was no trigger decision, so
-            // there are no numbers behind one either.
             link.sendScan(reading, rotation: 0, auto: auto,
                           fireReason: auto ? camera.fireCause : nil,
                           holdDelta: auto ? camera.fireHoldDelta : nil,
                           faceDelta: auto ? camera.fireFaceDelta : nil)
 
-            // Every leg of the loop, in the shape the macOS helper's timing
-            // line already has, so HOARD_SCAN_LOG reads the same whichever
-            // source produced it. The budget to beat is the ledger's ~0.7s from
-            // shutter to result; anything longer and the rhythm stops being
-            // "silence then payoff" and starts being "did it hear me".
-            //
-            // The tap size is here because nothing else reports it, and it
-            // decides whether the trigger is being fed what it was tuned for.
             let ms = { (a: Date, b: Date) in Int(b.timeIntervalSince(a) * 1000) }
             link.trace(
                 "timing shutter=\(ms(started, shutter))ms"
@@ -425,71 +251,15 @@ struct SessionView: View {
                 + " total=\(ms(started, read))ms"
                 + " still=\(frame.image.width)x\(frame.image.height)"
                 + " tap=\(Int(camera.tapSize.width))x\(Int(camera.tapSize.height))"
-                // The read's own stages. `read` alone says the pipeline is slow
-                // without saying where, and the three stages are tuned
-                // independently — locate is segmentation plus the perspective
-                // flatten, whole and band are the two text passes, which run
-                // concurrently, so the read is roughly locate + the larger.
                 + " \(reading.timings.line)"
-                // The border read, every time, verdict or not. This is the
-                // measurement that decides whether it may ever settle a
-                // printing, and the corpus cannot supply it: those images are
-                // scans in which the card fills the frame, so segmentation has
-                // no background to lock onto and trims the border away on
-                // roughly half of them. A live pile is the only source of the
-                // geometry this reader will actually see.
-                // `abstain` names the gate that refused, always. The reader
-                // this replaced reported "between tones" for every failure
-                // except ring uniformity, so two white cards that were actually
-                // rejected on the standoff check read as a tone problem — and
-                // the tuning that followed went looking in the wrong place.
                 + " border=\(reading.border.color ?? "-")"
                 + "(\(reading.border.source ?? reading.border.abstain))"
                 + String(format: " t=%.2f standoff=%.2f anchor=%@ scale=%.2f",
                          reading.border.t, reading.border.standoff,
                          reading.border.anchorKind, reading.border.scaleAgreement))
-            // Hand the clock to the link so the round trip back — resolve on the
-            // Mac, price returned — can be closed out when the result lands.
             link.markCaptureSent(at: started, localMS: ms(started, read))
-            // A capture that read something proves the lens is where the cards
-            // are; one that read nothing counts toward thawing it. This is what
-            // makes locking safe — without it a lens locked on an empty desk
-            // stays there and every card afterwards is soft.
-            // After the read and after the event: a multi-megabyte frame must
-            // never sit in front of the result the operator is waiting to hear.
             link.sendStill(frame.image)
             camera.focus(afterGoodRead: !reading.title.isEmpty)
-            // The set row exactly as the card prints it: set code, collector
-            // number, and the separator glyph — ★ for foil, • for nonfoil.
-            //
-            // An empty finish renders **nothing**, and that is the whole point
-            // of the three-way. `Printing.finish` is empty when the frame
-            // prints no marker at all or the glyph was unreadable, and
-            // Collector.swift is emphatic that empty is not nonfoil: old
-            // frames carry no marker, so drawing a dot from silence would show
-            // as read something that was never printed — and foil is worth a
-            // multiple of nonfoil, so that is the expensive direction to guess
-            // in.
-            //
-            // **Only the printed glyph.** `finish` has two sources and they
-            // are not the same kind of statement. "separator" is the set row's
-            // marker read as text — the card said so. "sparkle-<channel>" is
-            // BorderKit inferring foil from a retro frame's starburst, which
-            // docs/scanner-limits.md §6 measures at 53% recall overall and
-            // between 23% and 69% across three rigs on identical code.
-            //
-            // This line is an account of what the camera *read*, shown to
-            // someone holding the card, who can see for themselves whether it
-            // is foil. Rendering an inference in the same glyph as a reading
-            // would make the two indistinguishable at exactly the moment the
-            // difference is checkable — and a ★ that is wrong a third of the
-            // time is worse than no ★, because it teaches the reader to
-            // believe it.
-            //
-            // The wire is untouched: `link.sendScan` still carries `finish`
-            // and `finishSource` in full, so the Mac keeps treating any
-            // present finish as evidence and nothing about auto-commit
-            // changes. This is a display rule, not a protocol one.
             let printing = reading.printing
             var mark = ""
             if printing.finishSource == "separator" {
@@ -499,19 +269,12 @@ struct SessionView: View {
                 default: break
                 }
             }
-            // Joined by filtering rather than interpolating, so a pre-1998
-            // card — which prints neither a set code nor a collector number —
-            // reads as its bare title instead of a name trailed by the spaces
-            // where two empty fields used to be.
             let detail = [printing.setCode, printing.number, mark]
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
             lastRead = reading.title.isEmpty
                 ? "(nothing read)"
                 : detail.isEmpty ? reading.title : "\(reading.title)  \(detail)"
-            // Park the trigger on what was just shot, whatever fired it. A
-            // manual shutter must do this too or the trigger can double-fire
-            // on the same card.
             camera.triggerCaptureFinished()
         }
     }

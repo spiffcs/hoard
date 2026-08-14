@@ -1,14 +1,12 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// RepointDeckPrintings moves a deck's entries to the mapped printings,
-// merging with rows the target already has, and leaves other containers'
-// entries alone.
 func TestRepointDeckPrintings(t *testing.T) {
 	s := newTestStore(t)
 	wrong := scryfall.Card{ID: "we-hob", Set: "hob", CollectorNumber: "142",
@@ -20,12 +18,12 @@ func TestRepointDeckPrintings(t *testing.T) {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	deckID, err := s.UpsertDeck(DeckMeta{Name: "Guided", Source: "text", SourceID: "guided"},
-		[]Entry{{ScryfallID: "we-hob", Finish: "nonfoil", Board: "main", Quantity: 1}})
+		[]Entry{{ScryfallID: "we-hob", Finish: finish.Nonfoil, Board: "main", Quantity: 1}})
 	if err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
-	// The same wrong printing loose in the binder must not move.
-	if err := s.AddCardFinish(wrong, "nonfoil", 2); err != nil {
+
+	if err := s.AddCardFinish(wrong, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 
@@ -47,11 +45,10 @@ func TestRepointDeckPrintings(t *testing.T) {
 		t.Errorf("binder copies = %v, want the loose holding untouched", held)
 	}
 
-	// Re-pointing onto a printing the deck already holds merges quantities.
 	if _, err := s.UpsertDeck(DeckMeta{Name: "Merge", Source: "text", SourceID: "merge"},
 		[]Entry{
-			{ScryfallID: "we-hob", Finish: "nonfoil", Board: "main", Quantity: 2},
-			{ScryfallID: "we-cma", Finish: "nonfoil", Board: "main", Quantity: 1},
+			{ScryfallID: "we-hob", Finish: finish.Nonfoil, Board: "main", Quantity: 2},
+			{ScryfallID: "we-cma", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
 		}); err != nil {
 		t.Fatalf("UpsertDeck merge fixture: %v", err)
 	}
@@ -71,8 +68,6 @@ func TestRepointDeckPrintings(t *testing.T) {
 	}
 }
 
-// MoveEntry re-points one binder row at another printing or binder,
-// merging quantities, and refuses a row that does not exist.
 func TestMoveEntry(t *testing.T) {
 	s := newTestStore(t)
 	wrong := scryfall.Card{ID: "k-mb2", Set: "mb2", CollectorNumber: "148",
@@ -82,24 +77,23 @@ func TestMoveEntry(t *testing.T) {
 	if err := s.UpsertPrintings([]scryfall.Card{wrong, right}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
-	if err := s.AddCardFinish(wrong, "nonfoil", 3); err != nil {
+	if err := s.AddCardFinish(wrong, finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	binder, err := s.CreateBinder("Trades")
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := s.AddCardFinishTo(binder, right, "nonfoil", 2); err != nil {
+	if err := s.AddCardFinishTo(binder, right, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 	binders, err := s.ListBinders()
 	if err != nil || len(binders) == 0 {
 		t.Fatalf("ListBinders: %v (%d)", err, len(binders))
 	}
-	collectionID := binders[0].ID // the default binder leads
+	collectionID := binders[0].ID
 
-	// Set change in place: the collection's mb2 row becomes md1.
-	prev, err := s.MoveEntry(collectionID, "k-mb2", "nonfoil", ConditionUnknown, collectionID, "k-md1")
+	prev, err := s.MoveEntry(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown, collectionID, "k-md1")
 	if err != nil {
 		t.Fatalf("MoveEntry: %v", err)
 	}
@@ -113,8 +107,7 @@ func TestMoveEntry(t *testing.T) {
 		t.Errorf("collection mb2 = %v, want gone", held)
 	}
 
-	// Container move with merge: 3 collection copies join the binder's 2.
-	prev, err = s.MoveEntry(collectionID, "k-md1", "nonfoil", ConditionUnknown, binder, "k-md1")
+	prev, err = s.MoveEntry(collectionID, "k-md1", finish.Nonfoil, ConditionUnknown, binder, "k-md1")
 	if err != nil {
 		t.Fatalf("MoveEntry to binder: %v", err)
 	}
@@ -129,14 +122,11 @@ func TestMoveEntry(t *testing.T) {
 		t.Fatalf("binder rows = %+v, want one merged row of 5", rows)
 	}
 
-	// A row that does not exist refuses rather than inventing one.
-	if _, err := s.MoveEntry(collectionID, "k-mb2", "nonfoil", ConditionUnknown, binder, "k-md1"); err == nil {
+	if _, err := s.MoveEntry(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown, binder, "k-md1"); err == nil {
 		t.Error("moving a missing holding must refuse")
 	}
 }
 
-// ActivePrintingIDs is the refresh set: held or watched printings only —
-// the orphans a repin leaves behind must not spend network on every run.
 func TestActivePrintingIDs(t *testing.T) {
 	s := newTestStore(t)
 	held := scryfall.Card{ID: "held-1", Set: "uma", CollectorNumber: "1",
@@ -148,10 +138,10 @@ func TestActivePrintingIDs(t *testing.T) {
 	if err := s.UpsertPrintings([]scryfall.Card{held, orphan, watched}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
-	if err := s.AddCardFinish(held, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(held, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddWatch("watched-1", "Watched", "nonfoil", "under", 5); err != nil {
+	if err := s.AddWatch("watched-1", "Watched", finish.Nonfoil, "under", 5); err != nil {
 		t.Fatalf("AddWatch: %v", err)
 	}
 
@@ -168,8 +158,6 @@ func TestActivePrintingIDs(t *testing.T) {
 	}
 }
 
-// MoveEntryFinish re-keys a holding's finish in place, merging with copies
-// already held in the target finish, and refuses a missing source row.
 func TestMoveEntryFinish(t *testing.T) {
 	s := newTestStore(t)
 	card := scryfall.Card{ID: "bb-uma", Set: "uma", CollectorNumber: "85",
@@ -177,10 +165,10 @@ func TestMoveEntryFinish(t *testing.T) {
 	if err := s.UpsertPrintings([]scryfall.Card{card}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
-	if err := s.AddCardFinish(card, "nonfoil", 3); err != nil {
+	if err := s.AddCardFinish(card, finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddCardFinish(card, "foil", 2); err != nil {
+	if err := s.AddCardFinish(card, finish.Foil, 2); err != nil {
 		t.Fatalf("AddCardFinish foil: %v", err)
 	}
 	binders, err := s.ListBinders()
@@ -189,8 +177,7 @@ func TestMoveEntryFinish(t *testing.T) {
 	}
 	cid := binders[0].ID
 
-	// Re-key with merge: 3 nonfoil join the 2 foil.
-	prev, err := s.MoveEntryFinish(cid, "bb-uma", "nonfoil", "foil", ConditionUnknown)
+	prev, err := s.MoveEntryFinish(cid, "bb-uma", finish.Nonfoil, finish.Foil, ConditionUnknown)
 	if err != nil {
 		t.Fatalf("MoveEntryFinish: %v", err)
 	}
@@ -202,16 +189,14 @@ func TestMoveEntryFinish(t *testing.T) {
 		t.Errorf("held = %v, want 5 foil and no nonfoil", held)
 	}
 
-	// Re-key without a target row: the row simply changes key.
-	if _, err := s.MoveEntryFinish(cid, "bb-uma", "foil", "etched", ConditionUnknown); err != nil {
+	if _, err := s.MoveEntryFinish(cid, "bb-uma", finish.Foil, finish.Etched, ConditionUnknown); err != nil {
 		t.Fatalf("MoveEntryFinish to etched: %v", err)
 	}
 	if held := heldByFinish(t, s, "bb-uma"); held["etched"] != 5 {
 		t.Errorf("held = %v, want 5 etched", held)
 	}
 
-	// A missing source refuses.
-	if _, err := s.MoveEntryFinish(cid, "bb-uma", "nonfoil", "foil", ConditionUnknown); err == nil {
+	if _, err := s.MoveEntryFinish(cid, "bb-uma", finish.Nonfoil, finish.Foil, ConditionUnknown); err == nil {
 		t.Error("moving a missing finish row succeeded")
 	}
 }

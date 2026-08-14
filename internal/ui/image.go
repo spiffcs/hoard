@@ -1,18 +1,5 @@
 package ui
 
-// Card images in the terminal. Two tiers render a bitmap:
-//
-//   - Kitty graphics with Unicode placeholders (Ghostty, Kitty, WezTerm):
-//     the image is transmitted once under an id, then placed by ordinary
-//     text cells that carry the id in their foreground color and their
-//     row/column in diacritics. Because the placement is plain text it
-//     flows through View() and survives bubbletea's repaints — the reason
-//     this protocol works under a cell-diffing renderer and cursor-anchored
-//     ones (iTerm2's OSC 1337) do not.
-//   - Halfblock cells (any truecolor terminal, iTerm2 included): each ▀
-//     carries two pixels, top in the foreground, bottom in the background.
-//     Pure text, no protocol, universally safe.
-
 import (
 	"fmt"
 	"image"
@@ -22,24 +9,14 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
-// ImageTier is how capable the terminal is of drawing a bitmap.
 type ImageTier int
 
 const (
-	ImageNone      ImageTier = iota
-	ImageHalfblock           // truecolor cells, two pixels per cell
-	ImageKitty               // kitty graphics protocol, Unicode placeholders
+	ImageNone ImageTier = iota
+	ImageHalfblock
+	ImageKitty
 )
 
-// DetectImageTier reads the environment once, before the program starts —
-// the same moment lipgloss probes the background. Images are on by default
-// wherever the terminal can draw them; HOARD_CARD_IMAGES is the override:
-// "0" or "off" disables them, "kitty" or "halfblock" forces a tier past
-// the fingerprinting, for a terminal this list doesn't know. An explicit
-// force wins over everything — the user typed it this invocation.
-// Otherwise NO_COLOR turns images off with the rest of the color, and
-// multiplexers (tmux, screen) get nothing: graphics passthrough is its
-// own project, and mangled cells are worse than no picture.
 func DetectImageTier() ImageTier {
 	switch os.Getenv("HOARD_CARD_IMAGES") {
 	case "0", "off":
@@ -60,9 +37,7 @@ func DetectImageTier() ImageTier {
 		prog == "ghostty" || prog == "WezTerm" {
 		return ImageKitty
 	}
-	// iTerm2's own protocol is cursor-anchored and gets clobbered by the
-	// renderer's repaints, so it takes the halfblock tier with every other
-	// truecolor terminal.
+
 	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" ||
 		prog == "iTerm.app" {
 		return ImageHalfblock
@@ -70,10 +45,6 @@ func DetectImageTier() ImageTier {
 	return ImageNone
 }
 
-// Halfblocks renders img as cols-wide rows of ▀ cells, two pixels per
-// cell. Row count follows the image's aspect: a terminal cell is about
-// half as wide as it is tall, so a cols×(2·rows) pixel grid has roughly
-// square pixels.
 func Halfblocks(img image.Image, cols int) []string {
 	b := img.Bounds()
 	if cols <= 0 || b.Dx() <= 0 || b.Dy() <= 0 {
@@ -98,43 +69,18 @@ func Halfblocks(img image.Image, cols int) []string {
 
 type rgb struct{ r, g, b uint8 }
 
-// sample scales img to w×h by averaging every source pixel that lands in each
-// destination cell.
-//
-// This took the single pixel at each cell's centre until it was looked at, which
-// is the wrong operation at the ratio this actually runs at. The detail overlay
-// renders a 488×680 card scan into 40×54, so one destination pixel stands for a
-// 12×12 block of 144 source pixels; point-sampling kept one and discarded 143.
-// That is not an approximation of the image, it is a random sample of it, and it
-// showed: a card's rules text came out as black-and-white speckle — each pixel
-// landing on either a glyph stroke or the paper — instead of the even grey a
-// reader reads as text.
-//
-// Averaging first is the cheapest correct answer. Decimating a signal without
-// low-passing it aliases, and a box filter is the simplest low-pass there is.
-// The cost is that this now walks the source once rather than the destination,
-// which for a card scan is a few hundred thousand pixels on image arrival and on
-// resize — unmeasurable next to the fetch that delivered it.
-//
-// Still dependency-free, and unchanged where it was already right: at 1:1 or on
-// an upscale every cell covers exactly one pixel, and an average of one pixel is
-// that pixel.
 func sample(img image.Image, w, h int) [][]rgb {
 	b := img.Bounds()
 	out := make([][]rgb, h)
 	for y := range h {
 		out[y] = make([]rgb, w)
-		// Half-open cell bounds in source space. The +1 floor matters only when
-		// upscaling, where two consecutive edges can land on the same pixel and
-		// the range would otherwise be empty — and an empty range divides by zero.
+
 		y0 := b.Min.Y + y*b.Dy()/h
 		y1 := max(b.Min.Y+(y+1)*b.Dy()/h, y0+1)
 		for x := range w {
 			x0 := b.Min.X + x*b.Dx()/w
 			x1 := max(b.Min.X+(x+1)*b.Dx()/w, x0+1)
 
-			// uint64 rather than uint32: the accumulator holds n×255, and a
-			// large enough source would silently wrap a 32-bit one.
 			var sr, sg, sb, n uint64
 			for sy := y0; sy < y1; sy++ {
 				for sx := x0; sx < x1; sx++ {
@@ -151,12 +97,6 @@ func sample(img image.Image, w, h int) [][]rgb {
 	return out
 }
 
-// KittyImage builds the two halves of a virtual placement: the transmit
-// sequence (written to the terminal once) and the placeholder lines that
-// place it (rendered like any other text). The terminal scales the image
-// into the cols×rows rectangle, so no pixel geometry is needed. Rows
-// follow the image's aspect the same way Halfblocks' do. Retransmitting
-// under the same id replaces the previous image.
 func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit string, placeholder []string, err error) {
 	b := img.Bounds()
 	if cols <= 0 || b.Dx() <= 0 || b.Dy() <= 0 {
@@ -165,10 +105,7 @@ func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit str
 	if cellAspect <= 0 {
 		cellAspect = 2
 	}
-	// Rows from the measured cell aspect, floored: the terminal scales
-	// the image to fit the rect, and an over-tall estimate letterboxes a
-	// blank strip under the card (observed live at Ghostty's ~1:2.3) —
-	// half a row of side margin beats a full row of gap.
+
 	rows := max(int(float64(cols*b.Dy())/(float64(b.Dx())*cellAspect)), 1)
 
 	var buf strings.Builder
@@ -177,7 +114,7 @@ func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit str
 		Transmission:     kitty.Direct,
 		Format:           kitty.PNG,
 		ID:               id,
-		Quite:            2, // silence OK and error replies; nobody is reading them
+		Quite:            2,
 		Chunk:            true,
 		VirtualPlacement: true,
 		Columns:          cols,
@@ -189,9 +126,6 @@ func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit str
 	return buf.String(), kittyPlaceholder(id, cols, rows), nil
 }
 
-// kittyPlaceholder renders the placement cells: each is U+10EEEE carrying
-// its row and column in diacritics, with the image id in the foreground
-// color (a 256-color index — ids stay under 256 by construction).
 func kittyPlaceholder(id, cols, rows int) []string {
 	lines := make([]string, rows)
 	for r := range rows {

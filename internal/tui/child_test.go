@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -25,16 +26,10 @@ func TestChildCtrlDSetsDoneAndSwallowsQuit(t *testing.T) {
 	}
 }
 
-// The scanning view advertises ctrl+d, and ctrl+d ends the session from it
-// without a gate — the pile is finished, the operator's hands are full, and
-// the receipt for everything committed is already on disk.
 func TestCaptureAdvertisesAndHonoursCtrlD(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// Just through the new entry: the line wraps at the terminal's width, so
-	// asserting across the esc/ctrl+c tail would be asserting on where the
-	// wrap happens to fall.
 	if v := m.View(); !strings.Contains(v, "c close camera · ctrl+d done") {
 		t.Fatalf("capture help line is missing ctrl+d:\n%s", v)
 	}
@@ -48,16 +43,13 @@ func TestCaptureAdvertisesAndHonoursCtrlD(t *testing.T) {
 	}
 }
 
-// Embedded, ctrl+d pauses the pile rather than dropping it: the unanswered
-// queue is handed to the parent, and the next cascade opens holding it. The
-// receipt says nothing about a discard, because nothing was discarded.
 func TestCtrlDPausesTheQueueWhenEmbedded(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	c.m.review = []queueItem{
 		{id: 4, canonical: "Sol Ring", captureSeq: 7},
 		{id: 5, ocrLine: "brainstorrn", captureSeq: 8},
 	}
-	// A card mid-walk belongs to the queue too — it was taken off it.
+
 	c.m.current = &queueItem{id: 3, canonical: "Counterspell", captureSeq: 6}
 
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
@@ -77,7 +69,6 @@ func TestCtrlDPausesTheQueueWhenEmbedded(t *testing.T) {
 		}
 	}
 
-	// The next session opens on the same cards, says so, and offers the door.
 	next := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	next.Restore(p)
 	next, _ = next.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
@@ -91,18 +82,13 @@ func TestCtrlDPausesTheQueueWhenEmbedded(t *testing.T) {
 	if !strings.Contains(v, "tab review queue (3)") {
 		t.Fatalf("the restored queue has no advertised door:\n%s", v)
 	}
-	// A new capture must not be able to claim a restored card's identity: ids
-	// key the queue, and captureSeq is what tells a fanned playset from an
-	// un-swapped pile.
+
 	if next.m.nextResolveID < 5 || next.m.captureSeq < 8 {
 		t.Fatalf("counters not advanced past the restored cards: id=%d seq=%d",
 			next.m.nextResolveID, next.m.captureSeq)
 	}
 }
 
-// The restored queue is reachable and leaveable with no camera anywhere in
-// the picture — tab opens it, and backing out lands on the name prompt
-// rather than a capture view for a session that isn't running.
 func TestRestoredQueueWalksFromTheNamePrompt(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	c.Restore(Pending{items: []queueItem{{id: 1, canonical: "Sol Ring"}}})
@@ -121,9 +107,6 @@ func TestRestoredQueueWalksFromTheNamePrompt(t *testing.T) {
 	}
 }
 
-// The leave gate opens with the count of what is already on disk, in the
-// same green the auto-add receipts use — esc is asked by people who want to
-// know whether leaving costs them anything, and the answer is usually no.
 func TestLeaveGateStatesWhatWasSaved(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.addedCount = 12
@@ -140,8 +123,6 @@ func TestLeaveGateStatesWhatWasSaved(t *testing.T) {
 		t.Fatalf("the gate lost its prompt:\n%s", v)
 	}
 
-	// One card is one card: a gate that reads "1 cards" undercuts the
-	// reassurance it exists to give.
 	one := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	one.addedCount = 1
 	mm, _ = one.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -150,8 +131,6 @@ func TestLeaveGateStatesWhatWasSaved(t *testing.T) {
 	}
 }
 
-// esc walks the leave gate: the first press asks, a single y leaves, and
-// any other key stays in the session.
 func TestChildEscGatesLeavingBehindY(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -161,12 +140,12 @@ func TestChildEscGatesLeavingBehindY(t *testing.T) {
 	if v := c.View(); !strings.Contains(v, "quit add session?") {
 		t.Fatalf("no leave gate on screen:\n%s", v)
 	}
-	// A stray key cancels back to the session.
+
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if c.Done() {
 		t.Fatal("a stray key on the gate must stay")
 	}
-	// esc then y leaves.
+
 	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	c, cmd := c.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !c.Done() {
@@ -219,7 +198,7 @@ func TestChildCloseRecordsDiscardsAndClosesSession(t *testing.T) {
 		t.Fatalf("discarded entries = %d, want 1", got)
 	}
 
-	c.Close() // idempotent: nothing to double-count
+	c.Close()
 	if got := c.Summary().Count("discarded"); got != 1 {
 		t.Fatalf("second Close added entries: discarded = %d", got)
 	}
@@ -251,11 +230,8 @@ func TestChildUpdateKeepsNonQuitCmds(t *testing.T) {
 	}
 }
 
-// price is a test-literal pointer.
 func price(v float64) *float64 { return &v }
 
-// pumpChild executes a command tree into the child, dropping animation
-// ticks (feeding one back re-arms a sleeping timer).
 func pumpChild(c Child, cmd tea.Cmd) Child {
 	queue := []tea.Cmd{cmd}
 	for i := 0; i < 64 && len(queue) > 0; i++ {
@@ -278,8 +254,6 @@ func pumpChild(c Child, cmd tea.Cmd) Child {
 	return c
 }
 
-// A manual add of a priced card lands in the running value, the tally
-// fragment, and the accessor.
 func TestAddedValueAccumulates(t *testing.T) {
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": {
 		{ID: "a", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
@@ -305,13 +279,12 @@ func TestAddedValueAccumulates(t *testing.T) {
 	}
 }
 
-// confirmAdd weighs the value by quantity.
 func TestConfirmAddWeighsQty(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	card := scryfall.Card{ID: "a", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil"}, PriceUSD: price(2.00)}
 	m.chosen = &card
-	m.finish = "nonfoil"
+	m.finish = finish.Nonfoil
 	m.qtyInput.SetValue("3")
 	mm, _ := m.confirmAdd()
 	m = mm.(model)
@@ -320,8 +293,6 @@ func TestConfirmAddWeighsQty(t *testing.T) {
 	}
 }
 
-// An unpriced card counts in the tally but adds no value, and the money
-// fragment stays hidden rather than reading "$0.00".
 func TestAddedValueHiddenWhenUnpriced(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.addedCount = 2
@@ -330,7 +301,6 @@ func TestAddedValueHiddenWhenUnpriced(t *testing.T) {
 	}
 }
 
-// Auto-commits accumulate value too, weighted by the printing's finish.
 func TestAutoCommitAccumulatesValue(t *testing.T) {
 	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
 		Candidates: []string{"Sol Ring"}, SetCode: "MH3", CollectorNumber: "123",
@@ -360,8 +330,6 @@ func TestAutoCommitAccumulatesValue(t *testing.T) {
 	}
 }
 
-// Embedded, the name prompt's help says esc goes back to the browser;
-// standalone it says quit — the same key, labeled for what it does.
 func TestEscHelpWording(t *testing.T) {
 	c := NewChild(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	if v := c.View(); !strings.Contains(v, "ctrl+d done · esc back") {

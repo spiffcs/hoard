@@ -11,7 +11,7 @@ the newest versioned file.
 ```console
 $ sqlite3 ~/Library/Application\ Support/hoard/hoard.db \
     'PRAGMA user_version; PRAGMA application_id;'
-28
+30
 1213157956
 ```
 
@@ -40,9 +40,9 @@ ecosystem's bulk data, so nothing has to match on names.
 - **Generated, never hand-edited.** The source of truth is the migration list
   in `internal/store/migrate.go`; `make generate-sqlite-schema` migrates an
   empty database and dumps it, and a test fails if the files drift.
-- **Released files are immutable.** Migrations are append-only and write a new
-  file, so a consumer holding an old database can fetch the exact schema it was
-  written against.
+- **Not yet stable.** Until 1.0, migrations may be rewritten and released files
+  replaced, so a database written by an older build is not guaranteed to open.
+  Read `schema-latest.sql` and expect it to move.
 
 ## Do not build on catalog.db
 

@@ -1,16 +1,3 @@
-// Package tcgcsv reads TCGplayer prices for the products the MTGJSON feed
-// never carries: the treated foils (ripple, surge, textured, …) and
-// etched cards TCGplayer sells as separate products.
-//
-// tcgcsv.com republishes TCGplayer's public catalog daily — no key, plain
-// JSON. Three reads matter here: the group list (one group per set), a
-// group's current prices, and the daily archives of the same. Everything
-// is keyed by TCGplayer product id; mapping a printing to its treated
-// product id is the caller's business (MTGJSON identifiers carry it).
-//
-// Failures here must stay soft at the call site: this is an overlay over
-// the primary feed, and a missing overlay means a dash, not a broken
-// price update.
 package tcgcsv
 
 import (
@@ -32,25 +19,17 @@ import (
 	"github.com/spiffcs/hoard/internal/buildinfo"
 )
 
-// magicCategory is TCGplayer's category id for Magic: the Gathering.
 const magicCategory = 1
 
-// apiBase is the tcgcsv file root, a var for tests.
 var apiBase = "https://tcgcsv.com"
 
-// today is a var so tests can pin the cache key.
 var today = func() string { return time.Now().Format("2006-01-02") }
 
-// Options configures a fetch.
 type Options struct {
-	// BaseURL overrides the tcgcsv root — tests. Empty means the real one.
 	BaseURL string
-	// CacheDir, when non-empty, keeps downloads: current files day-stamped
-	// (pruned like the MTGJSON cache), archive extractions date-keyed and
-	// immutable (pruned past archiveKeepDays).
+
 	CacheDir string
-	// Note receives a line about a route this package chose or abandoned —
-	// narration a caller may show and may ignore. Nil is silent.
+
 	Note func(string)
 }
 
@@ -69,11 +48,6 @@ func (o Options) base() string {
 
 var httpClient = &http.Client{Timeout: 2 * time.Minute}
 
-// The request pacer: tcgcsv is a volunteer mirror, and the archive sweep
-// with concurrent workers is exactly the burst shape volunteer
-// infrastructure hates. No two request *starts* come closer than
-// requestGap; cache hits never touch the pacer, so a fully cached day
-// costs zero waits along with its zero requests. Vars so tests pin them.
 var (
 	requestGap = 250 * time.Millisecond
 	paceMu     sync.Mutex
@@ -81,7 +55,6 @@ var (
 	paceSleep  = time.Sleep
 )
 
-// pace blocks until this request start is requestGap after the previous one.
 func pace() {
 	paceMu.Lock()
 	wait := requestGap - time.Since(lastStart)
@@ -92,9 +65,6 @@ func pace() {
 	paceMu.Unlock()
 }
 
-// get fetches one URL's body, through the day cache when cacheName is
-// non-empty. Day-cached entries from earlier dates are removed as a side
-// effect, mirroring the MTGJSON cache's convention.
 func get(ctx context.Context, o Options, url, cacheName string) ([]byte, error) {
 	var cachePath string
 	if o.CacheDir != "" && cacheName != "" {
@@ -130,9 +100,6 @@ func get(ctx context.Context, o Options, url, cacheName string) ([]byte, error) 
 	return b, nil
 }
 
-// cleanDayCache removes day-stamped entries from earlier dates. Archive
-// extractions live under archive/ and are immutable, so they are pruned
-// by age instead (pruneArchive).
 func cleanDayCache(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -147,9 +114,6 @@ func cleanDayCache(dir string) {
 	}
 }
 
-// Groups maps upper-cased set abbreviations to TCGplayer group ids for
-// the Magic category. Some Scryfall set codes have no group; callers skip
-// those.
 func Groups(ctx context.Context, o Options) (map[string]int, error) {
 	b, err := get(ctx, o, fmt.Sprintf("%s/tcgplayer/%d/groups", o.base(), magicCategory), "groups.json")
 	if err != nil {
@@ -173,8 +137,6 @@ func Groups(ctx context.Context, o Options) (map[string]int, error) {
 	return out, nil
 }
 
-// priceRows is the JSON shape of one group's price list — identical on
-// the current endpoint and inside the archives.
 type priceRows struct {
 	Results []struct {
 		ProductID   int     `json:"productId"`
@@ -186,38 +148,17 @@ type priceRows struct {
 	} `json:"results"`
 }
 
-// Quote is one product's figures for a day, as TCGplayer publishes them.
-//
-// Market and the ask figures answer different questions and can disagree
-// without either being wrong. Market is an average over *completed sales*;
-// Low, Mid and High describe the *listings* standing right now. An illiquid
-// card whose last sale undercuts today's cheapest listing is ordinary — 39
-// of 2,604 owned products quote Market under Low, and 38 of those are
-// healthy. Only the magnitude separates that from a market price taken over
-// no sales at all, so the asks are carried here rather than dropped: a
-// reader that sees only Market cannot tell the two apart.
 type Quote struct {
-	// Market is the volume-weighted average of recent sales, and is the
-	// figure Scryfall republishes as its USD price.
 	Market float64
-	// Low, Mid and High describe the live listings: the cheapest ask, the
-	// midpoint, and the dearest. Low is what a buyer would actually pay.
+
 	Low, Mid, High float64
 }
 
-// The two subtypes TCGplayer files a Magic listing under. One product id
-// carries both, so a printing's foil and non-foil prices arrive as sibling
-// rows rather than as separate products.
 const (
 	Normal = "Normal"
 	Foil   = "Foil"
 )
 
-// allQuotes decodes a price list to productID → subtype → quote, keeping
-// both subtypes apart.
-//
-// A row with no market price contributes nothing, as it always has: it is
-// not a price.
 func allQuotes(b []byte) (map[string]map[string]Quote, error) {
 	var d priceRows
 	if err := json.Unmarshal(b, &d); err != nil {
@@ -242,15 +183,6 @@ func allQuotes(b []byte) (map[string]map[string]Quote, error) {
 	return out, nil
 }
 
-// foilQuotes reduces a price list to productID → quote, preferring each
-// product's Foil row. A treated product usually lists only as Foil; its
-// Normal row, when that is all there is, still describes the treated
-// product, so it stands in.
-//
-// This is the overlay's view, where the product id already names the treated
-// foil and the subtype is noise. A caller that needs to tell a printing's foil
-// price from its non-foil one wants GroupQuotes instead — collapsing the two
-// here would hand it the foil figure for both.
 func foilQuotes(b []byte) (map[string]Quote, error) {
 	all, err := allQuotes(b)
 	if err != nil {
@@ -269,8 +201,6 @@ func foilQuotes(b []byte) (map[string]Quote, error) {
 	return out, nil
 }
 
-// GroupPrices returns today's quote per product id for one group, Foil
-// rows preferred.
 func GroupPrices(ctx context.Context, o Options, groupID int) (map[string]Quote, error) {
 	b, err := groupBody(ctx, o, groupID)
 	if err != nil {
@@ -279,9 +209,6 @@ func GroupPrices(ctx context.Context, o Options, groupID int) (map[string]Quote,
 	return foilQuotes(b)
 }
 
-// GroupQuotes returns today's quotes for one group with the Normal and Foil
-// subtypes kept apart, keyed product id → subtype. Same download and same day
-// cache as GroupPrices, so asking for both costs one fetch.
 func GroupQuotes(ctx context.Context, o Options, groupID int) (map[string]map[string]Quote, error) {
 	b, err := groupBody(ctx, o, groupID)
 	if err != nil {
@@ -296,27 +223,15 @@ func groupBody(ctx context.Context, o Options, groupID int) ([]byte, error) {
 		fmt.Sprintf("prices-%d.json", groupID))
 }
 
-// archiveKeepDays bounds the immutable archive-extraction cache: the
-// MTGJSON archive reaches back ninety days, so anything older can never
-// be asked for again.
 const archiveKeepDays = 100
 
-// readArchiveMembers opens a downloaded archive and returns the bodies of
-// the wanted members, keyed by member name; wanted members the archive
-// lacks are simply absent. One pass in stored order, so a solid PPMd
-// stream decodes once, not once per member. A var so tests can stub it —
-// no Go PPMd writer exists to build a fixture archive with (the reading
-// itself is proven against the live archives).
 var readArchiveMembers = func(path string, want map[string]bool) (map[string][]byte, error) {
 	r, err := sevenzip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", filepath.Base(path), err)
 	}
 	defer r.Close()
-	// The archive's own size, which bounds what any member of it may expand to.
-	// A stat failure leaves archiveBytes at zero, and a zero limit would refuse
-	// every member — so fall back to a fixed ceiling rather than turning a
-	// missing stat into a broken price update.
+
 	var archiveBytes int64 = 16 << 20
 	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
 		archiveBytes = fi.Size()
@@ -330,14 +245,7 @@ var readArchiveMembers = func(path string, want map[string]bool) (map[string][]b
 		if err != nil {
 			return nil, fmt.Errorf("extracting %s: %w", f.Name, err)
 		}
-		// The only fully-buffered decompression in hoard: this one reads a
-		// member into memory rather than streaming it, so an archive built to
-		// expand has nowhere to be caught downstream. The whole archive is
-		// ~4 MB, and MaxExpansion of that is generous for a member of it.
-		//
-		// The bound is on the archive's size ON DISK, which is a fact about a
-		// file already downloaded rather than a claim in a header — there is no
-		// compressed-side reader to count here, because sevenzip owns it.
+
 		b, err := io.ReadAll(boundedio.Limit(rc, archiveBytes*boundedio.MaxExpansion,
 			"the price archive member "+f.Name))
 		rc.Close()
@@ -349,11 +257,6 @@ var readArchiveMembers = func(path string, want map[string]bool) (map[string][]b
 	return out, nil
 }
 
-// ArchivePrices returns one past day's quote per product id for each
-// requested group, from that day's archive. The archive downloads once
-// (~4 MB) and only the requested groups' members are extracted and
-// kept; the 7z itself is deleted after extraction. Groups absent from
-// that day's archive come back missing, not as an error.
 func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) (map[int]map[string]Quote, error) {
 	if o.CacheDir == "" {
 		return nil, fmt.Errorf("archive reads need a cache directory")
@@ -374,10 +277,7 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 		}
 		prices, err := foilQuotes(b)
 		if err != nil {
-			// A cache file that does not parse is not an answer, it is damage
-			// (a torn write from before these were atomic, a bad disk). Kept,
-			// it would stand in for this group-day forever — a permanent hole
-			// in the treated-foil history — so it is deleted and re-fetched.
+
 			os.Remove(path)
 			missing = append(missing, gid)
 			continue
@@ -412,16 +312,13 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 	for member, gid := range byMember {
 		b := members[member]
 		if len(b) == 0 {
-			// This day's archive has no such group — remember the absence so
-			// the next backfill does not re-download the archive to relearn it.
+
 			writeFileAtomic(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), []byte("{}"))
 			continue
 		}
 		prices, err := foilQuotes(b)
 		if err != nil {
-			// A member that does not parse is a bad archive day. Left uncached
-			// so a later, repaired archive can still answer; caching it would
-			// only feed the delete-and-refetch path above every run.
+
 			continue
 		}
 		writeFileAtomic(filepath.Join(dir, fmt.Sprintf("%s-%d.json", date, gid)), b)
@@ -431,12 +328,6 @@ func ArchivePrices(ctx context.Context, o Options, date string, groupIDs []int) 
 	return out, nil
 }
 
-// writeFileAtomic lands b at path via a same-directory temp and rename — the
-// mtgjson cache's pattern. The extraction files written with it are treated as
-// authoritative by presence, so a ctrl-C or full disk mid-write must leave
-// nothing rather than truncated JSON claiming to be that group-day's answer.
-// Best-effort like the writes it replaces: the caller already holds the bytes,
-// so a failed cache write costs a re-download, not the result.
 func writeFileAtomic(path string, b []byte) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -456,8 +347,6 @@ func writeFileAtomic(path string, b []byte) {
 	}
 }
 
-// pruneArchive removes extractions older than archiveKeepDays; their
-// dates lead the filename, so age is a string comparison.
 func pruneArchive(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -1,8 +1,3 @@
-# A shim over the Taskfile: `make <anything>` bootstraps binny + task into
-# .tool/ and forwards, so every `make ...` command in the docs keeps working.
-# The real targets — Go and Swift both — live in Taskfile.yaml; `make help`
-# (or `task -l`) lists them.
-
 OWNER = spiffcs
 PROJECT = hoard
 
@@ -10,18 +5,12 @@ TOOL_DIR = .tool
 BINNY = $(TOOL_DIR)/binny
 TASK = $(TOOL_DIR)/task
 
-# No bare-`make` build: there is no `default` task to forward to, so an
-# argument-less `make` lists what is available rather than erroring out of task.
 .DEFAULT_GOAL := help
 
-## Bootstrapping targets #################################
-
-# note: we need to assume that binny and task have not already been installed
 $(BINNY):
 	@mkdir -p $(TOOL_DIR)
 	@curl -sSfL https://get.anchore.io/binny | sh -s -- -b $(TOOL_DIR)
 
-# note: we need to assume that binny and task have not already been installed
 .PHONY: task
 $(TASK) task: $(BINNY)
 	@$(BINNY) install task -q
@@ -30,14 +19,10 @@ $(TASK) task: $(BINNY)
 ci-bootstrap-go:
 	go mod download
 
-# this is a bootstrapping catch-all, where if the target doesn't exist, we'll ensure the tools are installed and then try again
 %:
 	@make --silent $(TASK)
 	@$(TASK) $@
 
-## Shim targets #################################
-
-# for those of us that can't seem to kick the habit of typing `make ...` lets wrap the superior `task` tool
 TASKS := $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' | tr '\n' ' '" ) $(shell bash -c "test -f $(TASK) && NO_COLOR=1 $(TASK) -l | grep 'aliases:' | cut -d ':' -f 3 | tr '\n' ' ' | tr -d ','")
 
 .PHONY: $(TASKS)

@@ -1,7 +1,5 @@
 package tui
 
-// The name step's command drawer, and the finish it made consistent.
-
 import (
 	"context"
 	"strings"
@@ -25,8 +23,6 @@ func typeRunes(m model, s string) model {
 	return m
 }
 
-// ':' is the palette key, but the field under it is what this view is mostly
-// for — so it only opens the drawer when there is nothing typed yet.
 func TestColonOpensPaletteOnlyOnAnEmptyField(t *testing.T) {
 	m := paletteModel(t, &fakeScanner{})
 	m = typeRunes(m, ":")
@@ -44,7 +40,6 @@ func TestColonOpensPaletteOnlyOnAnEmptyField(t *testing.T) {
 	}
 }
 
-// An empty query lists every applicable command, in registry order.
 func TestPaletteListsScanPairDone(t *testing.T) {
 	m := paletteModel(t, &fakeScanner{})
 	m = typeRunes(m, ":")
@@ -61,9 +56,6 @@ func TestPaletteListsScanPairDone(t *testing.T) {
 	}
 }
 
-// Without a scanner there is nothing to scan or pair with, so those rows do
-// not list at all — the palette answers "what can I do", and a row that only
-// apologises is a worse answer than no row.
 func TestPaletteHidesScanningWithoutAScanner(t *testing.T) {
 	m := paletteModel(t, nil)
 	m = typeRunes(m, ":")
@@ -77,7 +69,6 @@ func TestPaletteHidesScanningWithoutAScanner(t *testing.T) {
 	}
 }
 
-// Typing narrows, and enter runs whatever is highlighted.
 func TestPaletteNarrowsAndRunsPair(t *testing.T) {
 	m := paletteModel(t, &fakeScanner{})
 	m = typeRunes(m, ":pair")
@@ -94,7 +85,6 @@ func TestPaletteNarrowsAndRunsPair(t *testing.T) {
 	}
 }
 
-// esc closes without running the highlighted command.
 func TestPaletteEscClosesWithoutRunning(t *testing.T) {
 	m := paletteModel(t, &fakeScanner{})
 	m = typeRunes(m, ":")
@@ -108,8 +98,6 @@ func TestPaletteEscClosesWithoutRunning(t *testing.T) {
 	}
 }
 
-// :done and ctrl+d are the same thing, and with nothing pending both finish
-// straight back to the collection.
 func TestDoneFinishesWhenNothingIsPending(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -134,10 +122,6 @@ func TestDoneFinishesWhenNothingIsPending(t *testing.T) {
 	}
 }
 
-// Queued cards neither refuse the finish nor gate it. Standalone — this
-// model is not embedded — there is no next session to hand them to, so the
-// queue goes with the process and the summary line is the only trace. See
-// TestCtrlDPausesTheQueueWhenEmbedded for the other half.
 func TestDoneDropsQueuedCardsWithoutAskingStandalone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -162,9 +146,7 @@ func TestDoneDropsQueuedCardsWithoutAskingStandalone(t *testing.T) {
 			if !m.done {
 				t.Fatalf("queued cards must not hold the session open: state = %v", m.state)
 			}
-			// Nothing was asked, so the receipt is where the drop is
-			// answerable for — all three of them, the in-flight resolve
-			// included.
+
 			var got string
 			for _, e := range m.summary.Entries {
 				if e.Kind == "discarded" {
@@ -174,9 +156,7 @@ func TestDoneDropsQueuedCardsWithoutAskingStandalone(t *testing.T) {
 			if got != "3 scanned cards discarded unprocessed" {
 				t.Fatalf("summary discard line = %q, want all three accounted for", got)
 			}
-			// The old behaviours, neither of which should come back: a
-			// refusal that sent you hunting for ctrl+s, and the gate that
-			// replaced it.
+
 			if len(m.review) != 0 || m.resolving != 0 {
 				t.Fatalf("queue survived the finish: %d queued, %d resolving",
 					len(m.review), m.resolving)
@@ -185,16 +165,13 @@ func TestDoneDropsQueuedCardsWithoutAskingStandalone(t *testing.T) {
 	}
 }
 
-// The drawer replaces the hint line rather than stacking under it, and the
-// hint line advertises the key when the drawer is closed.
 func TestPaletteReplacesTheHintLine(t *testing.T) {
 	m := paletteModel(t, &fakeScanner{})
 	v := m.viewContent()
 	if !strings.Contains(v, ": commands") {
 		t.Fatalf("the closed view must advertise ':':\n%s", v)
 	}
-	// The palette leads the line, ahead of pairing — it is the one key that
-	// means the same thing on every view in the program.
+
 	want := ": commands · ctrl+p pair · ctrl+o scan · enter search · ctrl+d done"
 	if !strings.Contains(v, want) {
 		t.Fatalf("help line is not %q:\n%s", want, v)

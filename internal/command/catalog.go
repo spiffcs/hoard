@@ -1,7 +1,5 @@
 package command
 
-// `hoard catalog`: the local copy of Scryfall's bulk card data.
-
 import (
 	"context"
 	"fmt"
@@ -13,12 +11,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdCatalog builds `hoard catalog`, whose bare form reports status — the
-// same shorthand `hoard binder` uses for its list.
-//
-// status and update were a hand-parsed positional before the port. As real
-// subcommands they gain their own help and completion, and a typo answers with
-// a suggestion instead of "unknown catalog subcommand".
 func NewCmdCatalog(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "catalog",
@@ -71,8 +63,7 @@ func runCatalogStatus(ctx context.Context, env *cli.Env) error {
 
 	switch {
 	case !st.Checked:
-		// Either the check is still fresh or the network is unreachable; both
-		// mean the same thing to a reader, which is that nothing was asked.
+
 		fmt.Fprintln(env.Out, dim("Scryfall not consulted this run."))
 	case st.Stale:
 		fmt.Fprintf(env.Out, "A newer bundle is available (%s). Update with: hoard catalog update\n",

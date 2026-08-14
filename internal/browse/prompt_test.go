@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// openPrompt stages a test prompt on a model and returns it.
 func openPrompt(t *testing.T, p *prompt) Model {
 	t.Helper()
 	m := newTestModel(t, testStore())
@@ -56,7 +55,7 @@ func TestPromptValidateRefusesAndShows(t *testing.T) {
 	if !strings.Contains(m.statusLine(), "say a number") {
 		t.Errorf("prompt line = %q, want the validation error shown", m.statusLine())
 	}
-	// The next keystroke clears the error.
+
 	m = key(m, "4")
 	if m.prompt.err != "" {
 		t.Errorf("err = %q after typing, want cleared", m.prompt.err)
@@ -88,8 +87,6 @@ func TestPromptEscCancelsAndEditingKeys(t *testing.T) {
 	}
 }
 
-// The precedence contract: a confirm outranks a prompt, which outranks the
-// filter bar, which outranks the detail overlay.
 func TestModePrecedence(t *testing.T) {
 	m := newTestModel(t, testStore())
 	if m.mode() != modeBrowse {

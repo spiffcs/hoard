@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"time"
 )
 
-// gzipped compresses a JSON fixture the way MTGJSON serves its files.
 func gzipped(t *testing.T, body string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -27,7 +27,6 @@ func gzipped(t *testing.T, body string) []byte {
 	return buf.Bytes()
 }
 
-// serve stands up a server for the given path→body map and points apiBase at it.
 func serve(t *testing.T, files map[string][]byte) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,8 +43,6 @@ func serve(t *testing.T, files map[string][]byte) {
 	t.Cleanup(func() { apiBase = old })
 }
 
-// priceFile mirrors the real shape: a meta object before data (so the seek has
-// something to skip), and vendors that differ in currency and coverage.
 const priceFile = `{
  "meta": {"date": "2026-07-28", "version": "5.3.0"},
  "data": {
@@ -76,9 +73,6 @@ const priceFile = `{
  }
 }`
 
-// The exact shape of the MH3 ripple foils: the first-choice vendor prices the
-// card, but only in the finish we do not need. Taking its price and stopping
-// leaves the foil unpriced while the row looks filled.
 func TestTodayPricesResolvesEachFinishSeparately(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
 
@@ -93,8 +87,7 @@ func TestTodayPricesResolvesEachFinishSeparately(t *testing.T) {
 	if p.USD == nil || *p.USD != 0.34 {
 		t.Errorf("normal = %v, want 0.34 from tcgplayer", p.USD)
 	}
-	// Each finish records its own vendor, so neither price is credited to a
-	// shop that had nothing to do with it.
+
 	if p.USDSource != "tcgplayer" || p.FoilSource != "cardkingdom" {
 		t.Errorf("sources = %q/%q, want tcgplayer/cardkingdom", p.USDSource, p.FoilSource)
 	}
@@ -109,13 +102,10 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 		t.Fatalf("TodayPrices: %v", err)
 	}
 
-	// TCGplayer wins when present: it is the source Scryfall itself uses.
 	if p := got["uuid-tcg"]; p.FoilSource != "tcgplayer" || p.Foil == nil || *p.Foil != 11.16 {
 		t.Errorf("uuid-tcg = %+v, want tcgplayer 11.16", p)
 	}
-	// TCGplayer quotes neither finish and Cardmarket is euros: the normal
-	// falls to Card Kingdom (next in the normal order), while the foil
-	// falls to Manapool — the foil order runs marketplace-first.
+
 	p := got["uuid-ck"]
 	if p.FoilSource != "manapool" || p.Foil == nil || *p.Foil != 6.91 {
 		t.Errorf("uuid-ck = %+v, want manapool foil 6.91", p)
@@ -123,15 +113,15 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 	if p.USD == nil || *p.USD != 0.34 || p.USDSource != "cardkingdom" {
 		t.Errorf("uuid-ck normal = %v from %q, want 0.34 from cardkingdom", p.USD, p.USDSource)
 	}
-	// EUR-only is skipped entirely: a euro price cannot join a USD total.
+
 	if _, ok := got["uuid-eur-only"]; ok {
 		t.Error("a EUR-only card must not be priced")
 	}
-	// Most recent date wins.
+
 	if p := got["uuid-stale"]; p.Foil == nil || *p.Foil != 2.50 {
 		t.Errorf("uuid-stale = %+v, want the 2026-07-28 price", p)
 	}
-	// Cards not asked for are skipped, not returned.
+
 	if _, ok := got["uuid-unwanted"]; ok {
 		t.Error("returned a card that was not requested")
 	}
@@ -140,8 +130,6 @@ func TestTodayPricesPrefersProvidersInOrder(t *testing.T) {
 	}
 }
 
-// quoteFile carries what TodayPrices deliberately throws away: every vendor,
-// both sides of the counter. Modelled on the real Legion Loyalty record.
 const quoteFile = `{
  "meta": {"date": "2026-07-28"},
  "data": {
@@ -167,28 +155,27 @@ func TestTodayQuotesReturnsEveryVendorAndSide(t *testing.T) {
 	}
 	qs := got["uuid-legion"]
 
-	// Nothing is collapsed: comparing vendors is the point.
 	byKey := map[string]float64{}
 	for _, q := range qs {
-		byKey[q.Provider+"/"+q.Kind+"/"+q.Finish] = q.Price
+		byKey[q.Provider+"/"+q.Kind+"/"+q.Finish.String()] = q.Price
 	}
 	for key, want := range map[string]float64{
-		"cardkingdom/retail/normal": 0.99,
-		"cardkingdom/retail/foil":   2.49,
-		"cardkingdom/buylist/foil":  0.75,
-		"tcgplayer/retail/normal":   0.42,
-		"manapool/retail/normal":    0.20,
-		"manapool/retail/foil":      138518.78,
+		"cardkingdom/retail/nonfoil": 0.99,
+		"cardkingdom/retail/foil":    2.49,
+		"cardkingdom/buylist/foil":   0.75,
+		"tcgplayer/retail/nonfoil":   0.42,
+		"manapool/retail/nonfoil":    0.20,
+		"manapool/retail/foil":       138518.78,
 	} {
 		if byKey[key] != want {
 			t.Errorf("%s = %v, want %v", key, byKey[key], want)
 		}
 	}
-	// Buylist is what TodayPrices could never report.
+
 	if byKey["cardkingdom/buylist/foil"] == 0 {
 		t.Error("buylist quotes must be included")
 	}
-	// Cardmarket quotes euros, which cannot be compared against dollars.
+
 	for _, q := range qs {
 		if q.Provider == "cardmarket" {
 			t.Errorf("cardmarket must be excluded, got %+v", q)
@@ -201,7 +188,7 @@ func TestTodayQuotesReturnsEveryVendorAndSide(t *testing.T) {
 
 func TestTodayQuotesEmptyRequestSkipsDownload(t *testing.T) {
 	old := apiBase
-	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
+	apiBase = "http://127.0.0.1:1"
 	defer func() { apiBase = old }()
 
 	got, err := TodayQuotes(context.Background(), Options{}, nil)
@@ -211,9 +198,9 @@ func TestTodayQuotesEmptyRequestSkipsDownload(t *testing.T) {
 }
 
 func TestTodayPricesEmptyRequestSkipsDownload(t *testing.T) {
-	// No server at all: an empty request must not make one.
+
 	old := apiBase
-	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
+	apiBase = "http://127.0.0.1:1"
 	defer func() { apiBase = old }()
 
 	got, err := TodayPrices(context.Background(), Options{}, nil)
@@ -247,7 +234,6 @@ const m3cFile = `{
 func TestSetIdentifiers(t *testing.T) {
 	serve(t, map[string][]byte{"/M3C.json.gz": gzipped(t, m3cFile)})
 
-	// Lower-case set codes come from Scryfall; MTGJSON file names are upper.
 	got, err := SetIdentifiers(context.Background(), Options{}, "m3c")
 	if err != nil {
 		t.Fatalf("SetIdentifiers: %v", err)
@@ -255,8 +241,7 @@ func TestSetIdentifiers(t *testing.T) {
 	if got["scry-1"].UUID != "uuid-ck" || got["scry-2"].UUID != "uuid-tcg" {
 		t.Errorf("map = %v, want both Scryfall IDs mapped", got)
 	}
-	// The Card Kingdom links ride the same read, per finish; a card the
-	// feed has no links for reads as empty, not absent.
+
 	if got["scry-1"].CKURL != "https://mtgjson.com/links/aa" ||
 		got["scry-1"].CKFoilURL != "https://mtgjson.com/links/bb" {
 		t.Errorf("links = %+v, want both finishes", got["scry-1"])
@@ -264,14 +249,11 @@ func TestSetIdentifiers(t *testing.T) {
 	if got["scry-2"].CKURL != "" || got["scry-2"].CKFoilURL != "" {
 		t.Errorf("linkless card = %+v, want empty links", got["scry-2"])
 	}
-	// A card with no Scryfall ID cannot be joined, so it is dropped.
+
 	if len(got) != 2 {
 		t.Errorf("map has %d entries, want 2", len(got))
 	}
-	// The split-product ids ride the same read, and stay apart: the
-	// alternative-foil id and the etched id name different products with
-	// different prices. AltProductID once fell back to the etched id, which
-	// let an etched product's price be merged into the foil series.
+
 	if got["scry-1"].AltProductID != "553005" {
 		t.Errorf("alt product = %q, want the ripple product id", got["scry-1"].AltProductID)
 	}
@@ -298,7 +280,6 @@ func TestCacheAvoidsRefetchAndPrunesOldDays(t *testing.T) {
 	today = func() string { return "2026-07-29" }
 	defer func() { apiBase, today = oldBase, oldDay }()
 
-	// A leftover from a previous day, which should be swept on the next write.
 	stale := filepath.Join(cacheDir, "2026-07-28-AllPricesToday.json.gz")
 	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
@@ -310,8 +291,7 @@ func TestCacheAvoidsRefetchAndPrunesOldDays(t *testing.T) {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
-	// A card no source can price stays a gap forever, so without the cache
-	// every run would re-download the whole bundle chasing it.
+
 	if hits != 1 {
 		t.Errorf("made %d requests across 3 calls, want 1", hits)
 	}
@@ -326,16 +306,12 @@ func TestCacheAvoidsRefetchAndPrunesOldDays(t *testing.T) {
 func TestSetIdentifiersUnknownSet(t *testing.T) {
 	serve(t, map[string][]byte{})
 
-	// Scryfall and MTGJSON disagree on some promo sets. That must be skippable,
-	// not fatal, so it gets its own sentinel.
 	_, err := SetIdentifiers(context.Background(), Options{}, "nope")
 	if !errors.Is(err, ErrNoSuchSet) {
 		t.Errorf("err = %v, want ErrNoSuchSet", err)
 	}
 }
 
-// archiveFileBody is AllPrices' shape: the same nesting as today's file, but
-// with a run of dates under each finish rather than one.
 const archiveFileBody = `{
  "meta": {"date": "2026-07-29", "version": "5.3.0"},
  "data": {
@@ -374,7 +350,7 @@ func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
 		t.Fatalf("PriceHistory: %v", err)
 	}
 	obs := got["uuid-hist"].Retail
-	// Three normal dates and two foil: the whole series, not just the newest.
+
 	if len(obs) != 5 {
 		t.Fatalf("got %d observations, want 5: %+v", len(obs), obs)
 	}
@@ -382,18 +358,13 @@ func TestPriceHistoryKeepsEveryDateForTCGplayerRetail(t *testing.T) {
 		if o.Source != "tcgplayer" {
 			t.Errorf("observation %+v: source = %q, want tcgplayer", o, o.Source)
 		}
-		// Card Kingdom's 9.99 retail and every buylist figure must not appear
-		// here: one is another shop's retail, the others are the wrong side of
-		// the counter, and all would read as a price move.
+
 		if o.Price == 9.99 || o.Price == 0.40 || o.Price == 0.75 || o.Price == 0.80 || o.Price == 2.00 {
 			t.Errorf("observation %+v leaked from another vendor or the buylist", o)
 		}
 	}
 }
 
-// The same pass reads the other side of the counter: Card Kingdom's bid
-// series, and only Card Kingdom's — tcgplayer's buylist key is dead data
-// from before that program closed, and reading it would resurrect it.
 func TestPriceHistoryReadsCardKingdomBids(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
@@ -415,8 +386,6 @@ func TestPriceHistoryReadsCardKingdomBids(t *testing.T) {
 	}
 }
 
-// A card tcgplayer never quoted can still carry a bid series — the two
-// sides are independent reads, not a join.
 func TestPriceHistoryReturnsBidsOnlyCards(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
@@ -433,10 +402,6 @@ func TestPriceHistoryReturnsBidsOnlyCards(t *testing.T) {
 func TestPriceHistorySkipsNonUSDAndFallsThroughProviders(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
-	// A EUR tcgplayer series is absent rather than converted — a euro price
-	// in a USD total is a lie, and no other vendor quotes the card. But a
-	// card TCGplayer never carried takes the next vendor's series: that
-	// vendor is also the one pricing it live, so the history joins up.
 	got, err := PriceHistory(context.Background(), Options{},
 		map[string]bool{"uuid-eur-tcg": true, "uuid-no-tcg": true})
 	if err != nil {
@@ -451,9 +416,6 @@ func TestPriceHistorySkipsNonUSDAndFallsThroughProviders(t *testing.T) {
 	}
 }
 
-// The ripple-foil shape, observed live: TCGplayer publishes no foil series
-// for the MH3 Collector's Edition printings, so the foil history falls to
-// the next vendor per finish — the normal series stays TCGplayer's.
 func TestPriceHistoryFoilFallsToNextVendor(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 
@@ -463,15 +425,15 @@ func TestPriceHistoryFoilFallsToNextVendor(t *testing.T) {
 	}
 	obs := got["uuid-ripple"].Retail
 	if len(obs) != 3 {
-		t.Fatalf("got %d observations, want tcg's 1 normal + ck's 2 foil: %+v", len(obs), obs)
+		t.Fatalf("got %d observations, want tcg's 1 nonfoil + ck's 2 foil: %+v", len(obs), obs)
 	}
 	for _, o := range obs {
 		switch o.Finish {
-		case "normal":
+		case finish.Nonfoil:
 			if o.Source != "tcgplayer" || o.Price != 11.86 {
-				t.Errorf("normal %+v, want tcgplayer's series", o)
+				t.Errorf("nonfoil %+v, want tcgplayer's series", o)
 			}
-		case "foil":
+		case finish.Foil:
 			if o.Source != "cardkingdom" || (o.Price != 74.99 && o.Price != 75.99) {
 				t.Errorf("foil %+v, want cardkingdom's series", o)
 			}
@@ -481,19 +443,15 @@ func TestPriceHistoryFoilFallsToNextVendor(t *testing.T) {
 
 func TestPriceHistoryEmptyRequestSkipsDownload(t *testing.T) {
 	old := apiBase
-	apiBase = "http://127.0.0.1:1" // would fail instantly if dialled
+	apiBase = "http://127.0.0.1:1"
 	defer func() { apiBase = old }()
 
-	// Nothing owned must not pull 150 MB to discover that.
 	got, err := PriceHistory(context.Background(), Options{}, nil)
 	if err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v; want empty and no error", got, err)
 	}
 }
 
-// A cache directory that cannot be created must degrade to an uncached
-// download. The close of the response body used to be deferred across this
-// fallback, handing the caller a body that was already closed.
 func TestUnusableCacheDirStillServes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(gzipped(t, priceFile))
@@ -503,7 +461,6 @@ func TestUnusableCacheDirStillServes(t *testing.T) {
 	apiBase = srv.URL
 	defer func() { apiBase = oldBase }()
 
-	// MkdirAll fails because the parent is a regular file.
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -519,8 +476,6 @@ func TestUnusableCacheDirStillServes(t *testing.T) {
 	}
 }
 
-// When both quote a foil TCGplayer skips, Manapool's marketplace ask beats
-// Card Kingdom's premium retail ask — the foil order differs from normal's.
 func TestFoilPrefersManapoolOverCardKingdom(t *testing.T) {
 	body := `{
  "meta": {"date": "2026-07-29", "version": "5.3.0"},
@@ -555,19 +510,15 @@ func TestFoilPrefersManapoolOverCardKingdom(t *testing.T) {
 		t.Fatalf("PriceHistory: %v", err)
 	}
 	for _, o := range hist["uuid-both"].Retail {
-		if o.Finish == "foil" && o.Source != "manapool" {
+		if o.Finish == finish.Foil && o.Source != "manapool" {
 			t.Errorf("foil history %+v, want manapool's series", o)
 		}
-		if o.Finish == "normal" && o.Source != "tcgplayer" {
+		if o.Finish == finish.Nonfoil && o.Source != "tcgplayer" {
 			t.Errorf("normal history %+v, want tcgplayer's series", o)
 		}
 	}
 }
 
-// A marketplace's "lowest ask" can be a troll listing — a seven-figure
-// Legion Loyalty, observed live. A quote over ListingOutlierRatio times
-// the cheapest other vendor's is skipped, today and in the archive; a
-// lone vendor is trusted (nothing to compare against).
 func TestFoilSkipsTrollListings(t *testing.T) {
 	body := `{
  "meta": {"date": "2026-08-02", "version": "5.3.0"},
@@ -610,14 +561,9 @@ func TestFoilSkipsTrollListings(t *testing.T) {
 	}
 }
 
-// The treated-foil overlay: an ExtraSeries merges into the record's
-// tcgplayer foil retail before any selection, so a ripple foil the feed
-// prices only via other vendors anchors on TCGplayer everywhere — the
-// best price, the quote list, and the history's vendor fallback.
 func TestExtraSeriesOverlay(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
-	// A figure inside the outlier guard's tolerance of the other vendors —
-	// the guard treats a merged series exactly like a native one.
+
 	extra := ExtraSeries{"uuid-ripple": {Foil: map[string]float64{"2026-07-28": 5.55}}}
 
 	got, err := TodayPricesWith(extra)(context.Background(), Options{},
@@ -640,7 +586,7 @@ func TestExtraSeriesOverlay(t *testing.T) {
 	}
 	var foilQuote *Quote
 	for i, q := range qs["uuid-ripple"] {
-		if q.Provider == "tcgplayer" && q.Kind == Retail && q.Finish == "foil" {
+		if q.Provider == "tcgplayer" && q.Kind == Retail && q.Finish == finish.Foil {
 			foilQuote = &qs["uuid-ripple"][i]
 		}
 	}
@@ -648,7 +594,6 @@ func TestExtraSeriesOverlay(t *testing.T) {
 		t.Errorf("quotes = %+v, want a tcgplayer foil quote from the overlay", qs["uuid-ripple"])
 	}
 
-	// Without the overlay, nothing changes: the feed's answer stands.
 	bare, err := TodayPrices(context.Background(), Options{}, map[string]bool{"uuid-ripple": true})
 	if err != nil {
 		t.Fatalf("TodayPrices: %v", err)
@@ -658,9 +603,6 @@ func TestExtraSeriesOverlay(t *testing.T) {
 	}
 }
 
-// The history side of the same overlay: the merged series wins the
-// per-finish vendor fallback, so a treated foil's back catalogue rides
-// TCGplayer's own numbers instead of a marketplace stand-in.
 func TestExtraSeriesOverlayHistory(t *testing.T) {
 	serve(t, map[string][]byte{"/AllPrices.json.gz": gzipped(t, archiveFileBody)})
 	extra := ExtraSeries{"uuid-no-tcg": {Foil: map[string]float64{"2026-07-27": 16.90, "2026-07-28": 17.56}}}
@@ -673,7 +615,7 @@ func TestExtraSeriesOverlayHistory(t *testing.T) {
 	h := got["uuid-no-tcg"]
 	var foil []Observation
 	for _, o := range h.Retail {
-		if o.Finish == "foil" {
+		if o.Finish == finish.Foil {
 			foil = append(foil, o)
 		}
 	}
@@ -687,14 +629,11 @@ func TestExtraSeriesOverlayHistory(t *testing.T) {
 	}
 }
 
-// TestMain zeroes the request pacer: politeness delays are for the real
-// feed, not for httptest.
 func TestMain(m *testing.M) {
 	requestGap = 0
 	os.Exit(m.Run())
 }
 
-// The pacer spaces download starts; the day cache never reaches it.
 func TestRequestPacing(t *testing.T) {
 	oldGap, oldSleep := requestGap, paceSleep
 	defer func() {
@@ -708,7 +647,7 @@ func TestRequestPacing(t *testing.T) {
 
 	serve(t, map[string][]byte{"/AllPricesToday.json.gz": gzipped(t, priceFile)})
 	want := map[string]bool{"uuid-tcg": true}
-	for range 2 { // uncached: two real downloads, one waited-out gap
+	for range 2 {
 		if _, err := TodayPrices(context.Background(), Options{}, want); err != nil {
 			t.Fatalf("TodayPrices: %v", err)
 		}
@@ -730,11 +669,6 @@ func TestRequestPacing(t *testing.T) {
 	}
 }
 
-// The overlay's two series are different products and must land in different
-// buckets. AltProductID used to fall back to the etched id and mergeExtra wrote
-// everything into Retail.Foil, so a printing with an etched product and no
-// treated foil had the etched product's price filling holes in its foil series
-// — one card's price quoted under another's name.
 func TestMergeExtraKeepsFoilAndEtchedApart(t *testing.T) {
 	var rec priceRecord
 	mergeExtra(&rec, ExtraPrices{
@@ -750,8 +684,6 @@ func TestMergeExtraKeepsFoilAndEtchedApart(t *testing.T) {
 	}
 }
 
-// An etched-only overlay must not invent a foil price, which is exactly what
-// the old single-bucket merge did.
 func TestMergeExtraEtchedOnlyLeavesFoilAlone(t *testing.T) {
 	var rec priceRecord
 	mergeExtra(&rec, ExtraPrices{Etched: map[string]float64{"2026-07-28": 24.50}})
@@ -764,15 +696,14 @@ func TestMergeExtraEtchedOnlyLeavesFoilAlone(t *testing.T) {
 	}
 }
 
-// The feed still wins on dates both know; the overlay only fills holes.
 func TestMergeExtraDoesNotOverwriteTheFeed(t *testing.T) {
 	rec := priceRecord{Paper: map[string]vendor{"tcgplayer": {
 		Currency: "USD",
 		Retail:   byFinish{Foil: map[string]float64{"2026-07-28": 9.99}},
 	}}}
 	mergeExtra(&rec, ExtraPrices{Foil: map[string]float64{
-		"2026-07-28": 5.55, // the feed already answers this day
-		"2026-07-27": 5.40, // this one is a hole
+		"2026-07-28": 5.55,
+		"2026-07-27": 5.40,
 	}})
 	v := rec.Paper["tcgplayer"]
 	if got := v.Retail.Foil["2026-07-28"]; got != 9.99 {
@@ -783,13 +714,6 @@ func TestMergeExtraDoesNotOverwriteTheFeed(t *testing.T) {
 	}
 }
 
-// The two-sided guard, and its asymmetry.
-//
-// Every figure here was measured live on 2026-08-12. The case that matters is
-// the third one: with a cheapest-anchored rule, 0.56 could never be refused
-// (nothing is twenty times below itself) and both honest vendors above it were
-// themselves rejected as trolls, so the pick fell back to 0.56 — the guard
-// protecting the defect it existed to catch.
 func TestNonPrice(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -797,30 +721,23 @@ func TestNonPrice(t *testing.T) {
 		figures []float64
 		want    bool
 	}{
-		// One voice: nothing to compare against, so nothing is refused.
+
 		{"lone vendor", 500.00, []float64{500.00}, false},
 
-		// Two figures: no majority, so the older rule stands — the cheaper is
-		// assumed real and only a wild upward figure is refused.
 		{"troll listing, two figures", 7362059.74, []float64{29.99, 7362059.74}, true},
 		{"the sane figure beside it", 29.99, []float64{29.99, 7362059.74}, false},
 		{"two figures far apart downward", 0.56, []float64{0.56, 120.51}, false},
 
-		// Three figures: both directions measured against the median.
 		{"market averaged over no sales", 0.56, []float64{0.56, 59.99, 120.51}, true},
 		{"cardkingdom beside it", 59.99, []float64{0.56, 59.99, 120.51}, false},
 		{"manapool beside it", 120.51, []float64{0.56, 59.99, 120.51}, false},
 		{"troll listing, three figures", 7362059.74, []float64{2.49, 2.99, 7362059.74}, true},
 		{"the cheapest beside it", 2.49, []float64{2.49, 2.99, 7362059.74}, false},
 
-		// Ordinary vendor disagreement, which must survive untouched. The last
-		// is the regression a cheapest-anchored rule caused: a $1 outlier drags
-		// the anchor to $20 and calls a perfectly normal $25 ask a troll.
 		{"healthy thin market", 3.89, []float64{3.89, 12.98, 17.36}, false},
 		{"worst healthy spread measured", 0.56, []float64{0.56, 1.85}, false},
 		{"cheap outlier does not condemn the dear", 25, []float64{1, 15, 25}, false},
 
-		// Nothing to judge.
 		{"zero price", 0, []float64{0, 10, 20}, false},
 		{"no figures", 5, nil, false},
 	}
@@ -832,9 +749,6 @@ func TestNonPrice(t *testing.T) {
 	}
 }
 
-// End to end through bestUSD: the shape that started this. TCGplayer's figure
-// is an average over no sales, so the foil price comes from the next vendor in
-// preference order rather than from the cheapest number on the sheet.
 func TestFoilSkipsMarketPriceWithNoSalesBehindIt(t *testing.T) {
 	body := `{
  "meta": {"date": "2026-08-12", "version": "5.3.0"},

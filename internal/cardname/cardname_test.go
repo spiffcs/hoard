@@ -11,9 +11,7 @@ func TestPlausible(t *testing.T) {
 		want            bool
 		why             string
 	}{
-		// Text that merely contains a short name is not that card. This is the
-		// case the whole check exists for: Scryfall's fuzzy endpoint returns
-		// "Opt" for all three.
+
 		{"option", "Opt", false, "containing a short name is not being it"},
 		{"options", "Opt", false, "same, pluralized"},
 		{"adopt", "Opt", false, "short name embedded mid-word"},
@@ -24,14 +22,10 @@ func TestPlausible(t *testing.T) {
 
 		{"Elspeth, Knight-Errant", "Elspeth, Knight-Errant", true, "clean read"},
 		{"Elspeth Knight Errant", "Elspeth, Knight-Errant", true, "punctuation dropped"},
-		// A partial read is no longer accepted by prefix: "Gliding" (debris of
-		// Glowrider mid-slide) resolved to the real card Gliding Licid live,
-		// and no string property separates that steal from a legitimate
-		// truncation. A truncated title queues for review instead.
+
 		{"Elspeth", "Elspeth, Knight-Errant", false, "partial read must not resolve by prefix"},
 		{"Gliding", "Gliding Licid", false, "a slide fragment must not become another card"},
 
-		// The substitutions OCR actually makes.
 		{"Sol Rlng", "Sol Ring", true, "l for i"},
 		{"S0l Ring", "Sol Ring", true, "zero for o"},
 		{"Anclent Tornb", "Ancient Tomb", true, "rn for m, and l for i"},
@@ -48,10 +42,6 @@ func TestPlausible(t *testing.T) {
 	}
 }
 
-// The copyright line is printed on every card, so OCR reads it often. It scores
-// 0.71 similarity against the real card "Wizards of Thay" — over the bar, and
-// close enough to it that no threshold on similarity alone separates the two.
-// The length guard is what rejects it: a fifth of the text is left unexplained.
 func TestPlausibleRejectsNearMissesThatDropWords(t *testing.T) {
 	for _, c := range []struct{ text, canonical string }{
 		{"Wizards of the Coast", "Wizards of Thay"},
@@ -62,9 +52,7 @@ func TestPlausibleRejectsNearMissesThatDropWords(t *testing.T) {
 				c.text, c.canonical)
 		}
 	}
-	// A partial read is rejected too, since the prefix rule's removal: it is
-	// indistinguishable from a fragment of a different card's title (the
-	// "Gliding" → Gliding Licid steal, live 2026-08-07).
+
 	if Plausible("Bitter", "Bitterblossom") {
 		t.Error("a bare prefix fragment resolved to a name it cannot confirm")
 	}
@@ -106,16 +94,14 @@ func TestTrigrams(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Trigrams = %v, want %v", got, want)
 	}
-	// A name shorter than a trigram yields itself, so it is still findable
-	// rather than silently absent from the index.
+
 	if got := Trigrams("ai"); !slices.Equal(got, []string{"ai"}) {
 		t.Errorf("Trigrams(short) = %v", got)
 	}
 	if got := Trigrams(""); got != nil {
 		t.Errorf("Trigrams(empty) = %v, want nil", got)
 	}
-	// Repeats are collapsed: a gram appearing twice would double that name's
-	// score in the candidate ranking for no reason.
+
 	if got := Trigrams("aaaa"); !slices.Equal(got, []string{"aaa"}) {
 		t.Errorf("Trigrams with repeats = %v, want them deduplicated", got)
 	}

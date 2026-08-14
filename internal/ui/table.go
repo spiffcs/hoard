@@ -6,7 +6,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Align is a column's horizontal alignment.
 type Align int
 
 const (
@@ -14,67 +13,48 @@ const (
 	Right
 )
 
-// DefaultGutter matches the padding the CLI's tabwriter tables used.
 const DefaultGutter = 2
 
-// Col describes one column's layout. Widths are measured in display cells.
 type Col struct {
 	Title    string
 	Align    Align
-	Flex     bool  // absorbs slack, and shrinks first when space runs out
-	Min, Max int   // 0 means unbounded
-	Priority int   // >0 is droppable; the highest priority is dropped first
-	Style    Style // default style for this column's cells
-	// Width pins the column's laid-out width regardless of this table's
-	// cells: a paged table sizes its columns from the whole ranking so a
-	// page turn holds the shape instead of re-fitting to each page's
-	// longest value. Space pressure still shrinks and drops columns via
-	// Min and Priority; wider cells truncate.
+	Flex     bool
+	Min, Max int
+	Priority int
+	Style    Style
+
 	Width int
 }
 
-// Cell is one rendered value.
-//
-// Text is always unstyled: the renderer measures it to lay out columns, and
-// styling is applied afterwards, outside the padding. That invariant is what
-// keeps ANSI escapes from corrupting alignment — the failure mode that makes
-// text/tabwriter unusable with styled output.
 type Cell struct {
 	Text  string
-	Style Style // nil inherits the column's style
+	Style Style
 }
 
-// C is shorthand for an unstyled cell.
 func C(text string) Cell { return Cell{Text: text} }
 
-// Row is a line of cells, an optional whole-row style override, or a blank
-// spacer line.
 type Row struct {
 	Cells  []Cell
-	Style  Style // overrides the column styles for this row
+	Style  Style
 	Spacer bool
 }
 
-// Table lays a grid out to fit Env.Width exactly.
 type Table struct {
 	Env    Env
 	Cols   []Col
 	Rows   []Row
-	Gutter int  // 0 uses DefaultGutter
-	Header bool // print the column-title row
+	Gutter int
+	Header bool
 }
 
-// Add appends a row of cells.
 func (t *Table) Add(cells ...Cell) {
 	t.Rows = append(t.Rows, Row{Cells: cells})
 }
 
-// AddStyled appends a row rendered entirely in style.
 func (t *Table) AddStyled(style Style, cells ...Cell) {
 	t.Rows = append(t.Rows, Row{Cells: cells, Style: style})
 }
 
-// AddSpacer appends a blank line.
 func (t *Table) AddSpacer() {
 	t.Rows = append(t.Rows, Row{Spacer: true})
 }
@@ -86,28 +66,6 @@ func (t Table) gutter() int {
 	return t.Gutter
 }
 
-// blankColumns marks the columns whose every cell says nothing, so the fit can
-// leave them out.
-//
-// A column of dashes is width spent on the absence of information. The FINISH
-// column against a binder with no foils, or COND before anything has been
-// assessed, is a header and a rule of hyphens telling the reader what they
-// already know — and it is taken from the card names, which is the column
-// people are actually reading.
-//
-// Only droppable columns qualify. Priority > 0 is the table's existing way of
-// saying "this one is optional under pressure", so the same declaration serves
-// here: NAME, VALUE and anything else a table insists on are never dropped,
-// however empty they look. That is deliberate — a VALUE column of dashes still
-// says "these are worth nothing known", which is a fact about the hoard rather
-// than about the column.
-//
-// The mask is computed before the fit and seeds it, so the width a blank column
-// would have taken goes to the card names rather than being left as a gap.
-//
-// Scope is the whole table, not the visible page: an interactive list builds one
-// Table from every row and slices the rendered lines afterwards, so a column
-// cannot appear and vanish as the cursor moves.
 func (t Table) blankColumns() []bool {
 	drop := make([]bool, len(t.Cols))
 	for i, c := range t.Cols {
@@ -129,13 +87,6 @@ func (t Table) blankColumns() []bool {
 	return drop
 }
 
-// saysNothing reports whether a cell carries information worth a column.
-//
-// Both marks count, for different reasons — see the constants in format.go.
-// A column of em dashes is entirely unknown; a column of hyphens is entirely
-// the dull default. Neither tells a reader anything they could act on, which is
-// the test here. The distinction between the two still matters everywhere else,
-// and is why they are separate characters rather than one.
 func saysNothing(text string) bool {
 	switch strings.TrimSpace(text) {
 	case "", suppressed, unknown:
@@ -144,8 +95,6 @@ func saysNothing(text string) bool {
 	return false
 }
 
-// natural returns each column's unconstrained width: the widest of its title
-// and its cells, capped at Col.Max.
 func (t Table) natural() []int {
 	w := make([]int, len(t.Cols))
 	for i, c := range t.Cols {
@@ -168,8 +117,7 @@ func (t Table) natural() []int {
 	}
 	for i, c := range t.Cols {
 		if c.Width > 0 {
-			// The pin replaces the cells' measure but never squeezes the
-			// column's own title — which is constant, so still page-stable.
+
 			w[i] = c.Width
 			if t.Header {
 				w[i] = max(w[i], ansi.StringWidth(c.Title))
@@ -182,20 +130,6 @@ func (t Table) natural() []int {
 	return w
 }
 
-// fitColumns resolves final column widths for the given natural widths.
-//
-// It shrinks Flex columns toward their Min first, then shrinks bounded columns
-// (a bar, say, declared Min 6 / Max 10) toward their Min, then drops columns by
-// descending Priority. If the table still doesn't fit it gives up clamping and
-// returns natural widths rather than rendering unreadably narrow cells.
-//
-// keep[i] reports whether column i is rendered at all.
-//
-// drop marks columns already ruled out before any width is considered — the
-// blank ones. They are excluded from the fit rather than removed after it, so
-// the space they would have taken goes to the flexible column instead of being
-// left as a gap. Dropping afterwards truncated card names to make room for a
-// column of dashes that was then thrown away.
 func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (widths []int, keep []bool) {
 	widths = append([]int(nil), natural...)
 	keep = make([]bool, len(cols))
@@ -203,7 +137,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		keep[i] = i >= len(drop) || !drop[i]
 	}
 
-	// Unlimited width, or a non-terminal: render everything at natural width.
 	if !env.Clamp || env.Width <= 0 {
 		return widths, keep
 	}
@@ -227,7 +160,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		return widths, keep
 	}
 
-	// 1. Shrink flexible columns toward their minimum.
 	for i, c := range cols {
 		if !c.Flex {
 			continue
@@ -245,7 +177,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		return widths, keep
 	}
 
-	// 2. Shrink bounded columns toward their minimum.
 	for i, c := range cols {
 		if c.Flex || c.Min <= 0 {
 			continue
@@ -262,7 +193,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		return widths, keep
 	}
 
-	// 3. Drop droppable columns, highest priority first.
 	for {
 		victim, best := -1, 0
 		for i, c := range cols {
@@ -275,7 +205,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		}
 		keep[victim] = false
 
-		// Dropping a column frees space the flexible column can reclaim.
 		for i, c := range cols {
 			if !keep[i] || !c.Flex {
 				continue
@@ -291,7 +220,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		}
 	}
 
-	// 4. Still over: give up clamping rather than render 3-character cells.
 	if total() > env.Width {
 		copy(widths, natural)
 		for i := range keep {
@@ -301,7 +229,6 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 	return widths, keep
 }
 
-// Render lays the table out and returns it as lines, newline-terminated.
 func (t Table) Render() string {
 	lines := t.Lines()
 	if len(lines) == 0 {
@@ -310,13 +237,6 @@ func (t Table) Render() string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// Lines lays the table out and returns each rendered line separately, unterminated.
-//
-// For callers that must address a line after layout — an interactive list drawing
-// a cursor on the selected row.
-//
-// Order: column titles when Header is set, then one line per row, a spacer
-// rendering empty. So with a header and no spacers, row i is line i+1.
 func (t Table) Lines() []string {
 	if len(t.Cols) == 0 {
 		return nil
@@ -337,8 +257,6 @@ func (t Table) Lines() []string {
 	return out
 }
 
-// line renders one row without its terminating newline, padding outside the
-// styled span so that ANSI escapes can never influence column alignment.
 func (t Table) line(r Row, widths []int, keep []bool) string {
 	if r.Spacer {
 		return ""
@@ -388,13 +306,9 @@ func (t Table) line(r Row, widths []int, keep []bool) string {
 		}
 	}
 
-	// Trailing padding helps nobody and dirties grep/diff output.
 	return strings.TrimRight(b.String(), " ")
 }
 
-// Truncate shortens s to at most w display cells, marking the cut with an
-// ellipsis. It is width-aware, so wide runes and combining marks are counted
-// as they render rather than as bytes.
 func Truncate(s string, w int) string {
 	if w <= 0 {
 		return ""

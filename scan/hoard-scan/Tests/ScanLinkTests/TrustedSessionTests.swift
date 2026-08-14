@@ -1,30 +1,3 @@
-// The whole link, over TLS, with real identities and real pinning.
-//
-// LoopbackTests covers the same ground on a plaintext link, and deliberately
-// still does: those tests are about framing, role assignment and half-session
-// timeouts, and running them over TLS would only make them slower and their
-// failures harder to read. These are the ones about identity.
-//
-// What is actually being proved here, in order of how badly each would fail:
-//
-//   1. a session establishes over TLS at all — which exercises the deferred
-//      hello, since a fingerprint-bound proof cannot be built until the
-//      handshake has settled;
-//   2. the listener pins the peer it just paired with, so the second
-//      connection needs no leniency;
-//   3. a pinned pair connects with `acceptUnknown: false` on both ends — the
-//      steady state, where an unknown certificate cannot even finish TLS;
-//   4. a pairing survives the session that made it — the phone is still
-//      reachable after a session ends, and the same pinned Mac reconnects
-//      without a code, which is what "paired" has to mean to be worth the
-//      six digits;
-//   5. the pairing proof still gates, over TLS, with the right code and the
-//      wrong one.
-//
-// Serialized for the same reason PeerIdentitySuite is: these mint keychain
-// items, and the legacy keychain does not take concurrent writes from one
-// process.
-
 import CryptoKit
 import Foundation
 import Network
@@ -43,8 +16,6 @@ private func waitUntil(_ seconds: Double = 6, _ check: () -> Bool) -> Bool {
 
 @Suite(.serialized)
 struct TrustedSessionSuite {
-
-    /// A scratch identity plus its pin store, torn down after each test.
     private func scratch(_ name: String) throws -> (PeerIdentity, PinnedPeers, String) {
         let service = "dev.spiffcs.hoard.scan.test.\(name).\(UUID().uuidString.prefix(8))"
         let identity = try loadOrCreatePeerIdentity(service: service)
@@ -62,8 +33,6 @@ struct TrustedSessionSuite {
         }
 
         let code = PairingCode.random()
-        // Pairing is open on both ends: neither has seen the other before, so
-        // TLS cannot be the gate yet. The proof is.
         let listener = PeerListener(
             name: "hoard-tls-\(UUID().uuidString.prefix(8))", code: code,
             trust: PeerTrust(identity: phoneID, pinned: [], acceptUnknown: true),
@@ -94,17 +63,12 @@ struct TrustedSessionSuite {
             """)
         let server = try #require(accepted)
 
-        // Each end actually saw a certificate — a nil here would mean the link
-        // silently fell back to plaintext and every assertion above passed for
-        // the wrong reason.
         #expect(server.control.peerFingerprint == macID.fingerprint)
         #expect(client.control.peerFingerprint == phoneID.fingerprint)
 
-        // Trust on first use: the listener recorded the Mac.
         #expect(phonePins.all.contains(macID.fingerprint),
                 "the paired peer was not pinned; store holds \(phonePins.all.count) entries")
 
-        // And traffic still flows, which is the point of all of it.
         var received: [Frame] = []
         client.control.onFrame = { received.append($0) }
         server.control.send(try #require(
@@ -123,10 +87,6 @@ struct TrustedSessionSuite {
             deletePeerIdentity(service: macService)
         }
 
-        // The steady state: each end already knows the other, so neither will
-        // complete a handshake with anything else. This is what every session
-        // after the first looks like, and the code below is incidental to it —
-        // it is still checked, but nothing depends on its strength any more.
         let code = PairingCode.random()
         let listener = PeerListener(
             name: "hoard-pin-\(UUID().uuidString.prefix(8))", code: code,
@@ -162,9 +122,6 @@ struct TrustedSessionSuite {
             deletePeerIdentity(service: macService)
         }
 
-        // Already paired, and the phone has since rotated its code — which is
-        // now what happens on every launch and after every pairing. The Mac
-        // still holds the old one, because nothing tells it otherwise.
         phonePins.pin(macID.fingerprint, name: "mac")
         let rotated = PairingCode.random()
         let stale = PairingCode.random()
@@ -192,10 +149,6 @@ struct TrustedSessionSuite {
                 identity: macID, pinned: [phoneID.fingerprint], acceptUnknown: false))
         defer { client.cancel() }
 
-        // The whole reason the code could not rotate before. A pinned peer is
-        // not asked for it, so a stale code on the Mac is simply irrelevant —
-        // and if this ever regresses, every existing pairing breaks on the
-        // next launch and reports as a network fault.
         #expect(waitUntil { accepted != nil }, """
             a pinned peer was refused after the code rotated
               listener error: \(listenerError ?? "none")
@@ -212,14 +165,6 @@ struct TrustedSessionSuite {
             deletePeerIdentity(service: macService)
         }
 
-        // The steady state again, but across *two* sessions. What the phone
-        // does between them is the whole subject: a session ending must leave
-        // the listener advertising, because the only controls that rebuild one
-        // are "Add a Mac" and "Forget all Macs", and both rotate the code and
-        // reopen pairing. A phone that stops advertising when a session ends
-        // can therefore only be recovered by re-pairing something that was
-        // never unpaired — which is exactly what LinkController's `quit`
-        // handler used to cause by calling `stop()`.
         phonePins.pin(macID.fingerprint, name: "mac")
         let name = "hoard-re-\(UUID().uuidString.prefix(8))"
         let listener = PeerListener(
@@ -247,24 +192,9 @@ struct TrustedSessionSuite {
               listener error: \(listenerError ?? "none")
             """)
 
-        // The Mac closing up: `quit` reaches the phone and its connections go.
-        // Cancelled from this side too, which is what the wire close amounts to.
         sessions.first?.cancel()
         one.cancel()
 
-        // A *fresh* browser, deliberately. PeerBrowser accumulates into `found`
-        // and never removes, so re-browsing on the first one would report a
-        // service that had since vanished and this assertion would pass for the
-        // wrong reason — the one way to write this test so it proves nothing.
-        //
-        // Visibility is the weaker half of the check, and knowingly so:
-        // mDNSResponder serves a cancelled listener's record from cache for a
-        // few seconds, so a phone that has just gone off the air still browses
-        // as present. Measured — with the old `stop()` restored between the two
-        // sessions, this require *passes* and the connect below is what fails.
-        // Which is the honest shape of the bug: hoard sometimes reported no
-        // phone and sometimes offered one it could not reach, depending on how
-        // long the operator took to press ctrl+o.
         let stillThere = PeerBrowser().browse(seconds: 4)
         let second = try #require(
             stillThere.first { $0.name == name },
@@ -273,8 +203,6 @@ struct TrustedSessionSuite {
             could find it again without re-pairing; saw \(stillThere.map(\.name))
             """)
 
-        // And it is reachable, not merely visible. No code is offered that
-        // could be the right one — a pinned peer is never asked.
         let two = PeerBrowser().connect(to: second, code: PairingCode.random(), trust: macTrust)
         defer { two.cancel() }
         #expect(waitUntil { sessions.count == 2 }, """
@@ -283,8 +211,6 @@ struct TrustedSessionSuite {
               client now: control \(two.control.state), preview \(two.preview.state)
             """)
 
-        // Nothing was re-pinned along the way: this was one pairing used twice,
-        // not a second pairing quietly made.
         #expect(phonePins.all == [macID.fingerprint],
                 "reconnecting changed the trust store; it holds \(phonePins.all.count) entries")
     }
@@ -317,10 +243,6 @@ struct TrustedSessionSuite {
         let service = try #require(
             browser.browse(seconds: 4).first { $0.name.hasPrefix("hoard-deny-") })
 
-        // The stranger has the right code. Under the old design that was the
-        // whole gate and this would pair; under pinning the handshake never
-        // completes, so the code never even gets offered. That is the entire
-        // point of the change, stated as a test.
         let stranger = browser.connect(
             to: service, code: code,
             trust: PeerTrust(identity: strangerID, pinned: [], acceptUnknown: true))
@@ -365,9 +287,6 @@ struct TrustedSessionSuite {
         _ = waitUntil(4) { accepted != nil }
         #expect(accepted == nil, "a peer with the wrong code was given a session over TLS")
         #expect(rejected != nil, "the wrong code was not reported as a failed pairing")
-        // And crucially it was not pinned: pairing open means TLS lets it in,
-        // so the proof is the only thing standing between a stranger and a
-        // permanent entry in the trust store.
         #expect(!phonePins.all.contains(macID.fingerprint),
                 "a peer that failed the pairing check was pinned anyway")
     }

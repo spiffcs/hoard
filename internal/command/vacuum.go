@@ -1,7 +1,5 @@
 package command
 
-// `hoard vacuum`: dropping the printings that corrections leave behind.
-
 import (
 	"github.com/spf13/cobra"
 
@@ -10,7 +8,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdVacuum builds `hoard vacuum`.
 func NewCmdVacuum(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:     "vacuum",
@@ -24,9 +21,6 @@ func NewCmdVacuum(a *app) *cobra.Command {
 	}
 }
 
-// runVacuum deletes the orphaned printings corrections leave behind — no
-// holding or watch points at them — along with their junk price history,
-// then compacts the file.
 func runVacuum(st *store.Store, env *cli.Env) error {
 	removed, err := st.VacuumPrintings()
 	if err != nil {

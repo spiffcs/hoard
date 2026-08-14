@@ -13,14 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// The safety property the whole command rests on. Without the annotation the
-// root's PersistentPreRunE opens — and on a machine that has none, creates —
-// the user's real hoard before demo's RunE is ever reached, so asking to see a
-// sample collection would have the side effect of establishing a real one.
-//
-// This is asserted rather than trusted because nothing else would notice:
-// `hoard demo` would still work, still seed its own database, still show the
-// sample. The unwanted file appears somewhere the test output never looks.
 func TestDemoRunsWithoutTheUsersDatabase(t *testing.T) {
 	root, _ := buildRoot(&app{env: bufEnv(io.Discard)}, pipeEnv)
 
@@ -35,10 +27,6 @@ func TestDemoRunsWithoutTheUsersDatabase(t *testing.T) {
 	t.Fatal("no demo command in the tree")
 }
 
-// Seeding is the demo's whole content, and it goes through the merge planner.
-// A change there that broke a fresh seed would otherwise surface as a first-run
-// experience nobody on the project ever repeats — everyone developing hoard
-// already has a demo database.
 func TestSeedHoardPopulatesAnEmptyStore(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "demo.db"))
 	if err != nil {
@@ -68,8 +56,6 @@ func TestSeedHoardPopulatesAnEmptyStore(t *testing.T) {
 	}
 }
 
-// seedDemo builds the database `hoard demo` builds — cards and history both —
-// so the tests below read what a first run actually opens on.
 func seedDemo(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "demo.db"))
@@ -86,11 +72,6 @@ func seedDemo(t *testing.T) *store.Store {
 	return st
 }
 
-// The movers view is the reason the history is seeded at all: it charts a card
-// against its own past, so a demo without one opens the view empty and the only
-// way to fill it is a ~150 MB download. This asserts the seeded document
-// actually lands as movable history, over the span the document itself covers —
-// no calendar involved, so it holds however old the sample gets.
 func TestSeededDemoHistoryFeedsMovers(t *testing.T) {
 	st := seedDemo(t)
 
@@ -108,9 +89,7 @@ func TestSeededDemoHistoryFeedsMovers(t *testing.T) {
 	if len(changes) == 0 {
 		t.Fatalf("%d observations seeded from %s, but movers reports nothing moved", obs, oldest)
 	}
-	// Held finishes, since movers joins holdings: a document that seeded only
-	// the foil series of non-foil holdings would satisfy every count above and
-	// still show an empty view.
+
 	for _, c := range changes {
 		if c.Copies == 0 {
 			t.Errorf("%s (%s) reports %d copies; movers should only carry held rows",
@@ -119,11 +98,6 @@ func TestSeededDemoHistoryFeedsMovers(t *testing.T) {
 	}
 }
 
-// Seeding only ever runs on a database that did not exist, so every demo built
-// before the history was compiled in would open movers empty forever. The top-up
-// is what closes that, and it has to be able to tell "never had history" from
-// "the owner backfilled this one for real" — re-seeding the second would put
-// frozen sample rows underneath live ones.
 func TestDemoHistoryTopsUpAnOlderDemoOnlyOnce(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "demo.db"))
 	if err != nil {
@@ -149,9 +123,6 @@ func TestDemoHistoryTopsUpAnOlderDemoOnlyOnce(t *testing.T) {
 		t.Fatal("a demo with no history was left with none")
 	}
 
-	// Second call: the history is no longer empty, so it must do nothing at
-	// all — not "insert nothing", which the store's collision handling would
-	// give it for free, but not run.
 	before := obs
 	_, seeded, err = demo.TopUpHistory(st)
 	if err != nil {
@@ -170,11 +141,6 @@ func TestDemoHistoryTopsUpAnOlderDemoOnlyOnce(t *testing.T) {
 	}
 }
 
-// The sample freezes when it is generated, and the movers windows are measured
-// back from today, so the file ages out of them: past ninety days the deepest
-// window has nothing left to report and the view is empty again. That is a
-// property of the design the owner accepted, not a bug — but it must be loud,
-// because the failure mode is a demo that silently shows less than it used to.
 func TestDemoHistoryIsFreshEnoughForMovers(t *testing.T) {
 	st := seedDemo(t)
 
@@ -198,13 +164,8 @@ func TestDemoHistoryIsFreshEnoughForMovers(t *testing.T) {
 	}
 }
 
-// The demo database is deliberately in the cache directory, not the data
-// directory: one is documented as safe to delete and rebuildable, the other
-// holds the collection and must never be evicted. Putting the demo in dataDir
-// would be a quiet mistake — it would work perfectly.
 func TestDemoDBLivesInTheCacheDirectory(t *testing.T) {
-	// Named db, not demo: the sample data now lives in a package called demo,
-	// and a local of the same name shadows it in a file that imports it.
+
 	db, err := demoDBPath()
 	if err != nil {
 		t.Skipf("no cache directory on this machine: %v", err)

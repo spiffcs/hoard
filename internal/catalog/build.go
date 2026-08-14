@@ -20,63 +20,33 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 )
 
-// listingURL is Scryfall's bulk-data index: a few kilobytes describing each
-// bundle and when it was last rebuilt. It is a var so tests can point at an
-// httptest server.
 var listingURL = "https://api.scryfall.com/bulk-data"
 
-// bulkType is the bundle to build from.
-//
-// default_cards is one row per printing, in English or the printed language
-// where there is no English version — which is exactly hoard's unit, since the
-// collection is keyed on a printing's Scryfall id. oracle_cards would collapse
-// printings together and all_cards would add every language for no gain.
 const bulkType = "default_cards"
 
-// checkInterval is how long a freshness check is trusted for.
-//
-// Scryfall rebuilds these bundles a few times a day, and a shell full of hoard
-// invocations should not mean a request each. Six hours keeps the catalog within
-// a build or two of current while making the listing call effectively free.
 const checkInterval = 6 * time.Hour
 
-// httpClient carries no whole-request timeout: the bundle is 77 MB and any
-// fixed deadline is either too tight for a slow link or too slack to be worth
-// setting. The transport does bound the header wait, so a server that accepts
-// the connection and then goes silent fails in seconds — which matters because
-// CheckStatus runs at the start of every update-prices, where a hang would
-// block the command before it has done anything at all.
 var httpClient = &http.Client{Transport: func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 30 * time.Second
 	return t
 }()}
 
-// listingTimeout bounds the whole bulk-data index fetch. The listing is a few
-// kilobytes; unlike the bundle it can afford a hard deadline, and CheckStatus
-// promises "a failed check is silence" — a promise a hang would break.
 const listingTimeout = 10 * time.Second
 
-// Status describes the local catalog and, when it was worth asking, how it
-// compares to what Scryfall publishes.
 type Status struct {
 	Cards         int
 	Bytes         int64
 	Built         time.Time
 	SourceUpdated time.Time
 
-	// Remote is the published bundle's timestamp; zero when the listing was not
-	// consulted. Checked says which of those it is, so "not asked" is never
-	// mistaken for "nothing newer".
 	Remote  time.Time
 	Checked bool
 	Stale   bool
 }
 
-// Empty reports whether the catalog has never been built.
 func (s Status) Empty() bool { return s.Cards == 0 }
 
-// bundle is one entry in Scryfall's bulk-data index.
 type bundle struct {
 	Type           string `json:"type"`
 	UpdatedAt      string `json:"updated_at"`
@@ -84,17 +54,10 @@ type bundle struct {
 	CompressedSize int64  `json:"compressed_size"`
 }
 
-// listing is the shape of Scryfall's bulk-data index, narrowed.
 type listing struct {
 	Data []bundle `json:"data"`
 }
 
-// Status reports the local catalog, checking Scryfall for a newer bundle when
-// the last check has aged out.
-//
-// A failed check is silence, not an error. Being offline is an ordinary state
-// for a tool whose point is working without the network, and a status command
-// that errors because the network is down would be reporting on the wrong thing.
 func (c *Catalog) CheckStatus(ctx context.Context) Status {
 	s := Status{
 		Cards:         c.CardCount(),
@@ -121,8 +84,6 @@ func (c *Catalog) CheckStatus(ctx context.Context) Status {
 	return s
 }
 
-// listing returns the bulk-data entry, fetched at most once per process and
-// remembered on the Catalog.
 func (c *Catalog) listing(ctx context.Context) (bundle, error) {
 	if c.entry != nil {
 		return *c.entry, nil
@@ -134,7 +95,6 @@ func (c *Catalog) listing(ctx context.Context) (bundle, error) {
 	return e, err
 }
 
-// fetchListing reads the bulk-data index and returns the entry for bulkType.
 func fetchListing(ctx context.Context) (bundle, error) {
 	var zero bundle
 
@@ -168,8 +128,6 @@ func fetchListing(ctx context.Context) (bundle, error) {
 	return zero, fmt.Errorf("bulk-data listing has no %q bundle", bulkType)
 }
 
-// DownloadSize is what a rebuild would transfer, for asking before spending it.
-// Zero when the listing could not be read.
 func (c *Catalog) DownloadSize(ctx context.Context) int64 {
 	e, err := c.listing(ctx)
 	if err != nil {
@@ -178,7 +136,6 @@ func (c *Catalog) DownloadSize(ctx context.Context) int64 {
 	return e.CompressedSize
 }
 
-// bulkCard is a row of the bundle, narrowed to what the catalog stores.
 type bulkCard struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -204,39 +161,21 @@ type bulkCard struct {
 	} `json:"prices"`
 }
 
-// Update rebuilds the catalog from Scryfall's current bundle, reporting
-// byte progress against the listing's compressed size — the one figure known
-// before the stream starts, which is what makes the minutes-long download
-// determinate.
 func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 	entry, err := c.listing(ctx)
 	if err != nil {
 		return err
 	}
-	// A build consumes the listing: whatever happens next — a freshness check,
-	// a retry — should look at the world as it is then, not as it was when
-	// this command started.
+
 	defer func() { c.entry = nil }()
 
-	// Built beside the real catalog under a temporary name and renamed into
-	// place only on success. An interrupted download must not leave a partial
-	// catalog that looks complete — every lookup would then quietly miss.
-	//
-	// The name is unique per build, and nothing here deletes anyone else's:
-	// two updates can genuinely overlap (browse's catalog op plus a second
-	// terminal's `hoard catalog update`), and a fixed name with a clear-away
-	// delete let one unlink the other's 77 MB in-progress build minutes in,
-	// surfacing as a corrupt-database error on the innocent side. Last rename
-	// wins, which is fine — both were building the same bundle. A crash's
-	// orphaned temp is swept by the next build once it is safely stale.
 	pruneStaleBuilds(c.dir)
 	tmpFile, err := os.CreateTemp(c.dir, fileName+".building-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	// SQLite treats an existing zero-length file as a new database, so the
-	// handle only reserved the name.
+
 	tmpFile.Close()
 	tmp, err := openAt(c.dir, tmpPath)
 	if err != nil {
@@ -268,9 +207,6 @@ func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 		return err
 	}
 
-	// Swap. The live handle has to let go of the file first, and is reopened
-	// against whatever ends up there — including the old catalog, if the rename
-	// fails, so a failed swap leaves a working catalog rather than none.
 	if err := c.db.Close(); err != nil {
 		return err
 	}
@@ -286,15 +222,8 @@ func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 	return nil
 }
 
-// staleBuildAge is how long a .building-* temp must sit untouched before it
-// reads as abandoned. A live build writes its temp continuously, so an hour
-// of silence only ever describes a crash's orphan.
 const staleBuildAge = time.Hour
 
-// pruneStaleBuilds sweeps build temps abandoned by a crash — at ~77 MB each
-// they are worth collecting — while leaving any concurrent build's fresh temp
-// alone (mtime, per staleBuildAge). Best-effort: a failed sweep costs disk,
-// not correctness.
 func pruneStaleBuilds(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -313,9 +242,6 @@ func pruneStaleBuilds(dir string) {
 	}
 }
 
-// countingReader counts compressed bytes as they arrive, which is the only
-// place the download's true position is knowable — after gzip the byte count
-// no longer matches anything the listing promised.
 type countingReader struct {
 	r io.Reader
 	n int64
@@ -327,8 +253,6 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// build streams the bundle into this (temporary) catalog and returns how many
-// cards it stored.
 func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.Fn) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -345,22 +269,15 @@ func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.
 		return 0, fmt.Errorf("card bundle returned %d", resp.StatusCode)
 	}
 
-	// Counted before decompression, so Done measures the same thing the
-	// listing's compressed size promises and the bar cannot overshoot 100%.
 	cr := &countingReader{r: resp.Body}
-	// Counts the same compressed bytes cr does, for the expansion bound below.
-	// A second counter rather than a method on cr: cr's count drives the
-	// progress bar and is read on another goroutine, and the bound must not
-	// start depending on that.
+
 	bc := &boundedio.Counter{R: cr}
 	zr, err := gzip.NewReader(bc)
 	if err != nil {
 		return 0, fmt.Errorf("decompressing the card bundle: %w", err)
 	}
 	defer zr.Close()
-	// Bounded against bytes actually transferred, not against `size`. The
-	// listing that declares `size` comes from the same host as the bundle, so
-	// trusting it would let whoever serves one serve the other to match.
+
 	bundle := boundedio.LimitRatio(zr, bc, "the card bundle")
 
 	tx, err := c.db.Begin()
@@ -381,21 +298,15 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	}
 	defer insertCard.Close()
 
-	// Names are collected in memory and written after the cards. There are far
-	// fewer of them than printings, and deduplicating in Go avoids a SELECT per
-	// row against a table that is still being written.
 	names := map[string]string{}
 
 	sc := bufio.NewScanner(bundle)
-	// Some cards — long oracle text, many faces, many rulings links — exceed the
-	// scanner's 64 KB default, and a line that does not fit is a silent short
-	// read rather than an error.
+
 	sc.Buffer(make([]byte, 0, 256*1024), 4*1024*1024)
 
 	var n int
 	for sc.Scan() {
-		// A cancelled build should stop promptly rather than at the end of a
-		// 77 MB stream.
+
 		if n%2000 == 0 {
 			select {
 			case <-ctx.Done():
@@ -414,8 +325,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 		}
 		var bc bulkCard
 		if err := json.Unmarshal(line, &bc); err != nil {
-			// One malformed row is not worth abandoning the build for; the
-			// catalog is advisory and a missing card falls through to the API.
+
 			continue
 		}
 		if bc.ID == "" || !hasGame(bc.Games, "paper") {
@@ -454,12 +364,6 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	return n, nil
 }
 
-// writeNames stores the distinct names and the trigram index that generates
-// fuzzy candidates.
-//
-// Written from a map accumulated during the card pass rather than by querying
-// the cards table afterwards: many printings share a name, so the map is a
-// fraction of the rows and the deduplication has already happened.
 func writeNames(tx *sql.Tx, names map[string]string) error {
 	insertName, err := tx.Prepare(`INSERT OR REPLACE INTO names (name_norm, name) VALUES (?, ?)`)
 	if err != nil {
@@ -486,7 +390,6 @@ func writeNames(tx *sql.Tx, names map[string]string) error {
 	return nil
 }
 
-// hasGame reports whether a card is available in the given game.
 func hasGame(games []string, want string) bool {
 	for _, g := range games {
 		if g == want {
@@ -496,8 +399,6 @@ func hasGame(games []string, want string) bool {
 	return false
 }
 
-// trimJSONLine strips the array punctuation Scryfall's JSON (as opposed to
-// JSONL) bundles carry, so either form parses.
 func trimJSONLine(b []byte) []byte {
 	for len(b) > 0 && (b[0] == ' ' || b[0] == '\t' || b[0] == '[') {
 		b = b[1:]
@@ -516,9 +417,6 @@ func trimJSONLine(b []byte) []byte {
 	return b
 }
 
-// jsonArray stores a string slice the way Scryfall sends it, so callers read it
-// back with json_each rather than by splitting a delimiter that could appear in
-// a value.
 func jsonArray(v []string) any {
 	if len(v) == 0 {
 		return nil
@@ -530,10 +428,6 @@ func jsonArray(v []string) any {
 	return string(b)
 }
 
-// jsonArrayKeepEmpty is jsonArray with nil and empty kept distinct: an
-// absent field stores NULL (unknown), a present-but-empty one stores "[]".
-// The color columns need the difference — a colorless card is not a card
-// whose colors are unknown.
 func jsonArrayKeepEmpty(v []string) any {
 	if v == nil {
 		return nil
@@ -545,8 +439,6 @@ func jsonArrayKeepEmpty(v []string) any {
 	return string(b)
 }
 
-// nullable stores an empty string as NULL, so "unknown" and "empty" stay
-// distinguishable in the catalog the way they are in hoard.db.
 func nullable(s string) any {
 	if s == "" {
 		return nil
@@ -554,7 +446,6 @@ func nullable(s string) any {
 	return s
 }
 
-// parsePrice converts Scryfall's decimal string into a nullable float.
 func parsePrice(s string) any {
 	if s == "" {
 		return nil

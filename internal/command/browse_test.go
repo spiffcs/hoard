@@ -10,10 +10,6 @@ import (
 	"github.com/spiffcs/hoard/internal/pricing"
 )
 
-// browseDeck runs a decklist through the real text parser, so the Skipped
-// lines these tests assert on are the ones the parser actually produces
-// rather than a hand-built fixture. This is the same list `deck add --file`
-// would read; the browser reaches the same parser through importTextDeck.
 func browseDeck(t *testing.T, name, body string) *decksource.Deck {
 	t.Helper()
 	d, err := decksource.ParseText(name, "", "", "text", strings.NewReader(body))
@@ -23,9 +19,6 @@ func browseDeck(t *testing.T, name, body string) *decksource.Deck {
 	return d
 }
 
-// browseDeps builds the Deps cmdBrowse builds, minus the catalog the browser
-// only uses for its own pickers. The fixtures are fully priced, so FillGaps
-// finds no gap and never reaches the network.
 func browseDeps(t *testing.T) action.Deps {
 	t.Helper()
 	return action.Deps{
@@ -33,11 +26,6 @@ func browseDeps(t *testing.T) action.Deps {
 	}
 }
 
-// A decklist whose lines could not all be read was not fully imported, and
-// the browser's report has to say so. `deck add` raises ErrPartial and exits
-// 2 for exactly this; the browser is the same operation through a different
-// door, and an exit code is not a thing it has. So the report is where the
-// news lands — the reader is looking at it either way.
 func TestBrowseDeckAddReportsUnreadableLines(t *testing.T) {
 	stubFetch(t, importFixtures()...)
 	deck := browseDeck(t, "Mixed", "1 Sol Ring (c21) 125\n~~~ garbage ~~~\nalso not a card line\n")
@@ -49,8 +37,7 @@ func TestBrowseDeckAddReportsUnreadableLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("browseDeckAdd: %v", err)
 	}
-	// Partial is "done, mostly": the readable line still landed, so the
-	// headline still reads as an import.
+
 	if !strings.Contains(r.Summary, "1 card resolved") {
 		t.Errorf("summary = %q, want the one readable line reported as imported", r.Summary)
 	}
@@ -63,16 +50,12 @@ func TestBrowseDeckAddReportsUnreadableLines(t *testing.T) {
 			t.Errorf("report does not name the skipped line %q:\n%s", sk, body)
 		}
 	}
-	// A garbage line was never resolved against anything, so it must not
-	// inherit the unresolved-cards sentence.
+
 	if strings.Contains(body, "could not be resolved") {
 		t.Errorf("unreadable lines reported as unresolved cards:\n%s", body)
 	}
 }
 
-// Both losses at once: a line that parsed but named nothing, and lines that
-// did not parse. They are different failures and the report must keep them
-// apart — the CLI already prints two separate sentences for them.
 func TestBrowseDeckAddSeparatesUnresolvedFromUnreadable(t *testing.T) {
 	stubFetch(t, importFixtures()...)
 	deck := browseDeck(t, "Mixed",
@@ -89,9 +72,7 @@ func TestBrowseDeckAddSeparatesUnresolvedFromUnreadable(t *testing.T) {
 		t.Errorf("summary = %q, want both losses counted separately", r.Summary)
 	}
 	body := strings.Join(r.Report, "\n")
-	// Singular, because there is exactly one of each: these sentences land on
-	// the error path, and "1 cards ... were skipped" reads as a bug in the
-	// thing that just told you it lost something.
+
 	if !strings.Contains(body, "1 card could not be resolved and was skipped:") {
 		t.Errorf("report lost the unresolved-cards sentence:\n%s", body)
 	}
@@ -106,10 +87,6 @@ func TestBrowseDeckAddSeparatesUnresolvedFromUnreadable(t *testing.T) {
 	}
 }
 
-// The control that must pass before and after: a decklist that reads
-// entirely produces the report it always produced, to the byte. A fix that
-// changes the clean case has changed what every successful import looks
-// like, which is not what was asked for.
 func TestBrowseDeckAddCleanDeckReportUnchanged(t *testing.T) {
 	stubFetch(t, importFixtures()...)
 	deck := browseDeck(t, "Fish Tank", "2 Sol Ring (c21) 125\n1 Mystic Remora\n")
@@ -127,11 +104,6 @@ func TestBrowseDeckAddCleanDeckReportUnchanged(t *testing.T) {
 	}
 }
 
-// A price refresh that could not re-fetch some cards has to say so. Scryfall
-// dropping an identifier is permanent — those prices never move again — and
-// the browser's line reported only what it found, so the number quietly
-// shrank with nothing to explain it. The CLI has said this since it had a
-// report to say it in.
 func TestBrowseUpdatePricesReportsNotFound(t *testing.T) {
 	got := browseUpdatePricesSummary(action.UpdatePricesResult{
 		Total: 120, Found: 117, NotFound: 3,
@@ -141,10 +113,6 @@ func TestBrowseUpdatePricesReportsNotFound(t *testing.T) {
 	}
 }
 
-// The two counters sit on one line and count different failures: a printing
-// Scryfall stopped answering for, and a printing nothing could price. If the
-// second wording were reused for the first, the line would read as one
-// number split in two.
 func TestBrowseUpdatePricesKeepsNotFoundDistinctFromUnpriced(t *testing.T) {
 	res := action.UpdatePricesResult{Total: 120, Found: 117, NotFound: 3}
 	res.Gaps.Remaining = 8
@@ -155,24 +123,18 @@ func TestBrowseUpdatePricesKeepsNotFoundDistinctFromUnpriced(t *testing.T) {
 	}
 }
 
-// The control that must pass before and after: a refresh with nothing to
-// confess produces the line it always produced, to the byte.
 func TestBrowseUpdatePricesCleanSummaryUnchanged(t *testing.T) {
 	got := browseUpdatePricesSummary(action.UpdatePricesResult{Total: 120, Found: 120})
 	const want = "prices updated · 120 printings"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
-	// The empty hoard's line is the other branch and is equally untouched.
+
 	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}); got != "no cards yet; nothing to update" {
 		t.Errorf("empty-hoard summary = %q", got)
 	}
 }
 
-// A backfill that could not cover part of the hoard has to say so. The CLI
-// raises both shortfalls as warnings on stderr precisely because they are
-// the partial outcome; the browser has neither stderr nor a report slot on
-// this seam, so silence meant the reader saw only the half that worked.
 func TestBrowseBackfillReportsUnmappedAndUnquoted(t *testing.T) {
 	got := browseBackfillSummary(action.BackfillResult{
 		Printings: 400, Inserted: 9000, Cards: 340, Unmapped: 12, Unquoted: 48,
@@ -183,22 +145,16 @@ func TestBrowseBackfillReportsUnmappedAndUnquoted(t *testing.T) {
 	if !strings.Contains(got, "48 with no TCGplayer history") {
 		t.Errorf("summary = %q, want the 48 printings with no price history", got)
 	}
-	// The headline already counts printings. A second count of them would
-	// read as a share of the first rather than a separate shortfall, so
-	// neither counter repeats the noun.
+
 	if strings.Count(got, "printings") != 1 {
 		t.Errorf("summary = %q, want %q used once, for the headline", got, "printings")
 	}
-	// Only the unmapped half was skipped: the unquoted printings were asked
-	// about and the archive answered with nothing.
+
 	if strings.Count(got, "skipped") != 1 {
 		t.Errorf("summary = %q, want %q claimed only of the unmapped half", got, "skipped")
 	}
 }
 
-// The control that must pass before and after: a backfill that covered
-// everything produces the line it always produced, to the byte — including
-// the buylist clause, which shares the counter run with the two new ones.
 func TestBrowseBackfillCleanSummaryUnchanged(t *testing.T) {
 	got := browseBackfillSummary(action.BackfillResult{
 		Printings: 400, Inserted: 9000, Cards: 340, BidInserted: 1200,
@@ -207,7 +163,7 @@ func TestBrowseBackfillCleanSummaryUnchanged(t *testing.T) {
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
-	// The three early returns are untouched by the counters below them.
+
 	for _, tc := range []struct {
 		res  action.BackfillResult
 		want string

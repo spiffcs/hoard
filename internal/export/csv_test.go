@@ -1,6 +1,7 @@
 package export
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,19 +9,17 @@ import (
 
 func f(v float64) *float64 { return &v }
 
-// rows deliberately arrive unsorted and split across containers, since the
-// writers promise deterministic output and Moxfield/Archidekt aggregation.
 func fixture() []Row {
 	return []Row{
-		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "foil",
+		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: finish.Foil,
 			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(12.5)},
-		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "nonfoil",
+		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: finish.Nonfoil,
 			ScryfallID: "sol-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
-		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: "nonfoil",
+		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125", Finish: finish.Nonfoil,
 			ScryfallID: "sol-1", Container: "Trade", Kind: "binder", Board: "main", PriceUSD: f(2)},
-		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78", Finish: "nonfoil",
+		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78", Finish: finish.Nonfoil,
 			ScryfallID: "remora-1", Container: "Binder", Kind: "binder", Board: "main", PriceUSD: nil},
-		{Count: 1, Name: "Aether Vial", Set: "dst", CollectorNumber: "91", Finish: "etched",
+		{Count: 1, Name: "Aether Vial", Set: "dst", CollectorNumber: "91", Finish: finish.Etched,
 			ScryfallID: "vial-1", Container: "Vintage", Kind: "deck", Board: "main", PriceUSD: f(30)},
 	}
 }
@@ -32,7 +31,7 @@ func TestWriteCanonicalIsSortedAndKeepsContainers(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD",
-		"1,Mystic Remora,ice,78,nonfoil,,remora-1,Binder,binder,main,", // unpriced: empty cell, not 0.00
+		"1,Mystic Remora,ice,78,nonfoil,,remora-1,Binder,binder,main,",
 		"2,Sol Ring,c21,125,nonfoil,,sol-1,Binder,binder,main,2.00",
 		"1,Sol Ring,c21,125,foil,,sol-1,Trade,binder,main,12.50",
 		"1,Sol Ring,c21,125,nonfoil,,sol-1,Trade,binder,main,2.00",
@@ -49,8 +48,7 @@ func TestWriteMoxfieldAggregatesAndMapsFoil(t *testing.T) {
 	if err := WriteMoxfield(&b, fixture()); err != nil {
 		t.Fatalf("WriteMoxfield: %v", err)
 	}
-	// The two normal Sol Rings merge across binders; etched stays a distinct
-	// finish word in the Foil column; normal maps to an empty cell.
+
 	want := strings.Join([]string{
 		"Count,Name,Edition,Condition,Language,Foil,Collector Number",
 		"1,Aether Vial,dst,Near Mint,English,etched,91",
@@ -82,10 +80,9 @@ func TestWriteArchidektAggregatesAndCapitalizesFinish(t *testing.T) {
 	}
 }
 
-// A name containing a comma must survive the trip: encoding/csv quotes it.
 func TestFieldsWithCommasAreQuoted(t *testing.T) {
 	rows := []Row{{Count: 1, Name: "Borrowing 100,000 Arrows", Set: "ptk",
-		CollectorNumber: "31", Finish: "nonfoil", ScryfallID: "arrows-1",
+		CollectorNumber: "31", Finish: finish.Nonfoil, ScryfallID: "arrows-1",
 		Container: "Binder", Board: "main"}}
 	var b strings.Builder
 	if err := WriteCanonical(&b, rows); err != nil {
@@ -96,8 +93,6 @@ func TestFieldsWithCommasAreQuoted(t *testing.T) {
 	}
 }
 
-// The input slice must come back untouched — callers may hold rows in their
-// own order.
 func TestWritersDoNotReorderTheCallersSlice(t *testing.T) {
 	rows := fixture()
 	first := rows[0]

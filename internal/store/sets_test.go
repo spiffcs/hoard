@@ -2,14 +2,12 @@ package store
 
 import (
 	"database/sql"
+	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// seedSets stages holdings across three sets: two with Scryfall documents
-// (so set_name/released_at resolve) and one bare printing whose generated
-// columns read NULL — the decklist-import case.
 func seedSets(t *testing.T, s *Store) {
 	t.Helper()
 	mh2 := scryfall.Card{
@@ -26,32 +24,28 @@ func seedSets(t *testing.T, s *Store) {
 		ID: "myst-zzz", Set: "zzz", CollectorNumber: "3", Name: "Mystery",
 		ScryfallURL: "http://x", PriceUSD: f(1),
 	}
-	if err := s.AddCardFinish(mh2, "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(mh2, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("adding mh2: %v", err)
 	}
-	if err := s.AddCardFinish(uma, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(uma, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("adding uma nonfoil: %v", err)
 	}
-	if err := s.AddCardFinish(uma, "foil", 1); err != nil {
+	if err := s.AddCardFinish(uma, finish.Foil, 1); err != nil {
 		t.Fatalf("adding uma foil: %v", err)
 	}
-	if err := s.AddCardFinish(bare, "nonfoil", 3); err != nil {
+	if err := s.AddCardFinish(bare, finish.Nonfoil, 3); err != nil {
 		t.Fatalf("adding bare: %v", err)
 	}
-	// The mh2 printing again in a second binder: a set's rollup spans
-	// containers.
+
 	bid, err := s.CreateBinder("Trades")
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := s.AddCardFinishTo(bid, mh2, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinishTo(bid, mh2, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("adding mh2 to binder: %v", err)
 	}
 }
 
-// SetsHeld rolls the hoard up by set: newest release first, the undated
-// bare set last under its upper-cased code, copies and value summed across
-// every container.
 func TestSetsHeld(t *testing.T) {
 	s := newTestStore(t)
 	seedSets(t, s)
@@ -83,8 +77,6 @@ func TestSetsHeld(t *testing.T) {
 	}
 }
 
-// SetByFinish is AllByFinish narrowed to one set: only its rows, one per
-// printing and finish, quantities summed across containers.
 func TestSetByFinish(t *testing.T) {
 	s := newTestStore(t)
 	seedSets(t, s)
@@ -111,8 +103,6 @@ func TestSetByFinish(t *testing.T) {
 	}
 }
 
-// FoilTreatment maps Scryfall's treatment tags to display words, ignoring
-// cosmetics, absent documents, and unknown tags.
 func TestFoilTreatment(t *testing.T) {
 	ns := func(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
 	for in, want := range map[string]string{
@@ -133,14 +123,10 @@ func TestFoilTreatment(t *testing.T) {
 	}
 }
 
-// The "foil" suffix carries the rule, so a treatment WotC ships tomorrow
-// needs no code. The hand-written allowlist this replaced had drifted: it
-// keyed "texturedfoil", which matches nothing Scryfall publishes — the tag is
-// "textured" — so textured foils read as plain foils for as long as it stood.
 func TestFoilTreatmentDerivesFromTheSuffix(t *testing.T) {
 	ns := func(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
 	for in, want := range map[string]string{
-		// Real Scryfall tags the old allowlist never covered.
+
 		`["silverfoil"]`:       "silver",
 		`["fracturefoil"]`:     "fracture",
 		`["manafoil"]`:         "mana",
@@ -151,7 +137,6 @@ func TestFoilTreatmentDerivesFromTheSuffix(t *testing.T) {
 		`["firstplacefoil"]`:   "1st place",
 		`["chocobotrackfoil"]`: "chocobo",
 
-		// Words that were already right must not shift.
 		`["galaxyfoil"]`:      "galaxy",
 		`["halofoil"]`:        "halo",
 		`["confettifoil"]`:    "confetti",
@@ -162,8 +147,6 @@ func TestFoilTreatmentDerivesFromTheSuffix(t *testing.T) {
 		`["doublerainbow"]`:   "dbl rainbow",
 		`["stepandcompleat"]`: "compleat",
 
-		// Stock and print-run attributes are not foiling, and none of them
-		// carries the suffix — they fall through on their own.
 		`["thick"]`:                    "",
 		`["serialized"]`:               "",
 		`["magnified"]`:                "",
@@ -176,20 +159,15 @@ func TestFoilTreatmentDerivesFromTheSuffix(t *testing.T) {
 		}
 	}
 
-	// The dead key must stay dead: were Scryfall to start publishing it, the
-	// suffix rule answers anyway.
 	if got := FoilTreatment(ns(`["texturedfoil"]`)); got != "textured" {
 		t.Errorf("FoilTreatment(texturedfoil) = %q, want the suffix rule to answer", got)
 	}
-	// A bare "foil" tag is a finish, not a treatment, and must not become "".
+
 	if got := FoilTreatment(ns(`["foil"]`)); got != "" {
 		t.Errorf("FoilTreatment(foil) = %q, want empty", got)
 	}
 }
 
-// A ripple-tagged document surfaces Treatment on the query paths the
-// views read — the CE precon case (observed live: 400 ripple copies
-// reading as plain foil).
 func TestTreatmentSurfacesOnRows(t *testing.T) {
 	s := newTestStore(t)
 	ripple := scryfall.Card{
@@ -197,7 +175,7 @@ func TestTreatmentSurfacesOnRows(t *testing.T) {
 		ScryfallURL: "http://x", PriceUSD: f(11.86),
 		Raw: []byte(`{"promo_types":["ripplefoil"],"released_at":"2024-06-14"}`),
 	}
-	if err := s.AddCardFinish(ripple, "foil", 1); err != nil {
+	if err := s.AddCardFinish(ripple, finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	rows, err := s.AllByFinish()

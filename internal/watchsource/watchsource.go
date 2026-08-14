@@ -1,16 +1,10 @@
-// Package watchsource parses watch-list files — CSV or JSON — into one
-// normalized shape the watch import can resolve against Scryfall.
-//
-// The sibling of internal/collsource and internal/decksource: those parse
-// what other tools export, this parses what other tools generate on purpose.
-// A watch row carries a threshold and a direction instead of a quantity and
-// a binder, which is why the shape is its own and not a collsource.Row.
 package watchsource
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 
@@ -19,35 +13,21 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// Row is one watch to stand.
-//
-// Ident carries the single best resolution scheme the file offered (Scryfall
-// ID, else set+number, else name); Name is kept alongside even then, so a
-// set+number miss can fall back to a name lookup without re-parsing.
-// Threshold and Pct are the two units a direction can be stated in, and
-// exactly one of them is ever set — under and over are dollar lines, drop and
-// rise are movements. MinMove and WindowDays are a movement's floor and
-// lookback, defaulted where the file is silent.
 type Row struct {
 	Ident      scryfall.Identifier
 	Name       string
-	Finish     string // nonfoil|foil|etched — Scryfall's spelling, hoard's too
-	Op         string // under|over|drop|rise
+	Finish     finish.Finish
+	Op         string
 	Threshold  float64
 	Pct        float64
 	MinMove    float64
 	WindowDays int
 }
 
-// Request states this row as the resolve pipeline's input.
 func (r Row) Request() resolve.Request {
 	return resolve.Request{Ident: r.Ident, Name: r.Name, Finish: r.Finish}
 }
 
-// Parse reads one watch-list file, recognizing the format by content: a
-// document whose first byte is '[' is the JSON array, everything else is
-// CSV. Content beats extension because the file is often generated, and a
-// generator's naming habits are not part of the contract.
 func Parse(data []byte) ([]Row, error) {
 	trimmed := bytes.TrimSpace(bytes.TrimPrefix(data, []byte("\ufeff")))
 	if len(trimmed) == 0 {
@@ -59,9 +39,6 @@ func Parse(data []byte) ([]Row, error) {
 	return parseCSV(bytes.NewReader(data))
 }
 
-// identFor picks the strongest resolution scheme the row offers, mirroring
-// collsource and decksource: an ID is exact, set+number names one printing,
-// a bare name lets Scryfall pick one.
 func identFor(id, set, number, name string) scryfall.Identifier {
 	switch {
 	case id != "":
@@ -73,12 +50,6 @@ func identFor(id, set, number, name string) scryfall.Identifier {
 	}
 }
 
-// normDirection validates the row's direction. There is no default and no
-// inference: a watch fires money decisions, so the file must say which way.
-//
-// The four words are two pairs in different units — under and over name a
-// place, drop and rise name a movement — and which pair the row used decides
-// which of its other cells may be filled. See units.
 func normDirection(s string) (string, error) {
 	switch op := strings.ToLower(strings.TrimSpace(s)); op {
 	case "under", "over", "drop", "rise":
@@ -88,18 +59,6 @@ func normDirection(s string) (string, error) {
 	}
 }
 
-// units reads whichever of a row's two size cells its direction calls for, and
-// refuses a row that fills both.
-//
-// The mutual exclusion is enforced rather than resolved by precedence, for the
-// same reason normDirection infers nothing: a file that states both a dollar
-// line and a percentage has not said which one the alert obeys, and silently
-// picking one would stand a watch the file never asked for. A row is refused
-// by its line number, the way an over-long row already is.
-//
-// Where the file is silent on a movement's floor or window, the defaults are
-// the ones `watch add` applies, so a watch means the same thing however it was
-// created.
 func units(op, threshold, percent, minMove, since string) (Row, error) {
 	var r Row
 	hasThreshold, hasPercent := strings.TrimSpace(threshold) != "", strings.TrimSpace(percent) != ""
@@ -152,8 +111,6 @@ func units(op, threshold, percent, minMove, since string) (Row, error) {
 	}
 }
 
-// parseSince reads a lookback in the vocabulary `hoard movers --since` uses —
-// 30d, 2w — and answers in whole days, which is what a watch stores.
 func parseSince(s string) (int, error) {
 	n, err := strconv.ParseFloat(strings.TrimRight(s, "dwDW"), 64)
 	if err != nil || n <= 0 {
@@ -172,7 +129,6 @@ func parseSince(s string) (int, error) {
 	return int(n), nil
 }
 
-// parseThreshold reads a positive dollar amount, tolerating a leading $.
 func parseThreshold(s string) (float64, error) {
 	v, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(s), "$"), 64)
 	if err != nil {
@@ -184,17 +140,13 @@ func parseThreshold(s string) (float64, error) {
 	return v, nil
 }
 
-// normFinish maps the file's finish cell to the finish vocabulary
-// (nonfoil|foil|etched). Anything unrecognized — including empty — reads as
-// nonfoil: the resolver corrects a finish the printing lacks, while an
-// invented foil would watch a price that may not exist.
-func normFinish(s string) string {
+func normFinish(s string) finish.Finish {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "foil", "true", "yes", "1":
-		return "foil"
+		return finish.Foil
 	case "etched", "foil-etched", "etched foil":
-		return "etched"
+		return finish.Etched
 	default:
-		return "nonfoil"
+		return finish.Nonfoil
 	}
 }

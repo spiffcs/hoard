@@ -1,12 +1,10 @@
 package command
 
-// The watch command: standing price thresholds, checked against stored
-// prices only — the cron pairing is `hoard update-prices && hoard watch`.
-
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"time"
 
@@ -19,26 +17,16 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// errWatchFired marks a check where at least one watch crossed its
-// threshold, mapped to exit code 3 so a cron wrapper can `hoard watch ||
-// notify` without parsing output. The alert itself is the command's stdout;
-// this is only the exit status.
 var errWatchFired = fmt.Errorf("a watch fired")
 
-// watchFlags is what `watch add` was asked for, before any of it is checked
-// against the others.
 type watchFlags struct {
 	under, over      float64
-	drop, rise       string // a percentage: "10%" or "10"
+	drop, rise       string
 	minMove          float64
 	since            string
 	foil, minMoveSet bool
 }
 
-// parsePercent reads a movement's size off a flag, naming the flag in whatever
-// the units boundary refuses. store.ParsePercent holds the rule, because the
-// import file spells a movement the same way and one conversion decided once
-// is what keeps a factor of a hundred from appearing between them.
 func parsePercent(flag, raw string) (float64, error) {
 	pct, err := store.ParsePercent(flag, raw)
 	if err != nil {
@@ -47,27 +35,12 @@ func parsePercent(flag, raw string) (float64, error) {
 	return pct, nil
 }
 
-// watchAdd stands the watches one card was asked for.
-//
-// Both dollar bounds at once is a band — alert outside $1 to $5 — and a band
-// is two watches, not one: the store keys on (card, finish, op), so under and
-// over are separate rows with separate ids. That is not an implementation
-// detail to be hidden, because every other watch command already deals in one
-// direction at a time; list shows two lines and rm takes one id. It is one
-// card, though, so the bounds go to the action layer together and the card is
-// resolved once — see action.WatchAddOptions.
-//
-// A movement and a dollar line cannot be asked for in one command. They are
-// two different questions about one printing — "tell me when it moves 10%" and
-// "tell me when it crosses $30" — and each deserves its own line, so that
-// watch rm can take one away without the other.
 func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string, fl watchFlags) error {
 	name := strings.TrimSpace(strings.Join(words, " "))
 	if name == "" {
 		return cli.Usagef("watch add needs a card name, e.g. hoard watch add Sol Ring --under 2")
 	}
-	// A zero or negative bound is an unset one: prices are positive, so
-	// there is no threshold either flag could be asking for down there.
+
 	var bounds []action.WatchBound
 	if fl.under > 0 {
 		bounds = append(bounds, action.WatchBound{Op: "under", Threshold: fl.under})
@@ -81,8 +54,7 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 		if err != nil {
 			return err
 		}
-		// Days at the boundary, so the store keeps an integer and movers'
-		// vocabulary does not have to move packages to be reused here.
+
 		if windowDays = int(w / (24 * time.Hour)); windowDays < 1 {
 			return cli.Usagef("--since %s is less than a day; a movement needs a window to move in", fl.since)
 		}
@@ -106,11 +78,7 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 		return cli.Usagef("a movement and a dollar line are two different questions " +
 			"about one card: give each its own watch add, so watch rm can take one without the other")
 	}
-	// A band only means anything with a gap in the middle. Reversed or
-	// equal, the two halves cover the whole number line: nothing downstream
-	// can catch that, because each row is individually valid and each one
-	// fires, so the user gets alerts forever from a command that looked
-	// like it worked.
+
 	if fl.under > 0 && fl.over > 0 && fl.under >= fl.over {
 		return cli.Usagef("a band alerts outside it, so --under must be below --over: "+
 			"under %s and over %s leaves no gap between them and every price is one or the other",
@@ -123,8 +91,7 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	pr.Close()
 	if err != nil {
 		if res.Stood > 0 {
-			// Some of the writes stood. Say so, or a retry reads as though
-			// the whole command did nothing.
+
 			return fmt.Errorf("the %s watch stood; the %s watch did not: %w",
 				bounds[res.Stood-1].Op, bounds[res.Stood].Op, err)
 		}
@@ -150,20 +117,6 @@ func watchAdd(ctx context.Context, st *store.Store, env *cli.Env, words []string
 	return nil
 }
 
-// watchPrintingNotes says which printing the watch landed on and why it was
-// that one.
-//
-// A bare card name is not a printing, and the answer to one is Scryfall's
-// rather than hoard's: `watch add Bitterblossom` stood a watch on 2x2/69 while
-// the owner held uma/85, printed a line that read like a success, and would
-// have alerted about a card nobody owns. WatchAdd now prefers a held printing;
-// this is the half that makes the outcome legible either way, because in a
-// transcript a silent right answer and a silent wrong one look identical —
-// which is precisely how the original went unnoticed.
-//
-// Nothing is said when the collection holds exactly the printing asked for and
-// nothing else: the confirmation line already names it, and a note on the one
-// case that needs no warning is how a reader learns to skip the notes.
 func watchPrintingNotes(env *cli.Env, res action.WatchAddResult) {
 	dim := env.OutEnv.Dim()
 	say := func(format string, a ...any) {
@@ -174,16 +127,11 @@ func watchPrintingNotes(env *cli.Env, res action.WatchAddResult) {
 		say("You hold no copy of %s: this is the printing Scryfall names for the bare "+
 			"name, not one of yours.", res.Card.Name)
 	case !res.Owned:
-		// The held printing was asked for by id and something else came back,
-		// which resolve only does when Scryfall no longer knows that id and the
-		// name retry answered instead. Rare — and exactly the substitution the
-		// old silence hid, so it is the loudest line here.
+
 		say("Scryfall did not answer for the printing you hold (%s), so this watch "+
 			"follows its own choice of printing instead.", heldPrintings(res.Held, ""))
 	case len(res.Held) > 1:
-		// The winning count goes on the line that states the rule. Without it
-		// the reader is told a tie-break was applied and shown only the losers,
-		// which is the one arrangement that makes a correct pick look arbitrary.
+
 		say("You hold %d printings of %s; watching the one you hold most of (%s).",
 			len(res.Held), res.Card.Name, ui.Qty(heldAny(res.Held, res.Card.ID)))
 		say("Also held: %s.", heldPrintings(res.Held, res.Card.ID))
@@ -194,8 +142,6 @@ func watchPrintingNotes(env *cli.Env, res action.WatchAddResult) {
 	}
 }
 
-// heldPrintings lists held printings as "uma/85 ×4", skipping the one already
-// named on the confirmation line.
 func heldPrintings(held []store.HeldPrinting, skipID string) string {
 	parts := make([]string, 0, len(held))
 	for _, h := range held {
@@ -207,9 +153,6 @@ func heldPrintings(held []store.HeldPrinting, skipID string) string {
 	return strings.Join(parts, ", ")
 }
 
-// heldCopies is how many copies of one printing are held in the watched
-// finish. Zero with the printing still in the list means it is held in some
-// other finish — a foil watch on a card owned only in non-foil, most often.
 func heldCopies(held []store.HeldPrinting, id string) int {
 	for _, h := range held {
 		if h.ScryfallID == id {
@@ -219,9 +162,6 @@ func heldCopies(held []store.HeldPrinting, id string) int {
 	return 0
 }
 
-// heldAny is heldCopies across every finish, which is the number the "also
-// held" list shows and therefore the one the chosen row has to be comparable
-// against.
 func heldAny(held []store.HeldPrinting, id string) int {
 	for _, h := range held {
 		if h.ScryfallID == id {
@@ -231,7 +171,6 @@ func heldAny(held []store.HeldPrinting, id string) int {
 	return 0
 }
 
-// watchRule phrases one bound the way the row will read it back.
 func watchRule(b action.WatchBound) string {
 	if b.Op == "drop" || b.Op == "rise" {
 		s := fmt.Sprintf("%s %s", b.Op, ui.Percent(b.Pct))
@@ -243,23 +182,9 @@ func watchRule(b action.WatchBound) string {
 	return fmt.Sprintf("%s %s", b.Op, ui.Money(b.Threshold))
 }
 
-// watchPercentNotes says the two things a percent watch can only be honest
-// about at the moment it is set.
-//
-// A movement is read from one vendor's series for both of its ends, so a
-// printing that vendor does not price can never answer — and that is silence,
-// which is indistinguishable from "nothing moved" unless it is said here. The
-// floor is the other: ten percent of a fifty cent card is a nickel, and a
-// watch set without a floor on a card that cheap is the shape of the incident
-// this feature came from.
 func watchPercentNotes(st *store.Store, env *cli.Env, res action.WatchAddResult, fl watchFlags, windowDays int) {
 	dim := env.OutEnv.Dim()
-	// The anchor's lower bound includes the watch's own creation, so a watch
-	// set today measures from today's price however far the card has already
-	// fallen. That is the right reading of "tell me when this moves" — the
-	// alternative fires the moment it is created, reporting history as news —
-	// but it is not what someone watching a card mid-slide expects, and the
-	// only honest place to say so is here.
+
 	fmt.Fprintln(env.Out, dim(
 		"Movement is measured from today onward: a fall that already happened is not an alert."))
 	ok, err := action.Deps{Store: st}.WatchAnchorable(res.Card.ID, res.Finish)
@@ -271,7 +196,7 @@ func watchPercentNotes(st *store.Store, env *cli.Env, res action.WatchAddResult,
 			windowDays)))
 	}
 	price := res.Card.PriceUSD
-	if res.Finish == "foil" {
+	if res.Finish == finish.Foil {
 		price = res.Card.PriceUSDFoil
 	}
 	if !fl.minMoveSet && price != nil && *price < 1 {
@@ -286,10 +211,7 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 	if len(pos) != 1 {
 		return cli.Usagef("watch import needs exactly one file (CSV or JSON)")
 	}
-	// A lone dash is stdin, spelled the way hoard add --file spells it, so a
-	// watch list can be piped from wherever it was generated. WatchImport
-	// has always documented its Display as a path or stdin; only this line
-	// never delivered the second half.
+
 	data, display, err := readPathOrStdin(pos[0])
 	if err != nil {
 		return err
@@ -298,8 +220,7 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 	res, err := action.WatchImport(ctx, addDeps(st), pr.Fn(),
 		action.WatchImportOptions{Data: data, Display: display})
 	pr.Close()
-	// A partial import still stood its watches; the report renders before
-	// the exit code says "done, mostly". Any other error did not finish.
+
 	if err != nil && !errors.Is(err, action.ErrPartial) {
 		return err
 	}
@@ -310,9 +231,7 @@ func watchImport(ctx context.Context, st *store.Store, env *cli.Env, pos []strin
 		r.Detail("%d watch the foil price: the file said otherwise but the printing has no non-foil.",
 			res.Refinished)
 	}
-	// The rows that named only a card. Said because the alternative is what
-	// `watch add` used to do silently: point the alert at whichever printing
-	// Scryfall calls the card's newest, which may be one nobody owns.
+
 	if res.Held > 0 {
 		r.Detail("%d named only a card and follow a printing you hold; "+
 			"give a Set and Collector Number to pin a different one.", res.Held)
@@ -333,9 +252,7 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		return err
 	}
 	out, env := cmdEnv.Out, cmdEnv.OutEnv
-	// Before the empty-list hint, because "no watches" is an answer a script
-	// needs as much as a person does, and an empty rows array says it in the
-	// shape the caller already knows how to read.
+
 	if cmdEnv.JSON {
 		return hoardjson.Write(out, hoardjson.FromWatchList(watches))
 	}
@@ -343,19 +260,7 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		fmt.Fprintln(out, env.Dim()("No watches. Add one: hoard watch add <name> --under N | --over N"))
 		return nil
 	}
-	// No ID column, and that is safe for a reason worth writing down because it
-	// is not obvious: watch rm takes an id, so dropping the column looks like
-	// it strands anyone whose name fragment is ambiguous. It does not, because
-	// WatchByRef's ambiguity error prints the ids itself —
-	//
-	//	"Ancient Tomb" matches 2 watches:
-	//	  12: Ancient Tomb foil over $149.86
-	//	  13: Ancient Tomb foil under $122.62
-	//	use the id
-	//
-	// — so the id is offered at the moment it is needed, by the command that
-	// needs it, and only then. A column carrying it on every row of every
-	// listing was the worse-targeted answer to a question most rows never ask.
+
 	t := ui.Table{
 		Env:    env,
 		Header: true,
@@ -364,11 +269,7 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 			{Title: "SET/NUM", Align: ui.Left, Priority: 3, Style: env.Dim()},
 			{Title: "FINISH", Align: ui.Left, Priority: 4, Style: env.Dim()},
 			{Title: "WATCH", Align: ui.Left},
-			// The anchor is the least important of the three numbers and goes
-			// first on a narrow terminal. Folding it into WATCH instead was
-			// rejected: that cell already holds the widest variable content in
-			// the table, and the flex budget belongs to NAME, which is the
-			// column a reader scans.
+
 			{Title: "ANCHOR", Align: ui.Right, Priority: 5, Style: env.Dim()},
 			{Title: "PRICE", Align: ui.Right},
 			{Title: "STATE", Align: ui.Left, Style: env.Dim()},
@@ -379,9 +280,7 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 		if w.PriceUSD != nil {
 			price = ui.Money(*w.PriceUSD)
 		}
-		// The state is the store's word, spaced out for reading. One direction
-		// only: the machine vocabulary is what the schema publishes, and this
-		// column is the rendering of it rather than a second opinion.
+
 		state := strings.ReplaceAll(w.State(), "-", " ")
 		anchor := "—"
 		if w.Anchor != nil {
@@ -395,12 +294,6 @@ func watchList(st *store.Store, cmdEnv *cli.Env) error {
 	return nil
 }
 
-// watchCell renders the WATCH column: the rule, in its own units.
-//
-// The floor is shown only when it is doing something. A watch whose min-move
-// is silently suppressing alerts has to say so on its own row, or the one
-// confusing thing this feature can do — "it moved 12%, why was I not told?" —
-// has no visible cause anywhere.
 func watchCell(w store.WatchStatus) string {
 	if !w.Percent() {
 		return fmt.Sprintf("%s %s", w.Op, ui.Money(w.Threshold))
@@ -445,13 +338,12 @@ func watchCheck(st *store.Store, cmdEnv *cli.Env) error {
 		return nil
 	}
 	for _, w := range fired {
-		// The finish is only worth saying when it is the notable one, as the
-		// tables do with their dimmed '-' for nonfoil.
-		finish := ""
-		if w.Finish == "foil" {
-			finish = " foil"
+
+		label := ""
+		if w.Finish == finish.Foil {
+			label = " foil"
 		}
-		fmt.Fprintf(out, "%s\n", watchAlert(env, w, finish))
+		fmt.Fprintf(out, "%s\n", watchAlert(env, w, label))
 	}
 	if len(fired) == 0 {
 		fmt.Fprintln(out, env.Dim()(fmt.Sprintf("%s watches checked, nothing crossed.", ui.Count(checked))))
@@ -462,24 +354,11 @@ func watchCheck(st *store.Store, cmdEnv *cli.Env) error {
 	return errWatchFired
 }
 
-// watchAlert phrases one alert.
-//
-// An absolute watch crossed a line and the line is the news. A movement's news
-// is the movement, so the sentence has to name the anchor, the size of the
-// move, and when the anchor was set — "down 10%" with nothing to measure it
-// against is unfalsifiable from the alert alone, and an alert a reader cannot
-// check is one they learn to skim.
-//
-// The prose says down and up where the row says drop and rise: the op is the
-// watch's name for the rule it follows, and this is the report of what
-// happened. The percentage is what gets the emphasis rather than the price,
-// which inverts the absolute alert's stress on purpose — there, the price
-// crossing is the event; here, the price is only context.
-func watchAlert(env ui.Env, w store.WatchStatus, finish string) string {
+func watchAlert(env ui.Env, w store.WatchStatus, label string) string {
 	where := ui.Printing(w.SetCode, w.CollectorNumber)
 	if !w.Percent() || w.Anchor == nil {
 		return fmt.Sprintf("%s (%s)%s is %s, crossed %s %s",
-			w.Name, where, finish, env.Bold()(ui.Money(*w.PriceUSD)), w.Op, ui.Money(w.Threshold))
+			w.Name, where, label, env.Bold()(ui.Money(*w.PriceUSD)), w.Op, ui.Money(w.Threshold))
 	}
 	word, extreme := "down", "high"
 	moved := (*w.Anchor - *w.PriceUSD) / *w.Anchor
@@ -492,17 +371,10 @@ func watchAlert(env ui.Env, w store.WatchStatus, finish string) string {
 		since = " of " + t.Local().Format("2 Jan")
 	}
 	return fmt.Sprintf("%s (%s)%s is %s, %s %s from its %s %s%s",
-		w.Name, where, finish, ui.Money(*w.PriceUSD),
+		w.Name, where, label, ui.Money(*w.PriceUSD),
 		word, env.Bold()(ui.Percent(moved)), ui.Money(*w.Anchor), extreme, since)
 }
 
-// NewCmdWatch is the group whose bare form does the work: `hoard watch` checks,
-// `hoard watch list` lists.
-//
-// The --json split that cmdWatch enforced by hand is now structural: the group
-// is JSONCapable, and of its subcommands only list is — a check and a listing
-// are both machine-readable questions, while add, import and rm are writes
-// whose receipts are prose.
 func NewCmdWatch(a *app) *cobra.Command {
 	var fl watchFlags
 
@@ -510,16 +382,7 @@ func NewCmdWatch(a *app) *cobra.Command {
 		Use:     "watch",
 		GroupID: groupCollection,
 		Short:   "Check price watches (no network; exit 3 = fired)",
-		// Wrapped to 60 columns, the narrowest terminal hoard's help claims
-		// to render in: writeCommandHelp copies Long through verbatim, so a
-		// Long is only ever as narrow as it was written.
-		//
-		// The latch is the subject because it is the one thing about this
-		// command that a correct-looking supervisor loop gets wrong, and the
-		// old help said "exit 3 = fired" and stopped. Both re-arm rules are
-		// stated because they differ by op — see TestWatchAbsoluteLatches-
-		// UntilThePriceCrossesBack and TestPercentReArmsOnFiringAlone, which
-		// is where each of these sentences is demonstrated.
+
 		Long: "Checks every standing watch against stored prices —\n" +
 			"no network, so the cron pairing is\n" +
 			"hoard update-prices && hoard watch.\n\n" +
@@ -564,10 +427,7 @@ func NewCmdWatch(a *app) *cobra.Command {
 	add.Flags().Float64Var(&fl.under, "under", 0, "alert when the price falls below this")
 	add.Flags().Float64Var(&fl.over, "over", 0,
 		"alert when the price rises above this (with --under: a band)")
-	// The baseline these measure from trails: it is the highest (or lowest)
-	// price inside the window, recomputed on every check and reset whenever
-	// the watch fires. A frozen baseline is already spelled --under or --over
-	// against a number you worked out once.
+
 	add.Flags().StringVar(&fl.drop, "drop", "",
 		"alert on a fall of this much from the window's high, e.g. 10%")
 	add.Flags().StringVar(&fl.rise, "rise", "",
@@ -589,9 +449,7 @@ func NewCmdWatch(a *app) *cobra.Command {
 				return watchImport(c.Context(), a.store, a.env, args)
 			},
 		},
-		// The one subcommand that honors --json. `watch` answers what a check
-		// just did; `watch list` answers what is standing, and a script that
-		// misses an exit 3 has no other way to ask.
+
 		cli.JSONCapable(&cobra.Command{
 			Use: "list", Short: "Your watches",
 			Example: "hoard watch list\nhoard watch list --json",

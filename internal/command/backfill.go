@@ -1,8 +1,5 @@
 package command
 
-// `hoard backfill-prices`: the price history MTGJSON kept while hoard was not
-// looking.
-
 import (
 	"context"
 	"fmt"
@@ -17,7 +14,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdBackfillPrices builds `hoard backfill-prices`.
 func NewCmdBackfillPrices(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:     "backfill-prices",
@@ -31,11 +27,6 @@ func NewCmdBackfillPrices(a *app) *cobra.Command {
 	}
 }
 
-// runBackfillPrices loads the prices MTGJSON kept while hoard was not
-// looking, so a fresh hoard can answer "what moved this month" immediately.
-// A one-off, and separate from update-prices for a reason: the archive is
-// ~150 MB against the 5 MB of today's file, and the download cache is
-// pruned nightly.
 func runBackfillPrices(ctx context.Context, st *store.Store, env *cli.Env) error {
 	pr := stderrPrinter()
 	res, err := action.BackfillPrices(ctx,
@@ -52,10 +43,6 @@ func runBackfillPrices(ctx context.Context, st *store.Store, env *cli.Env) error
 	return nil
 }
 
-// printBackfill reports the import, including what it missed. The outcome
-// goes to stdout; the partial-outcome warnings (printings the archive
-// could not cover) go to stderr — this used to put everything on stdout,
-// so piping the result meant filtering the caveats out by hand.
 func printBackfill(env *cli.Env, r action.BackfillResult) {
 	rep := env.Report()
 	if r.AlreadyToday != "" {

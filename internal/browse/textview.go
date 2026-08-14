@@ -1,10 +1,5 @@
 package browse
 
-// textView is a full-screen scrollable text takeover: the valuation report,
-// an import's outcome. Unlike the card overlay (detail.go) it renders lines
-// it was handed rather than structured data, and it scrolls — a report is
-// longer than a card.
-
 import (
 	"fmt"
 	"strings"
@@ -18,22 +13,16 @@ type textView struct {
 	offset int
 }
 
-// openText replaces the panes with a scrollable text takeover. The status
-// line is left alone: the takeover doesn't render it, and an op summary set
-// just before (onOpDone) must still be there when the takeover closes.
 func (m *Model) openText(title string, lines []string) {
-	// A text takeover replaces whatever full-screen surface was up; a card
-	// detail left set would win the render and hide the report.
+
 	m.detail = nil
 	m.text = &textView{title: title, lines: lines}
 }
 
-// textRows is how many content lines fit; the same budget the panes get.
 func (m Model) textRows() int {
 	return m.visibleRows() + 1
 }
 
-// handleTextKey drives the takeover: scroll, close, or quit.
 func (m Model) handleTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	t := m.text
 	maxOffset := max(len(t.lines)-m.textRows(), 0)
@@ -55,15 +44,13 @@ func (m Model) handleTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		t.offset = maxOffset
 	case ":", "ctrl+p":
-		// Same contract as the card overlay: the palette closes the takeover.
+
 		m.text = nil
 		m.openPalette()
 	}
 	return m, nil
 }
 
-// textViewRender renders the takeover in place of the panes, windowed by the
-// scroll offset, with a footer saying where in the text the window sits.
 func (m Model) textViewRender() string {
 	t := m.text
 	rows := m.textRows()
@@ -79,11 +66,7 @@ func (m Model) textViewRender() string {
 		b.WriteString("\n")
 	}
 	b.WriteString(strings.Repeat("─", m.width) + "\n")
-	// An active surface claims the slot under the rule, exactly as the card
-	// overlay's does: mode() ranks a confirm or prompt above the takeover, so
-	// while one is up it owns every key — an op's catalog question staged
-	// behind a valuation report was answered blind, the worker hanging on a
-	// prompt that was never on screen.
+
 	switch {
 	case m.confirm != nil || m.prompt != nil:
 		b.WriteString(m.statusLine())

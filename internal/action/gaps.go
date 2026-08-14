@@ -9,15 +9,8 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 )
 
-// GapReport re-exports pricing's report so frontends need only this package
-// for the result shapes they render.
 type GapReport = pricing.GapReport
 
-// FillGaps prices what Scryfall could not, narrating what happened: the
-// fetcher's own messages and the outcome both flow as Notes, so the
-// sequence reads the same on the CLI's stderr as in a TUI status line. The
-// returned report carries the same facts for rendering after the fact —
-// notes are droppable, results are not.
 func FillGaps(ctx context.Context, d Deps, p progress.Fn) (GapReport, error) {
 	f := d.pricer().WithProgress(func(msg string) {
 		p.Emit(progress.Event{Step: "filling price gaps", Note: msg})

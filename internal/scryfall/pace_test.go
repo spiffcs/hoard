@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// The suite talks to local httptest servers, where honouring Scryfall's real
-// gaps would spend half a second per request. Tests that measure pacing set
-// their own gaps explicitly.
 func TestMain(m *testing.M) {
 	slowGap = 0
 	defaultGap = 0
@@ -21,10 +18,10 @@ func TestMain(m *testing.M) {
 func TestEndpointClass(t *testing.T) {
 	slow := []string{
 		"https://api.scryfall.com/cards/search?q=x",
-		"https://api.scryfall.com/cards/search?unique=prints&page=2", // pagination next_page URL
+		"https://api.scryfall.com/cards/search?unique=prints&page=2",
 		"https://api.scryfall.com/cards/named?fuzzy=sol+ring",
 		"https://api.scryfall.com/cards/collection",
-		"http://127.0.0.1:9999/cards/search?q=x", // test-server base
+		"http://127.0.0.1:9999/cards/search?q=x",
 	}
 	for _, ep := range slow {
 		if class, _ := endpointClass(ep); class == "" {
@@ -42,9 +39,6 @@ func TestEndpointClass(t *testing.T) {
 	}
 }
 
-// The limit must hold across call sites: consecutive requests to a 2/second
-// endpoint may not go out closer together than the class gap, however the
-// callers arrive.
 func TestPacerSpacesSlowEndpointRequests(t *testing.T) {
 	oldSlow, oldDefault := slowGap, defaultGap
 	slowGap, defaultGap = 50*time.Millisecond, 0
@@ -54,7 +48,7 @@ func TestPacerSpacesSlowEndpointRequests(t *testing.T) {
 	var stamps []time.Time
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stamps = append(stamps, time.Now())
-		w.WriteHeader(http.StatusNotFound) // "no match" — cheapest valid answer
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	old := apiBase

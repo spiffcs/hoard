@@ -1,18 +1,3 @@
-# XcodeGen spec for the iPhone capture head.
-#
-# The generated .xcodeproj is a build artifact and is gitignored; this file is
-# the source of truth. That matches how build-scan.sh hand-assembles the macOS
-# .app rather than carrying an Xcode project — the repo keeps readable, diffable
-# inputs and treats Xcode's output as disposable. It also keeps a 3000-line
-# pbxproj out of every diff.
-#
-#   brew install xcodegen
-#   make scan-ios
-#
-# Signing is deliberately not in this file. DEVELOPMENT_TEAM lives in
-# Signing.xcconfig, which is gitignored, so a team identifier never lands in the
-# repo. scripts/build-scan-ios.sh writes a template if it is missing.
-
 name: HoardScan
 options:
   bundleIdPrefix: dev.spiffcs.hoard
@@ -24,8 +9,6 @@ configs:
   Debug: debug
   Release: release
 
-# The shared SwiftPM package. Named for the directory it lives in rather than
-# for any one product: the app links four of them.
 packages:
   HoardScanPackage:
     path: ../hoard-scan
@@ -36,31 +19,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-      # The app icon: hand-authored, full-bleed 1024×1024 artwork committed as
-      # icon-1024.png. Nothing generates it. It used to be derived from
-      # docs/assets/logo-master.png so the phone and the README could not wear
-      # different faces, but a finished icon is opaque edge to edge and that
-      # generator located the mark by its alpha bounding box — so it shrank the
-      # whole composition to 82% and letterboxed it. The two faces can drift
-      # now, and nothing checks that they match.
-      #
-      # Replacing it is a file copy. Two properties are not negotiable: exactly
-      # 1024×1024, and no alpha channel — an icon submitted with alpha is
-      # rejected, and the rejection arrives at the end of a submission.
-      # `make asset-review` renders it down to 40px to be looked at.
-      #
-      # PrivacyInfo.xcprivacy lives here too and is picked up by this same
-      # directory entry — xcodegen walks the folder, and an extension it does
-      # not recognise goes into the resources phase, which is where a privacy
-      # manifest has to end up (the top level of the .app, next to Info.plist).
-      # Listing the file a second time here would add it to that phase twice.
-      # Verified in the built bundle rather than assumed; it is easy to add a
-      # manifest and have it quietly not ship.
       - path: Resources
-    # ScanKit is deliberately absent: it is the *Mac* end of the link — the
-    # translator and its mirror window — and no source here imports it. It was
-    # listed until 2026-08-05 and never used, which only surfaced when the
-    # package stopped vending it as a product.
     dependencies:
       - package: HoardScanPackage
         product: CardKit
@@ -71,28 +30,8 @@ targets:
     info:
       path: Info.plist
       properties:
-        # The variable reference, quoted so xcodegen writes it into the plist
-        # verbatim for Xcode to resolve at build time — written as a literal,
-        # the build stamp scripts/build-scan-ios.sh passes lands in a setting nothing
-        # reads, and the phone reports whatever number generation day left
-        # here (live: a tuning session ran against "phone=1").
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        # The same trick as CFBundleVersion, for a drift that had already
-        # happened. xcodegen's default for this key is a literal "1.0"; the
-        # build setting said "0.1"; a literal is not a reference to anything, so
-        # nothing reconciled the two and the shipped plist read 1.0 while every
-        # human-readable place said 0.1. (Measured, not reasoned: a Release
-        # build before this change produced CFBundleShortVersionString 1.0. The
-        # release doc's claim that "Xcode's build setting wins, so the shipped
-        # value is 0.1" was backwards.) Pointing at the setting makes
-        # MARKETING_VERSION below the one place the number is written.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        # Capitalised, unlike `hoard` itself. The CLI is a command you type and
-        # wears the lowercase every command wears; this is an icon on a home
-        # screen, sitting in a grid where everything else is a proper noun, and
-        # a lowercase label there reads as a mistake rather than as a style. It
-        # also now agrees with the App Store listing, which was always
-        # `Hoardling` — the two spellings used to disagree.
         CFBundleDisplayName: Hoardling
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
@@ -101,79 +40,17 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription:
           Hoardling uses the camera to scan and identify Magic cards.
-        # Required from iOS 14 for the Bonjour link to the Mac (stage C). The
-        # permission prompt is one-time and cannot be re-offered without
-        # deleting the app, so it is declared before it is needed rather than
-        # discovered during a session.
         NSLocalNetworkUsageDescription:
           Hoardling sends card reads to the hoard app running on your Mac.
         NSBonjourServices:
           - _hoardscan._tcp
-        # Export compliance, answered once here instead of on every upload.
-        #
-        # The answer stays `false`, but the exemption underneath it moved, and
-        # this note was rewritten to match. It used to argue that there was "no
-        # cipher anywhere in the tree, because the link deliberately carries
-        # plaintext." That was true when it was written and is now false:
-        # PeerLink.swift builds NWProtocolTLS.Options() and the link runs TLS
-        # with self-signed certificates pinned on first use. The payload is
-        # encrypted. An authentication-only exemption no longer applies.
-        #
-        # What applies instead is narrower and still honest: every cryptographic
-        # call in this app is the operating system's own. CryptoKit for
-        # HKDF-SHA256 and HMAC-SHA256 (ScanLink/Pairing.swift), Security for the
-        # P-256 key pair and its signature (ScanLink/PeerIdentity.swift), and
-        # Network for the TLS itself (ScanLink/PeerTrust.swift, PeerLink.swift).
-        #
-        # That is the exact case App Store Connect asks about — whether standard
-        # algorithms are used *instead of, or in addition to* the encryption
-        # within Apple's operating system. Nothing here is. Package.swift
-        # declares no `.package(url:)` at all, so no third-party crypto library
-        # is linked, and no cipher is written by hand anywhere in the tree.
-        #
-        # This is a legal declaration, not a description of the code. Re-read it
-        # if a dependency lands or someone hand-rolls a cipher: either would
-        # break the exemption above, and neither would break the build.
         ITSAppUsesNonExemptEncryption: false
-        # File sharing. These two make the app's Documents/ directory browsable
-        # from the Files app, which is how a session's numbers get recovered by
-        # hand when `devicectl device copy from` misbehaves — which it has.
-        #
-        # They are true here and stripped from anything that is not a Debug
-        # build, by the postBuildScripts step at the bottom of this target. Read
-        # that note before moving them: it records why the two declarative
-        # routes do not work.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.spiffcs.hoard.scan.ios
-        # The one place the marketing version is written; the plist above
-        # points here.
-        #
-        # 1.0.0, and NOT the Go binary's number. This used to track hoard on the
-        # argument that two halves which only work paired should not carry two
-        # different numbers in a bug report. That argument was sound and is
-        # overruled by a harder constraint: App Store Connect groups uploaded
-        # builds by CFBundleShortVersionString, and a build that does not match
-        # the version being submitted is not offered for it. The store version
-        # is 1.0.0, so this has to be 1.0.0 — the alternative is an .ipa that
-        # cannot be attached to the release it was built for.
-        #
-        # So the two halves now diverge on purpose: Hoardling 1.0.0 against
-        # hoard 0.1.0. A bug report should name both, which it had to anyway —
-        # the old scheme made the numbers equal, never made them unambiguous.
-        #
-        # An earlier note here reasoned that calling it 1.0 "would be the only
-        # place in the project that overstates its own maturity." That reading
-        # does not survive contact with the store: on the App Store a leading
-        # zero is not read as modesty, it is read as a beta, and App Review has
-        # its own conventions about first releases. Do not revert this to 0.x
-        # without also changing the version in App Store Connect.
         MARKETING_VERSION: "1.0.0"
-        # "0" means an unstamped build — Xcode-GUI builds report phone=0 and
-        # say so honestly; scripts/build-scan-ios.sh overrides this with its
-        # per-build timestamp, which is the number a tuning session trusts.
         CURRENT_PROJECT_VERSION: "0"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
@@ -185,67 +62,17 @@ targets:
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig
-    # Strip the file-sharing keys from anything that is not a Debug build.
-    #
-    # UIFileSharingEnabled and LSSupportsOpeningDocumentsInPlace are right for a
-    # development build and wrong for a shipped one: together they advertise a
-    # document-sharing app that this is not, and they leave the app container
-    # open in the Files app to anyone holding the unlocked phone. A shipped
-    # build should not carry either.
-    #
-    # This is a script phase rather than configuration because both declarative
-    # routes were tried against this target and measured, and both fail:
-    #
-    #   - xcodegen's `info.properties` writes one Info.plist for every
-    #     configuration. Unlike `settings`, it has no per-config form, so the
-    #     keys cannot simply be declared in Debug.
-    #   - INFOPLIST_KEY_* (with GENERATE_INFOPLIST_FILE = YES) merges real
-    #     booleans into the plist per config and looked like the answer. It
-    #     handles LSSupportsOpeningDocumentsInPlace and drops
-    #     UIFileSharingEnabled on the floor, silently — no warning, no error,
-    #     the key is just missing from the built bundle. The setting names are
-    #     an allowlist of 95 in Xcode's CoreBuildSystem.xcspec and
-    #     INFOPLIST_KEY_UIFileSharingEnabled is not among them. A mechanism that
-    #     covers one key of a pair is worse than none.
-    #
-    # The remaining declarative option is a `$(SETTING)` reference in the plist
-    # value. That was rejected on a different ground: build-setting expansion
-    # yields a *string*, so Release would ship UIFileSharingEnabled as "NO"
-    # rather than as a boolean or an absence, and whether every consumer of the
-    # key coerces that string correctly is not something this repo can check.
-    #
-    # Deleting rather than adding, so the plain path is the untouched one: Debug
-    # gets real booleans straight from Info.plist and this script does nothing.
-    # Anything else — Release, or a configuration someone adds later — fails
-    # closed. It runs after Info.plist is processed and before the product is
-    # signed, which is why the edit sticks and does not break the signature.
     postBuildScripts:
       - name: Strip file-sharing keys (non-Debug)
-        # The built plist is declared as an input so the build system orders
-        # this phase after the task that produces it. Without the declaration
-        # the ordering is merely what the scheduler happens to do, and a script
-        # that runs before Info.plist is written would silently strip nothing —
-        # the exact failure this phase exists to prevent, and one that looks
-        # like success.
         inputFiles:
           - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
-        # Always run. The phase rewrites its own input, so letting Xcode skip it
-        # on an unchanged timestamp would let an incremental Release build ship
-        # the keys.
         basedOnDependencyAnalysis: false
         script: |
           set -eu
-          # An `if` rather than `[ ... ] && exit 0`: under `set -e` that idiom
-          # survives only because bash exempts the left side of an && list, and
-          # a guard whose correctness rests on that is a guard nobody should
-          # have to re-derive.
           if [ "${CONFIGURATION}" != "Debug" ]; then
             plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
             for key in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace; do
-              # Delete fails when the key is already gone, which is the normal
-              # state of an incremental rebuild. Not an error.
               /usr/libexec/PlistBuddy -c "Delete :${key}" "${plist}" 2>/dev/null || true
-              # Confirm rather than assume. A silent no-op here ships the key.
               if /usr/libexec/PlistBuddy -c "Print :${key}" "${plist}" >/dev/null 2>&1; then
                 echo "error: ${key} survived the strip in ${CONFIGURATION}" >&2
                 exit 1

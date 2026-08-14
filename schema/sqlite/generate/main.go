@@ -1,10 +1,3 @@
-// Command generate writes the current hoard.db schema to
-// schema/sqlite/schema-v<version>.sql and schema-latest.sql.
-//
-// Run it via `make generate-sqlite-schema` after adding a migration to
-// internal/store/migrate.go. Released schema files are immutable, so a new
-// migration means a new file rather than an edit to an old one — see
-// schema/sqlite/README.md.
 package main
 
 import (

@@ -10,8 +10,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// CatalogStatus reports the local catalog's state, consulting Scryfall's
-// bundle listing at most once per check interval.
 func CatalogStatus(ctx context.Context, d Deps) (catalog.Status, error) {
 	if d.Catalog == nil {
 		return catalog.Status{}, fmt.Errorf("no writable cache directory for the catalog")
@@ -19,15 +17,12 @@ func CatalogStatus(ctx context.Context, d Deps) (catalog.Status, error) {
 	return d.Catalog.CheckStatus(ctx), nil
 }
 
-// CatalogUpdateResult is what a rebuild produced.
 type CatalogUpdateResult struct {
 	Cards int
 	Bytes int64
 	Took  time.Duration
 }
 
-// CatalogUpdate rebuilds the local catalog from Scryfall's current bundle,
-// reporting byte progress against the known download size.
 func CatalogUpdate(ctx context.Context, d Deps, p progress.Fn) (CatalogUpdateResult, error) {
 	if d.Catalog == nil {
 		return CatalogUpdateResult{}, fmt.Errorf("no writable cache directory for the catalog")
@@ -43,19 +38,6 @@ func CatalogUpdate(ctx context.Context, d Deps, p progress.Fn) (CatalogUpdateRes
 	}, nil
 }
 
-// EnsureCatalog offers to build or refresh the catalog and reports whether
-// its prices can be trusted afterwards. It asks before downloading: 77 MB
-// starting because somebody typed a command is a surprise on a metered link,
-// and Deps.Confirm's nil-declines default keeps scheduled runs safe.
-//
-// The return value matters because a declined confirm is silent success
-// otherwise: a scheduled refresh would serve prices as old as the catalog
-// while reporting success, forever. Only prices go stale this way — identity
-// and finishes do not — so repair-finishes and the add cascade use an
-// out-of-date catalog happily.
-//
-// A catalog that will not build is not a reason to abandon the caller's
-// command; the failure is narrated and everything falls through to the API.
 func EnsureCatalog(ctx context.Context, d Deps, p progress.Fn) (pricesUsable bool) {
 	cat := d.Catalog
 	if cat == nil {
@@ -79,8 +61,7 @@ func EnsureCatalog(ctx context.Context, d Deps, p progress.Fn) (pricesUsable boo
 			return false
 		}
 	default:
-		// Either current, or the freshness check was skipped as recent
-		// enough.
+
 		return !st.Empty()
 	}
 	if _, err := CatalogUpdate(ctx, d, p); err != nil {
@@ -91,9 +72,6 @@ func EnsureCatalog(ctx context.Context, d Deps, p progress.Fn) (pricesUsable boo
 	return true
 }
 
-// downloadSize describes the transfer a rebuild would cost, or "unknown
-// size" when the listing cannot be read — a download prompt must say what it
-// is about to spend.
 func downloadSize(ctx context.Context, cat *catalog.Catalog) string {
 	if n := cat.DownloadSize(ctx); n > 0 {
 		return ui.Bytes(n)

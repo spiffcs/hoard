@@ -12,8 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// pipeEnv is the shape a piped stream gets: fixed width, no color, nothing
-// truncated. Assertions below compare plain text because of it.
 func pipeEnv(io.Writer) ui.Env { return ui.Env{Width: 80} }
 
 func newRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
@@ -31,13 +29,6 @@ func newRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	return root, out, errOut
 }
 
-// The terminator has to protect every argument after it, not just the first.
-//
-// This is the bug that motivated the whole restructuring: the hand-rolled
-// parser let flag.Parse consume the -- and then re-parsed the tail with flags
-// live again, so `hoard add -- "Sol Ring" --foil` set foil anyway and a card
-// legitimately named "-1/-1" could not be passed at all. pflag handles it; the
-// test stays because the behavior is what matters, not who implements it.
 func TestTerminatorProtectsEveryFollowingArgument(t *testing.T) {
 	var got []string
 	var foil bool
@@ -73,7 +64,6 @@ func TestTerminatorAllowsFlagShapedCardNames(t *testing.T) {
 	add.Flags().Float64("over", 0, "")
 	root.AddCommand(add)
 
-	// "-1/-1" is a real card name; before the port this was unpassable.
 	root.SetArgs([]string{"add", "--", "Ach! Hans", "-1/-1"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -83,9 +73,6 @@ func TestTerminatorAllowsFlagShapedCardNames(t *testing.T) {
 	}
 }
 
-// Flags and positionals interleave in any order — `hoard add "Sol Ring" --foil`
-// is what people type, and the standard library's flag package stops at the
-// first positional.
 func TestFlagsAndPositionalsInterleave(t *testing.T) {
 	var got []string
 	var foil bool
@@ -112,8 +99,6 @@ func TestFlagsAndPositionalsInterleave(t *testing.T) {
 	}
 }
 
-// Asking for help is not a failure, and it renders through hoard's table
-// engine rather than cobra's text template.
 func TestHelpSucceedsAndUsesTheHoardRenderer(t *testing.T) {
 	for _, arg := range []string{"-h", "--help"} {
 		t.Run(arg, func(t *testing.T) {
@@ -145,7 +130,6 @@ func TestHelpSucceedsAndUsesTheHoardRenderer(t *testing.T) {
 	}
 }
 
-// --json is a property of the command, not a list maintained in three places.
 func TestJSONPolicyComesFromTheAnnotation(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -181,8 +165,6 @@ func TestJSONPolicyComesFromTheAnnotation(t *testing.T) {
 	}
 }
 
-// The sentinel's name must never reach the user: wrapping ErrUsage with %w
-// would render as "usage: choose exactly one of --under N or --over N".
 func TestUsageErrorsCarryOnlyTheirMessage(t *testing.T) {
 	err := Usagef("choose exactly one of --under N or --over N")
 	if got := err.Error(); got != "choose exactly one of --under N or --over N" {
@@ -193,9 +175,6 @@ func TestUsageErrorsCarryOnlyTheirMessage(t *testing.T) {
 	}
 }
 
-// The root help is generated from the tree, so a command that exists is a
-// command that appears — the table it replaced was a separate var that nothing
-// checked against the dispatch switch.
 func TestRootHelpIsGeneratedFromTheTree(t *testing.T) {
 	root, out, _ := newRoot()
 	root.AddCommand(
@@ -225,8 +204,6 @@ func TestRootHelpIsGeneratedFromTheTree(t *testing.T) {
 	}
 }
 
-// Help is width-responsive because it renders through ui.Table — the reason
-// this package keeps its own renderer instead of cobra's text template.
 func TestHelpFitsANarrowTerminal(t *testing.T) {
 	out := &bytes.Buffer{}
 	root := &cobra.Command{Use: "hoard [command]", SilenceUsage: true}
@@ -251,14 +228,6 @@ func TestHelpFitsANarrowTerminal(t *testing.T) {
 	}
 }
 
-// A flag a parent declared works on the child, so the child's help has to say
-// so. cobra's LocalFlags is defined to exclude inherited flags, which is why
-// hoard shipped a --json and a --db that worked everywhere and were printed
-// nowhere.
-//
-// The section is filtered by the same annotation CheckJSON enforces: a command
-// that would be told "no JSON output" must not have been told, one screen
-// earlier, that --json was among its flags.
 func TestInheritedFlagsAppearOnlyWhereTheyWork(t *testing.T) {
 	for _, capable := range []bool{true, false} {
 		name := map[bool]string{true: "json-capable", false: "plain"}[capable]
@@ -292,9 +261,6 @@ func TestInheritedFlagsAppearOnlyWhereTheyWork(t *testing.T) {
 	}
 }
 
-// The root's own flags were invisible for the same reason by a different route:
-// writeRootHelp emitted a command table and then stopped, so nothing registered
-// on root was documented at all.
 func TestRootHelpListsItsOwnAndItsGlobalFlags(t *testing.T) {
 	root, out, _ := newRoot()
 	root.Flags().BoolP("version", "v", false, "print this build's version")
@@ -316,16 +282,12 @@ func TestRootHelpListsItsOwnAndItsGlobalFlags(t *testing.T) {
 			t.Errorf("root help missing %q; got:\n%s", want, got)
 		}
 	}
-	// --version is root's own, not persistent; listing it under both headings
-	// would say it works on every subcommand, which it does not.
+
 	if n := strings.Count(got, "--version"); n != 1 {
 		t.Errorf("--version listed %d times, want once; got:\n%s", n, got)
 	}
 }
 
-// The flag block is the one part of a help page cobra renders as plain text,
-// and pflag's default FlagUsages does not wrap: a long description ran past
-// the edge of a terminal every other section had been fitted to.
 func TestFlagUsagesWrapToTheTerminal(t *testing.T) {
 	out := &bytes.Buffer{}
 	root := &cobra.Command{Use: "hoard [command]", SilenceUsage: true}
@@ -353,8 +315,6 @@ func TestFlagUsagesWrapToTheTerminal(t *testing.T) {
 	}
 }
 
-// Cobra suggests a near-miss instead of dumping the command list — one of the
-// things adopting it bought outright.
 func TestUnknownCommandSuggestsTheNearMiss(t *testing.T) {
 	root, _, _ := newRoot()
 	root.AddCommand(&cobra.Command{Use: "movers", GroupID: "collection", Run: func(*cobra.Command, []string) {}})

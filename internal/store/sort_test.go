@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
+)
 
 func TestDecksByValue(t *testing.T) {
 	mk := func(name string, value float64) DeckSummary {
@@ -20,28 +24,26 @@ func TestDecksByValue(t *testing.T) {
 		}
 	}
 
-	// The caller's slice must be left alone: cmdDeckList and summaryTable both
-	// sort the same result of ListDecks.
 	if in[0].Name != "cheap" {
 		t.Errorf("decksByValue mutated its argument: %v", names(in))
 	}
 }
 
 func TestCollectionByValue(t *testing.T) {
-	mk := func(name, finish string, qty int, value float64) CollectionRow {
-		r := CollectionRow{Finish: finish, Quantity: qty, Value: value}
+	mk := func(name string, fin finish.Finish, qty int, value float64) CollectionRow {
+		r := CollectionRow{Finish: fin, Quantity: qty, Value: value}
 		r.Name = name
 		return r
 	}
 	in := []CollectionRow{
-		mk("cheap", "nonfoil", 1, 1),
-		// Quantity is already folded into Value by the
-		mk("bulk-but-many", "nonfoil", 10, 50),
-		mk("unpriced-b", "nonfoil", 3, 0),
-		mk("one-expensive", "nonfoil", 1, 30),
-		mk("unpriced-a", "nonfoil", 1, 0),
-		// A foil holding is its own row now, not a second column.
-		mk("foil-heavy", "foil", 2, 120),
+		mk("cheap", finish.Nonfoil, 1, 1),
+
+		mk("bulk-but-many", finish.Nonfoil, 10, 50),
+		mk("unpriced-b", finish.Nonfoil, 3, 0),
+		mk("one-expensive", finish.Nonfoil, 1, 30),
+		mk("unpriced-a", finish.Nonfoil, 1, 0),
+
+		mk("foil-heavy", finish.Foil, 2, 120),
 	}
 	got := CollectionByValue(in)
 
@@ -58,22 +60,22 @@ func TestCollectionByValue(t *testing.T) {
 
 func TestEntriesByValue(t *testing.T) {
 	price := func(v float64) *float64 { return &v }
-	mk := func(name, board, finish string, qty int, usd, usdFoil *float64) EntryView {
-		e := EntryView{Finish: finish, Board: board, Quantity: qty}
+	mk := func(name, board string, fin finish.Finish, qty int, usd, usdFoil *float64) EntryView {
+		e := EntryView{Finish: fin, Board: board, Quantity: qty}
 		e.Card.Name = name
 		e.Card.PriceUSD = usd
 		e.Card.PriceUSDFoil = usdFoil
 		return e
 	}
 	in := []EntryView{
-		// Grouped by board as the store returns them, cheapest first.
-		mk("commander-cheap", "commander", "nonfoil", 1, price(2), nil),
-		mk("main-mid", "main", "nonfoil", 1, price(40), nil),
-		// Quantity counts: 10 x $9 beats one $40 card.
-		mk("main-many", "main", "nonfoil", 10, price(9), nil),
-		// Foil entries take the foil price.
-		mk("side-foil", "side", "foil", 1, price(1), price(75)),
-		mk("side-unpriced", "side", "nonfoil", 1, nil, nil),
+
+		mk("commander-cheap", "commander", finish.Nonfoil, 1, price(2), nil),
+		mk("main-mid", "main", finish.Nonfoil, 1, price(40), nil),
+
+		mk("main-many", "main", finish.Nonfoil, 10, price(9), nil),
+
+		mk("side-foil", "side", finish.Foil, 1, price(1), price(75)),
+		mk("side-unpriced", "side", finish.Nonfoil, 1, nil, nil),
 	}
 	got := EntriesByValue(in)
 
@@ -83,7 +85,7 @@ func TestEntriesByValue(t *testing.T) {
 			t.Errorf("position %d = %q, want %q", i, got[i].Card.Name, name)
 		}
 	}
-	// Board grouping is deliberately flattened; the BOARD column still carries it.
+
 	if got[0].Board != "main" || got[1].Board != "side" {
 		t.Errorf("expected boards to interleave by value, got %q then %q",
 			got[0].Board, got[1].Board)

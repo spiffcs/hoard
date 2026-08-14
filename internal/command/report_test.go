@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// The fixture store has no price history, so the report's as-of date falls
-// back to the cards' fetch stamp — real but not fixed, which is why these
-// tests check structure rather than exact bytes.
-
 func TestCmdReportText(t *testing.T) {
 	st := exportStore(t)
 	out := filepath.Join(t.TempDir(), "report.txt")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 	"testing"
@@ -16,12 +17,11 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// fakeSearcher returns canned results for the cascade tests.
 type fakeSearcher struct {
 	auto   map[string][]string
 	prints map[string][]scryfall.Card
-	fuzzy  map[string]string         // ocr text -> canonical name
-	match  map[string]cardname.Match // optional override; else computed for real
+	fuzzy  map[string]string
+	match  map[string]cardname.Match
 }
 
 func (f fakeSearcher) Autocomplete(_ context.Context, q string) ([]string, error) {
@@ -35,10 +35,7 @@ func (f fakeSearcher) NamedFuzzy(_ context.Context, text string) (*scryfall.Card
 		if m, ok := f.match[text]; ok {
 			return &scryfall.Card{Name: name}, m, nil
 		}
-		// Compute the match for real, so tests mapping an exact name get an
-		// exact match without saying so twice — including the nomination
-		// flag, mirroring the real searchers: a truncated title comes back
-		// PrefixOnly, an identity comes back plain.
+
 		n, c := cardname.Normalize(text), cardname.Normalize(name)
 		if n != c && !cardname.Plausible(text, name) && cardname.PrefixCandidate(text, name) {
 			return &scryfall.Card{Name: name},
@@ -50,7 +47,6 @@ func (f fakeSearcher) NamedFuzzy(_ context.Context, text string) (*scryfall.Card
 	return nil, cardname.Match{}, nil
 }
 
-// recordingAdder captures confirmed results and can be made to fail.
 type recordingAdder struct {
 	got []Result
 	err error
@@ -66,8 +62,6 @@ func (r *recordingAdder) add(res Result) error {
 
 func noopAdder(Result) error { return nil }
 
-// fakeScanner hands out fake camera sessions. It records the device it was asked
-// to open, so camera-selection tests can assert on it.
 type fakeScanner struct {
 	pairs   map[string]string
 	devices []scan.Device
@@ -77,9 +71,7 @@ type fakeScanner struct {
 	usedDevice string
 	opened     int
 	last       *fakeSession
-	// listed counts device enumerations, which is a browse of the network and
-	// the slowest step in opening a session. Tests assert on it where the
-	// point of the code is that the list was not needed.
+
 	listed int
 }
 
@@ -88,10 +80,6 @@ func (f *fakeScanner) Devices(context.Context) ([]scan.Device, error) {
 	return f.devices, f.devErr
 }
 
-// runCmds executes a command tree far enough for its side effects to land,
-// which for these tests means the scanner calls buried inside a tea.Batch.
-// The resulting messages are not fed back into the model — the question is
-// which calls were made, not what they rendered.
 func runCmds(cmd tea.Cmd) {
 	queue := []tea.Cmd{cmd}
 	for i := 0; i < 64 && len(queue) > 0; i++ {
@@ -106,8 +94,6 @@ func runCmds(cmd tea.Cmd) {
 	}
 }
 
-// paired records what Pair was asked to remember, so a test can assert the
-// prompt handed the digits over rather than merely accepting them.
 func (f *fakeScanner) Pair(deviceID, code string) error {
 	if f.pairs == nil {
 		f.pairs = map[string]string{}
@@ -126,8 +112,6 @@ func (f *fakeScanner) Open(_ context.Context, deviceID string) (ScanSession, err
 	return f.last, nil
 }
 
-// fakeSession stands in for a live link to the phone. Tests push events onto it
-// to simulate the phone reporting captures, trigger states, and closure.
 type fakeSession struct {
 	chimes   int
 	results  []scan.HUDResult
@@ -203,8 +187,6 @@ func cam(id, name, kind string) scan.Device {
 
 func fp(v float64) *float64 { return &v }
 
-// step executes a single (non-batched) command and feeds its message back into
-// the model. The tests that use it only ever return a single lookup command.
 func step(t *testing.T, m tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	t.Helper()
 	if cmd == nil {
@@ -213,7 +195,6 @@ func step(t *testing.T, m tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m.Update(cmd())
 }
 
-// isQuit reports whether running cmd yields a tea.QuitMsg.
 func isQuit(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
@@ -230,10 +211,9 @@ func TestExactNameSkipsNamePick(t *testing.T) {
 	}
 	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog, the Infinite Gyre", nil)
 
-	// Init fires the prints search; deliver its message.
 	mm, _ := m.Update(printsMsg{name: "Ulamog, the Infinite Gyre", cards: []scryfall.Card{card}})
 	got := mm.(model)
-	// Single printing → auto-skip print pick; two finishes → finish picker.
+
 	if got.state != stateFinishPick {
 		t.Fatalf("state = %v, want stateFinishPick", got.state)
 	}
@@ -248,9 +228,8 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 	}
 	m := newModel(context.Background(), fs, noopAdder, nil, "Ulamog", nil)
 
-	// Prints for "Ulamog" come back empty → triggers autocomplete.
 	mm, cmd := m.Update(printsMsg{name: "Ulamog", cards: nil})
-	// cmd is the autocomplete command; run it and feed the result.
+
 	mm, _ = step(t, mm, cmd)
 	got := mm.(model)
 	if got.state != stateNamePick {
@@ -263,7 +242,7 @@ func TestAmbiguousNameShowsNamePick(t *testing.T) {
 
 func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
-		Finishes: []string{"foil"}} // one printing, one finish
+		Finishes: []string{"foil"}}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Foily", nil)
 
 	mm, _ := m.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
@@ -271,16 +250,16 @@ func TestSinglePrintingSingleFinishSkipsToQty(t *testing.T) {
 	if got.state != stateQty {
 		t.Fatalf("state = %v, want stateQty (both steps auto-skipped)", got.state)
 	}
-	if got.finish != "foil" {
+	if got.finish != finish.Foil {
 		t.Errorf("finish = %q, want foil", got.finish)
 	}
 }
 
 func TestNoMatchKeepsSession(t *testing.T) {
-	// Empty prints AND empty autocomplete → error banner, back on the name prompt.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Zzz Nonexistent", nil)
 	mm, cmd := m.Update(printsMsg{name: "Zzz Nonexistent", cards: nil})
-	mm, _ = step(t, mm, cmd) // run autocomplete → namesMsg{nil}
+	mm, _ = step(t, mm, cmd)
 	got := mm.(model)
 	if got.state != stateName || !got.statusErr || got.status == "" {
 		t.Fatalf("want stateName with an error banner, got state=%v statusErr=%v status=%q",
@@ -298,26 +277,25 @@ func TestConfirmAddsAndLoopsBack(t *testing.T) {
 	if got.state != stateQty {
 		t.Fatalf("expected stateQty, got %v", got.state)
 	}
-	// Enter a quantity and submit → confirm screen.
+
 	got.qtyInput.SetValue("3")
 	mm, _ = got.submitQty()
 	got = mm.(model)
 	if got.state != stateConfirm {
 		t.Fatalf("expected stateConfirm, got %v", got.state)
 	}
-	// Confirm.
+
 	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
 
-	// The adder received the right result.
 	if len(ra.got) != 1 {
 		t.Fatalf("adder called %d times, want 1", len(ra.got))
 	}
 	r := ra.got[0]
-	if r.Qty != 3 || r.Finish != "nonfoil" || r.Card.ID != "u1" {
+	if r.Qty != 3 || r.Finish != finish.Nonfoil || r.Card.ID != "u1" {
 		t.Errorf("result wrong: %+v", r)
 	}
-	// Session loops back to the name prompt (not quit) with a success banner.
+
 	if got.state != stateName {
 		t.Errorf("state = %v, want stateName after confirm", got.state)
 	}
@@ -338,9 +316,9 @@ func TestAdderErrorKeepsSession(t *testing.T) {
 	ra := &recordingAdder{err: errors.New("disk full")}
 	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog", nil)
 	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
-	got := mm.(model) // stateQty
+	got := mm.(model)
 	mm, _ = got.submitQty()
-	got = mm.(model) // stateConfirm
+	got = mm.(model)
 	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
 
@@ -357,7 +335,7 @@ func TestAdderErrorKeepsSession(t *testing.T) {
 
 func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 	card := scryfall.Card{ID: "a", Name: "A", Set: "x", CollectorNumber: "1", Finishes: []string{"nonfoil", "foil"}}
-	// esc mid-cascade (print pick) → back to name prompt, not quit.
+
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"A": {card,
 		{ID: "b", Name: "A", Set: "y", CollectorNumber: "2", Finishes: []string{"nonfoil"}}}}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "A", nil)
@@ -375,13 +353,12 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 		t.Error("esc mid-cascade should not quit")
 	}
 
-	// esc at the name prompt → the leave gate, and a single y quits.
 	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got = mm2.(model)
 	if got.state != stateLeaveConfirm || isQuit(cmd) {
 		t.Fatalf("esc at name: state = %v (cmd quit %v), want the leave gate", got.state, isQuit(cmd))
 	}
-	// Enter is not part of the confirm: it stays, like any other key.
+
 	mm2, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
 	if got.state != stateName || isQuit(cmd) {
@@ -396,21 +373,18 @@ func TestEscQuitsFromNameButCancelsMidCascade(t *testing.T) {
 }
 
 func TestScanResolvesInBackgroundAndQueues(t *testing.T) {
-	// Two printings and no collector info: the card resolves but cannot commit
-	// itself, so it queues while the camera stays interactive — and reviewing
-	// it re-enters the printing picker with the scan header pinned.
+
 	cards := []scryfall.Card{
 		{ID: "a", Name: "Sol Ring", Set: "c21", CollectorNumber: "263", Finishes: []string{"nonfoil"}},
 		{ID: "b", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil", "foil"}},
 	}
 	fs := fakeSearcher{
-		fuzzy:  map[string]string{"Sol Rlng": "Sol Ring"}, // OCR noise → canonical
+		fuzzy:  map[string]string{"Sol Rlng": "Sol Ring"},
 		prints: map[string][]scryfall.Card{"Sol Ring": cards},
 	}
 	sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
 	m := newModel(context.Background(), fs, noopAdder, sc, "", nil)
 
-	// ctrl+o looks for cameras; a lone camera is opened without asking.
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	if mm.(model).state != stateCameraBusy {
 		t.Fatalf("ctrl+o should enter stateCameraBusy, got %v", mm.(model).state)
@@ -428,7 +402,7 @@ func TestScanResolvesInBackgroundAndQueues(t *testing.T) {
 	if got.state != stateCapture {
 		t.Fatalf("resolution must run behind the camera, got state %v", got.state)
 	}
-	// Run the background resolve as the command would, and land its result.
+
 	mm, _ = got.Update(got.resolveCardCmd(1, ev.CardList()[0], 1)())
 	got = mm.(model)
 	if len(got.review) != 1 {
@@ -438,7 +412,6 @@ func TestScanResolvesInBackgroundAndQueues(t *testing.T) {
 		t.Errorf("queueing must not change state, got %v", got.state)
 	}
 
-	// Review it: the cascade re-enters at the printing picker, no refetch.
 	mm, _ = got.startReview(got.review[0])
 	got = mm.(model)
 	if got.state != statePrintPick {
@@ -455,8 +428,6 @@ func TestScanResolvesInBackgroundAndQueues(t *testing.T) {
 	}
 }
 
-// solRingPrints is a stand-in for a heavily reprinted card, in Scryfall's
-// newest-first order. The wanted printing is deliberately not first.
 func solRingPrints() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "a", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil"}},
@@ -465,14 +436,6 @@ func solRingPrints() []scryfall.Card {
 	}
 }
 
-// A number that names exactly one printing settles it — when a second read
-// corroborates (here the set code) — and the picker is skipped.
-//
-// This function used to hold the opposite rule — promote the row, never select
-// it, so a misread digit stays visible. A one-row list is not review: nobody
-// reads it, they press enter. The keystroke it saved on every scanned card is
-// what the hands-free flow exists for; a bare, uncorroborated number keeps the
-// picker (see TestBareNumberNarrowingToOneRowStillShowsThePicker).
 func TestScannedNumberNamingOnePrintingSkipsThePicker(t *testing.T) {
 	cards := solRingPrints()
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
@@ -493,14 +456,12 @@ func TestScannedNumberNamingOnePrintingSkipsThePicker(t *testing.T) {
 	if !strings.EqualFold(got.chosen.Set, "mh3") || got.chosen.CollectorNumber != "123" {
 		t.Errorf("chose %s #%s, want MH3 #123", got.chosen.Set, got.chosen.CollectorNumber)
 	}
-	// Nothing left hidden, so nothing offers to unhide it.
+
 	if got.printsAll != nil {
 		t.Errorf("printsAll = %v, want nil once the number settled it", got.printsAll)
 	}
 }
 
-// solRingSharedNumber is the case the picker still exists for: a number that
-// narrows the list without settling it, because two printings carry it.
 func solRingSharedNumber() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "a", Name: "Sol Ring", Set: "ltc", CollectorNumber: "300", Finishes: []string{"nonfoil"}},
@@ -514,7 +475,7 @@ func TestScannedNumberNarrowsAndMarksPrintings(t *testing.T) {
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 	m.scanned = "Sol Ring"
-	m.scannedNumber = "263" // no set read, so both 263s survive
+	m.scannedNumber = "263"
 
 	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
@@ -522,9 +483,7 @@ func TestScannedNumberNarrowsAndMarksPrintings(t *testing.T) {
 	if got.state != statePrintPick {
 		t.Fatalf("state = %v, want statePrintPick: 263 names two printings", got.state)
 	}
-	// Only the printings the number can be. Promoting the right row to the top
-	// was never the same as removing the ones the card rules out — live,
-	// Victimize read a clean 413 and still asked which of nineteen.
+
 	if len(got.list.Items()) != 2 {
 		t.Fatalf("list has %d items, want the two printings numbered 263",
 			len(got.list.Items()))
@@ -537,7 +496,7 @@ func TestScannedNumberNarrowsAndMarksPrintings(t *testing.T) {
 	if !got.list.Items()[0].(printItem).scanned {
 		t.Error("the leading printing should be marked as scanned")
 	}
-	// Pre-selected, not auto-committed: two candidates is a real question.
+
 	if got.chosen != nil {
 		t.Error("a number matching two printings must not select one outright")
 	}
@@ -545,8 +504,6 @@ func TestScannedNumberNarrowsAndMarksPrintings(t *testing.T) {
 		t.Errorf("printsAll = %v, want all %d kept for the toggle", got.printsAll, len(cards))
 	}
 
-	// ctrl+a brings the hidden printing back. The narrowing is the scanner's
-	// belief and the digits can be misread, so there has to be a way back.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
 	all := mm.(model)
 	if len(all.list.Items()) != len(cards) {
@@ -562,7 +519,7 @@ func TestScannedNumberMatchingNothingSaysSo(t *testing.T) {
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 	m.scanned = "Sol Ring"
-	m.scannedNumber = "999" // misread, or the name match was wrong
+	m.scannedNumber = "999"
 
 	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
@@ -583,18 +540,15 @@ func TestScannedNumberMatchingNothingSaysSo(t *testing.T) {
 func TestRankByScan(t *testing.T) {
 	cards := solRingPrints()
 
-	// No number read: nothing moves.
 	if _, matched := rankByScan(cards, "", ""); matched {
 		t.Error("no scanned number should not match")
 	}
 
-	// Number alone is enough when it picks out one printing.
 	got, matched := rankByScan(cards, "", "263")
 	if !matched || got[0].Set != "c21" {
 		t.Errorf("number-only match = %v (matched=%v), want c21 first", got, matched)
 	}
 
-	// A set code disambiguates when two printings share a collector number.
 	dupes := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7"},
@@ -604,7 +558,6 @@ func TestRankByScan(t *testing.T) {
 		t.Errorf("set+number match = %v, want bbb first", got)
 	}
 
-	// Original slice must be left alone; the caller still holds it.
 	if cards[0].Set != "ltc" {
 		t.Error("rankByScan mutated its input")
 	}
@@ -618,13 +571,11 @@ func TestScanHeaderShowsOcrTextWhenItDiffers(t *testing.T) {
 		t.Errorf("header should show canonical and raw OCR text, got %q", head)
 	}
 
-	// An exact read needs no "(read ...)" annotation.
 	m.scannedOCR = "sol ring"
 	if strings.Contains(m.scanHeader(), "read") {
 		t.Errorf("header should omit OCR text when it matches, got %q", m.scanHeader())
 	}
 
-	// No scan → no header at all.
 	m.scanned, m.scannedOCR = "", ""
 	if m.scanHeader() != "" {
 		t.Errorf("header should be empty without a scan, got %q", m.scanHeader())
@@ -636,7 +587,7 @@ func TestScanHeaderClearedAfterAdd(t *testing.T) {
 		Finishes: []string{"nonfoil"}}
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.scanned, m.scannedOCR = "Sol Ring", "Sol Rlng"
-	m.chosen, m.finish = &card, "nonfoil"
+	m.chosen, m.finish = &card, finish.Nonfoil
 	m.qtyInput.SetValue("1")
 
 	mm, _ := m.confirmAdd()
@@ -667,9 +618,7 @@ func TestClosingCameraWindowReturnsToPrompt(t *testing.T) {
 }
 
 func TestScanFallsBackToLaterOcrLines(t *testing.T) {
-	// The top-line guess is rules text (what a misrotated capture yields); the
-	// real title is further down the list and should still resolve — and the
-	// line index says it was a fallback, which the auto-commit bar refuses.
+
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
 
 	lines := []string{"control have indestructible.\"", "Volkan Baga", "Elspeth, Knight-Errant"}
@@ -694,33 +643,24 @@ func TestPlausibleMatch(t *testing.T) {
 		want           bool
 		why            string
 	}{
-		// The real bug: the word "option" in frame (a keycap, a sleeve) resolved
-		// to the card "Opt", because Scryfall fuzzy-matches anything containing a
-		// name. Text that merely contains a short name is not that card.
+
 		{"option", "Opt", false, "containing a short name is not being it"},
 		{"options", "Opt", false, "same, pluralized"},
 		{"adopt", "Opt", false, "short name embedded mid-word"},
 
-		// Genuinely short cards still scan when read exactly.
 		{"Opt", "Opt", true, "exact read of a short name"},
 		{"opt.", "Opt", true, "punctuation is not a difference"},
 		{"Fog", "Fog", true, "exact read of another short name"},
 
-		// Normal reads, including OCR noise and dropped punctuation.
 		{"Elspeth, Knight-Errant", "Elspeth, Knight-Errant", true, "clean read"},
 		{"Elspeth Knight Errant", "Elspeth, Knight-Errant", true, "punctuation dropped"},
 		{"Sol Rlng", "Sol Ring", true, "one-character OCR slip"},
-		// The prefix rule is gone: a fragment that begins a different card's
-		// name ("Gliding" → Gliding Licid, live) was indistinguishable from a
-		// legitimate truncation, so truncations queue for review instead.
+
 		{"Elspeth", "Elspeth, Knight-Errant", false, "partial read must not resolve by prefix"},
 
-		// Card text must not resolve to a card.
 		{"control have indestructible", "Opt", false, "rules text"},
 		{"Volkan Baga", "Elspeth, Knight-Errant", false, "artist line"},
 
-		// OCR glues the title to the line below it; the read starting with
-		// the whole (long enough) name is that name.
 		{"Inspired Fire deals + tam", "Inspired Fire", true, "title glued to rules text"},
 		{"option please", "Opt", false, "the prefix mirror must not revive the Opt bug"},
 	}
@@ -733,8 +673,7 @@ func TestPlausibleMatch(t *testing.T) {
 }
 
 func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
-	// Scryfall resolves "option" to "Opt"; the scan must not accept it and must
-	// fall through to the line that actually names a card.
+
 	fs := fakeSearcher{fuzzy: map[string]string{
 		"option":                 "Opt",
 		"Elspeth, Knight-Errant": "Elspeth, Knight-Errant",
@@ -747,7 +686,7 @@ func TestScanRejectsImplausibleFuzzyMatch(t *testing.T) {
 }
 
 func TestScanFuzzyMissReportsTopLine(t *testing.T) {
-	// Nothing matches → the best-guess line is what gets pre-filled for editing.
+
 	canonical, ocr, _, _, _, _ := resolveName(context.Background(), fakeSearcher{},
 		[]string{"Blrgh", "Nonsense"})
 	if canonical != "" || ocr != "Blrgh" {
@@ -756,9 +695,7 @@ func TestScanFuzzyMissReportsTopLine(t *testing.T) {
 }
 
 func TestFallbackLinesWithTypeWordsNeverResolve(t *testing.T) {
-	// "creature." as a fallback line fuzzy-resolved to the real card Creature
-	// Guy (observed live). Type-line vocabulary on a non-primary line is frame
-	// furniture; on the primary line it may be the actual title.
+
 	fs := fakeSearcher{fuzzy: map[string]string{
 		"creature.":    "Creature Guy",
 		"Creature Guy": "Creature Guy",
@@ -768,7 +705,7 @@ func TestFallbackLinesWithTypeWordsNeverResolve(t *testing.T) {
 	if canonical != "" {
 		t.Errorf("canonical = %q, want no match — the type-word fallback line must be skipped", canonical)
 	}
-	// The same text as the primary line still resolves: that IS the card.
+
 	canonical, _, _, _, _, _ = resolveName(context.Background(), fs, []string{"Creature Guy"})
 	if canonical != "Creature Guy" {
 		t.Errorf("canonical = %q, want the primary line to stay eligible", canonical)
@@ -776,14 +713,13 @@ func TestFallbackLinesWithTypeWordsNeverResolve(t *testing.T) {
 }
 
 func TestScanFuzzyStopsAfterMaxTries(t *testing.T) {
-	// A text-heavy capture must not turn into an unbounded burst of lookups.
+
 	var tries int
 	counting := countingSearcher{onFuzzy: func() { tries++ }}
 
 	lines := make([]string, 20)
 	for i := range lines {
-		// Title-like on purpose: lines the junk gate skips don't cost a
-		// lookup, and this test is about the cap on lines that do.
+
 		lines[i] = fmt.Sprintf("Cardish Name %c", 'A'+rune(i))
 	}
 	resolveName(context.Background(), counting, lines)
@@ -821,9 +757,7 @@ func TestTitleLikelyGate(t *testing.T) {
 }
 
 func TestKeywordFallbackLinesNeverResolve(t *testing.T) {
-	// "Haste" as a fallback line fuzzy-resolved to the real card Haste Magic
-	// (observed live, a phantom queue entry). Keyword-only lines are frame
-	// text; the primary line stays eligible for the rare title that IS one.
+
 	for _, line := range []string{"Haste", "Flying", "Double Strike", "Lifelink."} {
 		if !keywordLine(line) {
 			t.Errorf("keywordLine(%q) = false, want true", line)
@@ -848,15 +782,11 @@ func TestKeywordFallbackLinesNeverResolve(t *testing.T) {
 }
 
 func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
-	// Every fallback line here is junk (rules text, flavor, collector), so
-	// only line 0 — the helper's actual title guess, never gated — may cost
-	// a lookup. Junk lines were guaranteed catalog misses, and each one paid
-	// a sequential Scryfall round trip and risked fuzzy-resolving into a
-	// real-but-unscanned card (the shadow-card channel).
+
 	var tries int
 	counting := countingSearcher{onFuzzy: func() { tries++ }}
 	resolveName(context.Background(), counting, []string{
-		"blurred junk title", // line 0: junk, but always eligible
+		"blurred junk title",
 		"counters on one or more other Heroes you",
 		"\"Y'll hold down the fort while you guys bicker.\"",
 		"2/5",
@@ -866,7 +796,6 @@ func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
 		t.Errorf("made %d lookups, want 1 — only the primary line", tries)
 	}
 
-	// A real title on a fallback line still resolves.
 	fs := fakeSearcher{fuzzy: map[string]string{"Elspeth, Knight-Errant": "Elspeth, Knight-Errant"}}
 	canonical, _, idx, _, _, _ := resolveName(context.Background(), fs,
 		[]string{"blurred junk", "Elspeth, Knight-Errant"})
@@ -875,7 +804,6 @@ func TestJunkFallbackLinesNeverReachTheSearcher(t *testing.T) {
 	}
 }
 
-// countingSearcher counts fuzzy lookups and never matches.
 type countingSearcher struct {
 	fakeSearcher
 	onFuzzy func()
@@ -887,8 +815,7 @@ func (c countingSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, c
 }
 
 func TestReviewItemWithFuzzyMissPrefillsName(t *testing.T) {
-	// A card that never resolved a name reviews at the prompt, its OCR text
-	// pre-filled for editing and the queue reason as the banner.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	it := queueItem{id: 1, ocrLine: "Blrgh Nonsense", note: `couldn't identify "Blrgh Nonsense"`}
 	mm, _ := m.startReview(it)
@@ -903,7 +830,7 @@ func TestReviewItemWithFuzzyMissPrefillsName(t *testing.T) {
 	if !got.reviewing() {
 		t.Error("the cascade should know it is reviewing a queued card")
 	}
-	// esc there abandons the item, not the program.
+
 	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if isQuit(cmd) {
 		t.Error("esc while reviewing must not quit the program")
@@ -931,7 +858,6 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 		t.Fatalf("camera list = %d items, want 2", len(got.list.Items()))
 	}
 
-	// Select the second phone and open it.
 	got.list.Select(1)
 	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
@@ -950,9 +876,6 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 		t.Errorf("opened device %q, want %q", sc.usedDevice, "spare")
 	}
 
-	// From the live camera, ctrl+o means reselect: the window closes and the
-	// picker is offered again — the recovery key when a camera drops, the
-	// same "choose a source" it means at the prompt.
 	mm, _ = got.cancelToName()
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
@@ -963,8 +886,6 @@ func TestCameraPickerChoosesDeviceAndIsRemembered(t *testing.T) {
 		t.Error("reselecting should close the live window")
 	}
 
-	// From the prompt with no session, ctrl+o re-offers the picker too —
-	// choosing a source is what the key means everywhere.
 	back := mm.(model)
 	back.closeSession()
 	mm, _ = back.cancelToName()
@@ -984,7 +905,6 @@ func TestNoCamerasKeepsSession(t *testing.T) {
 	}
 }
 
-// openCapture drives a model to a live capture state with a fake session.
 func openCapture(t *testing.T, m model) (model, *fakeSession) {
 	t.Helper()
 	sess := &fakeSession{events: make(chan scan.Event, 8)}
@@ -1013,13 +933,6 @@ func TestSpaceCapturesWithoutReopeningTheCamera(t *testing.T) {
 	}
 }
 
-// The keys that left with the Continuity Camera must stay inert.
-//
-// Rotation (arrows), auto-framing (z) and the Video Effects panel (v) were all
-// Mac-camera concepts: a landscape frame the Mac had to turn upright, Center
-// Stage, and Studio Light. The phone answers none of them. This pins that they
-// do nothing rather than falling through to something else — a stray binding
-// here would fire mid-pile, on a step where every other key does something.
 func TestRetiredCameraKeysDoNothingOnTheCaptureStep(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
@@ -1048,8 +961,6 @@ func TestTTogglesTheTorchWhenTheHelperOffersIt(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	// Without the feature, t refuses with a banner rather than sending a
-	// command the helper would error on.
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	got = mm.(model)
 	if sess.torchOn+sess.torchOff != 0 {
@@ -1066,8 +977,6 @@ func TestTTogglesTheTorchWhenTheHelperOffersIt(t *testing.T) {
 		t.Fatalf("ready: torchCapable=%v torchOn=%v, want capable and dark", got.torchCapable, got.torchOn)
 	}
 
-	// The torch starts dark, so the first t asks for on; the mirror only
-	// flips when the helper's torch event confirms the light actually took.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	got = mm.(model)
 	if sess.torchOn != 1 {
@@ -1093,15 +1002,14 @@ func TestTTogglesTheTorchWhenTheHelperOffersIt(t *testing.T) {
 }
 
 func TestAddingACardReturnsToCaptureWithTheWindowOpen(t *testing.T) {
-	// The whole point of the persistent window: after a card lands in the DB the
-	// user is back at framing, not at the prompt having to press ctrl+o again.
+
 	card := scryfall.Card{ID: "s", Name: "Sol Ring", Set: "c21", CollectorNumber: "263",
 		Finishes: []string{"nonfoil"}}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fakeSearcher{}, ra.add, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	got.chosen, got.finish = &card, "nonfoil"
+	got.chosen, got.finish = &card, finish.Nonfoil
 	got.qtyInput.SetValue("1")
 	mm, _ := got.confirmAdd()
 	got = mm.(model)
@@ -1124,7 +1032,6 @@ func TestEscAtCaptureOpensLeaveGateAndCCloses(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	// esc keeps its session-wide meaning: the gated quit, not the close.
 	mm, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got = mm.(model)
 	if got.state != stateLeaveConfirm || isQuit(cmd) {
@@ -1134,14 +1041,12 @@ func TestEscAtCaptureOpensLeaveGateAndCCloses(t *testing.T) {
 		t.Error("the leave gate must not close the camera — declining is free")
 	}
 
-	// A stray key declines and lands back on the live camera.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	got = mm.(model)
 	if got.state != stateCapture || sess.closed {
 		t.Fatalf("declining should return to capture with the camera open, got %v", got.state)
 	}
 
-	// c is the close key: back to the prompt, window closed, program alive.
 	mm, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got = mm.(model)
 	if got.state != stateName {
@@ -1160,7 +1065,6 @@ func TestStaleSessionEventsAreDropped(t *testing.T) {
 	got, _ := openCapture(t, m)
 	stale := got.sessionGen
 
-	// Close the camera, then deliver an event from the session that just died.
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got = mm.(model)
 
@@ -1172,14 +1076,14 @@ func TestStaleSessionEventsAreDropped(t *testing.T) {
 }
 
 func TestUnreadableFrameStaysOnCapture(t *testing.T) {
-	// A frame Vision couldn't read shouldn't drop the user out of the camera.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, _ := openCapture(t, m)
 	mm, _ := got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = mm.(model)
 
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
-		ev: scan.Event{Kind: scan.EventScan}}) // no name, no candidates
+		ev: scan.Event{Kind: scan.EventScan}})
 	got = mm.(model)
 	if got.state != stateCapture {
 		t.Errorf("state = %v, want stateCapture so the user can retry", got.state)
@@ -1232,7 +1136,7 @@ func TestQtyValidation(t *testing.T) {
 func TestFinishOptions(t *testing.T) {
 	c := scryfall.Card{Finishes: []string{"foil", "nonfoil", "etched"}}
 	got := finishOptions(c)
-	want := []string{"nonfoil", "foil", "etched"}
+	want := finish.All()
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Errorf("finishOptions = %v, want %v (stable order)", got, want)
 	}
@@ -1241,8 +1145,6 @@ func TestFinishOptions(t *testing.T) {
 	}
 }
 
-// destFixtures is a hoard with somewhere to choose: the default binder, a
-// named binder, and a deck.
 func destFixtures() []Destination {
 	return []Destination{
 		{ID: 1, Name: "Binder", Kind: "binder"},
@@ -1251,12 +1153,9 @@ func destFixtures() []Destination {
 	}
 }
 
-// With more than one destination the cascade asks where the card goes after
-// the finish step, hands the choice to the adder, and remembers it — the next
-// card's picker opens on the last answer.
 func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
-		Finishes: []string{"foil"}} // single finish: the next question is the destination
+		Finishes: []string{"foil"}}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Foily", destFixtures())
 
@@ -1272,7 +1171,6 @@ func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 		t.Fatalf("first pick opens at %d, want the default binder at 0", got.list.Index())
 	}
 
-	// Choose the Trade binder and finish the add.
 	got.list.Select(1)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
@@ -1281,7 +1179,7 @@ func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 	}
 	mm, _ = got.submitQty()
 	got = mm.(model)
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if len(ra.got) != 1 || ra.got[0].ContainerID != 2 {
 		t.Fatalf("adder got %+v, want ContainerID 2", ra.got)
@@ -1290,7 +1188,6 @@ func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 		t.Errorf("banner %q should name the destination", got.status)
 	}
 
-	// The next card's picker opens on the remembered pick.
 	mm, _ = got.Update(printsMsg{name: "Foily", cards: []scryfall.Card{card}})
 	got = mm.(model)
 	if got.state != stateDestPick || got.list.Index() != 1 {
@@ -1298,8 +1195,6 @@ func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 	}
 }
 
-// One destination is no choice at all: the cascade never asks, the flow is the
-// one it always was, and the adder still learns which container that was.
 func TestSingleDestinationSkipsThePicker(t *testing.T) {
 	card := scryfall.Card{ID: "x", Name: "Foily", Set: "sld", CollectorNumber: "1",
 		Finishes: []string{"foil"}}
@@ -1324,8 +1219,6 @@ func TestSingleDestinationSkipsThePicker(t *testing.T) {
 	}
 }
 
-// confidentEvent is a scan whose card clears every auto-commit gate against
-// solRingPrints: exact name, set+number pinning MH3 #123, high confidence.
 func confidentEvent() scan.Event {
 	return scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
 		Candidates: []string{"Sol Ring"}, SetCode: "MH3", CollectorNumber: "123",
@@ -1339,18 +1232,12 @@ func confidentFixture() (scan.Event, fakeSearcher) {
 	}
 }
 
-// resolve runs one card's background resolution synchronously and lands it.
 func resolve(t *testing.T, m model, c scan.Card) model {
 	t.Helper()
 	mm, _ := m.Update(m.resolveCardCmd(m.nextResolveID, c, 1)())
 	return mm.(model)
 }
 
-// A truncated title plus the frame's own collector number identifies the
-// card: the fragment nominates, the number confirms against the nominee's
-// printings. Without the number — or with one that matches nothing — the
-// nomination dies, which is what keeps the "Gliding" → Gliding Licid steal
-// dead while truncated reads still resolve.
 func TestPrefixNominationConfirmedByCollectorNumber(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Elspeth": "Elspeth, Knight-Errant"},
@@ -1363,8 +1250,6 @@ func TestPrefixNominationConfirmedByCollectorNumber(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// Truncated title + a band number that matches the nominee's printing:
-	// set+number corroboration, so it commits like any verified read.
 	confirmed := scan.Card{Name: "Elspeth", Candidates: []string{"Elspeth"},
 		SetCode: "ALA", CollectorNumber: "9", Confidence: 0.95}
 	got := resolve(t, m, confirmed)
@@ -1375,8 +1260,6 @@ func TestPrefixNominationConfirmedByCollectorNumber(t *testing.T) {
 		t.Errorf("confirmed nomination queued %d entries, want none", len(got.review))
 	}
 
-	// Same fragment, a number that matches nothing of the nominee's: the
-	// nomination must die, not resolve — this is the steal shape.
 	m2 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m2, _ = openCapture(t, m2)
 	denied := scan.Card{Name: "Elspeth", Candidates: []string{"Elspeth"},
@@ -1385,16 +1268,12 @@ func TestPrefixNominationConfirmedByCollectorNumber(t *testing.T) {
 	if len(ra.got) != 1 {
 		t.Fatalf("a non-matching number confirmed a nomination: adder got %+v", ra.got)
 	}
-	// A denied nomination stays unidentified, and unnamed reads land in the
-	// receipt rather than the queue (the review gate).
+
 	if len(got.review) != 0 || got.summary.Count("skipped") == 0 {
 		t.Errorf("denied nomination: review=%d skipped=%d, want a receipt line and no queue entry",
 			len(got.review), got.summary.Count("skipped"))
 	}
 
-	// Same fragment, no digits at all — the live steal exactly. The
-	// nomination dies and the junk filter eats the unidentifiable capture;
-	// what matters is that nothing resolved and nothing committed.
 	m3 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m3, _ = openCapture(t, m3)
 	bare := scan.Card{Name: "Elspeth", Candidates: []string{"Elspeth"}, Confidence: 0.95}
@@ -1409,7 +1288,6 @@ func TestPrefixNominationConfirmedByCollectorNumber(t *testing.T) {
 	}
 }
 
-// reviewTiers counts the review flashes the phone was actually sent.
 func reviewTiers(s *fakeSession) int {
 	n := 0
 	for _, r := range s.results {
@@ -1420,10 +1298,6 @@ func reviewTiers(s *fakeSession) int {
 	return n
 }
 
-// The decision ceiling expiring while a read is in flight must hold the
-// review flash, not race it: Meltdown's commit landed 16ms after its review
-// tone, live. If the read answers, no flash ever; if it lands without
-// answering, the flash fires on the drain.
 func TestCeilingHoldsWhileReadInFlight(t *testing.T) {
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -1431,7 +1305,6 @@ func TestCeilingHoldsWhileReadInFlight(t *testing.T) {
 	m, sess := openCapture(t, m)
 	m.hudCapable = true
 
-	// A card queues unverified — the flash defers behind the ceiling.
 	it := queueItem{id: 1, canonical: "Meltdown", match: cardname.Match{Exact: true},
 		prints: []scryfall.Card{{ID: "md-a", Name: "Meltdown", Set: "usg", CollectorNumber: "1", Finishes: []string{"nonfoil"}},
 			{ID: "md-b", Name: "Meltdown", Set: "mh3", CollectorNumber: "418", Finishes: []string{"nonfoil"}}},
@@ -1443,7 +1316,6 @@ func TestCeilingHoldsWhileReadInFlight(t *testing.T) {
 			len(m.review), reviewTiers(sess))
 	}
 
-	// The ceiling expires with the retry's read still mid-resolve: held.
 	m.resolving = 1
 	mm, _ = m.Update(flashDeadlineMsg{name: "Meltdown"})
 	m = mm.(model)
@@ -1451,8 +1323,6 @@ func TestCeilingHoldsWhileReadInFlight(t *testing.T) {
 		t.Fatalf("the ceiling flashed over an in-flight read")
 	}
 
-	// The read lands and answers nothing (junk capture, killed): the drain
-	// owes the operator the flash it held.
 	junk := queueItem{id: 2, ocrLine: "I tample", captureSeq: 2}
 	mm, _ = m.Update(resolveDoneMsg{gen: m.resolveGen, item: junk})
 	m = mm.(model)
@@ -1461,8 +1331,6 @@ func TestCeilingHoldsWhileReadInFlight(t *testing.T) {
 	}
 }
 
-// The rescue committing the queued card while the ceiling is overdue means no
-// review flash at all — the question answered itself.
 func TestOverdueFlashDiesWhenTheRescueCommits(t *testing.T) {
 	printing := scryfall.Card{ID: "md-b", Name: "Meltdown", Set: "mh3",
 		CollectorNumber: "418", ReleasedAt: "2024-06-14", Finishes: []string{"nonfoil"}}
@@ -1496,11 +1364,6 @@ func TestOverdueFlashDiesWhenTheRescueCommits(t *testing.T) {
 	}
 }
 
-// An unidentified capture never reaches review: with footer evidence it goes
-// to the session receipt ("Creature - Eldrazi" and "(unreadable)" entries
-// offered the operator nothing but a discard, live), and its card gets its
-// answer from the next fire — here, No-Dachi committing 834ms later. No
-// flash at any point.
 func TestUnnamedCaptureSkipsToTheReceiptNotReview(t *testing.T) {
 	printing := scryfall.Card{ID: "nd", Name: "No-Dachi", Set: "chk",
 		CollectorNumber: "264", Finishes: []string{"nonfoil"}}
@@ -1512,8 +1375,6 @@ func TestUnnamedCaptureSkipsToTheReceiptNotReview(t *testing.T) {
 	m.hudCapable = true
 	m.autoCapable = true
 
-	// Footer evidence spares the fragment from the junk kill; the receipt
-	// gate keeps it out of the queue anyway.
 	frag := queueItem{id: 1, ocrLine: "a Dach", captureSeq: 1,
 		raw: scan.Card{CopyrightYear: 2004}}
 	mm, _ := m.Update(resolveDoneMsg{gen: m.resolveGen, item: frag})
@@ -1528,7 +1389,6 @@ func TestUnnamedCaptureSkipsToTheReceiptNotReview(t *testing.T) {
 		t.Fatalf("an unnamed capture flashed review: %d", got)
 	}
 
-	// The next capture commits the real card, business as usual.
 	real := queueItem{id: 2, canonical: "No-Dachi", match: cardname.Match{Exact: true},
 		prints: []scryfall.Card{printing}, rank: scanMatchSetAndNumber, captureSeq: 2}
 	mm, _ = m.Update(resolveDoneMsg{gen: m.resolveGen, item: real})
@@ -1539,9 +1399,6 @@ func TestUnnamedCaptureSkipsToTheReceiptNotReview(t *testing.T) {
 	}
 }
 
-// An errored lookup still queues — a timeout is not a verdict about the card
-// — and its held flash dies when the next capture commits the same physical
-// moment's card.
 func TestErroredUnnamedQueueFlashDiesOnTheNextCommit(t *testing.T) {
 	printing := scryfall.Card{ID: "nd", Name: "No-Dachi", Set: "chk",
 		CollectorNumber: "264", Finishes: []string{"nonfoil"}}
@@ -1577,8 +1434,6 @@ func TestErroredUnnamedQueueFlashDiesOnTheNextCommit(t *testing.T) {
 	}
 }
 
-// A type-shaped line is the card's TYPE row, never its title: it must not be
-// searched (a fuzzy match can only name a wrong card) and must not queue.
 func TestTypeLinesAreNeverSearchedOrQueued(t *testing.T) {
 	for _, line := range []string{
 		"Creature - Eldrazi", "Creature — Eldrazi Drone",
@@ -1597,8 +1452,7 @@ func TestTypeLinesAreNeverSearchedOrQueued(t *testing.T) {
 			t.Errorf("typeLineShape(%q) = true — a real name misread as a type line", line)
 		}
 	}
-	// End to end: a frame whose only line is a type row identifies nothing,
-	// even though the searcher would happily fuzzy-match it to a card.
+
 	fs := fakeSearcher{fuzzy: map[string]string{"Creature - Eldrazi": "Creature Guy"},
 		prints: map[string][]scryfall.Card{"Creature Guy": {{ID: "cg", Name: "Creature Guy"}}}}
 	canonical, _, _, _, _, err := resolveName(context.Background(), fs,
@@ -1608,13 +1462,6 @@ func TestTypeLinesAreNeverSearchedOrQueued(t *testing.T) {
 	}
 }
 
-// The second copy of an identical card, arriving via the queue-then-rescue
-// path, must commit. Live (2026-08-07, Brainsurge playset): copy 2 queued as
-// a real placement 8.4s after copy 1 committed, its rescue re-read arrived
-// flagged `moved` — true only relative to the queued capture, since identical
-// art makes copies indistinguishable — and the fromMoved arm suppressed it
-// against the 9-second-old commit. The queue entry was already replaced, so
-// the card vanished entirely: no commit, no review, one Brainsurge short.
 func TestRescuedSecondCopyOfIdenticalCardCommits(t *testing.T) {
 	printing := scryfall.Card{ID: "bs-mh3", Name: "Brainsurge", Set: "mh3",
 		CollectorNumber: "399", ReleasedAt: "2024-06-14",
@@ -1629,7 +1476,6 @@ func TestRescuedSecondCopyOfIdenticalCardCommits(t *testing.T) {
 	current := time.Date(2026, 8, 7, 23, 31, 51, 0, time.UTC)
 	m.now = func() time.Time { return current }
 
-	// Copy 1 commits off a verified read.
 	it1 := queueItem{id: m.nextResolveID, canonical: "Brainsurge",
 		match: cardname.Match{Exact: true}, prints: []scryfall.Card{printing},
 		rank: scanMatchSetAndNumber, captureSeq: 1}
@@ -1639,7 +1485,6 @@ func TestRescuedSecondCopyOfIdenticalCardCommits(t *testing.T) {
 		t.Fatalf("copy 1: adder called %d times, want 1", len(ra.got))
 	}
 
-	// 8.4s later copy 2 is placed and its first read queues unverified.
 	current = current.Add(8400 * time.Millisecond)
 	it2 := queueItem{id: m.nextResolveID + 1, canonical: "Brainsurge",
 		match: cardname.Match{Exact: true},
@@ -1652,9 +1497,6 @@ func TestRescuedSecondCopyOfIdenticalCardCommits(t *testing.T) {
 		t.Fatalf("copy 2's weak read should queue, review=%d", len(m.review))
 	}
 
-	// The rescue lands 700ms on, flagged moved — moved relative to the queued
-	// capture, not to copy 1's ancient commit. It replaces the queue entry and
-	// must commit, not evaporate.
 	current = current.Add(700 * time.Millisecond)
 	it3 := queueItem{id: m.nextResolveID + 2, canonical: "Brainsurge",
 		match: cardname.Match{Exact: true}, prints: []scryfall.Card{printing},
@@ -1670,11 +1512,6 @@ func TestRescuedSecondCopyOfIdenticalCardCommits(t *testing.T) {
 	}
 }
 
-// A deliberate slow playset of one printing with alternating finishes is
-// three cards: each re-scan slower than the same-card floor commits, in both
-// directions (nonfoil→foil→nonfoil and foil→nonfoil→foil), with no finish
-// "correction" rewriting an earlier copy — corrections belong to fast
-// re-reads of the same physical card, not to paced placements.
 func TestSlowAlternatingFinishPlaysetCommitsEachCopy(t *testing.T) {
 	printing := scryfall.Card{ID: "hs-lgn", Name: "Hollow Specter", Set: "lgn",
 		CollectorNumber: "75", Finishes: []string{"nonfoil", "foil"}}
@@ -1695,18 +1532,18 @@ func TestSlowAlternatingFinishPlaysetCommitsEachCopy(t *testing.T) {
 				rank: scanMatchSetAndNumber, captureSeq: i + 1, finishHint: hint}
 			mm, _ := m.Update(resolveDoneMsg{gen: m.resolveGen, item: it})
 			m = mm.(model)
-			current = current.Add(4 * time.Second) // slower than sameCardFloor
+			current = current.Add(4 * time.Second)
 		}
 		if len(ra.got) != 3 {
 			t.Fatalf("hints %v: adder called %d times, want 3 — every paced copy commits",
 				hints, len(ra.got))
 		}
 		for i, hint := range hints {
-			want := "nonfoil"
+			want := finish.Nonfoil
 			if hint == "foil" {
-				want = "foil"
+				want = finish.Foil
 			}
-			if ra.got[i].Finish != want || ra.got[i].ReplacesFinish != "" {
+			if ra.got[i].Finish != want || ra.got[i].ReplacesFinish != (finish.Finish{}) {
 				t.Errorf("hints %v copy %d: finish=%q replaces=%q, want %q with no correction",
 					hints, i+1, ra.got[i].Finish, ra.got[i].ReplacesFinish, want)
 			}
@@ -1714,10 +1551,6 @@ func TestSlowAlternatingFinishPlaysetCommitsEachCopy(t *testing.T) {
 	}
 }
 
-// One physical card whose two reads land on two different printings must not
-// commit twice. dupCapture keys on the printing id, so the second read (a
-// degraded rank picking a different id moments later) used to walk past every
-// duplicate rule and write a card nobody owns.
 func TestSameCardOnDifferentPrintingDoesNotDoubleCommit(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -1730,8 +1563,6 @@ func TestSameCardOnDifferentPrintingDoesNotDoubleCommit(t *testing.T) {
 	}
 	first := ra.got[0].Card.ID
 
-	// The same card again, moments later, off a weaker read that ranked a
-	// *different* printing — corroborated enough that verdict says commit.
 	var other scryfall.Card
 	for _, p := range solRingPrints() {
 		if p.ID != first {
@@ -1770,12 +1601,11 @@ func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
 	}
 	got = resolve(t, got, ev.CardList()[0])
 
-	// No keys pressed, and the card is in the collection.
 	if len(ra.got) != 1 {
 		t.Fatalf("adder called %d times, want 1", len(ra.got))
 	}
 	r := ra.got[0]
-	if r.Qty != 1 || r.Finish != "nonfoil" || !strings.EqualFold(r.Card.Set, "mh3") {
+	if r.Qty != 1 || r.Finish != finish.Nonfoil || !strings.EqualFold(r.Card.Set, "mh3") {
 		t.Errorf("result = %+v, want 1× the MH3 printing, nonfoil", r)
 	}
 	if got.state != stateCapture {
@@ -1784,8 +1614,7 @@ func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
 	if len(got.tally) != 1 || !strings.Contains(got.View(), "Auto-added") {
 		t.Errorf("the tally should show the commit: tally=%v", got.tally)
 	}
-	// The commit chimes, always — the shutter pop is quiet on nudge-armed
-	// captures, so this is the one guaranteed audible receipt.
+
 	if sess.chimes != 1 {
 		t.Errorf("chimes = %d after an auto-add, want exactly 1", sess.chimes)
 	}
@@ -1796,8 +1625,7 @@ func TestConfidentScanAutoCommitsWithoutKeys(t *testing.T) {
 }
 
 func TestMultiPrintNoCollectorNeverAutoCommits(t *testing.T) {
-	// The headline never-rule: a clean name match with several printings and no
-	// collector verification queues — newest-first would guess the wrong set.
+
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -1820,15 +1648,12 @@ func TestMultiPrintNoCollectorNeverAutoCommits(t *testing.T) {
 }
 
 func TestUncertainScanQueues(t *testing.T) {
-	// A shaky fuzzy score queues when the printing evidence is short of a
-	// full set+number verification — a bare number match is not enough to
-	// carry a name this weak. (With set+number the same score commits: see
-	// TestVerdict's carry rows.)
+
 	_, fs := confidentFixture()
 	fs.fuzzy["Sol Rmg"] = "Sol Ring"
 	fs.match = map[string]cardname.Match{"Sol Rmg": {Similarity: 0.75}}
 	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Rmg", Candidates: []string{"Sol Rmg"},
-		CollectorNumber: "263"} // number-only: unique among the printings, no set read
+		CollectorNumber: "263"}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
@@ -1842,19 +1667,14 @@ func TestUncertainScanQueues(t *testing.T) {
 	if len(got.review) != 1 || !strings.Contains(got.review[0].note, "uncertain name") {
 		t.Fatalf("review = %+v, want an uncertain-name note", got.review)
 	}
-	// Queuing chimes too: either resolution means "place the next card",
-	// and the sound is the prompt.
+
 	if sess.chimes != 1 {
 		t.Errorf("chimes = %d after a queue outcome, want 1", sess.chimes)
 	}
 }
 
 func TestCopyrightNumberNeverVetoesAutoCommit(t *testing.T) {
-	// The old-frame copyright line misreads digits (observed live: Aven
-	// Envoy's "30/145" read as "80/145"). A copyright-sourced number is
-	// upgrade-only evidence: on a single-printing card the mismatch must not
-	// demote the auto-commit — and the printed finish hint must survive the
-	// sentinel candidate winning the rank.
+
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Aven Envoy": "Aven Envoy"},
 		prints: map[string][]scryfall.Card{"Aven Envoy": {
@@ -1875,7 +1695,7 @@ func TestCopyrightNumberNeverVetoesAutoCommit(t *testing.T) {
 	if len(ra.got) != 1 {
 		t.Fatalf("adder called %d times, want 1 — a copyright misread must not veto", len(ra.got))
 	}
-	if r := ra.got[0]; !strings.EqualFold(r.Card.Set, "lgn") || r.Finish != "foil" {
+	if r := ra.got[0]; !strings.EqualFold(r.Card.Set, "lgn") || r.Finish != finish.Foil {
 		t.Errorf("result = %+v, want the lone printing with the finish hint kept", r)
 	}
 	if len(got.review) != 0 {
@@ -1884,10 +1704,7 @@ func TestCopyrightNumberNeverVetoesAutoCommit(t *testing.T) {
 }
 
 func TestBandNumberMismatchStillVetoes(t *testing.T) {
-	// A band number that matches nothing keeps its veto when the name was
-	// only a fuzzy match — that is what the veto was always for: the band is
-	// reliable, so the mismatch means the name may have landed on the wrong
-	// card. ("Aven Envo" is the glare-truncated read, not an exact hit.)
+
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Aven Envo": "Aven Envoy"},
 		prints: map[string][]scryfall.Card{"Aven Envoy": {
@@ -1912,10 +1729,6 @@ func TestBandNumberMismatchStillVetoes(t *testing.T) {
 	}
 }
 
-// An exact name on a card with one printing outlives a misread number. The
-// digits are what this glyph size gets wrong — Aven Envoy's "30" arrived as
-// "80", live — and refusing the card left it worse off than if the band had
-// been unreadable, which is the outcome an exact name already commits on.
 func TestExactNameSinglePrintSurvivesBadNumber(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Aven Envoy": "Aven Envoy"},
@@ -1944,8 +1757,6 @@ func TestExactNameSinglePrintSurvivesBadNumber(t *testing.T) {
 	}
 }
 
-// The rescue is a floor, not a licence: with several printings there is still
-// nothing to pick between them, so a bad number queues exactly as before.
 func TestExactNameManyPrintsStillQueuesOnBadNumber(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Brain Freeze": "Brain Freeze"},
@@ -1974,10 +1785,7 @@ func TestExactNameManyPrintsStillQueuesOnBadNumber(t *testing.T) {
 }
 
 func TestCopyrightYearBreaksTieToAutoCommit(t *testing.T) {
-	// Remove Soul, observed live: the band read "95/350", which is both 7th
-	// and 8th Edition — ambiguous, queued. The copyright range on the same
-	// line ends in the release year; carried as evidence it pins 8th Edition
-	// and the scan commits.
+
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Remove Soul": "Remove Soul"},
 		prints: map[string][]scryfall.Card{"Remove Soul": {
@@ -2008,7 +1816,7 @@ func TestCopyrightYearBreaksTieToAutoCommit(t *testing.T) {
 }
 
 func TestVerdict(t *testing.T) {
-	verified := solRingPrints()[2:] // the MH3 printing first
+	verified := solRingPrints()[2:]
 	multi := solRingPrints()
 	foilOnly := []scryfall.Card{{ID: "f", Name: "Foily", Set: "sld",
 		CollectorNumber: "1", Finishes: []string{"foil"}}}
@@ -2021,115 +1829,102 @@ func TestVerdict(t *testing.T) {
 		name     string
 		it       queueItem
 		wantAuto bool
-		finish   string
+		finish   finish.Finish
 		note     string
 	}{
 		{"exact set+number commits nonfoil",
 			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
 				rank: scanMatchSetAndNumber, raw: scan.Card{Confidence: 0.95}},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"printed star commits as foil",
 			queueItem{canonical: "Sol Ring", match: exact, prints: multiFinish,
 				rank: scanMatchSetAndNumber, finishHint: "foil"},
-			true, "foil", ""},
+			true, finish.Foil, ""},
 		{"printed bullet commits as nonfoil",
 			queueItem{canonical: "Sol Ring", match: exact, prints: multiFinish,
 				rank: scanMatchSetAndNumber, finishHint: "nonfoil"},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"foil marker on a nonfoil-only printing is ignored",
 			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
 				rank: scanMatchSetAndNumber, finishHint: "foil"},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"single foil-only printing commits as foil",
 			queueItem{canonical: "Foily", match: exact, prints: foilOnly,
 				rank: scanMatchSinglePrint},
-			true, "foil", ""},
+			true, finish.Foil, ""},
 		{"unknown confidence decides by name and printing alone",
 			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
 				rank: scanMatchNumberOnly},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"lookup error queues",
-			queueItem{errText: "api down"}, false, "", "lookup failed"},
+			queueItem{errText: "api down"}, false, finish.Finish{}, "lookup failed"},
 		{"no name queues",
-			queueItem{ocrLine: "Blrgh"}, false, "", "couldn't identify"},
-		// A fallback line is a weak place to find a name, so it queues on its
-		// own — but a number that matches a printing of the card that line
-		// resolved to could not have agreed with a wrong name (live: a Forest
-		// with an exact name and a full MSH/286 match sat in review).
+			queueItem{ocrLine: "Blrgh"}, false, finish.Finish{}, "couldn't identify"},
+
 		{"fallback-line match queues without printing evidence",
 			queueItem{canonical: "Sol Ring", lineIdx: 2, match: exact,
 				prints: verified[:1], rank: scanMatchSinglePrint},
-			false, "", "fallback"},
+			false, finish.Finish{}, "fallback"},
 		{"fallback-line match commits when the number verifies",
 			queueItem{canonical: "Sol Ring", lineIdx: 2, match: exact,
 				prints: verified, rank: scanMatchSetAndNumber},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"set+number verification carries a shaky name",
-			// Glare truncated the title (observed live: "Danther Wakandan
-			// King"), but the collector block pinned the printing — and a
-			// wrong-card resolution could not have matched these printings.
+
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.79},
 				prints: verified, rank: scanMatchSetAndNumber},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"set+number verification carries low OCR confidence",
-			// A trailing glare glyph drags the line confidence to 0.5 while
-			// the normalized name matches exactly (observed live every run on
-			// one foil).
+
 			queueItem{canonical: "Sol Ring", match: exact, prints: verified,
 				rank: scanMatchSetAndNumber, raw: scan.Card{Confidence: 0.5}},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"shaky similarity without strong printing queues",
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.8},
 				prints: verified[:1], rank: scanMatchNumberOnly},
-			false, "", "uncertain name"},
-		// Vision's confidence describes the glyphs; a matched number answers it,
-		// because the digits and the name agree on a real printing. With no
-		// number to check, the floor still stands.
+			false, finish.Finish{}, "uncertain name"},
+
 		{"low OCR confidence on a fuzzy name without a number queues",
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.95},
 				prints: verified[:1], rank: scanMatchSinglePrint,
 				raw: scan.Card{Confidence: 0.5}},
-			false, "", "low OCR confidence"},
+			false, finish.Finish{}, "low OCR confidence"},
 		{"low OCR confidence commits when the number verifies",
 			queueItem{canonical: "Sol Ring", match: cardname.Match{Similarity: 0.95},
 				prints: verified[:1], rank: scanMatchNumberOnly,
 				raw: scan.Card{Confidence: 0.5}},
-			true, "nonfoil", ""},
+			true, finish.Nonfoil, ""},
 		{"exact name with low confidence and weak printing still commits",
-			// Exact normalized equality IS the confidence check: the text
-			// matched a real card name letter for letter.
+
 			queueItem{canonical: "Sol Ring", match: exact, prints: verified[:1],
 				rank: scanMatchNumberOnly, raw: scan.Card{Confidence: 0.5}},
-			true, "nonfoil", ""},
-		// A number matching several printings now commits the one the ranking
-		// put in front, rather than queuing. Deliberate: a wrong printing is
-		// one row to correct, a queued card is a stop in the session.
+			true, finish.Nonfoil, ""},
+
 		{"ambiguous number commits the front printing",
 			queueItem{canonical: "Sol Ring", match: exact, prints: multi,
 				rank: scanMatchNumberAmbiguous},
-			true, "nonfoil", ""},
-		// Unless the card said otherwise. Absence of a year is why the pick is
-		// uncertain; a year that disagrees is evidence against it.
+			true, finish.Nonfoil, ""},
+
 		{"ambiguous number queues when the year contradicts the front printing",
 			queueItem{canonical: "Sol Ring", match: exact, prints: multi,
 				rank: scanMatchNumberAmbiguous,
 				raw:  scan.Card{CopyrightYear: 1999}},
-			false, "", "not from 1999"},
+			false, finish.Finish{}, "not from 1999"},
 		{"multi-print no collector queues",
 			queueItem{canonical: "Sol Ring", match: exact, prints: multi,
 				rank: scanMatchNone},
-			false, "", "printing unverified"},
+			false, finish.Finish{}, "printing unverified"},
 		{"no printings queues",
-			queueItem{canonical: "Sol Ring", match: exact}, false, "", "no printings"},
+			queueItem{canonical: "Sol Ring", match: exact}, false, finish.Finish{}, "no printings"},
 	}
 	for _, c := range cases {
-		auto, finish, note := verdict(c.it)
+		auto, fin, note := verdict(c.it)
 		if auto != c.wantAuto {
 			t.Errorf("%s: auto = %v, want %v", c.name, auto, c.wantAuto)
 			continue
 		}
-		if auto && finish != c.finish {
-			t.Errorf("%s: finish = %q, want %q", c.name, finish, c.finish)
+		if auto && fin != c.finish {
+			t.Errorf("%s: finish = %q, want %q", c.name, fin, c.finish)
 		}
 		if !auto && !strings.Contains(note, c.note) {
 			t.Errorf("%s: note = %q, want it to mention %q", c.name, note, c.note)
@@ -2155,8 +1950,7 @@ func TestRankByScanStrength(t *testing.T) {
 	if _, s := rankByScanStrength(cards[:1], "", "", 0, "", "", "", "", nil); s != scanMatchSinglePrint {
 		t.Errorf("single printing strength = %v, want scanMatchSinglePrint", s)
 	}
-	// A number that matches nothing makes even a lone printing suspect: the
-	// name match may have landed on the wrong card entirely.
+
 	if _, s := rankByScanStrength(cards[:1], "", "999", 0, "", "", "", "", nil); s != scanMatchNone {
 		t.Errorf("conflicting number strength = %v, want scanMatchNone", s)
 	}
@@ -2165,9 +1959,6 @@ func TestRankByScanStrength(t *testing.T) {
 	}
 }
 
-// Control Magic is the case border exists for: 4ED (white, 1995) and 4BB
-// (black, 1995) share their year, their art and their artist, so the copyright
-// year — the only other evidence a pre-1998 card carries — settles nothing.
 func controlMagicPrints() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "a", Name: "Control Magic", Set: "4bb", CollectorNumber: "48",
@@ -2182,8 +1973,6 @@ func controlMagicPrints() []scryfall.Card {
 func TestApplyBorderEvidence(t *testing.T) {
 	prints := controlMagicPrints()
 
-	// Border alone cannot pick 4ED: 3ED is white too, and newer-first puts it
-	// first. Only the pairing with 1995 names one printing.
 	got, changed := applyBorderEvidence(prints, "white", 0)
 	if !changed {
 		t.Fatal("a white read over a mixed list should reorder")
@@ -2193,9 +1982,6 @@ func TestApplyBorderEvidence(t *testing.T) {
 			"each group otherwise undisturbed", got[0].Set, got[1].Set, got[2].Set)
 	}
 
-	// With the year the pairing leads, which is the row a rank trusting both
-	// fields would commit — and 4BB, sharing the year but not the border, must
-	// not be it.
 	got, changed = applyBorderEvidence(prints, "white", 1995)
 	if !changed {
 		t.Fatal("border plus year should reorder")
@@ -2209,14 +1995,10 @@ func TestApplyBorderEvidence(t *testing.T) {
 			"or the picker could not reach the row it demoted", len(got), len(prints))
 	}
 
-	// A border matching nothing is ignored outright rather than treated as a
-	// contradiction. This is what keeps a wrong read on a card the reader
-	// should have abstained on — gold, silver, foreign-language — free.
 	if _, changed := applyBorderEvidence(prints, "gold", 0); changed {
 		t.Error("a border no printing has must change nothing")
 	}
-	// And a border every printing shares separates nothing, so it is not a
-	// reorder either — the distinction the resolve line reports as "unused".
+
 	allWhite := []scryfall.Card{
 		{ID: "a", Set: "3ed", BorderColor: "white"},
 		{ID: "b", Set: "4ed", BorderColor: "white"},
@@ -2227,9 +2009,7 @@ func TestApplyBorderEvidence(t *testing.T) {
 	if _, changed := applyBorderEvidence(prints, "", 0); changed {
 		t.Error("no border read must change nothing")
 	}
-	// Gold and silver read as white often enough to matter, so such a printing
-	// is never ruled out — but it is not promoted over a genuine match either,
-	// and it must still outrank the printings this read really does exclude.
+
 	withGold := append(controlMagicPrints(), scryfall.Card{
 		ID: "d", Name: "Control Magic", Set: "ptc", CollectorNumber: "jn12",
 		ReleasedAt: "1996-05-01", BorderColor: "gold"})
@@ -2259,17 +2039,6 @@ func TestApplyBorderEvidence(t *testing.T) {
 	}
 }
 
-// Reordering never moves the rank. The *ranking* may now use a border, but
-// only as its own input and only after the year has narrowed the field — a
-// list that has merely been re-sorted must rank exactly as it did before.
-//
-// The original form of this test asserted the rank was border-blind outright,
-// on the reasoning that one bit which always matches something cannot justify
-// an unattended write. That reasoning was right about a border used *alone* and
-// is preserved as such: with no year, or with a year that narrows nothing, the
-// border still settles nothing. What changed is that a border asked to choose
-// between two printings the year has already isolated is not one bit against
-// the whole catalog — it is the single remaining difference between them.
 func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 	prints := controlMagicPrints()
 	_, before := rankByScanStrength(prints, "", "", 1995, "", "", "", "", nil)
@@ -2278,25 +2047,13 @@ func TestApplyBorderEvidenceDoesNotChangeRank(t *testing.T) {
 	if before != after {
 		t.Errorf("rank moved from %v to %v after a border reorder", before, after)
 	}
-	// 1995 alone cannot separate 4ED from 4BB, and must not pretend to.
+
 	if before != scanMatchNone {
 		t.Errorf("year-only rank = %v, want scanMatchNone: 1995 is shared by "+
 			"two printings, so the year settles nothing", before)
 	}
 }
 
-// A read number pins a printing, and a misread border must not replace it.
-// Live on 2026-08-06: Ornithopter read set=M15 num=223 lang=en — an exact
-// A re-read that replaces a queued entry but still cannot commit must land
-// back in review, not vanish.
-//
-// upgradeQueued removes the queued entry the moment a better-ranked read of
-// the same name arrives. If that read then fails verdict anyway (better rank,
-// still unverified) it heads for the queue — where the same-card drop rules
-// used to swallow it, because its own first read put its name in
-// recentNames moments ago. The entry it replaced was already gone, so the
-// card ended represented nowhere: no commit, no review row, and a "Needs
-// Review" flash promised for an entry that did not exist.
 func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "a68", Name: "Gravel Slinger", Set: "ons", CollectorNumber: "68",
@@ -2316,7 +2073,6 @@ func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
 	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
-	// First read: name only. Three printings, nothing pinned — queues.
 	blind := scan.Card{Name: "Gravel Slinger", Candidates: []string{"Gravel Slinger"},
 		Confidence: 0.95, Source: "crop"}
 	mm, _ := m.Update(m.resolveCardCmd(1, blind, 1)())
@@ -2325,8 +2081,6 @@ func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
 		t.Fatalf("setup: blind read should queue, review = %d", len(got.review))
 	}
 
-	// 900ms later: digits that match two printings, and a year that matches
-	// neither of them — a strictly better rank that still cannot commit.
 	clock = clock.Add(900 * time.Millisecond)
 	got.captureSeq++
 	better := scan.Card{Name: "Gravel Slinger", Candidates: []string{"Gravel Slinger"},
@@ -2352,11 +2106,6 @@ func TestUpgradedButUnverifiedReReadStaysInReview(t *testing.T) {
 	}
 }
 
-// The frame stratum runs behind a near-certain fuzzy name, not only an exact
-// one. Live, 18:58 pile run: Consuming Corruption read at 95% similarity on
-// both its capture and its rescue, the exact-only gate kept the frame
-// evidence idle, and the card took the session's only review stop. The
-// operator set the floor at 0.92; below it the bet still refuses.
 func TestFramePickRunsBehindANearCertainName(t *testing.T) {
 	twins := []scryfall.Card{
 		{ID: "reg", Name: "Consuming Corruption", Set: "mh3", CollectorNumber: "102",
@@ -2385,7 +2134,6 @@ func TestFramePickRunsBehindANearCertainName(t *testing.T) {
 		t.Error("a fuzzy-name frame pick must still carry the guess flag")
 	}
 
-	// Below the floor the bet refuses, whatever the frame read said.
 	fs.match["Consuming Corrupticr"] = cardname.Match{Similarity: 0.90}
 	m2 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m2, _ = openCapture(t, m2)
@@ -2400,8 +2148,6 @@ func TestFramePickRunsBehindANearCertainName(t *testing.T) {
 	}
 }
 
-// A frame-picked printing commits, and commits flagged: no digits confirmed
-// it, so the row must be auditable against the physical card later.
 func TestFramePickedPrintingCommitsFlagged(t *testing.T) {
 	twins := []scryfall.Card{
 		{ID: "reg", Name: "Brainsurge", Set: "mh3", CollectorNumber: "106",
@@ -2433,11 +2179,6 @@ func TestFramePickedPrintingCommitsFlagged(t *testing.T) {
 	}
 }
 
-// An alt collector block with no year of its own still ranks with the card's
-// copyright year. The year belongs to the card — there is only one copyright
-// line — but the ranker used to see only the winning block's Year field, so
-// an alt carrying just digits silently discarded the year the log printed
-// and a read that should have corroborated ranked a stratum lower.
 func TestAltBlockInheritsTheCopyrightYear(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "mh3", Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426",
@@ -2465,11 +2206,6 @@ func TestAltBlockInheritsTheCopyrightYear(t *testing.T) {
 	}
 }
 
-// set+number+lang pin — with the border misread as white on a black-bordered
-// card. The border reorder then ruled the pinned M15 row out, promoted a
-// borderless SLD sibling to the head, and the head is what commits: the
-// session recorded SLD/604 foil from a card the phone had read correctly,
-// with the foil coming from the promoted row being foil-only.
 func TestPinnedPrintingSurvivesBorderMisread(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "sld", Name: "Ornithopter", Set: "sld", CollectorNumber: "604",
@@ -2479,8 +2215,7 @@ func TestPinnedPrintingSurvivesBorderMisread(t *testing.T) {
 			Lang: "en", BorderColor: "black", ReleasedAt: "2014-07-18",
 			Finishes: []string{"nonfoil", "foil"}},
 	}
-	// The displacement is real: left to run, the border reorder demotes the
-	// pinned row. This is what the guard is holding back.
+
 	displaced, changed := applyBorderEvidence(prints, "white", 2014)
 	if !changed || displaced[0].ID == "m15" {
 		t.Fatalf("premise broken: a white misread should displace the black "+
@@ -2505,20 +2240,15 @@ func TestPinnedPrintingSurvivesBorderMisread(t *testing.T) {
 		t.Errorf("head = %q, want the pinned m15 row to survive the border misread",
 			it.prints[0].ID)
 	}
-	auto, finish, note := verdict(it)
-	if !auto || finish != "nonfoil" {
+	auto, fin, note := verdict(it)
+	if !auto || fin != finish.Nonfoil {
 		t.Errorf("verdict = auto=%v finish=%q note=%q, want an unattended "+
-			"nonfoil commit of the pinned printing", auto, finish, note)
+			"nonfoil commit of the pinned printing", auto, fin, note)
 	}
 }
 
 func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
-	// A card whose only "reprint" is its own theme-deck alternate — one set,
-	// one base number, rows differing only by the variation marker — is a
-	// single logical printing, and the unmarked row must lead so it is the one
-	// verdict prices and the commit writes. Observed live: Cephalid Looter
-	// (ody 72 beside ody 72†) queued "printing unverified: 2 printings" on a
-	// perfect read.
+
 	variants := []scryfall.Card{
 		{ID: "alt", Name: "X", Set: "ody", CollectorNumber: "72†"},
 		{ID: "plain", Name: "X", Set: "ody", CollectorNumber: "72"},
@@ -2530,7 +2260,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 	if ranked[0].ID != "plain" {
 		t.Errorf("ranked[0] = %s, want the unmarked row first", ranked[0].ID)
 	}
-	// ★ rows collapse the same way (TrimRight's cutset is runes, not bytes).
+
 	stars := []scryfall.Card{
 		{ID: "plain", Name: "X", Set: "8ed", CollectorNumber: "95"},
 		{ID: "star", Name: "X", Set: "8ed", CollectorNumber: "95★"},
@@ -2538,7 +2268,7 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 	if _, s := rankByScanStrength(stars, "", "", 0, "", "", "", "", nil); s != scanMatchSinglePrint {
 		t.Errorf("star pair strength = %v, want scanMatchSinglePrint", s)
 	}
-	// Variants across different sets are genuinely different printings.
+
 	spread := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "7ed", CollectorNumber: "95"},
 		{ID: "b", Name: "X", Set: "8ed", CollectorNumber: "95★"},
@@ -2549,15 +2279,12 @@ func TestRankByScanStrengthCollapsesVariants(t *testing.T) {
 }
 
 func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
-	// "95" is Remove Soul in both 7th and 8th Edition; the copyright range's
-	// end year ("1993-2003") equals the release year and picks one (observed
-	// live — the read queued as ambiguous without it).
+
 	prints := []scryfall.Card{
 		{ID: "7ed", Name: "Remove Soul", Set: "7ed", CollectorNumber: "95", ReleasedAt: "2001-04-11"},
 		{ID: "8ed", Name: "Remove Soul", Set: "8ed", CollectorNumber: "95", ReleasedAt: "2003-07-28"},
 	}
-	// The year did not merely break the tie, it agreed with the winner — two
-	// signals, so the name gate is waived downstream.
+
 	ranked, s := rankByScanStrength(prints, "", "95", 2003, "", "", "", "", nil)
 	if s != scanMatchNumberAndYear {
 		t.Errorf("year-pinned strength = %v, want scanMatchNumberAndYear", s)
@@ -2565,12 +2292,11 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	if ranked[0].ID != "8ed" {
 		t.Errorf("ranked[0] = %s, want the printing released that year", ranked[0].ID)
 	}
-	// A misread year matches no printing and must leave the tie as it found
-	// it — ambiguous queues, never a guessed commit.
+
 	if _, s := rankByScanStrength(prints, "", "95", 2013, "", "", "", "", nil); s != scanMatchNumberAmbiguous {
 		t.Errorf("misread year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
-	// A year shared by both matches decides nothing either.
+
 	same := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "7", ReleasedAt: "2003-01-01"},
 		{ID: "b", Name: "X", Set: "bbb", CollectorNumber: "7", ReleasedAt: "2003-06-01"},
@@ -2578,20 +2304,12 @@ func TestRankByScanStrengthYearBreaksNumberTie(t *testing.T) {
 	if _, s := rankByScanStrength(same, "", "7", 2003, "", "", "", "", nil); s != scanMatchNumberAmbiguous {
 		t.Errorf("shared year strength = %v, want scanMatchNumberAmbiguous", s)
 	}
-	// The year never overrides a full set+number verification.
+
 	if _, s := rankByScanStrength(prints, "7ed", "95", 2003, "", "", "", "", nil); s != scanMatchSetAndNumber {
 		t.Errorf("set+number with year = %v, want scanMatchSetAndNumber", s)
 	}
 }
 
-// A second copy of a card commits rather than stopping the session — provided
-// enough time passed for a hand to have swapped it.
-//
-// Committing at all used to queue. It cost three stops on a playset of four,
-// and it was not even consistent: a copy scanned past the window committed
-// anyway, so the same physical action gave different answers depending on how
-// fast you were. What bounds it now is the one thing a person cannot fake —
-// nobody swaps a card in under 3856ms. See sameCardFloor.
 func TestRefireCommitsAsASecondCopy(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -2606,7 +2324,6 @@ func TestRefireCommitsAsASecondCopy(t *testing.T) {
 		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
 	}
 
-	// The same card a whole swap later: a second copy, committed.
 	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
@@ -2617,8 +2334,6 @@ func TestRefireCommitsAsASecondCopy(t *testing.T) {
 		t.Fatalf("review = %+v, want nothing queued", got.review)
 	}
 
-	// And past the window, which used to be the only way it committed. Same
-	// answer either side of that boundary now, which is the point.
 	clock = clock.Add(dupWindow + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
@@ -2627,13 +2342,6 @@ func TestRefireCommitsAsASecondCopy(t *testing.T) {
 	}
 }
 
-// The same card again a second later is the card that is already there.
-//
-// Replayed from the session of 2026-08-05 19:21, where Skirk Volcanist
-// committed five times in six seconds while sitting still on the desk. Every
-// repeat arrived tagged `replaced`, because the phone's trigger cannot tell a
-// card that *moved* from one swapped in place — so the Mac stops believing that
-// field on a repeat this fast and believes the clock instead.
 func TestFastRepeatOfTheSameCardIsDropped(t *testing.T) {
 	ev, fs := confidentFixture()
 	ev.FireReason = scan.FireReplaced
@@ -2649,9 +2357,6 @@ func TestFastRepeatOfTheSameCardIsDropped(t *testing.T) {
 		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
 	}
 
-	// The real gaps from that burst, in order. Each one re-anchors the floor,
-	// which is what stops the third and fourth slipping past a fixed three
-	// seconds measured from the original commit.
 	for _, gap := range []time.Duration{931, 1604, 932, 2595} {
 		clock = clock.Add(gap * time.Millisecond)
 		mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
@@ -2667,7 +2372,6 @@ func TestFastRepeatOfTheSameCardIsDropped(t *testing.T) {
 		t.Errorf("status = %q, want the still-seeing note", got.status)
 	}
 
-	// And the card genuinely swapped afterwards still lands.
 	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
@@ -2676,14 +2380,6 @@ func TestFastRepeatOfTheSameCardIsDropped(t *testing.T) {
 	}
 }
 
-// A repeat the source itself calls a *move* is dropped however long ago the
-// card was last seen.
-//
-// The clock floor catches a fast repeat, but the phone can do better than a
-// clock: it watched a box hold the watched spot while still looking like the
-// card it had already read, and said so. Two of the eight duplicates in the
-// session that prompted this were 5.4s and 7.1s apart — past any defensible
-// time floor, and still the same card sitting there.
 func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -2700,8 +2396,6 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 		t.Fatalf("first scan should commit, adder got %d", len(ra.got))
 	}
 
-	// Seven seconds later — comfortably past the floor — but the source says
-	// the card only moved.
 	moved := ev
 	moved.FireReason = scan.FireMoved
 	clock = clock.Add(7 * time.Second)
@@ -2714,8 +2408,6 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 		t.Errorf("review = %+v, want the move dropped rather than queued", got.review)
 	}
 
-	// And a genuine placement at the same remove still commits, so the rule is
-	// about the evidence rather than about the gap.
 	clock = clock.Add(7 * time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: placed})
 	got = resolve(t, mm.(model), placed.CardList()[0])
@@ -2724,13 +2416,6 @@ func TestMovedRepeatIsDroppedWhateverTheClockSays(t *testing.T) {
 	}
 }
 
-// The 19:33 pile run's two phantom reviews, pinned.
-//
-// "Gliding" — half of Glowrider mid-slide — fuzzy-matched a different card
-// at 71% and queued "uncertain name match"; a nameless numberless read with
-// only a year queued "nothing readable" 2.5s behind the same commit. A wrong
-// canonical walks past every name-keyed rule, and a year alone failed the
-// old digits-required footer echo.
 func TestSlideDebrisAfterACommitIsDropped(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "lgn15", Name: "Glowrider", Set: "lgn", CollectorNumber: "15",
@@ -2761,7 +2446,6 @@ func TestSlideDebrisAfterACommitIsDropped(t *testing.T) {
 		t.Fatalf("setup: Glowrider should commit, adds = %d", len(ra.got))
 	}
 
-	// 1.8s later: the wrong-card mangle.
 	clock = clock.Add(1798 * time.Millisecond)
 	got.captureSeq++
 	mangle := scan.Card{Name: "Gliding", Candidates: []string{"Gliding"},
@@ -2772,7 +2456,6 @@ func TestSlideDebrisAfterACommitIsDropped(t *testing.T) {
 		t.Errorf("review = %+v, want the wrong-card slide mangle dropped", got.review)
 	}
 
-	// 2.5s after the commit: nameless, numberless, year-only.
 	clock = clock.Add(719 * time.Millisecond)
 	got.captureSeq++
 	ghost := scan.Card{CopyrightYear: 2003, Source: "crop"}
@@ -2786,13 +2469,6 @@ func TestSlideDebrisAfterACommitIsDropped(t *testing.T) {
 	}
 }
 
-// A mid-slide mangle of a card just handled is dropped, not queued.
-//
-// Live, 2026-08-07 pile session: sliding Hollow Specter off the pile put
-// "AMN Spectes" in front of the lens — half a title plus debris. It resolved
-// to nothing, carried a copyright year (so the junk filter rightly spared
-// it: digits prove a card was in frame), and queued as `couldn't identify
-// "AMN Spectes"` — a review stop with nothing actionable in it.
 func TestMidSlideMangleIsDropped(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "lgn75", Name: "Hollow Specter", Set: "lgn", CollectorNumber: "75",
@@ -2817,7 +2493,6 @@ func TestMidSlideMangleIsDropped(t *testing.T) {
 		t.Fatalf("setup: the clean read should commit, adds = %d", len(ra.got))
 	}
 
-	// 5.1s later, the slide: half a title, a year, no identity.
 	clock = clock.Add(5111 * time.Millisecond)
 	got.captureSeq++
 	mangle := scan.Card{Name: "AMN Spectes", Candidates: []string{"AMN Spectes"},
@@ -2831,10 +2506,6 @@ func TestMidSlideMangleIsDropped(t *testing.T) {
 		t.Errorf("adds = %d, want nothing new", len(ra.got))
 	}
 
-	// An unidentifiable line that resembles nothing recent is not an echo —
-	// it lands in the receipt (unnamed reads never queue since the review
-	// gate; the next fire re-reads the card) rather than being silently
-	// swallowed like the mangle above.
 	clock = clock.Add(2 * time.Second)
 	got.captureSeq++
 	skippedBefore := got.summary.Count("skipped")
@@ -2848,14 +2519,6 @@ func TestMidSlideMangleIsDropped(t *testing.T) {
 	}
 }
 
-// The live pile-mode triple: one hand-held foil, three fires in 2.5s, every
-// face "decisive" — one row, finish corrected, no phantom copies.
-//
-// Trap Digger, 2026-08-07: committed nonfoil-guessed off a footerless first
-// read, then re-read twice as the hand shifted (`replaced` face=32.5, then
-// 26.5, both over placementFaceFloor) and committed three rows. The wanted
-// shape: the first repeat carries the foil marker the first read missed and
-// re-keys the row (guess → evidence); the second repeat is a plain drop.
 func TestPileRepeatCorrectsInsteadOfDuplicating(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "scg24", Name: "Trap Digger", Set: "scg", CollectorNumber: "24",
@@ -2871,16 +2534,13 @@ func TestPileRepeatCorrectsInsteadOfDuplicating(t *testing.T) {
 	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
-	// Footerless first read: single printing, no finish marker → nonfoil
-	// guessed.
 	first := scan.Card{Name: "Trap Digger", Candidates: []string{"Trap Digger"},
 		Confidence: 0.95, Source: "crop"}
 	got := resolve(t, m, first)
-	if len(ra.got) != 1 || !ra.got[0].FinishGuessed || ra.got[0].Finish != "nonfoil" {
+	if len(ra.got) != 1 || !ra.got[0].FinishGuessed || ra.got[0].Finish != finish.Nonfoil {
 		t.Fatalf("setup: first read should commit nonfoil guessed, got %+v", ra.got)
 	}
 
-	// 1.6s later, "decisive" face on the same card — and a real foil marker.
 	clock = clock.Add(1602 * time.Millisecond)
 	got.captureSeq++
 	got.lastScanReplaced = true
@@ -2892,11 +2552,10 @@ func TestPileRepeatCorrectsInsteadOfDuplicating(t *testing.T) {
 	if len(ra.got) != 2 {
 		t.Fatalf("adds = %d, want the correction and nothing else", len(ra.got))
 	}
-	if ra.got[1].ReplacesFinish != "nonfoil" || ra.got[1].Finish != "foil" {
+	if ra.got[1].ReplacesFinish != finish.Nonfoil || ra.got[1].Finish != finish.Foil {
 		t.Errorf("second write = %+v, want a nonfoil→foil re-key, not a new row", ra.got[1])
 	}
 
-	// 0.95s later, another "decisive" face, foil again: nothing new — drop.
 	clock = clock.Add(946 * time.Millisecond)
 	got.captureSeq++
 	face2 := 26.5
@@ -2910,48 +2569,24 @@ func TestPileRepeatCorrectsInsteadOfDuplicating(t *testing.T) {
 	}
 }
 
-// A same-printing repeat under the floor is suppressed and offered back on
-// the recovery key — whatever the face measurement claimed.
-//
-// This contract has flipped once, each direction backed by a live session.
-// First: two physical No-Dachi stacked 1671ms apart, the phone said
-// `replaced` face=32.5, the floor threw it away, and the copy waited 73.5s —
-// so a decisive face was allowed to override the floor. Then hand-held pile
-// scanning showed the measurement cannot carry that weight: a foil's face
-// moves with the hand — the same Trap Digger read face=30.4/32.5/26.5 across
-// three fires, all "decisive", and committed three rows in 2.5s. Identity
-// (the resolve naming the printing just written) now outranks the face; the
-// stacked-copy case pays one keystroke on pendingDup instead of the
-// collection growing phantom rows.
 func TestSameCardFloorOutranksADecisiveFace(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		reason string
 		face   *float64
-		want   int // adds after the repeat, including the first copy
+		want   int
 	}{
-		// This row used to want 2: a `replaced` at face=32.5 overrode the
-		// floor and committed (the No-Dachi stack). Hand-held pile scanning
-		// refuted the measurement — the same card reads face=26.5-32.5 as
-		// the hand shifts a foil, and one Trap Digger committed three rows
-		// in 2.5s through this override. Identity now outranks the face
-		// under the floor; the fast-stacked real copy is what the pendingDup
-		// recovery key is for, and the assertions below insist it is offered.
+
 		{"decisive replacement", scan.FireReplaced, fp(32.5), 1},
-		// The other side of the same measurement, from the same session.
+
 		{"moved", scan.FireMoved, fp(15.8), 1},
-		// Over movedFaceMax but under our margin: the source's claim is real
-		// and weak, so the clock keeps it.
+
 		{"marginal replacement", scan.FireReplaced, fp(20.1), 1},
-		// A claim with nothing behind it is a boolean, and a boolean from an
-		// interpolated threshold is what the floor exists to distrust.
+
 		{"replacement with no measurement", scan.FireReplaced, nil, 1},
-		// `removed` says the captured card left the watched rect — equally
-		// what picking it up and setting it down does. Never a placement
-		// claim, whatever number rides along.
+
 		{"removed", scan.FireRemoved, fp(40.0), 1},
-		// A helper too old to send any of this falls back to the clock, which
-		// is the compatibility path the floor must keep serving.
+
 		{"old helper", "", nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2970,7 +2605,6 @@ func TestSameCardFloorOutranksADecisiveFace(t *testing.T) {
 				t.Fatalf("setup: first copy should commit, adds = %d", len(ra.got))
 			}
 
-			// The gap from the live session, comfortably under the floor.
 			clock = clock.Add(1671 * time.Millisecond)
 			repeat := ev
 			repeat.FireReason = tc.reason
@@ -2984,8 +2618,7 @@ func TestSameCardFloorOutranksADecisiveFace(t *testing.T) {
 			if len(got.review) != 0 {
 				t.Errorf("review = %+v, want the repeat decided without a stop", got.review)
 			}
-			// Whatever the verdict, a suppressed copy must be recoverable and
-			// must say so — the silence is what made the live drop cost a card.
+
 			if tc.want == 1 {
 				if got.pending == nil {
 					t.Error("pending = nil, want the suppressed copy held for +")
@@ -2998,8 +2631,6 @@ func TestSameCardFloorOutranksADecisiveFace(t *testing.T) {
 	}
 }
 
-// The floor still governs everything the source cannot answer for, including a
-// gap wide enough to have been a real swap.
 func TestSameCardFloorStillCommitsADeliberateReScan(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -3013,7 +2644,6 @@ func TestSameCardFloorStillCommitsADeliberateReScan(t *testing.T) {
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
 	got := resolve(t, mm.(model), first.CardList()[0])
 
-	// Past the floor, and the source offers no measurement at all.
 	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: first})
 	got = resolve(t, mm.(model), first.CardList()[0])
@@ -3022,12 +2652,6 @@ func TestSameCardFloorStillCommitsADeliberateReScan(t *testing.T) {
 	}
 }
 
-// A suppressed copy is written when the operator says it was real.
-//
-// The point of the key is the asymmetry it removes. Every rule above judges a
-// physical act nobody in this process witnessed, and placementFaceFloor is
-// fitted on a single negative sample; being wrong used to cost a card with no
-// trace, and now costs one keystroke.
 func TestPlusPromotesTheSuppressedCopy(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -3041,7 +2665,6 @@ func TestPlusPromotesTheSuppressedCopy(t *testing.T) {
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: first})
 	got := resolve(t, mm.(model), first.CardList()[0])
 
-	// A repeat the rules suppress: too fast, and no measurement behind it.
 	clock = clock.Add(900 * time.Millisecond)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: first})
 	got = resolve(t, mm.(model), first.CardList()[0])
@@ -3062,8 +2685,6 @@ func TestPlusPromotesTheSuppressedCopy(t *testing.T) {
 		t.Errorf("summary = %+v, want the promotion on the receipt", got.summary.Entries)
 	}
 
-	// Pressing it again answers rather than silently doing nothing: the status
-	// line invited the key, so a no-op would read as a missed keystroke.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
 	got = mm.(model)
 	if len(ra.got) != 2 {
@@ -3074,7 +2695,6 @@ func TestPlusPromotesTheSuppressedCopy(t *testing.T) {
 	}
 }
 
-// A promotion offered past its window is refused rather than written.
 func TestStalePendingCopyIsNotPromoted(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -3099,16 +2719,6 @@ func TestStalePendingCopyIsNotPromoted(t *testing.T) {
 	}
 }
 
-// An offer the phone is showing outlives the next card; one only the terminal
-// ever saw does not.
-//
-// The asymmetry is the whole point. The terminal's offer is a status line, and
-// the next commit overwrites it — so holding the slot past that would let `+`
-// write a copy of a card whose prompt is gone. The phone's offer is a banner
-// that stays up until it is answered, so dropping the slot underneath it is
-// how the operator taps "Second copy" and gets nothing (live, 2026-08-09: the
-// suppressed card is still on the mat, the trigger re-fires on it, and the
-// next card commits within a second or two).
 func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
 	ev, fs := confidentFixture()
 	fs.fuzzy["Black Lotus"] = "Black Lotus"
@@ -3117,8 +2727,6 @@ func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
 			Finishes: []string{"nonfoil"}},
 	}
 
-	// offered reports whether the sighting was held with a live phone banner,
-	// which is the only input that differs between the two halves below.
 	suppress := func(t *testing.T, replaced bool) (model, *recordingAdder, *fakeSession) {
 		t.Helper()
 		ra := &recordingAdder{}
@@ -3135,12 +2743,10 @@ func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
 			t.Fatalf("setup: adds = %d, want the first copy committed", len(ra.got))
 		}
 
-		// A repeat the rules suppress: too fast, and no measurement behind it.
 		clock = clock.Add(900 * time.Millisecond)
 		repeat := ev
 		if replaced {
-			// The phone claiming a placement is what earns the banner — see
-			// suppressRepeat.
+
 			repeat.FireReason = scan.FireReplaced
 		}
 		mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: repeat})
@@ -3152,7 +2758,6 @@ func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
 			t.Fatalf("pending.offered = %v, want %v", got.pending.offered, replaced)
 		}
 
-		// The next card lands, overwriting the terminal's prompt.
 		clock = clock.Add(2 * time.Second)
 		next := confidentEvent()
 		next.Name, next.Candidates = "Black Lotus", []string{"Black Lotus"}
@@ -3202,12 +2807,7 @@ func TestOfferedPendingCopySurvivesTheNextCard(t *testing.T) {
 }
 
 func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
-	// Two captures in flight; the user tabs into the review list before either
-	// resolves. Both land regardless of UI state, out of order.
-	//
-	// Two distinct names that resolve but cannot verify a printing, so both
-	// genuinely queue. (This test once used unnamed footer-evidence reads,
-	// but those go to the receipt now, not the queue.)
+
 	twoPrints := func(name string) []scryfall.Card {
 		return []scryfall.Card{
 			{ID: name + "-a", Name: name, Set: "aaa", CollectorNumber: "1", Finishes: []string{"nonfoil"}},
@@ -3235,7 +2835,6 @@ func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 		t.Fatalf("resolving = %d, want 2 in flight", got.resolving)
 	}
 
-	// Seed one queued item so tab has something to show, then tab away.
 	got.review = append(got.review, queueItem{id: 99, ocrLine: "seed", note: "seeded"})
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 	got = mm.(model)
@@ -3243,7 +2842,6 @@ func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 		t.Fatalf("tab should open the review list, got %v", got.state)
 	}
 
-	// The second capture's resolution lands first, then the first's.
 	second := got.resolveCardCmd(2, ev("Brainsurge").CardList()[0], 1)().(resolveDoneMsg)
 	first := got.resolveCardCmd(1, unknown.CardList()[0], 1)().(resolveDoneMsg)
 	mm, _ = got.Update(second)
@@ -3262,8 +2860,7 @@ func TestResolveResultsLandOutOfOrderAndAfterTabbingAway(t *testing.T) {
 }
 
 func TestFoilMarkerCommitsAsFoil(t *testing.T) {
-	// The printed star beside the language code is the foil marker; a starred
-	// card whose printing offers both finishes commits as foil with no keys.
+
 	prints := []scryfall.Card{{ID: "f1", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil", "foil"}}}
 	fs := fakeSearcher{
@@ -3280,7 +2877,7 @@ func TestFoilMarkerCommitsAsFoil(t *testing.T) {
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: ev})
 	got := resolve(t, mm.(model), card)
 
-	if len(ra.got) != 1 || ra.got[0].Finish != "foil" {
+	if len(ra.got) != 1 || ra.got[0].Finish != finish.Foil {
 		t.Fatalf("adder got %+v, want the starred card committed as foil", ra.got)
 	}
 	if len(got.review) != 0 {
@@ -3289,12 +2886,8 @@ func TestFoilMarkerCommitsAsFoil(t *testing.T) {
 }
 
 func TestAltCollectorCandidateVerifiesStackScan(t *testing.T) {
-	// A card scanned off the top of a stack: the primary collector read is the
-	// neighbour card's sliver (which matches no printing of the resolved
-	// name), and the true block rides in the alternates. The alternate that
-	// verifies wins, and the card auto-commits. Observed live: Green Goblin
-	// MSC #657 with a stacked card's MSH #286 parsed first.
-	prints := solRingPrints() // has MH3 #123
+
+	prints := solRingPrints()
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
 		prints: map[string][]scryfall.Card{"Sol Ring": prints},
@@ -3304,7 +2897,7 @@ func TestAltCollectorCandidateVerifiesStackScan(t *testing.T) {
 	m, _ = openCapture(t, m)
 
 	card := scan.Card{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
-		SetCode: "MSH", CollectorNumber: "286", // the neighbour's border
+		SetCode: "MSH", CollectorNumber: "286",
 		CollectorAlts: []scan.CollectorAlt{{Number: "123", Set: "MH3"}},
 		Confidence:    0.95}
 	ev := scan.Event{Kind: scan.EventScan, Name: "Sol Ring", Cards: []scan.Card{card}}
@@ -3319,12 +2912,6 @@ func TestAltCollectorCandidateVerifiesStackScan(t *testing.T) {
 	}
 }
 
-// A swallowed echo re-arms the recheck instead of ending it.
-//
-// This branch returned nil, which stopped the loop after a single echo. The
-// card then sat unprocessed until the phone re-fired on its own — 73.5s in the
-// session that surfaced it, against a suppression window of ten. Every other
-// drop in onResolveDone reschedules; this was the outlier.
 func TestNudgeEchoReschedulesTheRecheck(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -3351,10 +2938,7 @@ func TestNudgeEchoReschedulesTheRecheck(t *testing.T) {
 }
 
 func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
-	// After a commit, the model nudges the parked trigger; the nudge re-reads
-	// the same sitting card. That echo must neither re-commit nor dup-queue —
-	// but the same read arriving WITHOUT a nudge (a real disruption fired it)
-	// still dup-queues, which is what keeps stacked playset copies alive.
+
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -3368,9 +2952,6 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 		t.Fatalf("setup: first scan should commit, got %d", len(ra.got))
 	}
 
-	// The nudged re-read of the same card: dropped. The tag is a time window
-	// rather than a consumed flag, so it survives a real scan racing the
-	// nudge onto the wire.
 	got.nudgeSentAt = got.now()
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = mm.(model)
@@ -3385,9 +2966,6 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 		t.Errorf("nudgeDrops = %d, want 1", got.nudgeDrops)
 	}
 
-	// The same card again, fired by real disruption rather than the nudge, and
-	// a whole swap later: a placement the phone watched happen, at a speed a
-	// person could actually have managed, so a second copy commits.
 	got.nudgeSentAt = time.Time{}
 	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
@@ -3401,10 +2979,7 @@ func TestNudgeEchoIsSilentlyDropped(t *testing.T) {
 }
 
 func TestMultiCardPhantomsDieQuietly(t *testing.T) {
-	// A licensed frame's ability names and brand lines read title-like and
-	// become entries; when the capture yielded several cards, the ones that
-	// resolve to nothing are dropped with a note, not queued. Observed live:
-	// "Survey the Realm" and "C MARVEL" beside a real Black Panther.
+
 	_, fs := confidentFixture()
 	m := newModel(context.Background(), fs, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
@@ -3425,11 +3000,6 @@ func TestMultiCardPhantomsDieQuietly(t *testing.T) {
 		t.Errorf("status = %q, want a quiet ignored note", got.status)
 	}
 
-	// The same unresolvable read from a single-card capture dies too. It used
-	// to queue, on the reasoning that the only card of a shot must never
-	// vanish silently — but a capture that read no name and nothing off a
-	// footer held no card to vanish, and the queue entry offered one action:
-	// discard. A live session of 25 left three of these in review.
 	mm, _ = got.Update(got.resolveCardCmd(3, ev.Cards[1], 1)())
 	got = mm.(model)
 	if len(got.review) != 0 {
@@ -3439,10 +3009,6 @@ func TestMultiCardPhantomsDieQuietly(t *testing.T) {
 		t.Errorf("ignored = %d, want 2 — both misses counted for the receipt", got.ignored)
 	}
 
-	// Printing evidence spares it from the junk kill — a footer read is proof
-	// a card was in frame — but proof of a card is not a review question, and
-	// an unnamed entry offers only a discard. It lands in the receipt; the
-	// next fire re-reads whatever is actually there.
 	withFooter := scan.Card{Name: "Survey the Realm", Candidates: []string{"Survey the Realm"},
 		CollectorNumber: "412", NumberSource: "copyright"}
 	skippedBefore := got.summary.Count("skipped")
@@ -3454,13 +3020,6 @@ func TestMultiCardPhantomsDieQuietly(t *testing.T) {
 	}
 }
 
-// The three shapes of junk a live session actually produced, none of which
-// should reach review.
-//
-// From the session of 2026-08-05 20:00, 25 outcomes: a capture that read
-// literally nothing, a fragment of rules copy, and a mangled word off a card
-// whose crop was never located. Each queued, and each offered the user exactly
-// one action — discard.
 func TestUnidentifiableCapturesNeverReachReview(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -3495,16 +3054,6 @@ func TestUnidentifiableCapturesNeverReachReview(t *testing.T) {
 	}
 }
 
-// A worse re-read of a card just committed is dropped, not queued.
-//
-// Live: Ancient Silverback committed on M15/168, and 918ms later the same card
-// came back with no collector number and a set code of "TAP" scavenged out of
-// its rules text. It ranked nothing, so it could not pin a printing among
-// seven, and it queued as "printing unverified" — asking the user a question
-// the capture before it had already answered.
-//
-// The same-card floor guarded only the commit path, so a repeat whose read
-// degraded slipped straight past it.
 func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "m15", Name: "Ancient Silverback", Set: "m15", CollectorNumber: "168",
@@ -3522,7 +3071,6 @@ func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
-	// The good read: set and number, which pins the printing.
 	good := scan.Card{Name: "Ancient Silverback", Candidates: []string{"Ancient Silverback"},
 		SetCode: "M15", CollectorNumber: "168", Confidence: 0.95, Source: "crop"}
 	mm, _ := m.Update(m.resolveCardCmd(1, good, 1)())
@@ -3531,7 +3079,6 @@ func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 		t.Fatalf("setup: the good read should commit, adds = %d", len(ra.got))
 	}
 
-	// 918ms later: no number, and a set code scraped out of the rules text.
 	clock = clock.Add(918 * time.Millisecond)
 	worse := scan.Card{Name: "Ancient Silverback", Candidates: []string{"Ancient Silverback", "4 c"},
 		SetCode: "TAP", Confidence: 0.95, Source: "crop"}
@@ -3547,9 +3094,6 @@ func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 		t.Errorf("status = %q, want the still-seeing note", got.status)
 	}
 
-	// A genuine second copy, read just as poorly but a swap later, still
-	// queues: the rule is about how recently the card was seen, not about the
-	// quality of the read.
 	clock = clock.Add(sameCardFloor + time.Second)
 	mm, _ = got.Update(got.resolveCardCmd(3, worse, 1)())
 	got = mm.(model)
@@ -3558,18 +3102,6 @@ func TestWorseReReadOfACommittedCardIsDropped(t *testing.T) {
 	}
 }
 
-// A nameless footer echo of a card just committed is dropped, not queued.
-//
-// Live, 2026-08-07: Trap Digger committed on SCG/24, and 896ms later the
-// trigger fired `replaced` on the card sliding out under a hand. The capture
-// read no title at all — just the footer: number 24, copyright year 2003 —
-// so every named echo rule skipped it, and it queued as "nothing readable".
-// A review entry that names nothing and describes the card already written
-// is a stop with no question in it.
-//
-// The fire was also placedDecisively (face=25.0, at the floor), which must
-// not save it: with no readable name there is nothing an operator could
-// confirm from the entry anyway.
 func TestFooterEchoOfACommittedCardIsDropped(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "scg24", Name: "Trap Digger", Set: "scg", CollectorNumber: "24",
@@ -3594,8 +3126,6 @@ func TestFooterEchoOfACommittedCardIsDropped(t *testing.T) {
 		t.Fatalf("setup: the good read should commit, adds = %d", len(ra.got))
 	}
 
-	// 896ms later: the same footer with no title anchor, on a fire the
-	// trigger called a decisive placement.
 	clock = clock.Add(896 * time.Millisecond)
 	got.captureSeq++
 	got.lastScanReplaced = true
@@ -3615,9 +3145,6 @@ func TestFooterEchoOfACommittedCardIsDropped(t *testing.T) {
 		t.Errorf("status = %q, want the still-seeing note", got.status)
 	}
 
-	// The same nameless footer a comfortable swap later is not an echo — it
-	// must not vanish silently like the echo above. Unnamed reads no longer
-	// queue (the review gate), so "not vanishing" means a receipt line.
 	clock = clock.Add(sameCardFloor + time.Second)
 	got.captureSeq++
 	mm, _ = got.Update(got.resolveCardCmd(3, echo, 1)())
@@ -3627,8 +3154,6 @@ func TestFooterEchoOfACommittedCardIsDropped(t *testing.T) {
 			len(got.review), got.summary.Count("skipped"))
 	}
 
-	// And a nameless footer naming a *different* printing inside the window
-	// is not an echo either: same treatment, distinct from the silent drop.
 	clock = clock.Add(time.Second)
 	got.captureSeq++
 	other := scan.Card{SetCode: "MSH", CollectorNumber: "412", Source: "crop"}
@@ -3644,7 +3169,6 @@ func TestTabTogglesQueueReview(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// Tab with an empty queue is a no-op.
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 	if s := mm.(model).state; s != stateCapture {
 		t.Fatalf("tab with nothing queued should stay at capture, got %v", s)
@@ -3667,8 +3191,7 @@ func TestTabTogglesQueueReview(t *testing.T) {
 }
 
 func TestDropKeyRemovesQueuedCard(t *testing.T) {
-	// d on the review list drops the card under the cursor — the browser's
-	// removal key — and the drop shows up in the receipt as a skip.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 	m.review = []queueItem{
@@ -3691,8 +3214,6 @@ func TestDropKeyRemovesQueuedCard(t *testing.T) {
 		t.Error("dropping a queued card must not close the camera")
 	}
 
-	// Emptying the queue hands the screen back to the camera, which is still
-	// live — the drop is a queue edit, not an exit.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	got = mm.(model)
 	if got.state != stateCapture || len(got.review) != 0 {
@@ -3704,8 +3225,7 @@ func TestDropKeyRemovesQueuedCard(t *testing.T) {
 }
 
 func TestDropKeyIsTypedWhileFiltering(t *testing.T) {
-	// The queue's filter has first claim on printable keys: someone typing
-	// "dragon" must not lose the card they were narrowing toward.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 	m.review = []queueItem{{id: 1, canonical: "Shivan Dragon", note: "printing unverified"}}
@@ -3728,9 +3248,7 @@ func TestDropKeyIsTypedWhileFiltering(t *testing.T) {
 }
 
 func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
-	// enter on a queued card re-enters the cascade at the printing picker with
-	// the ← scanned marker; confirming removes it from the queue and returns to
-	// the list-or-camera.
+
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -3745,9 +3263,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	got := mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
-	// MH3/123 names exactly one Sol Ring printing, so the picker has nothing to
-	// ask and is skipped — the prints were already fetched by the background
-	// resolve, so re-entry lands straight on the quantity prompt.
+
 	if got.state != stateQty {
 		t.Fatalf("state = %v, want stateQty — one printing and one finish leave nothing to pick", got.state)
 	}
@@ -3772,7 +3288,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 }
 
 func TestCloseKeyWithQueuePrompts(t *testing.T) {
-	// c with queued cards prompts instead of dropping them silently.
+
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -3793,13 +3309,11 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 		t.Fatal("the prompt must not have closed the camera yet — c-again is free")
 	}
 
-	// esc again: changed my mind, back to the camera.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if s := mm.(model).state; s != stateCapture {
 		t.Fatalf("esc from the prompt should return to capture, got %v", s)
 	}
 
-	// enter: walk the queue through the cascade, camera closed.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if !sess.closed {
@@ -3808,10 +3322,10 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	if got.state != statePrintPick || !got.walking {
 		t.Fatalf("state = %v walking=%v, want the first item's cascade", got.state, got.walking)
 	}
-	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // printing
+	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	mm, _ = got.submitQty()
-	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if len(ra.got) != 1 {
 		t.Fatalf("adder called %d times, want 1", len(ra.got))
@@ -3821,17 +3335,12 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	}
 }
 
-// The close-time walk parks on the spinner while resolves are in flight, and
-// only a resolve that appends to the queue used to wake it — one that
-// auto-commits (or drops) left the spinner up forever in a state with no
-// exit key. The last in-flight resolve finishing, whatever its outcome, must
-// end the wait.
 func TestWalkSpinnerEndsWhenLastResolveCommits(t *testing.T) {
 	_, fs := confidentFixture()
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
-	m.resolving = 1 // one card still looking itself up
+	m.resolving = 1
 
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got := mm.(model)
@@ -3844,7 +3353,6 @@ func TestWalkSpinnerEndsWhenLastResolveCommits(t *testing.T) {
 		t.Fatalf("state=%v walking=%v, want the spinner wait", got.state, got.walking)
 	}
 
-	// The straggler resolves confidently and auto-commits — no queue append.
 	it := queueItem{
 		id: got.nextResolveID, canonical: "Sol Ring",
 		match:  cardname.Match{Exact: true},
@@ -3866,10 +3374,8 @@ func TestEscWithQueueWarnsBeforeDropping(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 	m.review = []queueItem{{id: 1, ocrLine: "x", note: "queued"}}
-	m.resolving = 1 // one lookup still in flight
+	m.resolving = 1
 
-	// esc goes straight to the leave gate — no close-prompt detour — and
-	// the gate states the cost.
 	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got := mm.(model)
 	if got.state != stateLeaveConfirm || isQuit(cmd) {
@@ -3882,7 +3388,6 @@ func TestEscWithQueueWarnsBeforeDropping(t *testing.T) {
 		t.Fatal("the gate must not have closed the camera — declining is free")
 	}
 
-	// Declining returns to the live camera with the queue intact.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	got = mm.(model)
 	if got.state != stateCapture || len(got.review) != 1 || got.resolving != 1 {
@@ -3890,7 +3395,6 @@ func TestEscWithQueueWarnsBeforeDropping(t *testing.T) {
 			got.state, len(got.review), got.resolving)
 	}
 
-	// y quits, closing the camera and dropping the unsaved scans with it.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	mm, cmd = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !isQuit(cmd) || !sess.closed {
@@ -3902,7 +3406,7 @@ func TestCloseKeyWithQueueDiscards(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, sess := openCapture(t, m)
 	m.review = []queueItem{{id: 1, ocrLine: "x", note: "queued"}}
-	m.resolving = 1 // one lookup still in flight
+	m.resolving = 1
 	stale := m.resolveGen
 
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
@@ -3919,7 +3423,7 @@ func TestCloseKeyWithQueueDiscards(t *testing.T) {
 	if got.summary.Count("discarded") != 1 {
 		t.Errorf("summary discarded = %d, want 1", got.summary.Count("discarded"))
 	}
-	// The in-flight straggler lands dead.
+
 	msg := resolveDoneMsg{gen: stale, item: queueItem{id: 2, canonical: "Sol Ring"}}
 	mm, _ = got.Update(msg)
 	if n := len(mm.(model).review); n != 0 {
@@ -3933,13 +3437,12 @@ func TestSessionDestPickedOnceAndStampsAutoCommits(t *testing.T) {
 	sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
 	m := newModel(context.Background(), fs, ra.add, sc, "", destFixtures())
 
-	// ctrl+o asks where scanned cards land before opening the camera.
 	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	got := mm.(model)
 	if got.state != stateDestPick || !got.destForSession {
 		t.Fatalf("first scan should ask the session destination, got state=%v", got.state)
 	}
-	got.list.Select(1) // Trade binder
+	got.list.Select(1)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if got.state != stateCameraBusy || !got.destPicked || got.dest.ID != 2 {
@@ -3951,14 +3454,12 @@ func TestSessionDestPickedOnceAndStampsAutoCommits(t *testing.T) {
 	mm, _ = mm.(model).onSession(sessionMsg{session: sess})
 	got = mm.(model)
 
-	// An auto-commit lands in the session destination.
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
 	if len(ra.got) != 1 || ra.got[0].ContainerID != 2 {
 		t.Fatalf("auto-commit went to container %v, want the session pick 2", ra.got)
 	}
 
-	// Closing and reopening the camera does not re-ask.
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
@@ -3971,7 +3472,6 @@ func TestReadyEventEnablesHelperAutoCapture(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
 
-	// An old helper advertises nothing: no auto command is ever sent.
 	mm, _ := got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
 		ev: scan.Event{Kind: scan.EventReady, Device: "iPhone"}})
 	got = mm.(model)
@@ -3979,7 +3479,6 @@ func TestReadyEventEnablesHelperAutoCapture(t *testing.T) {
 		t.Fatalf("auto-on sent to a helper that never advertised it (%d times)", sess.autoOn)
 	}
 
-	// A new helper advertises auto and gets turned on.
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
 		ev: scan.Event{Kind: scan.EventReady, Device: "iPhone", Features: []string{"auto"}}})
 	got = mm.(model)
@@ -3990,7 +3489,6 @@ func TestReadyEventEnablesHelperAutoCapture(t *testing.T) {
 		t.Errorf("autoState = %q, want armed", got.autoState)
 	}
 
-	// Trigger phase changes update the capture view's guidance.
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
 		ev: scan.Event{Kind: scan.EventAuto, State: "held"}})
 	got = mm.(model)
@@ -3999,8 +3497,6 @@ func TestReadyEventEnablesHelperAutoCapture(t *testing.T) {
 	}
 }
 
-// q inside a picker used to quit the whole program via the list widget's own
-// keymap — with a batch queued, silent data loss. It must not quit anymore.
 func TestQInPickerNoLongerQuits(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
 		Finishes: []string{"nonfoil", "foil"}}
@@ -4019,8 +3515,6 @@ func TestQInPickerNoLongerQuits(t *testing.T) {
 	}
 }
 
-// multiFixture is confidentFixture plus a second auto-committable card, for
-// the multi-card duplicate scenarios.
 func multiFixture() fakeSearcher {
 	return fakeSearcher{
 		fuzzy: map[string]string{"Sol Ring": "Sol Ring", "Ancient Tomb": "Ancient Tomb"},
@@ -4037,8 +3531,6 @@ func scanCard(name, set, number string) scan.Card {
 		CollectorNumber: number, Confidence: 0.95}
 }
 
-// sendScan feeds a multi-card scan event through intake and resolves every
-// card synchronously, in order.
 func sendScan(t *testing.T, m model, cards ...scan.Card) model {
 	t.Helper()
 	ev := scan.Event{Kind: scan.EventScan, Cards: cards}
@@ -4051,9 +3543,6 @@ func sendScan(t *testing.T, m model, cards ...scan.Card) model {
 	return m
 }
 
-// A nudge recheck of a whole multi-card scene swallows every card of it —
-// the single-last-name memory used to dup-queue all but one (observed live:
-// a re-shot pair queued both).
 func TestNudgeEchoSwallowsWholeCapture(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
@@ -4064,7 +3553,6 @@ func TestNudgeEchoSwallowsWholeCapture(t *testing.T) {
 		t.Fatalf("setup: adds=%d review=%d, want both auto", len(ra.got), len(m.review))
 	}
 
-	// The nudge fires, and the recheck re-reads the unchanged scene.
 	m.nudgeSentAt = m.now()
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Ancient Tomb", "UMA", "236"))
 	if len(ra.got) != 2 {
@@ -4075,8 +3563,6 @@ func TestNudgeEchoSwallowsWholeCapture(t *testing.T) {
 	}
 }
 
-// A card lingering in frame beside a new one is dropped, not queued: an
-// un-swapped pile is not a playset signal.
 func TestLingeringNeighborDropped(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
@@ -4086,8 +3572,7 @@ func TestLingeringNeighborDropped(t *testing.T) {
 	if len(ra.got) != 1 {
 		t.Fatalf("setup: adds=%d", len(ra.got))
 	}
-	// The next capture (not a nudge) sees the new card and the old one still
-	// on the pile.
+
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"), scanCard("Ancient Tomb", "UMA", "236"))
 	if len(ra.got) != 2 {
 		t.Errorf("adds = %d, want the new card added once", len(ra.got))
@@ -4100,16 +3585,11 @@ func TestLingeringNeighborDropped(t *testing.T) {
 	}
 }
 
-// A banner does not outlive the capture it describes. The "Ignored" note for
-// a junk read used to sit above the "✓ Auto-added" row of the card scanned
-// after it, still claiming to be current (observed live: "O L" stranded over
-// an Ancient Silverback commit).
 func TestStaleStatusClearedByNextCapture(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// A capture holding nothing the catalog would accept and no collector block.
 	m = sendScan(t, m, scan.Card{Name: "O L", Candidates: []string{"O L"}, Confidence: 0.95})
 	if !strings.Contains(m.status, "not a card") {
 		t.Fatalf("setup: status = %q, want the ignored note", m.status)
@@ -4118,7 +3598,6 @@ func TestStaleStatusClearedByNextCapture(t *testing.T) {
 		t.Fatalf("setup: adds = %d, want the junk read ignored", len(ra.got))
 	}
 
-	// The next capture commits a real card, and the stale note goes with it.
 	m = sendScan(t, m, scanCard("Ancient Tomb", "UMA", "236"))
 	if len(ra.got) != 1 {
 		t.Fatalf("adds = %d, want the card committed", len(ra.got))
@@ -4131,11 +3610,6 @@ func TestStaleStatusClearedByNextCapture(t *testing.T) {
 	}
 }
 
-// Two copies fanned in one frame are two cards, and both commit.
-//
-// This used to queue the second for a deliberate confirm. Two copies visible in
-// one photograph is not ambiguous — it is a playset, which is exactly the pile
-// a hands-free session exists to get through without stopping.
 func TestFannedPlaysetCommitsBothCopies(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
@@ -4150,10 +3624,6 @@ func TestFannedPlaysetCommitsBothCopies(t *testing.T) {
 	}
 }
 
-// A deliberate solo re-scan is a second card and commits.
-//
-// The phone has said a card was placed — it watched the last one leave, or
-// watched this one laid over it — so there is nothing left to confirm.
 func TestSoloRescanCommitsAsASecondCopy(t *testing.T) {
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), multiFixture(), ra.add, &fakeScanner{}, "", nil)
@@ -4162,8 +3632,7 @@ func TestSoloRescanCommitsAsASecondCopy(t *testing.T) {
 	m, _ = openCapture(t, m)
 
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
-	// Swapping one card for another is a physical act with a measured floor
-	// under it; a "re-scan" faster than that is the same card, not a new one.
+
 	clock = clock.Add(sameCardFloor + time.Second)
 	m = sendScan(t, m, scanCard("Sol Ring", "MH3", "123"))
 	if len(ra.got) != 2 {
@@ -4174,8 +3643,6 @@ func TestSoloRescanCommitsAsASecondCopy(t *testing.T) {
 	}
 }
 
-// An OCR-mangled re-read of a just-processed card, in a multi-card frame,
-// drops instead of queueing as uncertain.
 func TestOCRVariantOfRecentDropped(t *testing.T) {
 	ra := &recordingAdder{}
 	fs := multiFixture()
@@ -4186,8 +3653,7 @@ func TestOCRVariantOfRecentDropped(t *testing.T) {
 	if len(ra.got) != 1 {
 		t.Fatalf("setup: adds=%d", len(ra.got))
 	}
-	// The next frame reads the lingering card's title with a mangle that
-	// still fuzzy-resolves, but weakly — plus a genuinely new card.
+
 	fs.fuzzy["Ancjent Tomb"] = "Ancient Tomb"
 	m.searcher = fs
 	mangled := scan.Card{Name: "Ancjent Tomb", Candidates: []string{"Ancjent Tomb"}, Confidence: 0.6}
@@ -4200,8 +3666,6 @@ func TestOCRVariantOfRecentDropped(t *testing.T) {
 	}
 }
 
-// Enter is not a shutter: only space captures, so the confirm reflex from
-// every other step never fires the camera by accident.
 func TestEnterDoesNotCapture(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	got, sess := openCapture(t, m)
@@ -4215,9 +3679,6 @@ func TestEnterDoesNotCapture(t *testing.T) {
 	}
 }
 
-// layeredFakeSearcher records which lines were resolved against the catalog
-// alone and which were allowed off-machine, so the fallback-line policy can be
-// asserted rather than inferred from timing.
 type layeredFakeSearcher struct {
 	fakeSearcher
 	remote []string
@@ -4234,10 +3695,6 @@ func (s *layeredFakeSearcher) NamedFuzzyLocal(ctx context.Context, text string) 
 	return s.fakeSearcher.NamedFuzzy(ctx, text)
 }
 
-// Only the helper's own title guess may reach the network. verdict refuses to
-// auto-commit a fallback-line match, so a round trip spent on one buys nothing
-// but latency and a chance to ghost a real card into the queue — one live
-// session lost 19s across 15 failed resolutions this way.
 func TestResolveNameKeepsFallbackLinesLocal(t *testing.T) {
 	s := &layeredFakeSearcher{fakeSearcher: fakeSearcher{
 		fuzzy: map[string]string{"Dwarven Ruins": "Dwarven Ruins"},
@@ -4254,23 +3711,17 @@ func TestResolveNameKeepsFallbackLinesLocal(t *testing.T) {
 	if want := []string{"Tins. Liz Danforth"}; !slices.Equal(s.remote, want) {
 		t.Errorf("lines allowed off-machine = %v, want only the title guess %v", s.remote, want)
 	}
-	// Every line is offered to the catalog first, including line 0 — that is
-	// free, and it is what keeps a card genuinely named with a keyword or a
-	// type word scannable.
+
 	if want := []string{"Tins. Liz Danforth", "Dwarven Ruins"}; !slices.Equal(s.local, want) {
 		t.Errorf("catalog lines = %v, want %v", s.local, want)
 	}
 }
 
-// A title guess that is not title-shaped stays on the machine too. On an
-// unreadable frame the catalog rightly refuses it and the escalation then asks
-// Scryfall about a string that was never a name — six such lookups in one live
-// session returned nothing after ~600ms each, the worst loop costing 3.9s.
 func TestImplausibleTitleGuessNeverLeavesTheMachine(t *testing.T) {
 	s := &layeredFakeSearcher{fakeSearcher: fakeSearcher{
 		fuzzy: map[string]string{"Dwarven Ruins": "Dwarven Ruins"},
 	}}
-	// Leads lowercase, so it cannot be a title.
+
 	lines := []string{"count on it. Then for each nor", "Dwarven Ruins"}
 
 	name, _, idx, _, _, err := resolveName(context.Background(), s, lines)
@@ -4288,10 +3739,6 @@ func TestImplausibleTitleGuessNeverLeavesTheMachine(t *testing.T) {
 	}
 }
 
-// The empty sentinel exists to re-derive the no-number outcome as a floor, so
-// it must never displace evidence that a set and number both matched — that
-// would clear the winning collector context and drop the card back under the
-// strict name gates verdict exempts a set+number match from.
 func TestSetAndNumberOutranksSinglePrint(t *testing.T) {
 	if !(scanMatchSetAndNumber > scanMatchSinglePrint) {
 		t.Errorf("scanMatchSetAndNumber (%d) must outrank scanMatchSinglePrint (%d)",
@@ -4306,9 +3753,6 @@ func TestSetAndNumberOutranksSinglePrint(t *testing.T) {
 	}
 }
 
-// keeperPrints is the case the year cannot settle: two printings that shipped
-// in the *same* year, so a copyright read naming that year still leaves the
-// card ambiguous. The fixture exists to pin the failing-closed direction.
 func keeperPrints() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "lgn", Name: "Keeper of the Nine Gales", Set: "lgn", CollectorNumber: "42",
@@ -4337,24 +3781,20 @@ func TestCopyrightYearPinsPrintingWithoutNumber(t *testing.T) {
 	}
 }
 
-// Two printings from the same year settle nothing, so the card must queue
-// rather than pick whichever the catalog happened to list first.
 func TestCopyrightYearAmbiguousLeavesUnverified(t *testing.T) {
 	if _, rank := rankByScanStrength(keeperPrints(), "", "", 2003, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone — both printings are 2003", rank)
 	}
-	// A year matching no printing is the misread case: unchanged behavior.
+
 	if _, rank := rankByScanStrength(keeperPrints(), "", "", 1997, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone for a year no printing shares", rank)
 	}
-	// And with no year read at all, nothing changes either.
+
 	if _, rank := rankByScanStrength(keeperPrints(), "", "", 0, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone without a year", rank)
 	}
 }
 
-// A year is weaker evidence than a collector number and must rank below one,
-// so a candidate that actually verified by number always wins the selection.
 func TestYearOnlyRanksBelowNumber(t *testing.T) {
 	if !(scanMatchYearOnly < scanMatchNumberOnly) {
 		t.Errorf("year-only (%d) must rank below number-only (%d)",
@@ -4366,8 +3806,6 @@ func TestYearOnlyRanksBelowNumber(t *testing.T) {
 	}
 }
 
-// End to end: the old frame gave a name and a copyright year and nothing else,
-// and the card commits to the printing that year names.
 func TestYearOnlyAutoCommits(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Keeper of the Nine Gales": "Keeper of the Nine Gales"},
@@ -4399,31 +3837,11 @@ func TestYearOnlyAutoCommits(t *testing.T) {
 	}
 }
 
-// inspiredFire is the live case: one printing, both finishes available, and a
-// frame whose foil marker only reads on some captures.
 func inspiredFirePrints() []scryfall.Card {
 	return []scryfall.Card{{ID: "msc690", Name: "Inspired Fire", Set: "msc",
 		CollectorNumber: "690", Finishes: []string{"nonfoil", "foil"}}}
 }
 
-// A nonfoil and then a foil of one card, swapped at human speed, are two
-// cards.
-//
-// This used to *correct* the first row instead of adding a second, which made
-// scanning a card and its foil impossible to express. The removed function's
-// own comment had spotted the conflict: two copies scanned back to back look
-// exactly like one misread copy, and rewriting the first row is as wrong as
-// dropping the second.
-//
-// "At human speed" is what changed, and it is measured, not guessed: the
-// fastest observed card swap is 3856ms (see sameCardFloor). A finish flip
-// inside that floor used to bypass every duplicate rule — the dup window was
-// keyed on printing *and* finish — and committed a phantom second row.
-// Observed live twice in one session: Brainsurge, nonfoil then foil, 800ms
-// apart, off one physical card. Now the flip goes through the same duplicate
-// judgement as everything else, and a sub-floor re-read carrying real finish
-// evidence corrects the guessed row instead — see
-// TestFastFinishReReadCorrectsTheGuessedRow.
 func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
@@ -4435,21 +3853,16 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	m.now = func() time.Time { return clock }
 	m, _ = openCapture(t, m)
 
-	// First look: no marker anywhere, so the default is written.
 	blind := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
 		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
 			Confidence: 0.95, Source: "crop"}}}
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
 	m = resolve(t, mm.(model), blind.CardList()[0])
 
-	if len(ra.got) != 1 || ra.got[0].Finish != "nonfoil" {
+	if len(ra.got) != 1 || ra.got[0].Finish != finish.Nonfoil {
 		t.Fatalf("first look = %+v, want one nonfoil commit", ra.got)
 	}
 
-	// The foil is laid down where the nonfoil was, five seconds later — a real
-	// swap's timing. The phone watched it happen and says so, which is what
-	// makes it a placement rather than another look — a nudge echo would be
-	// swallowed, and should be.
 	clock = clock.Add(5 * time.Second)
 	marked := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
 		FireReason: scan.FireReplaced,
@@ -4462,21 +3875,20 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 		t.Fatalf("adder called %d times, want 2 — two cards", len(ra.got))
 	}
 	second := ra.got[1]
-	if second.Finish != "foil" {
+	if second.Finish != finish.Foil {
 		t.Errorf("second = %+v, want a foil added", second)
 	}
-	if second.ReplacesFinish != "" {
+	if second.ReplacesFinish != (finish.Finish{}) {
 		t.Errorf("second replaced %q; it should replace nothing", second.ReplacesFinish)
 	}
 	if len(m.review) != 0 {
 		t.Errorf("review = %+v, want nothing queued", m.review)
 	}
-	// Two cards, so two in the count.
+
 	if m.addedCount != 2 {
 		t.Errorf("addedCount = %d, want 2", m.addedCount)
 	}
-	// And the swallow still works: the same card looked at again because the
-	// parent nudged, with no placement behind it, adds nothing.
+
 	echo := marked
 	echo.FireReason = scan.FireNudge
 	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: echo})
@@ -4486,15 +3898,6 @@ func TestNonfoilThenFoilAreTwoCards(t *testing.T) {
 	}
 }
 
-// A fast re-read carrying real finish evidence corrects the guessed row.
-//
-// Live on 2026-08-06: Brainsurge's first look read no marker and committed the
-// nonfoil default; 800ms later the source fired again on the same card — its
-// own reason said "moved", not "placed" — and the marker read foil. The finish
-// difference used to make the two looks different keys in the duplicate
-// window, so the duplicate rules never ran and a phantom second row committed.
-// The right outcome is one row, foil: the physical-identity rules decide it is
-// the same card, and evidence beats a guess.
 func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Brainsurge": "Brainsurge"},
@@ -4513,7 +3916,7 @@ func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 			Confidence: 0.95, Source: "crop"}}}
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: blind})
 	m = resolve(t, mm.(model), blind.CardList()[0])
-	if len(ra.got) != 1 || ra.got[0].Finish != "nonfoil" {
+	if len(ra.got) != 1 || ra.got[0].Finish != finish.Nonfoil {
 		t.Fatalf("first look = %+v, want the nonfoil default committed", ra.got)
 	}
 
@@ -4529,7 +3932,7 @@ func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 		t.Fatalf("adder called %d times, want 2 — the commit and its correction", len(ra.got))
 	}
 	fix := ra.got[1]
-	if fix.Finish != "foil" || fix.ReplacesFinish != "nonfoil" {
+	if fix.Finish != finish.Foil || fix.ReplacesFinish != finish.Nonfoil {
 		t.Errorf("correction = %+v, want the nonfoil row re-keyed to foil", fix)
 	}
 	if m.addedCount != 1 {
@@ -4539,7 +3942,6 @@ func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 		t.Errorf("review = %+v, want nothing queued", m.review)
 	}
 
-	// A third sighting agreeing with the corrected row is back to being noise.
 	clock = clock.Add(800 * time.Millisecond)
 	mm, _ = m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: marked})
 	m = resolve(t, mm.(model), marked.CardList()[0])
@@ -4548,12 +3950,6 @@ func TestFastFinishReReadCorrectsTheGuessedRow(t *testing.T) {
 	}
 }
 
-// One review entry per card, however many times it re-announces itself.
-//
-// Live, 2026-08-07: Charitable Levy queued "printing unverified: 2 printings"
-// three times off one physical card — the re-reads taught nothing new (equal
-// rank), so upgradeQueued left the old entry standing, and each read then
-// appended another. Three stops for one decision.
 func TestRepeatQueueingIsOneReviewEntry(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Charitable Levy": "Charitable Levy"},
@@ -4584,16 +3980,6 @@ func TestRepeatQueueingIsOneReviewEntry(t *testing.T) {
 	}
 }
 
-// A better printing read must not discard the finish the read it replaces
-// already carried.
-//
-// Live, 2026-08-07: Glowrider's first look read the marker at 0.814 — foil —
-// but its name matched at 88%, so it queued. The retry read the collector
-// number, replaced the queued entry, and committed nonfoil off its own flat
-// patch: a true foil written wrong while the evidence sat in the discarded
-// entry. Printing evidence and finish evidence come off different pixels and
-// degrade independently; silence in one read must not overwrite the other
-// read's answer.
 func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy: map[string]string{"Glowrider": "Glowrider"},
@@ -4608,9 +3994,6 @@ func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// First look: the marker read foil, but with no number and two printings
-	// the ranking settles nothing — it queues exactly as the live read did
-	// (rank=none, prints=2, finish=foil).
 	first := scan.Event{Kind: scan.EventScan, Name: "Glowrider",
 		Cards: []scan.Card{{Name: "Glowrider", Candidates: []string{"Glowrider"},
 			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
@@ -4621,7 +4004,6 @@ func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
 			len(m.review), len(ra.got))
 	}
 
-	// The retry reads the number cleanly but its own marker patch is flat.
 	second := scan.Event{Kind: scan.EventScan, Name: "Glowrider",
 		FireReason: scan.FireReplaced,
 		Cards: []scan.Card{{Name: "Glowrider", Candidates: []string{"Glowrider"},
@@ -4633,7 +4015,7 @@ func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
 	if len(ra.got) != 1 {
 		t.Fatalf("adder called %d times, want the upgraded read committed once", len(ra.got))
 	}
-	if got := ra.got[0]; got.Finish != "foil" || got.FinishGuessed {
+	if got := ra.got[0]; got.Finish != finish.Foil || got.FinishGuessed {
 		t.Errorf("committed %s guessed=%v, want the queued look's foil carried "+
 			"through the upgrade", got.Finish, got.FinishGuessed)
 	}
@@ -4642,16 +4024,6 @@ func TestUpgradeCarriesTheQueuedFinishEvidence(t *testing.T) {
 	}
 }
 
-// A nudge echo of a committed foil is still an echo.
-//
-// The finish correction is gone, so the risk this pins has changed shape: a
-// second look that misreads the marker must not become a second card.
-//
-// Note what does *not* rescue it. The swallow keys on the name alone, so the
-// contradicting hint below is simply ignored — which is the point. A nudge echo
-// is a second look at a scene nobody touched, and a card actually swapped for
-// its foil arrives as `replaced` and never reaches this gate at all. Keying the
-// gate on the finish as well would let this misread through as a phantom card.
 func TestEvidencedFinishIsNotReopenedByEcho(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
@@ -4666,12 +4038,10 @@ func TestEvidencedFinishIsNotReopenedByEcho(t *testing.T) {
 			FinishHint: "foil", Confidence: 0.95, Source: "crop"}}}
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: foil})
 	m = resolve(t, mm.(model), foil.CardList()[0])
-	if len(ra.got) != 1 || ra.got[0].Finish != "foil" {
+	if len(ra.got) != 1 || ra.got[0].Finish != finish.Foil {
 		t.Fatalf("first look = %+v, want one foil commit", ra.got)
 	}
 
-	// The echo reads nonfoil. The commit was evidence-backed, so it stands and
-	// the echo is swallowed as usual.
 	m.nudgeSentAt = m.now()
 	plain := scan.Event{Kind: scan.EventScan, Name: "Inspired Fire",
 		Cards: []scan.Card{{Name: "Inspired Fire", Candidates: []string{"Inspired Fire"},
@@ -4687,10 +4057,9 @@ func TestEvidencedFinishIsNotReopenedByEcho(t *testing.T) {
 	}
 }
 
-// blockFakeSearcher adds collector-block lookup to the cascade fake.
 type blockFakeSearcher struct {
 	fakeSearcher
-	byBlock map[string]scryfall.Card // "set/number" (lowercased) -> card
+	byBlock map[string]scryfall.Card
 	asked   []string
 }
 
@@ -4713,9 +4082,6 @@ func quicksilverEvent(name string, alts []scan.CollectorAlt) scan.Event {
 			CollectorAlts: alts}}}
 }
 
-// A title that reads as rules text does not make the card unidentifiable: the
-// block names it exactly. Live, "If Quicksilver, Brash Blur is in your" came
-// with a clean MSH/412 and the card went unrecorded for the whole session.
 func TestUnreadableTitleResolvesFromItsCollectorBlock(t *testing.T) {
 	card := scryfall.Card{ID: "msh412", Name: "Quicksilver, Brash Blur", Set: "msh",
 		CollectorNumber: "412", Finishes: []string{"nonfoil"}}
@@ -4739,9 +4105,6 @@ func TestUnreadableTitleResolvesFromItsCollectorBlock(t *testing.T) {
 	}
 }
 
-// A copyright-line number misreads digits, so it may rank a card but never
-// conjure one: resolving a card that was never identified from a number we
-// distrust would invent the card outright.
 func TestBlockResolutionRefusesACopyrightNumber(t *testing.T) {
 	card := scryfall.Card{ID: "msh412", Name: "Quicksilver, Brash Blur", Set: "msh",
 		CollectorNumber: "412", Finishes: []string{"nonfoil"}}
@@ -4764,12 +4127,8 @@ func TestBlockResolutionRefusesACopyrightNumber(t *testing.T) {
 	}
 }
 
-// The phantom kill clears the noise a nudge re-look leaves behind, but a block
-// is evidence a real card is in frame — killing that would delete the only
-// trace of it, which is exactly what block resolution exists to rescue.
 func TestNudgePhantomKillSparesAnEntryWithACollectorBlock(t *testing.T) {
-	// No block lookup available, so the card stays unidentified either way;
-	// what is under test is whether it survives to the queue.
+
 	fs := &blockFakeSearcher{}
 	ra := &recordingAdder{}
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
@@ -4779,15 +4138,12 @@ func TestNudgePhantomKillSparesAnEntryWithACollectorBlock(t *testing.T) {
 	withBlock := quicksilverEvent("If Quicksilver, Brash Blur is in your", nil)
 	mm, _ := m.onSessionEvent(sessionEventMsg{gen: m.sessionGen, ok: true, ev: withBlock})
 	got := resolve(t, mm.(model), withBlock.CardList()[0])
-	// A block is evidence a card is in frame, so the read is not killed as a
-	// phantom — but unnamed reads never queue either (the review gate); the
-	// distinction the kill preserves now shows up as a receipt line.
+
 	if len(got.review) != 0 || got.summary.Count("skipped") != 1 {
 		t.Fatalf("review=%d skipped=%d, want the blocked entry accounted in the receipt",
 			len(got.review), got.summary.Count("skipped"))
 	}
 
-	// The same nudge re-look with nothing but junk text is noise and dies.
 	m2 := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m2, _ = openCapture(t, m2)
 	m2.nudgeSentAt = m2.now()
@@ -4801,8 +4157,6 @@ func TestNudgePhantomKillSparesAnEntryWithACollectorBlock(t *testing.T) {
 	}
 }
 
-// eternalDragonPrints is the live case: seven printings, exactly one numbered
-// 12, released the year the copyright line names.
 func eternalDragonPrints() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "scg", Name: "Eternal Dragon", Set: "scg", CollectorNumber: "12",
@@ -4814,10 +4168,6 @@ func eternalDragonPrints() []scryfall.Card {
 	}
 }
 
-// A number naming one printing is one signal; that printing's release year
-// agreeing with the copyright line is a second. Two independent agreements
-// outrank a mangled title — live, "Stemal Dragon" resolved to Eternal Dragon
-// at 76% and queued while the band read a clean 12/143 and "1993-2003".
 func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 	prints := eternalDragonPrints()
 	ranked, rank := rankByScanStrength(prints, "", "12", 2003, "", "", "", "", nil)
@@ -4839,9 +4189,6 @@ func TestNumberAndYearRankIsEarnedAndWaivesTheNameGate(t *testing.T) {
 	}
 }
 
-// Without the year it stays number-only, and a title that mangled still queues:
-// collector number 12 is common enough that a fuzzy match onto the wrong card
-// could collide with it, which is the luck the second signal removes.
 func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
 	ranked, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 0, "", "", "", "", nil)
 	if rank != scanMatchNumberOnly {
@@ -4857,16 +4204,12 @@ func TestNumberAloneStillQueuesAMangledName(t *testing.T) {
 	}
 }
 
-// A year that agrees with no printing is a misread and must add nothing.
 func TestDisagreeingYearDoesNotEarnTheRank(t *testing.T) {
 	if _, rank := rankByScanStrength(eternalDragonPrints(), "", "12", 1999, "", "", "", "", nil); rank != scanMatchNumberOnly {
 		t.Errorf("rank = %v, want scanMatchNumberOnly when the year matches nothing", rank)
 	}
 }
 
-// Esc during the close-time review walk used to drop every remaining card on
-// the spot. That walk is where a session's unsaved scans live, and nothing
-// else in the app destroys that much on one keystroke without asking.
 func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
@@ -4891,14 +4234,12 @@ func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
 			len(after.review), after.current)
 	}
 
-	// Anything but y resumes the walk with everything intact.
 	mm, _ := after.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	kept := mm.(model)
 	if len(kept.review) != 2 || !kept.walking {
 		t.Errorf("declining the gate lost work: review=%d walking=%v", len(kept.review), kept.walking)
 	}
 
-	// y is the deliberate answer, and only then is the queue dropped.
 	mm, _ = after.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	gone := mm.(model)
 	if len(gone.review) != 0 || gone.walking {
@@ -4906,24 +4247,6 @@ func TestEscDuringReviewWalkAsksBeforeDropping(t *testing.T) {
 	}
 }
 
-// The live foil / nonfoil / foil sequence, replayed from the wire.
-//
-// Copied from a real session (13:12:26, 13:12:30, 13:12:33 in
-// scan-telemetry.log): a foil Rampaging Ferocidon, its nonfoil, then the foil
-// again. The first two committed and the third queued as *"possible duplicate:
-// same card auto-added just now"* — the second foil is the same printing and
-// the same finish as the first, seven seconds apart, so the duplicate window
-// hit legitimately.
-//
-// It is the third scan that this pins, not the second. Nonfoil-after-foil was
-// never in danger: the window keys on printing *and* finish, so a different
-// finish does not reach it. The repeat does, and the phone said `removed` for
-// all three — it watched each card leave and the next go down.
-//
-// The session's own timings are replayed rather than treated as instantaneous,
-// because they are what makes the third scan legitimate: seven seconds separate
-// the two foils, comfortably past the floor under which a repeat is the card
-// that never left. Run with no clock at all this used to pass by accident.
 func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Inspired Fire": "Inspired Fire"},
@@ -4942,7 +4265,7 @@ func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 				Candidates: []string{"Inspired Fire"},
 				FinishHint: finish, Confidence: 0.95, Source: "crop"}}}
 	}
-	// 13:12:26, 13:12:30, 13:12:33 — the gaps as they were recorded.
+
 	for i, finish := range []string{"foil", "nonfoil", "foil"} {
 		if i > 0 {
 			clock = clock.Add([]time.Duration{0, 4, 3}[i] * time.Second)
@@ -4955,7 +4278,7 @@ func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 	if len(ra.got) != 3 {
 		t.Fatalf("adder called %d times, want 3 — three cards were placed", len(ra.got))
 	}
-	for i, want := range []string{"foil", "nonfoil", "foil"} {
+	for i, want := range []finish.Finish{finish.Foil, finish.Nonfoil, finish.Foil} {
 		if ra.got[i].Finish != want {
 			t.Errorf("add %d = %q, want %q", i, ra.got[i].Finish, want)
 		}
@@ -4965,19 +4288,8 @@ func TestLiveFoilNonfoilFoilSequenceCommitsThree(t *testing.T) {
 	}
 }
 
-// The settled card replaces the phantom the shutter caught on its way down.
-//
-// Replayed from a stacking run (13:33:00.742 / 13:33:01.789 and two more pairs
-// like it): the shutter fires while the card is still being lowered, so the
-// name reads but the footer does not and it queues as "printing unverified".
-// One second later the settled card is captured again and reads perfectly.
-//
-// The second capture arrives as `replaced` — the held window really did change
-// while the hand withdrew — which is exactly why this needs testing. The
-// upgrade used to run only for nudge echoes, so a placement-fired re-read left
-// the phantom sitting in review beside its own correct commit.
 func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
-	// Three printings, so a name with no footer behind it cannot pick one.
+
 	fs := fakeSearcher{
 		fuzzy:  map[string]string{"Sol Ring": "Sol Ring"},
 		prints: map[string][]scryfall.Card{"Sol Ring": solRingPrints()},
@@ -4986,8 +4298,6 @@ func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
 	m := newModel(context.Background(), fs, ra.add, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
 
-	// The name off the top of the card, no footer: several printings, nothing
-	// to choose between them.
 	early := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
 		Cards: []scan.Card{{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
 			Confidence: 0.62, Source: "line"}}}
@@ -4997,7 +4307,6 @@ func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
 		t.Fatalf("review = %d, want the early read queued", len(m.review))
 	}
 
-	// The settled card, footer and all, fired by a placement.
 	settled := scan.Event{Kind: scan.EventScan, Name: "Sol Ring",
 		FireReason: scan.FireReplaced,
 		Cards: []scan.Card{{Name: "Sol Ring", Candidates: []string{"Sol Ring"},
@@ -5014,15 +4323,12 @@ func TestSettledReadReplacesTheQueuedPhantom(t *testing.T) {
 	}
 }
 
-// The receipt shows a window onto the history, not all of it.
 func TestTallyWindowsAndScrolls(t *testing.T) {
 	m := model{}
 	for i := 1; i <= 25; i++ {
 		m.recordTally(fmt.Sprintf("card %d", i))
 	}
 
-	// Pinned to the newest while nobody has scrolled: the row that just landed
-	// is the one being watched for.
 	if m.tallyOffset != 0 {
 		t.Fatalf("tallyOffset = %d, want 0 — the resting state is the newest",
 			m.tallyOffset)
@@ -5031,21 +4337,18 @@ func TestTallyWindowsAndScrolls(t *testing.T) {
 		t.Errorf("tallyMaxOffset = %d, want 15 (25 rows, 10 shown)", got)
 	}
 
-	// Scrolling back stops at the oldest row rather than running off the end.
 	mm, _ := m.scrollTally(999)
 	m = mm.(model)
 	if m.tallyOffset != 15 {
 		t.Errorf("tallyOffset = %d, want it clamped to 15", m.tallyOffset)
 	}
 
-	// A card arriving while scrolled back must not slide the rows along.
 	m.recordTally("card 26")
 	if m.tallyOffset != 16 {
 		t.Errorf("tallyOffset = %d, want 16 — the visible rows should not move",
 			m.tallyOffset)
 	}
 
-	// And forward returns to the newest, never past it.
 	mm, _ = m.scrollTally(-999)
 	m = mm.(model)
 	if m.tallyOffset != 0 {
@@ -5053,7 +4356,6 @@ func TestTallyWindowsAndScrolls(t *testing.T) {
 	}
 }
 
-// A short session has nothing to scroll and says nothing about scrolling.
 func TestShortTallyNeedsNoScroll(t *testing.T) {
 	m := model{}
 	for i := 0; i < tallyShown; i++ {
@@ -5068,7 +4370,6 @@ func TestShortTallyNeedsNoScroll(t *testing.T) {
 	}
 }
 
-// The rendered view shows exactly the window, and slicing it cannot panic.
 func TestCaptureViewRendersTenRows(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m, _ = openCapture(t, m)
@@ -5084,7 +4385,6 @@ func TestCaptureViewRendersTenRows(t *testing.T) {
 		t.Error("the newest window should say where it is in the history")
 	}
 
-	// Scrolled fully back: the oldest rows, still exactly ten of them.
 	mm, _ := m.scrollTally(999)
 	m = mm.(model)
 	if got := strings.Count(m.View(), "Auto-added"); got != tallyShown {
@@ -5096,10 +4396,7 @@ func TestCaptureViewRendersTenRows(t *testing.T) {
 }
 
 func TestErrorBannerClearsOnAnyKey(t *testing.T) {
-	// The helper's "no phone found" guidance is three lines long and used to
-	// outlive its usefulness: sticky across states, still above the prompt long
-	// after its reader gave up and went back to typing names. Any key at all is
-	// proof it has been read.
+
 	const guidance = "no iPhone running Hoardling was found on this network"
 
 	for _, tc := range []struct {
@@ -5116,7 +4413,6 @@ func TestErrorBannerClearsOnAnyKey(t *testing.T) {
 			sc := &fakeScanner{devices: []scan.Device{cam("c1", "iPhone", "iPhone")}}
 			m := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
 
-			// The helper's own wording reaches the prompt unprefixed.
 			mm, _ := m.onCameras(camerasMsg{err: errors.New(guidance)})
 			got := mm.(model)
 			if got.status != guidance || !got.statusErr {
@@ -5135,9 +4431,7 @@ func TestErrorBannerClearsOnAnyKey(t *testing.T) {
 }
 
 func TestSuccessBannerSurvivesTyping(t *testing.T) {
-	// The other half of the rule: a receipt is a record of what happened, not a
-	// complaint about it, and typing the next card's name is no reason to take
-	// it away.
+
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	m.status, m.statusErr = "Added Sol Ring ×1", false
 
@@ -5147,11 +4441,6 @@ func TestSuccessBannerSurvivesTyping(t *testing.T) {
 	}
 }
 
-// The retry state threads through the real queue path, and a commit clears it.
-//
-// Sol Ring with no collector info is the headline never-rule case: several
-// printings, nothing verified, so it queues — and queueing for that reason is
-// exactly what earns a second look.
 func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
 	ev, fs := confidentFixture()
 	ra := &recordingAdder{}
@@ -5170,8 +4459,6 @@ func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
 		t.Fatalf("secondLookFor = %q, want the queued card's name", got.secondLookFor)
 	}
 
-	// A commit ends that card's run of bad reads, so a later copy reading badly
-	// is owed its own look rather than inheriting this one's spent attempt.
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true, ev: ev})
 	got = resolve(t, mm.(model), ev.CardList()[0])
 	if len(ra.got) != 1 {
@@ -5182,10 +4469,6 @@ func TestUnverifiedPrintingArmsASecondLook(t *testing.T) {
 	}
 }
 
-// The queued look's finish marker only carries onto a read of the same
-// physical sighting. A same-name better read landing past the second-look
-// window may be a second copy — one foil, one not, in one session — and it
-// used to inherit the first copy's marker on the name match alone.
 func TestUpgradeFinishCarryStopsAtTheSecondLookWindow(t *testing.T) {
 	sol := scryfall.Card{ID: "s", Name: "Sol Ring", Set: "mh3",
 		CollectorNumber: "123", Finishes: []string{"nonfoil", "foil"}}
@@ -5195,7 +4478,6 @@ func TestUpgradeFinishCarryStopsAtTheSecondLookWindow(t *testing.T) {
 		finishHint: "foil", captureSeq: 1, queuedAt: t0,
 		prints: []scryfall.Card{sol}}}
 
-	// Inside the window: the rescue's re-read, whatever reason it fired for.
 	m.now = func() time.Time { return t0.Add(600 * time.Millisecond) }
 	in := queueItem{id: 2, canonical: "Sol Ring", rank: scanMatchSetAndNumber,
 		captureSeq: 2, prints: []scryfall.Card{sol}}
@@ -5206,7 +4488,6 @@ func TestUpgradeFinishCarryStopsAtTheSecondLookWindow(t *testing.T) {
 		t.Errorf("finishHint = %q inside the window, want the queued foil carried", in.finishHint)
 	}
 
-	// Past the window, off a claimed placement: possibly a second copy.
 	m.review = []queueItem{{id: 3, canonical: "Sol Ring", rank: scanMatchNone,
 		finishHint: "foil", captureSeq: 1, queuedAt: t0,
 		prints: []scryfall.Card{sol}}}
@@ -5222,14 +4503,9 @@ func TestUpgradeFinishCarryStopsAtTheSecondLookWindow(t *testing.T) {
 	}
 }
 
-// ctrl+d runs ahead of the drawer intercept, so it must dismiss the drawer
-// itself. It finishes outright now, so the old failure (the leave gate's y
-// typing into an invisible palette query) is gone by construction — but a
-// drawer left mounted on a finished model is still state the parent would
-// render for one frame during teardown.
 func TestCtrlDUnderTheDrawerFinishesTheSession(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
-	m.review = []queueItem{{id: 1, canonical: "Sol Ring"}} // pending work must not gate it
+	m.review = []queueItem{{id: 1, canonical: "Sol Ring"}}
 	mm, _ := m.openAddPalette()
 	m = mm.(model)
 	if m.addPalette == nil {
@@ -5246,17 +4522,12 @@ func TestCtrlDUnderTheDrawerFinishesTheSession(t *testing.T) {
 	}
 }
 
-// A number that narrows to one row commits only with a second signal
-// agreeing (set code or copyright year). Bare digits keep their one-row
-// picker: a misread digit naming a different real printing of the same card
-// used to commit silently, with the ctrl+a hatch gone because no picker
-// ever showed. Scanner behavior: awaits live validation.
 func TestBareNumberNarrowingToOneRowStillShowsThePicker(t *testing.T) {
 	cards := solRingPrints()
 	fs := fakeSearcher{prints: map[string][]scryfall.Card{"Sol Ring": cards}}
 	m := newModel(context.Background(), fs, noopAdder, nil, "", nil)
 	m.scanned = "Sol Ring"
-	m.scannedNumber = "123" // one row answers, but nothing corroborates it
+	m.scannedNumber = "123"
 
 	mm, _ := m.onPrints(printsMsg{name: "Sol Ring", cards: cards})
 	got := mm.(model)
@@ -5275,9 +4546,6 @@ func TestBareNumberNarrowingToOneRowStillShowsThePicker(t *testing.T) {
 	}
 }
 
-// The live receipt is a window, not an archive: the session Summary keeps
-// every row, so the tally can stop growing once its history is deeper than
-// anyone scrolls mid-session.
 func TestTallyIsCapped(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "", nil)
 	for i := range tallyCap + 50 {
@@ -5291,10 +4559,6 @@ func TestTallyIsCapped(t *testing.T) {
 	}
 }
 
-// friendlyish mirrors what scan.Client.Open actually hands back for a refused
-// pairing: a sentence a person can read, with the sentinel still reachable
-// underneath. The two halves are separate on purpose — Error carries only the
-// prose, so a caller that matched on text would see nothing to match.
 type friendlyish struct {
 	msg string
 	err error
@@ -5303,7 +4567,6 @@ type friendlyish struct {
 func (e friendlyish) Error() string { return e.msg }
 func (e friendlyish) Unwrap() error { return e.err }
 
-// notPairedErr is the value the real Open returns when the handshake refuses.
 func notPairedErr() error {
 	return friendlyish{
 		msg: "that phone is not paired with this machine. Run the pairing step and enter the six digits from Hoardling's Pair tab",
@@ -5311,14 +4574,6 @@ func notPairedErr() error {
 	}
 }
 
-// A lone unpaired phone is opened, refused, and the refusal routes to the code
-// screen. Nothing predicted this beforehand: the browse that found the phone
-// carries no fingerprint, so the handshake is the first thing that knows.
-//
-// Note the entry point — one phone on the network auto-selects and opens with
-// no picker in between, which is the topology most people have. That path never
-// consulted the old NeedsPairing flag at all; it opened, failed, and dumped the
-// user back at the name prompt with a banner telling them to go and pair.
 func TestUnpairedOpenRoutesToTheCodeScreen(t *testing.T) {
 	devices := []scan.Device{cam("phone", "Chris's iPhone", scan.KindRemote)}
 	sc := &fakeScanner{devices: devices, openErr: notPairedErr()}
@@ -5330,8 +4585,7 @@ func TestUnpairedOpenRoutesToTheCodeScreen(t *testing.T) {
 	if got.state != stateCameraBusy {
 		t.Fatalf("a lone phone should open straight away, got %v", got.state)
 	}
-	// The wait names the phone rather than claiming to still be hunting for
-	// one, which is what stops the hand-off below from reading as a jump cut.
+
 	if v := got.View(); !strings.Contains(v, "connecting to Chris's iPhone") {
 		t.Errorf("the wait does not say what it is waiting for: %q", v)
 	}
@@ -5351,8 +4605,6 @@ func TestUnpairedOpenRoutesToTheCodeScreen(t *testing.T) {
 		t.Error("a first pairing is the ordinary next step, not an error")
 	}
 
-	// And the six digits complete the job from where the user already is,
-	// rather than sending them back to start the flow over.
 	got.codeInput.SetValue("123456")
 	mm, cmd := got.submitPairCode()
 	runCmds(cmd)
@@ -5364,9 +4616,6 @@ func TestUnpairedOpenRoutesToTheCodeScreen(t *testing.T) {
 	}
 }
 
-// The other failure modes. "Enter the six digits" is wrong advice for a phone
-// that went away or a handshake that broke, so only the pairing sentinel earns
-// the code screen and everything else keeps the banner.
 func TestOnlyTheNotPairedSentinelReachesTheCodeScreen(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -5376,11 +4625,7 @@ func TestOnlyTheNotPairedSentinelReachesTheCodeScreen(t *testing.T) {
 		{"not paired", notPairedErr(), statePairCode},
 		{"phone went away", errors.New("no iPhone running Hoardling was found on this network"), stateName},
 		{"tls failed", errors.New("the phone refused the connection"), stateName},
-		// The regression this change is exposed to forever. friendly used to
-		// rewrite link errors with errors.New, which severed the sentinel while
-		// leaving the sentence byte-identical. If that comes back, this is what
-		// the user gets — and it must stay visibly different from the real
-		// thing, not quietly right-looking.
+
 		{"severed sentinel", friendlyish{msg: notPairedErr().Error(), err: nil}, stateName},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

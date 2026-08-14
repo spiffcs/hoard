@@ -12,9 +12,7 @@ func TestResample(t *testing.T) {
 			Value: v,
 		}
 	}
-	// A value that moved on day 1 then held for a month, then moved again. By
-	// index this is three equal thirds; by time the flat month dominates, which
-	// is the truth a sparkline should show.
+
 	series := []TimePoint{pt(1, 10), pt(2, 20), pt(31, 30)}
 	got := Resample(series, 10)
 	if len(got) != 10 {
@@ -42,7 +40,7 @@ func TestResampleEdgeCases(t *testing.T) {
 	if got := Resample(one, 8); len(got) != 1 || got[0] != 7 {
 		t.Errorf("single point = %v, want [7]", got)
 	}
-	// Two observations at the same instant have no span to spread across.
+
 	same := []TimePoint{
 		{AsOf: "2026-05-01T00:00:00Z", Value: 7},
 		{AsOf: "2026-05-01T00:00:00Z", Value: 9},

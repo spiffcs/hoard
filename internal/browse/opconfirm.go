@@ -1,43 +1,22 @@
 package browse
 
-// The confirm bridge: an operation's synchronous yes/no question, answered
-// by the browser's confirm surface.
-//
-// action.Deps.Confirm is a blocking call on the op goroutine (today: the
-// catalog-download questions inside update-prices). The browser's confirm
-// is asynchronous Elm-loop state. main bridges them with a channel: its
-// Deps.Confirm closure sends a ConfirmRequest and blocks on the Reply;
-// browse's pump delivers the request as a message, stages it as an ordinary
-// pendingConfirm, and the answer flows back through the channel.
-//
-// There is deliberately no generation guard. A request can only come from a
-// goroutine that is still blocked waiting for its answer — a "stale"
-// confirm request cannot exist, and answering is mandatory: every request
-// gets exactly one reply on every exit path (y, any other key, ctrl+c).
-
 import (
 	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// ConfirmRequest is an op-originated yes/no question. Reply must have
-// capacity ≥ 1: browse writes exactly once and must never block on a
-// worker that gave up.
 type ConfirmRequest struct {
 	Question string
 	Reply    chan<- bool
 }
 
-// WithConfirm supplies the channel op goroutines ask questions on.
 func WithConfirm(ch <-chan ConfirmRequest) Option {
 	return func(m *Model) { m.confirmCh = ch }
 }
 
 type opConfirmMsg struct{ req ConfirmRequest }
 
-// awaitConfirm is the long-lived pump: armed once from Init, re-armed on
-// every delivery, released by ctx when the program ends.
 func awaitConfirm(ctx context.Context, ch <-chan ConfirmRequest) tea.Cmd {
 	if ch == nil {
 		return nil
@@ -58,15 +37,8 @@ func awaitConfirm(ctx context.Context, ch <-chan ConfirmRequest) tea.Cmd {
 	}
 }
 
-// onOpConfirm stages the question, or parks it if a confirm is already up
-// (the only collision: a user-staged confirm was open when the op asked —
-// at most one request can exist, so a single slot suffices). Either way the
-// pump re-arms.
 func (m Model) onOpConfirm(msg opConfirmMsg) (tea.Model, tea.Cmd) {
-	// The capacity contract was a doc comment; a zero-cap Reply turns every
-	// answer below into a blocking send against a worker that may have given
-	// up. Enforced at the door, loudly: this is a wiring bug in the caller,
-	// not a runtime condition to degrade around.
+
 	if cap(msg.req.Reply) < 1 {
 		panic("browse: ConfirmRequest.Reply must have capacity ≥ 1")
 	}
@@ -79,12 +51,6 @@ func (m Model) onOpConfirm(msg opConfirmMsg) (tea.Model, tea.Cmd) {
 	return m, awaitConfirm(m.ctx, m.confirmCh)
 }
 
-// declineDeferredAsk answers a parked bridge question "no" — the same
-// reading every non-yes key gives it — so no op goroutine stays blocked on
-// its reply past the program. The ask only exists while a user-staged
-// confirm is up, and the quit routes that bypass that confirm's own answer
-// path (ctrl+c inside it, a quit the confirm itself staged) would otherwise
-// strand the worker forever.
 func (m *Model) declineDeferredAsk() {
 	if m.deferredAsk != nil {
 		m.deferredAsk.Reply <- false
@@ -92,9 +58,6 @@ func (m *Model) declineDeferredAsk() {
 	}
 }
 
-// stageConfirmRequest turns a bridge request into an ordinary confirm whose
-// both branches answer the asker. Any key but y declines — the same reading
-// a non-interactive CLI run gives the question.
 func (m *Model) stageConfirmRequest(req ConfirmRequest) {
 	reply := req.Reply
 	m.confirm = &pendingConfirm{

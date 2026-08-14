@@ -1,10 +1,5 @@
 package command
 
-// `hoard binder list` is a discovery step, not a report: --binder on export,
-// import and add takes "an id, a name, or a unique fragment", so a caller has
-// to find out what binders exist before it can name one. These pin that the
-// finding-out has a machine path.
-
 import (
 	"context"
 	"encoding/json"
@@ -15,9 +10,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// binderStore is a hoard with the built-in binder and one the user made, which
-// is the case the ids matter in: with a single binder any name works, and the
-// question of which handle is stable never comes up.
 func binderStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
@@ -59,9 +51,6 @@ func readBinders(t *testing.T, st *store.Store, args ...string) binderDoc {
 	return doc
 }
 
-// The reported friction, stated as a test: before this, `hoard binder --json`
-// answered "hoard binder has no JSON output" and the only way to learn a
-// binder's id was to read a formatted table.
 func TestBinderListJSONCarriesEveryBinderWithItsID(t *testing.T) {
 	st := binderStore(t)
 	doc := readBinders(t, st, "binder", "list")
@@ -81,8 +70,7 @@ func TestBinderListJSONCarriesEveryBinderWithItsID(t *testing.T) {
 			t.Errorf("binder #%d has no name", r.ID)
 		}
 	}
-	// The default binder is marked rather than merely first, because `binder
-	// rm` refuses it and a caller should not have to infer that from position.
+
 	if !doc.Binders.Rows[0].IsDefault {
 		t.Errorf("the first row is not marked isDefault: %+v", doc.Binders.Rows[0])
 	}
@@ -91,9 +79,6 @@ func TestBinderListJSONCarriesEveryBinderWithItsID(t *testing.T) {
 	}
 }
 
-// The bare group form lists, as it did before the port, so it emits the same
-// document. A caller that types the shorthand should not get a different answer
-// from one that types the subcommand.
 func TestBinderBareFormEmitsTheSameDocumentAsList(t *testing.T) {
 	st := binderStore(t)
 	bare, err := execCmd(context.Background(), st, []string{"binder"}, true)
@@ -109,9 +94,6 @@ func TestBinderBareFormEmitsTheSameDocumentAsList(t *testing.T) {
 	}
 }
 
-// The point of carrying the id is that it survives a name changing underneath a
-// script; the name is the handle that cannot. This walks that: rename the
-// binder, and the row keeps its id.
 func TestBinderIDSurvivesARename(t *testing.T) {
 	st := binderStore(t)
 	before := readBinders(t, st, "binder", "list")
@@ -143,8 +125,6 @@ func TestBinderIDSurvivesARename(t *testing.T) {
 		id, after.Binders.Rows)
 }
 
-// The annotation does not descend, and it must not: new, rename and rm report
-// an action rather than a result, and there is no document for one.
 func TestBinderMutatorsStillRefuseJSON(t *testing.T) {
 	for _, args := range [][]string{
 		{"binder", "new", "Spare"},

@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// oneByteReader forces every chunk boundary case: needles and records split
-// across reads at every possible offset.
 type oneByteReader struct{ r io.Reader }
 
 func (o oneByteReader) Read(p []byte) (int, error) { return o.r.Read(p[:1]) }
@@ -44,8 +42,7 @@ func TestScanKeyedObjectsFindsAcrossChunkBoundaries(t *testing.T) {
 		if !strings.Contains(got["aaa-1"], "tcgplayer") {
 			t.Errorf("aaa-1 = %q", got["aaa-1"])
 		}
-		// The record with an escaped quote and a brace inside a string must
-		// come back whole, not cut at the brace.
+
 		if !strings.HasSuffix(got["ccc-3"], `}}}`) {
 			t.Errorf("ccc-3 cut short: %q", got["ccc-3"])
 		}
@@ -55,8 +52,6 @@ func TestScanKeyedObjectsFindsAcrossChunkBoundaries(t *testing.T) {
 	}
 }
 
-// A record larger than the read chunk arrives across many reads and is
-// retried until complete.
 func TestScanKeyedObjectsLargeRecordSpansReads(t *testing.T) {
 	var b bytes.Buffer
 	b.WriteString(`{"data":{`)
@@ -84,11 +79,8 @@ func TestScanKeyedObjectsLargeRecordSpansReads(t *testing.T) {
 	}
 }
 
-// Once every wanted key is found the scan returns without reading the rest
-// of the stream — the early exit that halves the average backfill.
 func TestScanKeyedObjectsStopsEarly(t *testing.T) {
-	// The key sits at the front of a stream four chunks long; finding it
-	// must stop the reads, so at most one chunk is ever pulled.
+
 	payload := `{"data":{"first":{"a":1},` + strings.Repeat(`"pad":{"p":0},`, 10) + `"end":{"z":9}}}`
 	total := payload + strings.Repeat(" ", 16<<20)
 	r := &countingReader{r: strings.NewReader(total)}
@@ -113,8 +105,6 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// An absent key scans to EOF and is simply not visited — same contract the
-// tokenizer had.
 func TestScanKeyedObjectsAbsentKey(t *testing.T) {
 	calls := 0
 	err := scanKeyedObjects(strings.NewReader(scanDoc()),
@@ -124,8 +114,6 @@ func TestScanKeyedObjectsAbsentKey(t *testing.T) {
 	}
 }
 
-// The same boundary battery through the single-pass set scan (forced by
-// dropping the threshold; the doc's keys share one length, as UUIDs do).
 func TestScanKeyedObjectsSetPath(t *testing.T) {
 	defer func(v int) { setScanMin = v }(setScanMin)
 	setScanMin = 0
@@ -156,8 +144,6 @@ func TestScanKeyedObjectsSetPath(t *testing.T) {
 	}
 }
 
-// Mixed-length keys cannot anchor on width and fall back to per-needle
-// searching, whatever the count.
 func TestScanKeyedObjectsMixedLengthsFallBack(t *testing.T) {
 	defer func(v int) { setScanMin = v }(setScanMin)
 	setScanMin = 0
@@ -171,7 +157,6 @@ func TestScanKeyedObjectsMixedLengthsFallBack(t *testing.T) {
 	}
 }
 
-// The set scan also stops reading once the last wanted key is found.
 func TestScanKeyedObjectsSetPathStopsEarly(t *testing.T) {
 	defer func(v int) { setScanMin = v }(setScanMin)
 	setScanMin = 0

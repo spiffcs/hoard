@@ -28,7 +28,6 @@ func TestPinStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pins.json")
 	s := NewPinStore(path)
 
-	// A missing file is an empty set, not an error: the first run has no pins.
 	if got := s.All(); len(got) != 0 {
 		t.Fatalf("fresh store has %d pins", len(got))
 	}
@@ -50,7 +49,6 @@ func TestPinStoreRoundTrip(t *testing.T) {
 		t.Errorf("Names() lost the label: %q", got)
 	}
 
-	// Idempotent — pairing the same phone twice is ordinary.
 	if err := s.Pin(fp[:], "Chris's iPhone"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +56,6 @@ func TestPinStoreRoundTrip(t *testing.T) {
 		t.Errorf("re-pinning made %d entries", len(got))
 	}
 
-	// A second store on the same path sees it: pins survive a restart, which
-	// is the entire point of writing them down.
 	if !NewPinStore(path).Contains(fp[:]) {
 		t.Error("pins did not survive reopening the store")
 	}
@@ -72,10 +68,6 @@ func TestPinStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// Rename refreshes the label a paired phone is remembered under — someone
-// renaming their iPhone has not re-paired it — and, the half that matters, it
-// cannot bring a peer into the set. Implementing it as a call to Pin would pass
-// the first half of this and fail the second, which is why it is not one.
 func TestPinStoreRenameIsUpdateOnly(t *testing.T) {
 	s := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	paired := sha256.Sum256([]byte("paired phone"))
@@ -89,14 +81,11 @@ func TestPinStoreRenameIsUpdateOnly(t *testing.T) {
 	if got := s.Names()[b64(paired[:])]; got != "Chris's iPhone 17" {
 		t.Errorf("Rename left the label as %q", got)
 	}
-	// Renaming is not re-pairing: the key is untouched, so the set of trusted
-	// fingerprints is exactly what it was.
+
 	if len(s.All()) != 1 || !s.Contains(paired[:]) {
 		t.Errorf("Rename disturbed the pin set: %d entries", len(s.All()))
 	}
 
-	// The authorisation property. A fingerprint this machine has never paired
-	// with must not appear in the set because something asked to relabel it.
 	stranger := sha256.Sum256([]byte("some other phone"))
 	if err := s.Rename(stranger[:], "Someone Else's iPhone"); err != nil {
 		t.Fatal(err)
@@ -108,8 +97,6 @@ func TestPinStoreRenameIsUpdateOnly(t *testing.T) {
 		t.Errorf("store grew to %d entries", len(s.All()))
 	}
 
-	// A malformed fingerprint is ignored rather than stored, so a caller
-	// passing a nil PeerFingerprint cannot write a junk key.
 	if err := s.Rename(nil, "nobody"); err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +135,7 @@ func TestPinStorePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The set of pins is the authorisation list; an attacker who can add an
-	// entry needs nothing else.
+
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Errorf("pin file mode = %o, want 600", perm)
 	}
@@ -164,9 +150,6 @@ func TestPinStoreRejectsWrongSizedFingerprint(t *testing.T) {
 	}
 }
 
-// TestCorruptPinStoreEmptiesRatherThanWidens — unlike the identity, a corrupt
-// pin set is recoverable by re-pairing, so it must not be fatal. What it must
-// never do is fail open.
 func TestCorruptPinStoreEmptiesRatherThanWidens(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pins.json")
 	if err := os.WriteFile(path, []byte("{{{not json"), 0o600); err != nil {
@@ -183,25 +166,12 @@ func TestCorruptPinStoreEmptiesRatherThanWidens(t *testing.T) {
 }
 
 func b64(b []byte) string {
-	data, _ := json.Marshal(b) // base64 via json's []byte encoding
+	data, _ := json.Marshal(b)
 	var s string
 	_ = json.Unmarshal(data, &s)
 	return s
 }
 
-// handshake runs a real TLS exchange between this package's client config and
-// a server presenting serverID, and reports what each side concluded.
-//
-// A real handshake rather than calling verify() directly: the pinning logic is
-// installed through crypto/tls, and a test that bypasses it proves the function
-// works without proving it is wired up.
-//
-// Loopback TCP rather than net.Pipe, and the difference is not cosmetic.
-// net.Pipe is synchronous and unbuffered, so a write blocks until the peer
-// reads — and when both TLS ends close, each tries to write close_notify with
-// nobody reading. That deadlocks until a deadline fires, which turned this
-// suite into 65 seconds of tests that all passed. TCP has kernel buffers, so
-// the alert lands and both sides return at once.
 func handshake(t *testing.T, trust *Trust, h *Handshake, serverID *Identity) (clientErr, serverErr error) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -221,9 +191,7 @@ func handshake(t *testing.T, trust *Trust, h *Handshake, serverID *Identity) (cl
 		}
 		defer conn.Close()
 		_ = conn.SetDeadline(time.Now().Add(handshakeTestTimeout))
-		// The phone requires a client certificate (PeerTrust.swift:174-178),
-		// so the server half insists on one here too — otherwise this would
-		// pass with a Go config that never presents one.
+
 		server := tls.Server(conn, &tls.Config{
 			Certificates: []tls.Certificate{serverID.Certificate},
 			MinVersion:   tls.VersionTLS12,
@@ -250,9 +218,6 @@ func handshake(t *testing.T, trust *Trust, h *Handshake, serverID *Identity) (cl
 	return clientErr, serverErr
 }
 
-// handshakeTestTimeout is a backstop, not a wait. A handshake over loopback is
-// sub-millisecond; anything approaching this is a deadlock worth failing on
-// rather than sitting through.
 const handshakeTestTimeout = 5 * time.Second
 
 func TestHandshakeRejectsUnpinnedPeer(t *testing.T) {
@@ -264,8 +229,7 @@ func TestHandshakeRejectsUnpinnedPeer(t *testing.T) {
 	if !errors.Is(clientErr, ErrPeerNotPinned) {
 		t.Fatalf("handshake with an unpinned peer: %v, want ErrPeerNotPinned", clientErr)
 	}
-	// Even on refusal the fingerprint is recorded, so a caller can tell the
-	// user which certificate it saw rather than only that something failed.
+
 	if h.PeerFingerprint() == nil {
 		t.Error("no fingerprint recorded for a refused peer")
 	}
@@ -284,9 +248,7 @@ func TestHandshakeAcceptsPinnedPeer(t *testing.T) {
 	if clientErr != nil {
 		t.Fatalf("handshake with a pinned peer failed: %v", clientErr)
 	}
-	// The server insisted on a client certificate, so this also proves hoard
-	// presents one — without it the phone's peer_authentication_required
-	// would refuse every connection.
+
 	if serverErr != nil {
 		t.Fatalf("server rejected the client: %v", serverErr)
 	}
@@ -295,9 +257,6 @@ func TestHandshakeAcceptsPinnedPeer(t *testing.T) {
 	}
 }
 
-// TestPairingWindowAcceptsUnknown — during pairing, TLS is not the gate; the
-// proof on the hello is. An unknown peer must be able to complete a handshake
-// so that the proof has a certificate to bind to.
 func TestPairingWindowAcceptsUnknown(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	phone := newTestIdentity(t, "phone")
@@ -312,35 +271,26 @@ func TestPairingWindowAcceptsUnknown(t *testing.T) {
 	}
 }
 
-// TestPolicyIsReadLive is the bug PeerTrust.swift:99-112 documents: a pin set
-// captured when the config was built means the phone that just paired is a
-// stranger again on its next connection, and the failure looks like a network
-// fault.
 func TestPolicyIsReadLive(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	phone := newTestIdentity(t, "phone")
 	trust := TrustStore(newTestIdentity(t, "mac"), pins)
 
-	// Built before the pin exists.
 	var first Handshake
 	if clientErr, _ := handshake(t, trust, &first, phone); !errors.Is(clientErr, ErrPeerNotPinned) {
 		t.Fatalf("expected refusal before pinning, got %v", clientErr)
 	}
 
-	// Pin mid-life, exactly as a completed pairing does.
 	if err := pins.Pin(phone.Fingerprint(), "phone"); err != nil {
 		t.Fatal(err)
 	}
 
-	// The same Trust must now accept, with nothing rebuilt.
 	var second Handshake
 	if clientErr, _ := handshake(t, trust, &second, phone); clientErr != nil {
 		t.Fatalf("a peer pinned during the session was refused: %v", clientErr)
 	}
 }
 
-// TestClosingThePairingWindowTakesEffect is the other half: the window has to
-// be closable without rebuilding the listener.
 func TestClosingThePairingWindowTakesEffect(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	open := true
@@ -361,12 +311,10 @@ func TestClosingThePairingWindowTakesEffect(t *testing.T) {
 	}
 }
 
-// TestWrongPinIsRefused — pinning one phone must not admit another. The two
-// certificates differ only in their bytes, which is the whole security model.
 func TestWrongPinIsRefused(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	wanted := newTestIdentity(t, "phone")
-	impostor := newTestIdentity(t, "phone") // same CN, different key
+	impostor := newTestIdentity(t, "phone")
 	if err := pins.Pin(wanted.Fingerprint(), "phone"); err != nil {
 		t.Fatal(err)
 	}
@@ -378,8 +326,6 @@ func TestWrongPinIsRefused(t *testing.T) {
 	}
 }
 
-// TestVerifyRejectsEmptyChain — a peer that presents nothing must not be read
-// as a peer that presented something unrecognised.
 func TestVerifyRejectsEmptyChain(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	trust := TrustPairing(newTestIdentity(t, "mac"), pins)
@@ -392,15 +338,12 @@ func TestVerifyRejectsEmptyChain(t *testing.T) {
 	if err := verify([][]byte{[]byte("not a certificate")}, nil); err == nil {
 		t.Error("accepted an unparseable peer certificate")
 	}
-	// Neither case may leave a fingerprint behind for the hello to bind to.
+
 	if h.PeerFingerprint() != nil {
 		t.Error("recorded a fingerprint from a certificate that never parsed")
 	}
 }
 
-// TestHandshakeFingerprintMatchesTheWire ties the recorded value back to the
-// certificate crypto/tls actually saw, so a future refactor cannot start
-// hashing something adjacent — the parsed form, say, rather than the raw DER.
 func TestHandshakeFingerprintMatchesTheWire(t *testing.T) {
 	pins := NewPinStore(filepath.Join(t.TempDir(), "pins.json"))
 	phone := newTestIdentity(t, "phone")
@@ -419,8 +362,6 @@ func TestHandshakeFingerprintMatchesTheWire(t *testing.T) {
 	}
 }
 
-// TestPeerFingerprintIsACopy — the caller binds this into a MAC, and handing
-// out the internal slice would let a caller mutate what the session trusts.
 func TestPeerFingerprintIsACopy(t *testing.T) {
 	var h Handshake
 	fp := sha256.Sum256([]byte("x"))

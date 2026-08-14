@@ -1,23 +1,10 @@
 package action
 
-// Merging another hoard's database into this one.
-//
-// The route is deliberately not a SQLite splice. The candidate is read out as
-// the interchange document, the document is read back, and the plan is built
-// from what was read — so the data model is the contract between two hoards,
-// and a field the model cannot carry fails visibly here rather than silently
-// on the far side. It also means the format is the same one `-o` hands the
-// user, rather than a private path nothing else exercises.
-//
-// Nothing in here touches the network. Import re-resolves every row through
-// Scryfall because it is reading a foreign CSV that carries names and set
-// codes; a merge is reading a hoard, which already holds the full catalog for
-// everything in it.
-
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,34 +16,26 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// MergeOptions is one merge as requested.
 type MergeOptions struct {
-	// Source is the database to merge in.
 	Source string
-	// Target is the database being merged into, for the same-file guard.
+
 	Target string
-	// ReplaceDecks overwrites a deck the target already has from the same
-	// origin, rather than leaving the target's copy alone.
+
 	ReplaceDecks bool
-	// ReplaceWatches overwrites a standing watch's threshold instead of
-	// keeping the target's.
+
 	ReplaceWatches bool
 	DryRun         bool
 	Again          bool
 }
 
-// MergeResult is everything the merge did and declined to do.
 type MergeResult struct {
 	Source string
-	// SourceVersion is the schema the candidate was read at, after any upgrade.
+
 	SourceVersion int
-	// Upgraded records that the candidate was migrated first, and where its
-	// backup went.
+
 	Upgraded   bool
 	BackupPath string
 
-	// Document is the interchange document the merge was planned from, kept so
-	// the frontend can write it out.
 	Document []byte
 
 	Printings int
@@ -66,28 +45,16 @@ type MergeResult struct {
 
 	Decks     int
 	DeckCards int
-	// SkippedDecks are decks the target already has from the same origin,
-	// left untouched.
+
 	SkippedDecks []string
 
 	Watches int
-	// SkippedWatches are watches the target already stands on the same
-	// printing, finish and direction.
+
 	SkippedWatches []string
 
-	// FoldedInto names the target binder that the candidate's default binder
-	// merged into, when the fold happened. It is the one surprise in the
-	// binder rules worth stating outright.
 	FoldedInto string
 }
 
-// MergeHoard folds another hoard's database into this one: holdings, decks and
-// watches, in one transaction.
-//
-// It takes no context because it needs none: there is no network call and no
-// long poll to cancel, only local reads and a single transaction. Interrupting
-// it leaves the transaction unfinished, which is the same nothing an
-// interrupted import leaves.
 func MergeHoard(d Deps, p progress.Fn, o MergeOptions) (MergeResult, error) {
 	res := MergeResult{Source: o.Source, PerBinder: make(map[string]int)}
 
@@ -122,11 +89,6 @@ func MergeHoard(d Deps, p progress.Fn, o MergeOptions) (MergeResult, error) {
 	}
 	res.Document = buf.Bytes()
 
-	// The ledger's identity is the document's bytes, so re-merging a candidate
-	// that has not changed is refused. It catches the common repeat and not
-	// the dangerous one: edit the candidate at all and the hash moves, so a
-	// second merge adds its copies again. --dry-run before a re-merge is the
-	// only real check.
 	hash := ContentHash(res.Document)
 	if !o.DryRun {
 		if err := RefuseReimport(d.Store, hash, o.Again); err != nil {
@@ -134,9 +96,6 @@ func MergeHoard(d Deps, p progress.Fn, o MergeOptions) (MergeResult, error) {
 		}
 	}
 
-	// Read the document back and plan from that. The round trip costs
-	// microseconds and makes "the model carries everything a merge needs" a
-	// fact this path proves on every run instead of an assumption.
 	h, err := hoardjson.ReadHoard(bytes.NewReader(res.Document))
 	if err != nil {
 		return res, err
@@ -158,9 +117,6 @@ func MergeHoard(d Deps, p progress.Fn, o MergeOptions) (MergeResult, error) {
 	return res, nil
 }
 
-// refuseSameFile stops a hoard being merged into itself, which would double
-// every quantity in it. os.SameFile rather than path equality: the two names
-// can differ and still be one file.
 func refuseSameFile(source, target string) error {
 	si, err := os.Stat(source)
 	if err != nil {
@@ -168,8 +124,7 @@ func refuseSameFile(source, target string) error {
 	}
 	ti, err := os.Stat(target)
 	if err != nil {
-		// A target that cannot be stat'd is not this function's problem; the
-		// store is already open on it.
+
 		return nil //nolint:nilerr // absence here means "not the same file"
 	}
 	if os.SameFile(si, ti) {
@@ -178,13 +133,6 @@ func refuseSameFile(source, target string) error {
 	return nil
 }
 
-// ensureSourceCurrent brings the candidate up to this hoard's schema, asking
-// first.
-//
-// Reading a database at an older schema means migrating it, and migrating is a
-// write to a file the user pointed at rather than opened. So it is asked for,
-// backed up, and rolled back on failure: a merge that damages the database it
-// was only supposed to read is the worst outcome this command has.
 func ensureSourceCurrent(d Deps, path string, res *MergeResult) error {
 	v, err := store.FileVersion(path)
 	if err != nil {
@@ -216,8 +164,7 @@ func ensureSourceCurrent(d Deps, path string, res *MergeResult) error {
 	}
 	upgraded, err := store.Open(path)
 	if err != nil {
-		// Put the candidate back exactly as it was. The user pointed us at
-		// this file to read it; they must not lose it because we could not.
+
 		if rerr := copyFile(backup, path); rerr != nil {
 			return fmt.Errorf(
 				"upgrading %s failed: %w\nrestoring it from %s ALSO failed: %v\nthe backup still holds your data",
@@ -234,8 +181,6 @@ func ensureSourceCurrent(d Deps, path string, res *MergeResult) error {
 	return nil
 }
 
-// copyFile writes src over dst through a temporary file in dst's directory, so
-// an interrupted copy cannot leave a half-written database at the destination.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -260,9 +205,6 @@ func copyFile(src, dst string) error {
 	return os.Rename(tmp.Name(), dst)
 }
 
-// planMerge decides every write, resolving each conflict against what the
-// target already holds. It reads the target but writes nothing, so a dry run
-// is this function and nothing else.
 func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeResult) (store.MergePlan, error) {
 	var plan store.MergePlan
 
@@ -291,10 +233,7 @@ func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeRe
 		return plan, err
 	}
 
-	// Binders the candidate has and the target does not are created even when
-	// they hold nothing: an empty binder is organization the user built, and
-	// it has no holdings row to be inferred from.
-	newBinders := make(map[string]string) // lowered name -> spelling
+	newBinders := make(map[string]string)
 	for _, c := range h.Containers {
 		if c.Kind != "binder" {
 			continue
@@ -314,15 +253,20 @@ func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeRe
 			return plan, fmt.Errorf("the document holds %s (%s) but no catalog entry for it; the source database is inconsistent",
 				row.Card.Name, row.Card.ScryfallID)
 		}
+		rowFinish, err := finish.Parse(row.Card.Finish)
+		if err != nil {
+			return plan, fmt.Errorf("the document holds %s (%s): %w",
+				row.Card.Name, row.Card.ScryfallID, err)
+		}
 		if row.ContainerKind == "deck" {
 			deckEntries[row.Container] = append(deckEntries[row.Container], store.Entry{
-				ScryfallID: row.Card.ScryfallID, Finish: row.Card.Finish,
+				ScryfallID: row.Card.ScryfallID, Finish: rowFinish,
 				Condition: row.Card.Condition, Board: row.Board, Quantity: row.Count,
 			})
 			continue
 		}
 		add := store.CardAdd{
-			Card: card, Finish: row.Card.Finish,
+			Card: card, Finish: rowFinish,
 			Condition: row.Card.Condition, Quantity: row.Count,
 		}
 		if id, ok := binderTargets[strings.ToLower(row.Container)]; ok {
@@ -331,8 +275,7 @@ func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeRe
 		} else {
 			add.Binder = newBinders[strings.ToLower(row.Container)]
 			if add.Binder == "" {
-				// A holdings row naming a binder no container row declared.
-				// Create it rather than dropping the cards.
+
 				add.Binder = strings.TrimSpace(row.Container)
 				newBinders[strings.ToLower(row.Container)] = add.Binder
 			}
@@ -343,13 +286,9 @@ func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeRe
 	}
 
 	plan.NewBinders = sortedValues(newBinders)
-	// Reported from the plan, not from what was applied, so a dry run names
-	// the binders it would create.
+
 	res.Created = plan.NewBinders
 
-	// Decks are all-or-nothing per deck: UpsertDeck replaces a deck's contents
-	// wholesale, so merging into one the target already has would discard
-	// repins and assessed conditions the user did by hand there.
 	for _, name := range sortedKeys(deckEntries) {
 		meta, ok := deckMeta[name]
 		if !ok {
@@ -377,18 +316,21 @@ func planMerge(st *store.Store, h *hoardjson.Hoard, o MergeOptions, res *MergeRe
 		held[watchKey(w.ScryfallID, w.Finish, w.Op)] = true
 	}
 	for _, w := range h.Watches {
-		if held[watchKey(w.Card.ScryfallID, w.Card.Finish, w.Op)] && !o.ReplaceWatches {
+		watchFinish, err := finish.Parse(w.Card.Finish)
+		if err != nil {
+			return plan, fmt.Errorf("watch %s: %w", w.Display, err)
+		}
+		if held[watchKey(w.Card.ScryfallID, watchFinish, w.Op)] && !o.ReplaceWatches {
 			res.SkippedWatches = append(res.SkippedWatches, w.Display)
 			continue
 		}
 		if _, ok := cards[w.Card.ScryfallID]; !ok {
-			// watches reference cards; a watch whose printing never made it
-			// into the catalog would break the foreign key.
+
 			continue
 		}
 		plan.Watches = append(plan.Watches, store.WatchInput{
 			ScryfallID: w.Card.ScryfallID, Display: w.Display,
-			Finish: w.Card.Finish, Op: w.Op, Threshold: w.Threshold,
+			Finish: watchFinish, Op: w.Op, Threshold: w.Threshold,
 		})
 		res.Watches++
 	}
@@ -400,9 +342,6 @@ type binderDest struct {
 	name string
 }
 
-// binderDestinations maps every name a candidate might use for a binder onto
-// the target binder it lands in — the same resolution an import does, so a
-// hoard export round-trips the same way whichever command reads it.
 func binderDestinations(st *store.Store, res *MergeResult) (map[string]binderDest, error) {
 	binders, err := st.ListBinders()
 	if err != nil {
@@ -415,9 +354,7 @@ func binderDestinations(st *store.Store, res *MergeResult) (map[string]binderDes
 	for _, b := range binders {
 		out[strings.ToLower(b.Name)] = binderDest{b.ID, b.Name}
 	}
-	// The reserved aliases resolve to the default binder however it is named
-	// now — which is why two hoards' default binders necessarily become one.
-	// Worth saying out loud rather than letting it be discovered later.
+
 	for _, alias := range store.ReservedBinderNames {
 		if _, taken := out[strings.ToLower(alias)]; !taken {
 			out[strings.ToLower(alias)] = binderDest{binders[0].ID, binders[0].Name}
@@ -427,12 +364,6 @@ func binderDestinations(st *store.Store, res *MergeResult) (map[string]binderDes
 	return out, nil
 }
 
-// deckDestinations indexes the document's decks by name, which is all a
-// holdings row carries.
-//
-// Two decks sharing a name are refused rather than guessed at. hoard cannot
-// address such a pair by name anywhere else either, and silently merging one
-// deck's cards into another is a worse answer than asking for a rename.
 func deckDestinations(h *hoardjson.Hoard) (map[string]store.DeckMeta, error) {
 	out := make(map[string]store.DeckMeta)
 	for _, c := range h.Containers {
@@ -452,15 +383,6 @@ func deckDestinations(h *hoardjson.Hoard) (map[string]store.DeckMeta, error) {
 	return out, nil
 }
 
-// compactJSON squeezes the whitespace out of a card document before it is
-// stored.
-//
-// The document is written indented for a human reading a `-o` file, and Go's
-// encoder indents an embedded RawMessage along with everything else — so a
-// document read back carries a pretty-printed card. Storing that would put
-// kilobytes of spaces in every merged row and make a merged printing's
-// raw_json differ from a fetched one's for no reason. Invalid input is passed
-// through untouched: the store is where a bad document should fail, not here.
 func compactJSON(raw []byte) []byte {
 	if len(raw) == 0 {
 		return nil
@@ -472,7 +394,9 @@ func compactJSON(raw []byte) []byte {
 	return out.Bytes()
 }
 
-func watchKey(id, finish, op string) string { return id + "\x00" + finish + "\x00" + op }
+func watchKey(id string, fin finish.Finish, op string) string {
+	return id + "\x00" + fin.String() + "\x00" + op
+}
 
 func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))

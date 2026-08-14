@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"math"
 	"os"
 	"slices"
@@ -16,87 +17,43 @@ import (
 	"github.com/spiffcs/hoard/internal/mtgjson"
 )
 
-// PriceChange is one printing-and-finish whose price moved between two
-// observations, alongside how much of it is held.
-//
-// Finish is the price's finish — 'nonfoil', 'foil', or 'etched' where the
-// printing has an etched figure of its own; an etched copy of a printing priced
-// only as a foil is counted against the foil price, matching how entryValue
-// values it.
 type PriceChange struct {
 	ScryfallID      string
 	Name            string
 	SetCode         string
 	CollectorNumber string
-	// ReleasedAt is the printing's release date (YYYY-MM-DD), empty when the
-	// card's document has not been stored — same semantics as Lang. Settling
-	// reads it.
+
 	ReleasedAt string
-	Finish     string
+	Finish     finish.Finish
 	Copies     int
 	Old        float64
 	New        float64
-	// Source names where the new price came from: "scryfall", or the vendor
-	// behind a fallback.
+
 	Source string
-	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
-	// same semantics as Card.ColorIdentity.
+
 	ColorIdentity []string
-	// Treatment is the foil treatment's display word, empty for plain —
-	// same semantics as Card.Treatment.
+
 	Treatment string
-	// Lang is the printing's language code ("en", "ja"), empty when the card's
-	// document has not been stored — same semantics as Card.Lang.
+
 	Lang string
-	// OldAsOf is when Old was observed (RFC 3339), which is not always the
-	// window's cutoff: a printing whose record begins inside the window is
-	// measured from its own first price, so this row spans less time than the
-	// window asked for. Empty where the comparison has no date behind it —
-	// RecordPrices compares against the previous refresh, whatever its date.
+
 	OldAsOf string
 }
 
-// Delta is the movement in one copy's price.
 func (p PriceChange) Delta() float64 { return p.New - p.Old }
 
-// TotalDelta is what the movement is worth across every copy held. This is the
-// figure worth sorting on: a $2 rise on a card owned forty times matters more
-// than a $20 rise on a single copy.
 func (p PriceChange) TotalDelta() float64 { return float64(p.Copies) * p.Delta() }
 
-// DefaultSettlingDays is how many days a set's movement is held out of
-// collection-wide totals, counted from its release date, when nothing
-// overrides it.
 const DefaultSettlingDays = 90
 
-// SettlingDaysEnv names the override. A bare count of days, read once per
-// process; 0 turns the window off and every set counts, which is the supported
-// way to see the unexcluded net beside the excluded one.
 const SettlingDaysEnv = "HOARD_SETTLING_DAYS"
 
-// settlingDays is the window in force, -1 until something resolves it. It is
-// process-global rather than carried on a Store because every reader of the
-// rule — the sidebar, both nets, the JSON row — has to see one answer; a
-// window that differed between two surfaces of the same frame is the exact
-// disagreement Settling exists to prevent.
-//
-// Atomic rather than plain: browse's long operations run on their own
-// goroutines and render from the model while they do.
 var settlingDays = func() *atomic.Int64 {
 	var v atomic.Int64
 	v.Store(-1)
 	return &v
 }()
 
-// settlingDaysFrom parses the override, falling back to the default on
-// anything it cannot use.
-//
-// Unset and unusable are the same answer on purpose, matching the scanner's
-// tuning knobs: these are operator dials, and a typo in one must not stop a
-// command that would otherwise work. A negative count is refused rather than
-// clamped — it reads as an attempt to say something the dial cannot say, and
-// silently treating it as "off" would hide the mistake behind a plausible
-// behavior. Zero IS meaningful and is honored.
 func settlingDaysFrom(raw string) int {
 	if n, ok := settlingDaysAsked(raw); ok {
 		return n
@@ -104,14 +61,6 @@ func settlingDaysFrom(raw string) int {
 	return DefaultSettlingDays
 }
 
-// settlingDaysAsked is settlingDaysFrom's other half: the window asked for,
-// and whether anything usable was asked at all.
-//
-// The two answers have to be separable, because "the environment is pinning
-// the window" and "the environment is set to something" are different facts
-// and only the first should outrank a stored preference. Read as presence, a
-// typo in the variable would silently throw away a preference the reader saved
-// deliberately — and leave the default standing as if they had never set one.
 func settlingDaysAsked(raw string) (int, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -124,14 +73,8 @@ func settlingDaysAsked(raw string) (int, bool) {
 	return n, true
 }
 
-// SettlingDaysEnvAsk reports the window the environment asks for, and whether
-// it asked usably. A caller with its own source of the window consults this to
-// find out whether it is about to be outranked at the next launch.
 func SettlingDaysEnvAsk() (int, bool) { return settlingDaysAsked(os.Getenv(SettlingDaysEnv)) }
 
-// SettlingDays is the window in force. Unresolved, it takes the environment's
-// answer — so a command that never thinks about the window still gets the
-// override for free.
 func SettlingDays() int {
 	if v := settlingDays.Load(); v >= 0 {
 		return int(v)
@@ -140,17 +83,6 @@ func SettlingDays() int {
 	return int(settlingDays.Load())
 }
 
-// SetSettlingDays moves the window for the rest of this process.
-//
-// It is what the browser's dial writes, and it deliberately outranks the
-// environment: a reader changing the window while looking at the table sees
-// the table change under the answer, so the most recent explicit instruction
-// is the one that must win. The environment still decides where a run starts —
-// see the browser's own resolution order.
-//
-// A negative is refused for the reason settlingDaysFrom refuses one: it says
-// something the dial cannot say, and quietly reading it as "off" would hide
-// the mistake.
 func SetSettlingDays(days int) {
 	if days < 0 {
 		days = DefaultSettlingDays
@@ -158,43 +90,12 @@ func SetSettlingDays(days int) {
 	settlingDays.Store(int64(days))
 }
 
-// Settling reports whether this row belongs to a set too new for its prices to
-// carry information yet.
-//
-// A market price is an average over COMPLETED SALES, so a set with no sales
-// behind it has an average over an empty set — a non-price, not a low one. As
-// real sales land in the weeks after release, every printing corrects at once,
-// and that correction is large enough to dominate a whole collection's net
-// while saying nothing about the collection. Held out of the roll-up, it stays
-// visible everywhere a set is being read on its own terms.
-//
-// A row whose set has no release date is NOT settling. An unknown date has to
-// count normally rather than drop out of a total in silence — the same call
-// unpricedPredicate makes when it scores an unpriceable card $0 instead of
-// dropping the row.
-//
-// The window is its first SettlingDays days, so a set released exactly that
-// long ago has cleared. The comparison is on ISO dates, which sort
-// chronologically as strings (see backfill.go); a release date in the future —
-// a set still on preorder, the sharpest case there is — compares greater than
-// the cutoff and is settling, needing no case of its own.
 func (p PriceChange) Settling(now time.Time) bool { return Settling(p.ReleasedAt, now) }
 
-// Settling is the rule behind PriceChange.Settling, reachable without a row.
-// The sidebar marks a set from a SetSummary and the net holds one out from a
-// PriceChange; those two must never disagree about which sets are settling, so
-// there is one rule and two ways in rather than two copies of a date
-// comparison.
 func Settling(releasedAt string, now time.Time) bool {
 	return settlingWithin(releasedAt, now, SettlingDays())
 }
 
-// settlingWithin is Settling with the window handed to it, so the rule can be
-// tested across windows without an environment to set.
-//
-// A window of zero holds nothing out: no set is newer than a window with no
-// days in it, and the mark, the held-out clause and the exclusion all fall
-// away together because each reads this one answer.
 func settlingWithin(releasedAt string, now time.Time, days int) bool {
 	if releasedAt == "" || days <= 0 {
 		return false
@@ -202,14 +103,6 @@ func settlingWithin(releasedAt string, now time.Time, days int) bool {
 	return releasedAt > now.AddDate(0, 0, -days).Format(time.DateOnly)
 }
 
-// NetMoved sums the movement that counts toward a collection-wide total, and
-// reports how many distinct sets it held out so the caller can say so rather
-// than quietly print a smaller number.
-//
-// It lives here beside MoverExtents for the reason that one does: two
-// frontends reporting different nets for one collection is the disagreement
-// this forecloses. A caller already scoped to a single set wants the plain sum
-// instead — that view is exactly where a settling set's movement belongs.
 func NetMoved(rows []PriceChange, now time.Time) (net float64, heldOutSets int) {
 	var held map[string]struct{}
 	for _, c := range rows {
@@ -225,19 +118,8 @@ func NetMoved(rows []PriceChange, now time.Time) (net float64, heldOutSets int) 
 	return net, len(held)
 }
 
-// PctDefined reports whether Pct is a real figure. It is not when the card was
-// previously worth nothing: any rise from zero is an infinite percentage, which
-// is neither sortable nor printable.
-//
-// This is a predicate rather than an `if p.Old == 0` at each site because the
-// two frontends want different things from the same answer — the table prints
-// 0 so the column stays aligned, the document omits the field so no consumer
-// reads a rise from nothing as no movement — and the one thing they must not do
-// is disagree about which rows have a percentage at all.
 func (p PriceChange) PctDefined() bool { return p.Old != 0 }
 
-// Pct is the movement as a fraction of the old price, and is 0 where
-// PctDefined is false.
 func (p PriceChange) Pct() float64 {
 	if !p.PctDefined() {
 		return 0
@@ -245,19 +127,6 @@ func (p PriceChange) Pct() float64 {
 	return p.Delta() / p.Old
 }
 
-// BaselineFrom is the date to print beside Old on a row that measures less
-// time than the window asked for: the printing's record begins inside the
-// window, so Old is the series' own first price rather than the price at the
-// cutoff, and the row spans from here rather than from the window's start.
-//
-// It is the empty string wherever the window's own date already describes the
-// row — a baseline at or before the cutoff, or a comparison with no date
-// behind it at all. Blank cells are what lets the column disappear entirely on
-// a window the history covers, which is the common case and wants no column.
-//
-// The formatting lives here beside the type for the reason MoverExtents does:
-// two frontends printing different dates for one row is the disagreement this
-// forecloses.
 func (p PriceChange) BaselineFrom(cutoff time.Time) string {
 	if p.OldAsOf == "" {
 		return ""
@@ -269,10 +138,6 @@ func (p PriceChange) BaselineFrom(cutoff time.Time) string {
 	return t.Local().Format("2 Jan")
 }
 
-// MoverExtents scans the rows for each delta column's largest absolute
-// value — CHANGE keyed on Pct, IMPACT on TotalDelta. The pairing lives
-// here beside the type so the two frontends coloring those columns cannot
-// disagree about which accessor feeds which scale.
 func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
 	for _, c := range rows {
 		pctMax = max(pctMax, math.Abs(c.Pct()))
@@ -281,47 +146,11 @@ func MoverExtents(rows []PriceChange) (pctMax, impactMax float64) {
 	return pctMax, impactMax
 }
 
-// printedInFinish restricts a query to printings Scryfall says come in the
-// named finish, assuming `c` is the cards table.
-//
-// A price series for a finish a printing does not exist in is not a price
-// series. Manapool files one product's price under `normal` for a printing sold
-// only as a foil, and the unpivot below took that at face value: the surge foil
-// Aragorn and Arwen carried a "non-foil" history at $125.04 beside its real
-// foil series, drawn as a second sparkline for a card that has no non-foil
-// copy. Five such series existed in a live hoard.
-//
-// An unknown finishes list emits the row rather than suppressing it. Only a
-// positive "this printing does not come that way" may drop a series; a printing
-// whose Scryfall document has not been stored is a gap, and treating a gap as a
-// denial would silently stop recording history for it.
 func printedInFinish(finish string) string {
 	return `(json_extract(c.raw_json, '$.finishes') IS NULL
          OR json_extract(c.raw_json, '$.finishes') LIKE '%"` + finish + `"%')`
 }
 
-// effectivePrices is every card's current price per finish, with the MTGJSON
-// fallback applied, as one row per finish per card.
-//
-// It is the read side of the same COALESCE the valuation queries use, unpivoted
-// so history can store one row per finish. Recording the raw Scryfall column
-// instead would report a huge fake swing every time a card moved between a
-// vendor fallback and a real Scryfall price.
-//
-// Etched is emitted only where the card actually has an etched figure. Before
-// v21 it shared the foil series, so an etched holding's history was the foil
-// product's history; now it gets its own. Emitting it unconditionally would
-// instead duplicate the foil series under a second name for the tens of
-// thousands of printings that have no etched product at all.
-//
-// A var rather than a const only because printedInFinish is a function; the
-// fragment is still assembled once and read everywhere, which is the property
-// that matters.
-// A correction names itself first, in the same order the price resolves. It
-// has to: the source recorded here is what a percent watch anchors its series
-// on (effSourceExpr), so a corrected price filed under 'scryfall' would put an
-// observation in a series the anchor query then cannot find, and the figure
-// would be permanently mislabelled in the one table that keeps a record.
 var effectivePrices = `
     SELECT c.scryfall_id AS sid, 'nonfoil' AS pfinish, ` + effPriceUSD + ` AS price,
            CASE WHEN o.price_usd IS NOT NULL THEN o.source
@@ -339,32 +168,16 @@ var effectivePrices = `
            CASE WHEN o.price_usd_etched IS NOT NULL THEN o.source ELSE 'scryfall' END
     FROM cards c ` + altJoinCards + ` WHERE c.price_usd_etched IS NOT NULL`
 
-// ownedByPriceFinish is how many copies of each printing are held, in the
-// finishes prices come in. It spans the loose collection and every deck, because
-// a card's worth does not depend on which box it sits in.
-//
-// An etched holding counts as etched only where that printing has an etched
-// price to count against; otherwise it falls in with foil, matching
-// effPriceEtched's fallback. Without that check an etched copy of a printing
-// priced only as a foil would join a series nothing ever writes, and its copies
-// would vanish from movers entirely.
 const ownedByPriceFinish = `
     SELECT e.scryfall_id AS sid,
            CASE WHEN e.finish = 'etched' AND c.price_usd_etched IS NOT NULL
                      THEN 'etched'
                 WHEN e.finish IN ('foil','etched') THEN 'foil'
-                ELSE 'nonfoil' END AS pfinish,
+                WHEN e.finish = 'nonfoil' THEN 'nonfoil' END AS pfinish,
            SUM(e.quantity) AS copies
     FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
     GROUP BY sid, pfinish`
 
-// pricesAt is one observation per card and finish — whichever one the %s
-// expression picks out of that series. The expression names an instant; the
-// row carrying it comes back whole, price, source and date together.
-//
-// The choice is made in the inner aggregate rather than by filtering the outer
-// join, because as_of is unique per card and finish: matching the outer row on
-// the chosen instant can only ever return that one observation.
 const pricesAt = `
     SELECT h.scryfall_id AS sid, h.finish AS pfinish, h.price_usd AS price,
            h.source AS source, h.as_of AS as_of
@@ -374,31 +187,10 @@ const pricesAt = `
           GROUP BY scryfall_id, finish) t
       ON t.scryfall_id = h.scryfall_id AND t.finish = h.finish AND t.chosen = h.as_of`
 
-// newestObservation picks the current price: the last one seen, whenever that
-// was.
 const newestObservation = `MAX(as_of)`
 
-// windowBaseline picks where a price sat when the window opened, as well as the
-// record can say: the last observation at or before the cutoff, or the earliest
-// one the series has when the series itself begins inside the window.
-//
-// One rule, not a rule with an exception. A window is a range to measure
-// movement across, not a precondition a card has to meet: asking for thirty
-// days asks what moved in the last thirty days, not which cards carried a price
-// thirty days ago. A printing first seen four days ago has four days of
-// movement inside a thirty-day window, and those four days are the answer.
 const windowBaseline = `COALESCE(MAX(CASE WHEN as_of <= ? THEN as_of END), MIN(as_of))`
 
-// RecordPrices appends an observation for every card whose effective price
-// differs from the last one recorded, and reports what moved.
-//
-// Unchanged prices are not written, and a first observation is recorded silently:
-// it is a baseline, not a movement. Only held cards are *reported*, but history is
-// kept for everything, since a card can leave the collection and come back and the
-// gap would be permanent.
-//
-// A price that disappears leaves the last observation standing. These are
-// observations, not assertions about every instant between them.
 func (s *Store) RecordPrices() ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH eff AS (` + effectivePrices + `),
@@ -434,12 +226,7 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// One timestamp for the history rows and the snapshot, and one
-	// transaction for both: written separately, an interrupt between them
-	// left history rows with no snapshot at that instant — and the next
-	// refresh, seeing the prices already recorded, wrote nothing, so the
-	// value chart carried a permanent gap indistinguishable from "never
-	// looked".
+
 	ts := now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -449,9 +236,7 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 	if err := appendPrices(tx, seen, ts); err != nil {
 		return nil, err
 	}
-	// The snapshot is written whether or not anything moved: a chart's flat
-	// stretches are information ("checked, unchanged"), and skipping them
-	// would leave gaps indistinguishable from "never looked".
+
 	if err := snapshotValue(tx, ts); err != nil {
 		return nil, err
 	}
@@ -461,9 +246,6 @@ WHERE e.price IS NOT NULL AND (l.price IS NULL OR l.price <> e.price)`)
 	return moved, nil
 }
 
-// snapshotValue records what the whole hoard is worth right now, split the way
-// the summary splits it. Uses entryValue, so the snapshot and the summary can
-// never disagree about the same instant.
 func snapshotValue(tx *sql.Tx, ts string) error {
 	_, err := tx.Exec(`
 INSERT INTO value_snapshots (as_of, binder, decks, total, source)
@@ -487,9 +269,6 @@ ON CONFLICT(as_of) DO UPDATE SET
 	return nil
 }
 
-// ValuePoint is the hoard's worth at one instant. Seeded points were
-// reconstructed at migration time from today's quantities and that day's
-// prices — an estimate, and charts should say so.
 type ValuePoint struct {
 	AsOf   string
 	Binder float64
@@ -498,7 +277,6 @@ type ValuePoint struct {
 	Seeded bool
 }
 
-// ValueSnapshots returns the whole series, oldest first.
 func (s *Store) ValueSnapshots() ([]ValuePoint, error) {
 	rows, err := s.db.Query(`
 SELECT as_of, binder, decks, total, source = 'seeded'
@@ -518,15 +296,11 @@ FROM value_snapshots ORDER BY as_of`)
 	return out, rows.Err()
 }
 
-// appendPrices writes one observation per change, all at the same instant so a
-// single refresh reads back as a single point in the series. It runs inside
-// the caller's transaction, beside the value snapshot the observations imply.
 func appendPrices(tx *sql.Tx, changes []PriceChange, ts string) error {
 	if len(changes) == 0 {
 		return nil
 	}
-	// Two refreshes within the same second collide on the primary key. The later
-	// price is the truer one, so it wins rather than failing the whole run.
+
 	stmt, err := tx.Prepare(`
 INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
 VALUES (?, ?, ?, ?, ?)
@@ -546,23 +320,6 @@ ON CONFLICT(scryfall_id, finish, as_of) DO UPDATE SET
 	return nil
 }
 
-// Movers reports every held printing whose price moved inside the window that
-// opens at since (an RFC3339 timestamp): its newest price against where its
-// price sat when the window opened.
-//
-// since is a range to measure across, not a bar a printing has to clear. Where
-// the record reaches back past it the baseline is the last observation at or
-// before it; where the record begins inside the window the baseline is the
-// series' own first price, and the row reports the movement it has. OldAsOf
-// carries which one it was, per row, so a reader is never told a figure came
-// from a date it did not come from.
-//
-// Left out is the one case with nothing to compare: a printing with a single
-// observation. That is what base.as_of < cur.as_of says — a lone price is its
-// own baseline, and a first price read as a rise from nothing would put every
-// newly priced card top of every list. It is stated as a date comparison rather
-// than left to fall out of the price test, because it is a rule about having
-// two prices, not about their happening to differ.
 func (s *Store) Movers(since string) ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH owned AS (`+ownedByPriceFinish+`),
@@ -597,9 +354,6 @@ WHERE base.as_of < cur.as_of AND cur.price <> base.price`, since)
 	return out, rows.Err()
 }
 
-// PriceHistoryDepth reports how many observations are stored and when the oldest
-// one was taken, so a command can say "no history yet" rather than "nothing
-// moved" — the two look identical in an empty result and mean opposite things.
 func (s *Store) PriceHistoryDepth() (observations int, oldest string, err error) {
 	var first sql.NullString
 	err = s.db.QueryRow(`SELECT COUNT(*), MIN(as_of) FROM card_price_history`).
@@ -610,78 +364,27 @@ func (s *Store) PriceHistoryDepth() (observations int, oldest string, err error)
 	return observations, first.String, nil
 }
 
-// backfillStamp turns MTGJSON's bare date into the RFC3339 form the rest of the
-// history is written in.
-//
-// Midnight, not the hour the file was built: it puts a backfilled point before
-// any live observation taken the same day, so the newest row for a card stays
-// the one actually seen rather than the one reconstructed.
 func backfillStamp(date string) string { return date + "T00:00:00Z" }
 
-// BackfillPrices loads observations recorded before hoard was watching, and
-// reports how many rows and cards it wrote.
-//
-// Each series is bounded to the era with no live history of its own: the
-// import stops where that card and finish's own first observation begins.
-// Not tidiness: the two sources snapshot at different hours, so an imported
-// point beside a real one for the same day shows up in Movers as movement
-// that never happened. Per card rather than hoard-wide, because a card
-// added months into the hoard's history has months of archive the rest of
-// the hoard already lived through — a single hoard-wide bound silently
-// discarded all of it, and every deck imported after day one arrived with
-// no baselines (observed live, the Tricky Terrain bug).
-//
-// Where an import collides with a live row the live one stands — it is what
-// was observed, this is what was reconstructed. A previously *backfilled*
-// series is the one exception: when the incoming import speaks for a
-// different vendor, the old reconstruction retires first
-// (retireSwitchedSeries), because two vendors' figures spliced into one
-// series read as price movement that never happened.
 func (s *Store) BackfillPrices(byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	return s.backfillHistory("card_price_history", byCard)
 }
 
-// backfillHistory is the shared import path for both history tables —
-// retail prices and buylist bids follow the same doctrine, each bounded
-// against its own table's live era. table is always one of the two
-// package-internal table names, never caller input.
 func (s *Store) backfillHistory(table string, byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	if len(byCard) == 0 {
 		return 0, 0, nil
 	}
-	// MTGJSON speaks "normal"; the store has spoken "nonfoil" since
-	// schema v8. Translate before anything reads the finishes so the
-	// vendor-switch pass, the bound lookup, the series grouping and the
-	// stored row all agree — untranslated rows join nothing and Movers
-	// never sees them (schema v12 repaired the ones written before this
-	// line existed).
-	normalized := make(map[string][]mtgjson.Observation, len(byCard))
-	for sid, obs := range byCard {
-		ns := make([]mtgjson.Observation, len(obs))
-		for i, o := range obs {
-			o.Finish = storeFinish(o.Finish)
-			ns[i] = o
-		}
-		normalized[sid] = ns
-	}
-	// One transaction around the whole import — the retirements and the
-	// replacement inserts live or die together. The retire pass used to
-	// commit its DELETEs on the spot, before this transaction began, so an
-	// interrupt in the gap destroyed a card's reconstructed series with
-	// nothing put back — and MTGJSON reaches back only 90 days, so anything
-	// older was gone for good. The package's own doctrine (main.go: "every
-	// write is a single transaction") now actually holds here.
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
 
-	if err := retireSwitchedSeries(tx, table, normalized); err != nil {
+	if err := retireSwitchedSeries(tx, table, byCard); err != nil {
 		return 0, 0, err
 	}
-	// After any retirements, so a replaced series' bound reflects only the
-	// rows that actually survived.
+
 	firstLive, err := firstObservationsIn(tx, table)
 	if err != nil {
 		return 0, 0, err
@@ -696,20 +399,16 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	}
 	defer stmt.Close()
 
-	// The same rule the live unpivot applies (printedInFinish): an import
-	// carries whatever buckets the vendor filed, and a vendor that files one
-	// product under `normal` for a foil-only printing would otherwise
-	// reconstruct ninety days of a series that describes no card anyone owns.
 	printed, err := printedFinishes(tx)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	for sid, obs := range normalized {
+	for sid, obs := range byCard {
 		var wrote bool
-		bound := func(finish string) string { return firstLive[sid+"|"+finish] }
+		bound := func(f finish.Finish) string { return firstLive[sid+"|"+f.String()] }
 		for _, o := range compactSeries(obs, bound) {
-			if f, known := printed[sid]; known && !f[o.Finish] {
+			if f, known := printed[sid]; known && !f[o.Finish.String()] {
 				continue
 			}
 			res, err := stmt.Exec(sid, o.Finish, o.Price, o.Source, backfillStamp(o.Date))
@@ -731,27 +430,12 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	return inserted, cards, nil
 }
 
-// retireSwitchedSeries deletes a series' previously backfilled rows when
-// the incoming import speaks for a different vendor — the vendor-switch
-// case the per-series bound cannot handle alone. The old reconstruction
-// would otherwise own the bound forever: the Manapool foil series written
-// for the treated foils blocked TCGplayer's own series entirely once the
-// tcgcsv overlay made it the chosen vendor (observed live: 152 of many
-// thousand observations imported).
-//
-// Only reconstructed rows die — backfillStamp marks every import with a
-// midnight timestamp, while live observations carry the clock time they
-// were actually seen, so "live rows stand" survives the switch. A series
-// with no incoming observations keeps its old reconstruction: deletion
-// without a replacement would just erase history.
-// It runs inside the backfill's own transaction: a retirement whose
-// replacement never lands must roll back with it.
 func retireSwitchedSeries(tx *sql.Tx, table string, byCard map[string][]mtgjson.Observation) error {
-	incoming := map[string]string{} // sid|finish → the import's vendor
+	incoming := map[string]string{}
 	for sid, obs := range byCard {
 		for _, o := range obs {
 			if o.Source != "" {
-				incoming[sid+"|"+o.Finish] = o.Source
+				incoming[sid+"|"+o.Finish.String()] = o.Source
 			}
 		}
 	}
@@ -772,9 +456,7 @@ WHERE as_of LIKE '%T00:00:00Z'`)
 		if err := rows.Scan(&sid, &finish, &source); err != nil {
 			return err
 		}
-		// Scryfall rows are live observations by definition — the import
-		// never writes that source — so a midnight stamp on one (a
-		// backdated fixture, a freak clock) still means "observed".
+
 		if source == "scryfall" {
 			continue
 		}
@@ -797,17 +479,6 @@ WHERE scryfall_id = ? AND finish = ? AND as_of LIKE '%T00:00:00Z'
 	return nil
 }
 
-// storeFinish translates MTGJSON's finish vocabulary into the schema's.
-func storeFinish(finish string) string {
-	if finish == "normal" {
-		return "nonfoil"
-	}
-	return finish
-}
-
-// firstObservationsIn maps every (card, finish) with history in the given
-// table to the moment its live history began — the per-series bound the
-// backfill imports up to.
 func firstObservationsIn(tx *sql.Tx, table string) (map[string]string, error) {
 	rows, err := tx.Query(`
 SELECT scryfall_id, finish, MIN(as_of) FROM ` + table + `
@@ -827,25 +498,14 @@ GROUP BY scryfall_id, finish`)
 	return out, rows.Err()
 }
 
-// compactSeries reduces one card's observations to the days its price moved, per
-// finish, discarding anything at or after that finish's own bound.
-//
-// MTGJSON quotes every one of its ninety days whether or not the price changed;
-// storing all of them would say nothing new in two orders of magnitude more rows.
-// The first point of each series is always kept as the baseline.
-//
-// Filtering happens before compaction so the surviving window keeps a baseline of
-// its own. The cutoff compares dates, not timestamps: the two sources snapshot at
-// different hours, and an imported midnight price under an observed morning one is
-// the same-day overlap the bound exists to prevent.
-func compactSeries(obs []mtgjson.Observation, before func(finish string) string) []mtgjson.Observation {
+func compactSeries(obs []mtgjson.Observation, before func(finish.Finish) string) []mtgjson.Observation {
 	day := func(ts string) string {
 		if len(ts) > len("2006-01-02") {
 			return ts[:len("2006-01-02")]
 		}
 		return ts
 	}
-	byFinish := map[string][]mtgjson.Observation{}
+	byFinish := map[finish.Finish][]mtgjson.Observation{}
 	for _, o := range obs {
 		if b := day(before(o.Finish)); b != "" && o.Date >= b {
 			continue
@@ -869,16 +529,6 @@ func compactSeries(obs []mtgjson.Observation, before func(finish string) string)
 	return kept
 }
 
-// printedFinishes maps each printing to the finishes Scryfall says it comes
-// in. A printing absent from the map has no stored document, and the caller
-// must treat that as "unknown" rather than "none" — see printedInFinish.
-//
-// Etched is deliberately folded in with foil rather than read literally.
-// Scryfall lists "etched" as its own finish, but the history table stores an
-// etched observation under 'etched' only where the printing carries an etched
-// price of its own; everywhere else effPriceEtched values it as the foil, and
-// dropping a foil-bucket import for an etched-only printing would leave that
-// holding with no series at all.
 func printedFinishes(tx *sql.Tx) (map[string]map[string]bool, error) {
 	rows, err := tx.Query(`
 SELECT scryfall_id, json_extract(raw_json, '$.finishes')
@@ -895,11 +545,11 @@ FROM cards WHERE json_extract(raw_json, '$.finishes') IS NOT NULL`)
 		}
 		var finishes []string
 		if err := json.Unmarshal([]byte(list), &finishes); err != nil {
-			continue // an unreadable list is not a denial
+			continue
 		}
 		set := make(map[string]bool, len(finishes)+1)
 		for _, f := range finishes {
-			set[storeFinish(f)] = true
+			set[f] = true
 		}
 		if set["etched"] {
 			set["foil"] = true

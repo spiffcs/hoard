@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"time"
 )
 
-// card builds one line of a bulk bundle.
 func card(id, name, set, num string, usd string, games ...string) string {
 	if len(games) == 0 {
 		games = []string{"paper"}
@@ -23,7 +23,7 @@ func card(id, name, set, num string, usd string, games ...string) string {
 	b, _ := json.Marshal(map[string]any{
 		"id": id, "name": name, "set": set, "collector_number": num,
 		"set_name": "Test Set", "released_at": "2024-01-01", "rarity": "rare",
-		"finishes": []string{"nonfoil", "foil"}, "border_color": "black",
+		"finishes": []finish.Finish{finish.Nonfoil, finish.Foil}, "border_color": "black",
 		"scryfall_uri": "https://scryfall.com/card/" + set + "/" + num,
 		"games":        games,
 		"prices":       map[string]any{"usd": usd, "usd_foil": "9.99", "usd_etched": nil},
@@ -31,8 +31,6 @@ func card(id, name, set, num string, usd string, games ...string) string {
 	return string(b)
 }
 
-// serveBundle stands up a listing plus a gzipped JSONL bundle and points the
-// package at it.
 func serveBundle(t *testing.T, updatedAt string, lines []string) *httptest.Server {
 	t.Helper()
 	var gz bytes.Buffer
@@ -88,9 +86,9 @@ func TestOpenCreatesAnEmptyCatalog(t *testing.T) {
 func TestBuildStoresPaperCardsAndNames(t *testing.T) {
 	serveBundle(t, "2026-07-30T00:00:00Z", []string{
 		card("a", "Sol Ring", "c21", "1", "2.00"),
-		card("b", "Sol Ring", "mps", "1", "120.00"), // same name, second printing
+		card("b", "Sol Ring", "mps", "1", "120.00"),
 		card("c", "Bitterblossom", "uma", "85", "34.11"),
-		// Digital-only cards are not collectable in paper and must be skipped.
+
 		card("d", "Alchemy Card", "ymid", "1", "0.01", "arena"),
 	})
 	c := openTemp(t)
@@ -113,13 +111,11 @@ func TestBuildStoresPaperCardsAndNames(t *testing.T) {
 	if name != "Sol Ring" || usd != 120.00 {
 		t.Errorf("stored %q at %v, want Sol Ring at 120", name, usd)
 	}
-	// Arrays are stored as JSON so they can be read with json_each rather than
-	// split on a delimiter that could appear inside a value.
+
 	if finishes != `["nonfoil","foil"]` {
 		t.Errorf("finishes = %q", finishes)
 	}
 
-	// Two printings, one name.
 	var names int
 	if err := c.db.QueryRow(`SELECT COUNT(*) FROM names`).Scan(&names); err != nil {
 		t.Fatal(err)
@@ -134,7 +130,7 @@ func TestBuildStoresPaperCardsAndNames(t *testing.T) {
 	if tris == 0 {
 		t.Error("no trigrams indexed; fuzzy matching would find nothing")
 	}
-	// The digital card must not have contributed a name either.
+
 	var n int
 	c.db.QueryRow(`SELECT COUNT(*) FROM names WHERE name = 'Alchemy Card'`).Scan(&n)
 	if n != 0 {
@@ -142,9 +138,6 @@ func TestBuildStoresPaperCardsAndNames(t *testing.T) {
 	}
 }
 
-// The color columns round-trip with nil and empty kept apart: a colorless
-// card ("color_identity": []) is not a card whose colors are unknown (the
-// field absent), and the picker renders them differently — C versus the dash.
 func TestBuildStoresColorIdentity(t *testing.T) {
 	withColors := func(line string, identity []string) string {
 		var m map[string]any
@@ -198,8 +191,6 @@ func TestBuildRecordsProvenance(t *testing.T) {
 	}
 }
 
-// A rebuild replaces the catalog wholesale, so a card that left the bundle
-// leaves the catalog rather than lingering forever.
 func TestRebuildReplacesRatherThanMerges(t *testing.T) {
 	dir := t.TempDir()
 	srv := serveBundle(t, "2026-07-29T00:00:00Z", []string{
@@ -241,8 +232,6 @@ func TestRebuildReplacesRatherThanMerges(t *testing.T) {
 	}
 }
 
-// An interrupted build must leave the previous catalog intact. A half-written
-// replacement would look complete and quietly miss on every lookup.
 func TestFailedBuildLeavesThePreviousCatalog(t *testing.T) {
 	dir := t.TempDir()
 	serveBundle(t, "2026-07-29T00:00:00Z", []string{card("a", "Sol Ring", "c21", "1", "2.00")})
@@ -255,7 +244,6 @@ func TestFailedBuildLeavesThePreviousCatalog(t *testing.T) {
 		t.Fatalf("first build: %v", err)
 	}
 
-	// A server that serves a listing but fails the download.
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/bundle" {
@@ -279,7 +267,7 @@ func TestFailedBuildLeavesThePreviousCatalog(t *testing.T) {
 	if got := c.sourceUpdated().Format(time.RFC3339); got != "2026-07-29T00:00:00Z" {
 		t.Errorf("SourceUpdated = %s, want the old build's", got)
 	}
-	// And no debris left behind to be mistaken for a catalog.
+
 	if _, err := os.Stat(filepath.Join(dir, fileName+".building")); !os.IsNotExist(err) {
 		t.Error("the partial build was left on disk")
 	}
@@ -292,8 +280,6 @@ func TestStatusReportsStaleness(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	// Immediately after a build the check is fresh, so no request is made and
-	// nothing is claimed about the remote.
 	s := c.CheckStatus(context.Background())
 	if s.Checked || s.Stale {
 		t.Errorf("status right after a build = %+v, want no check and not stale", s)
@@ -302,7 +288,6 @@ func TestStatusReportsStaleness(t *testing.T) {
 		t.Errorf("status = %+v, want 1 card", s)
 	}
 
-	// Age the check out, then publish something newer.
 	if err := c.setMeta(keyChecked, "2020-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
@@ -316,8 +301,6 @@ func TestStatusReportsStaleness(t *testing.T) {
 	}
 }
 
-// The check interval is what keeps a shell full of hoard invocations from
-// meaning a request each.
 func TestStatusHonoursTheCheckInterval(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,11 +322,9 @@ func TestStatusHonoursTheCheckInterval(t *testing.T) {
 	}
 }
 
-// Being offline is an ordinary state for a tool whose point is working without
-// the network. A failed check reports what is stored rather than an error.
 func TestStatusIsSilentWhenOffline(t *testing.T) {
 	old := listingURL
-	listingURL = "http://127.0.0.1:1/bulk-data" // refused immediately
+	listingURL = "http://127.0.0.1:1/bulk-data"
 	defer func() { listingURL = old }()
 
 	c := openTemp(t)
@@ -356,8 +337,6 @@ func TestStatusIsSilentWhenOffline(t *testing.T) {
 	}
 }
 
-// A catalog written by an older schema is discarded, not migrated: the data is a
-// download away, so carrying migration code for a cache buys nothing.
 func TestOpenRebuildsOnSchemaMismatch(t *testing.T) {
 	dir := t.TempDir()
 	serveBundle(t, "2026-07-29T00:00:00Z", []string{card("a", "Sol Ring", "c21", "1", "2.00")})
@@ -386,8 +365,6 @@ func TestOpenRebuildsOnSchemaMismatch(t *testing.T) {
 	}
 }
 
-// A file that is not a catalog at all must be replaced rather than crashing the
-// tool: it lives in a cache directory anything might write to.
 func TestOpenReplacesGarbage(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("not a database"), 0o644); err != nil {
@@ -424,7 +401,7 @@ func TestBuildCancellation(t *testing.T) {
 func TestTrimJSONLine(t *testing.T) {
 	for _, tt := range []struct{ in, want string }{
 		{`{"a":1}`, `{"a":1}`},
-		{`[{"a":1},`, `{"a":1}`}, // the JSON (not JSONL) bundle's punctuation
+		{`[{"a":1},`, `{"a":1}`},
 		{`  {"a":1}  `, `{"a":1}`},
 		{`{"a":1}]`, `{"a":1}`},
 		{`]`, ``},

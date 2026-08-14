@@ -1,11 +1,3 @@
-// What the terminal is told when the link drops.
-//
-// Pinned because the failure being guarded against is not a crash — it is a
-// sentence. A live session showed the user "The operation couldn't be
-// completed. (Network.NWError error 53 - Software caused connection abort)",
-// which names an errno, blames software in general, and mentions neither the
-// iPhone nor the one action that fixes it.
-
 import Network
 import Testing
 
@@ -17,7 +9,6 @@ func backgroundedAppMessage() {
     #expect(f.reason.contains("Hoardling"), "should name the app: \(f.reason)")
     #expect(!f.reason.contains("NWError"))
     #expect(!f.reason.contains("errno"))
-    // The framework's words survive for the log, just not for the terminal.
     #expect(!f.detail.isEmpty)
 }
 
@@ -35,9 +26,6 @@ func noInternalsInAnyReason() {
             #expect(!r.contains(leak), "\(r) leaks \(leak)")
         }
         #expect(!r.isEmpty)
-        // User-facing sentences start with a capital. "iPhone" is the exception
-        // that proves it is a sentence and not a framework string: it is
-        // capitalised the way Apple writes it, not the way a noun would be.
         #expect(r.first?.isUppercase == true || r.hasPrefix("iPhone"),
                 "reason does not start like a sentence: \(r)")
     }

@@ -49,7 +49,7 @@ func TestTextViewScrollClamps(t *testing.T) {
 	rows := m.textRows()
 	maxOffset := 100 - rows
 
-	m = key(m, "up") // clamped at the top
+	m = key(m, "up")
 	if m.text.offset != 0 {
 		t.Fatalf("offset = %d after up at top", m.text.offset)
 	}
@@ -57,7 +57,7 @@ func TestTextViewScrollClamps(t *testing.T) {
 	if m.text.offset != maxOffset {
 		t.Fatalf("offset = %d after G, want %d", m.text.offset, maxOffset)
 	}
-	m = key(m, "down") // clamped at the bottom
+	m = key(m, "down")
 	if m.text.offset != maxOffset {
 		t.Fatalf("offset = %d after down at bottom", m.text.offset)
 	}
@@ -135,11 +135,6 @@ func TestTextViewNarrowWidthRenders(t *testing.T) {
 	}
 }
 
-// mode() ranks a bridge confirm above the text takeover, so while both are
-// up the confirm owns every key — and the takeover rendered no status slot,
-// leaving the question invisible while it ate the keyboard (an op's catalog
-// ask staged behind a valuation report). The takeover now cedes the slot
-// under its rule, the same contract the card overlay keeps.
 func TestOpConfirmIsVisibleOverTheTextTakeover(t *testing.T) {
 	m := reportModel(t, manyLines(30))
 	m, _ = runPaletteCommand(t, m, "report.view")

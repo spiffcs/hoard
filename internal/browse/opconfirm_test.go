@@ -11,7 +11,6 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 )
 
-// ask stages a bridge question on the model and returns its reply channel.
 func ask(t *testing.T, m Model, q string) (Model, chan bool) {
 	t.Helper()
 	reply := make(chan bool, 1)
@@ -77,10 +76,9 @@ func TestOpConfirmCtrlCDeclinesAndCancelsOp(t *testing.T) {
 		return "", ctx.Err()
 	})
 	m.ctx = context.Background()
-	// Start the op for real so its goroutine is live and watching its ctx.
+
 	cmd := (&m).startOp("updating prices", m.opUpdatePrices)
-	// Run the op's command tree so its goroutine is live; the done msg it
-	// eventually yields is irrelevant here.
+
 	go func() {
 		queue := []tea.Cmd{cmd}
 		for len(queue) > 0 {
@@ -112,10 +110,10 @@ func TestOpConfirmCtrlCDeclinesAndCancelsOp(t *testing.T) {
 
 func TestOpConfirmDefersBehindUserConfirmThenStages(t *testing.T) {
 	m := newTestModel(t, testStore())
-	// A user-staged confirm is up…
+
 	m.confirm = &pendingConfirm{prompt: "remove deck?",
 		onYes: func(*Model) tea.Cmd { return nil }}
-	// …when the bridge question arrives.
+
 	m, reply := ask(t, m, "download?")
 	if m.confirm.prompt != "remove deck?" {
 		t.Fatal("the user confirm must not be preempted")
@@ -124,7 +122,6 @@ func TestOpConfirmDefersBehindUserConfirmThenStages(t *testing.T) {
 		t.Fatal("the bridge question must be parked, not dropped")
 	}
 
-	// Resolving the user confirm (decline) stages the parked question.
 	m = key(m, "n")
 	if m.confirm == nil || m.confirm.prompt != "download?" {
 		t.Fatalf("confirm = %+v, want the parked question staged", m.confirm)
@@ -146,7 +143,7 @@ func TestOpConfirmPumpReArms(t *testing.T) {
 	for i, q := range []string{"first?", "second?"} {
 		reply := make(chan bool, 1)
 		ch <- ConfirmRequest{Question: q, Reply: reply}
-		// The pump cmd (from Init, then from each delivery) reads the channel.
+
 		pumpCmd := awaitConfirm(m.ctx, m.confirmCh)
 		msg := pumpCmd()
 		if msg == nil {
@@ -170,14 +167,12 @@ func TestRemovalConfirmKeepsRemoveWording(t *testing.T) {
 	if !strings.Contains(m.statusLine(), "y remove") {
 		t.Errorf("statusLine = %q, want the removal wording", m.statusLine())
 	}
-	// And nowhere else: the help line under it must not say it again.
+
 	if m.helpLine() != "" {
 		t.Errorf("helpLine = %q, want the question to carry its keys alone", m.helpLine())
 	}
 }
 
-// The whole bridge, end to end: a worker calling the main-side closure gets
-// its answer from the browser's keys.
 func TestConfirmBridgeRoundTrip(t *testing.T) {
 	ch := make(chan ConfirmRequest, 1)
 	ctx := context.Background()
@@ -228,12 +223,9 @@ func TestConfirmBridgeRoundTrip(t *testing.T) {
 	}
 }
 
-// A bridge question parked behind a user-staged confirm must be answered on
-// the way out: ctrl+c on that confirm replied to the confirm's own asker and
-// quit, leaving the parked worker blocked on a reply forever.
 func TestQuitAnswersTheParkedBridgeQuestion(t *testing.T) {
 	m := newTestModel(t, testStore())
-	m.stageQuit() // a user confirm is up…
+	m.stageQuit()
 	m, reply := ask(t, m, "download?")
 	if m.deferredAsk == nil {
 		t.Fatal("setup: the ask should be parked behind the open confirm")
@@ -243,10 +235,6 @@ func TestQuitAnswersTheParkedBridgeQuestion(t *testing.T) {
 	mustReply(t, reply, false)
 }
 
-// The Reply capacity contract was a doc comment; now it fails at the door.
-// A zero-cap channel turns every answer into a blocking send against a
-// worker that may have given up — a hang later, in someone else's key
-// handler, is strictly worse than a panic naming the wiring bug.
 func TestZeroCapReplyChannelIsRejectedLoudly(t *testing.T) {
 	m := newTestModel(t, testStore())
 	defer func() {

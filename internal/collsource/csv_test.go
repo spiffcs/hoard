@@ -1,6 +1,7 @@
 package collsource
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"strings"
 	"testing"
@@ -31,21 +32,20 @@ func TestManaBoxIsSniffedAndKeepsBinders(t *testing.T) {
 		t.Fatalf("got %d rows, want 3", len(c.Rows))
 	}
 	sol := c.Rows[0]
-	if sol.Quantity != 2 || sol.Binder != "Trade Binder" || sol.Finish != "nonfoil" {
+	if sol.Quantity != 2 || sol.Binder != "Trade Binder" || sol.Finish != finish.Nonfoil {
 		t.Errorf("sol ring row = %+v", sol)
 	}
-	// ManaBox carries Scryfall IDs, so resolution must be exact.
+
 	if sol.Ident != (scryfall.Identifier{ID: "sol-id-1"}) {
 		t.Errorf("ident = %+v, want the Scryfall ID", sol.Ident)
 	}
-	if c.Rows[1].Finish != "foil" {
+	if c.Rows[1].Finish != finish.Foil {
 		t.Errorf("bolt finish = %q, want foil", c.Rows[1].Finish)
 	}
 	if c.Rows[2].Binder != "" {
 		t.Errorf("remora binder = %q, want empty (default)", c.Rows[2].Binder)
 	}
-	// The excellent-condition row is no longer dropped: it folds onto lp and
-	// is stored. One Japanese row and one purchase price still are.
+
 	if c.Rows[1].Condition != "lp" {
 		t.Errorf("bolt condition = %q, want excellent folded onto lp", c.Rows[1].Condition)
 	}
@@ -59,8 +59,7 @@ func TestMoxfieldFallsBackToSetAndNumber(t *testing.T) {
 	if c.Format != "moxfield" {
 		t.Fatalf("sniffed %q, want moxfield", c.Format)
 	}
-	// Moxfield has no Scryfall ID column, so set+number is the scheme; the
-	// name still rides along for the fallback pass.
+
 	sol := c.Rows[0]
 	if sol.Ident != (scryfall.Identifier{Set: "c21", CollectorNumber: "125"}) {
 		t.Errorf("ident = %+v, want set+number", sol.Ident)
@@ -71,7 +70,7 @@ func TestMoxfieldFallsBackToSetAndNumber(t *testing.T) {
 	if got := c.Rows[2].Name; got != "Borrowing 100,000 Arrows" {
 		t.Errorf("quoted name = %q", got)
 	}
-	// The Lightly Played row is stored rather than dropped.
+
 	if c.Dropped["condition"] != 0 || c.Dropped["purchase price"] != 1 || c.Dropped["language"] != 0 {
 		t.Errorf("dropped = %v", c.Dropped)
 	}
@@ -82,23 +81,21 @@ func TestDelverParsesQuantityStylings(t *testing.T) {
 	if c.Format != "delver" {
 		t.Fatalf("sniffed %q, want delver", c.Format)
 	}
-	if c.Rows[0].Quantity != 2 { // "2x"
+	if c.Rows[0].Quantity != 2 {
 		t.Errorf("quantity = %d, want 2", c.Rows[0].Quantity)
 	}
-	// Row without a Scryfall ID falls to set+number; row with one uses it.
+
 	if c.Rows[0].Ident != (scryfall.Identifier{Set: "c21", CollectorNumber: "125"}) {
 		t.Errorf("ident = %+v", c.Rows[0].Ident)
 	}
 	if c.Rows[1].Ident != (scryfall.Identifier{ID: "bolt-id-1"}) {
 		t.Errorf("ident = %+v", c.Rows[1].Ident)
 	}
-	if c.Rows[1].Finish != "foil" {
+	if c.Rows[1].Finish != finish.Foil {
 		t.Errorf("finish = %q, want foil", c.Rows[1].Finish)
 	}
 }
 
-// One x, either side: "x2x" is a malformed cell, and reading it as 2 would
-// import a quantity nobody wrote.
 func TestParseQtyRejectsDoubleX(t *testing.T) {
 	for _, ok := range []struct {
 		in   string
@@ -115,9 +112,6 @@ func TestParseQtyRejectsDoubleX(t *testing.T) {
 	}
 }
 
-// "Card number" alone is a column any tool might emit; sniffing Delver on it
-// silently mapped another dialect's quantity and finish columns. An unknown
-// header must fail loudly toward --format instead.
 func TestGenericCardNumberColumnIsNotDelver(t *testing.T) {
 	in := "Count,Name,Card number\n2,Sol Ring,125\n"
 	if _, err := Parse(strings.NewReader(in), "auto"); err == nil ||
@@ -131,11 +125,10 @@ func TestHoardCanonicalRoundTripsContainers(t *testing.T) {
 	if c.Format != "hoard" {
 		t.Fatalf("sniffed %q, want hoard", c.Format)
 	}
-	if c.Rows[1].Binder != "Trade" || c.Rows[1].Finish != "foil" || c.Rows[1].Kind != "binder" {
+	if c.Rows[1].Binder != "Trade" || c.Rows[1].Finish != finish.Foil || c.Rows[1].Kind != "binder" {
 		t.Errorf("trade row = %+v", c.Rows[1])
 	}
-	// The deck row carries its kind so the importer can refuse to pour deck
-	// contents into a binder.
+
 	if c.Rows[3].Kind != "deck" || c.Rows[3].Binder != "Fish" {
 		t.Errorf("deck row = %+v", c.Rows[3])
 	}
@@ -144,8 +137,6 @@ func TestHoardCanonicalRoundTripsContainers(t *testing.T) {
 	}
 }
 
-// A canonical file from before the Container Kind column still parses, its
-// rows all reading as binder rows — which is all such files ever held.
 func TestHoardCanonicalWithoutKindColumnStillParses(t *testing.T) {
 	in := "Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Board,Price USD\n" +
 		"2,Sol Ring,c21,125,nonfoil,sol-id-1,Binder,main,2.00\n"
@@ -169,8 +160,7 @@ func TestUnknownHeaderFailsLoudlyAndSuggestsFormat(t *testing.T) {
 }
 
 func TestFormatOverrideBeatsSniffing(t *testing.T) {
-	// A file missing every sniff column still parses when the caller names
-	// the dialect, as long as the required columns exist.
+
 	in := "Quantity,Name\n3,Sol Ring\n"
 	c, err := Parse(strings.NewReader(in), "delver")
 	if err != nil {
@@ -191,11 +181,6 @@ func TestParseErrorsCarryTheLineNumber(t *testing.T) {
 	}
 }
 
-// A comma inside an unquoted card name — what a hand-edit or an LLM writes —
-// makes the row one field too long and shifts every column after it. Read
-// leniently, "Voice of Plenty" landed in Set and went out to Scryfall as a set
-// code, whose 400 came back with no file and no line. Tolerating short rows is
-// the documented case; tolerating long ones was never anything but a bug.
 const overlongHeader = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD\n"
 
 func TestOverlongRowIsRefusedBeforeAnythingResolves(t *testing.T) {
@@ -212,9 +197,6 @@ func TestOverlongRowIsRefusedBeforeAnythingResolves(t *testing.T) {
 	}
 }
 
-// The same row quoted the way hoard's own exporter writes it. This is the
-// round trip the refusal above is protecting: the name keeps its comma and the
-// set code stays a set code.
 func TestQuotedCommaInANameStillParses(t *testing.T) {
 	in := overlongHeader +
 		`1,"Shalai, Voice of Plenty",dom,35,foil,,db827ee7-6f2e-4e10-aac0-120fc2b69fbd,Binder,binder,main,5.08` + "\n"
@@ -230,15 +212,12 @@ func TestQuotedCommaInANameStillParses(t *testing.T) {
 	}
 }
 
-// The other half of the asymmetry, pinned so a future tightening cannot take
-// it away: a row that stops early is an export that omitted trailing empty
-// fields, and its missing cells read as empty.
 func TestShortRowsAreStillTolerated(t *testing.T) {
 	c, err := Parse(strings.NewReader(overlongHeader+"1,Sol Ring,c21,125\n"), "auto")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(c.Rows) != 1 || c.Rows[0].Finish != "nonfoil" || c.Rows[0].Binder != "" {
+	if len(c.Rows) != 1 || c.Rows[0].Finish != finish.Nonfoil || c.Rows[0].Binder != "" {
 		t.Errorf("row = %+v, want the absent cells to read as empty", c.Rows[0])
 	}
 	if c.Rows[0].Ident != (scryfall.Identifier{Set: "c21", CollectorNumber: "125"}) {
@@ -260,19 +239,14 @@ func TestBOMAndEmptyFilesAreHandled(t *testing.T) {
 	}
 }
 
-// normCondition is where two condition scales meet. Every value below was taken
-// from a real export or is the abbreviation apps write for one.
 func TestNormCondition(t *testing.T) {
 	for in, want := range map[string]string{
-		// TCGplayer's five — Moxfield, Delver, and hoard's own vocabulary.
+
 		"Near Mint":      "nm",
 		"NM":             "nm",
 		"Lightly Played": "lp",
 		"LP":             "lp",
 
-		// Moxfield spells this one three ways and abbreviates it SP, not LP;
-		// Cardsphere calls it Slightly Played. Every one of these appears in a
-		// real export and every one used to read as unknown.
 		"Good (Lightly Played)": "lp",
 		"Good/Lightly Played":   "lp",
 		"SP":                    "lp",
@@ -285,8 +259,6 @@ func TestNormCondition(t *testing.T) {
 		"Damaged":           "dmg",
 		"DMG":               "dmg",
 
-		// Cardmarket's seven, as ManaBox writes them. Mint folds down because
-		// neither MTGJSON nor TCGplayer has anything above near mint.
 		"mint":         "nm",
 		"near_mint":    "nm",
 		"excellent":    "lp",
@@ -295,8 +267,6 @@ func TestNormCondition(t *testing.T) {
 		"played":       "mp",
 		"poor":         "dmg",
 
-		// Nothing said, and something said that no scale uses. Both read as
-		// unknown: a condition hoard cannot place is not one it should invent.
 		"":           "unknown",
 		"   ":        "unknown",
 		"Pristine":   "unknown",
@@ -309,11 +279,6 @@ func TestNormCondition(t *testing.T) {
 	}
 }
 
-// The one genuine collision between the scales, called out so a future change
-// cannot quietly pick the other reading. Cardmarket's "light played" sits a
-// step below TCGplayer's "lightly played", and the strings are nearly the
-// same; both fold to lp, the commoner reading. It mislabels rather than
-// misprices, because condition does not affect value.
 func TestNormConditionFoldsTheAmbiguousLightPlayed(t *testing.T) {
 	if got := normCondition("lightly played"); got != "lp" {
 		t.Errorf("TCGplayer lightly played = %q, want lp", got)
@@ -323,9 +288,6 @@ func TestNormConditionFoldsTheAmbiguousLightPlayed(t *testing.T) {
 	}
 }
 
-// Now that the condition is stored, only what could not be placed counts as
-// dropped. A value that folded onto a coarser one is still carried, and the
-// card keeps a condition — which is the thing that was at risk of being lost.
 func TestUnplaceableConditionReportsOnlyWhatWasLost(t *testing.T) {
 	for _, carried := range []string{
 		"", "  ", "Near Mint", "near_mint", "NM", "mint",
@@ -335,8 +297,7 @@ func TestUnplaceableConditionReportsOnlyWhatWasLost(t *testing.T) {
 			t.Errorf("unplaceableCondition(%q) = true, but it is stored", carried)
 		}
 	}
-	// A professional grade and a vocabulary hoard does not know are genuinely
-	// lost, and are reported so the loss is visible.
+
 	for _, lost := range []string{"Pristine", "BGS 10", "PSA 9", "graded 9.5"} {
 		if !unplaceableCondition(lost) {
 			t.Errorf("unplaceableCondition(%q) = false, want it reported", lost)
@@ -344,8 +305,6 @@ func TestUnplaceableConditionReportsOnlyWhatWasLost(t *testing.T) {
 	}
 }
 
-// The import finally keeps what normCondition works out. Before this the value
-// was computed, used to answer "was that cell informative?", and thrown away.
 func TestParseCarriesTheCondition(t *testing.T) {
 	const manabox = "Binder Name,Name,Set code,Collector number,Foil,Quantity,Scryfall ID,Condition,Language\n" +
 		"Trade,Sol Ring,C21,125,normal,2,sol-id,near_mint,en\n" +
@@ -363,18 +322,13 @@ func TestParseCarriesTheCondition(t *testing.T) {
 			t.Errorf("row %d condition = %q, want %q", i, c.Rows[i].Condition, w)
 		}
 	}
-	// Only the unplaceable one is reported. near_mint and excellent were both
-	// carried — excellent folded onto lp, but the card kept a condition, which
-	// is the thing that was at risk of being lost.
+
 	if c.Dropped["condition"] != 1 {
 		t.Errorf("dropped %d conditions, want 1 (the BGS grade alone): %v",
 			c.Dropped["condition"], c.Dropped)
 	}
 }
 
-// hoard's own export round-trips its conditions: the canonical format gained a
-// Condition column so it stays lossless, and the sniff does not key on it, so a
-// file written before the column still imports.
 func TestCanonicalRoundTripsCondition(t *testing.T) {
 	const withCond = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID,Container,Container Kind,Board,Price USD\n" +
 		"2,Sol Ring,c21,125,nonfoil,lp,sol-id,Binder,binder,main,2.00\n" +
@@ -394,8 +348,6 @@ func TestCanonicalRoundTripsCondition(t *testing.T) {
 		t.Errorf("dropped %v, want nothing: the canonical format is lossless", c.Dropped)
 	}
 
-	// A file from before the column imports as unassessed, which is what those
-	// rows were.
 	const noCond = "Count,Name,Set,Collector Number,Finish,Scryfall ID,Container,Container Kind,Board,Price USD\n" +
 		"2,Sol Ring,c21,125,nonfoil,sol-id,Binder,binder,main,2.00\n"
 	old, err := Parse(strings.NewReader(noCond), "auto")

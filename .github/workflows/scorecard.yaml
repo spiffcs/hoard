@@ -1,30 +1,12 @@
 name: "Scorecard"
 
-# OpenSSF Scorecard grades a repository's supply-chain posture — are actions
-# pinned by SHA, are releases signed, is there a security policy, does CI run on
-# every PR — and publishes the result so a visitor can see the answer without
-# reading the workflows. hoard already does most of what it checks; this makes
-# that legible instead of leaving it buried in .goreleaser.yaml.
-#
-# REQUIRES A PUBLIC REPOSITORY. `publish_results` sends the score to the OpenSSF
-# API, which only accepts public projects, and the README badge reads from that
-# API. Until the repo is public this workflow will fail rather than sit idle, so
-# it is worth knowing that the first green run comes after the flip, not before.
-#
-# Cost is not a concern once public: GitHub Actions minutes are free for public
-# repositories, so the weekly run does not touch the spending limit that has
-# been holding up CI.
-
 on:
-  # Scorecard's branch-protection check reads settings, not files, so it can go
-  # stale without a single commit. This re-runs it when those settings change.
   branch_protection_rule:
   schedule:
     - cron: '20 7 * * 2'
   push:
     branches: ["main"]
 
-# Read-only by default; the one job widens only what it needs.
 permissions: read-all
 
 concurrency:
@@ -35,19 +17,10 @@ jobs:
   analysis:
     name: "Analyze"
     runs-on: ubuntu-latest
-    # Skip rather than fail while the repo is private. Without this the very
-    # first push would put a red X on main and keep it there until the flip —
-    # on a repository whose whole point right now is looking finished. A skipped
-    # job reports neutral, and the condition flips itself the moment visibility
-    # changes, so nobody has to remember to come back and enable this.
     if: github.event.repository.visibility == 'public'
     permissions:
-      # Publishing is an OIDC exchange, not a stored token: the action proves
-      # which workflow in which repository produced the score, so the result on
-      # the OpenSSF API cannot be forged by anyone who cannot run this workflow.
       id-token: write
       contents: read
-      # Scorecard reads the workflow definitions themselves to grade them.
       actions: read
 
     steps:
@@ -60,15 +33,8 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # What lights up the README badge. Also makes the full breakdown
-          # public, which is the point — a score nobody can look up is a claim.
           publish_results: true
 
-      # Kept as an artifact rather than uploaded to code scanning. The SARIF
-      # step in Scorecard's own template needs code scanning enabled, and that
-      # arrives with CodeQL; adding it now would only paint this workflow red.
-      # To wire it up later, add github/codeql-action/upload-sarif here and give
-      # this job `security-events: write`.
       - name: "Upload results"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

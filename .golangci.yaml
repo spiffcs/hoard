@@ -3,15 +3,6 @@ version: "2"
 run:
   timeout: 5m
 
-# Report everything, always.
-#
-# golangci-lint defaults to max-same-issues: 3 and max-issues-per-linter: 50,
-# which silently truncate. That is tolerable for a style linter and actively
-# dangerous for a security one: enabling gosec appeared to produce 26 findings,
-# they were triaged and exempted, and the next run produced a *different* set —
-# because the 26 had been three-per-rule samples of 40-plus, and every exemption
-# revealed the next three. A capped security report reads exactly like a
-# complete one.
 issues:
   max-same-issues: 0
   max-issues-per-linter: 0
@@ -19,10 +10,6 @@ issues:
 linters:
   enable:
     - errcheck
-    # The only security linter in the set, and deliberately separate from the
-    # five above in kind: those five find code that is wrong, gosec finds code
-    # that is exploitable — command injection, path traversal from unsanitised
-    # input, file permissions, weak randomness where it matters.
     - gosec
     - govet
     - ineffassign
@@ -32,31 +19,10 @@ linters:
     errcheck:
       check-type-assertions: true
     gosec:
-      # Rules turned off program-wide, because they ask a question this program
-      # does not have. Site-specific exemptions live in exclusions.rules below;
-      # these three are wrong everywhere, so excluding them at each site would
-      # be noise that grows with the codebase.
       excludes:
-        # G104 duplicates errcheck, which is already enabled above and carries
-        # this file's carefully-reasoned exclusions. Two linters reporting the
-        # same unchecked error would mean maintaining the exemptions twice.
         - G104
-        # XSS. hoard renders to a terminal — there is no HTML, no template, no
-        # HTTP response anywhere in the tree. gosec's taint rule fires on any
-        # tainted value reaching any writer, and cannot tell os.Stderr from an
-        # http.ResponseWriter, so it flagged `fmt.Fprintln(os.Stderr, err)`.
-        # Revisit only if hoard ever serves a page.
         - G705
-        # SSRF. Every outbound host is a package constant — api.scryfall.com,
-        # mtgjson.com, tcgcsv.com, archidekt.com (see docs/specs/data-licensing.md
-        # §1). A card name reaches the *query*, never the host, so no input can
-        # redirect a request at an attacker's server. Revisit if a host ever
-        # becomes configurable.
         - G704
-        # The rule presumes a privilege boundary between whoever supplies the
-        # path and the filesystem. hoard has none: `--db`, `$HOARD_DB`,
-        # `$HOARD_SCAN_LOG` and an export destination are supplied by the
-        # person running the process, against files that person already owns.
         - G703
   exclusions:
     presets:
@@ -65,59 +31,30 @@ linters:
       - common-false-positives
       - legacy
     rules:
-      # csv.Writer's errors are sticky: every writer here (export/csv.go,
-      # report/valuation.go) checks cw.Error() after Flush, which is the API's
-      # documented contract. Checking each Write would triple the code to learn
-      # the same thing later. `cw` is this codebase's one name for a csv.Writer.
       - linters: [errcheck]
         text: "Error return value of `cw\\.Write` is not checked"
-      # `defer tx.Rollback()` after a successful Commit returns ErrTxDone by
-      # design; that error is the mechanism, not a failure.
       - linters: [errcheck]
         source: "defer tx\\.Rollback\\(\\)"
-      # http.DefaultTransport is a *http.Transport unless a test or an import
-      # replaced it, and a panic at package init is the loudest possible report
-      # of that programming error — a checked assertion would have to invent a
-      # fallback transport nobody wants.
       - linters: [errcheck]
         source: "http\\.DefaultTransport\\.\\(\\*http\\.Transport\\)"
-      # A bubbletea model's Update returns tea.Model by interface; this package
-      # only ever feeds its own concrete model through, so a failed assertion is
-      # a programming error and the panic is the report.
       - path: internal/tui/child\.go
         linters: [errcheck]
         source: "next\\.\\(model\\)"
-      # Best-effort day-cache write: a failure costs a re-download, not
-      # correctness, and it is guarded by the MkdirAll that just succeeded.
       - path: internal/tcgcsv/tcgcsv\.go
         linters: [errcheck]
         text: "Error return value of `os\\.WriteFile` is not checked"
-      # The list delegate renders into the writer bubbles hands it; the
-      # interface offers nowhere to report a write error to.
       - path: internal/tui/delegate\.go
         linters: [errcheck]
         text: "Error return value of `io\\.WriteString` is not checked"
-      # Lint runs --tests=false (triage's flag), so helpers exercised only by
-      # tests read as dead. These two are load-bearing test subjects.
       - path: internal/browse/image\.go
         linters: [unused]
         text: "artOverflows is unused"
       - path: internal/tui/autoscan\.go
         linters: [unused]
         text: "hasCollectorBlock is unused"
-      # Scaffolding its own comment declares: the interim shim for the planned
-      # cmdUpdatePrices migration into the action layer. Deleting it would undo
-      # prepared work; it leaves when the migration lands.
       - path: catalog\.go
         linters: [unused]
         text: "ensureCatalog is unused"
-      # Darwin-only runtime code the Linux CI linter cannot see it use:
-      # parseEvent is called by session_darwin.go, parseDevices (and the
-      # deviceList it fills) by scan_darwin.go — both //go:build darwin, so
-      # they compile out on the ubuntu runner. scan_test.go exercises all
-      # three, but --tests=false hides that too. Used, not dead; a build tag
-      # cannot move them because scan_test.go also tests platform-neutral
-      # symbols in the same package.
       - path: internal/scan/scan\.go
         linters: [unused]
         text: "func parseEvent is unused"
@@ -128,79 +65,26 @@ linters:
         linters: [unused]
         text: "type deviceList is unused"
 
-      # ---- gosec ---------------------------------------------------------
-      # Triaged 2026-08-13 when gosec was enabled: 26 findings, 26 false
-      # positives, none of them a defect. What follows is why for each, so the
-      # next person does not have to re-derive it. A new gosec finding is NOT
-      # covered by these and should be read on its own merits.
-
-      # G602, slice index out of range. Both sites index a *fixed-size* array:
-      # `marketSections()` returns `[3]marketSection` and `marketSecOffset` is
-      # `[3]int` (model.go:318), so a `range` over one cannot leave the other.
-      # comps.go additionally guards `r.Kind` explicitly, with a comment naming
-      # the exact panic it prevents. gosec does not carry array length through
-      # a return, so it sees a slice where the type system guarantees three.
       - path: internal/browse/(comps|market)\.go
         linters: [gosec]
         text: "G602"
 
-      # G202, SQL string concatenation. What is concatenated is never data:
-      # `strings.Repeat(",?", n-1)` builds a placeholder list, `cardColumns` is
-      # a const, `strconv.Itoa(limit)` is an int. Every value goes through the
-      # `?` args. `printsMatching` does take a `where string`, which would be a
-      # real hole — it has exactly one caller (searcher.go:128) and it passes a
-      # backtick literal. If a second caller ever appears, read it before
-      # trusting this exemption.
-      #
-      # internal/store is the same two shapes plus one more. filter.go:118
-      # concatenates a comparison *operator* into the predicate — the one place
-      # in the tree where a real injection could live — and it is guarded: `if
-      # !validOps[c.Op] { return ... }` rejects anything not in the allowlist
-      # before the concatenation, and the value still goes through `?`. That is
-      # the correct pattern for a dynamic operator; SQL placeholders cannot
-      # parameterise an operator, so an allowlist is the only option.
-      #
-      # Read any NEW G202 here before adding it to this list. This exemption is
-      # a statement about eleven specific call sites, not about the package.
       - path: internal/(catalog|store)/.*\.go
         linters: [gosec]
         text: "G202"
 
-      # G306, file permissions wider than 0600. Every site writes something
-      # meant to be read: the schema generators emit files *committed to the
-      # repository* and published for parsers to pin against
-      # (schema/json/README.md), where world-readable is the point and 0600
-      # would be the bug; the rest are price caches, bulk downloads and demo
-      # data — re-downloadable public data, holding nothing private. The user's
-      # collection is the one file that matters and SQLite owns its mode.
       - path: (schema/(json|sqlite)/generate/main|internal/scan/session|internal/demo/gen/main|internal/tcgcsv/(bulk|tcgcsv))\.go
         linters: [gosec]
         text: "G306"
 
-      # G115, integer overflow on conversion. Each is bounded at the conversion
-      # or immediately above it: theme.go converts a rune under an `if r < 128`
-      # guard, image.go averages channel values that are 0-255 by construction,
-      # and frame.go's `uint32(len(f.Payload))` is four lines below the
-      # `len(f.Payload) > MaxPayload` check that returns ErrPayloadTooLarge —
-      # MaxPayload is 64 MiB, which is three orders of magnitude inside uint32.
       - path: internal/(ui/(theme|image)|scan/link/(frame|browse))\.go
         linters: [gosec]
         text: "G115"
 
-      # G402, InsecureSkipVerify. The field is required to *replace* chain
-      # verification, not to skip it: `VerifyPeerCertificate` on the next line
-      # pins the peer to one certificate, which is stricter than the default of
-      # trusting anything a public CA signed. The comment above it in
-      # trust.go says so; this is certificate pinning, and there is no way to
-      # express it without this field.
       - path: internal/scan/link/trust\.go
         linters: [gosec]
         text: "G402"
 
-      # G204, subprocess with tainted arguments. The binary is `/usr/bin/dns-sd`
-      # — an absolute constant — unless `DNSSD.Path` is set, which only tests do
-      # to point at a stub. The arguments are a service type this package
-      # builds. Nothing here reaches a shell.
       - path: internal/scan/link/browse\.go
         linters: [gosec]
         text: "G204"

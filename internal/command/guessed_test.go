@@ -1,13 +1,11 @@
 package command
 
-// `hoard guessed` is a worklist, not a ledger: every row in it is a card
-// somebody still has to pick up and look at. These pin that it can be emptied.
-
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,10 +17,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// guessedStore holds two copies of one printing, both committed on the
-// scanner's default. Two copies rather than one because that is the case the
-// natural key cannot address: the log is per commit, so the two rows are
-// identical in every column a listing prints.
 func guessedStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
@@ -33,27 +27,24 @@ func guessedStore(t *testing.T) *store.Store {
 
 	card := scryfall.Card{ID: "whisperer", Set: "lgn", CollectorNumber: "135",
 		Name: "Primal Whisperer", ScryfallURL: "http://x"}
-	if err := st.AddCardFinish(card, "nonfoil", 2); err != nil {
+	if err := st.AddCardFinish(card, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	// 0 is the default-binder sentinel the adder passes; the store resolves it.
+
 	for range 2 {
-		if err := st.RecordFinishGuess(0, card.ID, "nonfoil"); err != nil {
+		if err := st.RecordFinishGuess(0, card.ID, finish.Nonfoil); err != nil {
 			t.Fatalf("RecordFinishGuess: %v", err)
 		}
 	}
 	return st
 }
 
-// splitEnv keeps stdout and stderr apart, because a partial outcome here is a
-// warning on Err and the count of what was retired is the answer on Out.
 func splitEnv() (*cli.Env, *bytes.Buffer, *bytes.Buffer) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	e := ui.Env{Width: 80}
 	return &cli.Env{Out: out, Err: errOut, OutEnv: e, ErrEnv: e}, out, errOut
 }
 
-// guessIDs is the ids currently standing, newest first.
 func guessIDs(t *testing.T, st *store.Store) []int64 {
 	t.Helper()
 	rows, err := st.GuessedFinishes()
@@ -67,15 +58,6 @@ func guessIDs(t *testing.T, st *store.Store) []int64 {
 	return ids
 }
 
-// THE DECISION. `guessed` is a worklist -- store.MoveEntryFinish says so
-// outright, retiring a guess in the same transaction as a correction so that
-// "hoard guessed drains as the pile gets checked" -- and a worklist that can
-// only be answered by a correction cannot drain, because a scan that guessed
-// right is never re-keyed. This is the missing half: the row leaves when the
-// card is checked and the guess turns out to have been correct.
-//
-// Before --checked existed there was no way to write this test at all, which
-// is the defect stated as precisely as it can be.
 func TestGuessedCheckedRetiresTheRow(t *testing.T) {
 	st := guessedStore(t)
 	ids := guessIDs(t, st)
@@ -91,16 +73,12 @@ func TestGuessedCheckedRetiresTheRow(t *testing.T) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 
-	// The entry actually left, and took nothing else with it: the other copy
-	// is a separate card that still needs looking at.
 	left := guessIDs(t, st)
 	if len(left) != 1 || left[0] != ids[1] {
 		t.Errorf("ids after --checked = %v, want just %d", left, ids[1])
 	}
 }
 
-// The queue reaches zero. That is the whole claim: an append-only log cannot,
-// and the count of a list that cannot means nothing.
 func TestGuessedQueueCanReachZero(t *testing.T) {
 	st := guessedStore(t)
 	ids := guessIDs(t, st)
@@ -116,8 +94,6 @@ func TestGuessedQueueCanReachZero(t *testing.T) {
 		t.Fatalf("ids after checking every card = %v, want none", left)
 	}
 
-	// And the empty state's promise -- "evidence-backed or has been checked"
-	// -- is now something the tool can actually deliver.
 	env, listed, _ := splitEnv()
 	if err := runGuessed(st, env); err != nil {
 		t.Fatalf("runGuessed: %v", err)
@@ -127,8 +103,6 @@ func TestGuessedQueueCanReachZero(t *testing.T) {
 	}
 }
 
-// An id off a stale listing is a partial outcome, not a failure: it warns on
-// Err, keeps the exit code, and does not claim to have retired anything.
 func TestGuessedCheckedWarnsOnAnIDThatNamesNothing(t *testing.T) {
 	st := guessedStore(t)
 
@@ -147,9 +121,6 @@ func TestGuessedCheckedWarnsOnAnIDThatNamesNothing(t *testing.T) {
 	}
 }
 
-// The clean case, whole. A row has to carry its id to be addressable, and the
-// footer has to name both ways out -- naming only the correction is what left
-// the list unable to shrink. Everything else is as it was.
 func TestGuessedListingReadsAsAWorklist(t *testing.T) {
 	st := guessedStore(t)
 	ids := guessIDs(t, st)
@@ -161,29 +132,27 @@ func TestGuessedListingReadsAsAWorklist(t *testing.T) {
 	got := out.String()
 
 	for _, want := range []string{
-		// Unchanged: the headline, and the row's card furniture.
+
 		"2 scanned rows committed without finish evidence:",
 		"Primal Whisperer (LGN/135) nonfoil · guessed ",
-		// New: an id per row, so a row can be named.
+
 		"#" + itoa(ids[0]),
 		"#" + itoa(ids[1]),
-		// New: the way out for a guess that was right.
+
 		"confirm a right one with hoard guessed --checked <id>",
-		// Unchanged: the way out for a guess that was wrong.
+
 		"Fix a wrong one in browse (enter → finish)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("listing is missing %q:\n%s", want, got)
 		}
 	}
-	// The old footer promised only the correction path.
+
 	if strings.Contains(got, "which clears it here.") {
 		t.Errorf("listing still names only the correction path:\n%s", got)
 	}
 }
 
-// Through the real tree, so the flag itself is covered: --checked has to parse
-// as a repeatable id list, not just as a function argument.
 func TestGuessedCheckedFlagDispatches(t *testing.T) {
 	st := guessedStore(t)
 	ids := guessIDs(t, st)
@@ -201,14 +170,8 @@ func TestGuessedCheckedFlagDispatches(t *testing.T) {
 	}
 }
 
-// itoa keeps the id formatting in one place; the listing and the flag have to
-// agree on it or the ids a user reads cannot be typed back in.
 func itoa(id int64) string { return strconv.FormatInt(id, 10) }
 
-// The queue's ids are its whole interface — --checked takes them and nothing
-// else does — so a worklist readable only as a formatted table can be read by
-// an agent but not worked through. This is the round trip: list as JSON, take
-// an id out of the document, retire it, and see the queue shrink.
 func TestGuessedJSONCarriesTheIDsCheckedTakes(t *testing.T) {
 	st := guessedStore(t)
 
@@ -235,8 +198,7 @@ func TestGuessedJSONCarriesTheIDsCheckedTakes(t *testing.T) {
 	if doc.Kind != "guessed" {
 		t.Errorf("kind = %q, want %q", doc.Kind, "guessed")
 	}
-	// Two rows for two physical copies of one printing. The fixture is
-	// deliberately the case a natural key cannot address.
+
 	if len(doc.Guessed.Rows) != 2 {
 		t.Fatalf("rows = %d, want the two banked guesses: %s", len(doc.Guessed.Rows), out)
 	}
@@ -245,7 +207,6 @@ func TestGuessedJSONCarriesTheIDsCheckedTakes(t *testing.T) {
 		t.Errorf("row is missing what the table shows: %+v", r)
 	}
 
-	// The id read out of the document is the one --checked answers to.
 	env, _, _ := splitEnv()
 	if err := runGuessedChecked(st, env, []int64{r.ID}); err != nil {
 		t.Fatalf("runGuessedChecked(%d): %v", r.ID, err)
@@ -255,9 +216,6 @@ func TestGuessedJSONCarriesTheIDsCheckedTakes(t *testing.T) {
 	}
 }
 
-// An emptied queue is a document with no rows. A script draining the list needs
-// to be able to see that it is done, and the prose the table prints instead
-// ("every scanned row was evidence-backed") is not something it can read.
 func TestGuessedJSONOnAnEmptyQueueIsAnEmptyList(t *testing.T) {
 	st := guessedStore(t)
 	env, _, _ := splitEnv()
@@ -274,10 +232,6 @@ func TestGuessedJSONOnAnEmptyQueueIsAnEmptyList(t *testing.T) {
 	}
 }
 
-// --checked is the acting half of the command and reports an outcome, which the
-// document model has no kind for. Rather than hand a script prose from a command
-// whose help advertises --json, it says which half the flag belongs to and what
-// to run instead.
 func TestGuessedCheckedRefusesJSON(t *testing.T) {
 	st := guessedStore(t)
 	ids := guessIDs(t, st)
@@ -293,7 +247,7 @@ func TestGuessedCheckedRefusesJSON(t *testing.T) {
 	if !strings.Contains(err.Error(), "hoard guessed --json") {
 		t.Errorf("message does not name the command that does emit one: %v", err)
 	}
-	// And it refused rather than half-acting: the row is still queued.
+
 	if left := guessIDs(t, st); len(left) != 2 {
 		t.Errorf("ids after the refusal = %v, want both still queued", left)
 	}

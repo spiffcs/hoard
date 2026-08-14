@@ -16,8 +16,6 @@ import (
 	"github.com/spiffcs/hoard/internal/tui"
 )
 
-// childSearcher is the smallest tui.Searcher that lets a type-a-name add
-// run end to end: one card, one printing, one finish.
 type childSearcher struct{}
 
 func (childSearcher) Autocomplete(context.Context, string) ([]string, error) { return nil, nil }
@@ -31,7 +29,6 @@ func (childSearcher) NamedFuzzy(context.Context, string) (*scryfall.Card, cardna
 
 func noopChildAdder(tui.Result) error { return nil }
 
-// recordingChildAdder counts what the embedded cascade persists.
 type recordingChildAdder struct{ got []tui.Result }
 
 func (r *recordingChildAdder) add(res tui.Result) error {
@@ -45,7 +42,6 @@ func withTestCascade(adder *recordingChildAdder) Option {
 	})
 }
 
-// newCascadeModel is newTestModel with options.
 func newCascadeModel(t *testing.T, st Store, opts ...Option) Model {
 	t.Helper()
 	m, err := New(st, opts...)
@@ -57,10 +53,6 @@ func newCascadeModel(t *testing.T, st Store, opts ...Option) Model {
 	return next.(Model)
 }
 
-// pump executes a command tree and feeds the resulting messages back through
-// the model — the test-side stand-in for bubbletea's loop. Spinner ticks are
-// dropped rather than fed back: feeding one re-arms a sleeping tick and the
-// animation is irrelevant to every assertion here.
 func pump(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	queue := []tea.Cmd{cmd}
@@ -75,14 +67,7 @@ func pump(t *testing.T, m Model, cmd tea.Cmd) Model {
 		case tea.BatchMsg:
 			queue = append(queue, msg...)
 		case spinner.TickMsg, cursor.BlinkMsg, livePollMsg, liveQuietMsg:
-			// Self-re-arming traffic: feeding any of these back schedules
-			// another sleeping tick, and none affects an assertion here.
-			// It matters more than it reads — this loop calls each command
-			// synchronously, so a tea.Tick blocks for its whole delay,
-			// where the real program runs it in a goroutine. The live
-			// poll's chain would otherwise spend the entire 64-command
-			// budget at 500ms a turn. live_test.go drives those two
-			// directly instead.
+
 		default:
 			next, c2 := m.Update(msg)
 			m = next.(Model)
@@ -126,7 +111,7 @@ func TestAddCascadeEscAtNameReturnsToBrowse(t *testing.T) {
 	m := newCascadeModel(t, &fakeStore{}, withTestCascade(ra))
 
 	m = key(m, "a")
-	// esc opens the leave gate; the cascade is still up until y confirms.
+
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
 	if m.addChild == nil {
@@ -148,7 +133,6 @@ func TestAddCascadeEscAtNameReturnsToBrowse(t *testing.T) {
 	}
 }
 
-// typeChild types text into the active cascade.
 func typeChild(m Model, s string) Model {
 	for _, r := range s {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -157,8 +141,6 @@ func typeChild(m Model, s string) Model {
 	return m
 }
 
-// addOneCard drives a full type-a-name add through the embedded cascade:
-// name, then enter through the pickers until the adder records the commit.
 func addOneCard(t *testing.T, m Model, ra *recordingChildAdder, name string) Model {
 	t.Helper()
 	before := len(ra.got)
@@ -207,8 +189,7 @@ func TestAddCascadeReceiptAccumulatesAcrossInvocations(t *testing.T) {
 	if len(ra.got) != 2 {
 		t.Fatalf("adds = %d, want 2", len(ra.got))
 	}
-	// Manual adds keep the summary empty (it is the scan receipt), but the
-	// accumulator must survive both invocations without resetting.
+
 	if len(m.addSummary.Entries) != 0 {
 		t.Fatalf("manual adds should not fabricate scan entries: %+v", m.addSummary.Entries)
 	}
@@ -239,7 +220,6 @@ func TestCtrlCDuringAddWithOpRunningStagesConfirm(t *testing.T) {
 			return "done", nil
 		}))
 
-	// Start the op but never run its command: m.op stays live, no goroutine.
 	(&m).startOp("updating prices", m.opUpdatePrices)
 	if m.op == nil {
 		t.Fatal("setup: op not started")
@@ -261,14 +241,12 @@ func TestCtrlCDuringAddWithOpRunningStagesConfirm(t *testing.T) {
 		t.Fatal("the confirm must render over the cascade view")
 	}
 
-	// Declining returns to the cascade.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	m = next.(Model)
 	if m.confirm != nil || m.addChild == nil {
 		t.Fatal("declining must return to the live cascade")
 	}
 
-	// Accepting tears down and quits.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m = next.(Model)
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
@@ -320,9 +298,6 @@ func TestResizeReachesEmbeddedCascade(t *testing.T) {
 	}
 }
 
-// Closing an add session with new cards auto-runs the view's fetch, so
-// prices and identity arrive without anyone pressing F; a session that
-// added nothing fetches nothing.
 func TestAddCascadeAutoFetchesAfterAdds(t *testing.T) {
 	ra := &recordingChildAdder{}
 	ran := false

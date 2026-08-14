@@ -8,8 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// The whole point: an inner reset must not switch the outer style off, and
-// the inner styling must survive rather than being stripped.
 func TestRestyle(t *testing.T) {
 	reverse := lipgloss.NewStyle().Reverse(true)
 	faint := lipgloss.NewStyle().Faint(true)
@@ -28,8 +26,7 @@ func TestRestyle(t *testing.T) {
 	t.Run("inner reset cannot end the bar", func(t *testing.T) {
 		line := "Name " + faint.Render("dim cell") + " after"
 		got := Restyle(line, reverse)
-		// After the dim cell's closing reset, the reverse must be
-		// re-asserted before "after" renders.
+
 		i := strings.LastIndex(got, "after")
 		if i < 0 {
 			t.Fatalf("text lost: %q", got)
@@ -73,7 +70,7 @@ func TestRestyle(t *testing.T) {
 	})
 
 	t.Run("non-SGR escapes pass through without re-assertion", func(t *testing.T) {
-		line := "a\x1b[2Kb" // erase-line: CSI ending in K, not m
+		line := "a\x1b[2Kb"
 		got := Restyle(line, reverse)
 		if !strings.Contains(got, "\x1b[2K") {
 			t.Errorf("non-SGR CSI mangled: %q", got)

@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// FileVersion reads the stamp without migrating, and refuses to invent a
-// database for a path that has none — the typo case, which would otherwise
-// leave an empty file reading as version 0.
 func TestFileVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
 	st, err := Open(path)
@@ -36,8 +33,6 @@ func TestFileVersion(t *testing.T) {
 	}
 }
 
-// OpenSource cannot write. This is what lets a merge promise it never touched
-// the hoard it read from, so it is asserted at the engine rather than trusted.
 func TestOpenSourceRefusesWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
 	st, err := Open(path)
@@ -62,7 +57,7 @@ func TestOpenSourceRefusesWrites(t *testing.T) {
 	if _, err := src.CreateBinder("Trades"); err == nil {
 		t.Error("a write succeeded on a read-only handle")
 	}
-	// Reads still work — it is read-only, not closed.
+
 	if _, err := src.ListBinders(); err != nil {
 		t.Errorf("ListBinders on a read-only handle: %v", err)
 	}
@@ -79,8 +74,6 @@ func TestOpenSourceRefusesWrites(t *testing.T) {
 	}
 }
 
-// A version mismatch is refused rather than migrated, because migrating is a
-// write to a file the caller only meant to read.
 func TestOpenSourceRefusesVersionMismatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
 	st, err := Open(path)

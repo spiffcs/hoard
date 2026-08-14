@@ -1,41 +1,28 @@
 package browse
 
-// The live refresh, and mostly its negative controls: every assertion here
-// is written so that removing the thing it guards makes it fail loudly. The
-// gate, the identity restore and the growth guard are each cheap to write in
-// a form that passes for the wrong reason, so each has a companion assertion
-// that the situation it is testing was actually set up.
-
 import (
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
 )
 
-// poll delivers one live poll tick.
 func poll(m Model) Model {
 	next, _ := m.Update(livePollMsg{})
 	return next.(Model)
 }
 
-// quiet delivers the quiescence timer the newest change armed — the stream
-// going still.
 func quiet(m Model) Model {
 	next, _ := m.Update(liveQuietMsg{gen: m.liveGen})
 	return next.(Model)
 }
 
-// changed is another process committing: the counter moves, and the browser
-// polls in time to see it.
 func changed(st *fakeStore, m Model) Model {
 	st.dataVersion++
 	return poll(m)
 }
 
-// TestLivePollTakesABaselineNotARefresh: the first reading is only a
-// baseline. A browser that treated it as a change would re-read the whole
-// hoard on the first tick after opening, having just read it in New.
 func TestLivePollTakesABaselineNotARefresh(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)
@@ -54,11 +41,6 @@ func TestLivePollTakesABaselineNotARefresh(t *testing.T) {
 	}
 }
 
-// TestQuiescenceGateCoalescesABurst is the negative control for the gate, and
-// the whole design. Ten changes arriving faster than liveQuietPeriod must
-// cost one refresh, not ten: every superseded timer comes due and must do
-// nothing. Delete the generation check in onLiveQuiet and this reports nine
-// re-reads before the stream ever goes still.
 func TestQuiescenceGateCoalescesABurst(t *testing.T) {
 	st := testStore()
 	m := poll(newTestModel(t, st))
@@ -73,7 +55,6 @@ func TestQuiescenceGateCoalescesABurst(t *testing.T) {
 			m.liveGen, burst)
 	}
 
-	// Every timer the burst superseded, in the order they would arrive.
 	for gen := 1; gen < m.liveGen; gen++ {
 		next, _ := m.Update(liveQuietMsg{gen: gen})
 		m = next.(Model)
@@ -88,11 +69,6 @@ func TestQuiescenceGateCoalescesABurst(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshRestoresByRowIdentity is the negative control for §5.1.
-// Holdings sort by value descending, so an insert above the cursor shifts
-// every row beneath it; restoring the index would silently leave the reader
-// on a different card. The last assertion is what makes this a control — it
-// fails if the insert did not actually move anything.
 func TestLiveRefreshRestoresByRowIdentity(t *testing.T) {
 	st := testStore()
 	st.collection = manyCards(20)
@@ -102,9 +78,9 @@ func TestLiveRefreshRestoresByRowIdentity(t *testing.T) {
 	was, wasIdx := m.selectedCard().Name, m.cursor[paneCards]
 
 	m = poll(m)
-	// Another process adds a card worth more than everything already held.
+
 	st.collection = append(st.collection,
-		row("Black Lotus", "lea", "233", "nonfoil", 1, 9999))
+		row("Black Lotus", "lea", "233", finish.Nonfoil, 1, 9999))
 	m = quiet(changed(st, m))
 
 	if got := m.selectedCard().Name; got != was {
@@ -120,22 +96,17 @@ func TestLiveRefreshRestoresByRowIdentity(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshFollowsTheRowAcrossAPage: identity restore has to move the
-// page as well as the cursor. A row sitting on the last line of page one is
-// pushed onto page two by a single insert above it, and a restore that only
-// fixed the cursor would leave the reader on the wrong page looking at the
-// wrong card.
 func TestLiveRefreshFollowsTheRowAcrossAPage(t *testing.T) {
 	st := testStore()
 	st.collection = manyCards(120)
 	m := newTestModel(t, st)
 	m.focus = paneCards
-	m.cursor[paneCards] = singleTablePageSize - 1 // the last row of page one
+	m.cursor[paneCards] = singleTablePageSize - 1
 	was := m.selectedCard().Name
 
 	m = poll(m)
 	st.collection = append(st.collection,
-		row("Black Lotus", "lea", "233", "nonfoil", 1, 9999))
+		row("Black Lotus", "lea", "233", finish.Nonfoil, 1, 9999))
 	m = quiet(changed(st, m))
 
 	if m.cardsPage != 1 {
@@ -151,9 +122,6 @@ func TestLiveRefreshFollowsTheRowAcrossAPage(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshSaysWhenTheSelectedRowIsGone: the selection cannot survive
-// a row that no longer exists, and must not pretend to. The place survives
-// — clamped, in the neighbourhood — and the status line says what happened.
 func TestLiveRefreshSaysWhenTheSelectedRowIsGone(t *testing.T) {
 	st := testStore()
 	st.collection = manyCards(20)
@@ -163,7 +131,7 @@ func TestLiveRefreshSaysWhenTheSelectedRowIsGone(t *testing.T) {
 	was := m.selectedCard().Name
 
 	m = poll(m)
-	// Someone in the other session moved the last copy to a deck.
+
 	st.collection = append(st.collection[:5], st.collection[6:]...)
 	m = quiet(changed(st, m))
 
@@ -182,8 +150,6 @@ func TestLiveRefreshSaysWhenTheSelectedRowIsGone(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshReportsTheDelta: a change that lands below the fold is
-// still legible on the status line.
 func TestLiveRefreshReportsTheDelta(t *testing.T) {
 	st := testStore()
 	m := poll(newTestModel(t, st))
@@ -202,7 +168,6 @@ func TestLiveRefreshReportsTheDelta(t *testing.T) {
 		t.Error("the delta rendered as an error")
 	}
 
-	// One card is a card. The real hoard caught this reading "+1 cards".
 	st.totals.TotalCopies++
 	st.totals.Value += 2
 	m = quiet(changed(st, m))
@@ -211,9 +176,6 @@ func TestLiveRefreshReportsTheDelta(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshTouchesHoldingsOnly is §3.2 as a test. Movers is the
-// longest lock hold in the program and the watches screen's third table is
-// an 87ms read at ten times the hoard; neither may run on a tick.
 func TestLiveRefreshTouchesHoldingsOnly(t *testing.T) {
 	st := threeTableStore()
 	m := poll(onWatches(t, st))
@@ -234,15 +196,9 @@ func TestLiveRefreshTouchesHoldingsOnly(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshKeepsTheWatchesScreenStill exercises the state the design
-// lane never did: its probe ran with holdings active, and this screen is
-// newer than the probe. The cursor here indexes the screen's three tables,
-// not the holdings, so a refresh that put it back as a holdings index would
-// move the reader between tables.
 func TestLiveRefreshKeepsTheWatchesScreenStill(t *testing.T) {
 	st := threeTableStore()
-	// Enough rows in OVERS that the table genuinely overflows its region —
-	// an offset the layout would clamp away proves nothing.
+
 	for i := range 40 {
 		st.watches = append(st.watches,
 			watchOn(fmt.Sprintf("Filler %02d", i), fmt.Sprintf("fill-%d-id", i),
@@ -250,7 +206,7 @@ func TestLiveRefreshKeepsTheWatchesScreenStill(t *testing.T) {
 	}
 	m := poll(onWatches(t, st))
 	m.focus = paneCards
-	m.cursor[paneCards] = 30 // deep inside the first table
+	m.cursor[paneCards] = 30
 	(&m).scrollIntoView()
 
 	wasSec, wasIdx := m.watchCursorPos()
@@ -277,10 +233,6 @@ func TestLiveRefreshKeepsTheWatchesScreenStill(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshDefersUnderATakeover: the detail overlay is read once when
-// it opens, so a refresh under it would leave the reader studying numbers
-// the panes behind had already moved past. The pending refresh applies on
-// the first tick after the keyboard comes back.
 func TestLiveRefreshDefersUnderATakeover(t *testing.T) {
 	st := testStore()
 	m := poll(newTestModel(t, st))
@@ -311,9 +263,6 @@ func TestLiveRefreshDefersUnderATakeover(t *testing.T) {
 	}
 }
 
-// TestLivePollSkipsTheReadBehindAnOperation: an update-prices owns the
-// single connection, and a PRAGMA queued behind it is not a 6µs read. The
-// chain must survive the skip, or the feature dies at the first operation.
 func TestLivePollSkipsTheReadBehindAnOperation(t *testing.T) {
 	st := testStore()
 	m := poll(newTestModel(t, st))
@@ -335,10 +284,6 @@ func TestLivePollSkipsTheReadBehindAnOperation(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshRetiresWhenItGetsSlow is the growth guard. A refresh over
-// liveRefreshBudget retires the feature for the session, says why, and
-// leaves the manual key — which is how this can be always-on with no flag
-// and no config key to get wrong.
 func TestLiveRefreshRetiresWhenItGetsSlow(t *testing.T) {
 	st := testStore()
 	m := poll(atAllCards(t, newTestModel(t, st)))
@@ -356,8 +301,6 @@ func TestLiveRefreshRetiresWhenItGetsSlow(t *testing.T) {
 		t.Errorf("status %q does not say what it measured", m.status)
 	}
 
-	// Retired means retired: further changes are noticed and reported, and
-	// never re-read.
 	st.slowRead = 0
 	reads := st.binderListCalls
 	m = quiet(changed(st, m))
@@ -372,7 +315,6 @@ func TestLiveRefreshRetiresWhenItGetsSlow(t *testing.T) {
 	}
 }
 
-// TestManualReloadStillWorksAfterRetirement: the fallback has to be real.
 func TestManualReloadStillWorksAfterRetirement(t *testing.T) {
 	st := testStore()
 	m := poll(atAllCards(t, newTestModel(t, st)))
@@ -394,10 +336,6 @@ func TestManualReloadStillWorksAfterRetirement(t *testing.T) {
 	}
 }
 
-// TestLiveRefreshIgnoresOurOwnEdits guards the property the store test pins
-// at the SQLite level: browse must never chase its own writes. Here the
-// counter simply does not move, which is what the real PRAGMA does for this
-// connection's own commits.
 func TestLiveRefreshIgnoresOurOwnEdits(t *testing.T) {
 	st := testStore()
 	m := poll(newTestModel(t, st))
@@ -415,9 +353,6 @@ func TestLiveRefreshIgnoresOurOwnEdits(t *testing.T) {
 	}
 }
 
-// TestLiveConstantsMatchTheDesign pins the three numbers to the measurements
-// that chose them, so moving one is a deliberate act with a document to
-// argue against.
 func TestLiveConstantsMatchTheDesign(t *testing.T) {
 	if livePollInterval != 500*time.Millisecond {
 		t.Errorf("poll interval %v, design says 500ms", livePollInterval)
@@ -433,8 +368,6 @@ func TestLiveConstantsMatchTheDesign(t *testing.T) {
 	}
 }
 
-// TestLivePollChainReArms: one tick in, one tick scheduled, forever. A chain
-// that stops is a feature that silently dies mid-session.
 func TestLivePollChainReArms(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)

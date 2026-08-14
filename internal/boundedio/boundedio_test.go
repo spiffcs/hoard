@@ -21,8 +21,7 @@ func TestReaderPassesThroughUnderTheLimit(t *testing.T) {
 }
 
 func TestReaderAllowsExactlyTheLimit(t *testing.T) {
-	// An off-by-one here would reject a download that is precisely its
-	// declared size, which is the normal case and not an attack.
+
 	got, err := io.ReadAll(Limit(strings.NewReader("hello"), 5, "test"))
 	if err != nil {
 		t.Fatalf("a stream of exactly N bytes must be allowed: %v", err)
@@ -32,8 +31,6 @@ func TestReaderAllowsExactlyTheLimit(t *testing.T) {
 	}
 }
 
-// The property the package exists for: over the limit is an ERROR, never a
-// short read that reads as success.
 func TestReaderFailsRatherThanTruncating(t *testing.T) {
 	got, err := io.ReadAll(Limit(strings.NewReader("hello world"), 5, "the card bundle"))
 	if err == nil {
@@ -42,15 +39,12 @@ func TestReaderFailsRatherThanTruncating(t *testing.T) {
 	if !errors.Is(err, ErrTooLarge) {
 		t.Errorf("error does not wrap ErrTooLarge: %v", err)
 	}
-	// The message has to name the download, or a user seeing it in the wild
-	// cannot tell which of four fetches failed.
+
 	if !strings.Contains(err.Error(), "the card bundle") {
 		t.Errorf("error does not name the stream: %v", err)
 	}
 }
 
-// The contrast that motivates the package. io.LimitReader is a correctness
-// hazard here, and this test is the evidence rather than the claim.
 func TestIoLimitReaderWouldHaveTruncatedSilently(t *testing.T) {
 	got, err := io.ReadAll(io.LimitReader(strings.NewReader("hello world"), 5))
 	if err != nil {
@@ -59,8 +53,7 @@ func TestIoLimitReaderWouldHaveTruncatedSilently(t *testing.T) {
 	if string(got) != "hello" {
 		t.Fatalf("io.LimitReader behaviour changed: got %q", got)
 	}
-	// Reaching here means io.LimitReader reported success on a truncated
-	// stream. That is exactly the outcome Reader exists to avoid.
+
 }
 
 func TestLimitExpansionUsesTheDeclaredSize(t *testing.T) {
@@ -71,8 +64,7 @@ func TestLimitExpansionUsesTheDeclaredSize(t *testing.T) {
 }
 
 func TestLimitExpansionFallsBackWhenSizeIsUnknown(t *testing.T) {
-	// A missing Content-Length must not mean "unbounded": omitting a header is
-	// free for whoever is serving the response.
+
 	for _, size := range []int64{0, -1} {
 		b := LimitExpansion(strings.NewReader(""), size, 999, "test")
 		if b.N != 999 {
@@ -81,9 +73,6 @@ func TestLimitExpansionFallsBackWhenSizeIsUnknown(t *testing.T) {
 	}
 }
 
-// End to end against a real gzip bomb, because the unit tests above only prove
-// the arithmetic — this proves the thing actually stops a compressed stream
-// from expanding without bound.
 func TestStopsAGzipBomb(t *testing.T) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -101,7 +90,7 @@ func TestStopsAGzipBomb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The bound the production call sites use: MaxExpansion × declared size.
+
 	_, err = io.ReadAll(LimitExpansion(zr, compressed, 1<<20, "the bomb"))
 	if !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("a %.0f:1 stream was not stopped: %v",
@@ -109,14 +98,8 @@ func TestStopsAGzipBomb(t *testing.T) {
 	}
 }
 
-// A stream at the real measured ratio must pass, or the limit breaks the
-// application it is meant to protect.
 func TestAllowsTheRealWorldRatio(t *testing.T) {
-	// 8.00x is the ratio measured against Scryfall's default_cards bundle on
-	// 2026-08-13. The fixture has to VARY: the first version of this test
-	// repeated one identical line and compressed at 402x, which would have
-	// "passed" while proving nothing about real card data. Varying the fields
-	// puts it in the same order of magnitude as the real bundle.
+
 	var payload []byte
 	for i := range 40000 {
 		payload = append(payload, fmt.Sprintf(
@@ -150,8 +133,6 @@ func TestAllowsTheRealWorldRatio(t *testing.T) {
 	}
 }
 
-// LimitRatio is the bound the call sites use, so it gets the same two tests
-// the fixed limit does: it must stop a bomb and must not stop real data.
 func TestLimitRatioStopsABomb(t *testing.T) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -172,7 +153,7 @@ func TestLimitRatioStopsABomb(t *testing.T) {
 	if !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("bomb not stopped: read %d bytes, err %v", n, err)
 	}
-	// The point of the ratio bound: it stops EARLY, not after the full expansion.
+
 	if n > 8<<20 {
 		t.Errorf("stopped after %d bytes; expected to stop near the floor", n)
 	}

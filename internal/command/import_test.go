@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,25 +19,13 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// manaboxFixture is collsource's ManaBox sample, addressed relative to this
-// package rather than to the module root. `go test` runs each package with its
-// own directory as the working directory, so a module-root path only works
-// while the package sits at the module root — which stopped being true when
-// the commands moved under internal/.
 const manaboxFixture = "../collsource/testdata/manabox.csv"
 
-// The other two third-party exports, beside ManaBox's. collsource owns all
-// three so that the parser tests and these read the same bytes: a fixture that
-// drifted to suit one layer would quietly stop describing the other.
 const (
 	moxfieldFixture = "../collsource/testdata/moxfield.csv"
 	delverFixture   = "../collsource/testdata/delver.csv"
 )
 
-// stubFetch swaps the resolver's Scryfall lookup for an in-memory one over
-// the given cards, matching by the same keys the resolver indexes. Covers
-// deck add and import alike — they share cardResolver. Returns a call counter
-// so tests can see whether the name-fallback pass ran.
 func stubFetch(t *testing.T, cards ...scryfall.Card) *int {
 	t.Helper()
 	index := make(map[string]scryfall.Card, len(cards)*3)
@@ -69,9 +58,6 @@ func stubFetch(t *testing.T, cards ...scryfall.Card) *int {
 	return calls
 }
 
-// importCmd dispatches `hoard import` through the real tree, so these tests
-// cover the flag parsing and the one-file argument check as well as the
-// import itself.
 func importCmd(st *store.Store, args ...string) error {
 	_, err := execCmd(context.Background(), st, append([]string{"import"}, args...), false)
 	return err
@@ -87,8 +73,6 @@ func importStore(t *testing.T) *store.Store {
 	return st
 }
 
-// Fully priced printings, so fillPriceGaps finds no gap and never talks to
-// MTGJSON in tests.
 func importFixtures() []scryfall.Card {
 	return []scryfall.Card{
 		{ID: "sol-id-1", Set: "c21", CollectorNumber: "125", Name: "Sol Ring",
@@ -103,8 +87,6 @@ func importFixtures() []scryfall.Card {
 	}
 }
 
-// The ManaBox fixture: 2 Sol Ring + 1 foil Bolt in "Trade Binder", 1 Remora
-// with no binder name. Preserving binders must fan them out accordingly.
 func TestCmdImportPreservesManaBoxBinders(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -132,8 +114,6 @@ func TestCmdImportPreservesManaBoxBinders(t *testing.T) {
 	}
 }
 
-// A set+number Scryfall does not know still resolves through the second,
-// name-keyed pass rather than being reported unresolved.
 func TestCmdImportFallsBackToNames(t *testing.T) {
 	st := importStore(t)
 	calls := stubFetch(t, importFixtures()...)
@@ -174,32 +154,28 @@ func TestCmdImportDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// The sprint checkpoint, now with a deck in the source: export → import into a
-// fresh database → identical binder totals, with the deck's rows skipped
-// rather than poured into a binder as loose cards.
 func TestExportImportRoundTrip(t *testing.T) {
 	src := importStore(t)
 	cards := importFixtures()
-	if err := src.AddCardFinish(cards[0], "nonfoil", 2); err != nil {
+	if err := src.AddCardFinish(cards[0], finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	trade, err := src.CreateBinder("Trade")
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := src.AddCardFinishTo(trade, cards[0], "foil", 1); err != nil {
+	if err := src.AddCardFinishTo(trade, cards[0], finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	if err := src.AddCardFinishTo(trade, cards[2], "nonfoil", 3); err != nil {
+	if err := src.AddCardFinishTo(trade, cards[2], finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	// A deck too: before Container Kind existed, its cards came back as loose
-	// copies and inflated the binder totals.
+
 	if err := src.UpsertPrintings([]scryfall.Card{cards[1]}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := src.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]store.Entry{{ScryfallID: cards[1].ID, Finish: "nonfoil", Board: "main", Quantity: 4}}); err != nil {
+		[]store.Entry{{ScryfallID: cards[1].ID, Finish: finish.Nonfoil, Board: "main", Quantity: 4}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 
@@ -210,8 +186,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 	dst := importStore(t)
 	stubFetch(t, cards...)
-	// Partial, not clean: the deck's four Bolts are in the file and are not
-	// coming back this way. The binder halves below still have to be exact.
+
 	if err := importCmd(dst, "--preserve-binders", file); !errors.Is(err, errPartial) {
 		t.Fatalf("hoard import: err = %v, want the partial sentinel for the skipped deck rows", err)
 	}
@@ -239,7 +214,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 				dstBinders[i].Name, dstBinders[i].TotalCopies)
 		}
 	}
-	// No "Fish" binder either: the deck's rows were skipped, not renamed.
+
 	for _, b := range dstBinders {
 		if b.Name == "Fish" {
 			t.Error("the deck came back as a binder")
@@ -247,11 +222,6 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 }
 
-// A canonical export's deck rows are skipped, and the exit status has to say
-// so: this exact command against the real collection restored 356 of 2,235
-// copies and exited 0, so a backup script ran green while dropping 22 decks.
-// errPartial is what Run maps to exit 2 — "done, mostly" — and the rows that
-// could be imported are still imported.
 func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
 	const header = "Count,Name,Set,Collector Number,Finish,Condition,Scryfall ID," +
 		"Container,Container Kind,Board,Price USD\n"
@@ -274,7 +244,7 @@ func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
 		if !errors.Is(err, errPartial) {
 			t.Errorf("err = %v, want the partial sentinel (exit 2)", err)
 		}
-		// The binder half still landed: partial means done-mostly, not undone.
+
 		totals, _ := st.CollectionTotals()
 		if totals.TotalCopies != 2 {
 			t.Errorf("copies = %d, want the 2 binder copies to have been written anyway",
@@ -282,8 +252,6 @@ func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
 		}
 	})
 
-	// The rehearsal has to predict the real run, or it is not a rehearsal —
-	// and --dry-run is the form the bug was reported in.
 	t.Run("dry run", func(t *testing.T) {
 		st := importStore(t)
 		stubFetch(t, importFixtures()...)
@@ -292,8 +260,6 @@ func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
 		}
 	})
 
-	// And a file with nothing to skip still exits clean, so the status stays
-	// worth reading.
 	t.Run("no deck rows", func(t *testing.T) {
 		st := importStore(t)
 		stubFetch(t, importFixtures()...)
@@ -303,8 +269,6 @@ func TestCmdImportIsPartialWhenItSkipsDeckRows(t *testing.T) {
 	})
 }
 
-// Importing the same content twice is refused via the ledger; --again is the
-// explicit override, and a dry run neither records nor refuses.
 func TestCmdImportRefusesRepeats(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -337,10 +301,6 @@ func TestCmdImportRefusesRepeats(t *testing.T) {
 	}
 }
 
-// --format names one of five CSV dialects. An unknown value used to be carried
-// all the way to the CSV lexer, so `--format json` over a JSON file answered
-// with a complaint about a bare quote on line 2 and sent the reader looking for
-// a quoting problem that was not there.
 func TestCmdImportRejectsAnUnknownFormat(t *testing.T) {
 	st := importStore(t)
 	path := filepath.Join(t.TempDir(), "holdings.json")
@@ -356,8 +316,7 @@ func TestCmdImportRejectsAnUnknownFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("hoard import --format json succeeded, want a usage error")
 	}
-	// The value it could not honour, then the set it can, in `schema --kind`'s
-	// shape — not a lexing complaint about the file, which is well-formed.
+
 	if !strings.Contains(err.Error(), `unknown format "json"`) {
 		t.Errorf("err = %v, want it to name the value it refused", err)
 	}
@@ -368,11 +327,6 @@ func TestCmdImportRejectsAnUnknownFormat(t *testing.T) {
 	}
 }
 
-// The empty string is refused with the rest. It was a synonym for auto by
-// accident — collsource sniffs on anything falsy — and nothing ever offered it,
-// so the only way to send it is an unset variable in --format "$FMT", which is
-// this bug's own shape: a value the caller did not mean, honoured as something
-// plausible instead of questioned.
 func TestCmdImportRejectsAnEmptyFormat(t *testing.T) {
 	st := importStore(t)
 	err := importCmd(st, "--format", "", manaboxFixture)
@@ -384,14 +338,10 @@ func TestCmdImportRejectsAnEmptyFormat(t *testing.T) {
 	}
 }
 
-// importFormats restates a table collsource keeps to itself, so the restatement
-// is checked rather than trusted: every name the command accepts must be one
-// the parser will dispatch on. A missing column is the parser having got past
-// the name; an unknown-format complaint is this list having invented one.
 func TestImportFormatsAreAllRealToTheParser(t *testing.T) {
 	for _, format := range importFormats {
 		if format == "auto" {
-			continue // not a spec — the instruction to sniff for one
+			continue
 		}
 		_, err := collsource.Parse(strings.NewReader("a,b\n"), format)
 		if err != nil && strings.Contains(err.Error(), "unknown format") {
@@ -400,9 +350,6 @@ func TestImportFormatsAreAllRealToTheParser(t *testing.T) {
 	}
 }
 
-// The clean case: a named format that is real still imports exactly as it did.
-// The fixture is ManaBox's, named rather than sniffed, so the check that runs
-// first cannot have swallowed a file the parser would have accepted.
 func TestCmdImportNamedFormatIsUnchanged(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -418,18 +365,6 @@ func TestCmdImportNamedFormatIsUnchanged(t *testing.T) {
 	}
 }
 
-// A hoard CSV round trip is card-exact and value-approximate, and only the
-// first half was ever written down. 915 cards out, 915 cards in, $3,797.19 ->
-// $3,797.53: the whole 34 cents was one card whose price had moved between the
-// export and the import, because no importer reads a price from a file — every
-// dialect's price column is dropped, and hoard's own is not even mapped. That
-// is the right behaviour and it is indistinguishable, from the outside, from a
-// rounding bug in a program that handles money. The help page is where someone
-// checks before they decide which one they are looking at.
-//
-// Asserted on the page rather than left as prose in the source, because an
-// undocumented behaviour and a documented one differ only in a paragraph that
-// nothing keeps honest.
 func TestCmdImportHelpSaysPricesAreReDerived(t *testing.T) {
 	var b bytes.Buffer
 	renderHelp(&b, ui.Env{Width: 100}, "import")
@@ -442,18 +377,6 @@ func TestCmdImportHelpSaysPricesAreReDerived(t *testing.T) {
 	}
 }
 
-// A destination that does not exist is knowable from the store alone, and the
-// import used to find that out last: --binder with a typo resolved all 678 rows
-// of a real collection over the network — 4.6 seconds, with a progress counter
-// climbing to 75/678 — and only then asked whether the binder existed. The cost
-// is the smaller half. The counter is the larger one: it reports work being
-// done successfully, so the operator's read of the run is "it's working" right
-// up until the refusal, and a typo becomes five seconds of misplaced confidence.
-//
-// The resolver's call count is the assertion, not the elapsed time. A timing
-// test would measure the stub, which is instant either way; "the network was
-// never consulted" is the property the fix actually establishes, and it holds on
-// any machine.
 func TestCmdImportChecksTheBinderBeforeResolvingAnything(t *testing.T) {
 	st := importStore(t)
 	calls := stubFetch(t, importFixtures()...)
@@ -470,11 +393,6 @@ func TestCmdImportChecksTheBinderBeforeResolvingAnything(t *testing.T) {
 			"the destination check belongs above the resolve, not below it", *calls)
 	}
 
-	// The refusal names the way out. Both commands are real — `hoard binder new
-	// NAME` and `hoard binder list` are in the binder command's own tree — and a
-	// test is what keeps that true, since an error message is the one place a
-	// command that does not exist can be advertised for a release without
-	// anything failing.
 	for _, want := range []string{"hoard binder new", "hoard binder list"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to name %q as the fix", err, want)
@@ -490,10 +408,6 @@ func TestCmdImportChecksTheBinderBeforeResolvingAnything(t *testing.T) {
 	}
 }
 
-// The create-it advice is attached to exactly one refusal. An ambiguous
-// fragment is the other way BinderByRef says no, and there "create it with
-// binder new" is advice to make a third binder named like the two that already
-// matched — the reader's problem is that they have too many, not none.
 func TestCmdImportDoesNotAdviseCreatingAnAmbiguousBinder(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -516,13 +430,6 @@ func TestCmdImportDoesNotAdviseCreatingAnAmbiguousBinder(t *testing.T) {
 	}
 }
 
-// The guard's date is the one date in the CLI a user ever saw as RFC 3339 in
-// UTC, which on a US clock reads as tomorrow — an otherwise excellent refusal
-// undermined by looking like it had the wrong day.
-//
-// Checked through the command so the assertion covers the sentence a user
-// actually reads; ledger_test.go pins the conversion itself against a fixed
-// zone, which is the half that can be got wrong invisibly on a UTC machine.
 func TestCmdImportRefusalDatesReadLikeEveryOtherDate(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -566,9 +473,6 @@ func TestCmdImportRejectsBadFlagCombos(t *testing.T) {
 	}
 }
 
-// A pre-rename export whose Container column says "Binder" keeps landing in
-// the default binder after it is renamed: the old name is a reserved alias,
-// not a new binder to create.
 func TestCmdImportAliasesOldDefaultNameAfterRename(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -600,12 +504,6 @@ func TestCmdImportAliasesOldDefaultNameAfterRename(t *testing.T) {
 	}
 }
 
-// A lone dash reads the CSV from stdin, the spelling `hoard add --file` has
-// always accepted. ImportOptions has documented its Display as a path or
-// stdin since it was written; only this command never delivered the second
-// half, and the round trip import itself recommends —
-// `hoard export --deck X --format text | hoard deck add --file -` — needed a
-// temporary file without it.
 func TestCmdImportStdin(t *testing.T) {
 	st := importStore(t)
 	stubFetch(t, importFixtures()...)
@@ -634,27 +532,6 @@ func TestCmdImportStdin(t *testing.T) {
 	}
 }
 
-// The three third-party exports, each imported end to end into a database of
-// its own.
-//
-// collsource's tests prove the headers sniff and the rows parse; they stop at
-// the parser. These carry each fixture the rest of the way — resolve, then
-// store — because that is where a format's compatibility is actually decided,
-// and until now only ManaBox was taken that far: Moxfield reached a database
-// only through a synthetic one-row CSV written to exercise the name fallback,
-// and Delver reached one never.
-//
-// Asserted as the complete set of holdings rather than as a total, because a
-// total hides the two failures that actually happen — a row silently dropped
-// and a row imported twice — by letting them cancel. Sorted by name and finish
-// rather than taken in the store's own order, which is by value, so that a
-// price change in the fixtures cannot reorder the expectation.
-//
-// Condition rides along deliberately. These three apps do not share a
-// vocabulary — ManaBox speaks Cardmarket's seven ("excellent"), Moxfield and
-// Delver TCGplayer's five ("Lightly Played", "Played") — and nothing else
-// proves both scales survive as far as the database rather than folding to
-// unknown somewhere past the parser.
 func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 	type holding struct {
 		Name      string
@@ -671,7 +548,7 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 			format:  "manabox",
 			fixture: manaboxFixture,
 			want: []holding{
-				// Cardmarket's "excellent" folds onto lp; "near_mint" is nm.
+
 				{"Lightning Bolt", "foil", 1, "lp"},
 				{"Mystic Remora", "nonfoil", 1, "nm"},
 				{"Sol Ring", "nonfoil", 2, "nm"},
@@ -681,8 +558,7 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 			format:  "moxfield",
 			fixture: moxfieldFixture,
 			want: []holding{
-				// The quoted comma in this name has to survive the CSV reader,
-				// the resolver's name-keyed pass and the insert to land here.
+
 				{"Borrowing 100,000 Arrows", "nonfoil", 1, "nm"},
 				{"Lightning Bolt", "foil", 1, "lp"},
 				{"Sol Ring", "nonfoil", 2, "nm"},
@@ -692,27 +568,22 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 			format:  "delver",
 			fixture: delverFixture,
 			want: []holding{
-				// "Played" is Cardmarket's word but TCGplayer's position: mp.
+
 				{"Lightning Bolt", "foil", 1, "mp"},
-				// Written "2x" in the fixture.
+
 				{"Sol Ring", "nonfoil", 2, "nm"},
 			},
 		},
 	} {
 		t.Run(tc.format, func(t *testing.T) {
 			st := importStore(t)
-			// The shared fixtures plus the one card only the Moxfield export
-			// names. Added here rather than to importFixtures() because that
-			// list is the resolver's whole universe for every other test in
-			// this file, and widening it would weaken their unresolved paths.
+
 			stubFetch(t, append(importFixtures(), scryfall.Card{
 				ID: "arrows-id-1", Set: "ptk", CollectorNumber: "31",
 				Name: "Borrowing 100,000 Arrows", ScryfallURL: "http://arrows",
 				PriceUSD: f(0.5), Finishes: []string{"nonfoil"},
 			})...)
 
-			// Sniffed, not named. --format would prove the parser runs; it
-			// would not prove hoard recognizes the file a user actually has.
 			if err := importCmd(st, tc.fixture); err != nil {
 				t.Fatalf("hoard import %s: %v", tc.fixture, err)
 			}
@@ -723,7 +594,7 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 			}
 			got := make([]holding, 0, len(rows))
 			for _, r := range rows {
-				got = append(got, holding{r.Name, r.Finish, r.Quantity, r.Condition})
+				got = append(got, holding{r.Name, r.Finish.String(), r.Quantity, r.Condition})
 			}
 			sort.Slice(got, func(i, j int) bool {
 				if got[i].Name != got[j].Name {
@@ -739,9 +610,6 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 	}
 }
 
-// A file that will not parse names its source, and for a pipe the source is
-// the word stdin — a dash in that sentence would read like a flag. Matches
-// what `watch import -` already says.
 func TestCmdImportStdinNamesTheSource(t *testing.T) {
 	st := importStore(t)
 	withStdin(t, "not,a,collection,csv\n")

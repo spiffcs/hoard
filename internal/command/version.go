@@ -12,11 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// printVersion answers `hoard version`: the build's identity, then the legal
-// notices the Fan Content Policy and Scryfall's guidelines require the product
-// to carry (docs/data-licensing.md §7). Commit and date read "unknown" on
-// source builds — Resolve already folds the VCS revision into the version
-// line, so nothing is lost there.
 func printVersion(w io.Writer, env ui.Env) {
 	dim := env.Dim()
 	fmt.Fprintf(w, "hoard %s\n", buildinfo.Resolve())
@@ -27,7 +22,6 @@ func printVersion(w io.Writer, env ui.Env) {
 	fmt.Fprintln(w, dim(buildinfo.DataCredit))
 }
 
-// NewCmdVersion answers without a database, so it works before there is one.
 func NewCmdVersion(a *app) *cobra.Command {
 	return cli.NoStore(&cobra.Command{
 		Use:   "version",

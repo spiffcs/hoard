@@ -57,15 +57,14 @@ func TestArchidektToDeckFixture(t *testing.T) {
 		t.Fatalf("entries = %d, want 126", len(d.Entries))
 	}
 
-	// Board + finish distribution should match the fixture probe.
 	boards := map[string]int{}
 	finishes := map[string]int{}
 	var commanderName string
 	for _, e := range d.Entries {
 		boards[e.Board]++
-		finishes[e.Finish]++
+		finishes[e.Finish.String()]++
 		if e.Board == BoardCommander {
-			// Every entry carries a Scryfall ID from card.uid.
+
 			if e.Ident.ID == "" {
 				t.Error("commander entry missing Scryfall ID")
 			}
@@ -84,7 +83,7 @@ func TestArchidektToDeckFixture(t *testing.T) {
 	if commanderName == "" {
 		t.Error("no commander identifier captured")
 	}
-	// Every entry should carry a Scryfall ID (Archidekt provides card.uid).
+
 	for _, e := range d.Entries {
 		if e.Ident.ID == "" {
 			t.Errorf("entry %v missing Scryfall ID", e.Ident)

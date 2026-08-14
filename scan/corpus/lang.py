@@ -33,23 +33,16 @@ HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "manifest.tsv"
 BACKUP = HERE / "manifest.tsv.bak"
 
-# Scryfall asks for 50-100ms between requests. Theirs is a free service holding
-# up a hobby project; the corpus is 231 cards and this runs once.
 DELAY = 0.1
 API = "https://api.scryfall.com/cards/"
-# Scryfall rejects requests without these with a bare 400 — no message, no hint.
-# `fetch.sh` never hit it because curl sends a User-Agent of its own; urllib's
-# default is refused.
 HEADERS = {
     "User-Agent": "hoard-corpus/1.0 (+https://github.com/spiffcs/hoard)",
     "Accept": "application/json",
 }
 
-
 def read_manifest():
     rows = MANIFEST.read_text().rstrip("\n").split("\n")
     return rows[0].split("\t"), [r.split("\t") for r in rows[1:]]
-
 
 def language_of(card_id):
     """The printing's language, or None if Scryfall would not say.
@@ -63,7 +56,6 @@ def language_of(card_id):
             return json.load(r).get("lang") or None
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
         return None
-
 
 def main():
     header, rows = read_manifest()
@@ -81,8 +73,6 @@ def main():
         print(f"no lang column; {len(rows)} rows would be fetched")
         return 0
 
-    # Back up before touching anything. The manifest is tracked, so this is
-    # belt and braces — but it is also the only ground truth the corpus has.
     shutil.copy2(MANIFEST, BACKUP)
     print(f"backed up to {BACKUP.name}", file=sys.stderr)
 
@@ -97,8 +87,6 @@ def main():
             print(f"  {i}/{len(rows)}", file=sys.stderr)
         time.sleep(DELAY)
 
-    # Verify before replacing, not after. This is the check whose absence
-    # truncated the manifest last time.
     if len(out) != len(rows):
         print(f"ABORT: built {len(out)} rows from {len(rows)}; manifest untouched",
               file=sys.stderr)
@@ -121,7 +109,6 @@ def main():
     if failed:
         print(f"  {len(failed)} lookups failed and are marked '?'", file=sys.stderr)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

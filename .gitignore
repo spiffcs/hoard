@@ -1,6 +1,3 @@
-# --- Standard Go (github.com/github/gitignore Go.gitignore) ---
-
-# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
@@ -8,102 +5,58 @@
 *.dylib
 *.p12
 
-# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
 go.work
 go.work.sum
 
-# env file
 .env
 
-# --- Project-specific ---
-
-# binny-managed tool binaries (`make tools`); .binny.yaml is the tracked pin list
 .tool/
 .tmp/
 
-# goreleaser output (`.tool/goreleaser release --snapshot`)
 /dist/
 
-# chronicle's changelog outputs (`make changelog`); release notes are generated,
-# not tracked
 /CHANGELOG.md
 /VERSION
 
-# Compiled binary (produced by `go build -o hoard .`)
 /hoard
 
-# Native scan helper build output (produced by `make scan`); Swift source is tracked
 /bin/
 
-# SwiftPM's build directory for the scan helper package
 scan/hoard-scan/.build/
 
-# The iPhone capture head. project.yml is the source of truth and is tracked;
-# the Xcode project it generates, the build output, and the local signing team
-# are not. A team identifier is account data, not project configuration.
 scan/hoard-scan-ios/*.xcodeproj/
 scan/hoard-scan-ios/.build/
 scan/hoard-scan-ios/Signing.xcconfig
-# App Store Connect API keys. scripts/release-scan-ios.sh tells you to put the .p8 in
-# ~/.appstoreconnect/private_keys, but altool also searches ./private_keys, so
-# the repo root is one `mv` away from committing a credential that can upload
-# builds as you. The .p8 downloads exactly once and cannot be re-downloaded.
 *.p8
 /private_keys/
-# Info.plist is generated from project.yml's info.properties block. Tracking it
-# would give the same settings two homes, and the checked-in one would rot.
 scan/hoard-scan-ios/Info.plist
 
-# Local SQLite database(s) — the real hoard lives in a per-user data dir
 hoard.db
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-# Pre-migration backups (hoard.db.bak-v1-20260729)
 *.db.bak-*
 
-# macOS folder cruft
 .DS_Store
 
-# Claude Code local session state (worktrees, caches); device settings live
-# in ~/.claude, so nothing here is shared project config
 .claude/
 
-# Scan-tuning artifacts: personal card photos and session telemetry
 scan-fixtures/
 leader-debug/
 
-# The parser corpus: third-party card images, fetched not authored.
-# Labels beside them are tracked — see scan/corpus/README.md.
 scan/corpus/images/
 
-# The foil-sparkle corpus. Unlike the two above, these photographs CANNOT be
-# refetched, so the part the detector is fitted and scored on — cards/ — is
-# tracked on purpose. Only the bulky derivatives are ignored: full/ is the
-# whole flatten (44 MB) and stills/ the original camera frames (165 MB), both
-# re-derivable from stills/ if it survives.
 scan/foil-corpus/full/
 scan/foil-corpus/stills/
 
-# Generated at release time from the binary's own cobra tree.
 completions/
 manpages/
 
-# The scanner's fixture frames: ~58MB of camera stills fetched by
-# `make scan-fixtures`, not carried in the repository. The goldens beside them
-# ARE tracked — they are the assertions, and they diff readably. See
-# scan/fixtures/frames.oci.
 scan/fixtures/frames/
 
-# Coverage output from `make coverage`.
 coverage.out

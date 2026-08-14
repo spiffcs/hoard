@@ -9,25 +9,14 @@ import (
 	"github.com/spiffcs/hoard/internal/tui"
 )
 
-// layeredSearcher answers card lookups locally where it can and from Scryfall
-// where it cannot, holding the whole cache policy in one place.
-//
-// The rule: an empty local result is a miss, not an answer, and a miss goes to
-// the API — which is what keeps a card printed since the last build addable.
-//
-// local is nil when there is no usable catalog, making this exactly the Scryfall
-// client hoard always used. It is an interface rather than the concrete catalog so
-// the policy can be tested against fakes.
 type layeredSearcher struct {
 	local  tui.Searcher
 	remote tui.Searcher
 }
 
-// newSearcher composes the two, given a catalog that may be nil or empty.
 func newSearcher(cat *catalog.Catalog) tui.Searcher {
 	s := layeredSearcher{remote: scryfallSearcher{}}
-	// An empty catalog is worse than no catalog: every lookup would miss, pay
-	// for a query, and go to the API anyway.
+
 	if cat != nil && cat.CardCount() > 0 {
 		s.local = cat
 	}
@@ -52,16 +41,6 @@ func (s layeredSearcher) SearchPrints(ctx context.Context, name string) ([]scryf
 	return s.remote.SearchPrints(ctx, name)
 }
 
-// NamedFuzzy prefers the catalog and falls through to the API on any local
-// miss — including a local refusal. A card from a set newer than the last
-// catalog build looks exactly like junk to the catalog (nothing plausible to
-// match against), and treating that "no" as final made every newly-released
-// card unscannable. What keeps the fallthrough safe from the endpoint that
-// resolves "option" to "Opt" is that the remote adapter applies the same
-// cardname.Plausible identity check the catalog does — junk dies in either
-// layer; a genuinely new card dies only in the stale one. The match rides
-// along from whichever layer answered, computed with the same cardname
-// functions, so a score means the same thing either way.
 func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	if s.local == nil {
 		return s.remote.NamedFuzzy(ctx, text)
@@ -73,26 +52,10 @@ func (s layeredSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall
 	return s.remote.NamedFuzzy(ctx, text)
 }
 
-// Compile-time proof that the composed searcher still offers the scan flow's
-// collector-block rescue. resolveByBlock can only ask for it at runtime, so
-// without this line a signature change there is a silent capability loss, not
-// a build failure — which is exactly what happened when the block lookup grew
-// its lang parameter and this adapter kept the old two-argument method.
 var _ tui.BlockSearcher = layeredSearcher{}
 
-// PrintBySetNumberLang resolves a printing from its collector block, catalog
-// only. There is no API fallthrough on purpose: the block is a last resort
-// reached when the name would not read at all, and a network round trip per
-// unreadable title is the cost the scan flow least wants to pay. A card newer
-// than the catalog simply stays unidentified, as it would have anyway.
-//
-// lang comes from the card's own set row and rides along untouched, because
-// it is what separates a foreign-only printing from the English namesake it
-// shares a set and number with. Dropping it here would hand the catalog an
-// ambiguous block and get a refusal back.
 func (s layeredSearcher) PrintBySetNumberLang(ctx context.Context, set, number, lang string) (*scryfall.Card, error) {
-	// local is the general Searcher interface, so the capability is asked for
-	// rather than assumed — a nil or fake local simply declines.
+
 	byBlock, ok := s.local.(tui.BlockSearcher)
 	if !ok {
 		return nil, nil
@@ -100,11 +63,6 @@ func (s layeredSearcher) PrintBySetNumberLang(ctx context.Context, set, number, 
 	return byBlock.PrintBySetNumberLang(ctx, set, number, lang)
 }
 
-// NamedFuzzyLocal resolves against the catalog alone. The scan flow uses it
-// for fallback OCR lines, which can never auto-commit: there the fallthrough
-// above would spend a network round trip per junk line and, at best, name a
-// review-queue entry. With no catalog to consult there is nothing to prefer,
-// so it degrades to the ordinary layered path.
 func (s layeredSearcher) NamedFuzzyLocal(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	if s.local == nil {
 		return s.remote.NamedFuzzy(ctx, text)
@@ -112,9 +70,6 @@ func (s layeredSearcher) NamedFuzzyLocal(ctx context.Context, text string) (*scr
 	return s.local.NamedFuzzy(ctx, text)
 }
 
-// scryfallSearcher adapts the package-level scryfall functions to tui.Searcher.
-// It lives here, beside the layering policy, so internal/tui itself never
-// talks to the network.
 type scryfallSearcher struct{}
 
 func (scryfallSearcher) Autocomplete(ctx context.Context, q string) ([]string, error) {
@@ -124,16 +79,6 @@ func (scryfallSearcher) SearchPrints(ctx context.Context, name string) ([]scryfa
 	return scryfall.SearchPrints(ctx, name)
 }
 
-// NamedFuzzy wraps the unchanged API call and computes the match itself, with
-// the same cardname functions the catalog uses — the API doesn't report how it
-// matched, and inventing a different scoring here would let the two layers
-// disagree about what "exact" means.
-//
-// The Plausible gate makes this an identity check like the catalog's own:
-// Scryfall's endpoint is a *search* that resolves "option" to the card "Opt"
-// because the query contains the name, which is right for a human typing and
-// wrong for OCR. Refusing implausible answers here is what makes it safe for
-// the layered searcher to consult the API on every local miss.
 func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, cardname.Match, error) {
 	card, err := scryfall.NamedFuzzy(ctx, text)
 	if err != nil || card == nil {
@@ -141,10 +86,7 @@ func (scryfallSearcher) NamedFuzzy(ctx context.Context, text string) (*scryfall.
 	}
 	n, c := cardname.Normalize(text), cardname.Normalize(card.Name)
 	if !cardname.Plausible(text, card.Name) {
-		// Same nomination rule as the catalog: a truncated title comes back
-		// flagged PrefixOnly rather than as nothing, so the scan resolver
-		// can confirm it against the frame's collector number. Anything else
-		// implausible stays refused.
+
 		if cardname.PrefixCandidate(text, card.Name) {
 			return card, cardname.Match{Similarity: cardname.Similarity(n, c), PrefixOnly: true}, nil
 		}

@@ -8,17 +8,6 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// scryfallLikeFetch models the two /cards/collection behaviours the retry pass
-// exists to survive, rather than the permissive lookup fixtureFetch offers.
-//
-// Both are measured against the live API, not assumed:
-//
-//   - a name narrowed by a set matches only if the card really has that set.
-//     Archidekt writes "(mb1)" for cards Scryfall does not list under mb1, and
-//     the bare name finds them.
-//   - a split card is matched by its FRONT FACE, never by the printed
-//     "A // B" name. {"name":"Fire // Ice"} is not found; {"name":"Wear"}
-//     returns the card, whose Name is then the full "Wear // Tear".
 func scryfallLikeFetch(calls *int, cards ...scryfall.Card) func(context.Context, []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
 	return func(_ context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
 		*calls++
@@ -62,10 +51,6 @@ func scryfallLikeFetch(calls *int, cards ...scryfall.Card) func(context.Context,
 	}
 }
 
-// A name carrying a set that the card does not have must fall back to the bare
-// name. Before this, the retry pass skipped every identifier that already had a
-// name, so a name+set miss was simply unresolved — which is what an Archidekt
-// text export produces for its whole maybeboard.
 func TestResolveRetriesWhenTheSetIsWrong(t *testing.T) {
 	bronto := scryfall.Card{ID: "bronto-id", Set: "xln", CollectorNumber: "175",
 		Name: "Ancient Brontodon", Finishes: []string{"nonfoil"}}
@@ -90,8 +75,6 @@ func TestResolveRetriesWhenTheSetIsWrong(t *testing.T) {
 	}
 }
 
-// A split card is written "A // B" by every decklist site and matched by
-// neither half-joined name at Scryfall. The retry sends the front face.
 func TestResolveRetriesSplitCardsByFrontFace(t *testing.T) {
 	wear := scryfall.Card{ID: "wear-id", Set: "dgm", CollectorNumber: "135",
 		Name: "Wear // Tear", Finishes: []string{"nonfoil"}}
@@ -113,10 +96,6 @@ func TestResolveRetriesSplitCardsByFrontFace(t *testing.T) {
 	}
 }
 
-// The retry must not fire for an identifier that is a bare name already: the
-// request would be byte-identical to the one that just failed, so a second
-// round trip buys nothing. This is the guard the wrong-set case had to be
-// carved out of, so it is asserted rather than assumed.
 func TestResolveDoesNotRetryABareName(t *testing.T) {
 	var calls int
 	r := &Resolver{Fetch: scryfallLikeFetch(&calls)}
@@ -141,7 +120,7 @@ func TestFrontFace(t *testing.T) {
 		{"Wear // Tear", "Wear"},
 		{"Branchloft Pathway // Boulderloft Pathway", "Branchloft Pathway"},
 		{"Sol Ring", "Sol Ring"},
-		// Not a split marker: no spaces around it. Nothing to cut.
+
 		{"Borrowing 100,000 Arrows", "Borrowing 100,000 Arrows"},
 	} {
 		if got := frontFace(tc.in); got != tc.want {

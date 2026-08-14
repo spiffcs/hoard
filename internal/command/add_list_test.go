@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"strings"
 	"testing"
@@ -12,9 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/tui"
 )
 
-// The paste path end to end: lines resolve through the shared pipeline, land
-// in the named binder as one transaction, and the ledger refuses the same
-// bytes twice.
 func TestAddListIntoBinder(t *testing.T) {
 	st := exportStore(t)
 	stubFetch(t, watchCard())
@@ -30,15 +28,13 @@ func TestAddListIntoBinder(t *testing.T) {
 	}
 	got := map[string]int{}
 	for _, r := range rows {
-		got[r.Finish] += r.Quantity
+		got[r.Finish.String()] += r.Quantity
 	}
-	// The fixture binder already held 1 foil Sol Ring; the paste adds 2
-	// non-foil and 1 more foil.
+
 	if got["nonfoil"] != 2 || got["foil"] != 2 {
 		t.Errorf("Trade holds %v, want 2 nonfoil / 2 foil", got)
 	}
 
-	// The same bytes again are the ledger's case, --again the override.
 	if err := addList(ctx, st, bufEnv(io.Discard), list, "paste", "Trade", false); err == nil ||
 		!strings.Contains(err.Error(), "--again") {
 		t.Errorf("re-paste = %v, want the ledger refusal", err)
@@ -48,8 +44,6 @@ func TestAddListIntoBinder(t *testing.T) {
 	}
 }
 
-// A messy paste adds what it can and exits partial: unreadable lines and
-// unresolvable cards are reported, not fatal, and not silent.
 func TestAddListSkipsAndReportsPartial(t *testing.T) {
 	st := exportStore(t)
 	stubFetch(t, watchCard())
@@ -63,7 +57,7 @@ func TestAddListSkipsAndReportsPartial(t *testing.T) {
 	rows, _ := st.ListCollectionByFinish()
 	found := false
 	for _, r := range rows {
-		if r.Name == "Sol Ring" && r.Finish == "nonfoil" {
+		if r.Name == "Sol Ring" && r.Finish == finish.Nonfoil {
 			found = true
 		}
 	}
@@ -81,7 +75,6 @@ func TestAddListNothingReadable(t *testing.T) {
 	}
 }
 
-// mustBinder resolves a binder id by name for assertions.
 func mustBinder(t *testing.T, st *store.Store, name string) int64 {
 	t.Helper()
 	b, err := st.BinderByRef(name)
@@ -91,17 +84,13 @@ func mustBinder(t *testing.T, st *store.Store, name string) int64 {
 	return b.ID
 }
 
-// The scanner's guessed finishes leave an audit trail through the adder: a
-// guessed commit banks a row, and a finish correction — the re-key
-// ReplacesFinish asks for — spends the matching one.
 func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 	st := exportStore(t)
 	add := storeAdder(st)
 	card := scryfall.Card{ID: "brainsurge-id", Set: "mh3", CollectorNumber: "399",
 		Name: "Brainsurge", ScryfallURL: "http://x"}
 
-	// A blind commit: nonfoil by default, flagged as a guess.
-	if err := add(tui.Result{Card: card, Finish: "nonfoil", Qty: 1,
+	if err := add(tui.Result{Card: card, Finish: finish.Nonfoil, Qty: 1,
 		FinishGuessed: true}); err != nil {
 		t.Fatalf("guessed add: %v", err)
 	}
@@ -113,10 +102,8 @@ func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 		t.Fatalf("guesses = %+v, want the blind commit banked", rows)
 	}
 
-	// The correction: same card, evidence arrived, row re-keyed to foil. The
-	// guess is answered and the audit row goes with it.
-	if err := add(tui.Result{Card: card, Finish: "foil", Qty: 1,
-		ReplacesFinish: "nonfoil"}); err != nil {
+	if err := add(tui.Result{Card: card, Finish: finish.Foil, Qty: 1,
+		ReplacesFinish: finish.Nonfoil}); err != nil {
 		t.Fatalf("correction: %v", err)
 	}
 	rows, err = st.GuessedFinishes()
@@ -127,8 +114,7 @@ func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 		t.Errorf("guesses after correction = %+v, want none", rows)
 	}
 
-	// An evidence-backed add never banks an audit row.
-	if err := add(tui.Result{Card: card, Finish: "foil", Qty: 1}); err != nil {
+	if err := add(tui.Result{Card: card, Finish: finish.Foil, Qty: 1}); err != nil {
 		t.Fatalf("evidenced add: %v", err)
 	}
 	if rows, _ := st.GuessedFinishes(); len(rows) != 0 {
@@ -136,13 +122,6 @@ func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 	}
 }
 
-// --qty and --foil describe one copy of one printing, which is a thing only
-// the URL form has. On the list path each line carries its own count and
-// finish; on the picker path the picker asks. Both used to drop the flags
-// without a word — `add --file l.txt --qty 4 --foil` reported "Added 1 cards"
-// — which is exactly what the --binder refusal two lines above them exists to
-// prevent. The default is left alone: only a flag the user actually typed is
-// refused, so `hoard add --file l.txt` is untouched.
 func TestCmdAddRefusesPerCopyFlagsOffTheURLForm(t *testing.T) {
 	list := deckFile(t, "list.txt", "1 Sol Ring\n")
 	for _, c := range []struct {
@@ -153,13 +132,11 @@ func TestCmdAddRefusesPerCopyFlagsOffTheURLForm(t *testing.T) {
 		{"list --qty", []string{"add", "--file", list, "--qty", "4"}, "--qty"},
 		{"list --foil", []string{"add", "--file", list, "--foil"}, "--foil"},
 		{"list both", []string{"add", "--file", list, "--qty", "4", "--foil"}, "--qty"},
-		// An explicit --qty 1 is the default's value, not the default: the
-		// list still ignores it, so it is refused like any other.
+
 		{"list --qty 1", []string{"add", "--file", list, "--qty", "1"}, "--qty"},
-		// No --file and no arguments is the piped list spelled without
-		// flags, and it must refuse before it reads a byte of the pipe.
+
 		{"implicit pipe", []string{"add", "--qty", "4"}, "--qty"},
-		// The picker path, where --binder is already refused.
+
 		{"picker --qty", []string{"add", "Sol", "Ring", "--qty", "4"}, "--qty"},
 		{"picker --foil", []string{"add", "Sol", "Ring", "--foil"}, "--foil"},
 	} {
@@ -182,8 +159,6 @@ func TestCmdAddRefusesPerCopyFlagsOffTheURLForm(t *testing.T) {
 	}
 }
 
-// The control against over-refusal: an untyped flag is still the default, and
-// a list add with neither flag goes through exactly as it did.
 func TestCmdAddListWithoutPerCopyFlagsStillAdds(t *testing.T) {
 	st := exportStore(t)
 	stubFetch(t, watchCard())

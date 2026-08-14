@@ -1,25 +1,7 @@
-// Turning a CardReading into the line the Go side already understands.
-//
-// CardKit shares no code with ScanKit, but it must not invent a second dialect
-// of the protocol: the Go side is one parser, and "an older hoard binary must
-// keep parsing what a newer helper emits" applies whichever pipeline emitted it.
-// So the shapes come from ScanWire and only the mapping lives here.
-//
-// The mapping is deliberately narrow. CardKit's own types carry more than the
-// wire does — where a number came from, how confident the segmentation was —
-// and the temptation is to widen the contract to fit. Anything added here is
-// added to a format two binaries and three years of goldens depend on, so the
-// rule is that a field crosses only when the Go side has a use for it.
-
 import Foundation
 import ScanWire
 
 extension CardReading {
-    /// scanEvent is this reading as the `scan` event the parent expects.
-    ///
-    /// `rotation` is reported back rather than applied — the caller has already
-    /// baked orientation into the pixels, and an event that claimed to have
-    /// rotated them would invite a second turn downstream.
     public func scanEvent(
         rotation: Int, auto: Bool? = nil, fireReason: String? = nil,
         holdDelta: Double? = nil, faceDelta: Double? = nil
@@ -33,72 +15,17 @@ extension CardReading {
             setCode: printing.setCode,
             bottomLines: bandLines,
             cards: cardEntry.map { [$0] } ?? [],
-            // `located` maps onto bandAnchored rather than getting a field of
-            // its own: the wire's word for it is already "was the band anchored
-            // to a detected card, or did it fall back to a fraction of the
-            // frame" — which is exactly the distinction, and the Go side
-            // already declines to trust an unanchored read.
             bandAnchored: located,
             auto: auto,
             fireReason: fireReason,
-            // The measurements behind `fireReason`, which clear the bar this
-            // file sets — the Go side has a use for them, and it is a use a
-            // boolean cannot serve. `fireReason: "replaced"` says the trigger
-            // believes a different card is on the mat; `faceDelta` says how
-            // strongly, which is what decides whether that belief outranks the
-            // parent's own same-card floor or defers to it.
-            //
-            // `holdDelta` decides nothing and crosses anyway: `movedFaceMax`
-            // is interpolated rather than measured, and re-fitting it needs
-            // both numbers in something a log analysis can read.
             holdDelta: holdDelta,
             faceDelta: faceDelta,
             collectorAlts: nil,
-            // The printed foil marker, when the set row carried one. Left nil
-            // rather than "nonfoil" when it did not: the Go side's
-            // finishFromEvidence tells a read finish from a defaulted one, and
-            // flattening that distinction is how a foil records silently as
-            // nonfoil.
             finishHint: printing.finish.isEmpty ? nil : printing.finish,
             language: scryfallLanguage(printing.language))
     }
 
-    /// The single-card entry, or nothing when the capture found nothing.
-    ///
-    /// Nil is the important case and it was missing. This built an entry
-    /// unconditionally, so a capture of bare desk — no card located, no title,
-    /// no band — still crossed the wire as a card whose every field was empty,
-    /// and the parent dutifully queued it as "nothing readable". Seven of ten
-    /// review cases in one live session were that: five fired 1.6-2.0s *before*
-    /// the real card committed, as the operator's hand was still moving, and
-    /// the rest during idle gaps of a minute or more with nothing on the desk.
-    ///
-    /// The macOS helper has never done this. Its `empty-desk` fixture pins the
-    /// contract in one line — a frame with no cards yields an empty list, not
-    /// junk entries — and its golden is literally `[]`. This is CardKit
-    /// catching up to a rule that already existed.
-    ///
-    /// The test is "did the capture learn anything a card would tell it", not
-    /// "was a card located". A card the segmenter missed but whose title read
-    /// anyway is a real card and a legitimate review case.
-    ///
-    /// Two ways to qualify, and the first is why "any text at all" is not the
-    /// bar. `chooseTitle` falls back to the first line whatever it looks like,
-    /// so a capture that caught only a power/toughness box arrives with a
-    /// title of "0/1" — which crossed the wire as a card and queued live as
-    /// `couldn't identify "0/1"`. A scrap is not a name. `plausibleTitle`
-    /// already knows this and already rejects it; it just was not being asked.
-    ///
-    /// A band read qualifies on its own, even with no plausible title. That is
-    /// the glare-blown-title case, and it is the one the review queue exists
-    /// for: the footer names the printing, so a human can finish the job. Live,
-    /// a capture whose title read "2" carried a perfect `1993-2002 ... 46/350`
-    /// and was rightly kept.
     private var cardEntry: CardEntry? {
-        // The title is checked as well as the lines it came from, so this does
-        // not depend on a caller having populated both. In the live path
-        // `chooseTitle` always draws from `lines`, but a reading assembled any
-        // other way should answer the same question the same way.
         guard !bandLines.isEmpty
             || plausibleTitle(title)
             || lines.contains(where: plausibleTitle)
@@ -110,78 +37,23 @@ extension CardReading {
             collectorNumber: printing.number,
             setCode: printing.setCode,
             source: located ? "crop" : "frame",
-            // On the *card entry*, which is what the parent actually reads.
-            //
-            // The first attempt at this set the Event's top-level finishHint
-            // instead, and the difference is invisible until it matters: the
-            // top-level fields are the compatibility path for a helper too old
-            // to send a card list, so `CardList()` falls back to them only when
-            // `cards` is empty. A capture that sends both puts the finish in
-            // one place and has it read from the other — which is exactly how a
-            // foil Deserted Temple committed as nonfoil twice.
             finishHint: printing.finish,
-            // The set row's language code, crossing for the first time.
-            //
-            // It has been read, validated against a closed vocabulary and
-            // unit-tested since the row was first parsed, and then dropped
-            // right here — the rule being that a field crosses only when the Go
-            // side has a use for it. It has one now, and it is one nothing else
-            // can serve: Scryfall keeps a foreign-only printing beside its
-            // English namesake under the same set and collector number,
-            // separated by a marker the card does not print, so the number
-            // alone always picks the English row. `war/97` is Liliana,
-            // Dreadhorde General at $7.95 and `war/97★` the Japanese alternate
-            // art at $112.73.
-            //
-            // Nil rather than "" when nothing was read, for the reason
-            // finishHint is: the Go side must tell a read language from a
-            // defaulted one, and the parent's rule is that unknown never counts
-            // as agreement.
             language: scryfallLanguage(printing.language),
             finishSource: printing.finishSource.isEmpty ? nil : printing.finishSource,
-            // What the sparkle reader measured, sent whether or not it decided
-            // anything. A verdict without its measurement is exactly what made
-            // the first live session of this feature unreadable: four foils came
-            // back nonfoil and the log held no number that could say why.
             sparkleScore: sparkle?.luma.map { Double($0.score) },
             sparkleOffsetU: sparkle?.luma.map { Double($0.offsetU) },
             sparkleOffsetV: sparkle?.luma.map { Double($0.offsetV) },
             sparkleContrast: sparkle?.luma.map { Double($0.contrast) },
-            // Both channels on the wire, always, whichever one decided. A
-            // session that could only see the winner could not tell whether the
-            // colour channel is earning its place.
             sparkleChromaScore: sparkle?.chroma.map { Double($0.score) },
             sparkleChromaContrast: sparkle?.chroma.map { Double($0.contrast) },
-            // A number lifted out of a copyright row is upgrade-only evidence
-            // on the Go side, and mislabelling it as a band read is how a
-            // guessed printing gets treated as a confirmed one.
             numberSource: printing.numberSource == .copyrightRow ? "copyright" : nil,
             copyrightYear: printing.year,
-            // Sent. Fitted and scored on 16 stills from the real rig: 13
-            // answered, 13 correct, none wrong, 3 abstained. The Go side still
-            // only reorders a printing list with this — it cannot auto-commit
-            // on a border — so the cost of the three abstentions is a card that
-            // queues exactly as it does today.
             borderColor: border.color,
             borderSource: border.source,
-            // The frame family, from the footer's own shape: retro frames
-            // (and their modern retro-frame reprints) credit the artist on a
-            // row of their own, modern frames never do. A same-set
-            // regular/retro twin pair differs in nothing else on this wire,
-            // and the parent needs the difference to pick a printing when the
-            // digits never read. Nil on silence — an unreadable footer is not
-            // a modern one.
             frameStyle: retroFooter ? "retro" : nil)
     }
 }
 
-/// scryfallLanguage maps the code printed on a card to Scryfall's spelling.
-///
-/// The frame prints a two-letter code and Scryfall mostly agrees, lower-cased.
-/// Chinese is the exception: the card says CS or CT for simplified and
-/// traditional, Scryfall says zhs and zht. Returning nil for an unread code
-/// keeps "not read" distinct from "read as English", which is the distinction
-/// the parent's agreement check turns on.
 public func scryfallLanguage(_ printed: String) -> String? {
     let code = printed.uppercased()
     if code.isEmpty { return nil }

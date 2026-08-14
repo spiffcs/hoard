@@ -23,7 +23,6 @@ func deckAddModel(t *testing.T, fn DeckAddFunc) Model {
 	return next.(Model)
 }
 
-// typePrompt types into the open prompt and commits with enter.
 func typePrompt(t *testing.T, m Model, text string) (Model, tea.Cmd) {
 	t.Helper()
 	if m.prompt == nil {
@@ -51,7 +50,7 @@ func TestDeckURLPromptValidates(t *testing.T) {
 		if cmd != nil || mm.prompt == nil || mm.prompt.err == "" {
 			t.Fatalf("%q: want a validation refusal, got err=%q", bad, mm.prompt.err)
 		}
-		// Wipe for the next round.
+
 		next, _ := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
 		m = next.(Model)
 	}
@@ -114,8 +113,6 @@ func TestDeckFilePromptValidates(t *testing.T) {
 	}
 }
 
-// The escape hatch the deck-URL help points at: a decklist exported from a
-// provider that blocks fetching imports without leaving the browser.
 func TestDeckFileCommitStartsOpWithPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "my-edgar-edh.txt")
 	if err := os.WriteFile(path, []byte("1 Sol Ring\n1 Arcane Signet\n"), 0o644); err != nil {
@@ -144,8 +141,6 @@ func TestDeckFileCommitStartsOpWithPath(t *testing.T) {
 	}
 }
 
-// The prompt names the file command, so the two must not drift apart: a
-// renamed command with a stale help line is advice that goes nowhere.
 func TestDeckURLHelpPointsAtTheFileCommand(t *testing.T) {
 	m := deckAddModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
 		return OpReport{}, nil
@@ -184,7 +179,7 @@ func TestOpReportAutoOpensTextView(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "Foo") || !strings.Contains(v, "importing deck") {
 		t.Fatalf("takeover missing content:\n%s", v)
 	}
-	// esc reveals refreshed panes with the summary still on the status line.
+
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
 	if m.text != nil || !strings.Contains(m.status, "imported deck") {
@@ -211,7 +206,7 @@ func TestOpOutcomeConfirmIsStaged(t *testing.T) {
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "Import it again") {
 		t.Fatalf("confirm = %+v, want the follow-up staged", m.confirm)
 	}
-	// Beside the question, which is the only place a confirm's keys appear.
+
 	if !strings.Contains(m.statusLine(), "y import again") {
 		t.Errorf("statusLine = %q", m.statusLine())
 	}
@@ -305,7 +300,7 @@ func TestImportAlreadyImportedStagesConfirmAndReruns(t *testing.T) {
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "Import it again?") {
 		t.Fatalf("confirm = %+v, want the run-again question", m.confirm)
 	}
-	// y re-runs with again=true.
+
 	nxt, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m = nxt.(Model)
 	next2, _ := m.Update(findOpDone(t, cmd2))
@@ -353,13 +348,12 @@ func exportModel(t *testing.T, calls *[]exportCall) Model {
 		t.Fatalf("New: %v", err)
 	}
 	m.ctx = context.Background()
-	// Leave the sets lens the browser opens on: a set row is not exportable
-	// (TestExportRefusesSetRow), and these tests export the binder.
+
 	m.setsMode = false
 	if err := m.loadContainers(); err != nil {
 		t.Fatalf("loadContainers: %v", err)
 	}
-	// Step past the merged all-cards row: these tests export the binder.
+
 	m.cursor[paneContainers] = 1
 	if err := m.loadCards(); err != nil {
 		t.Fatalf("loadCards: %v", err)
@@ -379,7 +373,6 @@ func TestExportContainerPrefillsSlugAndRefsByID(t *testing.T) {
 		t.Fatalf("prefill = %q", m.prompt.text)
 	}
 
-	// Commit to a real temp dir; then the format prompt, prefilled csv.
 	dir := t.TempDir()
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
 	m = next.(Model)
@@ -387,7 +380,7 @@ func TestExportContainerPrefillsSlugAndRefsByID(t *testing.T) {
 	if m.prompt == nil || m.prompt.text != "csv" {
 		t.Fatalf("format prompt = %+v", m.prompt)
 	}
-	m, _ = typePrompt(t, m, "") // accept the prefill
+	m, _ = typePrompt(t, m, "")
 	if m.confirm != nil {
 		t.Fatal("no overwrite confirm for a fresh file")
 	}
@@ -395,7 +388,7 @@ func TestExportContainerPrefillsSlugAndRefsByID(t *testing.T) {
 		t.Fatalf("export not run: %v", calls)
 	}
 	c := calls[0]
-	// The default binder is the selected container in the test store.
+
 	if c.binderRef == "" || c.deckRef != "" {
 		t.Fatalf("refs = %+v, want a binder id ref", c)
 	}
@@ -478,7 +471,7 @@ func TestExportOverwriteConfirmOnlyWhenFileExists(t *testing.T) {
 func TestExportContainerHiddenOffHoldings(t *testing.T) {
 	var calls []exportCall
 	m := exportModel(t, &calls)
-	m = key(m, "v") // movers
+	m = key(m, "v")
 	for i := range m.commands {
 		if m.commands[i].id == "export.container" && m.commands[i].applies(&m) {
 			t.Fatal("export.container must hide off the holdings view")
@@ -499,8 +492,6 @@ func watchImportModel(t *testing.T, fn WatchImportFunc) Model {
 	return m
 }
 
-// The command exists exactly where the watches live: on the watches view,
-// with the import closure injected.
 func TestWatchImportCommandScope(t *testing.T) {
 	m := watchImportModel(t, func(context.Context, progress.Fn, string) (OpReport, error) {
 		return OpReport{}, nil

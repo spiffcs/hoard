@@ -8,8 +8,6 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// catalog seeds a few printings with real Scryfall-shaped documents so the
-// generated columns have something to resolve from.
 func catalog(t *testing.T, s *Store) {
 	t.Helper()
 	docs := map[string]string{
@@ -66,7 +64,7 @@ func TestMatchingCardIDs(t *testing.T) {
 	}{
 		{"rarity", TraitFilter{Rarities: []string{"mythic"}}, []string{"bb", "bolas", "solitude"}},
 		{"type substring", TraitFilter{Types: []string{"creature"}}, []string{"bolas", "solitude"}},
-		// Two type terms are ANDed, which is what typing two words means.
+
 		{"types are ANDed", TraitFilter{Types: []string{"legendary", "creature"}}, []string{"bolas"}},
 		{"artist", TraitFilter{Artists: []string{"jesper"}}, []string{"bb"}},
 		{"set name", TraitFilter{SetNames: []string{"ultimate"}}, []string{"bb", "tomb"}},
@@ -74,7 +72,7 @@ func TestMatchingCardIDs(t *testing.T) {
 		{"cmc greater", TraitFilter{CMC: []NumCond{{">", 3}}}, []string{"bolas", "solitude"}},
 		{"cmc range", TraitFilter{CMC: []NumCond{{">=", 1}, {"<=", 2}}}, []string{"bb", "sol"}},
 		{"colour", TraitFilter{Colors: []string{"B"}}, []string{"bb", "bolas"}},
-		// Colours are ANDed too: a two-colour term wants both, not either.
+
 		{"colours ANDed", TraitFilter{Colors: []string{"B", "R"}}, []string{"bolas"}},
 		{"colour and rarity", TraitFilter{Colors: []string{"W"}, Rarities: []string{"mythic"}}, []string{"solitude"}},
 		{"nothing matches", TraitFilter{Rarities: []string{"common"}}, []string{}},
@@ -88,11 +86,6 @@ func TestMatchingCardIDs(t *testing.T) {
 	}
 }
 
-// The filter's predicate columns are VIRTUAL over raw_json, and the planner
-// left to itself scans the table — re-parsing kilobytes of JSON per row on
-// every filter keystroke. MatchingCardIDs pins the v27 trait index instead;
-// this asserts the pin holds, since losing it would not fail any correctness
-// test, only bring the stutter back.
 func TestMatchingCardIDsReadsFromTheTraitIndex(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -119,25 +112,19 @@ WHERE type_line IS NOT NULL AND lower(type_line) LIKE ?`, "%creature%")
 	}
 }
 
-// color:U must not match a UB card by way of its "B" entry, which is what a
-// substring match on the stored JSON array would do.
 func TestColorMatchesMembersNotSubstrings(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
 
-	// Nicol Bolas is ["B","R","U"]; Bitterblossom is ["B"].
 	if got := matched(t, s, TraitFilter{Colors: []string{"U"}}); !slices.Equal(got, []string{"bolas"}) {
 		t.Errorf("color:U = %v, want only the card that actually has U", got)
 	}
-	// And the empty array is not "every colour".
+
 	if got := matched(t, s, TraitFilter{Colors: []string{"W"}}); slices.Contains(got, "tomb") {
 		t.Errorf("colourless Ancient Tomb matched color:W: %v", got)
 	}
 }
 
-// A trait query on rows with no stored document must return nothing rather than
-// an arbitrary subset: NULL fails LIKE silently, and a filter that quietly drops
-// half the collection is worse than one that visibly finds none of it.
 func TestMatchingCardIDsSkipsUnenrichedRows(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -158,8 +145,6 @@ func TestMatchingCardIDsSkipsUnenrichedRows(t *testing.T) {
 	}
 }
 
-// An empty filter means "no opinion" and must not be turned into a query with
-// an empty WHERE clause.
 func TestMatchingCardIDsEmptyFilter(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -172,8 +157,6 @@ func TestMatchingCardIDsEmptyFilter(t *testing.T) {
 	}
 }
 
-// Values are bound, never interpolated. If they were assembled into the SQL
-// this would drop the table rather than politely matching nothing.
 func TestMatchingCardIDsBindsHostileValues(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -189,7 +172,6 @@ func TestMatchingCardIDsBindsHostileValues(t *testing.T) {
 		}
 	}
 
-	// The table is still there and still populated.
 	var n int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM cards`).Scan(&n); err != nil {
 		t.Fatalf("cards table is gone: %v", err)
@@ -199,8 +181,6 @@ func TestMatchingCardIDsBindsHostileValues(t *testing.T) {
 	}
 }
 
-// The comparison operator is the one fragment that cannot be bound, so it is
-// checked against a allow-list instead of trusted.
 func TestMatchingCardIDsRejectsAnInvalidOperator(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -232,11 +212,6 @@ func TestEnrichedCount(t *testing.T) {
 	}
 }
 
-// An empty catalog is what a fresh hoard has, and it is the case the aggregate
-// gets wrong if it is written carelessly: enrichedExpr is summed rather than
-// counted, and SUM returns NULL over zero rows where COUNT returns 0. The scan
-// into an int fails outright, so this is a first-run defect rather than a
-// wrong number.
 func TestEnrichedCountOnAnEmptyCatalog(t *testing.T) {
 	s := newTestStore(t)
 
@@ -249,9 +224,6 @@ func TestEnrichedCountOnAnEmptyCatalog(t *testing.T) {
 	}
 }
 
-// "common" is a substring of "uncommon", so a substring match on rarity returns
-// the exact opposite of what was asked for. Rarity is a closed set and is
-// matched exactly.
 func TestRarityMatchesExactlyNotBySubstring(t *testing.T) {
 	s := newTestStore(t)
 	catalog(t, s)
@@ -262,7 +234,7 @@ func TestRarityMatchesExactlyNotBySubstring(t *testing.T) {
 	if got := matched(t, s, TraitFilter{Rarities: []string{"uncommon"}}); !slices.Equal(got, []string{"sol"}) {
 		t.Errorf("rarity:uncommon = %v, want the uncommon", got)
 	}
-	// Case still does not matter.
+
 	if got := matched(t, s, TraitFilter{Rarities: []string{"MYTHIC"}}); len(got) != 3 {
 		t.Errorf("rarity:MYTHIC = %v, want the three mythics", got)
 	}

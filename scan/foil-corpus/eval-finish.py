@@ -26,7 +26,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-
 def read_rigs():
     rigs = {}
     with open(os.path.join(HERE, "labels.tsv")) as fh:
@@ -45,7 +44,6 @@ def read_rigs():
                         (row["id"], img, row["finish"], row["physical"]))
     return rigs
 
-
 def probe_one(probe, entry):
     sid, img, want, name = entry
     out = subprocess.run([probe, "--image", img], capture_output=True, text=True)
@@ -57,7 +55,7 @@ def probe_one(probe, entry):
     except (json.JSONDecodeError, IndexError):
         pass
     hint = card.get("finishHint") or ""
-    committed = hint if hint else "nonfoil"  # the shipping default
+    committed = hint if hint else "nonfoil"
     return {
         "id": sid, "name": name, "want": want,
         "hint": hint, "source": card.get("finishSource") or "",
@@ -67,7 +65,6 @@ def probe_one(probe, entry):
         "chroma": card.get("sparkleChromaScore"),
         "chromaContrast": card.get("sparkleChromaContrast"),
     }
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -109,7 +106,6 @@ def main():
         if len(commit_ok) != len(results):
             worst_ok = False
     sys.exit(0 if worst_ok else 1)
-
 
 if __name__ == "__main__":
     main()

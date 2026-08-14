@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"testing"
 
@@ -12,12 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// A stale or missing catalog must not price a refresh.
-//
-// Deps.Confirm's nil default declines — which is every cron job and every
-// piped run — so a stale catalog would otherwise be used forever, and
-// update-prices would report success over numbers that had not moved since
-// the catalog was built.
 func TestEnsureCatalogDeclinedIsNotUsable(t *testing.T) {
 	cat, err := catalog.Open(t.TempDir())
 	if err != nil {
@@ -31,8 +26,7 @@ func TestEnsureCatalogDeclinedIsNotUsable(t *testing.T) {
 			notes = append(notes, ev.Note)
 		}
 	}
-	// An empty catalog is the clearest case of "cannot price from this": it
-	// has no prices at all. Confirm declines explicitly.
+
 	d := Deps{Catalog: cat, Confirm: func(string) bool { return false }}
 	if EnsureCatalog(context.Background(), d, p) {
 		t.Error("an empty catalog was reported as usable for prices")
@@ -41,13 +35,11 @@ func TestEnsureCatalogDeclinedIsNotUsable(t *testing.T) {
 		t.Errorf("notes = %v, want the fall-through-to-API narration", notes)
 	}
 
-	// The nil-Confirm default must behave identically.
 	if EnsureCatalog(context.Background(), Deps{Catalog: cat}, nil) {
 		t.Error("nil Confirm accepted a download")
 	}
 }
 
-// No catalog at all is a supported state, not an error.
 func TestEnsureCatalogNilCatalog(t *testing.T) {
 	if EnsureCatalog(context.Background(), Deps{}, nil) {
 		t.Error("a nil catalog was reported as usable")
@@ -63,11 +55,6 @@ func TestCatalogStatusNilCatalog(t *testing.T) {
 	}
 }
 
-// The stale-catalog subtlety: when the catalog's prices cannot be trusted
-// (here: empty catalog, declined download), update-prices must drop the
-// catalog entirely and fetch every card live — a catalog card carries
-// prices, and upserting stale ones would report success over yesterday's
-// numbers.
 func TestUpdatePricesDropsUnusableCatalog(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {
@@ -79,14 +66,11 @@ func TestUpdatePricesDropsUnusableCatalog(t *testing.T) {
 	tomb := scryfall.Card{ID: "tomb", Set: "uma", CollectorNumber: "236",
 		Name: "Ancient Tomb", ScryfallURL: "http://z", PriceUSD: f(30)}
 	for _, c := range []scryfall.Card{sol, tomb} {
-		if err := st.AddCardFinish(c, "nonfoil", 1); err != nil {
+		if err := st.AddCardFinish(c, finish.Nonfoil, 1); err != nil {
 			t.Fatalf("AddCardFinish: %v", err)
 		}
 	}
 
-	// CheckStatus on a fresh empty catalog may consult the bundle listing;
-	// the outcome is order-independent (the Empty branch is checked first),
-	// so the test is deterministic online or off.
 	cat, err := catalog.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("catalog.Open: %v", err)

@@ -1,52 +1,30 @@
 package store
 
-// Price corrections: the prices hoard refused, and what it used instead.
-//
-// See migration v29 for why this table is allowed to outrank the catalog, and
-// internal/pricing/contradiction.go for the judgement that fills it. This file
-// is only the storage: what the sweep needs to read, and how its answer lands.
-
 import (
 	"database/sql"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"time"
 )
 
-// PriceCandidate is one owned printing-and-finish the contradiction sweep can
-// check, with the price it would be reported at if no correction existed.
-//
-// Price is the *uncorrected* figure (see catalogPriceUSD) and is zero when
-// nothing prices this finish at all — an unpriced card cannot be contradicted,
-// but it is still carried here so a caller can tell "no price" from "not a
-// candidate" without a second query.
 type PriceCandidate struct {
 	ScryfallID string
 	SetCode    string
-	Finish     string
+	Finish     finish.Finish
 	Price      float64
 
-	// ProductID is the printing's TCGplayer product, and AltProductID and
-	// EtchedProductID the separately-sold treated foil and etched products
-	// when they exist. Which one prices this row's finish is the caller's
-	// judgement — see pricing.productFor.
 	ProductID       string
 	AltProductID    string
 	EtchedProductID string
 }
 
-// PriceCandidates lists every owned printing-and-finish that TCGplayer sells a
-// product for, so the contradiction sweep has something to compare against.
-//
-// Held finishes only. A foil price on a card owned only in non-foil is not
-// worth a network round trip and could never reach a total, which is the same
-// rule unpricedPredicate applies for the same reason.
 func (s *Store) PriceCandidates() ([]PriceCandidate, error) {
 	rows, err := s.db.Query(`
 SELECT DISTINCT c.scryfall_id, c.set_code, e.finish,
        COALESCE(CASE
            WHEN e.finish = 'etched' THEN ` + catalogPriceEtched + `
-           WHEN e.finish = 'foil'   THEN ` + catalogPriceFoil + `
-           ELSE ` + catalogPriceUSD + ` END, 0),
+           WHEN e.finish = 'foil'    THEN ` + catalogPriceFoil + `
+           WHEN e.finish = 'nonfoil' THEN ` + catalogPriceUSD + ` END, 0),
        COALESCE(c.tcg_product_id, ''),
        COALESCE(c.tcg_alt_product_id, ''),
        COALESCE(c.tcg_etched_product_id, '')
@@ -72,35 +50,16 @@ WHERE COALESCE(c.tcg_product_id, '') <> ''
 	return out, rows.Err()
 }
 
-// PriceOverride is one printing's corrections, one finish at a time — the
-// shape the sweep produces and the worklist reads.
 type PriceOverride struct {
 	ScryfallID string
-	Finish     string
-	// Price is the substitute and Refused the figure it replaced.
+	Finish     finish.Finish
+
 	Price, Refused float64
-	// Source names where the substitute came from and Reason why the refusal
-	// happened, both stored verbatim for display.
+
 	Source, Reason string
 	AsOf           string
 }
 
-// ReplacePriceOverrides makes the corrections for the printings in checked say
-// exactly this and nothing else, in one transaction.
-//
-// Replacement rather than an upsert, because a correction that no longer
-// applies has to disappear. The refused figures are transient by nature:
-// TCGplayer's market price for a preorder becomes real the day the card starts
-// selling, and a correction that outlived its evidence would go on quietly
-// restating a stale ask as the card's value.
-//
-// checked is what bounds that deletion, and passing the wrong thing here is
-// the dangerous mistake this signature exists to prevent. It must be the
-// printings whose asks were genuinely re-read this pass — not every printing
-// owned. A sweep cut short by an unreachable catalog produces no corrections,
-// and deleting on that basis would restore the refused price as the card's
-// value and look like a repair. An empty checked therefore changes nothing at
-// all, which is the correct answer to "nothing was examined".
 func (s *Store) ReplacePriceOverrides(overrides []PriceOverride, checked []string) error {
 	if len(checked) == 0 {
 		return nil
@@ -110,8 +69,7 @@ func (s *Store) ReplacePriceOverrides(overrides []PriceOverride, checked []strin
 		return err
 	}
 	defer tx.Rollback()
-	// Chunked because checked is the whole owned collection on an ordinary
-	// run, well past what one statement should carry as bind parameters.
+
 	const chunk = 400
 	for start := 0; start < len(checked); start += chunk {
 		batch := checked[start:min(start+chunk, len(checked))]
@@ -129,10 +87,8 @@ func (s *Store) ReplacePriceOverrides(overrides []PriceOverride, checked []strin
 		return tx.Commit()
 	}
 
-	// One row per printing with a column per finish, so the corrections are
-	// folded here rather than written a row at a time.
 	type row struct {
-		price, refused map[string]float64
+		price, refused map[finish.Finish]float64
 		source, reason string
 	}
 	byCard := map[string]*row{}
@@ -140,7 +96,7 @@ func (s *Store) ReplacePriceOverrides(overrides []PriceOverride, checked []strin
 	for _, o := range overrides {
 		r, ok := byCard[o.ScryfallID]
 		if !ok {
-			r = &row{price: map[string]float64{}, refused: map[string]float64{}}
+			r = &row{price: map[finish.Finish]float64{}, refused: map[finish.Finish]float64{}}
 			byCard[o.ScryfallID], order = r, append(order, o.ScryfallID)
 		}
 		r.price[o.Finish], r.refused[o.Finish] = o.Price, o.Refused
@@ -158,8 +114,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	}
 	defer stmt.Close()
 	now := time.Now().UTC().Format(time.RFC3339)
-	null := func(m map[string]float64, finish string) any {
-		if v, ok := m[finish]; ok {
+	null := func(m map[finish.Finish]float64, f finish.Finish) any {
+		if v, ok := m[f]; ok {
 			return v
 		}
 		return nil
@@ -167,8 +123,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	for _, id := range order {
 		r := byCard[id]
 		if _, err := stmt.Exec(id,
-			null(r.price, "nonfoil"), null(r.price, "foil"), null(r.price, "etched"),
-			null(r.refused, "nonfoil"), null(r.refused, "foil"), null(r.refused, "etched"),
+			null(r.price, finish.Nonfoil), null(r.price, finish.Foil), null(r.price, finish.Etched),
+			null(r.refused, finish.Nonfoil), null(r.refused, finish.Foil), null(r.refused, finish.Etched),
 			r.source, r.reason, now); err != nil {
 			return err
 		}
@@ -176,8 +132,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	return tx.Commit()
 }
 
-// PriceOverrideRow is one correction with enough of the card beside it to be
-// listed without a second lookup.
 type PriceOverrideRow struct {
 	PriceOverride
 	Name            string
@@ -186,14 +140,8 @@ type PriceOverrideRow struct {
 	Quantity        int
 }
 
-// PriceOverrides lists every correction in force, newest cards first by name,
-// for the worklist. Unpivoted back to one row per finish: the table stores a
-// column per finish to keep the valuation join cheap, but a reader wants the
-// corrections one at a time.
 func (s *Store) PriceOverrides() ([]PriceOverrideRow, error) {
-	// Unpivoted with UNION ALL, the same shape effectivePrices uses: SQLite has
-	// no LATERAL, and three explicit branches read better than a CASE per
-	// column anyway.
+
 	rows, err := s.db.Query(`
 WITH corrections AS (
     SELECT scryfall_id, 'nonfoil' AS finish, price_usd AS price,

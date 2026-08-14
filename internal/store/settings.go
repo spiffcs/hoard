@@ -1,13 +1,7 @@
 package store
 
-// The settings table: small key-value preferences that should survive a
-// restart — the penny filters' state first. Preferences, not data: losing
-// this table costs a toggle, never a card.
-
 import "fmt"
 
-// Settings returns every stored preference. The table is a handful of
-// rows, so it reads whole.
 func (s *Store) Settings() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT key, value FROM settings`)
 	if err != nil {
@@ -25,7 +19,6 @@ func (s *Store) Settings() (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// SaveSettings upserts the given preferences, leaving others untouched.
 func (s *Store) SaveSettings(kv map[string]string) error {
 	if len(kv) == 0 {
 		return nil

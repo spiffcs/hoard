@@ -1,29 +1,5 @@
 package tui
 
-// An end-to-end replay of a captured session: every saved frame goes through
-// the real helper, the real resolution, and the real verdict against the real
-// catalog, and reports what the scanner would have done with it.
-//
-// The fixture sweep (scan/fixtures/sweep.sh) proves what the *reader* reads.
-// It cannot prove the thing a session is actually judged on — how many cards
-// land in review — because that decision is all on this side of the wire. This
-// closes that gap, so "the tool got better" can be measured against the very
-// frames a session queued rather than argued from the code.
-//
-// The reader is cardkit-probe, which is CardKit — the same pipeline the phone
-// runs — driven over an image file. That is the point: the frames were captured
-// by the phone, so replaying them through anything else would score a reader
-// the session never used.
-//
-// Skipped unless pointed at a session, since it needs both a built probe and a
-// populated catalog:
-//
-//	HOARD_REPLAY_FRAMES=/path/to/capture-frames \
-//	go test ./internal/tui -run TestSessionReplay -v
-//
-// Optional: HOARD_REPLAY_CATALOG (defaults to the user cache location),
-// HOARD_REPLAY_HELPER (defaults to bin/cardkit-probe in the repo).
-
 import (
 	"context"
 	"encoding/json"
@@ -68,10 +44,6 @@ func replayCatalog(t *testing.T) *catalog.Catalog {
 	return cat
 }
 
-// frameOrder sorts frames by their numeric component so the report reads in
-// capture order rather than lexically (capture-10 before capture-2). Both
-// name shapes carry their order in the digits: capture-N-ocr.png by sequence,
-// remote-still-<epoch ms>.jpg by wall clock.
 func frameOrder(paths []string) {
 	num := func(p string) int {
 		base := filepath.Base(p)
@@ -95,11 +67,6 @@ func TestSessionReplay(t *testing.T) {
 	cat := replayCatalog(t)
 	defer cat.Close()
 
-	// Two name shapes, one per helper generation: the Continuity-era
-	// capture-N-ocr.png, and remote-still-<ms>.jpg, which is the only thing
-	// the current phone helper writes (PhotoDecode.saveRemoteStill). The old
-	// glob alone made this harness silently skip every session captured since
-	// the switch.
 	frames, err := filepath.Glob(filepath.Join(dir, "capture-*-ocr.png"))
 	if err != nil || len(frames) == 0 {
 		frames, err = filepath.Glob(filepath.Join(dir, "remote-still-*.jpg"))
@@ -113,7 +80,7 @@ func TestSessionReplay(t *testing.T) {
 	for _, frame := range frames {
 		out, err := exec.Command(helper, "--image", frame, "--rotate", "0").Output()
 		if err != nil {
-			// Exit code 3 is the reader's "nothing readable", not a failure.
+
 			if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 3 {
 				t.Errorf("%s: reader failed: %v", filepath.Base(frame), err)
 				continue
@@ -135,19 +102,13 @@ func TestSessionReplay(t *testing.T) {
 			msg := m.resolveCardCmd(1, c, len(cards))().(resolveDoneMsg)
 			it := msg.item
 
-			// The phantom rules live in onResolveDone rather than verdict, so
-			// mirror the one that decides whether an entry is a card at all.
 			if it.canonical == "" && it.errText == "" && len(cards) > 1 && !hasCollectorBlock(it.raw) {
 				killed++
 				t.Logf("%-12s KILLED   %q", label, it.ocrLine)
 				continue
 			}
 			auto, finish, note := verdict(it)
-			// The border the helper read, and — for a pre-1998 pile, where the
-			// pile itself is the ground truth — the set now sitting on top of
-			// the queue because of it. That top row is what the user accepts
-			// with one keystroke, so it is the thing whose accuracy has to be
-			// scored before border is ever allowed to commit on its own.
+
 			border := ""
 			if it.raw.BorderColor != "" {
 				border = fmt.Sprintf("  border=%s", it.raw.BorderColor)

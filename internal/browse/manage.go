@@ -1,26 +1,19 @@
 package browse
 
-// Watch and binder management from inside the browser: staging removals,
-// the add-watch prompt, and the binder create/rename prompts. The store
-// methods arrive through the Editor interface; undo pairs mirror the
-// existing card/deck removals.
-
 import (
 	"context"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/progress"
-	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// askWatchRemoval stages removing one watch. Undo re-adds it — LastState
-// resets, which re-arms the alert: the safe direction.
 func (m *Model) askWatchRemoval(w store.WatchStatus) {
 	m.confirm = &pendingConfirm{
 		prompt: fmt.Sprintf("remove the %s %s watch on %s?", w.Op, ui.Money(w.Threshold), w.Display),
@@ -46,8 +39,6 @@ func (m *Model) askWatchRemoval(w store.WatchStatus) {
 	}
 }
 
-// askBinderRemoval stages removing an empty binder; the store refuses a
-// non-empty one and that message lands on the status line as-is.
 func (m *Model) askBinderRemoval(sel *container) {
 	name := sel.Name
 	id := sel.ID
@@ -59,7 +50,7 @@ func (m *Model) askBinderRemoval(sel *container) {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			// Empty by precondition, so recreating it is a faithful undo.
+
 			m.undoable(undoAction{
 				desc: "binder " + name,
 				undo: func(e Editor) error {
@@ -74,7 +65,6 @@ func (m *Model) askBinderRemoval(sel *container) {
 	}
 }
 
-// promptNewBinder opens the create-binder prompt.
 func (m *Model) promptNewBinder() {
 	m.prompt = &prompt{
 		label: "new binder name",
@@ -88,16 +78,11 @@ func (m *Model) promptNewBinder() {
 				desc: "binder " + text,
 				undo: func(e Editor) error { return e.DeleteBinder(id) },
 			})
-			// Creating a binder promises "switch to it", which the sets
-			// pane cannot show — leave sets mode so focusContainer finds
-			// the new row.
+
 			m.setsMode = false
 			m.refresh()
 			m.focusContainer(id)
-			// The card pane follows the selection to the new binder's empty
-			// state — refresh() reloaded it for the cursor's old position,
-			// and a "created" receipt over someone else's cards reads as
-			// the create having gone somewhere it didn't.
+
 			if err := m.loadCards(); err != nil {
 				m.setError(err)
 				return nil
@@ -108,8 +93,6 @@ func (m *Model) promptNewBinder() {
 	}
 }
 
-// promptRenameBinder opens the rename prompt for the selected binder,
-// prefilled with its current name.
 func (m *Model) promptRenameBinder() {
 	sel := m.selectedContainer()
 	switch {
@@ -146,41 +129,34 @@ func (m *Model) promptRenameBinder() {
 	}
 }
 
-// focusContainer moves the left cursor to a container by id.
 func (m *Model) focusContainer(id int64) {
 	for i, c := range m.containers {
 		if c.ID == id {
 			m.cursor[paneContainers] = i
 			m.scrollIntoView()
-			// The selection scopes the analytical views, so a programmatic
-			// jump re-derives like a cursor move would.
+
 			m.deriveView()
 			return
 		}
 	}
 }
 
-// subjectRef is the printing the user is "on", wherever they are on it.
 type subjectRef struct {
 	scryfallID string
 	name       string
-	finish     string
+	finish     finish.Finish
 	price      *float64
 }
 
-// subjectCard resolves the current subject: the open detail card, or the
-// row under the cards cursor in whichever view carries printings.
 func (m *Model) subjectCard() *subjectRef {
 	if m.detail != nil {
 		c := m.detail.card
 		price := c.PriceUSD
-		return &subjectRef{scryfallID: c.ScryfallID, name: c.Name, finish: "nonfoil", price: price}
+		return &subjectRef{scryfallID: c.ScryfallID, name: c.Name, finish: finish.Nonfoil, price: price}
 	}
 	switch m.view {
 	case viewHoldings:
-		// Only when the hand is on the card pane: with the cursor in the
-		// container list, "this card" would be whichever row happened to
-		// sit under the other pane's cursor.
+
 		if m.focus != paneCards {
 			return nil
 		}
@@ -198,9 +174,7 @@ func (m *Model) subjectCard() *subjectRef {
 		if w := m.selectedWatch(); w != nil {
 			return &subjectRef{scryfallID: w.ScryfallID, name: w.Name, finish: w.Finish, price: w.PriceUSD}
 		}
-		// An unpriced row is a subject too — it names a printing, which is
-		// all a watch needs — but it carries no price for a bare threshold
-		// to infer a direction from.
+
 		if r := m.selectedUnpricedRow(); r != nil {
 			return &subjectRef{scryfallID: r.ScryfallID, name: r.Name, finish: r.Finish}
 		}
@@ -221,8 +195,7 @@ func (m *Model) subjectCard() *subjectRef {
 			r := m.marketRows[i]
 			ref := &subjectRef{scryfallID: r.Card.ScryfallID, name: r.Card.Name, finish: r.Card.Finish}
 			if r.HasMarket {
-				// The sales-derived anchor is the row's own idea of the
-				// price, so a bare threshold infers direction from it.
+
 				price := r.Market
 				ref.price = &price
 			}
@@ -232,34 +205,31 @@ func (m *Model) subjectCard() *subjectRef {
 	return nil
 }
 
-// promptWatch opens the add-watch prompt for the current subject.
 func (m *Model) promptWatch() {
 	sub := m.subjectCard()
 	if sub == nil {
 		m.status, m.statusErr = "select a card to watch", true
 		return
 	}
-	if sub.finish == "etched" {
+	if sub.finish == finish.Etched {
 		m.status, m.statusErr = "watches support nonfoil and foil only", true
 		return
 	}
-	finish := "nonfoil"
-	if scryfall.PricedAsFoil(sub.finish) {
-		finish = "foil"
+	fin := finish.Nonfoil
+	if sub.finish.UsesFoilPricing() {
+		fin = finish.Foil
 	}
 
-	label := fmt.Sprintf("watch %s (%s) · threshold", sub.name, finish)
+	label := fmt.Sprintf("watch %s (%s) · threshold", sub.name, fin)
 	if sub.price != nil {
 		label = fmt.Sprintf("watch %s (%s) · now %s · threshold",
-			sub.name, finish, ui.Money(*sub.price))
+			sub.name, fin, ui.Money(*sub.price))
 	}
 	sid, name, price := sub.scryfallID, sub.name, sub.price
-	// Editing an existing watch starts from its current threshold — AddWatch
-	// is an upsert, and making the user retype what they are adjusting turns
-	// an edit into a memory test.
+
 	prefill := ""
 	if m.view == viewWatches {
-		if w := m.selectedWatch(); w != nil && w.ScryfallID == sid && w.Finish == finish {
+		if w := m.selectedWatch(); w != nil && w.ScryfallID == sid && w.Finish == fin {
 			prefill = w.Op + " " + strconv.FormatFloat(w.Threshold, 'f', -1, 64)
 		}
 	}
@@ -274,7 +244,7 @@ func (m *Model) promptWatch() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			if err := m.store.AddWatch(sid, name, finish, op, threshold); err != nil {
+			if err := m.store.AddWatch(sid, name, fin, op, threshold); err != nil {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
@@ -283,7 +253,7 @@ func (m *Model) promptWatch() {
 				now = " · now " + ui.Money(*price)
 			}
 			m.status = fmt.Sprintf("watching %s (%s) %s %s%s",
-				name, finish, op, ui.Money(threshold), now)
+				name, fin, op, ui.Money(threshold), now)
 			m.statusErr = false
 			if m.view == viewWatches {
 				if err := m.loadView(); err != nil {
@@ -295,10 +265,6 @@ func (m *Model) promptWatch() {
 	}
 }
 
-// parseThreshold reads a watch threshold: "under 40", "over 40", "<40",
-// ">40", or a bare number whose direction is inferred from the current
-// price — below it means waiting for a dip, above it a rise. A card with no
-// price refuses bare numbers: there is nothing to infer from.
 func parseThreshold(text string, price *float64) (op string, threshold float64, err error) {
 	t := strings.TrimSpace(strings.ToLower(text))
 	switch {
@@ -326,10 +292,6 @@ func parseThreshold(text string, price *float64) (op string, threshold float64, 
 	return op, n, nil
 }
 
-// promptWatchByName chains two prompts — card name, then threshold — and
-// runs the resolve-and-add as an operation, since pinning the printing
-// needs the network. Direction must be explicit ("under 40" / "over 40"):
-// there is no current price to infer from before the name resolves.
 func (m *Model) promptWatchByName() {
 	m.prompt = &prompt{
 		label: "watch which card (name)",
@@ -365,16 +327,10 @@ func (m *Model) promptWatchByName() {
 	}
 }
 
-// thresholdHelp spells out the watch threshold syntax, shown while either
-// threshold prompt is open.
 const thresholdHelp = "under 40 / over 40 set the direction · a bare 40 infers it from the current price · enter accept · esc cancel"
 
-// startWatchPick begins choosing a watch target from the cards already
-// held: jump to holdings with the filter bar open, and the next enter on a
-// card runs the ordinary watch prompt — the same flow as pressing w on it,
-// with the current price known so a bare threshold can infer direction.
 func (m *Model) startWatchPick() tea.Cmd {
-	m.detail = nil // the pick browses the panes; a detail would hide them
+	m.detail = nil
 	cmd := m.showView(viewHoldings)
 	m.focus = paneCards
 	m.filtering = true
@@ -382,10 +338,6 @@ func (m *Model) startWatchPick() tea.Cmd {
 	return cmd
 }
 
-// finishWatchPick runs the watch prompt for the picked card, and — because
-// the flow started from the watches view — jumps back there once the watch
-// lands or the prompt is escaped, so the reader ends where they began. A
-// refusal stays put: the error belongs where the user still is.
 func (m *Model) finishWatchPick() {
 	m.watchPick = false
 	m.promptWatch()

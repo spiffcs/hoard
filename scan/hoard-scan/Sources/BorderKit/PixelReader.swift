@@ -1,20 +1,12 @@
-// Sampling raw pixels, and the two statistics the ring is judged with.
-
 import CoreGraphics
 import Foundation
 
-/// PixelReader is one RGBA8 copy of a frame. Made only once an anchor has been
-/// found, so a frame with no readable footer costs nothing.
 final class PixelReader {
     let width: Int
     let height: Int
     private let data: UnsafeMutablePointer<UInt8>
     private let bytesPerRow: Int
 
-    /// The largest frame worth copying, in pixels. Live captures are 12 MP;
-    /// the offline probe reads arbitrary files, and before this ceiling a
-    /// 20000×20000 PNG was a 1.6 GB allocation and an unhandled abort inside
-    /// `allocate` — nil is an answerable failure, a trap is not.
     private static let maxPixels = 64 * 1024 * 1024
 
     init?(_ cg: CGImage) {
@@ -36,9 +28,6 @@ final class PixelReader {
 
     deinit { data.deallocate() }
 
-    /// Sample at a pixel position, with y measured downward from the top — the
-    /// bitmap's own order, and the convention the geometry below works in,
-    /// since Vision's bottom-up y only makes the tilt maths harder to read.
     func rgb(_ x: CGFloat, _ y: CGFloat) -> (r: CGFloat, g: CGFloat, b: CGFloat)? {
         let px = Int(x.rounded(.down)), py = Int(y.rounded(.down))
         guard px >= 0, px < width, py >= 0, py < height else { return nil }
@@ -51,22 +40,11 @@ final class PixelReader {
         return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
     }
 
-    /// Chroma as the channel spread. Enough to tell a neutral border from a
-    /// gold or silver one without dragging in a colour space, and those are the
-    /// only cases it has to reject.
     func chroma(_ x: CGFloat, _ y: CGFloat) -> CGFloat? {
         guard let c = rgb(x, y) else { return nil }
         return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
     }
 
-    /// warmCool is blue minus red: negative on the retro text box's tan, positive
-    /// on the cool silver a foil's diffraction throws back. Range -1…1.
-    ///
-    /// One subtraction rather than a colour space, and that is the whole idea —
-    /// the sparkle reader needs an axis on which the marker and the box differ,
-    /// not a perceptually uniform one. Measured on live captures where the luma
-    /// reader scored zero, this axis carries 5-13x the structure luma does; see
-    /// `sparkleWarmCool`.
     func warmCool(_ x: CGFloat, _ y: CGFloat) -> CGFloat? {
         guard let c = rgb(x, y) else { return nil }
         return c.b - c.r
@@ -79,20 +57,11 @@ func medianOf(_ xs: [CGFloat]) -> CGFloat {
     return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
 }
 
-/// medianAbsoluteDeviation is the spread measure the ring wants: a ring that
-/// has slipped half off the card straddles two very different surfaces, and
-/// says so here, where a mean would just land somewhere in between.
 func medianAbsoluteDeviation(_ xs: [CGFloat]) -> CGFloat {
     let m = medianOf(xs)
     return medianOf(xs.map { abs($0 - m) })
 }
 
-/// otsu splits samples in two at the threshold minimizing within-class
-/// variance. On a footer line the two class means are the border's paper tone
-/// and the credit's ink — the card's own black and white points, measured in
-/// the light it was actually photographed under.
-/// ToneSplit is a bimodal sample cut in two: the two class means, and how much
-/// of the sample fell in the dark one.
 struct ToneSplit {
     let dark: CGFloat
     let bright: CGFloat

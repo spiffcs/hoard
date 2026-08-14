@@ -8,20 +8,12 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// Cards returns what the catalog knows about the requested printings, keyed by
-// Scryfall id. Unknown ids are simply absent; callers ask the API for the
-// remainder rather than treating a miss as "no such card".
-//
-// The returned cards carry no Raw document — the catalog stores only what a lookup
-// needs, so store.IDsNeedingDocuments closes that gap once rather than per refresh.
 func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 	out := make(map[string]scryfall.Card, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
 
-	// Chunked because SQLite's parameter limit is finite and a collection can be
-	// tens of thousands of cards. 500 keeps each statement well inside it.
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
 		end := min(start+chunk, len(ids))
@@ -55,23 +47,13 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 	return out, nil
 }
 
-// rowScanner is what both Query and QueryRow results satisfy.
 type rowScanner interface{ Scan(...any) error }
 
-// cardColumns is the projection scanCard reads, in its exact order. Every query
-// that feeds scanCard interpolates this rather than restating the list, so the
-// column order is decided once, beside the code that depends on it.
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
        released_at, lang, finishes, promo_types, frame_effects, frame, border_color,
        colors, color_identity,
        price_usd, price_usd_foil, price_usd_etched, scryfall_url`
 
-// scanCard reads one catalog row into the shared Card type.
-//
-// Building a scryfall.Card rather than a catalog-specific type is deliberate:
-// every consumer — the price refresh, the finish repair, the add cascade —
-// already speaks that type, so a local answer and a remote one are
-// interchangeable and no caller has to know which it got.
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
 	var setName, released, lang, finishes, promos, frames, frame, border *string
@@ -93,15 +75,11 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.Finishes = decodeArray(finishes)
 	c.PromoTypes = decodeArray(promos)
 	c.FrameEffects = decodeArray(frames)
-	// decodeArray keeps NULL (nil, unknown) distinct from "[]" (empty,
-	// colorless) — jsonArrayKeepEmpty wrote them apart for exactly this read.
+
 	c.Colors = decodeArray(colors)
 	c.ColorIdentity = decodeArray(identity)
 	c.PriceUSD = usd
-	// Both columns carry through, exactly as the API client fills them: the
-	// foil column keeps FoilPrice's etched fallback so an etched-only printing
-	// still reports a foil price, and the etched figure also stands on its own
-	// so a card resolved locally and one resolved remotely price identically.
+
 	c.PriceUSDFoil = scryfall.FoilPrice(foil, etched)
 	c.PriceUSDEtched = etched
 	return c, nil

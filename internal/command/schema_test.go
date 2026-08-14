@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -16,17 +17,11 @@ import (
 	"github.com/spiffcs/hoard/schema"
 )
 
-// runSchemaCmd dispatches `hoard schema ...` through the real tree with no
-// store, which is the point of the NoStore annotation: the schema is a fact
-// about the build, so asking for it must not open — or create — a database.
 func runSchemaCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	return execCmd(context.Background(), nil, append([]string{"schema"}, args...), false)
 }
 
-// compile is the check that a slice is a schema rather than an excerpt: a
-// compiler resolves every $ref, so a walk that kept Holdings and dropped the
-// Holding it points at fails here rather than in whatever consumed the output.
 func compile(t *testing.T, raw []byte) *santhosh.Schema {
 	t.Helper()
 	doc, err := santhosh.UnmarshalJSON(bytes.NewReader(raw))
@@ -44,9 +39,6 @@ func compile(t *testing.T, raw []byte) *santhosh.Schema {
 	return sch
 }
 
-// The unsliced output is the published file byte for byte, so a consumer can
-// diff what the binary printed against the URL in its own $id and get nothing.
-// Re-marshalling would reorder every object and break that.
 func TestSchemaPrintsTheEmbeddedFileVerbatim(t *testing.T) {
 	out, err := runSchemaCmd(t)
 	if err != nil {
@@ -56,19 +48,12 @@ func TestSchemaPrintsTheEmbeddedFileVerbatim(t *testing.T) {
 		t.Errorf("output is not the embedded file verbatim (%d bytes vs %d)",
 			len(out), len(schema.Latest))
 	}
-	// The embed points at schema-latest.json, which the drift test in
-	// internal/hoardjson/schemagen holds to the model. Checking the $id here
-	// catches the one thing that test cannot: an embed aimed at some other
-	// file in the same directory, every one of which is also a valid schema.
+
 	if want := "schema-" + hoardjson.SchemaVersion + ".json"; !strings.Contains(out, want) {
 		t.Errorf("embedded schema's $id does not name %s; the go:embed is aimed at the wrong file", want)
 	}
 }
 
-// --kind is the reason the command exists: the whole schema is 22 KB and a
-// single kind is a few, which is the difference between a cheap prompt and an
-// expensive one. It has to be a real reachability walk — dropping the $defs a
-// kind does not touch — not a smaller header on the same 22 KB.
 func TestSchemaKindKeepsOnlyWhatThatKindReaches(t *testing.T) {
 	full, err := runSchemaCmd(t)
 	if err != nil {
@@ -107,9 +92,6 @@ func TestSchemaKindKeepsOnlyWhatThatKindReaches(t *testing.T) {
 					len(props), kind, propNames(props))
 			}
 
-			// The enum is narrowed to the one kind, so the slice rejects a
-			// document of another kind — a distinction the full schema cannot
-			// make, since it has to accept all eight.
 			kindProp, _ := props["kind"].(map[string]any)
 			enum, _ := kindProp["enum"].([]any)
 			if len(enum) != 1 || enum[0] != kind {
@@ -133,9 +115,6 @@ func TestSchemaKindKeepsOnlyWhatThatKindReaches(t *testing.T) {
 	}
 }
 
-// The walk has to be transitive. Holdings names Holding, which names Card and
-// Container; keeping only the directly-referenced definition would leave two
-// dangling pointers, and dropping an unrelated branch is what the flag is for.
 func TestSchemaKindWalksDefinitionsTransitively(t *testing.T) {
 	out, err := runSchemaCmd(t, "--kind", "holdings")
 	if err != nil {
@@ -155,7 +134,6 @@ func TestSchemaKindWalksDefinitionsTransitively(t *testing.T) {
 	}
 }
 
-// A slice is only worth sending if it still validates the thing it describes.
 func TestSchemaKindValidatesADocumentOfThatKind(t *testing.T) {
 	out, err := runSchemaCmd(t, "--kind", "holdings")
 	if err != nil {
@@ -166,7 +144,7 @@ func TestSchemaKindValidatesADocumentOfThatKind(t *testing.T) {
 	price := 2.0
 	doc := hoardjson.FromExportRows([]export.Row{
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol",
+			Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol",
 			Container: "Binder", Kind: "binder", Board: "main", PriceUSD: &price},
 	})
 	var buf bytes.Buffer
@@ -182,9 +160,6 @@ func TestSchemaKindValidatesADocumentOfThatKind(t *testing.T) {
 	}
 }
 
-// A typo'd kind is the user's to fix, so it is a usage error and it says what
-// the kinds are — read out of the schema's own enum, so the list cannot fall
-// behind hoardjson.Document.
 func TestSchemaRejectsAnUnknownKindWithTheList(t *testing.T) {
 	_, err := runSchemaCmd(t, "--kind", "holding")
 	if err == nil {

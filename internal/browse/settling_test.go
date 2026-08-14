@@ -1,10 +1,7 @@
 package browse
 
-// The settling window in the browser: the sidebar mark, and the net that holds
-// a fresh set out at the collection level while still showing it whole in the
-// set's own view.
-
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,18 +14,12 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// settlingNow is the instant these tests judge against, so one running the day
-// a fixture set ages out does not start failing on its own.
 var settlingNow = time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 
 func daysBefore(n int) string {
 	return settlingNow.AddDate(0, 0, -n).Format(time.DateOnly)
 }
 
-// settlingStore stages two sets on opposite sides of the window, and one mover
-// in each. The deltas oppose: the settling set rose $10 and the settled one
-// fell $2, so a net that stopped holding anything out would not read slightly
-// high, it would read the other direction.
 func settlingStore() *fakeStore {
 	st := testStore()
 	st.sets = []store.SetSummary{
@@ -37,19 +28,13 @@ func settlingStore() *fakeStore {
 	}
 	st.movers = []store.PriceChange{
 		{ScryfallID: "hob-id", Name: "Mountain-king", SetCode: "hob", CollectorNumber: "7",
-			ReleasedAt: daysBefore(-2), Finish: "nonfoil", Copies: 1, Old: 10, New: 20},
+			ReleasedAt: daysBefore(-2), Finish: finish.Nonfoil, Copies: 1, Old: 10, New: 20},
 		{ScryfallID: "uma-id", Name: "Bitterblossom", SetCode: "uma", CollectorNumber: "85",
-			ReleasedAt: daysBefore(3000), Finish: "nonfoil", Copies: 1, Old: 10, New: 8},
+			ReleasedAt: daysBefore(3000), Finish: finish.Nonfoil, Copies: 1, Old: 10, New: 8},
 	}
 	return st
 }
 
-// pinWindow holds the settling window for one test and puts it back after.
-//
-// The window is process-global by design — every surface of one frame has to
-// read the same answer — which makes it shared state between tests in this
-// package. Without the restore, a test that moved the dial would silently
-// change the fixtures of every test that ran after it.
 func pinWindow(t *testing.T, days int) {
 	t.Helper()
 	prev := store.SettlingDays()
@@ -57,8 +42,6 @@ func pinWindow(t *testing.T, days int) {
 	store.SetSettlingDays(days)
 }
 
-// onSettlingSets opens the browser on its own lens (SETS), pins the clock, and
-// sizes the frame as a terminal would.
 func onSettlingSets(t *testing.T, st *fakeStore) Model {
 	t.Helper()
 	m, err := New(st, WithEnv(ui.Env{Color: true}))
@@ -73,7 +56,6 @@ func onSettlingSets(t *testing.T, st *fakeStore) Model {
 	return next.(Model)
 }
 
-// onSettlingMovers is onSettlingSets advanced to the movers view.
 func onSettlingMovers(t *testing.T, m Model) Model {
 	t.Helper()
 	m = key(m, "v")
@@ -105,7 +87,7 @@ func TestSidebarMarksOnlySettlingSets(t *testing.T) {
 	if strings.Contains(uma, settlingMark) {
 		t.Errorf("settled row = %q, want no mark", uma)
 	}
-	// All Cards is not a set and must never wear it, whatever it holds.
+
 	for _, l := range lines {
 		if strings.Contains(l, allCardsName) && strings.Contains(l, settlingMark) {
 			t.Errorf("All Cards row = %q, want no mark", l)
@@ -113,9 +95,6 @@ func TestSidebarMarksOnlySettlingSets(t *testing.T) {
 	}
 }
 
-// The mark costs a cell out of a fixed-width pane. It must come out of the
-// name column's own budget — every row still one width, none of them over the
-// pane — rather than pushing VALUE out of alignment.
 func TestSidebarMarkKeepsTheRowsAligned(t *testing.T) {
 	marked := onSettlingSets(t, settlingStore()).containerLines(containerPaneWidth)
 
@@ -125,8 +104,6 @@ func TestSidebarMarkKeepsTheRowsAligned(t *testing.T) {
 	}
 	plain := onSettlingSets(t, quiet).containerLines(containerPaneWidth)
 
-	// Body rows only: the header is laid out to the table's natural width and
-	// the rows are padded to the pane, so the two legitimately differ.
 	for _, lines := range [][]string{marked, plain} {
 		want := ansi.StringWidth(lines[1])
 		for i, l := range lines[1:] {
@@ -140,27 +117,20 @@ func TestSidebarMarkKeepsTheRowsAligned(t *testing.T) {
 			}
 		}
 	}
-	// The column pays its own way: blank in every row, it is dropped along
-	// with its gutter, so a hoard with nothing settling is laid out exactly as
-	// it was before the window existed — no leading indent, no lost cell.
+
 	for i, l := range plain[1:] {
 		if strings.HasPrefix(ansi.Strip(l), " ") {
 			t.Errorf("unmarked row %d = %q, want no gutter reserved for a mark "+
 				"no row is wearing", i+1, l)
 		}
 	}
-	// And it is really there when it is earned.
+
 	if !strings.HasPrefix(ansi.Strip(marked[1]), " ") &&
 		!strings.HasPrefix(ansi.Strip(marked[1]), settlingMark) {
 		t.Errorf("marked row = %q, want the mark column present", marked[1])
 	}
 }
 
-// THE BUG, found on the owner's own hoard: with the mark trailing the name,
-// NAME is the flexed column and a set whose name overran the pane had the mark
-// eaten by the truncating ellipsis. "The Hobbit" was marked and "Marvel Super
-// Heroes" beside it was not, though both were days old — which is worse than
-// marking neither, because the unmarked row looks like a set that counts.
 func TestSidebarMarksASetWhoseNameIsTruncated(t *testing.T) {
 	st := settlingStore()
 	long := "Marvel Super Heroes Secret Wars Commander"
@@ -185,9 +155,6 @@ func TestSidebarMarksASetWhoseNameIsTruncated(t *testing.T) {
 	}
 }
 
-// The collection's net is what a reader judges the hoard by, so a set still
-// finding its price is held out of it — and the header says how many, because
-// a total that disagrees with the rows above it has to account for the gap.
 func TestMoversNetHoldsOutSettlingSetsAtAllCards(t *testing.T) {
 	m := onSettlingMovers(t, onSettlingSets(t, settlingStore()))
 	if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
@@ -198,9 +165,7 @@ func TestMoversNetHoldsOutSettlingSetsAtAllCards(t *testing.T) {
 	}
 
 	_, totals := m.viewHeader()
-	// -$2.00 is the settled row alone. +$8.00 is what the header would read if
-	// the exclusion were dropped — asserted so this test cannot pass on a
-	// build that counts everything.
+
 	if !strings.Contains(totals, "-$2.00") {
 		t.Errorf("totals = %q, want the net to be the settled row alone (-$2.00)", totals)
 	}
@@ -210,14 +175,12 @@ func TestMoversNetHoldsOutSettlingSetsAtAllCards(t *testing.T) {
 	if !strings.Contains(totals, "1 settling set held out") {
 		t.Errorf("totals = %q, want the count of sets held out", totals)
 	}
-	// The count of movers is never held out: both rows are on screen.
+
 	if !strings.Contains(totals, "2 moved") {
 		t.Errorf("totals = %q, want both rows counted", totals)
 	}
 }
 
-// Scoped to the settling set, the reader is asking about that set. Holding its
-// rows out here would answer with a net of nothing.
 func TestMoversNetIsWholeInTheSettlingSetsOwnView(t *testing.T) {
 	m := onSettlingSets(t, settlingStore())
 	m = atSet(t, m, "hob")
@@ -235,7 +198,6 @@ func TestMoversNetIsWholeInTheSettlingSetsOwnView(t *testing.T) {
 	}
 }
 
-// A settled set scopes like any other, and holds nothing out either.
 func TestMoversNetInASettledSetsView(t *testing.T) {
 	m := onSettlingSets(t, settlingStore())
 	m = atSet(t, m, "uma")
@@ -250,8 +212,6 @@ func TestMoversNetInASettledSetsView(t *testing.T) {
 	}
 }
 
-// A hoard with nothing settling must read exactly as it did before the window
-// existed — no mark, no clause, no gutter row spent on a legend.
 func TestNothingSettlingChangesNothing(t *testing.T) {
 	st := settlingStore()
 	for i := range st.sets {
@@ -279,7 +239,6 @@ func TestNothingSettlingChangesNothing(t *testing.T) {
 	}
 }
 
-// The legend explains a mark the reader can see, so it appears with it.
 func TestSettlingLegendAppearsWithTheMark(t *testing.T) {
 	m := onSettlingSets(t, settlingStore())
 	if !strings.Contains(m.helpLine(), settlingMark+" new set") {
@@ -287,9 +246,6 @@ func TestSettlingLegendAppearsWithTheMark(t *testing.T) {
 	}
 }
 
-// The palette is the browser's exhaustive reference, so the dial has to be
-// reachable from both places its effect is visible: the net on the movers
-// view, and the marks on the sets lens.
 func TestSettlingWindowIsInThePalette(t *testing.T) {
 	find := func(t *testing.T, m Model) bool {
 		t.Helper()
@@ -308,15 +264,13 @@ func TestSettlingWindowIsInThePalette(t *testing.T) {
 	if !find(t, onSettlingMovers(t, sets)) {
 		t.Error("SetSettlingWindow missing from the palette on the movers view")
 	}
-	// Not offered where it would explain nothing on screen.
+
 	holdings := atAllCards(t, newTestModel(t, settlingStore()))
 	if find(t, holdings) {
 		t.Error("SetSettlingWindow offered on the holdings pane, where it shows nothing")
 	}
 }
 
-// Committing the prompt has to move the number the reader is looking at in
-// the same frame, and outlast the session.
 func TestSetSettlingWindowMovesTheNetAndPersists(t *testing.T) {
 	pinWindow(t, store.DefaultSettlingDays)
 	st := settlingStore()
@@ -348,7 +302,7 @@ func TestSetSettlingWindowMovesTheNetAndPersists(t *testing.T) {
 	if got := st.settings[setSettlingDays]; got != "0" {
 		t.Errorf("persisted %q, want \"0\" — a window moved today is the window tomorrow", got)
 	}
-	// And the marks agree with the net in the same frame.
+
 	for _, l := range m.containerLines(containerPaneWidth) {
 		if strings.Contains(l, settlingMark) {
 			t.Errorf("sidebar row = %q, want no mark at a zero window", l)
@@ -356,10 +310,6 @@ func TestSetSettlingWindowMovesTheNetAndPersists(t *testing.T) {
 	}
 }
 
-// THE OTHER BUG: with the variable pinning the window, a palette change took
-// effect and was saved, and then the next launch read the variable again and
-// silently reverted it. The dial visibly worked and quietly did not stick,
-// with nothing on screen saying which of the two to believe.
 func TestSettlingWindowSaysWhenTheEnvironmentWillWinNextLaunch(t *testing.T) {
 	pinWindow(t, store.DefaultSettlingDays)
 	t.Setenv(store.SettlingDaysEnv, "7")
@@ -376,13 +326,11 @@ func TestSettlingWindowSaysWhenTheEnvironmentWillWinNextLaunch(t *testing.T) {
 		t.Errorf("status = %q, want it to name the variable that outranks this "+
 			"at the next launch", m.status)
 	}
-	// Still saved: the reader's preference is theirs again the moment the
-	// variable is out of the way.
+
 	if got := st.settings[setSettlingDays]; got != "60" {
 		t.Errorf("persisted %q, want \"60\"", got)
 	}
 
-	// And with no variable set, the notice is not there to puzzle over.
 	t.Run("silent when nothing outranks it", func(t *testing.T) {
 		pinWindow(t, store.DefaultSettlingDays)
 		t.Setenv(store.SettlingDaysEnv, "")
@@ -395,8 +343,6 @@ func TestSettlingWindowSaysWhenTheEnvironmentWillWinNextLaunch(t *testing.T) {
 	})
 }
 
-// The prompt corrects a person who just typed the value, where the
-// environment silently falls back for a stale line in a script.
 func TestParseSettlingDaysRefusesWhatTheDialCannotSay(t *testing.T) {
 	for _, ok := range []string{"0", "30", " 90 ", "3650"} {
 		if _, err := parseSettlingDays(ok); err != nil {
@@ -410,8 +356,6 @@ func TestParseSettlingDaysRefusesWhatTheDialCannotSay(t *testing.T) {
 	}
 }
 
-// Startup order: the environment is an instruction about this run, given
-// before anything was on screen, so it outranks yesterday's preference.
 func TestSettlingWindowStartupPrecedence(t *testing.T) {
 	t.Run("stored preference when the environment is quiet", func(t *testing.T) {
 		pinWindow(t, store.DefaultSettlingDays)
@@ -434,9 +378,6 @@ func TestSettlingWindowStartupPrecedence(t *testing.T) {
 		}
 	})
 
-	// THE BUG: the startup check read the variable as present rather than
-	// usable, so a typo in it threw away a preference the reader had saved on
-	// purpose and left the default standing as if they had never set one.
 	t.Run("a garbled environment does not discard the stored preference", func(t *testing.T) {
 		pinWindow(t, store.DefaultSettlingDays)
 		t.Setenv(store.SettlingDaysEnv, "banana")
@@ -460,9 +401,6 @@ func TestSettlingWindowStartupPrecedence(t *testing.T) {
 	})
 }
 
-// helpRowsKey decides a memoized gutter height. The legend's presence turns on
-// data rather than a key press, so a key that ignored it would hand back a
-// height measured before the legend existed and clip the row.
 func TestHelpRowsKeyNamesSettling(t *testing.T) {
 	settling := onSettlingSets(t, settlingStore())
 

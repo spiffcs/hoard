@@ -12,12 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// viewMode is what the right pane is showing.
-//
-// Every mode reads through the container pane: All Cards is the whole
-// hoard, and any other selection narrows the view to what that container
-// holds — the same contract the holdings view has always had. The header
-// names the selection so a filtered table says so.
 type viewMode int
 
 const (
@@ -32,23 +26,15 @@ func (v viewMode) String() string {
 	case viewMovers:
 		return "movers"
 	case viewWatches:
-		// The unpriced holdings are the third table on this screen, not a
-		// view of their own (owner's call) — so there is no "unpriced" here
-		// for the view switcher to stop on.
+
 		return "watches"
 	case viewMarket:
-		// Renamed on screen: the view holds three market questions —
-		// arbitrage is just its first table, and a view and a table sharing
-		// one name read as a stutter.
+
 		return "market"
 	}
 	return "holdings"
 }
 
-// viewCycle is the v-key order (owner's call): the everyday reads first —
-// cards, movers, market — then the alerts, which now carry the maintenance
-// list as their third table. The enum's declaration order stays untouched;
-// state arrays index by it.
 var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewWatches}
 
 func (v viewMode) next() viewMode {
@@ -60,18 +46,10 @@ func (v viewMode) next() viewMode {
 	return viewHoldings
 }
 
-// moversWindowDays are the lookbacks the movers view cycles through with
-// 'W', ascending with wrap (… → 7 → 30 → 90 → 7 → …); the default leads
-// and matches `hoard movers`, so the two agree.
 var moversWindowDays = []int{30, 90, 7}
 
-// defaultPennyLimit is where the movers view's noise gate starts: cards
-// priced at or under it hide by default (TogglePennyFilter shows them,
-// SetPennyFilter moves the line).
 const defaultPennyLimit = 0.50
 
-// The penny filters' preference keys. Both views' gates persist: a floor
-// moved during a session should still be the floor tomorrow.
 const (
 	setMoversPennies   = "movers.pennies"
 	setMoversPennyLine = "movers.pennyLimit"
@@ -79,9 +57,6 @@ const (
 	setMarketFloor     = "market.floor"
 )
 
-// loadPennyFilters restores both views' gates. Absent or garbled values
-// leave the defaults standing — a preference is never worth failing a
-// launch over.
 func (m *Model) loadPennyFilters() {
 	s, err := m.store.Settings()
 	if err != nil {
@@ -101,8 +76,6 @@ func (m *Model) loadPennyFilters() {
 	}
 }
 
-// persistPennyFilters writes both views' gates. Called wherever either
-// changes; a failed write surfaces but never undoes the change on screen.
 func (m *Model) persistPennyFilters() {
 	err := m.store.SaveSettings(map[string]string{
 		setMoversPennies:   strconv.FormatBool(m.moversPennies),
@@ -115,9 +88,6 @@ func (m *Model) persistPennyFilters() {
 	}
 }
 
-// promptSetPennyLimit opens the penny filter's threshold prompt, prefilled
-// with the current line. The commit re-arms the gate: asking to move the
-// line while the pennies stayed showing would make the answer invisible.
 func (m *Model) promptSetPennyLimit() {
 	m.prompt = &prompt{
 		label:    "hide movers at or under",
@@ -140,10 +110,6 @@ func (m *Model) promptSetPennyLimit() {
 	}
 }
 
-// promptSetMarketFloor is the market view's twin: same prompt, but the
-// line it moves is the floor market.Collect filters on, so the commit
-// re-collects from the day cache rather than re-deriving rows. Re-arms
-// the gate the same way — moving the line answers with the line active.
 func (m *Model) promptSetMarketFloor() {
 	m.prompt = &prompt{
 		label:    "hide market rows under",
@@ -159,8 +125,7 @@ func (m *Model) promptSetMarketFloor() {
 			m.marketFloor = n
 			m.marketPennies = false
 			m.status, m.statusErr = "penny filter < "+ui.Money(n)+" on", false
-			// After the receipt: a day-cache miss replaces it with the
-			// fresh-fetch ask, which is the truer answer.
+
 			m.refreshMarketFloor()
 			m.persistPennyFilters()
 			return nil
@@ -168,9 +133,6 @@ func (m *Model) promptSetMarketFloor() {
 	}
 }
 
-// parsePennyLimit reads the penny filter's line: a plain dollar amount,
-// "$" optional. The cap keeps a typo from gating the whole view — a penny
-// filter at $500 is a hidden movers list, not a noise gate.
 func parsePennyLimit(text string) (float64, error) {
 	t := strings.TrimPrefix(strings.TrimSpace(text), "$")
 	n, err := strconv.ParseFloat(t, 64)
@@ -180,7 +142,6 @@ func parsePennyLimit(text string) (float64, error) {
 	return n, nil
 }
 
-// moversWindow is the current lookback.
 func (m Model) moversWindow() time.Duration {
 	days := moversWindowDays[0]
 	if m.moversDaysIdx > 0 {
@@ -189,23 +150,12 @@ func (m Model) moversWindow() time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// moversCutoff is the instant the current window opens: the one the query asks
-// from, the one the header names, and the one each row's FROM date is judged
-// against. Three readings of the same moment had drifted apart into three
-// expressions of it.
 func (m Model) moversCutoff() time.Time { return m.now().Add(-m.moversWindow()) }
 
-// loadView reads whichever analysis the right pane is showing, into the
-// pristine slice — deriveView narrows it to what is visible.
-//
-// All are plain database reads and return in milliseconds, so they are loaded
-// synchronously like the holdings. Nothing here touches the network.
 func (m *Model) loadView() error {
 	switch m.view {
 	case viewMovers:
-		// Serve the window from the session cache when nothing has
-		// changed since it was filled — W cycles between three windows,
-		// and each miss costs a double pass over the whole price history.
+
 		if m.moversCacheGen == m.dataGen && m.moversCache != nil {
 			if rows, ok := m.moversCache[m.moversDaysIdx]; ok {
 				m.allMovers = rows
@@ -224,8 +174,7 @@ func (m *Model) loadView() error {
 		}
 		m.moversCache[m.moversDaysIdx] = m.allMovers
 	case viewWatches:
-		// One screen, two reads: the watches screen's third table is the
-		// unpriced holdings, so both lists load together or neither does.
+
 		watches, err := m.store.ListWatches()
 		if err != nil {
 			return fmt.Errorf("reading watches: %w", err)
@@ -240,21 +189,10 @@ func (m *Model) loadView() error {
 	return nil
 }
 
-// deriveView applies the value floor, the container filter and — on the
-// views that consume it — the typed query to the pristine slices, rebuilds
-// the eligibility set on the views that grey containers out, and re-clamps
-// the card cursor. Cheap and re-runnable: no database, no network — cycling
-// the floor, moving the left cursor, or pressing a key into the filter bar
-// all land here.
-//
-// Eligibility is computed from the pristine (floor-ignored) rows so the
-// grey set holds still while M cycles; the floor only thins visible rows.
 func (m *Model) deriveView() {
 	m.viewEligible = nil
 	cid, filtered := m.filterContainerID()
-	// The set scope is the container scope's sibling — mutually exclusive
-	// with it, and an exact code match: both sides come from cards.set_code,
-	// so no finish folding applies.
+
 	set, bySet := m.filterSetCode()
 	switch m.view {
 	case viewMovers:
@@ -263,15 +201,12 @@ func (m *Model) deriveView() {
 			if m.underFloor(&c.New) {
 				continue
 			}
-			// The penny gate, separate from the floor: a $0.15 card
-			// twitching by a cent is a row, not information.
+
 			if !m.moversPennies && c.New <= m.moversPennyLimit {
 				continue
 			}
 			if filtered {
-				// Scope the count too: the row's Copies is hoard-wide, and a
-				// deck-scoped QTY/IMPACT must describe the deck's copies, not
-				// every copy across the collection (observed live).
+
 				qty := m.containerQtyPriced(cid, c.ScryfallID, c.Finish)
 				if qty == 0 {
 					continue
@@ -281,8 +216,7 @@ func (m *Model) deriveView() {
 			if bySet && c.SetCode != set {
 				continue
 			}
-			// Last, so the query sees the container-scoped Copies above and
-			// `qty` describes the same number the QTY column prints.
+
 			if !m.filter.empty() && !m.filter.matches(moverAsCard(c), m.allowed) {
 				continue
 			}
@@ -290,7 +224,7 @@ func (m *Model) deriveView() {
 		}
 		m.filteredMovers = rows
 		m.moversColW = measureMoverCols(rows, m.moversCutoff())
-		m.applySort() // sorts filteredMovers and re-derives the page
+		m.applySort()
 	case viewWatches:
 		watches := make([]store.WatchStatus, 0, len(m.allWatches))
 		for _, w := range m.allWatches {
@@ -308,8 +242,7 @@ func (m *Model) deriveView() {
 			}
 			watches = append(watches, w)
 		}
-		// The split is the screen: every watch lands in exactly one of the
-		// two tables, by the same reading of Op that store.Met uses.
+
 		m.overs, m.unders = nil, nil
 		for _, w := range watches {
 			if wantsUnder(w) {
@@ -330,19 +263,14 @@ func (m *Model) deriveView() {
 			if bySet && r.SetCode != set {
 				continue
 			}
-			// Last, so the query sees the container-scoped Copies above and
-			// `qty` describes the number the QTY column prints.
+
 			if !m.filter.empty() && !m.filter.matches(unpricedAsCard(r), m.allowed) {
 				continue
 			}
 			unpriced = append(unpriced, r)
 		}
 		m.unpriced = unpriced
-		// Eligibility is the union of the three tables: a container greyed
-		// out here must hold nothing this whole screen would show, and the
-		// unpriced holdings are as much a reason to keep it lit as a watch.
-		// It reads the pristine rows, so the grey set holds still while the
-		// floor and the query thin what is visible.
+
 		if m.setsMode {
 			m.viewEligible = m.eligibleSets(func(code string) bool {
 				for _, w := range m.allWatches {
@@ -379,9 +307,7 @@ func (m *Model) deriveView() {
 		return
 	}
 	m.clampCursor(paneCards)
-	// A cursor left on a table that no longer has rows moves to one that
-	// does — an empty heading is somewhere to navigate to, not somewhere to
-	// be put. Same rule the market view applies after re-ranking.
+
 	if m.view == viewWatches && m.watchTotalRows() > 0 {
 		if sec, _ := m.watchCursorPos(); m.watchCount(sec) == 0 {
 			m.cursor[paneCards] = m.firstWatchCursor()
@@ -389,8 +315,6 @@ func (m *Model) deriveView() {
 	}
 }
 
-// now is a var so tests can pin the movers window rather than depending on when
-// they run.
 func (m Model) now() time.Time {
 	if m.clock != nil {
 		return m.clock()
@@ -398,25 +322,20 @@ func (m Model) now() time.Time {
 	return time.Now()
 }
 
-// viewRowCount is how many rows the current right-pane mode holds.
 func (m Model) viewRowCount() int {
 	switch m.view {
 	case viewMovers:
 		return len(m.movers)
 	case viewWatches:
-		// Slots, not rows: the cursor also visits the heading of a table
-		// with nothing under it — see watchRegion.
+
 		return m.watchCursorSlots()
 	case viewMarket:
-		// Slots, not rows: the market view's cursor also visits the heading
-		// of a table with nothing under it.
+
 		return m.marketCursorSlots()
 	}
 	return len(m.cards)
 }
 
-// moversLines renders the risers and sinkers. Columns pin to the whole
-// filtered ranking's measures (Width), so >/< holds the table's shape.
 func (m Model) moversLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
 		w := m.moversColW
@@ -426,11 +345,7 @@ func (m Model) moversLines(width int) []string {
 			{Title: "ID", Align: ui.Left, Priority: 7, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.set},
 			{Title: "FINISH", Align: ui.Left, Priority: 6, Style: env.Dim(), Width: w.fin},
-			// Where each row's own measurement starts, on the rows that start
-			// later than the window did; blank everywhere else, so a window the
-			// history covers drops the column and the table keeps its shape.
-			// It outlives WAS: a date taken away from beside the price it dates
-			// would leave that price looking like the header's.
+
 			{Title: "FROM", Align: ui.Right, Priority: 3, Style: env.Dim(), Width: w.from},
 			{Title: "WAS", Align: ui.Right, Priority: 4, Style: env.Dim(), Width: w.was},
 			{Title: "NOW", Align: ui.Right, Width: w.now},
@@ -438,10 +353,7 @@ func (m Model) moversLines(width int) []string {
 			{Title: "QTY", Align: ui.Right, Priority: 2, Width: w.qty},
 			{Title: "IMPACT", Align: ui.Right, Width: w.impact},
 		}}
-		// Each delta column fades on the diverging ramp against the whole
-		// filtered ranking's extreme — not the page's — so a row keeps its
-		// color as >/< leaf, and sorting by the column still reads as one
-		// smooth green→gray→red sweep.
+
 		pctMax, impactMax := store.MoverExtents(m.filteredMovers)
 		cutoff := m.moversCutoff()
 		for _, c := range m.movers {
@@ -460,19 +372,10 @@ func (m Model) moversLines(width int) []string {
 	})
 }
 
-// viewHeader is the right pane's title and summary for the current mode.
 func (m Model) viewHeader() (title, totals string) {
 	switch m.view {
 	case viewMovers:
-		// Count and net speak for the whole filtered ranking, not the page
-		// on screen; the page phrase beside them says where the reader is.
-		//
-		// The net holds out sets still settling after release, because this
-		// figure is what a collection gets read by and a set's first weeks of
-		// price discovery would swamp it. The one place it does not is that
-		// set's own view: scoped there, the reader is asking about the set,
-		// and holding out the whole table would leave a net of nothing. The
-		// count is never held out — the rows are all still on screen.
+
 		now := m.now()
 		var net float64
 		var heldOut int
@@ -483,19 +386,7 @@ func (m Model) viewHeader() (title, totals string) {
 		} else {
 			net, heldOut = store.NetMoved(m.filteredMovers, now)
 		}
-		// The summary trails the page phrase so the net lands at the far
-		// right, where these totals are anchored — directly over IMPACT, the
-		// right-aligned column it is the sum of. Leading it, the net sat above
-		// the middle of the table and read as a measurement of some other
-		// column.
-		//
-		// It wears the movers ramp's own endpoint rather than a fresh color:
-		// this figure is the total of a column already painted on that ramp,
-		// and a header in a second red would claim to mean something different.
-		// The endpoints rather than a graded shade, because a lone total has no
-		// distribution to be graded against — only a direction. A net of
-		// exactly zero takes the ramp's neutral gray, which is the honest
-		// reading of no movement.
+
 		env := ui.Env{Color: m.env.Color}
 		sign := 0.0
 		if net > 0 {
@@ -525,13 +416,6 @@ func (m Model) viewHeader() (title, totals string) {
 	return "CARDS", ""
 }
 
-// joinPhrases strings header fragments together on the " · " separator,
-// dropping the empty ones.
-//
-// It exists because pagePhrase returns its fragments already carrying a
-// leading separator — convenient while the page phrase was always last, and
-// wrong the moment something follows it. Trimming that prefix at the one call
-// site that reorders keeps pagePhrase's shape for every other caller.
 func joinPhrases(parts ...string) string {
 	var kept []string
 	for _, p := range parts {

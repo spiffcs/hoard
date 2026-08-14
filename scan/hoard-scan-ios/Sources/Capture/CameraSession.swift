@@ -1,22 +1,3 @@
-// The camera, with the controls Continuity Camera never had.
-//
-// Everything in this file exists because the macOS helper cannot do it. The
-// capability ledger in docs/scanner-tuning.md records what a Continuity Camera
-// admits to: 1920x1440 stills, no zoom, no exposure control, no white balance
-// lock, no torch, and — measured, not assumed — no focus modes at all, which
-// makes App/FocusPolicy.swift inert on that hardware. Every one of those is
-// available here.
-//
-// The scanning rig is the thing to keep in mind: a phone on a stand, pointed
-// down at a fixed spot on a desk, and a person putting one card after another
-// in that spot. Nothing about the scene changes except which card it is. That
-// is an unusually good case for a camera — focus once and freeze it, meter once
-// and freeze that too — and an unusually bad one for the automatic behaviour
-// that assumes it is filming a person moving around a room.
-//
-// So the policy is: settle everything, then lock everything, and let the
-// operator override any of it. Auto is the enemy of repeatability.
-
 import AVFoundation
 import CardKit
 import Foundation
@@ -27,18 +8,8 @@ final class CameraSession: NSObject, ObservableObject {
     let session = AVCaptureSession()
     private(set) var device: AVCaptureDevice?
 
-    /// What the session is doing, in words fit to show a person.
     @Published var status = "Starting…"
 
-    /// The subset of `status` that is a dead end rather than a running
-    /// commentary, empty while nothing is wrong.
-    ///
-    /// Separate because the two have opposite audiences. "Focused", "Settling…"
-    /// and "Waiting for the first card" are a developer watching the rig, and
-    /// they live behind developer mode; a camera that never opened is something
-    /// the person holding the phone has to be told about, whatever mode they are
-    /// in. Without this the failures would hide with the chatter, and a denied
-    /// permission would look like a black screen with no explanation.
     @Published private(set) var failure = ""
     @Published var lensPosition: Float = 0.5
     @Published var torchLevel: Float = 0
@@ -46,31 +17,14 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var lastCapture: CapturedFrame?
     @Published var busy = false
 
-    /// The lens, fixed.
-    ///
-    /// Not a choice any more. The ultra-wide was offered for its macro range
-    /// and rejected on image quality; the virtual devices are worse still,
-    /// because zooming a .builtInTripleCamera past its switch-over point hands
-    /// you the telephoto, whose minimum focus distance is *longer* — so the
-    /// card goes soft at exactly the moment you zoom in to read it.
     private let lensType = AVCaptureDevice.DeviceType.builtInWideAngleCamera
 
-    /// The angle that levels the preview against gravity.
-    ///
-    /// The macOS helper carries a whole saga about this — a manual ←/→
-    /// correction persisted to scan.json — because Continuity Camera often
-    /// cannot tell how the phone is being held and reports 0°. A phone knows
-    /// its own orientation, so here the coordinator is simply right and there is
-    /// nothing for the operator to correct.
     @Published var previewRotation: CGFloat = 90
 
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
 
-    /// The hands-free trigger. Owned here because it needs the session and the
-    /// device, and nothing else does.
     private let triggerRunner = TriggerRunner()
-    /// Raised when the trigger asks for a capture.
     var onFire: (@MainActor () -> Void)? {
         get { triggerRunner.onFire }
         set { triggerRunner.onFire = newValue }
@@ -79,14 +33,6 @@ final class CameraSession: NSObject, ObservableObject {
         get { triggerRunner.onPhase }
         set { triggerRunner.onPhase = newValue }
     }
-    /// The box to draw brackets on, raised per sample.
-    ///
-    /// Passed straight through rather than stored as an `@Published` here. This
-    /// object is a `@StateObject` on the session screen, so publishing a rect
-    /// that changes 30 times a second would invalidate the whole view that
-    /// often — the camera preview's representable, both of the price's
-    /// `fixedSize` texts, the header and the footer — to move twelve line
-    /// segments. The cue owns its own observable leaf instead.
     var onCue: (@MainActor (CGRect?) -> Void)? {
         get { triggerRunner.onBox }
         set { triggerRunner.onBox = newValue }
@@ -96,13 +42,8 @@ final class CameraSession: NSObject, ObservableObject {
         get { triggerRunner.onTrace }
         set { triggerRunner.onTrace = newValue }
     }
-    /// Whether a video tap could be attached. When false, hands-free is
-    /// unavailable and the ready event should not advertise it.
     private(set) var autoAvailable = false
 
-    /// Whether the trigger is armed. Published so the screen can offer a
-    /// toggle: the parent arms it on connect, but a phone that can be switched
-    /// to hands-free by hand is far easier to test and to recover.
     @Published var autoOn = false
     var autoUnavailableReason: String { triggerRunner.unavailableReason }
 
@@ -110,29 +51,8 @@ final class CameraSession: NSObject, ObservableObject {
         autoOn ? stopTrigger() : startTrigger()
     }
 
-    /// The tap's real buffer size, for the telemetry line.
     var tapSize: CGSize { triggerRunner.bufferSize }
 
-    /// captureFromVideo lifts the next tap frame as a still, already upright.
-    ///
-    /// The rotation is folded into the same CIImage pass as the conversion,
-    /// which removes an entire 12-megapixel rasterization from the shutter.
-    /// Before this the buffer became a CGImage here and the read path
-    /// immediately turned it back into a CIImage to rotate it and rasterized it
-    /// again — two full passes over 4032x3024 before anything had looked at a
-    /// single pixel, on a loop budgeted at 700ms.
-    ///
-    /// Handing back `.up` rather than `.right` is what makes that safe: the
-    /// pixels are already turned, so `uprighted` becomes the no-op its own
-    /// guard provides, and nothing downstream applies the rotation twice. It
-    /// also means a fixture written by `sendStill` is upright on disk, which
-    /// the corpus tooling previously had to guess at.
-    /// captureGrace bounds the wait for a tap frame. The tap delivers 30fps
-    /// when anything is flowing at all, so two seconds of silence means the
-    /// frames are not coming — the tap never attached, the trigger queue is
-    /// starved, or the OS took the camera (a call, Control Center). Without
-    /// this bound the continuation below waited forever, `busy` stuck true,
-    /// and the phone was dead for the session under a green header.
     private static let captureGrace: TimeInterval = 2
 
     private func captureFromVideo() async -> CapturedFrame? {
@@ -166,22 +86,13 @@ final class CameraSession: NSObject, ObservableObject {
         triggerRunner.stop()
     }
     func nudgeTrigger() { triggerRunner.nudge() }
-    /// Recognition-time rearm: the box goes yellow with the chime instead of
-    /// waiting for the card to be dragged out of frame. Cause `.none` so the
-    /// next fire reads as the placement it is, never as a nudge echo.
     func rearmForResult() { triggerRunner.rearmForResult() }
-    /// Why the trigger armed for the capture now in flight, for the wire.
     var fireCause: String? {
         let c = triggerRunner.lastFireCause
         return c == .none ? nil : c.rawValue
     }
-    /// The measurements behind `fireCause`, for the wire. Nil where the
-    /// comparison never ran — which is a different answer from zero, and the
-    /// one the parent has to be able to tell apart.
     var fireHoldDelta: Double? { triggerRunner.lastFireHoldDelta }
     var fireFaceDelta: Double? { triggerRunner.lastFireFaceDelta }
-    /// Apply a tuning sent by the parent. Takes effect on the next sample, so a
-    /// session can be retuned without reconnecting.
     func tuneTrigger(stable: Int, interval: Double) {
         triggerRunner.tune(stable: stable, interval: interval)
     }
@@ -191,15 +102,8 @@ final class CameraSession: NSObject, ObservableObject {
         restoreEVBiasIfNeeded()
     }
 
-    /// Whether a one-shot bias is in force — the finish rescue's darker
-    /// retake. Set by setOneShotEVBias, cleared when the capture it was for
-    /// completes.
     private var evBiased = false
 
-    /// setOneShotEVBias darkens the next auto capture, clamped to what the
-    /// hardware offers. The rescue's premise: a glare-blown marker is clipped
-    /// at metered exposure, and the sparkle correlation is normalized, so an
-    /// unclipped darker frame reads through the existing gates unchanged.
     func setOneShotEVBias(_ ev: Double) {
         guard let device else { return }
         do {
@@ -210,10 +114,6 @@ final class CameraSession: NSObject, ObservableObject {
             device.unlockForConfiguration()
             evBiased = true
         } catch {
-            // The rescue's darker retake simply does not happen; the retake
-            // still fires at metered exposure, so the failure is a wasted
-            // capture rather than a stall — but it must be findable when a
-            // rescue session's retakes all come back blown out anyway.
             SessionLog.write("evbias skipped: \(error.localizedDescription)")
         }
     }
@@ -226,14 +126,9 @@ final class CameraSession: NSObject, ObservableObject {
             device.setExposureTargetBias(0)
             device.unlockForConfiguration()
         } catch {
-            // Worse than the set failing: a bias that could not be restored
-            // darkens every capture after the rescue, and nothing on screen
-            // says why the reads got worse.
             SessionLog.write("evbias restore failed: \(error.localizedDescription)")
         }
     }
-
-    // MARK: - Lifecycle
 
     func start() async {
         guard await AVCaptureDevice.requestAccess(for: .video) else {
@@ -244,13 +139,6 @@ final class CameraSession: NSObject, ObservableObject {
         configure()
     }
 
-    /// stop is the Scan tab's teardown, the mirror of start. The camera is a
-    /// per-screen instrument (unlike the link, which is app-lifetime), and
-    /// the handlers the screen wires all capture the view — cleared here so
-    /// a departed view is not retained by its own camera, which was the
-    /// cycle CameraSession → closure → view → StateObject → CameraSession
-    /// that kept a torn-down session running forever. The screen re-wires
-    /// everything on its way back in.
     func stop() {
         stopTrigger()
         onFire = nil
@@ -262,16 +150,6 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
-    /// configure builds the session around one principle: the app owns the
-    /// format, not the preset.
-    ///
-    /// `sessionPreset = .photo` looks like the way to ask for full-resolution
-    /// stills and is not — measured on macOS, it actively *downgraded* the
-    /// device from its own 1920x1440 default to 1920x1080, because it picks a
-    /// 16:9 format and that is a vertical crop of a 4:3 sensor. Setting
-    /// activeFormat directly moves the session to .inputPriority, which is
-    /// AVFoundation's way of saying the app has taken over. That is what we
-    /// want: the preset has demonstrably worse taste than the sensor.
     private func configure() {
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
@@ -295,31 +173,20 @@ final class CameraSession: NSObject, ObservableObject {
         }
         session.addInput(input)
 
-        // The largest still the device offers, chosen explicitly. maxPhoto is
-        // per-format, so this has to happen before the output is told anything.
         if let best = bestPhotoFormat(device) {
             do {
                 try device.lockForConfiguration()
                 device.activeFormat = best
                 device.unlockForConfiguration()
             } catch {
-                // The framework's wording goes to the log; the screen gets a
-                // sentence about the camera. AVFoundation writes for a
-                // developer reading a crash report.
                 SessionLog.write("camera format failed: \(error.localizedDescription)")
                 status = "Could not set up the camera"
                 failure = status
             }
         }
-        // The tap's dimensions go to the trace line rather than to a label.
-        // They were on screen when this app had tabs and a capture view to
-        // debug; the scanning screen's job is a price, and the number reaches
-        // the log on every capture anyway.
         let tap = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
         SessionLog.write("tap \(tap.width)x\(tap.height)")
 
-        // The video tap, for the trigger — and now for capture too, so this is
-        // the session's only output rather than its second one.
         autoAvailable = triggerRunner.attach(to: session, device: device)
 
         session.commitConfiguration()
@@ -331,18 +198,8 @@ final class CameraSession: NSObject, ObservableObject {
         observeSessionLife()
     }
 
-    /// Whether the lifecycle observers are already registered — configure()
-    /// re-runs on a lens switch, and each observer must exist exactly once.
     private var lifeObserved = false
 
-    /// observeSessionLife keeps the session honest about not running.
-    ///
-    /// Nothing observed these before, so a phone call, a FaceTime pickup, or
-    /// Control Center taking the camera stopped frame delivery permanently
-    /// while the UI kept its green header: any pending capture hung (now
-    /// bounded by captureGrace), and nothing ever restarted the session. The
-    /// interruption is surfaced in the status line, and the session restarts
-    /// itself when the OS hands the camera back or after a runtime error.
     private func observeSessionLife() {
         guard !lifeObserved else { return }
         lifeObserved = true
@@ -359,8 +216,6 @@ final class CameraSession: NSObject, ObservableObject {
         }
         nc.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
                        object: session, queue: .main) { [weak self] _ in
-            // A media-services reset is the classic cause; the documented
-            // recovery is simply to start the session again.
             Task { @MainActor [weak self] in self?.resumeAfterInterruption() }
         }
     }
@@ -373,11 +228,6 @@ final class CameraSession: NSObject, ObservableObject {
         status = "Ready"
     }
 
-    /// trackRotation keeps the preview level as the phone turns, and republishes
-    /// the angle so the layout can re-shape itself to match. The preview
-    /// connection is the only thing rotated: the still is left alone and its
-    /// orientation metadata is applied to the pixels once, downstream, so the
-    /// capture and what was framed can never disagree by a quarter turn.
     private func trackRotation(of device: AVCaptureDevice) {
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         rotationCoordinator = coordinator
@@ -398,23 +248,10 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
-    /// Set by the preview view once its layer exists, so the session can level it.
     var previewConnection: AVCaptureConnection? {
         didSet { applyRotation() }
     }
 
-
-    // MARK: - The locks
-
-    /// settleAndLock lets the automatics find the scene once, then freezes all
-    /// three of them.
-    ///
-    /// The order matters and the wait is not padding: focus, exposure and white
-    /// balance each need a moment of continuous operation to converge, and
-    /// locking mid-convergence pins whatever wrong value they were passing
-    /// through. Once frozen, every card after this one is metered identically,
-    /// which is what makes a border reader's thresholds mean the same thing
-    /// twice.
     func settleAndLock() async {
         guard let device else { return }
         do {
@@ -428,15 +265,11 @@ final class CameraSession: NSObject, ObservableObject {
             if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
             }
-            // Cards land in the middle of the frame; meter and focus for that
-            // rather than for the desk around it.
             let centre = CGPoint(x: 0.5, y: 0.5)
             if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = centre }
             if device.isExposurePointOfInterestSupported {
                 device.exposurePointOfInterest = centre
             }
-            // The card plane is close. Telling autofocus not to search past it
-            // shortens every hunt it does make.
             if device.isAutoFocusRangeRestrictionSupported {
                 device.autoFocusRangeRestriction = .near
             }
@@ -448,26 +281,11 @@ final class CameraSession: NSObject, ObservableObject {
             return
         }
 
-        // Exposure and white balance lock now — they are about the room, and
-        // the room is what it is whether or not a card is present.
         try? await Task.sleep(for: .milliseconds(1200))
         lockMetering()
         status = "Waiting for the first card"
     }
 
-    /// Focus is *not* locked here, and that is the correction to an earlier
-    /// version that did.
-    ///
-    /// Locking a moment after startup pins the lens to whatever was in frame
-    /// then — which is an empty desk, at a distance no card will ever be at.
-    /// Every capture afterwards was soft, nothing read a collector row, and
-    /// every card went to review. The lens has no way back because nothing was
-    /// watching for it.
-    ///
-    /// So: continuous autofocus until a read actually succeeds, then freeze
-    /// where the card is; and thaw again after two consecutive reads that got
-    /// nothing, which is the signature of a rig that has been moved. Exactly
-    /// what the macOS FocusPolicy does, and the half of it that was missing.
     private var emptyReads = 0
 
     func focus(afterGoodRead good: Bool) {
@@ -487,11 +305,6 @@ final class CameraSession: NSObject, ObservableObject {
 
     private func lockFocus() {
         guard let device, device.isFocusModeSupported(.locked) else { return }
-        // Every control below keeps this shape: a device that refuses its
-        // configuration lock is busy, not broken, so the control quietly
-        // no-ops — but "quietly" must not mean invisibly, because a session
-        // where focus never locked and one where it locked wrong look
-        // identical from the cards. The log line is what tells them apart.
         guard (try? device.lockForConfiguration()) != nil else {
             SessionLog.write("focus lock skipped: camera is busy")
             return
@@ -500,10 +313,6 @@ final class CameraSession: NSObject, ObservableObject {
         device.focusMode = .locked
         device.unlockForConfiguration()
         locked = true
-        // The lens position was on screen as "locked at 0.243". It is the
-        // right thing to log and the wrong thing to show: three decimal places
-        // of a normalised focus value is not something anyone holding cards can
-        // act on, and it reads like a debug overlay left switched on.
         SessionLog.write(String(format: "focus locked at %.3f", lensPosition))
         status = "Focused"
     }
@@ -520,8 +329,6 @@ final class CameraSession: NSObject, ObservableObject {
         status = "Refocusing"
     }
 
-    /// lockMetering freezes exposure and white balance, which is what makes a
-    /// border reader's thresholds mean the same thing twice.
     private func lockMetering() {
         guard let device else { return }
         guard (try? device.lockForConfiguration()) != nil else {
@@ -533,8 +340,6 @@ final class CameraSession: NSObject, ObservableObject {
         if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
     }
 
-
-    /// unlock hands the automatics back, for reframing the rig.
     func unlock() {
         guard let device else { return }
         guard (try? device.lockForConfiguration()) != nil else {
@@ -555,15 +360,6 @@ final class CameraSession: NSObject, ObservableObject {
         status = "Auto"
     }
 
-    /// refocus points the lens at a spot the operator tapped.
-    ///
-    /// The override for when the automatic policy is wrong: it locks on the
-    /// first good read, and if that read happened at the wrong distance — a
-    /// hand in frame, a card half in — every capture after it is soft with no
-    /// obvious way to say so. A tap is the way to say so.
-    ///
-    /// `point` is normalized in device space, origin top-left, which is what
-    /// the preview layer converts a tap into.
     func refocus(at point: CGPoint) {
         guard let device else { return }
         guard (try? device.lockForConfiguration()) != nil else {
@@ -575,8 +371,6 @@ final class CameraSession: NSObject, ObservableObject {
             device.focusPointOfInterest = point
             device.focusMode = .autoFocus
         }
-        // Metering follows the lens: a tap means "this is the subject", and
-        // exposing for somewhere else would be answering half the request.
         if device.isExposurePointOfInterestSupported,
            device.isExposureModeSupported(.autoExpose) {
             device.exposurePointOfInterest = point
@@ -585,8 +379,6 @@ final class CameraSession: NSObject, ObservableObject {
         locked = false
         emptyReads = 0
         status = "Refocusing…"
-        // Re-lock once it has settled, so the tap ends in the same steady state
-        // everything else depends on rather than leaving the lens hunting.
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(900))
             guard let self else { return }
@@ -595,9 +387,6 @@ final class CameraSession: NSObject, ObservableObject {
         }
     }
 
-    /// setLensPosition pins the lens to an exact distance. This is the control
-    /// the macOS helper most wanted and could not have: there, locking meant
-    /// freezing wherever autofocus happened to land, with no way to say where.
     func setLensPosition(_ p: Float) {
         guard let device, device.isFocusModeSupported(.locked),
               device.isLockingFocusWithCustomLensPositionSupported else { return }
@@ -612,11 +401,6 @@ final class CameraSession: NSObject, ObservableObject {
         status = "Focused"
     }
 
-
-    /// setTorch lights the card. Worth being skeptical about rather than
-    /// assuming it helps: an on-axis LED against a glossy foil is a specular
-    /// glare generator, and glare across the title is already a documented
-    /// failure mode. Hence a level rather than a switch.
     func setTorch(_ level: Float) {
         guard let device, device.hasTorch else { return }
         guard (try? device.lockForConfiguration()) != nil else {
@@ -631,11 +415,6 @@ final class CameraSession: NSObject, ObservableObject {
             do {
                 try device.setTorchModeOn(
                     level: min(level, AVCaptureDevice.maxAvailableTorchLevel))
-                // Published only on success. setTorchModeOn throws when the
-                // hardware refuses — thermal shutoff is the common one — and
-                // publishing the ask anyway lit the screen's torch state over
-                // a dark card: it reported what was requested, not what
-                // happened.
                 torchLevel = level
             } catch {
                 SessionLog.write("torch refused: \(error.localizedDescription)")
@@ -645,15 +424,6 @@ final class CameraSession: NSObject, ObservableObject {
 
     var hasTorch: Bool { device?.hasTorch ?? false }
 
-    /// The shape of what the camera actually delivers, width over height, with
-    /// the preview's own rotation applied.
-    ///
-    /// The preview must be given this and told to fit inside it. The default is
-    /// to fill, which on a view of a different shape crops the frame to suit the
-    /// view — so the operator frames a card against a picture the capture does
-    /// not agree with. A card that looks like it fills a wide preview is in fact
-    /// a small object in the middle of a tall frame, which is precisely how the
-    /// first captures ended up using 16% of the sensor.
     var previewAspect: CGFloat {
         guard let device else { return 3.0 / 4.0 }
         let d = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
@@ -663,28 +433,8 @@ final class CameraSession: NSObject, ObservableObject {
             ? CGFloat(d.height) / CGFloat(d.width)
             : CGFloat(d.width) / CGFloat(d.height)
     }
-    /// How close the rig can physically get before the lens gives up. This is
-    /// the real ceiling on card resolution, now that zoom has been measured and
-    /// found to be nearly a wash — filling the frame is a matter of distance,
-    /// and this is the distance below which the wide lens cannot focus at all.
-    /// The ultra-wide is the macro option when this runs out.
     var minFocusMM: Int { max(0, Int(device?.minimumFocusDistance ?? 0)) }
 
-    // MARK: - Capture
-
-    /// capture lifts the next frame straight off the video tap.
-    ///
-    /// There is no photo path any more, and no selector to choose one. The
-    /// 24 MP AVCapturePhotoOutput route was measured against this one over a
-    /// full session and lost on every axis that matters: the tap already
-    /// delivers 4032x3024, the read never once came back empty across 61
-    /// captures, and the shutter term was 149ms rather than the photo path's
-    /// larger one. It also cost an undocumented workaround — disposing system
-    /// sound 1108 — to suppress a shutter pop that broke the one-sound-per-card
-    /// rule the audio design depends on.
-    ///
-    /// Nothing is recorded and nothing is stored; a frame is copied out of the
-    /// stream the trigger is already watching.
     func capture() async -> CapturedFrame? {
         guard !busy else { return nil }
         busy = true
@@ -695,36 +445,16 @@ final class CameraSession: NSObject, ObservableObject {
     }
 }
 
-/// One captured still, with the orientation still to be applied.
-///
-/// The orientation travels beside the pixels rather than being baked in here,
-/// because baking it in twice is how the title ends up at the bottom of the
-/// card — the read path calls `uprighted` exactly once, and this is what it
-/// calls it with.
 struct CapturedFrame {
     let image: CGImage
     let orientation: CGImagePropertyOrientation
 }
 
-// MARK: - Format choice
-
-/// The largest still a format will produce.
 func maxPhotoDimensions(_ format: AVCaptureDevice.Format) -> CMVideoDimensions? {
     format.supportedMaxPhotoDimensions
         .max { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }
 }
 
-/// bestPhotoFormat picks by still size, then prefers the format that can also
-/// deliver a usable video stream — the trigger will want one later, and a format
-/// chosen for stills alone can leave the preview at an awkward frame rate.
-///
-/// It still ranks on `supportedMaxPhotoDimensions` even though nothing takes a
-/// photo any more, and that is deliberate rather than left over. The value is a
-/// proxy for "this is the sensor's full-readout format", which is exactly the
-/// format whose *video* tap is 4032x3024 — the one the measured session ran on.
-/// Ranking on video dimensions directly is the obvious tidy-up and is not worth
-/// making blind: it would change which format is chosen on some devices, and
-/// the only way to know whether that is an improvement is a live session.
 func bestPhotoFormat(_ device: AVCaptureDevice) -> AVCaptureDevice.Format? {
     func pixels(_ f: AVCaptureDevice.Format) -> Int {
         guard let m = maxPhotoDimensions(f) else { return 0 }
@@ -741,6 +471,4 @@ func bestPhotoFormat(_ device: AVCaptureDevice) -> AVCaptureDevice.Format? {
         }
 }
 
-/// One CIContext for the process. Constructing one spins up a Metal device, and
-/// doing that per capture is measurable per-card cost.
 private let sharedContext = CIContext()

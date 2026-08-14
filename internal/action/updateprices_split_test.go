@@ -1,10 +1,8 @@
 package action
 
-// The split that lets the browser show refreshed prices before paying for the
-// slowest question a price update asks.
-
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"testing"
 
@@ -22,7 +20,7 @@ func splitStore(t *testing.T) (*store.Store, Deps) {
 	t.Cleanup(func() { st.Close() })
 	card := scryfall.Card{ID: "sol", Set: "lea", CollectorNumber: "1",
 		Name: "Sol Ring", ScryfallURL: "http://x", PriceUSD: f(12)}
-	if err := st.AddCardFinish(card, "nonfoil", 1); err != nil {
+	if err := st.AddCardFinish(card, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	return st, Deps{
@@ -35,10 +33,6 @@ func splitStore(t *testing.T) (*store.Store, Deps) {
 	}
 }
 
-// The reorder this file guards: history is written by the refresh half, so the
-// browser's first redraw already carries today's observation and movers has
-// something to chart. It used to wait behind the correction sweep — twenty
-// seconds of paced vendor requests that change nothing on almost every run.
 func TestRefreshPricesRecordsHistoryImmediately(t *testing.T) {
 	st, deps := splitStore(t)
 
@@ -57,8 +51,6 @@ func TestRefreshPricesRecordsHistoryImmediately(t *testing.T) {
 		t.Fatal("the refresh half recorded no history; movers would open empty until the sweep landed")
 	}
 
-	// The deferred half repairs rather than records, and carries the refresh's
-	// counts through so a caller ends up with one filled-in result either way.
 	before := obs
 	res, err = CorrectPrices(context.Background(), deps, nil, res)
 	if err != nil {
@@ -80,8 +72,6 @@ func TestRefreshPricesRecordsHistoryImmediately(t *testing.T) {
 	}
 }
 
-// The composed call is what every batch caller still uses, and it must behave
-// as it always did: both halves, in order, one result.
 func TestUpdatePricesStillRecordsInOneCall(t *testing.T) {
 	st, deps := splitStore(t)
 
@@ -101,8 +91,6 @@ func TestUpdatePricesStillRecordsInOneCall(t *testing.T) {
 	}
 }
 
-// An empty hoard short-circuits before either half does any work; the composed
-// call must not fall through into a correction sweep over nothing.
 func TestUpdatePricesOnAnEmptyHoardDoesNothing(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {

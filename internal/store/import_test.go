@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +18,8 @@ func TestApplyImportCreatesBindersAndAddsAtomically(t *testing.T) {
 	defaultID := binders[0].ID
 
 	created, err := s.ApplyImport(nil, []string{"Trade"}, []CardAdd{
-		{ContainerID: defaultID, Card: ulamog(), Finish: "nonfoil", Quantity: 2},
-		{Binder: "Trade", Card: solRing(), Finish: "foil", Quantity: 1},
+		{ContainerID: defaultID, Card: ulamog(), Finish: finish.Nonfoil, Quantity: 2},
+		{Binder: "Trade", Card: solRing(), Finish: finish.Foil, Quantity: 1},
 	})
 	if err != nil {
 		t.Fatalf("ApplyImport: %v", err)
@@ -34,22 +35,19 @@ func TestApplyImportCreatesBindersAndAddsAtomically(t *testing.T) {
 		t.Errorf("copies = %d, want 3", totals.TotalCopies)
 	}
 	rows, err := s.BinderByFinish(created["Trade"])
-	if err != nil || len(rows) != 1 || rows[0].Finish != "foil" {
+	if err != nil || len(rows) != 1 || rows[0].Finish != finish.Foil {
 		t.Errorf("Trade rows = %+v (%v), want the foil Sol Ring", rows, err)
 	}
 }
 
-// A failure anywhere in the batch must leave nothing behind — no entries and
-// no binders. Added quantities accumulate, so a half-committed import cannot
-// be told apart from cards actually owned.
 func TestApplyImportIsAllOrNothing(t *testing.T) {
 	s := newTestStore(t)
 	binders, _ := s.ListBinders()
 	defaultID := binders[0].ID
 
 	_, err := s.ApplyImport(nil, []string{"Trade"}, []CardAdd{
-		{ContainerID: defaultID, Card: ulamog(), Finish: "nonfoil", Quantity: 2},
-		{Binder: "Ghost", Card: solRing(), Finish: "nonfoil", Quantity: 1}, // not in newBinders
+		{ContainerID: defaultID, Card: ulamog(), Finish: finish.Nonfoil, Quantity: 2},
+		{Binder: "Ghost", Card: solRing(), Finish: finish.Nonfoil, Quantity: 1},
 	})
 	if err == nil {
 		t.Fatal("a bad batch committed, want an error")
@@ -64,8 +62,6 @@ func TestApplyImportIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// A file from a newer hoard is refused before anything touches it: every
-// migration so far has been additive, but that is circumstance, not contract.
 func TestNewerSchemaIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "future.db")
 	s, err := Open(path)
@@ -88,8 +84,6 @@ func TestNewerSchemaIsRefused(t *testing.T) {
 	}
 }
 
-// The application_id marks the file as a hoard per the SQLite file-format
-// convention, so tooling can identify it without guessing at tables.
 func TestApplicationIDIsStamped(t *testing.T) {
 	s := freshDB(t)
 	var id int64
@@ -101,8 +95,6 @@ func TestApplicationIDIsStamped(t *testing.T) {
 	}
 }
 
-// The pre-migration backup must capture the file as it stood BEFORE any
-// transform — a backup taken after one can only preserve its mistakes.
 func TestBackupPrecedesTransforms(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hoard.db")

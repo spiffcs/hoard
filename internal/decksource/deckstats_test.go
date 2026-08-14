@@ -6,24 +6,10 @@ import (
 	"testing"
 )
 
-// Deckstats' text export, from real bytes.
-//
-// Both fixtures are excerpts of the same deck exported twice — once with the
-// owner's categories, once without — which is the pairing that matters: the two
-// files must produce the same hoard deck, and the categorised one is where the
-// sectioning goes wrong. The full exports were 125 and 103 lines and agreed on
-// 99 main plus 1 commander only after both bugs below were fixed.
-//
-// Deckstats spells a category as a comment, "//Commander" with the name against
-// the slashes. hoard skipped every "//" line outright, so the commander sat in
-// the main deck; and once "//Commander" was honoured, the twelve categories
-// after it named no board, left the section standing, and filed all 100 cards
-// under Commander instead. A fixture with only one category cannot see that
-// second failure, which is why this one carries two.
 func TestDeckstatsExportSections(t *testing.T) {
 	for _, tc := range []struct {
 		file  string
-		want  map[string]int // board -> cards
+		want  map[string]int
 		names map[string]string
 	}{
 		{
@@ -69,9 +55,6 @@ func TestDeckstatsExportSections(t *testing.T) {
 	}
 }
 
-// A split card's name contains the comment marker. It must not be mistaken for
-// one — the line does not begin with it — and the set and number on the line
-// still address the printing exactly, so no front-face retry is needed.
 func TestDeckstatsSplitCardIsNotAComment(t *testing.T) {
 	d, err := ParseText("x", "", "", "deckstats",
 		strings.NewReader("//Main\n1 Life // Death (DMR) 216\n"))
@@ -87,9 +70,6 @@ func TestDeckstatsSplitCardIsNotAComment(t *testing.T) {
 	}
 }
 
-// A written comment keeps its old meaning. The space after the slashes is what
-// separates a note from a Deckstats category, so a note must not silently end
-// the section it sits in.
 func TestWrittenCommentDoesNotEndASection(t *testing.T) {
 	d, err := ParseText("x", "", "", "",
 		strings.NewReader("Sideboard\n1 Duress (m21) 95\n// a note to self\n1 Negate (m21) 55\n"))

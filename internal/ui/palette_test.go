@@ -2,8 +2,6 @@ package ui
 
 import "testing"
 
-// The search targets a palette builds from a title, so a spaced query keeps
-// matching without every command restating its own name in aliases.
 func TestSpacedTitle(t *testing.T) {
 	for title, want := range map[string]string{
 		"AddCards":               "add cards",
@@ -27,8 +25,6 @@ func items() []PaletteItem {
 	}
 }
 
-// An empty query lists everything, highest rank first, and equal ranks keep
-// the order the caller supplied.
 func TestEmptyQueryRanksAndKeepsOrder(t *testing.T) {
 	var p Palette
 	its := items()
@@ -39,19 +35,16 @@ func TestEmptyQueryRanksAndKeepsOrder(t *testing.T) {
 	if got := its[p.Matches()[0].Index].Title; got != "Done" {
 		t.Errorf("top row = %q, want Done (rank 5)", got)
 	}
-	// Scan and Pair both rank zero, so the registry order decides.
+
 	if a, b := its[p.Matches()[1].Index].Title, its[p.Matches()[2].Index].Title; a != "Scan" || b != "Pair" {
 		t.Errorf("equal ranks reordered: got %q then %q", a, b)
 	}
 }
 
-// A query narrows, and matching on an alias still selects the command even
-// though no rune of the title is bolded.
 func TestQueryNarrowsAndMatchesAliases(t *testing.T) {
 	var p Palette
 	its := items()
-	// "camera" and not "iphone": fuzzy matching is a subsequence test, and
-	// i-p-h-o-n-e is a subsequence of "Pair … phone" too.
+
 	p.Query = "camera"
 	p.Refresh(its)
 	if len(p.Matches()) != 1 {
@@ -61,9 +54,7 @@ func TestQueryNarrowsAndMatchesAliases(t *testing.T) {
 	if its[m.Index].Title != "Scan" {
 		t.Errorf("matched %q, want Scan", its[m.Index].Title)
 	}
-	// Positions are title-relative and must stay inside it: the match ran
-	// against title + spaced title + aliases, and a position past the title's
-	// last rune would index off the end of the string being bolded.
+
 	for _, at := range m.Positions {
 		if at >= len([]rune(its[m.Index].Title)) {
 			t.Errorf("position %d escapes the title %q", at, its[m.Index].Title)
@@ -71,8 +62,6 @@ func TestQueryNarrowsAndMatchesAliases(t *testing.T) {
 	}
 }
 
-// The cursor stops at the ends rather than wrapping, and a narrowing query
-// pulls it back into range rather than leaving it past the last row.
 func TestCursorStaysInRange(t *testing.T) {
 	var p Palette
 	its := items()
@@ -94,7 +83,6 @@ func TestCursorStaysInRange(t *testing.T) {
 	}
 }
 
-// No match still costs one row, so the drawer has somewhere to say so.
 func TestNoMatchStillDrawsARow(t *testing.T) {
 	var p Palette
 	its := items()
@@ -114,8 +102,6 @@ func TestNoMatchStillDrawsARow(t *testing.T) {
 	}
 }
 
-// Typing and erasing drive the query, and the drawer never grows past its
-// row cap however many commands apply.
 func TestTypingAndRowCap(t *testing.T) {
 	var p Palette
 	p.Type("sc")

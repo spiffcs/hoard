@@ -1,24 +1,3 @@
-// Does a hand-rolled self-signed certificate actually work?
-//
-// The design work marked this **unverified**: there is no public Apple API for
-// generating a self-signed X.509 certificate on iOS — high confidence, not
-// exhaustively checked. The design chosen on 2026-08-08
-// rests entirely on that being surmountable, so it is measured here before
-// anything is built on top of it — the same order that turned the TLS-PSK
-// question from a mystery into two named bugs in an hour.
-//
-// Four things have to hold, and each fails in a different place:
-//
-//   1. Security parses the DER we emitted (a bad length byte fails here);
-//   2. the keychain hands back a SecIdentity for it (this is the step with no
-//      iOS API, and the reason the private key is created permanent);
-//   3. TLS completes with that identity presented by both ends;
-//   4. a peer whose fingerprint was not pinned is refused.
-//
-// Point 4 is the one worth writing a test for even when the rest is obviously
-// working: a pinning verify block that accidentally returns true is
-// indistinguishable from a correct one until someone attacks it.
-
 import CryptoKit
 import Foundation
 import Network
@@ -27,22 +6,12 @@ import Testing
 
 @testable import ScanLink
 
-/// Keychain items are process-global and outlive a test run, so every test
-/// scopes its own and cleans up. A shared label would make these tests pass or
-/// fail depending on what ran before them.
 private func scopedService(_ name: String) -> String {
     "dev.spiffcs.hoard.scan.test.\(name).\(UUID().uuidString.prefix(8))"
 }
 
-/// Serialized, and it has to be. The legacy keychain does not take concurrent
-/// writes from one process: four of these running at once produced
-/// `-25300 failed to generate CDSA key` on some tests and success on others,
-/// varying run to run — which reads as a flaky certificate bug rather than as
-/// contention, and sent one round of debugging at the DER encoder instead.
-/// Nothing about the production path is serial; only this test bundle is.
 @Suite(.serialized)
 struct PeerIdentitySuite {
-
 @Test("a generated identity parses, and is stable across loads")
 func identityGeneration() throws {
     let service = scopedService("gen")
@@ -50,17 +19,10 @@ func identityGeneration() throws {
 
     let identity = try loadOrCreatePeerIdentity(service: service)
 
-    // Point 1: Security parsed what we emitted. loadOrCreatePeerIdentity
-    // already throws .malformedCertificate if not, but assert the shape too —
-    // a certificate can parse and still carry the wrong public key.
     let cert = try #require(SecCertificateCreateWithData(nil, identity.certificateDER as CFData))
     #expect(SecCertificateCopyData(cert) as Data == identity.certificateDER)
     #expect(identity.fingerprint.count == 32)
 
-    // Point 2, and the property the whole design hangs on: a second load
-    // returns the same identity rather than minting another. If this drifts,
-    // every peer that pinned the old fingerprint is silently locked out on the
-    // next launch — which would look like a network fault, not an identity bug.
     let again = try loadOrCreatePeerIdentity(service: service)
     #expect(again.fingerprint == identity.fingerprint)
 }
@@ -74,13 +36,6 @@ func identitiesAreDistinct() throws {
     #expect(one.fingerprint != two.fingerprint)
 }
 
-/// TLS parameters presenting `identity`, and pinning the peer to `expected`.
-///
-/// `expected == nil` means accept anything, which is only ever right during the
-/// very first pairing exchange — and even then the fingerprint is bound to the
-/// pairing code's HMAC before it is stored. It is a parameter here so the
-/// refusal case can be tested against the acceptance case with one variable
-/// changed.
 private func pinnedParameters(
     identity: PeerIdentity, expected: Data?, queue: DispatchQueue,
     saw: @escaping (Data) -> Void
@@ -91,10 +46,6 @@ private func pinnedParameters(
     if let secIdentity = sec_identity_create(identity.secIdentity) {
         sec_protocol_options_set_local_identity(sec, secIdentity)
     }
-    // Both ends present a certificate. Without this the phone would
-    // authenticate the Mac and not the reverse, and the scanner auto-commits —
-    // an unauthenticated writer is the whole thing the pairing gate exists to
-    // stop.
     sec_protocol_options_set_peer_authentication_required(sec, true)
 
     sec_protocol_options_set_verify_block(
@@ -114,10 +65,6 @@ private func pinnedParameters(
                 complete(true)
                 return
             }
-            // Constant time. The comparison is against a value an attacker
-            // supplies, and `==` on Data is not documented to be constant
-            // time — cheap to do right, and Pairing.swift already sets the
-            // precedent with isValidAuthenticationCode.
             var diff: UInt8 = fingerprint.count == expected.count ? 0 : 1
             for (a, b) in zip(fingerprint, expected) { diff |= a ^ b }
             complete(diff == 0)
@@ -143,8 +90,6 @@ private struct HandshakeResult {
     var clientSawServerFingerprint: Data?
 }
 
-/// Stands up a mutually-authenticated TLS session on loopback between two
-/// identities, with each end pinning what it is told to pin.
 private func handshake(
     server: PeerIdentity, client: PeerIdentity,
     serverPins: Data?, clientPins: Data?
@@ -175,9 +120,6 @@ private func handshake(
     listener.start(queue: queue)
     defer { listener.cancel(); serverConn?.cancel() }
 
-    // `.ready`, not a non-nil port: `listener.port` reports the requested `.any`
-    // — that is, 0 — from construction, and dialing port 0 fails with
-    // EADDRNOTAVAIL, which reads as a TLS problem and is not one.
     guard waitForIdentity(5, { listenerReady }), let port = listener.port else {
         return HandshakeResult(paired: false, clientState: "-", serverState: "listener not ready",
                                serverSawClientFingerprint: nil, clientSawServerFingerprint: nil)
@@ -228,8 +170,6 @@ func pinnedHandshakeSucceeds() throws {
           client: \(result.clientState)
           server: \(result.serverState)
         """)
-    // Each end saw the other's real certificate, not its own reflected back —
-    // a verify block wired to the wrong side would still pass the test above.
     #expect(result.clientSawServerFingerprint == phone.fingerprint)
     #expect(result.serverSawClientFingerprint == mac.fingerprint)
 }
@@ -249,9 +189,6 @@ func unpinnedPeerRefused() throws {
     let mac = try loadOrCreatePeerIdentity(service: macService)
     let stranger = try loadOrCreatePeerIdentity(service: strangerService)
 
-    // The phone pins the Mac. Someone else on the network connects with a
-    // perfectly valid certificate of their own — which is the whole attack a
-    // self-signed system has to survive, since anyone can mint one.
     let result = handshake(
         server: phone, client: stranger,
         serverPins: mac.fingerprint, clientPins: phone.fingerprint)

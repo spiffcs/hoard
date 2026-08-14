@@ -2,23 +2,17 @@ package store
 
 import (
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 
 	"github.com/spiffcs/hoard/internal/mtgjson"
 )
 
-// Card Kingdom's buylist bids, kept in their own table beside the retail
-// history: the two are different sides of the counter, and the retail
-// table's readers assume one series per (card, finish). See migration v13.
-
-// BidSeries returns every bid recorded for one printing and finish, oldest
-// first — the buylist twin of PriceSeries, with the same irregular-spacing
-// caveat: only the days a bid actually moved are stored.
-func (s *Store) BidSeries(scryfallID, finish string) ([]PricePoint, error) {
+func (s *Store) BidSeries(scryfallID string, fin finish.Finish) ([]PricePoint, error) {
 	rows, err := s.db.Query(`
 SELECT as_of, price_usd, source
 FROM card_bid_history
 WHERE scryfall_id = ? AND finish = ?
-ORDER BY as_of`, scryfallID, finish)
+ORDER BY as_of`, scryfallID, fin)
 	if err != nil {
 		return nil, fmt.Errorf("reading bid series for %s: %w", scryfallID, err)
 	}
@@ -35,28 +29,17 @@ ORDER BY as_of`, scryfallID, finish)
 	return out, rows.Err()
 }
 
-// BackfillBids imports the archive's bid series, bounded against the bid
-// table's own live era — a card whose retail history reaches back months
-// still gets its full bid archive, and vice versa.
 func (s *Store) BackfillBids(byCard map[string][]mtgjson.Observation) (inserted, cards int, err error) {
 	return s.backfillHistory("card_bid_history", byCard)
 }
 
-// BidObservation is one live bid quote, in the store's finish vocabulary.
 type BidObservation struct {
 	ScryfallID string
-	Finish     string
+	Finish     finish.Finish
 	Source     string
 	Price      float64
 }
 
-// RecordBids appends the bids that differ from the last one recorded, all
-// at one timestamp — the same differs-from-last rule RecordPrices applies
-// to retail, which is what makes recording on every quotes read free: a
-// repeat of today's bid inserts nothing.
-//
-// A backfilled midnight row never collides (live timestamps carry a time
-// of day); the conflict clause backstops an exact repeat.
 func (s *Store) RecordBids(bids []BidObservation) (inserted int, err error) {
 	if len(bids) == 0 {
 		return 0, nil
@@ -82,11 +65,11 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 
 	ts := now()
 	for _, b := range bids {
-		finish := storeFinish(b.Finish)
-		if prev, ok := last[b.ScryfallID+"|"+finish]; ok && prev == b.Price {
+		fin := b.Finish
+		if prev, ok := last[b.ScryfallID+"|"+fin.String()]; ok && prev == b.Price {
 			continue
 		}
-		res, err := stmt.Exec(b.ScryfallID, finish, b.Price, b.Source, ts)
+		res, err := stmt.Exec(b.ScryfallID, fin, b.Price, b.Source, ts)
 		if err != nil {
 			return 0, fmt.Errorf("recording bid for %s: %w", b.ScryfallID, err)
 		}
@@ -100,7 +83,6 @@ ON CONFLICT(scryfall_id, finish, as_of) DO NOTHING`)
 	return inserted, nil
 }
 
-// latestBids maps every (card, finish) to its newest recorded bid.
 func (s *Store) latestBids() (map[string]float64, error) {
 	rows, err := s.db.Query(`
 SELECT h.scryfall_id, h.finish, h.price_usd

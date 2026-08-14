@@ -3,6 +3,7 @@ package pricing
 import (
 	"compress/gzip"
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -26,7 +27,6 @@ func newStore(t *testing.T) *store.Store {
 	return s
 }
 
-// A card Scryfall cannot price for a finish you hold is a gap.
 func unpricedFoil() scryfall.Card {
 	return scryfall.Card{
 		ID: "ripple-id", Set: "m3c", CollectorNumber: "218", Name: "Acidic Slime",
@@ -34,14 +34,12 @@ func unpricedFoil() scryfall.Card {
 	}
 }
 
-// With no gaps there is nothing to fetch, so the 50 MB scan must not happen —
-// which this proves by pointing the fetcher at a cache dir it would fail on.
 func TestFillGapsDoesNothingWithoutGaps(t *testing.T) {
 	s := newStore(t)
 	if err := s.AddCardFinish(scryfall.Card{
 		ID: "u", Set: "uma", CollectorNumber: "7", Name: "Ulamog",
 		PriceUSD: f64(10), PriceUSDFoil: f64(25), ScryfallURL: "http://x",
-	}, "nonfoil", 1); err != nil {
+	}, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	report, err := New(s, t.TempDir()).FillGaps(context.Background())
@@ -53,11 +51,9 @@ func TestFillGapsDoesNothingWithoutGaps(t *testing.T) {
 	}
 }
 
-// Once every gap has been asked about recently, the scan is skipped entirely.
-// That is the difference between a 1.7s refresh and a 0.2s one.
 func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	gaps, err := s.UnpricedByOwnedFinish()
@@ -68,8 +64,6 @@ func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 		t.Fatalf("RecordPriceGapChecks: %v", err)
 	}
 
-	// A cache dir that does not exist and no network: reaching MTGJSON at all
-	// would fail, so a clean skip is the only way this passes.
 	report, err := New(s, filepath.Join(t.TempDir(), "nope")).FillGaps(context.Background())
 	if err != nil {
 		t.Fatalf("FillGaps: %v", err)
@@ -79,20 +73,16 @@ func TestFillGapsSkipsWhenEveryGapWasAskedRecently(t *testing.T) {
 	}
 }
 
-// Refs already carrying an id need no set-file download once the vendor
-// links are stamped too, which is what makes a collection-wide read free
-// after the first run.
 func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	// The link pass has already happened for this card (an empty record
-	// counts: asked-and-none must not refetch).
+
 	if err := s.SaveCardKingdomLinks(map[string]store.CKLinks{"ripple-id": {}}); err != nil {
 		t.Fatalf("SaveCardKingdomLinks: %v", err)
 	}
-	// Unreachable cache and no network; only the supplied id can satisfy this.
+
 	f := New(s, filepath.Join(t.TempDir(), "nope"))
 	refs := []Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "known-uuid"}}
 	uuids, err := f.resolve(context.Background(), refs)
@@ -105,12 +95,9 @@ func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	}
 }
 
-// A card whose uuid is known but whose vendor links were never asked about
-// fetches its set file once — the pre-v15 backfill — stamps the links
-// (present or recorded-absent), and never fetches again.
 func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -127,8 +114,6 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Byte progress stays silent during the per-set pass: dozens of tiny
-	// bars filling and vanishing read as one download failing repeatedly.
 	var byteEvents int
 	f := New(s, t.TempDir()).WithBaseURL(srv.URL).
 		WithBytes(func(done, total int64) { byteEvents++ })
@@ -151,8 +136,6 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 		t.Fatalf("links = %q/%q, want both stamped", d.CKURL, d.CKFoilURL)
 	}
 
-	// Stamped means done: a second pass fetches nothing (the cache dir is
-	// fresh, so a fetch would hit the server again).
 	f2 := New(s, t.TempDir()).WithBaseURL(srv.URL)
 	if _, err := f2.resolve(context.Background(),
 		[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "uuid-ripple"}}); err != nil {
@@ -163,11 +146,10 @@ func TestResolveHarvestsCardKingdomLinksOnce(t *testing.T) {
 	}
 }
 
-// Progress is reported through a callback so this package prints nothing itself.
 func TestProgressIsOptional(t *testing.T) {
 	s := newStore(t)
 	fetcher := New(s, t.TempDir())
-	fetcher.say("silent %d", 1) // must not panic with no reporter
+	fetcher.say("silent %d", 1)
 
 	var got []string
 	fetcher.WithProgress(func(m string) { got = append(got, m) })
@@ -177,24 +159,19 @@ func TestProgressIsOptional(t *testing.T) {
 	}
 }
 
-// A held card already riding a fallback price refreshes on every pass —
-// a fallback filled once and never re-asked freezes the card's value
-// forever, and a vendor-preference change never lands (observed live:
-// the ripple foils stayed on Card Kingdom's ask after the foil order
-// moved to Manapool).
 func TestFillGapsRefreshesFallbackPrices(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	// Already fallback-priced — not a gap — with the old vendor's figure.
+
 	if err := s.UpsertAltPrices([]store.AltPrice{{
 		ScryfallID: "ripple-id", MTGJSONUUID: "uuid-ripple",
 		PriceUSDFoil: f64(74.99), SourceUSDFoil: "cardkingdom",
 	}}); err != nil {
 		t.Fatalf("UpsertAltPrices: %v", err)
 	}
-	// Resolution is already stamped, so the pass needs no set file.
+
 	if err := s.SaveMTGJSONUUIDs(map[string]string{"ripple-id": "uuid-ripple"}); err != nil {
 		t.Fatalf("SaveMTGJSONUUIDs: %v", err)
 	}
@@ -230,14 +207,9 @@ func TestFillGapsRefreshesFallbackPrices(t *testing.T) {
 	}
 }
 
-// The treated-foil overlay end to end: resolve learns the split TCGplayer
-// product id from the set file, tcgcsv supplies that product's market
-// price, and the effective foil price anchors on tcgplayer — even though
-// the MTGJSON feed publishes no foil series for the card (the ripple-foil
-// shape, observed live on Akroma's Will, product 553005).
 func TestPricesOverlayTreatedFoil(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -292,7 +264,6 @@ func TestPricesOverlayTreatedFoil(t *testing.T) {
 		t.Errorf("normal = %+v, want the feed's own figure untouched", p)
 	}
 
-	// The learned product id is stamped, like uuids and vendor links.
 	ids, _, stamped, err := s.TCGAltProducts()
 	if err != nil {
 		t.Fatalf("TCGAltProducts: %v", err)
@@ -302,11 +273,9 @@ func TestPricesOverlayTreatedFoil(t *testing.T) {
 	}
 }
 
-// The overlay fails soft: tcgcsv unreachable means the feed's own answer
-// stands — a dash for the treated finish beats a broken price update.
 func TestPricesOverlaySoftFailure(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +292,7 @@ func TestPricesOverlaySoftFailure(t *testing.T) {
 				"manapool": {"currency": "USD", "retail": {"foil": {"2026-08-01": 21.78}}}}}}}`))
 			zw.Close()
 		default:
-			w.WriteHeader(http.StatusInternalServerError) // tcgcsv is down
+			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}))
 	defer srv.Close()
@@ -338,13 +307,9 @@ func TestPricesOverlaySoftFailure(t *testing.T) {
 	}
 }
 
-// F must mean fresh: RefreshQuotes skips the day-cache read, re-parses
-// with the treated-foil overlay, and rewrites the cache — a stale bundle
-// written before the overlay existed otherwise answers for the whole day
-// (observed live: a comps sheet of dashes beside freshly updated prices).
 func TestRefreshQuotesBypassesTheDayCache(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	gz := func(body string) func(w http.ResponseWriter) {
@@ -381,16 +346,15 @@ func TestRefreshQuotesBypassesTheDayCache(t *testing.T) {
 	refs := []Ref{{ScryfallID: "ripple-id", SetCode: "m3c"}}
 	hasTCGFoil := func(qs map[string][]mtgjson.Quote) bool {
 		for _, q := range qs["ripple-id"] {
-			if q.Provider == "tcgplayer" && q.Finish == "foil" && q.Price == 17.56 {
+			if q.Provider == "tcgplayer" && q.Finish == finish.Foil && q.Price == 17.56 {
 				return true
 			}
 		}
 		return false
 	}
 
-	// A bundle written before the overlay existed.
 	f.saveQuotes(refs, map[string][]mtgjson.Quote{"ripple-id": {
-		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 21.78}}})
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 21.78}}})
 	qs, err := f.Quotes(context.Background(), refs)
 	if err != nil {
 		t.Fatalf("Quotes: %v", err)
@@ -412,15 +376,6 @@ func TestRefreshQuotesBypassesTheDayCache(t *testing.T) {
 	}
 }
 
-// The treated-foil overlay reconstructs a series one archive download per day,
-// which made it the most expensive thing a backfill does: 39 seconds of a 53
-// second cold run on a twelve-card hoard, measured before this narrowing. It was
-// being paid for the foil series of cards held only in non-foil, which movers
-// joins against holdings and can never display.
-//
-// A ref that names a finish is asked about in that finish alone, and the
-// negative control is the whole test: the foil half must still sweep, or an
-// overlay that had simply stopped working would pass just as well.
 func TestHistoryOverlaySweepsOnlyHeldFinishes(t *testing.T) {
 	gz := func(body string) func(w http.ResponseWriter) {
 		return func(w http.ResponseWriter) {
@@ -447,21 +402,18 @@ func TestHistoryOverlaySweepsOnlyHeldFinishes(t *testing.T) {
 			{"productId": 553005, "marketPrice": 17.56, "subTypeName": "Foil"}]}`),
 	}
 
-	// days=4 asks for three days behind today, so a sweep that runs is three
-	// archive downloads and a sweep that does not is none — a count, not a
-	// boolean, so a half-narrowed overlay cannot pass.
 	const days = 4
-	sweep := func(t *testing.T, finish string) int {
+	sweep := func(t *testing.T, fin finish.Finish) int {
 		t.Helper()
 		s := newStore(t)
-		if err := s.AddCardFinish(unpricedFoil(), finish, 1); err != nil {
+		if err := s.AddCardFinish(unpricedFoil(), fin, 1); err != nil {
 			t.Fatalf("AddCard: %v", err)
 		}
 		var archives int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/archive/tcgplayer/") {
 				archives++
-				w.WriteHeader(http.StatusNotFound) // a missing day is a hole, not a failure
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			h, ok := routes[r.URL.Path]
@@ -476,26 +428,23 @@ func TestHistoryOverlaySweepsOnlyHeldFinishes(t *testing.T) {
 
 		f := New(s, t.TempDir()).WithBaseURL(srv.URL).WithTCGCSVBaseURL(srv.URL)
 		if _, _, err := f.History(context.Background(),
-			[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", Finish: finish}}, days); err != nil {
+			[]Ref{{ScryfallID: "ripple-id", SetCode: "m3c", Finish: fin}}, days); err != nil {
 			t.Fatalf("History: %v", err)
 		}
 		return archives
 	}
 
-	if n := sweep(t, "nonfoil"); n != 0 {
+	if n := sweep(t, finish.Nonfoil); n != 0 {
 		t.Errorf("a non-foil holding pulled %d treated-foil archives; want none", n)
 	}
-	if n := sweep(t, "foil"); n != days-1 {
+	if n := sweep(t, finish.Foil); n != days-1 {
 		t.Errorf("a foil holding pulled %d treated-foil archives; want %d", n, days-1)
 	}
 }
 
-// A ref that names no finish still asks about every treatment: the comps sheet
-// and the market view quote finishes nobody holds on purpose, and narrowing
-// them would have been a silent loss of the thing the overlay was built for.
 func TestHistoryOverlaySweepsEveryFinishWhenRefSaysNothing(t *testing.T) {
 	s := newStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	var archives int

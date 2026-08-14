@@ -1,6 +1,7 @@
 package watchsource
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,22 +23,20 @@ func parseFile(t *testing.T, name string) []Row {
 	return rows
 }
 
-// Both fixtures describe the same three watches; whichever format carried
-// them, the parsed rows must agree.
 func checkFixtureRows(t *testing.T, rows []Row) {
 	t.Helper()
 	if len(rows) != 3 {
 		t.Fatalf("rows = %d, want 3", len(rows))
 	}
 	sol := rows[0]
-	if sol.Name != "Sol Ring" || sol.Op != "under" || sol.Threshold != 1.5 || sol.Finish != "nonfoil" {
+	if sol.Name != "Sol Ring" || sol.Op != "under" || sol.Threshold != 1.5 || sol.Finish != finish.Nonfoil {
 		t.Errorf("Sol Ring row = %+v", sol)
 	}
 	if sol.Ident != (scryfall.Identifier{Set: "c21", CollectorNumber: "263"}) {
 		t.Errorf("set+number should beat name: ident = %+v", sol.Ident)
 	}
 	sheoldred := rows[1]
-	if sheoldred.Name != "Sheoldred, the Apocalypse" || sheoldred.Finish != "foil" || sheoldred.Threshold != 40 {
+	if sheoldred.Name != "Sheoldred, the Apocalypse" || sheoldred.Finish != finish.Foil || sheoldred.Threshold != 40 {
 		t.Errorf("Sheoldred row = %+v", sheoldred)
 	}
 	if sheoldred.Ident != (scryfall.Identifier{Name: "Sheoldred, the Apocalypse"}) {
@@ -52,7 +51,7 @@ func TestParseCSVFixture(t *testing.T)  { checkFixtureRows(t, parseFile(t, "watc
 func TestParseJSONFixture(t *testing.T) { checkFixtureRows(t, parseFile(t, "watches.json")) }
 
 func TestSniffJSONByLeadingBracket(t *testing.T) {
-	// Whitespace and a BOM before the bracket must not defeat the sniff.
+
 	rows, err := Parse([]byte("\ufeff\n [\n{\"name\":\"Sol Ring\",\"direction\":\"under\",\"thresholdUsd\":2}]"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,8 +62,7 @@ func TestSniffJSONByLeadingBracket(t *testing.T) {
 }
 
 func TestCSVTolerations(t *testing.T) {
-	// BOM, reordered and extra columns, case-insensitive headers, $ and
-	// truthy foil spellings, ragged rows, scryfall id beating set+number.
+
 	csv := "\ufeffthreshold,NAME,Extra,direction,finish,scryfall id,set,collector number\n" +
 		"$12.50,Ragavan,x,under,true,abc-123,mom,42\n" +
 		"3,Fury,,over\n"
@@ -75,10 +73,10 @@ func TestCSVTolerations(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	if r := rows[0]; r.Threshold != 12.5 || r.Finish != "foil" || r.Ident != (scryfall.Identifier{ID: "abc-123"}) {
+	if r := rows[0]; r.Threshold != 12.5 || r.Finish != finish.Foil || r.Ident != (scryfall.Identifier{ID: "abc-123"}) {
 		t.Errorf("row 1 = %+v", r)
 	}
-	if r := rows[1]; r.Op != "over" || r.Finish != "nonfoil" || r.Ident != (scryfall.Identifier{Name: "Fury"}) {
+	if r := rows[1]; r.Op != "over" || r.Finish != finish.Nonfoil || r.Ident != (scryfall.Identifier{Name: "Fury"}) {
 		t.Errorf("row 2 = %+v", r)
 	}
 }
@@ -88,7 +86,7 @@ func TestEtchedFinishPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows[0].Finish != "etched" {
+	if rows[0].Finish != finish.Etched {
 		t.Errorf("finish = %q, want etched (the resolver corrects it to a price finish)", rows[0].Finish)
 	}
 }
@@ -104,10 +102,7 @@ func TestParseErrors(t *testing.T) {
 		{"bad direction", "Name,Direction,Threshold\nSol Ring,below,5\n", `line 2 (Sol Ring): direction must be under, over, drop or rise, not "below"`},
 		{"bad threshold", "Name,Direction,Threshold\nSol Ring,under,cheap\n", `line 2 (Sol Ring): cannot parse threshold "cheap"`},
 		{"zero threshold", "Name,Direction,Threshold\nSol Ring,under,0\n", "line 2 (Sol Ring): threshold must be a positive dollar amount"},
-		// A comma inside an unquoted card name shifts every column after it,
-		// so the direction cell reads a fragment of the name. Short rows stay
-		// tolerated (TestCSVTolerations); only over-long ones are refused,
-		// because nothing but an unquoted delimiter can produce one.
+
 		{"overlong row", "Name,Direction,Threshold\nShalai, Voice of Plenty,under,5\n",
 			"line 2: 4 fields, header has 3 — an unquoted comma in a card name?"},
 		{"header only", "Name,Direction,Threshold\n", "no watches found in file"},

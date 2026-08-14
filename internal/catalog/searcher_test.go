@@ -9,8 +9,6 @@ import (
 	"github.com/spiffcs/hoard/internal/cardname"
 )
 
-// stocked builds a catalog holding a handful of real card names, including the
-// ones the scanner's own tests use as traps.
 func stocked(t *testing.T) *Catalog {
 	t.Helper()
 	serveBundle(t, "2026-07-30T00:00:00Z", []string{
@@ -41,14 +39,11 @@ func TestAutocompletePrefersPrefixes(t *testing.T) {
 		t.Errorf("got %v, want Sol Ring first", got)
 	}
 
-	// Punctuation in the query is not a difference, so a name typed without its
-	// comma still completes.
 	got, _ = c.Autocomplete(context.Background(), "elspeth knight")
 	if !slices.Contains(got, "Elspeth, Knight-Errant") {
 		t.Errorf("got %v, want the comma-less query to complete", got)
 	}
 
-	// A substring match is offered, but after prefixes.
 	got, _ = c.Autocomplete(context.Background(), "forge")
 	if !slices.Contains(got, "Stoneforge Mystic") {
 		t.Errorf("got %v, want a mid-name match", got)
@@ -59,8 +54,6 @@ func TestAutocompletePrefersPrefixes(t *testing.T) {
 	}
 }
 
-// A name is one row in `names` however many printings carry it, so the picker
-// must not show it repeatedly.
 func TestAutocompleteDoesNotRepeatNames(t *testing.T) {
 	c := stocked(t)
 	got, _ := c.Autocomplete(context.Background(), "sol ring")
@@ -84,7 +77,7 @@ func TestSearchPrintsReturnsEveryPrintingNewestFirst(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d printings, want both", len(got))
 	}
-	// Prices and finishes come through, since this is what the add cascade shows.
+
 	for _, card := range got {
 		if card.PriceUSD == nil {
 			t.Errorf("%s/%s has no price", card.Set, card.CollectorNumber)
@@ -99,13 +92,11 @@ func TestSearchPrintsReturnsEveryPrintingNewestFirst(t *testing.T) {
 	}
 }
 
-// The whole point of the local matcher: it is an identity check, not a search.
-// These are the cases that made internal/tui distrust Scryfall's fuzzy endpoint.
 func TestNamedFuzzy(t *testing.T) {
 	c := stocked(t)
 	cases := []struct {
 		text string
-		want string // "" means no match
+		want string
 		why  string
 	}{
 		{"Sol Ring", "Sol Ring", "clean read"},
@@ -117,8 +108,6 @@ func TestNamedFuzzy(t *testing.T) {
 		{"Opt", "Opt", "exact read of a short name"},
 		{"opt.", "Opt", "trailing punctuation"},
 
-		// The bug this exists to prevent. Scryfall's endpoint returns "Opt" for
-		// all three because the text contains the name.
 		{"option", "", "containing a short name is not being it"},
 		{"options", "", "same, pluralized"},
 		{"adopt", "", "short name embedded mid-word"},
@@ -145,11 +134,6 @@ func TestNamedFuzzy(t *testing.T) {
 	}
 }
 
-// A truncated title comes back as a *nomination*, never an identity: the card
-// is surfaced with Match.PrefixOnly set, and the scan resolver only keeps it
-// when the frame's collector number verifies one of that card's printings.
-// The prefix rule that returned these unflagged resolved "Gliding" — debris
-// of Glowrider mid-slide — to the real card Gliding Licid, live.
 func TestNamedFuzzyNominatesPrefixesFlagged(t *testing.T) {
 	c := stocked(t)
 	got, m, err := c.NamedFuzzy(context.Background(), "Elspeth")
@@ -164,9 +148,6 @@ func TestNamedFuzzyNominatesPrefixesFlagged(t *testing.T) {
 	}
 }
 
-// The match report is what the auto-commit decision keys on: an exact
-// normalized hit must say so, and a fuzzy hit must carry the score bestNameFor
-// ranked it by rather than discarding it.
 func TestNamedFuzzyReportsExactAndSimilarity(t *testing.T) {
 	c := stocked(t)
 
@@ -178,7 +159,6 @@ func TestNamedFuzzyReportsExactAndSimilarity(t *testing.T) {
 		t.Errorf("clean read match = %+v, want exact with similarity 1", match)
 	}
 
-	// Punctuation and case vanish in normalization, so this is still exact.
 	_, match, err = c.NamedFuzzy(context.Background(), "elspeth knight errant")
 	if err != nil {
 		t.Fatalf("NamedFuzzy: %v", err)
@@ -200,8 +180,6 @@ func TestNamedFuzzyReportsExactAndSimilarity(t *testing.T) {
 	}
 }
 
-// The representative printing has to be a real, complete card: the add cascade
-// takes its name onward to SearchPrints and shows its price.
 func TestNamedFuzzyReturnsAUsablePrinting(t *testing.T) {
 	c := stocked(t)
 	got, _, err := c.NamedFuzzy(context.Background(), "Sol Rlng")
@@ -216,9 +194,6 @@ func TestNamedFuzzyReturnsAUsablePrinting(t *testing.T) {
 	}
 }
 
-// A name nothing in the catalog resembles must return nothing rather than the
-// least-bad row: the caller reads nil as "ask the user" and a wrong card as
-// truth.
 func TestNamedFuzzyRefusesUnrelatedText(t *testing.T) {
 	c := stocked(t)
 	for _, text := range []string{
@@ -237,8 +212,6 @@ func TestNamedFuzzyRefusesUnrelatedText(t *testing.T) {
 	}
 }
 
-// An empty catalog answers nothing rather than erroring, so a caller can layer
-// it under the API without special-casing the un-built state.
 func TestSearchOnAnEmptyCatalog(t *testing.T) {
 	c := openTemp(t)
 	ctx := context.Background()
@@ -253,13 +226,12 @@ func TestSearchOnAnEmptyCatalog(t *testing.T) {
 	}
 }
 
-// A card name containing a LIKE wildcard must be matched literally.
 func TestAutocompleteEscapesWildcards(t *testing.T) {
 	if got := escapeLike("100%_pure"); !strings.Contains(got, `\%`) || !strings.Contains(got, `\_`) {
 		t.Errorf("escapeLike = %q, want the wildcards escaped", got)
 	}
 	c := stocked(t)
-	// A bare wildcard must not match everything.
+
 	got, err := c.Autocomplete(context.Background(), "%")
 	if err != nil {
 		t.Fatalf("Autocomplete: %v", err)
@@ -269,10 +241,6 @@ func TestAutocompleteEscapesWildcards(t *testing.T) {
 	}
 }
 
-// A card whose title will not read is still named by its collector block, and
-// the block is the only key left when the title comes back as rules text
-// (live: Quicksilver, Brash Blur arrived as "If Quicksilver, Brash Blur is in
-// your" with a clean MSH/412 beside it).
 func TestPrintBySetNumberResolvesFromTheBlockAlone(t *testing.T) {
 	c := stocked(t)
 	got, err := c.PrintBySetNumber(context.Background(), "c21", "263")
@@ -282,22 +250,20 @@ func TestPrintBySetNumberResolvesFromTheBlockAlone(t *testing.T) {
 	if got == nil || got.Name != "Sol Ring" {
 		t.Fatalf("got %+v, want Sol Ring", got)
 	}
-	// Set codes come off the card in caps and out of the catalog in lower.
+
 	up, err := c.PrintBySetNumber(context.Background(), "C21", "263")
 	if err != nil || up == nil || up.ID != got.ID {
 		t.Errorf("uppercase set = %+v (%v), want the same printing", up, err)
 	}
 }
 
-// Half a block is not evidence. A number without a set is shared by every set
-// ever printed, so it must never resolve on its own.
 func TestPrintBySetNumberRefusesAnIncompleteOrUnknownBlock(t *testing.T) {
 	c := stocked(t)
 	for _, tc := range []struct{ set, number string }{
-		{"", "263"},    // number alone
-		{"c21", ""},    // set alone
-		{"c21", "999"}, // no such printing
-		{"zzz", "263"}, // no such set
+		{"", "263"},
+		{"c21", ""},
+		{"c21", "999"},
+		{"zzz", "263"},
 	} {
 		got, err := c.PrintBySetNumber(context.Background(), tc.set, tc.number)
 		if err != nil {

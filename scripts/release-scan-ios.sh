@@ -1,32 +1,4 @@
 #!/usr/bin/env bash
-# release-scan-ios.sh — archive, export and upload the iPhone capture head.
-#
-# The distribution sibling of build-scan-ios.sh. That one builds Debug onto the
-# phone on your desk; this one builds Release, archives it, exports a signed
-# .ipa and — given credentials — hands it to App Store Connect for TestFlight or
-# review.
-#
-#   make scan-ios-release              archive + export, stop with an .ipa
-#   make scan-ios-release-validate     … then run Apple's pre-upload checks
-#   make scan-ios-release-upload       … then upload it
-#
-# Why a second script rather than `build-scan-ios.sh --release`. The two paths
-# agree only on the first four steps — xcodegen, Signing.xcconfig, generate,
-# version stamp — and those are factored into scan-ios-common.sh and shared.
-# After that they have nothing in common. The Debug path discovers an attached
-# device by hardware UDID, builds for that specific destination so provisioning
-# errors name the phone, and installs with devicectl. This path never touches a
-# device: it builds for a generic destination, needs a distribution certificate
-# rather than a development one, has its own export options, and its own class
-# of failure (credentials, App Store Connect state) that means nothing on the
-# Debug path. Folding them together would have put a conditional inside almost
-# every block of an already-long script, for no shared code beyond what is now
-# in the common file.
-#
-# What this script does NOT do: it does not create the app record, register the
-# bundle ID, or write store metadata. See docs/app-store-release.md — those are
-# steps 1, 3 and 11, they are done in a browser, and until steps 1 and 3 are
-# done the export below cannot be signed at all.
 set -euo pipefail
 
 # shellcheck source=scan-ios-common.sh
@@ -34,7 +6,7 @@ source "$(cd "$(dirname "$0")" && pwd)/scan-ios-common.sh"
 
 root="$scan_ios_root"
 proj_dir="$scan_ios_proj_dir"
-action=archive          # archive | validate | upload
+action=archive
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -54,20 +26,8 @@ out_dir="$proj_dir/.build/release"
 archive_path="$out_dir/HoardScan.xcarchive"
 export_dir="$out_dir/export"
 opts_template="$proj_dir/ExportOptions-AppStore.plist"
-# The derived data path is overridable so a second build can run beside the
-# Debug one without the two fighting over the same module cache. Both default
-# to $proj_dir/.build, which is gitignored.
 derived_data="${HOARD_IOS_DERIVED_DATA:-$proj_dir/.build}"
 
-# ---------------------------------------------------------------------------
-# App Store Connect credentials.
-#
-# Resolved BEFORE the archive rather than after, because the archive takes
-# minutes and this check takes none, and learning that you have no API key
-# after a four-minute build is the kind of thing that makes people stop using
-# a script. Sets asc_auth_args and asc_auth_desc on success; returns 1 with
-# nothing printed on failure, so the caller can decide whether that is fatal.
-# ---------------------------------------------------------------------------
 asc_auth_args=()
 asc_auth_desc=""
 
@@ -81,16 +41,9 @@ resolve_asc_auth() {
                 echo "HOARD_ASC_KEY_PATH is set but $HOARD_ASC_KEY_PATH does not exist" >&2
                 exit 2
             fi
-            # --p8-file-path takes an explicit path, which is the only way to
-            # use a key that is not in one of altool's four magic directories.
             asc_auth_args+=(--p8-file-path "$HOARD_ASC_KEY_PATH")
             asc_auth_desc="API key $key_id ($HOARD_ASC_KEY_PATH)"
         else
-            # With no explicit path altool searches, in this order:
-            # ./private_keys, ~/private_keys, ~/.private_keys and
-            # ~/.appstoreconnect/private_keys, for AuthKey_<id>.p8. Look in the
-            # same places first, so a missing key is a sentence here instead of
-            # an opaque altool error after it has already started a session.
             local d found=""
             for d in "$PWD/private_keys" "$HOME/private_keys" "$HOME/.private_keys" \
                      "$HOME/.appstoreconnect/private_keys"; do
@@ -120,9 +73,6 @@ EOF
     fi
 
     if [ -n "${HOARD_ASC_APPLE_ID:-}" ] && [ -n "${HOARD_ASC_PASSWORD:-}" ]; then
-        # @env: rather than the password itself, so it never appears in argv
-        # where `ps` — and every process on the machine — can read it. altool
-        # reads the named variable out of its own environment.
         asc_auth_args=(-u "$HOARD_ASC_APPLE_ID" -p "@env:HOARD_ASC_PASSWORD")
         asc_auth_desc="app-specific password for $HOARD_ASC_APPLE_ID"
         return 0
@@ -131,10 +81,6 @@ EOF
     return 1
 }
 
-# The block that runs when there are no credentials. Long on purpose: this is
-# the step the user has not done yet, and the useful thing a script can do
-# about a missing account credential is say precisely which one and where it
-# comes from, rather than let a tool fail with its own vocabulary.
 explain_missing_credentials() {
     cat >&2 <<'EOF'
 
@@ -191,9 +137,6 @@ there was never anything to upload with is how a script gets abandoned. Run
 EOF
 }
 
-# ---------------------------------------------------------------------------
-# Preflight
-# ---------------------------------------------------------------------------
 ios_require_xcodegen
 ios_ensure_signing_xcconfig
 
@@ -224,28 +167,13 @@ dirty=""
 git -C "$root" diff --quiet 2>/dev/null || dirty="-dirty"
 echo "Build stamp: $stamp (git $rev$dirty, team $team)"
 if [ -n "$dirty" ] && [ "$action" = upload ]; then
-    # Not fatal. An upload from a dirty tree is a build nobody can reconstruct,
-    # which matters when a TestFlight tester reports something six weeks later —
-    # but refusing outright would be wrong for the one legitimate case, a
-    # last-minute version bump that has not been committed yet.
     echo "warning: uploading from a dirty working tree — this build is not reproducible from a commit" >&2
 fi
 
-# ---------------------------------------------------------------------------
-# Archive
-# ---------------------------------------------------------------------------
-# A stale .xcarchive at the same path is not overwritten by xcodebuild, it is
-# refused, so clear it. Only this one path — never the whole .build directory,
-# which holds the Debug build's derived data too.
 rm -rf "$archive_path" "$export_dir"
 mkdir -p "$out_dir"
 
 echo "Archiving HoardScan (Release)…"
-# 'generic/platform=iOS' rather than an attached device: an archive is a
-# universal, unthinned build for every supported device, and naming a specific
-# phone would both thin it and drag device registration into a step that has
-# nothing to do with any device. (build-scan-ios.sh names the device on purpose,
-# for the opposite reason — it wants provisioning errors to say WHICH phone.)
 if ! xcodebuild archive \
     -project "$proj_dir/HoardScan.xcodeproj" \
     -scheme HoardScan \
@@ -295,10 +223,6 @@ EOF
 fi
 echo "Archived $archive_path"
 
-# What actually landed in the archive, read back from the built app rather than
-# from project.yml — the settings have two possible homes (project.yml's
-# info.properties and its build settings) and Xcode's build setting wins, so
-# the only honest source is the product.
 app_plist="$archive_path/Products/Applications/HoardScan.app/Info.plist"
 if [ -f "$app_plist" ]; then
     pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$app_plist" 2>/dev/null || echo '?'; }
@@ -311,40 +235,12 @@ if [ -f "$app_plist" ]; then
     esac
 fi
 
-# ---------------------------------------------------------------------------
-# Export
-# ---------------------------------------------------------------------------
-# The tracked template carries no team identifier; the copy gets one. See the
-# comment at the top of ExportOptions-AppStore.plist.
 opts="$out_dir/ExportOptions.generated.plist"
 cp "$opts_template" "$opts"
 /usr/libexec/PlistBuddy -c "Add :teamID string $team" "$opts" >/dev/null 2>&1 \
     || /usr/libexec/PlistBuddy -c "Set :teamID $team" "$opts" >/dev/null
 
 echo "Exporting for App Store Connect…"
-# Exported with a system-only PATH, and this is load-bearing rather than
-# hygiene.
-#
-# The IPA step shells out to `/usr/bin/rsync -8aPhhE`. That absolute path is
-# openrsync, which understands Apple's `-E` (--extended-attributes) — but
-# rsync's local-copy mode spawns its other half by exec'ing `rsync --server`
-# *through PATH*, and a Homebrew rsync (3.4.4 here) gets found first. Upstream
-# rsync has no --extended-attributes; it spells that -X/--xattrs. So the client
-# speaks Apple's dialect to a GNU-dialect server and the export dies with:
-#
-#     rsync: on remote machine: --extended-attributes: unknown option
-#     error: exportArchive Copy failed
-#
-# "Copy failed" is all xcodebuild prints. The cause appears only as
-# `[server=3.4.4]` inside the .xcdistributionlogs bundle, and the absolute path
-# in the logged command line actively misleads — it looks like the system rsync
-# ran, and it did; it was the child that was wrong. Measured on 2026-08-08: the
-# identical export succeeds with Homebrew off PATH and fails with it on.
-#
-# Narrowing PATH rather than telling the user to `brew unlink rsync`: this is a
-# build step with no legitimate need for anything outside the system
-# directories, and a fix that survives a fresh checkout beats one that lives in
-# somebody's shell history.
 if ! env PATH="/usr/bin:/bin:/usr/sbin:/sbin" xcodebuild -exportArchive \
     -archivePath "$archive_path" \
     -exportPath "$export_dir" \
@@ -399,9 +295,6 @@ if [ -z "$ipa" ]; then
 fi
 echo "Exported $ipa"
 
-# ---------------------------------------------------------------------------
-# Validate / upload
-# ---------------------------------------------------------------------------
 if [ "$action" = archive ]; then
     cat <<EOF
 
@@ -419,13 +312,6 @@ EOF
     exit 0
 fi
 
-# altool, not notarytool. They are not alternatives and the naming invites the
-# mistake: notarytool submits a macOS app for Developer ID notarization, which
-# is the path for distributing OUTSIDE the store, and it has no iOS mode at all.
-# App Store uploads still go through altool (or Transporter.app, or Xcode's
-# Organizer, both of which are the same ContentDelivery framework with a window
-# in front). Deprecation notices about altool are about --upload-package and the
-# older iTMSTransporter shims, not --upload-app.
 echo "Authenticating with $asc_auth_desc"
 case "$action" in
     validate)

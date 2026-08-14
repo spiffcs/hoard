@@ -2,24 +2,15 @@ version: 2
 
 project_name: hoard
 
-# Completions and man pages are generated from the binary's own cobra tree, so
-# they can never drift from the commands that exist. Built here rather than
-# checked in, for the same reason.
 before:
   hooks:
     - mkdir -p completions
     - sh -c "go run ./cmd/hoard completion bash > completions/hoard.bash"
     - sh -c "go run ./cmd/hoard completion zsh > completions/_hoard"
     - sh -c "go run ./cmd/hoard completion fish > completions/hoard.fish"
-    # SOURCE_DATE_EPOCH pins the date in each page's .TH line to the commit's
-    # own timestamp. Cobra otherwise stamps the day of the build, which is the
-    # one thing that would make two builds of the same tag differ — everything
-    # else here is already reproducible via -trimpath and the pinned toolchain.
     - sh -c "SOURCE_DATE_EPOCH={{ .CommitTimestamp }} go run ./internal/tools/genman manpages"
 
 builds:
-  # modernc.org/sqlite is pure Go: no cgo anywhere in the module, so every
-  # target cross-compiles from the ubuntu runner with no toolchain wrangling.
   - id: hoard-linux
     binary: hoard
     main: ./cmd/hoard
@@ -33,17 +24,6 @@ builds:
       - -X github.com/spiffcs/hoard/internal/buildinfo.GitCommit={{ .Commit }}
       - -X github.com/spiffcs/hoard/internal/buildinfo.BuildDate={{ .Date }}
 
-  # No windows target. It cross-compiled for free — modernc.org/sqlite is pure
-  # Go, so there was nothing to wrangle — but a binary nobody has ever run is
-  # not a supported platform, and publishing one on the releases page is a claim
-  # of support rather than an offer of convenience. The code still resolves the
-  # windows data directory (internal/command/command.go), so anyone who wants to
-  # build it themselves can; hoard just does not hand it out.
-
-  # Split out for the post hook: quill signs the Mach-O binary with the
-  # Developer ID cert and submits it to Apple's notary service. Snapshot builds
-  # pass --dry-run/--ad-hoc so a local `goreleaser --snapshot` needs no
-  # credentials and talks to nobody.
   - id: hoard-darwin
     binary: hoard
     main: ./cmd/hoard
@@ -65,14 +45,10 @@ archives:
     files:
       - README.md
       - LICENSE
-      # NOTICE carries the Fan Content carve-out: the card imagery is not under
-      # the MIT terms, and that has to travel with the binary, not just the repo.
       - NOTICE
       - src: completions/*
         dst: completions
         info: {mode: 0644}
-      # Section 1, so `man ./manpages/hoard.1` works straight out of the
-      # archive and a packager can drop the tree into $MANPATH unchanged.
       - src: manpages/*
         dst: manpages
         info: {mode: 0644}
@@ -81,19 +57,9 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
-# cosign proves who built the artifact; the SBOM says what is inside it. One
-# without the other leaves a reviewer able to trust the binary's origin and
-# still unable to enumerate its dependencies. syft is pinned in .binny.yaml
-# alongside the rest of the toolchain rather than fetched at release time.
 sboms:
   - id: archive
     artifacts: archive
-    # `../` because GoReleaser runs SBOM commands with dist/ as the working
-    # directory, so a repo-relative path resolves to dist/.tool/syft and fails
-    # with "no such file or directory" — which is what happened on the first
-    # release ever attempted, after the binaries were built, signed and
-    # notarized. dist/ is a sibling of .tool/ at the repo root, so one level up
-    # is the toolchain. Reproduce with: goreleaser release --snapshot --clean.
     cmd: ../.tool/syft
     args: ["$artifact", "--output", "spdx-json=$document"]
     documents:
@@ -102,9 +68,6 @@ sboms:
 snapshot:
   version_template: "{{ incpatch .Version }}-next+{{ .ShortCommit }}"
 
-# Without this, goreleaser lists every commit since the last tag with a full
-# 40-character SHA — including docs and chore commits, and dependabot merges.
-# A reader wants to know what changed for them, not to read the git log.
 changelog:
   sort: asc
   abbrev: 7
@@ -127,9 +90,6 @@ changelog:
       - "^Merge pull request"
       - "^Merge branch"
 
-# Keyless signing: cosign gets a short-lived Fulcio cert bound to the workflow's
-# OIDC identity, and the signature lands in Rekor. Signing only checksums.txt
-# transitively covers every archive it hashes.
 signs:
   - cmd: .tool/cosign
     signature: "${artifact}.sigstore.json"

@@ -1,14 +1,6 @@
-// The printing parser, tested against strings real captures actually produced.
-//
-// Every fixture in this file is copied from a capture log, mangling and all —
-// `IM &` for `™ &`, `1093-2003` for `1993-2003`, `Inr.` for `Inc.`. Writing the
-// tests against clean text would test a card layout nobody photographs.
-
 import Testing
 
 @testable import CardKit
-
-// MARK: - Modern frames
 
 @Test("the modern frame's three rows read as one printing")
 func modernFrame() {
@@ -29,8 +21,6 @@ func modernFrame() {
 
 @Test("the set row's separator is whatever the light made of it")
 func manglеdSeparator() {
-    // Observed across captures: "MSC•EN • ALERANDER", "MSC • EN A ALEXANDER",
-    // "MSC •EN I ALEXANDER", "MAR• EN OBRIAN STE".
     for row in ["MSC•EN • ALEXANDER SKRIPNIKOV",
                 "MSC • EN A ALEXANDER SKRIPNIKOV",
                 "MSC •EN I ALEXANDER SKRIPNIKOV",
@@ -43,9 +33,6 @@ func manglеdSeparator() {
 
 @Test("newer frames print the pair with the rarity trailing")
 func pairWithTrailingRarity() {
-    // The second modern layout, from corpus reads. Missing it cost most of a
-    // stratum: the power/toughness guard rejected every N/M standing alone, and
-    // this form stands alone.
     let cases: [(String, String, String)] = [
         ("130/287 M", "130", "M"),
         ("235/280 U", "235", "U"),
@@ -61,26 +48,19 @@ func pairWithTrailingRarity() {
 
 @Test("the rarity letter is what separates a printing from a creature's body")
 func rarityDistinguishesPairFromPowerToughness() {
-    // Same shape, one letter apart. Without the letter it is the power and
-    // toughness box and must never become a printing.
     #expect(readPrinting(bandLines: ["2/2"]).number.isEmpty)
     #expect(readPrinting(bandLines: ["2/2 M"]).number == "2")
 }
 
 @Test("a three-digit denominator is a set size, not a toughness")
 func largeDenominatorIsAPrinting() {
-    // Some frames print the rarity on the *following* line, leaving the pair
-    // entirely alone — "012/216" then "UST • EN", "113/216" then "R". The
-    // rarity rule cannot see those, so set size carries the decision instead.
     #expect(readPrinting(bandLines: ["012/216"]).number == "12")
     #expect(readPrinting(bandLines: ["113/216"]).number == "113")
-    // And the guard still holds where it matters.
     #expect(readPrinting(bandLines: ["12/12"]).number.isEmpty)
 }
 
 @Test("tokens after the rarity do not derail the pair")
 func trailingTokensIgnored() {
-    // "002/004 P HASCON 2017" — a promo stamp trailing the rarity.
     let p = readPrinting(bandLines: ["002/004 P HASCON 2017"])
     #expect(p.number == "2")
     #expect(p.rarity == "P")
@@ -92,8 +72,6 @@ func zeroPadding() {
     #expect(readPrinting(bandLines: ["R 0338"]).number == "338")
     #expect(readPrinting(bandLines: ["0412"]).number == "412")
 }
-
-// MARK: - The copyright-row number
 
 @Test("1998-2003 frames print the number inside the copyright row")
 func numberInCopyrightRow() {
@@ -115,19 +93,13 @@ func numberInCopyrightRow() {
 
 @Test("a mangled leading year does not cost the range's later end")
 func mangledLeadingYear() {
-    // "1093" is outside the plausible window and is dropped; 2003 survives, and
-    // 2003 is the year that dates the printing.
     let p = readPrinting(bandLines: ["TM & © 1093-2003 Wizards of the Coast, Inc. 15/145"])
     #expect(p.year == 2003)
     #expect(p.yearFrom == nil)
 }
 
-// MARK: - Power/toughness must never become a printing
-
 @Test("a bare N/M is a power/toughness box, not a collector number")
 func powerToughnessRejected() {
-    // Measured across thirteen captures: power/toughness always stands alone on
-    // its own line, and the collector pair never does.
     for pt in ["0/1", "2/2", "1/1", "2/1", "1/3", " 4/4 "] {
         let p = readPrinting(bandLines: ["Illus. Amy Weber", pt])
         #expect(p.number.isEmpty, "\(pt) was read as a collector number")
@@ -136,10 +108,6 @@ func powerToughnessRejected() {
 
 @Test("a sideboard marker is not a collector number")
 func sideboardMarkerRejected() {
-    // World Championship decks print SB and GB on their own line. Folding digit
-    // lookalikes turns those into 58 and 68, which handed a collector number to
-    // 18% of the corpus's pre-1998 gold stratum — cards that print none at all.
-    // Folding may repair a number; it may not manufacture one.
     for marker in ["SB", "GB", "SI", "OO", "BS"] {
         let p = readPrinting(bandLines: [
             "Illus. Susan Van Camp",
@@ -153,8 +121,6 @@ func sideboardMarkerRejected() {
 
 @Test("a mostly-numeric token is still repaired")
 func foldingStillRepairs() {
-    // The rule above must not cost the case it was written for: a number with
-    // one character misread should still fold.
     #expect(digitsOnly("O338") == "0338")
     #expect(digitsOnly("12S") == "125")
     #expect(digitsOnly("SB") == nil)
@@ -163,17 +129,11 @@ func foldingStillRepairs() {
 
 @Test("junk beside a number is dropped, not fatal")
 func junkIsDropped() {
-    // Straight from a live session: both of these reached the parser with the
-    // number intact and were refused over one stray letter.
     #expect(digitsOnly("n0322") == "0322")
     #expect(digitsOnly("0338#") == "0338")
-    // And the guards still hold.
     #expect(digitsOnly("Illus") == nil)
     #expect(digitsOnly("Volrath") == nil)
     #expect(digitsOnly("SB") == nil)
-    // The one that proved the first version of this rule wrong: three letters
-    // dropped leaves two real digits reading as a clean "72", which invented a
-    // collector number on a card that prints none. Measured on the corpus.
     #expect(digitsOnly("a7KA2") == nil)
     #expect(digitsOnly("x1y2z3") == nil)
 }
@@ -198,8 +158,6 @@ func preExodusFrame() {
     #expect(p.numberSource == .none)
 }
 
-// MARK: - Refusals
-
 @Test("prose does not donate a set code")
 func proseIsNotASetRow() {
     for line in ["Bury Seasinger if you control no islands.",
@@ -218,8 +176,6 @@ func implausibleYears() {
 
 @Test("a bare four-digit number is not a copyright year")
 func bareNumberIsNotAYear() {
-    // "1999" alone is a collector number on a large set, not a date. Without the
-    // company row's fingerprint it must not be read as one.
     let p = readPrinting(bandLines: ["1999"])
     #expect(p.year == nil)
     #expect(p.number == "1999")
@@ -231,13 +187,8 @@ func emptyBand() {
     #expect(readPrinting(bandLines: ["", "   "]).isEmpty)
 }
 
-// MARK: - The foil marker
-
 @Test("the star between set and language reads as foil")
 func foilStarFromSetRow() {
-    // Straight from a live capture: a foil Deserted Temple committed as nonfoil
-    // because CardKit threw the separator away before anything could look at
-    // it. Vision rendered the star as "*", glued to the code with no space.
     let p = readPrinting(bandLines: ["R 0301", "MH3*EN © ROB ALEXANDER"])
     #expect(p.setCode == "MH3")
     #expect(p.finish == "foil", "MH3*EN is a starred, foil printing")
@@ -254,11 +205,6 @@ func bulletIsNonfoil() {
 
 @Test("rules text never asserts a separator verdict")
 func proseIsNotASeparatorVerdict() {
-    // Live, 2026-08-06, twice on one foil: "card, put it onto the battlefield"
-    // tokenises as code CARD, language IT — lowercase, which is what gives it
-    // away — and the comma in ", put " then wrote a confident nonfoil for a
-    // card whose frame prints no set row at all. The finish must stay unread
-    // so the star reader keeps the deciding vote.
     for lines in [
         ["card, put it onto the battlefield tapped,", "then shuffle."],
         ["you may search your library for a Plains", "card, put it onto the battlefield tapped,"],
@@ -272,9 +218,6 @@ func proseIsNotASeparatorVerdict() {
 
 @Test("a later set-row shape neither clears nor flips an earlier verdict")
 func laterLineDoesNotOverwriteFinish() {
-    // The assignment used to be unconditional, so a second set-row-shaped line
-    // could clear a real foil to "" — with finishSource left claiming a
-    // separator verdict that no longer existed.
     let p = readPrinting(bandLines: ["MH3*EN ROB ALEXANDER", "MSC • EN SKRIPNIKOV"])
     #expect(p.finish == "foil", "the first verdict stands")
     #expect(p.finishSource == "separator")
@@ -282,13 +225,10 @@ func laterLineDoesNotOverwriteFinish() {
 
 @Test("every glyph Vision produces for a star reads as foil")
 func starMisreadsAllReadFoil() {
-    // The star is small and Vision is inventive about it. These are the forms
-    // the macOS path recorded live.
     for sep in ["*", "+", "★", "✦"] {
         let p = readPrinting(bandLines: ["MH3\(sep)EN ROB ALEXANDER"])
         #expect(p.finish == "foil", "separator \(sep) should read foil")
     }
-    // And the letter misreads, which only count immediately before a language.
     for letter in ["K", "X", "A", "T"] {
         let p = readPrinting(bandLines: ["MSH \(letter)EN ROB ALEXANDER"])
         #expect(p.finish == "foil", "\(letter)EN is a starred border")
@@ -298,9 +238,6 @@ func starMisreadsAllReadFoil() {
 
 @Test("a word that merely contains a letter-EN shape is not a foil set row")
 func letterMisreadDoesNotEatWords() {
-    // "KRAKEN" and "MOLTEN" carry the same shape. Reading them as set rows
-    // would boilerplate-kill real cards, which is why the letter form has to
-    // sit alone directly before the language.
     for line in ["KRAKEN", "MOLTEN", "SHAKEN THE EARTH"] {
         let p = readPrinting(bandLines: [line])
         #expect(p.finish != "foil", "\(line) must not read as a foil marker")
@@ -309,8 +246,6 @@ func letterMisreadDoesNotEatWords() {
 
 @Test("an old frame with no marker leaves the finish unknown")
 func noMarkerStaysUnknown() {
-    // Silence is not "nonfoil". Pre-2003 frames print no marker at all, and
-    // claiming one would state as read what was never printed.
     let p = readPrinting(bandLines: [
         "Illus. Amy Weber",
         "©1994 Wizards of the Coast, Inc. All rights reserved",
@@ -318,13 +253,8 @@ func noMarkerStaysUnknown() {
     #expect(p.finish.isEmpty)
 }
 
-// MARK: - The bare number at the tail of a copyright row
-
 @Test("a copyright row ending in a bare number yields that number")
 func bareTrailingCollectorNumber() {
-    // Live, twice: Marionette Apprentice queued as "printing unverified: 2
-    // printings" while its band held a perfectly legible 410. Only the pair
-    // form was handled, so this layout read its year and dropped its number.
     for line in ["™M & © 2024 Wizards of the Coast 410",
                  "TM & © 2024 Wizards of the Coast 410"] {
         let p = readPrinting(bandLines: [line, "1/2"])
@@ -337,17 +267,11 @@ func bareTrailingCollectorNumber() {
 
 @Test("a copyright row whose year failed OCR still yields its number")
 func trailingNumberWithoutAYear() {
-    // Four cards from one live session, verbatim from the wire. Every one of
-    // them queued as "printing unverified" holding an empty collector number
-    // while the digits sat in plain text at the end of the band's last line —
-    // the number was read inside the year's branch, and these years did not
-    // survive OCR. The company name is what identifies this row; the year never
-    // was.
     let cases: [(line: String, number: String)] = [
-        ("wards of the Coast 399", "399"),          // Brainsurge
-        ("zards of the Coast 14", "14"),            // Dress Down
-        ("Wizards of the Coast 413", "413"),        // Victimize
-        ("4 Wizards of the Coast 407", "407"),      // Consuming Corruption
+        ("wards of the Coast 399", "399"),
+        ("zards of the Coast 14", "14"),
+        ("Wizards of the Coast 413", "413"),
+        ("4 Wizards of the Coast 407", "407"),
     ]
     for c in cases {
         let p = readPrinting(bandLines: [c.line])
@@ -359,13 +283,9 @@ func trailingNumberWithoutAYear() {
 
 @Test("a company row mangled past both fragments is still recognised")
 func fuzzyCompanyRow() {
-    // Live: Unstable Amulet's footer lost "Wizards" to `Wizanis` and "Coast" to
-    // `Cst` in one line, so neither substring matched and the row went
-    // unrecognised — taking its 2024 with it.
     let p = readPrinting(bandLines: ["IM & O 2024 Wizanis ot the Cst"])
     #expect(p.year == 2024)
 
-    // And the distance stays tight enough that ordinary words do not qualify.
     for line in ["The wizard's tower stands empty", "beasts of the coastal plain 12"] {
         let q = readPrinting(bandLines: [line])
         #expect(q.number.isEmpty, "\(line) is prose, not a printing")
@@ -374,10 +294,6 @@ func fuzzyCompanyRow() {
 
 @Test("a price beside the card is not a collector number")
 func priceStickerIsNotANumber() {
-    // Live: a `$18` in frame beside Meltdown read as collector number 18,
-    // matched no printing of it, and cost the card the 2024 it had read
-    // cleanly — a number that matches nothing does not fall back, it outranks
-    // the copyright row and then fails the ranking outright.
     let p = readPrinting(bandLines: ["$18", "2024 Wizards of the Coast"])
     #expect(p.number.isEmpty, "a price is not a printing")
     #expect(p.year == 2024, "and the year it displaced survives")
@@ -385,11 +301,6 @@ func priceStickerIsNotANumber() {
 
 @Test("a two-digit rarity row loses to the copyright row's number")
 func narrowRarityRowIsNotAPrinting() {
-    // Live: Brainsurge's band read `T 89` off a mangled illustrator credit on
-    // one line and `izards of the Coast 399` on the next. 89 claimed .ownRow,
-    // which locked out the real 399, and the card queued against a number no
-    // printing of it has. This frame pads its number to the set's width, so a
-    // genuine own row is four digits; two beside a stray letter is debris.
     let p = readPrinting(bandLines: ["T 89", "izards of the Coast 399"])
     #expect(p.number == "399")
     #expect(p.numberSource == .copyrightRow)
@@ -397,7 +308,6 @@ func narrowRarityRowIsNotAPrinting() {
 
 @Test("the copyright year is never mistaken for the number")
 func trailingYearIsNotANumber() {
-    // The failure this guard exists for: a row whose last token *is* the date.
     for line in ["© 1995 Wizards of the Coast",
                  "Wizards of the Coast 2024",
                  "™ & © 1993-2003 Wizards of the Coast"] {
@@ -415,8 +325,6 @@ func pairFormTakesPrecedence() {
 
 @Test("an own-row number is not overwritten by the copyright row")
 func ownRowWins() {
-    // The band often carries both. The card's own number row is the better
-    // evidence and must not be displaced by digits scraped off the credit line.
     let p = readPrinting(bandLines: [
         "R 0301",
         "™M & © 2024 Wizards of the Coast 410",
@@ -427,8 +335,6 @@ func ownRowWins() {
 
 @Test("prose ending in a number does not become a printing")
 func proseTailIsNotANumber() {
-    // trailingNumber only ever runs on a line the year and company have already
-    // identified, so rules text ending in a digit is never offered to it.
     for line in ["Bury Seasinger if you control no islands. 4",
                  "put a +1/+1 counter on it 2"] {
         #expect(readPrinting(bandLines: [line]).number.isEmpty, "from \(line)")
@@ -437,10 +343,6 @@ func proseTailIsNotANumber() {
 
 @Test("junk fused onto the language still yields the set code")
 func languageWithGluedJunk() {
-    // Live: a Zahid queued holding a perfect 076/269 because its set row read
-    // "DOM•ENIO MAGALI VILLENEUVE" — `DOM • EN` with two characters of the
-    // credit glyph fused on. Number 76 matches three printings; only the set
-    // code separates them.
     let p = readPrinting(bandLines: [
         "076/269 R",
         "DOM•ENIO MAGALI VILLENEUVE",
@@ -454,9 +356,6 @@ func languageWithGluedJunk() {
 
 @Test("a name after a word is not a set row")
 func gluedLanguageDoesNotEatNames() {
-    // The shape the two-character cap exists for. "Illus" is 3-5 alphanumerics
-    // with a letter, so it clears the set-code test; the artist must not then
-    // be read as a language.
     for line in ["Illus Enrico Sacchetti", "Illus. Espen Grundetjern",
                  "Illus Ittoku", "Illus Deruchenko Alexander"] {
         let p = readPrinting(bandLines: [line])

@@ -8,12 +8,10 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 )
 
-// Piped mode is a compatibility surface: plain lines, no \r, no ANSI. This
-// golden test is the lock.
 func TestPrinterPipedGolden(t *testing.T) {
 	var sb strings.Builder
 	p := NewPrinter(&sb, false)
-	p.interval = 0 // every count event prints; tests need determinism, not pacing
+	p.interval = 0
 	fn := p.Fn()
 
 	fn(progress.Event{Step: "checking catalog"})
@@ -42,8 +40,6 @@ func TestPrinterPipedGolden(t *testing.T) {
 	}
 }
 
-// A note event still prints its count line's information later — the note
-// itself must not be double-printed or eat the step line.
 func TestPrinterPipedNoteOnStepTransition(t *testing.T) {
 	var sb strings.Builder
 	p := NewPrinter(&sb, false)
@@ -57,8 +53,6 @@ func TestPrinterPipedNoteOnStepTransition(t *testing.T) {
 	}
 }
 
-// TTY mode redraws one line in place and finalizes it with a newline on
-// step change and Close.
 func TestPrinterTTY(t *testing.T) {
 	var sb strings.Builder
 	p := NewPrinter(&sb, true)
@@ -79,15 +73,12 @@ func TestPrinterTTY(t *testing.T) {
 	if !strings.Contains(out, "█") || !strings.Contains(out, "░") {
 		t.Errorf("no bar with track: %q", out)
 	}
-	// The refreshing line was finalized before "saving" started, and Close
-	// finalized "saving": two newlines in total.
+
 	if got := strings.Count(out, "\n"); got != 2 {
 		t.Errorf("%d newlines, want 2 (one per finalized step): %q", got, out)
 	}
 }
 
-// Throttling: count-only events inside the interval are dropped; the
-// consumer sees pacing without the producer knowing.
 func TestPrinterThrottlesCountEvents(t *testing.T) {
 	var sb strings.Builder
 	p := NewPrinter(&sb, false)

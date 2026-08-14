@@ -1,10 +1,3 @@
-// Command generate writes the current document schema to
-// schema/json/schema-<version>.json and schema-latest.json.
-//
-// Run it via `make generate-json-schema` after changing the model in
-// internal/hoardjson — and if the version it would overwrite has already been
-// released, bump hoardjson.SchemaVersion first: released schema files are
-// immutable (see schema/json/README.md).
 package main
 
 import (

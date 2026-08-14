@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"strconv"
 	"strings"
@@ -11,13 +12,9 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// spec names one app's CSV columns. Cells are looked up by header name, never
-// by position, so a reordered or extended export still parses; only qty and
-// cardName are required to exist, the rest degrade (a missing Scryfall ID
-// column just means set+number or name resolution).
 type spec struct {
 	name     string
-	sniff    []string // headers that identify this format; all must be present
+	sniff    []string
 	qty      string
 	cardName string
 	set      string
@@ -25,15 +22,11 @@ type spec struct {
 	finish   string
 	scryfall string
 	binder   string
-	kind     string // container kind column; only hoard's own format has one
-	// Lossy columns hoard cannot store, counted into Collection.Dropped when
-	// a cell actually says something (a non-NM condition, a non-English
-	// language, a nonzero price).
+	kind     string
+
 	condition, language, price string
 }
 
-// specs in sniffing order: hoard's own header first (it is exact), Delver Lens
-// last because its single distinctive column is the loosest match.
 var specs = []spec{
 	{
 		name:  "hoard",
@@ -56,13 +49,7 @@ var specs = []spec{
 		finish:    "Foil",
 		condition: "Condition", language: "Language", price: "Purchase Price",
 	},
-	// Delver Lens columns vary by version and export settings; this is the
-	// common default. Anything else fails the sniff and the error suggests
-	// --format, which is the design: guessing at an unknown dialect silently
-	// mangles quantities and finishes. The sniff needs the pair — "Card
-	// number" alone is generic enough that another tool's CSV carrying it
-	// would silently map the wrong quantity and finish columns, which is
-	// exactly the guessing the sniff-order comment above forswears.
+
 	{
 		name:  "delver",
 		sniff: []string{"Card number", "Set code"},
@@ -72,19 +59,9 @@ var specs = []spec{
 	},
 }
 
-// Parse reads one collection CSV. format is a parser name to force, or
-// "auto"/"" to recognize the file by its header row.
 func Parse(r io.Reader, format string) (*Collection, error) {
 	cr := csv.NewReader(r)
-	// Go's ErrFieldCount is off because ragged rows are only half-legitimate,
-	// and the excuse runs one way. A row *shorter* than the header is
-	// tolerated and its missing cells read as empty: several apps omit
-	// trailing empty fields. A row *longer* than the header cannot be a
-	// truncated export — it can only be a delimiter that should have been
-	// quoted, nearly always a comma inside a card name. Every column past it
-	// shifts by one, so a fragment of the name arrives where the set code
-	// belongs and is sent to Scryfall as one. Over-long rows are refused in
-	// the loop below, by line number, before anything is resolved.
+
 	cr.FieldsPerRecord = -1
 	records, err := cr.ReadAll()
 	if err != nil {
@@ -95,7 +72,7 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 	}
 
 	header := records[0]
-	// Excel and some apps prefix UTF-8 exports with a byte-order mark.
+
 	header[0] = strings.TrimPrefix(header[0], "\ufeff")
 	cols := make(map[string]int, len(header))
 	for i, h := range header {
@@ -132,13 +109,11 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 
 	out := &Collection{Format: sp.name, Dropped: map[string]int{}}
 	for n, rec := range records[1:] {
-		line := n + 2 // 1-based, counting the header
+		line := n + 2
 		if len(rec) == 0 || (len(rec) == 1 && strings.TrimSpace(rec[0]) == "") {
 			continue
 		}
-		// Refused before the name is even read: with the columns shifted,
-		// every cell this row offers belongs to the wrong header, and the
-		// ones that still look plausible are the dangerous ones.
+
 		if len(rec) > len(header) {
 			return nil, fmt.Errorf("line %d: %d fields, header has %d — an unquoted comma in a card name?",
 				line, len(rec), len(header))
@@ -204,9 +179,6 @@ func matchSpec(cols map[string]int, header []string, format string) (spec, error
 		strings.Join(header, ", "))
 }
 
-// identFor picks the strongest resolution scheme the row offers, mirroring
-// how decksource builds identifiers: an ID is exact, set+number names one
-// printing, a bare name lets Scryfall pick one.
 func identFor(id, set, number, name string) scryfall.Identifier {
 	switch {
 	case id != "":
@@ -218,9 +190,6 @@ func identFor(id, set, number, name string) scryfall.Identifier {
 	}
 }
 
-// parseQty accepts "2" and the "2x"/"x2" stylings some apps emit. One x,
-// either side, not both: trimming prefix and suffix in a single pass read
-// "x2x" — a malformed cell, not a styling — as 2.
 func parseQty(s string) (int, error) {
 	trimmed := strings.ToLower(s)
 	if t := strings.TrimPrefix(trimmed, "x"); t != trimmed {
@@ -235,75 +204,31 @@ func parseQty(s string) (int, error) {
 	return n, nil
 }
 
-// normFinish maps each app's foil column to the finish vocabulary
-// (nonfoil|foil|etched — Scryfall's spelling, hoard's too). Anything
-// unrecognized reads as nonfoil — ManaBox's "normal" among it — because the
-// finish repair command exists, while an invented foil would claim a price
-// that may not exist.
-func normFinish(s string) string {
+func normFinish(s string) finish.Finish {
 	switch strings.ToLower(s) {
 	case "foil", "true", "yes", "1":
-		return "foil"
+		return finish.Foil
 	case "etched", "foil-etched", "etched foil":
-		return "etched"
+		return finish.Etched
 	default:
-		return "nonfoil"
+		return finish.Nonfoil
 	}
 }
 
-// normCondition maps each app's condition column onto the conditions hoard stores
-// (unknown|nm|lp|mp|hp|dmg — MTGJSON's, which are TCGplayer's; see
-// store.validCondition, which is the gate this must satisfy).
-//
-// Two scales arrive here and they are not the same scale.
-//
-//   - TCGplayer's five, which Moxfield and most Delver exports speak:
-//     Near Mint, Lightly Played, Moderately Played, Heavily Played, Damaged.
-//   - Cardmarket's seven, which ManaBox speaks in words: mint, near_mint,
-//     excellent, good, light_played, played, poor.
-//
-// They barely collide, because each scale's middle values are words the other
-// does not use — "excellent" and "good" are only ever Cardmarket, "moderately
-// played" only ever TCGplayer. The one genuine ambiguity is Cardmarket's "light
-// played" against TCGplayer's "lightly played": nearly the same string, a step
-// apart in severity. Both fold to lp, the commoner reading.
-//
-// Folding seven onto five loses precision, and that is acceptable here for a
-// reason worth stating: condition does not affect value in hoard, because no
-// source it reads publishes a per-condition price. A condition that lands one
-// step generous mislabels a card; it cannot misprice one. The import reports the
-// rows it folded rather than folding them silently.
-//
-// Anything unrecognized reads as unknown rather than as a guess — the same
-// instinct as absent-means-unknown everywhere else, and the opposite of
-// normFinish's nonfoil default, which can afford a guess because repair-finishes
-// exists to undo it.
 func normCondition(s string) string {
 	switch strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", " ") {
 	case "":
 		return "unknown"
 
-	// Both scales' top, plus Cardmarket's Mint — hoard has nothing above near
-	// mint because neither MTGJSON nor TCGplayer does.
 	case "near mint", "nm", "nm-mint", "mint", "mt", "m":
 		return "nm"
 
-	// TCGplayer's Lightly Played, and Cardmarket's Excellent and Good, which
-	// sit between it and Near Mint. Cardmarket's own "light played" lands here
-	// too — see the note above.
-	//
-	// Moxfield spells this one three ways and abbreviates it as SP, not LP:
-	// its own documentation gives "Good (Lightly Played)" long and "SP" short,
-	// with LP as an alias. Cardsphere calls it "Slightly Played". All of them
-	// were falling through to unknown, which reads a stated condition as
-	// "nobody said" — the one thing this function exists to prevent.
 	case "lightly played", "light played", "lp",
 		"good (lightly played)", "good/lightly played", "good lightly played",
 		"slightly played", "sp",
 		"excellent", "ex", "good", "gd", "g":
 		return "lp"
 
-	// TCGplayer's Moderately Played, and Cardmarket's bare Played.
 	case "moderately played", "moderate play", "mp", "played", "pl":
 		return "mp"
 
@@ -318,13 +243,6 @@ func normCondition(s string) string {
 	}
 }
 
-// unplaceableCondition reports whether a cell said something normCondition
-// could not place — a professional grade, or a vocabulary hoard does not know.
-//
-// Only those count as dropped now that the condition is stored. A value hoard
-// *can* place is carried onto the holding, even where the seven-value scale
-// folds onto five: the card keeps a condition, which is what was at risk of
-// being lost. A blank cell is the ordinary case and no loss at all.
 func unplaceableCondition(c string) bool {
 	return strings.TrimSpace(c) != "" && normCondition(c) == "unknown"
 }

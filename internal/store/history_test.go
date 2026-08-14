@@ -1,6 +1,7 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -9,15 +10,14 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// changeFor finds one card-and-finish in a set of changes.
-func changeFor(t *testing.T, changes []PriceChange, id, finish string) PriceChange {
+func changeFor(t *testing.T, changes []PriceChange, id string, fin finish.Finish) PriceChange {
 	t.Helper()
 	for _, c := range changes {
-		if c.ScryfallID == id && c.Finish == finish {
+		if c.ScryfallID == id && c.Finish == fin {
 			return c
 		}
 	}
-	t.Fatalf("no change for %s/%s in %+v", id, finish, changes)
+	t.Fatalf("no change for %s/%s in %+v", id, fin, changes)
 	return PriceChange{}
 }
 
@@ -30,10 +30,6 @@ func observationCount(t *testing.T, s *Store) int {
 	return n
 }
 
-// backdate rewrites every stored observation's timestamp, standing in for time
-// passing between refreshes. Tests cannot wait a day, and the alternative —
-// injecting a clock into the store for this alone — would be a bigger change to
-// production code than the thing under test.
 func backdate(t *testing.T, s *Store, from, to string) {
 	t.Helper()
 	if _, err := s.db.Exec(`UPDATE card_price_history SET as_of = ? WHERE as_of = ?`, to, from); err != nil {
@@ -59,11 +55,9 @@ func stamps(t *testing.T, s *Store) []string {
 	return out
 }
 
-// A first observation is a baseline, not a movement: there is nothing to have
-// moved from, and reporting it would make every newly added card a riser.
 func TestRecordPricesFirstRunIsBaseline(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
@@ -74,8 +68,7 @@ func TestRecordPricesFirstRunIsBaseline(t *testing.T) {
 	if len(changes) != 0 {
 		t.Errorf("first run reported %+v, want no movement", changes)
 	}
-	// Both finishes are priced, so both are worth a baseline even though only
-	// the non-foil is held: the foil is what a later foil purchase compares to.
+
 	if n := observationCount(t, s); n != 2 {
 		t.Errorf("recorded %d observations, want 2 (one per priced finish)", n)
 	}
@@ -83,15 +76,13 @@ func TestRecordPricesFirstRunIsBaseline(t *testing.T) {
 
 func TestRecordPricesReportsMovement(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 3); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	// Yesterday's refresh. Timestamps are per-second, so a baseline recorded in
-	// the same second as the move would be overwritten by it rather than
-	// preceding it.
+
 	backdate(t, s, stamps(t, s)[0], "2026-07-28T00:00:00Z")
 
 	risen := ulamog()
@@ -124,17 +115,14 @@ func TestRecordPricesReportsMovement(t *testing.T) {
 		t.Errorf("Source = %q, want scryfall", c.Source)
 	}
 
-	// The foil never moved, so nothing new was written for it.
 	if n := observationCount(t, s); n != 3 {
 		t.Errorf("recorded %d observations, want 3 (2 baseline + 1 move)", n)
 	}
 }
 
-// Re-recording an unchanged catalog must write nothing. A row per card per
-// refresh would grow the database by the size of the catalog every day.
 func TestRecordPricesSkipsUnchanged(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -156,20 +144,17 @@ func TestRecordPricesSkipsUnchanged(t *testing.T) {
 	}
 }
 
-// Etched copies are valued from the foil price, so they must be counted against
-// the foil's movement rather than silently dropped or given a series of their
-// own that would only ever duplicate the foil's.
 func TestRecordPricesCountsCopiesAcrossContainersAndFinishes(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(solRing(), "foil", 2); err != nil {
+	if err := s.AddCardFinish(solRing(), finish.Foil, 2); err != nil {
 		t.Fatalf("AddCardFinish foil: %v", err)
 	}
-	if err := s.AddCardFinish(solRing(), "etched", 1); err != nil {
+	if err := s.AddCardFinish(solRing(), finish.Etched, 1); err != nil {
 		t.Fatalf("AddCardFinish etched: %v", err)
 	}
 	if _, err := s.UpsertDeck(
 		DeckMeta{Name: "EDH", Source: "text", SourceID: "edh"},
-		[]Entry{{ScryfallID: "sol-id", Finish: "foil", Board: "main", Quantity: 4}},
+		[]Entry{{ScryfallID: "sol-id", Finish: finish.Foil, Board: "main", Quantity: 4}},
 	); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -187,7 +172,7 @@ func TestRecordPricesCountsCopiesAcrossContainersAndFinishes(t *testing.T) {
 		t.Fatalf("RecordPrices: %v", err)
 	}
 
-	c := changeFor(t, changes, "sol-id", "foil")
+	c := changeFor(t, changes, "sol-id", finish.Foil)
 	if c.Copies != 7 {
 		t.Errorf("Copies = %d, want 7 (2 foil + 1 etched loose + 4 foil in a deck)", c.Copies)
 	}
@@ -196,13 +181,9 @@ func TestRecordPricesCountsCopiesAcrossContainersAndFinishes(t *testing.T) {
 	}
 }
 
-// A card in the catalog but owned nowhere still accrues history — it can come
-// back, and the gap would be permanent — but it is not a mover, because nothing
-// held has changed value.
 func TestRecordPricesIgnoresUnownedCards(t *testing.T) {
 	s := newTestStore(t)
-	// Catalogued but never added to a container, which is the state this is
-	// about: a printing hoard knows the price of and owns none of.
+
 	if err := s.UpsertPrintings([]scryfall.Card{ulamog()}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
@@ -223,18 +204,15 @@ func TestRecordPricesIgnoresUnownedCards(t *testing.T) {
 	if len(changes) != 0 {
 		t.Errorf("changes = %+v, want nothing for a card owned nowhere", changes)
 	}
-	// Recorded all the same, so the series survives the card's absence.
+
 	if n := observationCount(t, s); n != 3 {
 		t.Errorf("recorded %d observations, want 3", n)
 	}
 }
 
-// A price arriving from MTGJSON must be recorded as the effective price. Storing
-// the raw Scryfall column instead would report the fallback's replacement by a
-// real quote as an enormous move that never happened.
 func TestRecordPricesUsesFallbackPrices(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), "foil", 2); err != nil {
+	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if err := s.UpsertAltPrices([]AltPrice{{
@@ -257,7 +235,7 @@ func TestRecordPricesUsesFallbackPrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordPrices: %v", err)
 	}
-	c := changeFor(t, changes, "ripple-id", "foil")
+	c := changeFor(t, changes, "ripple-id", finish.Foil)
 	if c.Old != 30.00 || c.New != 36.00 {
 		t.Errorf("moved %v -> %v, want 30 -> 36", c.Old, c.New)
 	}
@@ -268,13 +246,13 @@ func TestRecordPricesUsesFallbackPrices(t *testing.T) {
 
 func TestMoversWindow(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	// The baseline is a month old; the move happened yesterday.
+
 	backdate(t, s, stamps(t, s)[0], "2026-06-01T00:00:00Z")
 
 	risen := ulamog()
@@ -291,21 +269,18 @@ func TestMoversWindow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Movers: %v", err)
 		}
-		c := changeFor(t, got, "ulamog-id", "nonfoil")
+		c := changeFor(t, got, "ulamog-id", finish.Nonfoil)
 		if c.Old != 10.00 || c.New != 20.00 {
 			t.Errorf("moved %v -> %v, want 10 -> 20", c.Old, c.New)
 		}
 	})
 
-	// A window reaching back further than the record does is answered with the
-	// record: asking for six years of movement from a card with two months of
-	// history gets the two months, measured from where the series starts.
 	t.Run("window older than the history sees the move", func(t *testing.T) {
 		got, err := s.Movers("2020-01-01T00:00:00Z")
 		if err != nil {
 			t.Fatalf("Movers: %v", err)
 		}
-		c := changeFor(t, got, "ulamog-id", "nonfoil")
+		c := changeFor(t, got, "ulamog-id", finish.Nonfoil)
 		if c.Old != 10.00 || c.New != 20.00 {
 			t.Errorf("moved %v -> %v, want 10 -> 20", c.Old, c.New)
 		}
@@ -315,17 +290,15 @@ func TestMoversWindow(t *testing.T) {
 	})
 }
 
-// Two refreshes landing in the same second must not fail the run on the primary
-// key, and the later price must win.
 func TestRecordPricesWithinOneSecond(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
-	// Collapse the baseline onto the timestamp the next write will use.
+
 	backdate(t, s, stamps(t, s)[0], now())
 
 	risen := ulamog()
@@ -348,9 +321,6 @@ SELECT price_usd FROM card_price_history WHERE scryfall_id='ulamog-id' AND finis
 	}
 }
 
-// v4 seeds history from the prices already on disk. Without it the first refresh
-// after upgrading would have nothing to compare against and would report a
-// collection where nothing had ever moved.
 func TestPriceHistorySeededFromExistingPrices(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hoard.db")
 	seedRawDB(t, path, schemaV1+`
@@ -396,8 +366,7 @@ PRAGMA user_version = 3;`)
 		"ulamog-id/nonfoil": {10.0, "scryfall", "2026-07-01T00:00:00Z"},
 		"ulamog-id/foil":    {25.0, "scryfall", "2026-07-01T00:00:00Z"},
 		"ripple-id/nonfoil": {0.34, "scryfall", "2026-07-01T00:00:00Z"},
-		// The foil Scryfall cannot price is seeded from the fallback, stamped
-		// when that fallback was fetched rather than when the card was written.
+
 		"ripple-id/foil": {30.0, "cardkingdom", "2026-06-20T00:00:00Z"},
 	}
 	if len(got) != len(want) {
@@ -409,8 +378,6 @@ PRAGMA user_version = 3;`)
 		}
 	}
 
-	// Seeded, so the very next refresh compares against these rather than
-	// treating today's unchanged prices as brand new.
 	changes, err := s.RecordPrices()
 	if err != nil {
 		t.Fatalf("RecordPrices: %v", err)
@@ -433,7 +400,7 @@ func TestPriceHistoryDepth(t *testing.T) {
 		t.Errorf("empty hoard reports %d observations since %q, want 0 and empty", n, oldest)
 	}
 
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -448,14 +415,10 @@ func TestPriceHistoryDepth(t *testing.T) {
 	}
 }
 
-// obs builds one imported observation. Source is fixed: only TCGplayer's series
-// is imported, because it is the one Scryfall's own prices come from.
-func obs(date, finish string, price float64) mtgjson.Observation {
-	return mtgjson.Observation{Date: date, Finish: finish, Price: price, Source: "tcgplayer"}
+func obs(date string, fin finish.Finish, price float64) mtgjson.Observation {
+	return mtgjson.Observation{Date: date, Finish: fin, Price: price, Source: "tcgplayer"}
 }
 
-// priceAt reads one stored observation, so a test can assert that a row survived
-// a collision rather than merely that some row exists.
 func priceAt(t *testing.T, s *Store, id, finish, asOf string) (float64, string) {
 	t.Helper()
 	var price float64
@@ -469,28 +432,25 @@ func priceAt(t *testing.T, s *Store, id, finish, asOf string) (float64, string) 
 	return price, source
 }
 
-// MTGJSON quotes a price every day whether or not it changed. Storing all ninety
-// would add two orders of magnitude more rows than the collection has cards, and
-// say nothing a repeat of the previous number does not already say.
 func TestBackfillPricesStoresOnlyTheDaysThatMoved(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
 	inserted, cards, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-01", "nonfoil", 5.00),
-			obs("2026-07-02", "nonfoil", 5.00),
-			obs("2026-07-03", "nonfoil", 7.00),
-			obs("2026-07-04", "nonfoil", 7.00),
-			obs("2026-07-05", "nonfoil", 6.00),
+			obs("2026-07-01", finish.Nonfoil, 5.00),
+			obs("2026-07-02", finish.Nonfoil, 5.00),
+			obs("2026-07-03", finish.Nonfoil, 7.00),
+			obs("2026-07-04", finish.Nonfoil, 7.00),
+			obs("2026-07-05", finish.Nonfoil, 6.00),
 		},
 	})
 	if err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
-	// The 1st as baseline, then the two days it actually moved.
+
 	if inserted != 3 || cards != 1 {
 		t.Errorf("inserted %d rows across %d cards, want 3 across 1", inserted, cards)
 	}
@@ -503,26 +463,24 @@ func TestBackfillPricesStoresOnlyTheDaysThatMoved(t *testing.T) {
 	}
 }
 
-// Each finish is its own series. A foil that held steady while the non-foil moved
-// must not inherit the non-foil's dates, or its history claims moves it never had.
 func TestBackfillPricesKeepsFinishesSeparate(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
 	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-01", "nonfoil", 5.00),
-			obs("2026-07-02", "nonfoil", 6.00),
-			obs("2026-07-01", "foil", 20.00),
-			obs("2026-07-02", "foil", 20.00),
+			obs("2026-07-01", finish.Nonfoil, 5.00),
+			obs("2026-07-02", finish.Nonfoil, 6.00),
+			obs("2026-07-01", finish.Foil, 20.00),
+			obs("2026-07-02", finish.Foil, 20.00),
 		},
 	})
 	if err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
-	// Two for the non-foil, one for the foil that never moved.
+
 	if inserted != 3 {
 		t.Errorf("inserted %d, want 3", inserted)
 	}
@@ -536,11 +494,9 @@ func TestBackfillPricesKeepsFinishesSeparate(t *testing.T) {
 	}
 }
 
-// An imported price must never displace an observed one. The live row is what the
-// prices actually were; the import is a reconstruction made afterwards.
 func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -548,11 +504,8 @@ func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
 	}
 	backdate(t, s, stamps(t, s)[0], "2026-07-10T00:00:00Z")
 
-	// Same card, same finish, same day, different price: the card's own
-	// bound excludes the day its live history began, and the conflict
-	// clause backstops the identical stamp.
 	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
-		"ulamog-id": {obs("2026-07-10", "nonfoil", 99.00)},
+		"ulamog-id": {obs("2026-07-10", finish.Nonfoil, 99.00)},
 	})
 	if err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
@@ -565,12 +518,9 @@ func TestBackfillPricesLeavesObservedRowsAlone(t *testing.T) {
 	}
 }
 
-// The bound is not tidiness. MTGJSON's vendor snapshots are taken at a different
-// hour than Scryfall's, so an imported point beside a real one for the same era
-// would surface in Movers as a few cents of movement that never happened.
 func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -580,10 +530,10 @@ func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
 
 	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-08", "nonfoil", 4.00),
-			obs("2026-07-09", "nonfoil", 6.00),
-			obs("2026-07-10", "nonfoil", 9.90), // same day as the live row
-			obs("2026-07-11", "nonfoil", 9.95), // after it
+			obs("2026-07-08", finish.Nonfoil, 4.00),
+			obs("2026-07-09", finish.Nonfoil, 6.00),
+			obs("2026-07-10", finish.Nonfoil, 9.90),
+			obs("2026-07-11", finish.Nonfoil, 9.95),
 		},
 	})
 	if err != nil {
@@ -598,14 +548,9 @@ func TestBackfillPricesStopsAtExistingHistory(t *testing.T) {
 	}
 }
 
-// The backfill's observations arrive in MTGJSON's vocabulary ("normal");
-// they must store in the schema's ("nonfoil"), or Movers' joins never see
-// them — a 47k-row backfill that changed nothing on screen, observed live.
-// The translation also has to precede the bound lookup, or a card's own
-// live nonfoil era would not shield it from same-day imports.
-func TestBackfillPricesTranslatesMTGJSONFinish(t *testing.T) {
+func TestBackfillPricesInsertsOnlyDaysBeforeTheLiveEra(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -615,8 +560,8 @@ func TestBackfillPricesTranslatesMTGJSONFinish(t *testing.T) {
 
 	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-08", "normal", 4.00),
-			obs("2026-07-10", "normal", 9.90), // the live nonfoil era: excluded
+			obs("2026-07-08", finish.Nonfoil, 4.00),
+			obs("2026-07-10", finish.Nonfoil, 9.90),
 		},
 	})
 	if err != nil {
@@ -626,23 +571,13 @@ func TestBackfillPricesTranslatesMTGJSONFinish(t *testing.T) {
 		t.Fatalf("inserted %d, want only the day before the live era", inserted)
 	}
 	if p, _ := priceAt(t, s, "ulamog-id", "nonfoil", "2026-07-08T00:00:00Z"); p != 4.00 {
-		t.Errorf("8 July nonfoil = %v, want the translated 4.00", p)
-	}
-	var normals int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM card_price_history WHERE finish = 'normal'`).
-		Scan(&normals); err != nil {
-		t.Fatalf("counting: %v", err)
-	}
-	if normals != 0 {
-		t.Errorf("%d rows stored under MTGJSON's vocabulary, want none", normals)
+		t.Errorf("8 July nonfoil = %v, want 4.00", p)
 	}
 }
 
-// Filtering happens before the repeats are dropped, not after: the surviving
-// window needs a baseline of its own rather than one that got cut off.
 func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -650,14 +585,12 @@ func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
 	}
 	backdate(t, s, stamps(t, s)[0], "2026-07-03T00:00:00Z")
 
-	// Compacting first would keep only the 1st, whose price then falls outside
-	// the window, leaving the card with no baseline at all.
 	inserted, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-01", "nonfoil", 5.00),
-			obs("2026-07-02", "nonfoil", 5.00),
-			obs("2026-07-03", "nonfoil", 5.00),
-			obs("2026-07-09", "nonfoil", 8.00),
+			obs("2026-07-01", finish.Nonfoil, 5.00),
+			obs("2026-07-02", finish.Nonfoil, 5.00),
+			obs("2026-07-03", finish.Nonfoil, 5.00),
+			obs("2026-07-09", finish.Nonfoil, 8.00),
 		},
 	})
 	if err != nil {
@@ -672,43 +605,37 @@ func TestBackfillPricesBaselinesTheSurvivingWindow(t *testing.T) {
 	}
 }
 
-// The bound is per card: a printing added months into the hoard's history
-// still gets its own archive depth, stopping only where its own live
-// history begins. A hoard-wide bound silently discarded everything for
-// late arrivals — a freshly imported deck could never earn a baseline
-// (observed live: 91 of a precon's 97 printings invisible to Movers).
 func TestBackfillBoundIsPerCard(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
 	backdate(t, s, stamps(t, s)[0], "2026-07-10T05:09:38Z")
-	// Sol Ring arrives after the hoard has history; it has none of its own.
-	if err := s.AddCardFinish(solRing(), "nonfoil", 1); err != nil {
+
+	if err := s.AddCardFinish(solRing(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 
 	inserted, cards, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			obs("2026-07-08", "nonfoil", 4.00),
-			obs("2026-07-09", "nonfoil", 6.00),
-			obs("2026-07-10", "nonfoil", 9.90), // its own live era: excluded
+			obs("2026-07-08", finish.Nonfoil, 4.00),
+			obs("2026-07-09", finish.Nonfoil, 6.00),
+			obs("2026-07-10", finish.Nonfoil, 9.90),
 		},
 		"sol-id": {
-			obs("2026-07-08", "nonfoil", 1.00),
-			obs("2026-07-09", "nonfoil", 1.00),
-			obs("2026-07-10", "nonfoil", 2.00), // no live history: all its days import
-			obs("2026-07-11", "nonfoil", 2.00),
+			obs("2026-07-08", finish.Nonfoil, 1.00),
+			obs("2026-07-09", finish.Nonfoil, 1.00),
+			obs("2026-07-10", finish.Nonfoil, 2.00),
+			obs("2026-07-11", finish.Nonfoil, 2.00),
 		},
 	})
 	if err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
-	// Ulamog: the two days before its live era. Sol Ring: its baseline and
-	// the one move (repeats compacted away).
+
 	if inserted != 4 || cards != 2 {
 		t.Fatalf("inserted %d rows across %d cards, want 4 across 2", inserted, cards)
 	}
@@ -717,10 +644,9 @@ func TestBackfillBoundIsPerCard(t *testing.T) {
 	}
 }
 
-// The point of the whole exercise: a 30-day question answered on day one.
 func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 4); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 4); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -728,8 +654,6 @@ func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	}
 	backdate(t, s, stamps(t, s)[0], "2026-07-29T05:09:38Z")
 
-	// Before: a month-wide window has nothing at or before its cutoff to
-	// compare against, so the card is invisible.
 	before, err := s.Movers("2026-06-29T00:00:00Z")
 	if err != nil {
 		t.Fatalf("Movers: %v", err)
@@ -739,7 +663,7 @@ func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	}
 
 	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
-		"ulamog-id": {obs("2026-06-20", "nonfoil", 4.00), obs("2026-07-15", "nonfoil", 8.00)},
+		"ulamog-id": {obs("2026-06-20", finish.Nonfoil, 4.00), obs("2026-07-15", finish.Nonfoil, 8.00)},
 	}); err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
@@ -748,9 +672,8 @@ func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Movers: %v", err)
 	}
-	c := changeFor(t, got, "ulamog-id", "nonfoil")
-	// Baseline is the imported 15 July price; current is the live one, not the
-	// newest import, because midnight sorts before an observed timestamp.
+	c := changeFor(t, got, "ulamog-id", finish.Nonfoil)
+
 	if c.Old != 4.00 || c.New != 10.00 {
 		t.Errorf("moved %v -> %v, want 4 -> 10", c.Old, c.New)
 	}
@@ -770,15 +693,13 @@ func TestBackfillPricesGivesMoversItsDepth(t *testing.T) {
 	}
 }
 
-// Running it twice must not double the rows: the second pass is bounded by the
-// history the first one created.
 func TestBackfillPricesIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	series := map[string][]mtgjson.Observation{
-		"ulamog-id": {obs("2026-07-01", "nonfoil", 5.00), obs("2026-07-02", "nonfoil", 6.00)},
+		"ulamog-id": {obs("2026-07-01", finish.Nonfoil, 5.00), obs("2026-07-02", finish.Nonfoil, 6.00)},
 	}
 	if _, _, err := s.BackfillPrices(series); err != nil {
 		t.Fatalf("first pass: %v", err)
@@ -797,7 +718,6 @@ func TestBackfillPricesIsIdempotent(t *testing.T) {
 	}
 }
 
-// Nothing to import must not open a transaction or report anything happened.
 func TestBackfillPricesEmptyInputWritesNothing(t *testing.T) {
 	s := newTestStore(t)
 	inserted, cards, err := s.BackfillPrices(nil)
@@ -806,16 +726,13 @@ func TestBackfillPricesEmptyInputWritesNothing(t *testing.T) {
 	}
 }
 
-// RecordPrices must snapshot the hoard's value even when nothing moved: the
-// chart's flat stretches mean "checked, unchanged", and skipping them would
-// leave gaps indistinguishable from "never looked".
 func TestRecordPricesWritesValueSnapshot(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]Entry{{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		[]Entry{{ScryfallID: "ulamog-id", Finish: finish.Foil, Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 
@@ -833,15 +750,12 @@ func TestRecordPricesWritesValueSnapshot(t *testing.T) {
 	if got.Seeded {
 		t.Error("a refresh's snapshot is marked seeded")
 	}
-	// 2 non-foil at $10 loose, 1 foil at $25 in the deck.
+
 	if got.Binder != 20 || got.Decks != 25 || got.Total != 45 {
 		t.Errorf("snapshot = binder %v / decks %v / total %v, want 20/25/45",
 			got.Binder, got.Decks, got.Total)
 	}
 
-	// A second observation at a distinct instant lands beside it, prices
-	// unchanged — written directly so the test does not sleep out a
-	// same-second collision.
 	tx, err := s.db.Begin()
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
@@ -857,31 +771,24 @@ func TestRecordPricesWritesValueSnapshot(t *testing.T) {
 	}
 }
 
-// Migrating to v9 seeds the value series from existing price history: one
-// estimated point per recorded date, from today's quantities at that day's
-// prices, carrying each price forward across dates it did not move.
 func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "seed.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if _, err := s.UpsertDeck(DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]Entry{{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1}}); err != nil {
+		[]Entry{{ScryfallID: "ulamog-id", Finish: finish.Foil, Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 	for _, stmt := range []string{
 		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',10,'scryfall','2026-05-01T00:00:00Z')`,
 		`INSERT INTO card_price_history VALUES ('ulamog-id','foil',20,'scryfall','2026-05-01T00:00:00Z')`,
 		`INSERT INTO card_price_history VALUES ('ulamog-id','nonfoil',12,'scryfall','2026-05-10T00:00:00Z')`,
-		// Rewind to v8 so reopening replays the snapshot migration — which
-		// means undoing everything later than v8: v9's snapshots, v10's
-		// watches, v11's card-frame columns, v13's bid table, v14's
-		// product-id column, v16's promo-types column, v20's vendor
-		// product ids.
+
 		`DROP TABLE value_snapshots`,
 		`DROP TABLE watches`,
 		`DROP TABLE card_bid_history`,
@@ -932,38 +839,30 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 	if first.AsOf != "2026-05-01T00:00:00Z" || second.AsOf != "2026-05-10T00:00:00Z" {
 		t.Errorf("stamps = %s / %s", first.AsOf, second.AsOf)
 	}
-	// Day one: 2 non-foil at $10 loose, 1 foil at $20 in the deck.
+
 	if first.Binder != 20 || first.Decks != 20 || first.Total != 40 {
 		t.Errorf("first = %+v, want binder 20 / decks 20 / total 40", first)
 	}
-	// Day ten: the non-foil moved to $12; the foil price carries forward.
+
 	if second.Binder != 24 || second.Decks != 20 || second.Total != 44 {
 		t.Errorf("second = %+v, want binder 24 / decks 20 / total 44", second)
 	}
 }
 
-// srcObs is obs with an explicit vendor, for the vendor-switch cases.
-func srcObs(date, finish string, price float64, source string) mtgjson.Observation {
-	return mtgjson.Observation{Date: date, Finish: finish, Price: price, Source: source}
+func srcObs(date string, fin finish.Finish, price float64, source string) mtgjson.Observation {
+	return mtgjson.Observation{Date: date, Finish: fin, Price: price, Source: source}
 }
 
-// A vendor switch retires the old reconstruction. The per-finish fallback
-// that once chose Manapool for a treated foil chooses TCGplayer once its
-// series exists — and the old midnight rows must yield, or they own the
-// bound forever and the new series never lands (observed live: 152 of
-// many thousand observations imported). Live rows still stand: only
-// reconstructed, midnight-stamped rows die.
 func TestBackfillReplacesVendorSwitchedSeries(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	// The old reconstruction: a Manapool series, plus one genuinely
-	// observed row with a real clock time.
+
 	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			srcObs("2026-07-01", "foil", 21.00, "manapool"),
-			srcObs("2026-07-05", "foil", 21.78, "manapool"),
+			srcObs("2026-07-01", finish.Foil, 21.00, "manapool"),
+			srcObs("2026-07-05", finish.Foil, 21.78, "manapool"),
 		},
 	}); err != nil {
 		t.Fatalf("seeding: %v", err)
@@ -975,8 +874,8 @@ func TestBackfillReplacesVendorSwitchedSeries(t *testing.T) {
 
 	inserted, cards, err := s.BackfillPrices(map[string][]mtgjson.Observation{
 		"ulamog-id": {
-			srcObs("2026-07-01", "foil", 17.10, "tcgplayer"),
-			srcObs("2026-07-03", "foil", 17.56, "tcgplayer"),
+			srcObs("2026-07-01", finish.Foil, 17.10, "tcgplayer"),
+			srcObs("2026-07-03", finish.Foil, 17.56, "tcgplayer"),
 		},
 	})
 	if err != nil {
@@ -996,10 +895,8 @@ func TestBackfillReplacesVendorSwitchedSeries(t *testing.T) {
 		t.Errorf("live row = %v from %q, want untouched", p, src)
 	}
 
-	// Same vendor again: nothing retires, nothing re-imports — the bound
-	// holds and the run stays a no-op.
 	inserted, _, err = s.BackfillPrices(map[string][]mtgjson.Observation{
-		"ulamog-id": {srcObs("2026-07-01", "foil", 17.10, "tcgplayer")},
+		"ulamog-id": {srcObs("2026-07-01", finish.Foil, 17.10, "tcgplayer")},
 	})
 	if err != nil {
 		t.Fatalf("re-run: %v", err)
@@ -1012,22 +909,19 @@ func TestBackfillReplacesVendorSwitchedSeries(t *testing.T) {
 	}
 }
 
-// A series with no incoming observations keeps its reconstruction:
-// deletion without a replacement would just erase history. The switch is
-// per finish — a nonfoil import must not retire the foil series.
 func TestBackfillRetiresOnlyTheIncomingFinish(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "foil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Foil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
-		"ulamog-id": {srcObs("2026-07-01", "foil", 21.00, "manapool")},
+		"ulamog-id": {srcObs("2026-07-01", finish.Foil, 21.00, "manapool")},
 	}); err != nil {
 		t.Fatalf("seeding: %v", err)
 	}
-	// A nonfoil-only import from another vendor: the foil series stays.
+
 	if _, _, err := s.BackfillPrices(map[string][]mtgjson.Observation{
-		"ulamog-id": {srcObs("2026-06-20", "normal", 9.00, "tcgplayer")},
+		"ulamog-id": {srcObs("2026-06-20", finish.Nonfoil, 9.00, "tcgplayer")},
 	}); err != nil {
 		t.Fatalf("BackfillPrices: %v", err)
 	}
@@ -1036,18 +930,12 @@ func TestBackfillRetiresOnlyTheIncomingFinish(t *testing.T) {
 	}
 }
 
-// A price series for a finish the printing does not come in is not a price
-// series. Manapool files one product under `normal` for a foil-only printing,
-// and the unpivot used to take that at face value — the surge foil Aragorn and
-// Arwen carried a "non-foil" history at $125.04 beside its real foil series,
-// drawn as a second sparkline for a copy that cannot exist.
 func TestRecordPricesSkipsFinishesThePrintingLacks(t *testing.T) {
 	s := newTestStore(t)
-	// A foil-only printing that nonetheless carries a non-foil figure, exactly
-	// as the fallback leaves one when a vendor mis-buckets its single product.
+
 	c := ulamog()
 	c.Raw = []byte(`{"finishes":["foil"]}`)
-	if err := s.AddCardFinish(c, "foil", 1); err != nil {
+	if err := s.AddCardFinish(c, finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -1075,13 +963,9 @@ func TestRecordPricesSkipsFinishesThePrintingLacks(t *testing.T) {
 	}
 }
 
-// The negative control, and the one that keeps the gate honest: a printing
-// whose Scryfall document has never been stored has an unknown finishes list,
-// which is a gap and not a denial. Reading it as "comes in no finish at all"
-// would silently stop recording history for every un-enriched printing.
 func TestRecordPricesKeepsSeriesForUnknownFinishes(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {

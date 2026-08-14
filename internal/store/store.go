@@ -1,66 +1,27 @@
-// Package store persists what you own: the binder, the decks, and the printings
-// in them.
-//
-//   - cards        — one row per printing, shared across every container.
-//   - containers   — the singleton binder plus one row per deck. `source` is a
-//     generic provider slug so no list site is referenced structurally.
-//   - card_entries — how many of a printing, in which finish and board, in which
-//     container.
-//   - card_prices_alt    — fallback vendor prices for printings Scryfall
-//     cannot price, applied by the shared SQL fragments below.
-//   - card_price_history — dated price observations, one per refresh or
-//     backfill, feeding movers and the detail sparklines. Irreplaceable in
-//     practice: MTGJSON's archive reaches back 90 days, so any observation
-//     older than that exists nowhere but here.
-//   - card_price_gaps    — printings already found unpriced everywhere, so a
-//     refresh stops re-downloading bundles to chase them.
-//
-// Not to be confused with internal/catalog, which is a disposable local copy of
-// Scryfall's whole card database. This package holds the irreplaceable half.
 package store
 
 import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/spiffcs/hoard/internal/scryfall"
-	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
+	_ "modernc.org/sqlite"
 )
 
-// Container kinds. These are stored values, never shown; see LooseName for what
-// the singleton is called on screen.
 const (
 	KindCollection = "collection"
 	KindDeck       = "deck"
 )
 
-// LooseName is the default binder's initial name — what the cards outside any
-// deck are called until the user renames it.
-//
-// "Collection" is the whole hoard — binder plus decks — so using it for the loose
-// half made the summary contradict itself, listing a COLLECTION of 335 above a
-// TOTAL of 2,214.
-//
-// Since v19 the stored container carries its display name outright (older rows
-// said 'Collection' behind a read-time CASE), so containers.name is
-// authoritative and this constant is only the starting value and a reserved
-// alias — never assume it is the current name; ask ListBinders.
 const LooseName = "Binder"
 
-// ReservedBinderNames always resolve to the default binder, whatever it is
-// currently called: LooseName because every export ever written stamps it in
-// the Container column, "Collection" because pre-v19 databases stored it.
-// Keeping them reserved means old CSVs round-trip into the default binder
-// instead of silently growing a second binder named "Binder".
 var ReservedBinderNames = []string{LooseName, "Collection"}
 
-// IsReservedBinderName reports whether a name is one of the reserved aliases,
-// compared like binder names everywhere else: trimmed, case-insensitive.
 func IsReservedBinderName(name string) bool {
 	for _, r := range ReservedBinderNames {
 		if strings.EqualFold(strings.TrimSpace(name), r) {
@@ -70,62 +31,41 @@ func IsReservedBinderName(name string) bool {
 	return false
 }
 
-// collectionSourceID is the fixed source_id of the singleton loose collection,
-// letting it share the UNIQUE(source, source_id) constraint with decks.
 const collectionSourceID = "__collection__"
 
-// Card is a catalog entry: a distinct printing plus its latest market prices.
 type Card struct {
 	ScryfallID string
-	// MTGJSONUUID is empty when the printing has no MTGJSON mapping yet; it is
-	// filled in by price updates that consult MTGJSON.
+
 	MTGJSONUUID     string
 	SetCode         string
 	CollectorNumber string
 	Name            string
 	PriceUSD        *float64
 	PriceUSDFoil    *float64
-	// PriceUSDEtched is the etched product's own price, nil for a printing with
-	// no etched product. Etched copies read it and fall back to PriceUSDFoil,
-	// since not every source splits the two — see scryfall.EffectiveFoilPrice,
-	// which is the Go mirror of the entryValue SQL.
+
 	PriceUSDEtched *float64
 	ScryfallURL    string
 	UpdatedAt      string
-	// AltSource names the vendor a fallback price came from, and is empty when
-	// Scryfall priced the card. Set only by the queries that read prices for
-	// display, so callers can mark an estimate as such.
+
 	AltSource string
-	// ColorIdentity is the printing's WUBRG identity: nil until a refresh has
-	// stored the card's document (unknown), empty for a colorless card. The
-	// distinction matters to rendering — unknown stays unstyled, colorless
-	// reads wastes-grey.
+
 	ColorIdentity []string
-	// ManaCost is the printed cost ("{2}{W}{U}"), nil when unknown.
+
 	ManaCost *string
-	// Lang is the printing's language code ("en", "ja"), empty when the card's
-	// document has not been stored. Language is already part of identity via
-	// the Scryfall id; this is what lets a reader see which one they hold.
+
 	Lang string
-	// Treatment is the foil treatment's display word ("ripple", "surge"),
-	// derived from the printing's promo_types tags — empty for an
-	// ordinary printing or one with no stored document. The treatment
-	// describes what the FOIL finish of the printing is; the nonfoil copy
-	// of a ripple-tagged printing is a plain card.
+
 	Treatment string
 }
 
-// Entry is a quantity of a card (finish + condition + board) to place in a
-// container.
 type Entry struct {
 	ScryfallID string
-	Finish     string // nonfoil|foil|etched
-	Condition  string // unknown|nm|lp|mp|hp|dmg
-	Board      string // main|commander|side|maybe
+	Finish     finish.Finish
+	Condition  string
+	Board      string
 	Quantity   int
 }
 
-// Container is the loose collection or a deck.
 type Container struct {
 	ID        int64
 	Kind      string
@@ -136,7 +76,6 @@ type Container struct {
 	Format    string
 }
 
-// DeckMeta describes a deck to upsert (its entries are supplied separately).
 type DeckMeta struct {
 	Name      string
 	Source    string
@@ -145,24 +84,18 @@ type DeckMeta struct {
 	Format    string
 }
 
-// EntryView is an entry joined to its catalog card, for display and valuation.
 type EntryView struct {
 	Card      Card
-	Finish    string
+	Finish    finish.Finish
 	Condition string
 	Board     string
 	Quantity  int
 }
 
-// Price returns the market price for this entry's finish.
 func (e EntryView) Price() *float64 {
-	if scryfall.PricedAsFoil(e.Finish) {
-		return scryfall.EffectiveFoilPrice(e.Finish, e.Card.PriceUSDFoil, e.Card.PriceUSDEtched)
-	}
-	return e.Card.PriceUSD
+	return e.Finish.EffectivePrice(e.Card.PriceUSD, e.Card.PriceUSDFoil, e.Card.PriceUSDEtched)
 }
 
-// Value returns quantity × finish price (0 when the price is unknown).
 func (e EntryView) Value() float64 {
 	if p := e.Price(); p != nil {
 		return float64(e.Quantity) * *p
@@ -170,82 +103,30 @@ func (e EntryView) Value() float64 {
 	return 0
 }
 
-// DeckSummary is a deck plus rolled-up counts and value for listings.
 type DeckSummary struct {
 	Container
 	DistinctCards int
 	TotalCopies   int
 	Value         float64
-	// IsDefault marks the built-in binder ListBinders puts first — carried
-	// on the row so no caller has to rely on its position to know which
-	// binder cannot be renamed or removed.
+
 	IsDefault bool
 }
 
-// SQL fragments for reading prices with the MTGJSON fallback applied. They are
-// consts rather than repeated text so the four valuation queries cannot drift
-// apart and leave two commands reporting different totals for the same cards.
-//
-// They assume `c` is the cards table and `a` is card_prices_alt, joined by
-// altJoinCards or altJoinEntries.
 const (
 	altJoinCards = `LEFT JOIN card_prices_alt a ON a.scryfall_id = c.scryfall_id
     LEFT JOIN card_price_overrides o ON o.scryfall_id = c.scryfall_id`
 	altJoinEntries = `LEFT JOIN card_prices_alt a ON a.scryfall_id = e.scryfall_id
     LEFT JOIN card_price_overrides o ON o.scryfall_id = e.scryfall_id`
 
-	// effPriceUSD, effPriceFoil and effPriceEtched are the price to use for
-	// each finish: the correction when one was recorded, else the Scryfall
-	// figure, else the fallback.
-	//
-	// The fallback fills a NULL; the override replaces a number. That is the
-	// whole difference between the two side tables and the reason they sit on
-	// opposite sides of the catalog in this chain. card_prices_alt answers
-	// "Scryfall knew nothing"; card_price_overrides answers "Scryfall's figure
-	// was contradicted by the asks on its own product" — a $0.56 surge foil
-	// with a $97.55 cheapest ask, which no ordering that lets the catalog win
-	// could ever correct. See migration v29.
-	//
-	// Etched reads its own column first and falls back to the foil one, since
-	// not every source splits the product — a printing the feed knows only as a
-	// foil is valued exactly as it was before etched had a column of its own.
-	// card_prices_alt has no etched column, so its foil fallback serves both.
-	// A finish-specific figure outranks a correction made to a different
-	// finish: an etched price Scryfall published is about the etched product,
-	// where the foil override is not.
 	effPriceUSD    = `COALESCE(o.price_usd, ` + catalogPriceUSD + `)`
 	effPriceFoil   = `COALESCE(o.price_usd_foil, ` + catalogPriceFoil + `)`
 	effPriceEtched = `COALESCE(o.price_usd_etched, c.price_usd_etched,
         o.price_usd_foil, c.price_usd_foil, a.price_usd_foil)`
 
-	// catalogPriceUSD, catalogPriceFoil and catalogPriceEtched are the same
-	// three prices with the corrections left out — what hoard would report if
-	// card_price_overrides did not exist.
-	//
-	// The sweep that writes those corrections reads these, and that is the
-	// whole reason they are spelled separately. A detector fed the effective
-	// price would be judging its own last answer: the correction it wrote
-	// yesterday agrees with the ask it was derived from, the contradiction
-	// disappears, and the correction deletes itself on the next run. Reading
-	// the uncorrected price instead makes the sweep idempotent and lets a
-	// correction lapse on its own the day the feed's figure becomes sane —
-	// which for a preorder is the day the card starts selling.
 	catalogPriceUSD    = `COALESCE(c.price_usd, a.price_usd)`
 	catalogPriceFoil   = `COALESCE(c.price_usd_foil, a.price_usd_foil)`
 	catalogPriceEtched = `COALESCE(c.price_usd_etched, c.price_usd_foil, a.price_usd_foil)`
 
-	// altSourceExpr names the vendor behind a price that did not come from the
-	// catalog, and is empty when Scryfall priced the card. Display code uses it
-	// to mark estimates.
-	//
-	// An override is checked before the fallback, matching the order the price
-	// itself is resolved in: a substituted figure that displayed as Scryfall's
-	// would be hoard quietly restating a number it refused. A correction is the
-	// one price the owner most needs attributed.
-	//
-	// This form is for queries with no single finish in scope, such as the
-	// collection listing where a row aggregates both. It reports whichever
-	// finish is actually falling back.
 	altSourceExpr = `COALESCE(CASE
         WHEN o.price_usd IS NOT NULL OR o.price_usd_foil IS NOT NULL
              OR o.price_usd_etched IS NOT NULL THEN o.source
@@ -253,11 +134,6 @@ const (
         WHEN c.price_usd_foil IS NULL AND a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
     END, '')`
 
-	// altSourceForEntry is the same idea where the row's finish is known, so it
-	// names the vendor that supplied *that* finish. A card's two finishes can
-	// come from different shops, and crediting the wrong one beside a price is
-	// worse than saying nothing — which is why each branch below asks about the
-	// override column its own finish would actually read.
 	altSourceForEntry = `COALESCE(CASE
         WHEN e.finish = 'etched' THEN
             CASE WHEN o.price_usd_etched IS NOT NULL THEN o.source
@@ -267,32 +143,16 @@ const (
         WHEN e.finish = 'foil' THEN
             CASE WHEN o.price_usd_foil IS NOT NULL THEN o.source
                  WHEN c.price_usd_foil IS NULL THEN a.source_usd_foil END
-        ELSE CASE WHEN o.price_usd IS NOT NULL THEN o.source
-                  WHEN c.price_usd IS NULL THEN a.source_usd END
+        WHEN e.finish = 'nonfoil' THEN
+            CASE WHEN o.price_usd IS NOT NULL THEN o.source
+                 WHEN c.price_usd IS NULL THEN a.source_usd END
     END, '')`
 
-	// entryValue values one card_entries row by its finish. Every total hoard
-	// reports is built from this, so it is the one place the finish-to-column
-	// rule lives; scryfall.EffectiveFoilPrice mirrors it in Go.
 	entryValue = `COALESCE(CASE
         WHEN e.finish = 'etched' THEN ` + effPriceEtched + `
-        WHEN e.finish = 'foil'   THEN ` + effPriceFoil + `
-        ELSE ` + effPriceUSD + ` END, 0)`
+        WHEN e.finish = 'foil'    THEN ` + effPriceFoil + `
+        WHEN e.finish = 'nonfoil' THEN ` + effPriceUSD + ` END, 0)`
 
-	// unpricedPredicate matches an entry no source can price for the finish it
-	// is actually held in. The finish matters: a card owned only in non-foil
-	// needs no foil price, and treating that as a gap would send every price
-	// run chasing numbers that would never be used.
-	//
-	// Etched is unpriced only when its own column, the foil column and the
-	// fallback are all empty — mirroring effPriceEtched, so a card this
-	// predicate calls unpriced is exactly one entryValue scores at zero.
-	//
-	// The override columns are named here for that reason and not because a
-	// correction is a common way to be priced. hoard can record one for a
-	// printing Scryfall never priced at all, and then the catalog and the
-	// fallback are both NULL while entryValue returns real money — the exact
-	// disagreement between these two expressions this comment exists to forbid.
 	unpricedPredicate = `(e.finish = 'etched'
          AND o.price_usd_etched IS NULL AND c.price_usd_etched IS NULL
          AND o.price_usd_foil IS NULL AND c.price_usd_foil IS NULL
@@ -303,34 +163,9 @@ const (
    OR (e.finish = 'nonfoil'
          AND o.price_usd IS NULL AND c.price_usd IS NULL AND a.price_usd IS NULL)`
 
-	// enrichedExpr is THE test for "hoard has stored this printing's Scryfall
-	// document", and the only place a reader should have to look for it.
-	//
-	// It is one fact, so it gets one expression. Spelled out per query it grew
-	// three variants — the projection here, a WHERE clause in the container
-	// read, and a COUNT in the filter summary — and the moment two of them
-	// disagreed about scope, one path decided a printing was unreadable while
-	// another decided it was fine. That is not hypothetical: the container
-	// read used to filter on it and the export then inferred presence from
-	// whether a row came back, while the browse overlay read the projection.
-	// Two mechanisms for one fact.
-	//
-	// It reaches Go as CardDetail.Enriched, and consumers branch on THAT.
-	// Nothing outside this file should test the column to decide whether card
-	// data is present.
-	//
-	// The producer side is a different question and correctly asks directly:
-	// UpsertPrintings fills a NULL raw_json, and IDsNeedingDocuments finds the
-	// rows to fetch. Those look for work to do rather than infer what a
-	// printing can answer.
 	enrichedExpr = `c.raw_json IS NOT NULL`
 )
 
-// cardCols selects the Card fields, in the order cardScanDest reads them.
-// altSource is altSourceExpr or altSourceForEntry, whichever the query's scope
-// permits. Projection and scan sit side by side so a new Card field is one
-// edit here, not a coordinated edit per query — a mismatch used to surface
-// only as a runtime scan error.
 func cardCols(altSource string) string {
 	return `c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.set_code, c.collector_number, c.name,
        ` + effPriceUSD + `, ` + effPriceFoil + `, ` + effPriceEtched + `,
@@ -339,37 +174,22 @@ func cardCols(altSource string) string {
        COALESCE(c.lang, '')`
 }
 
-// cardAux holds the scan shims for Card fields SQLite cannot fill directly:
-// the color-identity JSON array lands in a NullString and becomes a slice
-// only after the scan, via apply.
 type cardAux struct {
 	colorIdentity sql.NullString
 	promoTypes    sql.NullString
 }
 
-// apply finishes the scan, decoding the shimmed columns onto the card.
 func (a cardAux) apply(c *Card) {
 	c.ColorIdentity = parseColorIdentity(a.colorIdentity)
 	c.Treatment = FoilTreatment(a.promoTypes)
 }
 
-// cardScanDest is the scan targets matching cardCols, for the caller to extend
-// with its query's own columns. After the scan, aux.apply(c) completes the
-// shimmed fields.
 func cardScanDest(c *Card, aux *cardAux) []any {
 	return []any{&c.ScryfallID, &c.MTGJSONUUID, &c.SetCode, &c.CollectorNumber, &c.Name,
 		&c.PriceUSD, &c.PriceUSDFoil, &c.PriceUSDEtched, &c.ScryfallURL, &c.UpdatedAt,
 		&c.AltSource, &aux.colorIdentity, &c.ManaCost, &aux.promoTypes, &c.Lang}
 }
 
-// parseColorIdentity turns the stored JSON array into a slice: nil for NULL
-// (no document stored, identity unknown), empty for `[]` (a colorless card).
-//
-// Hand-parsed rather than run through encoding/json: the value is a fixed,
-// tiny shape written by SQLite from Scryfall's own array — `["W","U"]` — and
-// pulling in a decoder for five single-letter strings costs more than it
-// explains. An unrecognisable value yields no colours rather than an error,
-// since neither a reader nor a caller can do anything better with one.
 func parseColorIdentity(v sql.NullString) []string {
 	if !v.Valid || len(v.String) < 2 {
 		return nil
@@ -383,17 +203,8 @@ func parseColorIdentity(v sql.NullString) []string {
 	return out
 }
 
-// foilTreatmentWords overrides the display word for foil-treatment tags the
-// suffix rule below cannot derive one from, or derives badly. Two kinds live
-// here: tags that name a foiling without carrying the "foil" suffix, and tags
-// whose stripped form reads poorly in a column.
-//
-// An earlier hand-maintained allowlist drifted from the source — it keyed
-// "texturedfoil", which matches no printing Scryfall publishes (the tag is
-// "textured"), so textured foils read as plain foils for as long as it stood.
-// The suffix rule exists so a new WotC treatment needs no code at all.
 var foilTreatmentWords = map[string]string{
-	// No "foil" suffix to strip.
+
 	"textured":        "textured",
 	"embossed":        "embossed",
 	"gilded":          "gilded",
@@ -405,21 +216,10 @@ var foilTreatmentWords = map[string]string{
 	"invisibleink":    "invis ink",
 	"stepandcompleat": "compleat",
 
-	// Suffix present, but the stripped word reads badly.
 	"firstplacefoil":   "1st place",
 	"chocobotrackfoil": "chocobo",
 }
 
-// foilTreatmentOf returns one promo tag's display word, or "" when the tag
-// says nothing about the foiling.
-//
-// Tags ending in "foil" are treatments by construction — that is how WotC
-// names them (ripplefoil, surgefoil, silverfoil, fracturefoil, …) — so the
-// suffix carries the rule and the map above only handles exceptions.
-// Deliberately excluded: thick, serialized, magnified, plastic, metal and
-// friends describe the card's stock or print run rather than its foiling,
-// and cosmetics like boosterfun, portrait or universesbeyond say nothing at
-// all. None of those end in "foil", so they fall through on their own.
 func foilTreatmentOf(tag string) string {
 	if word, ok := foilTreatmentWords[tag]; ok {
 		return word
@@ -430,11 +230,6 @@ func foilTreatmentOf(tag string) string {
 	return ""
 }
 
-// FoilTreatment reads a promo_types JSON array and returns the display
-// word of the first foil-treatment tag it carries — "" for an ordinary
-// printing, a cosmetics-only tag list, or no stored document. Hand-parsed
-// like parseColorIdentity: the value is Scryfall's own tiny array of
-// lower-case words.
 func FoilTreatment(promoTypes sql.NullString) string {
 	if !promoTypes.Valid || len(promoTypes.String) < 2 {
 		return ""
@@ -448,40 +243,23 @@ func FoilTreatment(promoTypes sql.NullString) string {
 	return ""
 }
 
-// Store wraps the database handle.
 type Store struct {
 	db *sql.DB
 }
 
-// Open opens (creating if needed) the SQLite database at path, migrates any
-// legacy schema, ensures the current schema and the singleton collection exist.
 func Open(path string) (*Store, error) {
-	// Ensure the parent directory exists (e.g. the per-user data directory on
-	// first run).
+
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating database directory %q: %w", dir, err)
 		}
 	}
-	// Enable foreign-key enforcement so ON DELETE CASCADE works, and give a
-	// blocked write a few seconds rather than failing outright. Transactions
-	// begin immediate: several writers here read a value and write it back in
-	// one transaction, and a deferred BEGIN that upgrades to a write lock under
-	// a concurrent process gets an instant SQLITE_BUSY that busy_timeout never
-	// retries — taking the lock up front turns that race into a plain wait.
-	//
-	// Durability is the default and deliberately so: journal_mode=DELETE with
-	// synchronous=FULL. This file is the irreplaceable half, and every commit
-	// paying a real fsync is the choice. Anyone switching to WAL later must set
-	// synchronous explicitly — WAL quietly weakens it to NORMAL semantics.
+
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}
-	// One connection, deliberately. database/sql pools by default, which would
-	// let a PRAGMA land on a different connection than the statement it was
-	// meant to configure. For a single-user CLI serialising is free, and it
-	// makes migrations safe.
+
 	db.SetMaxOpenConns(1)
 
 	s := &Store{db: db}
@@ -496,13 +274,10 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// Close releases the database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// collectionID returns the id of the singleton loose collection, creating it on
-// first use.
 func (s *Store) collectionID() (int64, error) {
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM containers WHERE source='manual' AND source_id=?`,

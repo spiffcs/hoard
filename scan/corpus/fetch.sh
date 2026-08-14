@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-# fetch.sh — build a stratified corpus of card images for parser testing.
-#
-#   ./scan/corpus/fetch.sh [per-stratum] [era]   # default 25, all eras
-#
-# The optional era limits which strata *grow* — `fetch.sh 40 pre1998` deepens
-# the pre-1998 rows and leaves every other stratum exactly as it is, rather
-# than pulling ~500 images nobody asked about. Pinned rows are always kept, so
-# the manifest never shrinks whatever the filter says.
-#
-# Samples the local catalog across frame era × border colour, then pulls each
-# card's image from Scryfall. Writes images/ (gitignored) and manifest.tsv
-# (tracked), the latter carrying the known-good answer for every image so
-# sweep.sh can score against it.
-#
-# Stratified rather than "a few from every set" on purpose: most sets in an era
-# share one frame, so ~300 images cover every distinct layout where ~2,700
-# would be mostly redundant and far slower to sweep.
-#
-# The corpus grows as a superset: rows already in the manifest are pinned, so
-# raising the per-stratum count only ever appends and the published baseline
-# keeps scoring the same images. Re-running with a smaller count is a no-op.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -35,11 +14,6 @@ if [ ! -f "$catalog" ]; then
 fi
 mkdir -p "$images"
 
-# Era boundaries are frame changes, not set boundaries:
-#   pre-1998  no collector number printed at all
-#   1998-2003 collector numbers arrive, old frame
-#   2003-2015 the 8th Edition frame
-#   2015+     the M15 frame
 python3 - "$catalog" "$per" "$manifest" "$only" >"$manifest.ids" <<'PY'
 import sqlite3, sys, collections, random, os
 con = sqlite3.connect(sys.argv[1]); per = int(sys.argv[2]); manifest = sys.argv[3]
@@ -57,19 +31,12 @@ def era(d):
 buckets = collections.defaultdict(list)
 for r in rows:
     buckets[(era(r[4]), r[5])].append(r)
-# Rows already in the manifest are pinned, in the order they appear there, so a
-# bigger corpus is a superset of the one the README's baseline was measured on.
-# New rows are drawn per stratum from a seed derived from the stratum itself:
-# a bucket's order then depends on nothing but its own contents, so raising
-# `per` can neither reshuffle a bucket nor disturb any other one. (A shared
-# generator could not promise that — rnd.sample draws a number of times that
-# depends on how many rows it is asked for, so every later bucket moved too.)
 pinned = collections.defaultdict(list)
 if os.path.exists(manifest):
     with open(manifest) as fh:
-        next(fh, None)                          # header
+        next(fh, None)
         for line in fh:
-            f = line.rstrip("\n").split("\t")   # id, era, border, ...
+            f = line.rstrip("\n").split("\t")
             if len(f) >= 3:
                 pinned[(f[1], f[2])].append(f[0])
 
@@ -97,7 +64,7 @@ if not u:
     f=(d.get("card_faces") or [{}])[0]
     u=(f.get("image_uris") or {}).get("png") or ""
 print(u)' 2>/dev/null)
-        sleep 0.12                       # Scryfall asks for 50-100ms between calls
+        sleep 0.12
         if [ -z "$url" ]; then miss=$((miss + 1)); continue; fi
         curl -s "$url" -o "$out" || { miss=$((miss + 1)); continue; }
         sleep 0.12

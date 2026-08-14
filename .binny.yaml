@@ -1,5 +1,4 @@
 tools:
-  # we want to use a pinned version of binny to manage the toolchain (so binny manages itself!)
   - name: binny
     version:
       want: v0.11.3
@@ -7,7 +6,6 @@ tools:
     with:
       repo: anchore/binny
 
-  # used to sign mac binaries at release
   - name: quill
     version:
       want: v0.5.1
@@ -15,7 +13,6 @@ tools:
     with:
       repo: anchore/quill
 
-  # used for linting
   - name: golangci-lint
     version:
       want: v2.10.1
@@ -23,7 +20,6 @@ tools:
     with:
       repo: golangci/golangci-lint
 
-  # used for showing the changelog at release
   - name: glow
     version:
       want: v2.1.1
@@ -31,7 +27,6 @@ tools:
     with:
       repo: charmbracelet/glow
 
-  # used for building and releasing binaries
   - name: goreleaser
     version:
       want: v2.13.3
@@ -39,7 +34,6 @@ tools:
     with:
       repo: goreleaser/goreleaser
 
-  # used for signing the checksums file at release
   - name: cosign
     version:
       want: v3.0.4
@@ -47,7 +41,6 @@ tools:
     with:
       repo: sigstore/cosign
 
-  # used for organizing imports during static analysis
   - name: gosimports
     version:
       want: v0.3.8
@@ -55,7 +48,6 @@ tools:
     with:
       repo: rinchsan/gosimports
 
-  # used at release to generate the changelog
   - name: chronicle
     version:
       want: v0.8.0
@@ -63,7 +55,6 @@ tools:
     with:
       repo: anchore/chronicle
 
-  # used for running all local and CI tasks
   - name: task
     version:
       want: v3.48.0
@@ -71,7 +62,6 @@ tools:
     with:
       repo: go-task/task
 
-  # used for triggering a release
   - name: gh
     version:
       want: v2.86.0
@@ -79,7 +69,6 @@ tools:
     with:
       repo: cli/cli
 
-  # used for generating the SBOM attached to each release
   - name: syft
     version:
       want: v1.33.0

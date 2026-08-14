@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,7 +17,6 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// archidektProvider imports decks from archidekt.com via its public JSON API.
 type archidektProvider struct{}
 
 func (archidektProvider) Matches(u *url.URL) bool {
@@ -24,16 +24,15 @@ func (archidektProvider) Matches(u *url.URL) bool {
 	return h == "archidekt.com"
 }
 
-// archidektDeck mirrors the subset of the Archidekt deck payload we use.
 type archidektDeck struct {
 	Name   string `json:"name"`
 	Format int    `json:"deckFormat"`
 	Cards  []struct {
 		Quantity   int      `json:"quantity"`
-		Modifier   string   `json:"modifier"` // Normal|Foil|Etched
+		Modifier   string   `json:"modifier"`
 		Categories []string `json:"categories"`
 		Card       struct {
-			UID             string `json:"uid"` // Scryfall ID
+			UID             string `json:"uid"`
 			CollectorNumber string `json:"collectorNumber"`
 			Edition         struct {
 				EditionCode string `json:"editioncode"`
@@ -80,7 +79,6 @@ func (p archidektProvider) Fetch(ctx context.Context, u *url.URL) (*Deck, error)
 	return archidektToDeck(id, u.String(), &ad), nil
 }
 
-// parseArchidektID extracts the numeric deck id from /decks/{id}/{slug}.
 func parseArchidektID(u *url.URL) (string, error) {
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "decks" {
@@ -103,7 +101,7 @@ func archidektToDeck(id, sourceURL string, ad *archidektDeck) *Deck {
 	for _, c := range ad.Cards {
 		ident := scryfall.Identifier{ID: c.Card.UID}
 		if ident.ID == "" {
-			// Fall back to set + collector number, then name.
+
 			if c.Card.Edition.EditionCode != "" && c.Card.CollectorNumber != "" {
 				ident = scryfall.Identifier{Set: c.Card.Edition.EditionCode, CollectorNumber: c.Card.CollectorNumber}
 			} else {
@@ -121,8 +119,6 @@ func archidektToDeck(id, sourceURL string, ad *archidektDeck) *Deck {
 	return d
 }
 
-// boardFromCategories maps Archidekt's built-in categories to a board, falling
-// back to the main deck when none of them names one.
 func boardFromCategories(categories []string) string {
 	if b, ok := namedBoard(categories); ok {
 		return b
@@ -130,21 +126,8 @@ func boardFromCategories(categories []string) string {
 	return BoardMain
 }
 
-// archidektModifierRE matches the brace modifiers Archidekt's *text* export
-// writes into a category name — "Commander{top}", "Maybeboard{noDeck}{noPrice}".
-// The JSON API sends the bare name, so this only ever fires for the text path;
-// it lives here so both paths agree on what a category is called.
 var archidektModifierRE = regexp.MustCompile(`\{[^}]*\}`)
 
-// namedBoard reports the board Archidekt's built-in categories name, and whether
-// any of them named one at all.
-//
-// The "whether" is the point. boardFromCategories answers for the JSON API,
-// where every card carries its categories and a silence genuinely means the main
-// deck. A text line's categories are optional, and there the same silence means
-// "this line said nothing" — which must leave the section header standing rather
-// than dragging the card back to the main deck. Collapsing the two is how a
-// custom category under a Sideboard heading ends up in the deck.
 func namedBoard(categories []string) (string, bool) {
 	for _, cat := range categories {
 		cat = strings.TrimSpace(archidektModifierRE.ReplaceAllString(cat, ""))
@@ -160,18 +143,17 @@ func namedBoard(categories []string) (string, bool) {
 	return "", false
 }
 
-func normalizeFinish(modifier string) string {
+func normalizeFinish(modifier string) finish.Finish {
 	switch strings.ToLower(modifier) {
 	case "foil":
-		return "foil"
+		return finish.Foil
 	case "etched":
-		return "etched"
+		return finish.Etched
 	default:
-		return "nonfoil"
+		return finish.Nonfoil
 	}
 }
 
-// archidektFormat maps Archidekt's numeric format codes to readable names.
 func archidektFormat(code int) string {
 	names := map[int]string{
 		1: "Standard", 2: "Modern", 3: "Commander/EDH", 4: "Legacy",

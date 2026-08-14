@@ -5,17 +5,8 @@ import (
 	"testing"
 )
 
-// The boundary test. safetext has its own tests for what Clean removes; this
-// one asserts that the removal actually happens on the way out of this
-// package, which is the part a new provider can silently fail to do.
-//
-// It checks for a bare ESC rather than for an exact string, because what
-// matters is that nothing a terminal acts on escapes — not that a payload was
-// rewritten into one particular shape.
 func TestParseTextCleansEveryStringItReturns(t *testing.T) {
-	// A decklist where every field an importer reads carries an OSC 52
-	// clipboard-write payload: the deck name, a card name, a set code, and a
-	// line deliberately malformed so it lands in Skipped.
+
 	const osc = "\x1b]52;c;cGF5bG9hZA==\x07"
 	list := "1 Sol Ring" + osc + " (LEA" + osc + ") 1\n" +
 		"%%%" + osc + " unparseable\n" +
@@ -48,8 +39,7 @@ func TestParseTextCleansEveryStringItReturns(t *testing.T) {
 			}
 		}
 	}
-	// The one most likely to be missed: these are the lines the parser could
-	// NOT read, and they are quoted back to the terminal verbatim.
+
 	if len(d.Skipped) == 0 {
 		t.Fatal("expected the malformed line to be skipped; the fixture no longer " +
 			"exercises the Skipped sink")
@@ -61,9 +51,6 @@ func TestParseTextCleansEveryStringItReturns(t *testing.T) {
 	}
 }
 
-// ParseText's failure path quotes Skipped[0] into the error itself, and that
-// path is reached by making every line unparseable — which is entirely under
-// the control of whoever wrote the file.
 func TestParseTextCleansTheErrorItQuotes(t *testing.T) {
 	const osc = "\x1b]52;c;cGF5bG9hZA==\x07"
 	_, err := ParseText("d", "", "", "text", strings.NewReader("%%%"+osc+"\n"))

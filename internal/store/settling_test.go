@@ -1,18 +1,15 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// asOf is the instant every case here is judged against, so a test that runs
-// at 23:59:59 reads the same as one that runs at noon.
 var asOf = time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 
-// day returns the ISO release date n days before asOf; a negative n is a set
-// that has not come out yet.
 func day(n int) string {
 	return asOf.AddDate(0, 0, -n).Format(time.DateOnly)
 }
@@ -23,20 +20,15 @@ func TestSettlingBoundary(t *testing.T) {
 		releasedAt string
 		want       bool
 	}{
-		// The live case at the time of writing: The Hobbit's street date is
-		// two days out, so every copy held is a preorder and its price is an
-		// average over no sales at all.
+
 		{"not yet released", day(-2), true},
 		{"released today", day(0), true},
 		{"one day short of the window", day(DefaultSettlingDays - 1), true},
-		// The window is the first N days, so the day it comes up is the day
-		// the set counts again. This is the assertion that fails if the
-		// comparison is loosened to >=.
+
 		{"exactly the window", day(DefaultSettlingDays), false},
 		{"past the window", day(DefaultSettlingDays + 1), false},
 		{"long settled", day(3000), false},
-		// An unknown date must count normally rather than vanish from a total
-		// in silence — the same call unpricedPredicate makes.
+
 		{"no release date", "", false},
 	}
 	for _, c := range cases {
@@ -53,9 +45,6 @@ func TestSettlingBoundary(t *testing.T) {
 	}
 }
 
-// The override is an operator dial: anything it cannot use falls back to the
-// default rather than stopping a command that would otherwise work, matching
-// the scanner's tuning knobs. Zero is the one value that means something.
 func TestSettlingDaysFromEnvValue(t *testing.T) {
 	cases := []struct {
 		raw  string
@@ -68,9 +57,7 @@ func TestSettlingDaysFromEnvValue(t *testing.T) {
 		{"0", 0},
 		{"1", 1},
 		{"3650", 3650},
-		// Refused, not clamped: a negative window is an attempt to say
-		// something the dial cannot say, and reading it as "off" would hide
-		// the mistake behind a plausible behavior.
+
 		{"-1", DefaultSettlingDays},
 		{"90d", DefaultSettlingDays},
 		{"ninety", DefaultSettlingDays},
@@ -83,9 +70,6 @@ func TestSettlingDaysFromEnvValue(t *testing.T) {
 	}
 }
 
-// "Set to something" and "asking for a window" are different facts, and only
-// the second may outrank a stored preference. A caller that conflated them
-// would let a typo throw the preference away.
 func TestSettlingDaysAskedSeparatesPresenceFromUsability(t *testing.T) {
 	for _, raw := range []string{"0", "30", " 90 "} {
 		if _, ok := settlingDaysAsked(raw); !ok {
@@ -97,15 +81,12 @@ func TestSettlingDaysAskedSeparatesPresenceFromUsability(t *testing.T) {
 			t.Errorf("settlingDaysAsked(%q) = (%d, true), want no ask", raw, n)
 		}
 	}
-	// Zero asks for a real window; it must not read as absence.
+
 	if n, ok := settlingDaysAsked("0"); !ok || n != 0 {
 		t.Errorf("settlingDaysAsked(\"0\") = (%d, %v), want (0, true)", n, ok)
 	}
 }
 
-// A window of zero holds nothing out, whatever the date. The mark, the
-// held-out clause and the exclusion all read this one answer, so they fall
-// away together rather than one of them being left behind.
 func TestSettlingWindowOfZeroHoldsNothingOut(t *testing.T) {
 	for _, released := range []string{day(-2), day(0), day(1), day(3000), ""} {
 		if settlingWithin(released, asOf, 0) {
@@ -125,7 +106,6 @@ func TestSettlingWindowOfZeroHoldsNothingOut(t *testing.T) {
 	}
 }
 
-// A shorter window clears a set the default would still be holding.
 func TestSettlingWindowShortensWithTheOverride(t *testing.T) {
 	released := day(45)
 	if !settlingWithin(released, asOf, DefaultSettlingDays) {
@@ -136,10 +116,6 @@ func TestSettlingWindowShortensWithTheOverride(t *testing.T) {
 	}
 }
 
-// The rows are signed against each other on purpose: the settling set rose and
-// the settled one fell, so a NetMoved that stopped holding anything out would
-// not report a slightly different figure, it would report the opposite
-// direction. A control that can only drift is not a control.
 func TestNetMovedHoldsOutSettlingSets(t *testing.T) {
 	rows := []PriceChange{
 		{SetCode: "uma", ReleasedAt: day(3000), Copies: 1, Old: 10, New: 8},
@@ -152,8 +128,7 @@ func TestNetMovedHoldsOutSettlingSets(t *testing.T) {
 	if heldOut != 1 {
 		t.Errorf("heldOut = %d, want 1", heldOut)
 	}
-	// State the trap in the test: this is what the figure would be if the
-	// exclusion were removed, and it is not merely bigger.
+
 	var plain float64
 	for _, r := range rows {
 		plain += r.TotalDelta()
@@ -167,8 +142,6 @@ func TestNetMovedHoldsOutSettlingSets(t *testing.T) {
 	}
 }
 
-// The disclosure counts sets, not rows: a reader told "144 held out" would
-// think a fifth of the collection had gone missing.
 func TestNetMovedCountsDistinctSetsNotRows(t *testing.T) {
 	rows := []PriceChange{
 		{SetCode: "hob", ReleasedAt: day(1), Copies: 1, Old: 1, New: 2},
@@ -198,8 +171,6 @@ func TestNetMovedWithNothingSettlingIsThePlainSum(t *testing.T) {
 	}
 }
 
-// hobbit is a printing from a set released two days from asOf — the shape that
-// motivated the window.
 func hobbit() scryfall.Card {
 	return scryfall.Card{
 		ID:              "hobbit-id",
@@ -212,12 +183,9 @@ func hobbit() scryfall.Card {
 	}
 }
 
-// Both producers of a PriceChange have to fill ReleasedAt. Neither failure is
-// visible from the outside — the predicate simply answers false for every row
-// and the exclusion quietly does nothing — so each one is asserted here.
 func TestMoversCarriesTheReleaseDate(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(hobbit(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(hobbit(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -236,7 +204,7 @@ func TestMoversCarriesTheReleaseDate(t *testing.T) {
 	}
 
 	t.Run("RecordPrices", func(t *testing.T) {
-		c := changeFor(t, moved, "hobbit-id", "nonfoil")
+		c := changeFor(t, moved, "hobbit-id", finish.Nonfoil)
 		if c.ReleasedAt != "2026-08-14" {
 			t.Errorf("ReleasedAt = %q, want 2026-08-14 — update-prices reports "+
 				"its net from these rows", c.ReleasedAt)
@@ -251,7 +219,7 @@ func TestMoversCarriesTheReleaseDate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Movers: %v", err)
 		}
-		c := changeFor(t, got, "hobbit-id", "nonfoil")
+		c := changeFor(t, got, "hobbit-id", finish.Nonfoil)
 		if c.ReleasedAt != "2026-08-14" {
 			t.Errorf("ReleasedAt = %q, want 2026-08-14", c.ReleasedAt)
 		}
@@ -262,11 +230,9 @@ func TestMoversCarriesTheReleaseDate(t *testing.T) {
 	})
 }
 
-// A card whose document was never stored reads NULL for the generated column,
-// and NULL must arrive as "" rather than failing the scan.
 func TestMoversTolerationOfAnUnknownReleaseDate(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
 	if _, err := s.RecordPrices(); err != nil {
@@ -286,7 +252,7 @@ func TestMoversTolerationOfAnUnknownReleaseDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Movers: %v", err)
 	}
-	c := changeFor(t, got, "ulamog-id", "nonfoil")
+	c := changeFor(t, got, "ulamog-id", finish.Nonfoil)
 	if c.ReleasedAt != "" {
 		t.Errorf("ReleasedAt = %q, want empty", c.ReleasedAt)
 	}

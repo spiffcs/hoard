@@ -8,39 +8,24 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// filter is a parsed query over the card pane.
-//
-// It is split in two because the rows on screen and the printings in the
-// catalog know different things. A holding knows its finish, board and how many
-// copies there are; a printing knows its rarity, type and mana value. The trait
-// half becomes one SQL query against the generated columns, the holding half is
-// applied to the rows already loaded, and a query using only holding terms —
-// which includes every plain `/` search — touches the database not at all.
 type filter struct {
 	raw string
 
-	// Holding terms, matched against the rows on screen.
 	names    []string
 	sets     []string
 	finishes []string
 	boards   []string
-	nums     map[string][]store.NumCond // qty | price | value
+	nums     map[string][]store.NumCond
 
-	// Trait terms, matched by the store against the catalog.
 	traits store.TraitFilter
 }
 
 func (f filter) empty() bool { return f.raw == "" }
 
-// needsCatalog reports whether answering this filter requires a query.
 func (f filter) needsCatalog() bool { return !f.traits.Empty() }
 
-// numericKeys are the fields that accept comparisons rather than substrings.
 var numericKeys = map[string]bool{"qty": true, "price": true, "value": true, "cmc": true}
 
-// knownKeys is every key the switch below accepts, kept beside it so a term
-// added to one and not the other fails loudly at the parse rather than silently
-// at the match.
 var knownKeys = map[string]bool{
 	"name": true, "set": true, "finish": true, "board": true,
 	"qty": true, "price": true, "value": true, "cmc": true,
@@ -48,17 +33,8 @@ var knownKeys = map[string]bool{
 	"layout": true, "setname": true, "color": true, "c": true,
 }
 
-// keyHelp lists every key, for the error a mistyped one produces. A filter bar
-// that says only "unknown key" leaves you guessing at the vocabulary.
 const keyHelp = "name set finish board qty price value rarity type artist layout setname color"
 
-// parseFilter reads a filter expression.
-//
-// Terms are ANDed; there is deliberately no OR. Every query this is for narrows
-// — "the red mythics I own more than two of" — and adding a precedence to get
-// wrong buys nothing for a bar you type into one-handed.
-//
-// A bare word matches the card name, so the common case is just typing.
 func parseFilter(s string) (filter, error) {
 	f := filter{raw: strings.TrimSpace(s), nums: map[string][]store.NumCond{}}
 	if f.raw == "" {
@@ -71,9 +47,7 @@ func parseFilter(s string) (filter, error) {
 			f.names = append(f.names, value)
 			continue
 		}
-		// The key is checked before the value, so `sol>` reports that "sol" is
-		// not a key rather than that it needs a value — which would send you
-		// looking for the right value for a term that does not exist.
+
 		if !knownKeys[key] {
 			return filter{}, fmt.Errorf("unknown key %q · try: %s", key, keyHelp)
 		}
@@ -118,7 +92,7 @@ func parseFilter(s string) (filter, error) {
 		case "setname":
 			f.traits.SetNames = append(f.traits.SetNames, value)
 		case "color", "c":
-			// color:WU is two colours, not one two-letter one.
+
 			for _, r := range value {
 				f.traits.Colors = append(f.traits.Colors, string(r))
 			}
@@ -129,12 +103,6 @@ func parseFilter(s string) (filter, error) {
 	return f, nil
 }
 
-// tokenize splits on spaces, keeping double-quoted runs together so a value can
-// contain one ("legendary creature", "Seb McKinnon").
-//
-// An unclosed quote takes the rest of the line rather than failing: the bar is
-// filtered as you type, and every partly-typed quoted value would otherwise be
-// an error message flashing under the cursor.
 func tokenize(s string) []string {
 	var out []string
 	var cur strings.Builder
@@ -158,8 +126,6 @@ func tokenize(s string) []string {
 	return out
 }
 
-// splitTerm breaks a token into key, operator and value. A token with no
-// operator is a bare word: key is empty and the whole token is the value.
 func splitTerm(tok string) (key, op, value string) {
 	for _, o := range []string{">=", "<=", ":", ">", "<", "="} {
 		if i := strings.Index(tok, o); i > 0 {
@@ -169,11 +135,6 @@ func splitTerm(tok string) (key, op, value string) {
 	return "", "", tok
 }
 
-// matches reports whether one row survives the holding half of the filter.
-//
-// allowed is the id set the trait half produced, or nil when there were no
-// trait terms — nil means "no opinion", not "nothing matched", which is why it
-// is checked for length rather than for membership directly.
 func (f filter) matches(c card, allowed map[string]bool) bool {
 	if allowed != nil && !allowed[c.ScryfallID] {
 		return false
@@ -189,7 +150,7 @@ func (f filter) matches(c card, allowed map[string]bool) bool {
 		}
 	}
 	for _, fin := range f.finishes {
-		if !strings.EqualFold(c.Finish, fin) {
+		if !strings.EqualFold(c.Finish.String(), fin) {
 			return false
 		}
 	}
@@ -204,8 +165,7 @@ func (f filter) matches(c card, allowed map[string]bool) bool {
 		case "qty":
 			have = float64(c.Quantity)
 		case "price":
-			// A card no source can price is not "priced at zero"; it is
-			// unpriced, and must not satisfy price<1.
+
 			if c.Price == nil {
 				return false
 			}
@@ -222,18 +182,6 @@ func (f filter) matches(c card, allowed map[string]bool) bool {
 	return true
 }
 
-// moverAsCard projects a price-movement row onto the shape matches reads, so
-// the movers view narrows through the same grammar and the same code as the
-// holdings pane. A second filter beside this one would drift from it, and the
-// two lists would answer the same query differently.
-//
-// Price is the current price — what the NOW column shows, and what the floor
-// and penny gates already read — and Value is that across every copy held,
-// the figure IMPACT derives from. Board and Condition are deliberately left
-// empty: store.Movers groups by scryfall id and finish, summing copies across
-// every holding, so a mover row has no one board or condition to answer for.
-// unsupportedOnMovers reports the board term rather than letting it silently
-// match nothing.
 func moverAsCard(c store.PriceChange) card {
 	return card{
 		ScryfallID:      c.ScryfallID,
@@ -249,10 +197,6 @@ func moverAsCard(c store.PriceChange) card {
 	}
 }
 
-// unsupportedOnMovers names the one term a movers row cannot answer, or ""
-// when the query asks nothing of it. Every other key works there: name, set,
-// finish, qty, price and value read off the row, and the trait half is an id
-// set the row carries a scryfall id for.
 func (f filter) unsupportedOnMovers() string {
 	if len(f.boards) > 0 {
 		return "board"
@@ -260,16 +204,6 @@ func (f filter) unsupportedOnMovers() string {
 	return ""
 }
 
-// watchAsCard and unpricedAsCard project the watches screen's two row types
-// onto the shape matches reads, so all three of its tables narrow through
-// the same grammar and the same code as the holdings pane — the movers
-// treatment (see moverAsCard), extended to a screen that holds two kinds of
-// row at once.
-//
-// A watch is a threshold on one printing, not on copies: it carries no
-// quantity, board or condition, and so no value either. Price is what the
-// PRICE column shows, nil when nothing can price the card — which is
-// exactly the state matches already refuses a price term for.
 func watchAsCard(w store.WatchStatus) card {
 	return card{
 		ScryfallID:      w.ScryfallID,
@@ -282,10 +216,6 @@ func watchAsCard(w store.WatchStatus) card {
 	}
 }
 
-// unpricedAsCard is its twin for the third table. Price stays nil by
-// definition — the row exists because nothing can price it — so a `price:`
-// term empties this table rather than treating an unknown price as zero.
-// Quantity is the copies held, which is what the QTY column prints.
 func unpricedAsCard(r store.UnpricedRow) card {
 	return card{
 		ScryfallID:      r.ScryfallID,
@@ -299,18 +229,6 @@ func unpricedAsCard(r store.UnpricedRow) card {
 	}
 }
 
-// unsupportedOnWatches names the first term this screen cannot answer, ""
-// when the query asks nothing of it.
-//
-// The screen holds two row types, and a term is refused when either of them
-// would have to invent an answer. `qty` and `value` are refused because a
-// watch is a threshold on a printing and carries no copies at all — an
-// unpriced holding could answer qty, but a term that silently filters one
-// table and not the others is worse than one that says no. `board` is
-// refused for the same reason it is on movers: neither row type has one.
-// Everything else works: name, set and finish read off both, `price` reads
-// the watch's and correctly refuses the unpriced rows, and the trait half
-// is an id set both carry a scryfall id for.
 func (f filter) unsupportedOnWatches() string {
 	switch {
 	case len(f.boards) > 0:
@@ -323,22 +241,6 @@ func (f filter) unsupportedOnWatches() string {
 	return ""
 }
 
-// marketAsCard projects one owned printing onto the shape matches reads, so
-// the market view narrows through the same grammar and the same code as the
-// holdings pane — the movers treatment (see moverAsCard) applied to the last
-// screen whose filter bar took a query nothing consumed.
-//
-// One projection covers all three of that screen's tables: an opportunity's
-// card and a comp sheet's are the same store.OwnedFinish, so the two Kind
-// tables and the comp sheet cannot answer a card query differently.
-//
-// Quantity and Value are the copies held and what hoard says they are worth,
-// summed across every container by store.OwnedByFinish and rescaled to the
-// selection by applyMarketRows — the same per-copy figure the M floor already
-// filters this screen by. Price stays nil deliberately: a market row carries
-// four prices and none of them is the answer, which unsupportedOnMarket
-// reports by name. Board is left empty for the reason it is on a mover row —
-// the printing sums every holding of that card and finish.
 func marketAsCard(c store.OwnedFinish) card {
 	return card{
 		ScryfallID:      c.ScryfallID,
@@ -353,27 +255,6 @@ func marketAsCard(c store.OwnedFinish) card {
 	}
 }
 
-// unsupportedOnMarket names the first term this screen cannot answer and why,
-// both empty when the query asks nothing of it. It returns the reason as well
-// as the key because this screen refuses two terms for two unrelated reasons,
-// where movers and watches each have one.
-//
-// price is refused because it is ambiguous here, not because it is missing.
-// Everywhere else in hoard a card has one price, so the term is unambiguous;
-// a market row has four — the sales-derived anchor, the cheapest ask, the
-// best buylist bid, and the ratio between two of them — and the gap between
-// them is the entire purpose of the screen. Answering price<5 with any one of
-// the four would be silently wrong for the other three, in the one view whose
-// job is that they differ. Naming the refusal is the same choice movers made
-// for board and the watches screen made for qty and value.
-//
-// board is refused for movers' reason exactly: a row is an owned printing
-// summed across every holding of that card and finish, so no row has one.
-//
-// Everything else works. name, set and finish read off the printing; qty and
-// value are the copies and hoard's valuation of them, carried by both row
-// types because both are a store.OwnedFinish; and the trait half is an id set
-// every row carries a scryfall id for.
 func (f filter) unsupportedOnMarket() (key, why string) {
 	switch {
 	case len(f.nums["price"]) > 0:
@@ -384,13 +265,6 @@ func (f filter) unsupportedOnMarket() (key, why string) {
 	return "", ""
 }
 
-// filterMatchCount is how many rows the query selects in the list the
-// current view is showing — the whole result, not the page. It returns -1
-// on a view that does not consume the query at all, so the bar can decline
-// to give a number rather than quote the holdings pane's count over a table
-// the query is not touching. No view answers -1 today: market was the last
-// one, and the branch stays for the next view added, which will arrive not
-// consuming the query and must not inherit a wrong number by default.
 func (m Model) filterMatchCount() int {
 	switch m.view {
 	case viewHoldings:
@@ -398,22 +272,15 @@ func (m Model) filterMatchCount() int {
 	case viewMovers:
 		return len(m.filteredMovers)
 	case viewWatches:
-		// One number for the screen, not three: the bar sits under a pane
-		// showing all three tables, and a count for whichever one the cursor
-		// happened to be in would read as the answer for the lot.
+
 		return m.watchTotalRows()
 	case viewMarket:
-		// One number for this screen too, and over the full rankings rather
-		// than the pages on show: market pages at pageSize a table, so
-		// marketTotalRows would report at most 150 of a wider result and read
-		// as the answer.
+
 		return len(m.marketAllRows) + len(m.marketAllComps)
 	}
 	return -1
 }
 
-// filterUnsupported is the bar's note when the query uses a term the current
-// view cannot answer, empty otherwise.
 func (m Model) filterUnsupported() string {
 	switch m.view {
 	case viewMovers:
@@ -425,8 +292,7 @@ func (m Model) filterUnsupported() string {
 			return k + ": does not apply on the watches screen · a watch is a line on a printing, not on copies"
 		}
 	case viewMarket:
-		// Two refused terms with two unrelated reasons, so the reason travels
-		// with the key rather than being one sentence for the screen.
+
 		if k, why := m.filter.unsupportedOnMarket(); k != "" {
 			return k + ": does not apply on market · " + why
 		}

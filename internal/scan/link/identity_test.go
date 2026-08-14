@@ -35,14 +35,14 @@ func TestNewIdentityShape(t *testing.T) {
 	if key.Curve != elliptic.P256() {
 		t.Errorf("curve = %v, want P-256", key.Curve.Params().Name)
 	}
-	// Backdated, so a phone whose clock is a little behind still accepts it.
+
 	if !leaf.NotBefore.Before(time.Now()) {
 		t.Error("NotBefore is not in the past")
 	}
 	if leaf.NotAfter.Before(time.Now().Add(9 * 365 * 24 * time.Hour)) {
 		t.Error("certificate expires sooner than the ten years peers assume")
 	}
-	// The certificate must verify under its own key, or no handshake completes.
+
 	if err := leaf.CheckSignature(
 		leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature); err != nil {
 		t.Errorf("self-signature does not verify: %v", err)
@@ -58,17 +58,14 @@ func TestFingerprintIsSHA256OfDER(t *testing.T) {
 	if !bytes.Equal(id.Fingerprint(), want[:]) {
 		t.Error("Fingerprint() is not SHA-256 over the certificate DER")
 	}
-	// And DER really is what goes on the wire.
+
 	if !bytes.Equal(id.DER, id.Certificate.Certificate[0]) {
 		t.Error("DER differs from the bytes crypto/tls will send")
 	}
 }
 
 func TestIdentitiesAreDistinct(t *testing.T) {
-	// The Swift side shipped a bug where two identities silently shared one
-	// keychain entry, so pinning authenticated nothing and every stranger was
-	// accepted (PeerIdentity.swift:290-301). It was caught only by a test
-	// asserting two identities differ, so this is that test.
+
 	a, err := NewIdentity("same-name")
 	if err != nil {
 		t.Fatal(err)
@@ -97,17 +94,14 @@ func TestLoadOrCreateIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Stability is the whole contract: regenerating invalidates every peer
-	// that pinned the old certificate, which is why neither end has a refresh
-	// path.
+
 	if !bytes.Equal(first.Fingerprint(), second.Fingerprint()) {
 		t.Fatal("loading an existing identity produced a different fingerprint")
 	}
 	if !bytes.Equal(first.DER, second.DER) {
 		t.Error("reloaded DER differs from what was written")
 	}
-	// The reloaded key must still sign — a certificate without its key is a
-	// handshake failure, not a load failure, so it has to be caught here.
+
 	if _, ok := second.Certificate.PrivateKey.(*ecdsa.PrivateKey); !ok {
 		t.Error("reloaded identity has no usable private key")
 	}
@@ -123,7 +117,7 @@ func TestIdentityFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The private key is the one genuinely new secret this port introduces.
+
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Errorf("identity file mode = %o, want 600", perm)
 	}
@@ -136,10 +130,6 @@ func TestIdentityFilePermissions(t *testing.T) {
 	}
 }
 
-// TestCorruptIdentityIsNotSilentlyReplaced is the important failure mode.
-// Regenerating on a parse error would unpair every phone — and it would do it
-// because a file got truncated, which is exactly when a person least expects
-// their pairing to vanish.
 func TestCorruptIdentityIsNotSilentlyReplaced(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "identity.pem")
@@ -162,7 +152,7 @@ func TestCorruptIdentityIsNotSilentlyReplaced(t *testing.T) {
 			if _, err := LoadOrCreateIdentity(path, "x"); err == nil {
 				t.Error("a corrupt identity was silently replaced instead of refused")
 			}
-			// And the file is left alone, so it can be inspected or restored.
+
 			after, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -174,10 +164,6 @@ func TestCorruptIdentityIsNotSilentlyReplaced(t *testing.T) {
 	}
 }
 
-// mustCertPEM renders just the certificate half of an identity — a file that
-// is valid PEM and a valid certificate, and still not a usable identity because
-// the key is missing. That is the case most likely to arise in practice, from a
-// write interrupted between the two blocks.
 func mustCertPEM(t *testing.T, id *Identity) []byte {
 	t.Helper()
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: id.DER})

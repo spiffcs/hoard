@@ -1,12 +1,11 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 )
 
-// A fresh database has exactly one binder — the default — listed first and
-// answering to the display name, not its stored row name.
 func TestListBindersStartsWithTheDefault(t *testing.T) {
 	s := newTestStore(t)
 	bs, err := s.ListBinders()
@@ -27,10 +26,10 @@ func TestCreateBinderAndAddTo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 3); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	// The default binder is untouched; the new one holds the cards.
+
 	rows, err := s.ListCollectionByFinish()
 	if err != nil {
 		t.Fatalf("ListCollectionByFinish: %v", err)
@@ -45,7 +44,7 @@ func TestCreateBinderAndAddTo(t *testing.T) {
 	if len(got) != 1 || got[0].Quantity != 3 {
 		t.Errorf("binder rows = %+v, want 3 copies", got)
 	}
-	// Totals span every binder: the summary's BINDER line means "not in a deck".
+
 	tot, err := s.CollectionTotals()
 	if err != nil {
 		t.Fatalf("CollectionTotals: %v", err)
@@ -53,7 +52,7 @@ func TestCreateBinderAndAddTo(t *testing.T) {
 	if tot.TotalCopies != 3 || tot.Value != 30 {
 		t.Errorf("totals = %+v, want 3 copies worth $30", tot)
 	}
-	// And the listing shows both, default first.
+
 	bs, _ := s.ListBinders()
 	if len(bs) != 2 || bs[0].Name != LooseName || bs[1].Name != "Trade Stock" {
 		t.Errorf("binders = %+v", bs)
@@ -63,7 +62,6 @@ func TestCreateBinderAndAddTo(t *testing.T) {
 	}
 }
 
-// Binder references resolve like deck references: id, exact name, fragment.
 func TestBinderByRef(t *testing.T) {
 	s := newTestStore(t)
 	id, err := s.CreateBinder("Trade Stock")
@@ -79,7 +77,7 @@ func TestBinderByRef(t *testing.T) {
 			t.Errorf("BinderByRef(%q) = %d, want %d", ref, c.ID, id)
 		}
 	}
-	// The default answers to its display name.
+
 	c, err := s.BinderByRef(LooseName)
 	if err != nil {
 		t.Fatalf("BinderByRef(%q): %v", LooseName, err)
@@ -87,7 +85,7 @@ func TestBinderByRef(t *testing.T) {
 	if !IsDefaultBinder(*c) {
 		t.Errorf("BinderByRef(%q) did not find the default", LooseName)
 	}
-	// A deck must not be reachable as a binder.
+
 	if _, err := s.UpsertDeck(DeckMeta{Name: "Some Deck", Source: "manual", SourceID: "d1"}, nil); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -117,7 +115,7 @@ func TestRenameBinder(t *testing.T) {
 	if c, err := s.BinderByRef("For Sale"); err != nil || c.ID != id {
 		t.Errorf("renamed binder not found: %v", err)
 	}
-	// The default renames like any other binder…
+
 	def, _ := s.BinderByRef(LooseName)
 	if err := s.RenameBinder(def.ID, "Main"); err != nil {
 		t.Errorf("renaming the default binder: %v", err)
@@ -125,14 +123,14 @@ func TestRenameBinder(t *testing.T) {
 	if c, err := s.BinderByRef("Main"); err != nil || !IsDefaultBinder(*c) {
 		t.Errorf("renamed default not found by new name: %v", err)
 	}
-	// …still answers to the reserved aliases afterwards…
+
 	for _, alias := range ReservedBinderNames {
 		c, err := s.BinderByRef(alias)
 		if err != nil || !IsDefaultBinder(*c) {
 			t.Errorf("BinderByRef(%q) after rename = %v, want the default", alias, err)
 		}
 	}
-	// …and may retake an alias as its own name, which no other binder can.
+
 	if err := s.RenameBinder(def.ID, LooseName); err != nil {
 		t.Errorf("default retaking %q: %v", LooseName, err)
 	}
@@ -149,7 +147,7 @@ func TestDeleteBinderRefusesDefaultAndNonEmpty(t *testing.T) {
 	}
 
 	id, _ := s.CreateBinder("Trade")
-	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 	err := s.DeleteBinder(id)
@@ -167,17 +165,16 @@ func TestDeleteBinderRefusesDefaultAndNonEmpty(t *testing.T) {
 	}
 }
 
-// Per-binder edits touch only their binder.
 func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 	s := newTestStore(t)
 	id, _ := s.CreateBinder("Trade")
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 4); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 4); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddCardFinishTo(id, ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinishTo(id, ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", "nonfoil", ConditionUnknown, 5)
+	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", finish.Nonfoil, ConditionUnknown, 5)
 	if err != nil {
 		t.Fatalf("SetHoldingQuantityIn: %v", err)
 	}
@@ -193,18 +190,16 @@ func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 	}
 }
 
-// AllByFinish is the whole hoard in one list: the same printing held in a
-// binder and a deck merges into one row with the quantities summed.
 func TestAllByFinishMergesContainers(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 2); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if _, err := s.UpsertDeck(
 		DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
 		[]Entry{
-			{ScryfallID: "ulamog-id", Finish: "nonfoil", Board: "main", Quantity: 3},
-			{ScryfallID: "ulamog-id", Finish: "foil", Board: "main", Quantity: 1},
+			{ScryfallID: "ulamog-id", Finish: finish.Nonfoil, Board: "main", Quantity: 3},
+			{ScryfallID: "ulamog-id", Finish: finish.Foil, Board: "main", Quantity: 1},
 		}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -218,7 +213,7 @@ func TestAllByFinishMergesContainers(t *testing.T) {
 	}
 	byFinish := map[string]int{}
 	for _, r := range rows {
-		byFinish[r.Finish] = r.Quantity
+		byFinish[r.Finish.String()] = r.Quantity
 	}
 	if byFinish["nonfoil"] != 5 || byFinish["foil"] != 1 {
 		t.Errorf("quantities = %v, want binder and deck summed (nonfoil 5, foil 1)", byFinish)

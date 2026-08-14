@@ -1,9 +1,5 @@
 package link
 
-// Parser tests use output captured verbatim from /usr/bin/dns-sd on macOS 15.6
-// rather than output invented to match the parser, which is the same reason
-// the framing and pairing tests use Swift-generated vectors.
-
 import (
 	"context"
 	"errors"
@@ -16,9 +12,6 @@ import (
 	"time"
 )
 
-// Captured from `dns-sd -B _companion-link._tcp`. Note the header row splits
-// into nine fields, not seven, and that one device is reported once per
-// interface.
 const realBrowseOutput = `Browsing for _companion-link._tcp
 DATE: ---Sun 09 Aug 2026---
 18:06:05.925  ...STARTING...
@@ -66,8 +59,6 @@ func TestParseBrowseLineRejectsNoise(t *testing.T) {
 	}
 }
 
-// TestBrowseNameWithSpaces — "Chris's iPhone" is the common case, and the
-// instance name being the last column is the only reason it survives.
 func TestParseBrowseLineNameWithSpaces(t *testing.T) {
 	line := `18:06:05.926  Add        3   1 local.               _hoardscan._tcp.     Chris's iPhone 14 Pro`
 	name, iface, add, ok := parseBrowseLine(line)
@@ -82,8 +73,6 @@ func TestParseBrowseLineNameWithSpaces(t *testing.T) {
 	}
 }
 
-// Captured from `dns-sd -L optimus _companion-link._tcp local.`, including the
-// trailing flags and the TXT continuation line that must be ignored.
 const realResolveOutput = `Lookup optimus._companion-link._tcp.local.
 DATE: ---Sun 09 Aug 2026---
 18:06:11.953  ...STARTING...
@@ -137,10 +126,7 @@ func TestUnescapeDNSSD(t *testing.T) {
 		`\032\032`:           "  ",
 		`trailing\`:          `trailing\`,
 		"plain text with sp": "plain text with sp",
-		// 256 does not fit in a byte, so this is not a decimal escape. It
-		// degrades to the single-character form — a literal '2' — rather than
-		// wrapping round to 0, which is the failure that would silently
-		// rename a device.
+
 		`\256overflow`: "256overflow",
 	}
 	for in, want := range cases {
@@ -155,8 +141,7 @@ func TestServiceAddr(t *testing.T) {
 	if !s.Resolved() {
 		t.Error("a service with host and port is not Resolved")
 	}
-	// The trailing dot is stripped: it is valid DNS but net.Dial does not want
-	// it in a host:port string.
+
 	if got := s.Addr(); got != "phone.local:49722" {
 		t.Errorf("Addr() = %q", got)
 	}
@@ -174,8 +159,7 @@ func TestBrowseMissingTool(t *testing.T) {
 }
 
 func TestBrowseNoResults(t *testing.T) {
-	// A service type nothing advertises: the browse succeeds and finds
-	// nothing, which must be ErrNotFound rather than a silent empty list.
+
 	if _, err := os.Stat("/usr/bin/dns-sd"); err != nil {
 		t.Skip("no dns-sd on this platform")
 	}
@@ -186,30 +170,13 @@ func TestBrowseNoResults(t *testing.T) {
 	}
 }
 
-// --- early exit ---
-//
-// The window used to be the runtime rather than a ceiling: dns-sd is a
-// standing query that never exits, so every browse and every resolve waited
-// out its whole deadline to collect an answer that had arrived in single-digit
-// milliseconds. Measured against a real phone, that was 6.5s of the pairing
-// flow spent holding an answer it already had.
-//
-// These tests drive a fake tool rather than the real one, because the claim is
-// about *when* discovery returns and a real network cannot be made to answer
-// on cue.
-
-// fakeDNSSD writes lines and then keeps running, answering nothing, until it
-// is killed — which is the shape of every dns-sd mode and the whole reason the
-// early exit is needed. A fake that exited after printing would pass these
-// tests without the feature existing.
 func fakeDNSSD(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-dns-sd")
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
 	for _, line := range lines {
-		// Single-quoted, with embedded quotes broken out: instance names are
-		// the names people give their phones, so apostrophes are routine.
+
 		fmt.Fprintf(&b, "printf '%%s\\n' '%s'\n", strings.ReplaceAll(line, "'", `'\''`))
 	}
 	b.WriteString("while :; do sleep 30; done\n")
@@ -225,8 +192,6 @@ func browseRow(iface, name string) string {
 	return "18:06:05.926  Add        3  " + iface + " local.               _hoardscan._tcp.     " + name
 }
 
-// A named browse ends the moment its phone appears. Nothing is traded away:
-// the caller asked about one phone and that phone has answered.
 func TestBrowseForANamedPhoneStopsWhenItAppears(t *testing.T) {
 	d := DNSSD{Path: fakeDNSSD(t,
 		"Browsing for _hoardscan._tcp",
@@ -243,15 +208,12 @@ func TestBrowseForANamedPhoneStopsWhenItAppears(t *testing.T) {
 	if len(got) != 1 || got[0].Name != `Chris's iPhone` {
 		t.Fatalf("Browse found %v, want the one named phone", got)
 	}
-	// Generously under the window: the point is that it did not wait it out.
+
 	if took > 2*time.Second {
 		t.Errorf("named browse took %v of a 10s window; it should end at the phone", took)
 	}
 }
 
-// A named browse whose phone never appears has to serve the window out. There
-// is no line that means "it is not coming", so patience is the only answer,
-// and the other phones it saw go back for the "not on this network" message.
 func TestBrowseForAnAbsentPhoneServesTheWindow(t *testing.T) {
 	d := DNSSD{Path: fakeDNSSD(t,
 		"Browsing for _hoardscan._tcp",
@@ -273,9 +235,6 @@ func TestBrowseForAnAbsentPhoneServesTheWindow(t *testing.T) {
 	}
 }
 
-// An enumerating browse cannot stop at the first answer without hiding the
-// second phone, so it ends on quiet instead — and a phone answering behind the
-// first extends the read rather than being cut off by it.
 func TestBrowseEnumeratingSettlesAfterTheLastAnswer(t *testing.T) {
 	d := DNSSD{Path: fakeDNSSD(t,
 		"Browsing for _hoardscan._tcp",
@@ -301,7 +260,6 @@ func TestBrowseEnumeratingSettlesAfterTheLastAnswer(t *testing.T) {
 	}
 }
 
-// A resolve has exactly one right answer, so the first one ends it.
 func TestResolveStopsAtTheFirstAddress(t *testing.T) {
 	d := DNSSD{Path: fakeDNSSD(t,
 		"Lookup Chris's iPhone._hoardscan._tcp.local.",
@@ -322,9 +280,6 @@ func TestResolveStopsAtTheFirstAddress(t *testing.T) {
 	}
 }
 
-// The caller's own cancellation still has to be distinguishable from the
-// window elapsing — which is not free, now that a successful early exit
-// cancels the same context on its way out.
 func TestBrowseReportsCallerCancellation(t *testing.T) {
 	d := DNSSD{Path: fakeDNSSD(t, "Browsing for _hoardscan._tcp")}
 
@@ -339,13 +294,6 @@ func TestBrowseReportsCallerCancellation(t *testing.T) {
 	}
 }
 
-// TestLiveBrowseAnyService exercises the real browse and resolve path against
-// whatever is already on this network, so the plumbing is proved without a
-// phone in the room. Off by default: it needs a LAN and it is slow.
-//
-//	HOARD_LINK_LIVE=1 go test ./internal/scan/link/ -run TestLiveBrowseAnyService -v
-//
-// Override the service with HOARD_LINK_LIVE_TYPE.
 func TestLiveBrowseAnyService(t *testing.T) {
 	if os.Getenv("HOARD_LINK_LIVE") == "" {
 		t.Skip("set HOARD_LINK_LIVE=1 to browse the real network")
@@ -376,10 +324,6 @@ func TestLiveBrowseAnyService(t *testing.T) {
 	}
 }
 
-// TestLiveFindPhone is the Stage C acceptance check: does hoard's own code find
-// Hoardling? Requires the app open on a phone on this network.
-//
-//	HOARD_LINK_LIVE=1 go test ./internal/scan/link/ -run TestLiveFindPhone -v
 func TestLiveFindPhone(t *testing.T) {
 	if os.Getenv("HOARD_LINK_LIVE") == "" {
 		t.Skip("set HOARD_LINK_LIVE=1, with Hoardling open on a phone on this network")
@@ -402,13 +346,6 @@ func TestLiveFindPhone(t *testing.T) {
 	}
 }
 
-// TestLiveDialPhone is the bridge from Stage C to Stage D: discovery is only
-// useful if the address it produces can actually be opened. iOS advertises a
-// randomised UUID .local hostname rather than a device name, so this also
-// confirms the system resolver reaches it from a CGO_ENABLED=0 binary — the
-// shape the release pipeline builds.
-//
-//	HOARD_LINK_LIVE=1 go test ./internal/scan/link/ -run TestLiveDialPhone -v
 func TestLiveDialPhone(t *testing.T) {
 	if os.Getenv("HOARD_LINK_LIVE") == "" {
 		t.Skip("set HOARD_LINK_LIVE=1, with Hoardling open on a phone on this network")

@@ -2,6 +2,7 @@ package schemagen
 
 import (
 	"bytes"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,19 +92,19 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				DistinctCards: 1, TotalCopies: 1, Value: 2}}),
 		"holdings": hoardjson.FromExportRows([]export.Row{
 			{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-				Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol",
+				Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol",
 				Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
 			{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
-				Finish: "etched", Condition: "lp", ScryfallID: "rem",
+				Finish: finish.Etched, Condition: "lp", ScryfallID: "rem",
 				Container: "Fish", Kind: "deck", Board: "side"},
 		}),
 		"unpriced": hoardjson.FromUnpriced([]store.UnpricedRow{{
 			ScryfallID: "rem", Name: "Mystic Remora", SetCode: "ice",
-			CollectorNumber: "78", Finish: "nonfoil", Copies: 3,
+			CollectorNumber: "78", Finish: finish.Nonfoil, Copies: 3,
 			Containers: []string{"Binder"}, HeldIn: "Binder"}}),
 		"movers": hoardjson.FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
 			[]store.PriceChange{{ScryfallID: "a", Name: "Ancient Tomb", SetCode: "uma",
-				CollectorNumber: "236", Finish: "foil", Copies: 1, Old: 30, New: 32,
+				CollectorNumber: "236", Finish: finish.Foil, Copies: 1, Old: 30, New: 32,
 				Source: "scryfall"}}),
 		"movers-empty": hoardjson.FromMovers("2026-06-30T00:00:00Z", "", nil),
 		// The other side of pctChange: a printing that was unpriced at the
@@ -111,10 +112,10 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 		// than null or zero.
 		"movers-from-zero": hoardjson.FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
 			[]store.PriceChange{{ScryfallID: "b", Name: "Black Lotus", SetCode: "lea",
-				CollectorNumber: "232", Finish: "nonfoil", Copies: 1, Old: 0, New: 5,
+				CollectorNumber: "232", Finish: finish.Nonfoil, Copies: 1, Old: 0, New: 5,
 				Source: "scryfall"}}),
 		"watch": hoardjson.FromWatchCheck(2, []store.WatchStatus{{
-			Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over", Threshold: 10},
+			Watch: store.Watch{ScryfallID: "sol", Finish: finish.Foil, Op: "over", Threshold: 10},
 			Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125", PriceUSD: f(12.5),
 		}}),
 		"watch-quiet": hoardjson.FromWatchCheck(0, nil),
@@ -123,13 +124,13 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 		// price at all.
 		"watches": hoardjson.FromWatchList([]store.WatchStatus{{
 			Watch: store.Watch{ID: 1, ScryfallID: "sol", Display: "Sol Ring",
-				Finish: "foil", Op: "over", Threshold: 10, WindowDays: 30,
+				Finish: finish.Foil, Op: "over", Threshold: 10, WindowDays: 30,
 				CreatedAt: "2026-08-09T00:00:00Z", LastState: "met",
 				LastFiredAt: "2026-08-10T00:00:00Z"},
 			Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125", PriceUSD: f(12.5),
 		}, {
 			Watch: store.Watch{ID: 2, ScryfallID: "rem", Display: "Mystic Remora",
-				Finish: "nonfoil", Op: "drop", Pct: 0.1, MinMove: 0.25, WindowDays: 30},
+				Finish: finish.Nonfoil, Op: "drop", Pct: 0.1, MinMove: 0.25, WindowDays: 30},
 			Name: "Mystic Remora", SetCode: "ice", CollectorNumber: "78",
 		}}),
 		"watches-empty": hoardjson.FromWatchList(nil),
@@ -141,7 +142,7 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 			Decks: []store.DeckSummary{{Container: store.Container{Name: "Fish"},
 				DistinctCards: 1, TotalCopies: 1, Value: 0}},
 			Top: []store.OwnedFinish{{ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
-				CollectorNumber: "125", Finish: "foil", Copies: 1, Value: 12.5}},
+				CollectorNumber: "125", Finish: finish.Foil, Copies: 1, Value: 12.5}},
 			Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
 			Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 		}),
@@ -174,24 +175,24 @@ func TestEmittedDocumentsValidate(t *testing.T) {
 				},
 				Watches: []store.WatchStatus{{
 					Watch: store.Watch{ScryfallID: "sol", Display: "Sol Ring",
-						Finish: "foil", Op: "over", Threshold: 10,
+						Finish: finish.Foil, Op: "over", Threshold: 10,
 						CreatedAt: "2026-08-09T00:00:00Z"},
 					Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
 				}},
 			},
 			[]export.Row{
 				{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-					Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol",
+					Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol",
 					Container: "Binder", Kind: "binder", Board: "main", PriceUSD: f(2)},
 				{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
-					Finish: "etched", Condition: "lp", ScryfallID: "rem",
+					Finish: finish.Etched, Condition: "lp", ScryfallID: "rem",
 					Container: "Fish", Kind: "deck", Board: "side"},
 			}),
 		"arbitrage": hoardjson.FromMarket(market.Result{
 			Compared: 1,
 			Opportunities: []market.Opportunity{{
 				Card: store.OwnedFinish{ScryfallID: "a", Name: "Ancient Tomb",
-					SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil",
+					SetCode: "uma", CollectorNumber: "236", Finish: finish.Nonfoil,
 					Copies: 1, Value: 60},
 				Market: 8, BuyAt: 4, BuyFrom: "cardmarket",
 				SellAt: 5, SellTo: "cardkingdom",

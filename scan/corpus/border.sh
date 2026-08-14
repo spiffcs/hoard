@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# border.sh — dump the border reader's measurements over the corpus.
-#
-#   ./scan/corpus/border.sh            # score the reader's verdicts
-#   ./scan/corpus/border.sh --dump     # one TSV row of raw numbers per image
-#
-# This is the one thing the corpus *can* say about the border. These are clean
-# full-bleed scans, so the card fills the image and the card rect is therefore
-# known exactly — which makes them the right place to fit the layout constants
-# in CardLayout and the photometric gates in BorderGate, and the wrong place to
-# learn anything about the perspective crop (see README.md).
-#
-# Fit here, then confirm on scan/fixtures/, which are real photographs.
-#
-# The reader is cardkit-probe (CardKit — what the iPhone app runs) in --border
-# mode. It replaced the macOS helper's --border-probe, which went with the
-# Continuity Camera path. The two dump different key sets: what --border reports
-# is the verdict plus the anchoring numbers, not the full photometric ledger the
-# old probe printed, so --dump is correspondingly narrower.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -55,11 +37,6 @@ for line in open(sys.argv[1]):
     rows.append((era, border, name, d))
 
 if sys.argv[2] == "--dump":
-    # Exactly what cardkit-probe --border emits. It is a shorter list than the
-    # old --border-probe printed; the photometric intermediates (ring/inner
-    # tones, chroma, clipping) are no longer surfaced on the wire, so fitting
-    # those gates now means adding them to the probe rather than reading them
-    # here.
     keys = ["color", "source", "abstain", "anchorKind", "t", "standoff",
             "scaleAgreement", "cardHeightPx", "borderMS"]
     print("\t".join(["era", "border", "name"] + keys))
@@ -71,9 +48,7 @@ if sys.argv[2] == "--dump":
         print("\t".join([era, border, name] + vals))
     raise SystemExit
 
-# Coverage and precision, never averaged into one number: the property that
-# matters is "when it speaks it is right", not "it is usually right".
-agg = collections.defaultdict(lambda: [0, 0, 0])       # n, spoke, correct
+agg = collections.defaultdict(lambda: [0, 0, 0])
 reasons = collections.Counter()
 wrong = []
 for era, border, name, d in rows:
@@ -102,11 +77,6 @@ print("\nabstained because:")
 for r, c in reasons.most_common():
     print(f"  {c:4d}  {r}")
 if wrong:
-    # Gold and silver are groups 2 and 3 — World Championship decks and
-    # Un-sets, both declared non-goals. A wrong read there is still a wrong
-    # read and is reported as one, but it is bounded: the Go side only ever
-    # reorders on a border, and a card whose printings are all gold ignores a
-    # "white" outright. The number that must stay zero is the white/black one.
     hard = [w for w in wrong if w[1] in ("white", "black")]
     print(f"\nWRONG: {len(hard)} on white/black, {len(wrong) - len(hard)} on gold/silver")
     for era, want, got, name, t in wrong:

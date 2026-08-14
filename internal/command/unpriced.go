@@ -1,7 +1,5 @@
 package command
 
-// `hoard unpriced`: the holdings counting as $0.00, and the reason each one is.
-
 import (
 	"fmt"
 
@@ -14,7 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// NewCmdUnpriced builds `hoard unpriced`.
 func NewCmdUnpriced(a *app) *cobra.Command {
 	return cli.JSONCapable(&cobra.Command{
 		Use:     "unpriced",
@@ -28,11 +25,6 @@ func NewCmdUnpriced(a *app) *cobra.Command {
 	})
 }
 
-// runUnpriced lists what is contributing nothing to your totals.
-//
-// A card with no price is valued at zero, which is indistinguishable on a table
-// from a card genuinely worth nothing. This is how you tell the difference, and
-// how you find out which deck's total is understated.
 func runUnpriced(st *store.Store, env *cli.Env) error {
 	rows, err := action.Deps{Store: st}.Unpriced()
 	if err != nil {

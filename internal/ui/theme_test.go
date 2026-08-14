@@ -12,21 +12,12 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// TestMain pins the process-wide color state lipgloss caches on first use:
-// go test's stdout is not a terminal, so without this every style renders
-// as a no-op and the styling tests would assert nothing. Dark background is
-// pinned too so adaptive colors resolve deterministically. Tests that need
-// a different profile (degradation) set and restore their own.
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	lipgloss.SetHasDarkBackground(true)
 	os.Exit(m.Run())
 }
 
-// Every theme style must be SGR-only — styling may never change a string's
-// display width, because the table engine measures text before styling it.
-// A Width, Padding or Margin smuggled into one style would silently break
-// every layout that renders through it.
 func TestThemeStylesAreSGROnly(t *testing.T) {
 	samples := []string{"", "x", "Ragavan, Nimble Pilferer", "≈▁▂█ · — ×3"}
 	check := func(name string, render func(string) string) {
@@ -79,8 +70,6 @@ func TestThemeStylesAreSGROnly(t *testing.T) {
 	}
 }
 
-// With color off, every style is the identity function — piped output must
-// never see an escape sequence.
 func TestEnvStylesPlainWithoutColor(t *testing.T) {
 	e := Env{Color: false}
 	for name, style := range map[string]Style{
@@ -99,10 +88,6 @@ func TestEnvStylesPlainWithoutColor(t *testing.T) {
 	}
 }
 
-// Identity resolution: one color tints with that color, several read gold,
-// a known-empty identity reads wastes, and an unknown identity (nil — the
-// card's document was never stored) stays plain rather than claiming
-// colorlessness.
 func TestIdentityResolution(t *testing.T) {
 	e := Env{Color: true}
 	tinted := func(c lipgloss.AdaptiveColor) string {
@@ -130,8 +115,6 @@ func TestIdentityResolution(t *testing.T) {
 	}
 }
 
-// At a 16-color profile the pastels must degrade to ANSI indexes — still
-// styled, never raw truecolor sequences a 16-color terminal would garble.
 func TestThemeDegradesAtANSI(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI)

@@ -3,6 +3,7 @@ package browse
 import (
 	"context"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"time"
 
@@ -17,7 +18,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// pane identifies which side of the screen has the cursor.
 type pane int
 
 const (
@@ -25,85 +25,48 @@ const (
 	paneCards
 )
 
-// allCardsID and kindAllCards mark the synthetic top row of the left pane:
-// every holding in the hoard, all binders and all decks merged into one
-// list. Binders and decks below it are subsets. The row is browse-only —
-// no store container backs it, hence the sentinel id.
 const allCardsID int64 = -1
 const kindAllCards = "all"
 
-// kindSet marks a sets-mode row: one Magic set the hoard holds cards from.
-// Browse-only, like kindAllCards — a set is a lens over the hoard, not a
-// container, so its rows carry synthetic negative ids and refuse edits.
 const kindSet = "set"
 
-// allCardsName is the merged row's on-screen name.
 const allCardsName = "All Cards"
 
-// container is one row of the left pane: the merged all-cards view, the
-// loose collection, or a deck. Kind is what the card pane branches on when
-// it loads.
 type container struct {
 	ID     int64
 	Name   string
 	Kind   string
 	Copies int
 	Value  float64
-	// isDefault marks the built-in binder, which cannot be renamed or
-	// removed; carried from the store rather than inferred from position.
+
 	isDefault bool
 
-	// setCode is the join key of a kindSet row; Name is display-only (the
-	// pretty set name, which several sets could theoretically share).
 	setCode string
 
-	// releasedAt is a kindSet row's release date (YYYY-MM-DD), empty when
-	// unknown. It is what marks the row as still settling — see settling.
 	releasedAt string
 
-	// meta is what a deck needs to be recreated after it is removed. Carried on
-	// the row rather than re-read at deletion time because by then the container
-	// is gone and there is nothing left to read it from.
 	meta store.DeckMeta
 }
 
-// card is one row of the right pane, flattened from either source so the pane
-// renders one way regardless of which side of the hoard it is showing.
-//
-// Board is empty for loose holdings, which is the honest representation: the
-// collection has no boards, and printing "main" against every loose card would
-// invent a distinction that is not there.
 type card struct {
 	ScryfallID      string
 	Name            string
 	SetCode         string
 	CollectorNumber string
-	Finish          string
-	// Condition is the card's wear, "unknown" when nobody has said. It is part
-	// of what makes this row distinct: since schema v23 a card held in two
-	// conditions is two holdings, and the COND column exists so they do not
-	// read as one row printed twice.
+	Finish          finish.Finish
+
 	Condition string
 	Board     string
 	Quantity  int
 	Price     *float64
 	Value     float64
 	AltSource string
-	// ColorIdentity is the WUBRG identity, nil when unknown — same
-	// semantics as store.Card.ColorIdentity.
+
 	ColorIdentity []string
-	// Treatment is the foil treatment's display word — same semantics as
-	// store.Card.Treatment.
+
 	Treatment string
 }
 
-// pendingConfirm is a staged action waiting on confirmation. Only an
-// explicit y runs onYes; anything else, including enter, cancels — the safe
-// reading of a stray keystroke is "no". Removals were the first users; any
-// destructive or expensive action stages the same way. onNo (optional) runs
-// on every non-yes resolution including ctrl+c — it exists for the confirm
-// bridge, where a blocked worker must hear "no" or hang forever. help is
-// the help-line wording; empty gets a generic confirm line.
 type pendingConfirm struct {
 	prompt string
 	help   string
@@ -111,110 +74,61 @@ type pendingConfirm struct {
 	onNo   func(*Model)
 }
 
-// Model is the browser's state. Exported so tests can drive Update directly,
-// the way internal/tui's tests drive the add cascade.
 type Model struct {
 	store Store
 
-	// env is the terminal the browser renders for — detected from the real
-	// stdout by New, pinned by WithEnv in tests. Its Color field is what
-	// makes browse honor NO_COLOR; width still arrives per-frame from
-	// WindowSizeMsg. theme is the shared ui palette; no styles are defined
-	// in this package. imgTier is what DetectImageTier decided the terminal
-	// can draw (the card-image spike); imageFetch is its injected fetch.
 	env        ui.Env
 	theme      ui.Theme
 	imgTier    ui.ImageTier
 	imageFetch CardImageFunc
-	// cellAspect is the terminal cell's height:width ratio from the
-	// HOARD_CELL_ASPECT override, 0 unset — kitty image rows are computed
-	// against it, defaulting to kittyCellAspect (see artAspect).
+
 	cellAspect float64
 
 	width, height int
 	ready         bool
-	// resizeGen numbers WindowSizeMsgs so only the newest post-resize
-	// retransmit tick fires — a drag-resize schedules many, one re-sends.
+
 	resizeGen int
 
 	focus pane
 
-	// Per-view sort state: which of sortColumns[view] orders the rows, and
-	// whether that column runs backwards. Indexed by viewMode, so each view
-	// keeps its own order across "v" cycles. Containers are always ranked by
-	// value: the left pane is the summary, and a summary sorted by name would
-	// stop answering the question it exists for.
 	sortIdx [len(sortColumns)]int
 	sortRev [len(sortColumns)]bool
 
 	containers []container
 
-	// setsMode flips the left pane between the sets the hoard holds cards
-	// from and the binders and decks it keeps them in — two lenses over the
-	// same hoard, toggled with B. Sets is where the browser opens (see New).
-	// Session-only; nothing persists it.
 	setsMode bool
 
-	// The holdings pane's three levels, market-style: allCards is what the
-	// container holds (pristine, sorted — kept so narrowing and widening a
-	// filter as it is typed costs no database reads), filteredCards is the
-	// full filter+floor result, and cards is the current pageSize slice of
-	// it — the slice everything cursor-indexed reads, so a page turn never
-	// re-teaches a call site.
 	allCards      []card
 	filteredCards []card
 	cards         []card
 	cardsPage     int
-	// cardsColW / moversColW hold each variable column's widest cell across
-	// the whole filtered list, measured when the list changes. The page
-	// tables pin their columns to these (ui.Col.Width), so a page turn
-	// keeps the table's shape instead of re-fitting to each page's longest
-	// name (observed live: the name column breathed on every >).
+
 	cardsColW  cardColWidths
 	moversColW moverColWidths
 
-	// Filter state. filtering is true while the bar is open and taking
-	// keystrokes; the filter stays applied once it closes, so the bar is a mode
-	// for editing the query rather than for having one.
 	filtering  bool
 	filterText string
 	filter     filter
-	// emptyNote explains an empty filtered pane; see refreshEmptyNote.
+
 	emptyNote string
 	filterErr string
-	// allowed is the id set the trait half of the filter matched, or nil when
-	// the filter asks nothing of the catalog.
+
 	allowed map[string]bool
 
-	// Cursors are kept per pane so switching back to the container list does not
-	// lose your place in it, and a scroll offset per pane so a long list can
-	// move under a fixed viewport.
 	cursor [2]int
 	offset [2]int
 
-	// confirm is the pending destructive action, or nil. Removals ask first:
-	// a single keystroke that deletes a hundred-card deck with no way back
-	// through the same key that moves the cursor is a trap.
 	confirm *pendingConfirm
 
-	// prompt is an inline one-line input when non-nil; see prompt.go.
 	prompt *prompt
 
-	// watchPick marks the pick-a-card-to-watch flow: the next enter on a
-	// card runs the watch prompt instead of opening its detail.
 	watchPick bool
 
-	// floorIdx indexes floorLevels: the value floor hiding cards priced
-	// under it, across every view that has prices. 0 is off.
 	floorIdx int
 
-	// commands is the registry, built once; palette is the open drawer over
-	// it, nil when closed. See command.go and palette.go.
 	commands []command
 	palette  *palette
 
-	// The injected long-running operations (nil = unavailable) and the one
-	// in flight; see opstate.go.
 	opUpdatePrices   OpFunc
 	opCorrectPrices  OpFunc
 	opRepairFinishes OpFunc
@@ -229,112 +143,56 @@ type Model struct {
 	op               *opState
 	opGen            int
 
-	// undoStack holds the single reversible action. See undoAction.
 	undoStack *undoAction
 
-	// view is what the right pane is showing: the selected container's
-	// holdings, or an analysis filtered to it.
 	view     viewMode
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
-	// overs and unders are the watches screen's first two tables: every
-	// watch that survived the filters lands in exactly one of them, by
-	// direction (see wantsUnder). There is deliberately no merged slice
-	// beside them — each table carries its own order, so one would have to
-	// disagree with what is on screen. unpriced is the screen's third table.
+
 	overs  []store.WatchStatus
 	unders []store.WatchStatus
 
-	// The watches screen's per-table state, indexed by watchSection: which
-	// of that table's sortColumns orders it, whether that column runs
-	// backwards, and how far its own region is scrolled. Sized by the enum
-	// that indexes it, so a fourth table would grow all three together.
 	watchSortIdx   [watchSectionCount]int
 	watchSortRev   [watchSectionCount]bool
 	watchSecOffset [watchSectionCount]int
 
-	// The pristine analytical rows as queried; the floor and the container
-	// filter derive the visible slices above from these (deriveView), so
-	// cycling either never re-reads the database. Movers pages like the
-	// holdings pane: filteredMovers is deriveView's full sorted result and
-	// movers above is its current pageSize slice.
 	allMovers      []store.PriceChange
 	filteredMovers []store.PriceChange
 	moversPage     int
 	allUnpriced    []store.UnpricedRow
 	allWatches     []store.WatchStatus
 
-	// moversCache keeps each lookback window's pristine movers for the
-	// session: the query walks the whole price history twice, and paying
-	// that on every W press made the key feel broken (observed live).
-	// dataGen invalidates it — bumped wherever prices or holdings change.
 	moversCache    map[int][]store.PriceChange
 	moversCacheGen int
 	dataGen        int
 
-	// The movers view's own noise gate, separate from the value floor:
-	// cards at or under moversPennyLimit hide unless moversPennies shows
-	// them — bulk wobbling by cents is volume without information. The
-	// limit defaults to defaultPennyLimit; SetPennyFilter moves it.
 	moversPennies    bool
 	moversPennyLimit float64
 
-	// The market view's floor, same pair of controls: rows whose low ask
-	// sits under marketFloor stay out of the collection unless
-	// marketPennies shows them. Defaults to defaultMarketFloor; moving
-	// either re-collects from the day cache, no refetch.
 	marketPennies bool
 	marketFloor   float64
 
-	// entryIndex answers "how many of this printing does this container
-	// hold": containerID → "scryfallID|finish" → copies (membership is
-	// copies > 0). viewEligible marks the containers selectable on views
-	// that grey the rest out, nil when all are. Both live in
-	// containerfilter.go.
 	entryIndex   map[int64]map[string]int
 	viewEligible map[int64]bool
 
-	// The market view sorts per table: each of the three sections keeps
-	// its own column choice and direction, indexed by market.Kind, and
-	// 's' operates on the table the cursor is in. The comps section has
-	// no Kind, so it keeps its own slice and sort state (see comps.go).
 	marketSortIdx [3]int
 	marketSortRev [3]bool
 	marketComps   []market.Comp
 	compsSortIdx  int
 	compsSortRev  bool
 
-	// The full rankings behind the visible tables: marketRows/marketComps
-	// hold only the current page of each (pageSize rows), sliced from
-	// these by deriveMarketPages. marketPage is each section's page,
-	// indexed like marketSecOffset; >/< turn the cursor's table.
 	marketAllRows  []market.Row
 	marketAllComps []market.Comp
 	marketPage     [3]int
 
-	// marketSecOffset is each market section's scroll position inside its
-	// fixed region (0=profit, 1=liquid, 2=comps); the tables scroll
-	// independently rather than as one document.
 	marketSecOffset [3]int
 
-	// compsBuySide flips the COMPS table from its default sell side (what
-	// a sale brings: anchor, bid, ratio) to the buy side (every vendor's
-	// ask). 'b' toggles; selling is the default question.
 	compsBuySide bool
 
-	// liquidLowball flips the buylist table from its default near-market
-	// band (the shops treating you fairly) to the lowball band (the ones
-	// paying under half of market). 'b' toggles it while the cursor is in
-	// that table; the good guys are the default question.
 	liquidLowball bool
 
-	// moversDaysIdx indexes moversWindowDays; 'W' cycles it.
 	moversDaysIdx int
 
-	// Arbitrage is the one view that needs the network, so unlike the others it
-	// is fetched on request, asynchronously, and can be abandoned part-way.
-	// cardComps serves the detail overlay's comp sheets from the same
-	// day cache, nil when the capability is absent.
 	marketFetch   MarketFunc
 	marketCached  MarketCachedFunc
 	cardComps     CardCompFunc
@@ -348,67 +206,30 @@ type Model struct {
 	marketCancel  context.CancelFunc
 	spinner       spinner.Model
 
-	// ctx bounds every background fetch, so quitting the program stops them
-	// rather than leaving a download running against a closed database.
 	ctx context.Context
 
-	// clock is injectable so a test can pin the movers window instead of
-	// depending on when it runs.
 	clock func() time.Time
 
-	// detail is the open card overlay, or nil. Loaded once when opened rather
-	// than re-read per frame, so scrolling the list behind it costs nothing.
 	detail *detail
-	// detailComps memoizes background comp reads by printing for the open
-	// overlay's lifetime, so arrowing back to a printing already answered
-	// costs nothing. Cleared when the overlay closes, and when an op
-	// completes (a quote fetch may have changed the sheets).
+
 	detailComps map[string]compsResult
 
-	// text is the open scrollable text takeover (report, import outcome),
-	// or nil. See textview.go.
 	text *textView
 
-	// reportFn produces the valuation report as renderable lines; injected
-	// (nil = unavailable) so browse stays free of the action layer.
 	reportFn ReportFunc
 
-	// exportFn writes holdings to disk; injected for the same reason.
 	exportFn ExportFunc
 
-	// The confirm bridge (opconfirm.go): confirmCh is where op goroutines
-	// ask their questions; deferredAsk parks the one request that can
-	// arrive while a user-staged confirm is already up.
 	confirmCh   <-chan ConfirmRequest
 	deferredAsk *ConfirmRequest
 
-	// The embedded add cascade: newAddChild is the injected constructor
-	// (nil = capability absent), addChild the live takeover or nil, and
-	// addSummary the session's accumulated receipt across every cascade
-	// invocation, printed to scrollback when the browser exits so the
-	// record of unattended writes outlives the alt screen.
-	//
-	// addPending carries a finished cascade's unanswered scans to the next
-	// one, so ctrl+d out of a half-reviewed pile is a pause rather than a
-	// discard: press `a` again and the queue is still there. Browser-scoped
-	// and memory-only — it dies with the process, which is the point.
 	newAddChild func() (tui.Child, error)
 	addChild    *tui.Child
 	addPending  tui.Pending
 	addSummary  tui.Summary
 
-	// helpRowsMemo caches the gutter's tallest-view-help reservation; see
-	// tallestViewHelpRows. Shared across the Elm loop's value copies by
-	// being a map.
 	helpRowsMemo map[helpRowsKey]int
 
-	// The live refresh (live.go). liveVersion is the last data_version this
-	// connection read and liveKnown is false until the first poll takes a
-	// baseline; liveGen numbers the quiescence timers so only the newest
-	// one fires; livePending parks a refresh that came due while a takeover
-	// owned the keyboard; liveOff retires the feature for the session once
-	// a refresh blows liveRefreshBudget, with liveMissed counting the
-	// changes seen since, for the notice that replaces it.
 	liveVersion int64
 	liveKnown   bool
 	liveGen     int
@@ -416,31 +237,14 @@ type Model struct {
 	liveOff     bool
 	liveMissed  int
 
-	// rowGone records that the last re-read could not find the row the
-	// cursor was on, so the status line can say the selection was lost
-	// rather than letting the cursor land somewhere else in silence. Set
-	// and read within one refresh; see reread.
 	rowGone bool
 
 	status    string
 	statusErr bool
 
-	// err is the failure that ended the session, surfaced by Run. A read that
-	// fails mid-session becomes a status line instead: the screen already has
-	// content worth keeping, and quitting would throw it away.
 	err error
 }
 
-// New builds a model with the container list already loaded, so the first frame
-// has content rather than a spinner over a database read that takes a
-// millisecond.
-//
-// The browser opens on the SETS lens: a hoard's sets are a property of the
-// cards themselves, so that pane reads the same on a first run as on a
-// twentieth, while binders and decks are a filing choice that a new hoard has
-// not made yet (one default binder, no decks — a left pane with nothing to
-// choose from). B is the flip to that listing and back, so the filing view is
-// one keystroke away rather than the thing every session starts by leaving.
 func New(st Store, opts ...Option) (Model, error) {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -467,15 +271,8 @@ func New(st Store, opts ...Option) (Model, error) {
 	return m, nil
 }
 
-// catalogFirstRunMsg fires once from Init when the browser opened with no
-// catalog built, and starts the download as an ordinary operation.
 type catalogFirstRunMsg struct{}
 
-// showFiredBanner previews the watches whose thresholds hold unacknowledged
-// — read-only, never consuming the alert (cron's `hoard watch` stays the
-// consumer of record), which is why it repeats on every open until a real
-// check runs. It is a transient status: the first status-clearing key
-// dismisses it.
 func (m *Model) showFiredBanner() {
 	fired, err := m.store.WouldFire()
 	if err != nil || len(fired) == 0 {
@@ -495,7 +292,6 @@ func (m *Model) showFiredBanner() {
 	}
 }
 
-// pricePoints adapts a price series to the resampler's shape.
 func pricePoints(s []store.PricePoint) []ui.TimePoint {
 	out := make([]ui.TimePoint, len(s))
 	for i, p := range s {
@@ -504,8 +300,6 @@ func pricePoints(s []store.PricePoint) []ui.TimePoint {
 	return out
 }
 
-// loadContainers reads the left pane: the binders (default first), then decks
-// by value — or, in sets mode, the sets held.
 func (m *Model) loadContainers() error {
 	if m.setsMode {
 		return m.loadSetContainers()
@@ -520,8 +314,7 @@ func (m *Model) loadContainers() error {
 	}
 
 	out := make([]container, 0, len(binders)+len(decks)+1)
-	// The merged view leads: it is the hoard itself, and everything below
-	// it is a subset.
+
 	all := container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards}
 	out = append(out, all)
 	for _, b := range binders {
@@ -549,7 +342,6 @@ func (m *Model) loadContainers() error {
 	return nil
 }
 
-// loadCards reads the right pane for whichever container is selected.
 func (m *Model) loadCards() error {
 	sel := m.selectedContainer()
 	if sel == nil {
@@ -583,11 +375,7 @@ func (m *Model) loadCards() error {
 			})
 		}
 		if sel.Kind == kindAllCards {
-			// The hoard-level list answers "how many of this card", so
-			// same-name printings collapse into one row — ten Forests
-			// across four printings were ten rows each wearing a set the
-			// pile as a whole doesn't have (observed live). The detail's
-			// held list is where the exact printings live.
+
 			out = mergeByName(out)
 		}
 	} else {
@@ -609,24 +397,18 @@ func (m *Model) loadCards() error {
 
 	m.allCards = out
 	m.sortHoldings()
-	m.cardsPage = 0 // a fresh container starts on page one
+	m.cardsPage = 0
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
 	return nil
 }
 
-// mergeByName collapses same-name same-finish rows into one. Quantities
-// and values sum; the printing columns and the per-copy price survive only
-// when every merged row agrees — a set naming one of three printings, or a
-// price true of some copies, is worse than a dash. The first row's
-// scryfall id stays as the representative, which is all enter-detail
-// needs: the detail loads holdings by name and shows every printing.
 func mergeByName(rows []card) []card {
 	idx := map[string]int{}
 	var out []card
 	for _, c := range rows {
-		key := c.Name + "|" + c.Finish
+		key := c.Name + "|" + c.Finish.String()
 		i, seen := idx[key]
 		if !seen {
 			idx[key] = len(out)
@@ -646,12 +428,9 @@ func mergeByName(rows []card) []card {
 	return out
 }
 
-// applyFilter narrows allCards into filteredCards and re-derives the page.
-// It does not touch the database: the trait half was resolved when the query
-// last changed, and holding terms are answered by the rows themselves.
 func (m *Model) applyFilter() {
 	if m.filter.empty() && m.floorMin() == 0 {
-		// Aliasing is safe: the page below is a sub-slice, never mutated.
+
 		m.filteredCards = m.allCards
 	} else {
 		out := make([]card, 0, len(m.allCards))
@@ -668,10 +447,6 @@ func (m *Model) applyFilter() {
 	m.refreshEmptyNote()
 }
 
-// deriveCardsPage and deriveMoversPage slice the current page out of the
-// full filtered lists, clamping the page index against totals that may have
-// shrunk under it — the backstop that makes a missed page reset a wrong
-// page, never an empty pane.
 func (m *Model) deriveCardsPage() {
 	lo, hi := pageBounds(&m.cardsPage, len(m.filteredCards))
 	m.cards = m.filteredCards[lo:hi]
@@ -682,8 +457,6 @@ func (m *Model) deriveMoversPage() {
 	m.movers = m.filteredMovers[lo:hi]
 }
 
-// cardColWidths and moverColWidths carry the paged tables' whole-list
-// column measures; see the fields on Model.
 type cardColWidths struct{ name, set, fin, qty, price, value int }
 
 type moverColWidths struct{ name, set, fin, from, was, now, change, qty, impact int }
@@ -717,16 +490,10 @@ func measureMoverCols(rows []store.PriceChange, cutoff time.Time) moverColWidths
 	return w
 }
 
-// stableNameWidth caps the pinned name column so one novella-length card
-// name cannot starve every other column: at most a third of the pane, at
-// least the flex minimum the builders already use.
 func stableNameWidth(measured, paneWidth int) int {
 	return min(measured, max(16, paneWidth/3))
 }
 
-// pageBounds clamps a page index against a total and returns that page's
-// slice bounds — the page arithmetic the single-table panes share (the
-// market slices its own three tables at its shallower pageSize).
 func pageBounds(page *int, tot int) (lo, hi int) {
 	maxPage := 0
 	if tot > 0 {
@@ -737,15 +504,10 @@ func pageBounds(page *int, tot int) (lo, hi int) {
 	return lo, min(lo+singleTablePageSize, tot)
 }
 
-// floorLevels are the value-floor presets M cycles through; 0 is off.
 var floorLevels = []float64{0, 5, 10, 25, 50, 100}
 
-// floorMin is the active mask threshold, 0 when off.
 func (m Model) floorMin() float64 { return floorLevels[m.floorIdx] }
 
-// underFloor reports whether a per-copy price falls under the floor. With
-// a floor set, an unknown price is under it — the floor asks for cards
-// worth at least this much, and "unknown" is not an answer.
 func (m Model) underFloor(p *float64) bool {
 	if min := m.floorMin(); min > 0 {
 		return p == nil || *p < min
@@ -753,11 +515,9 @@ func (m Model) underFloor(p *float64) bool {
 	return false
 }
 
-// cycleFloor advances the value floor and re-derives the current view
-// through it — from the pristine slices, so no database read.
 func (m *Model) cycleFloor() {
 	m.floorIdx = (m.floorIdx + 1) % len(floorLevels)
-	// A moved floor changes what the pages hold; read from the first.
+
 	m.cardsPage, m.moversPage = 0, 0
 	m.applyFilter()
 	m.deriveView()
@@ -769,26 +529,12 @@ func (m *Model) cycleFloor() {
 	}
 }
 
-// refreshEmptyNote explains an empty filtered pane, computed here — when the
-// query or the rows change — rather than in the render path, which must not
-// read the database (the invariant detail.go states for the whole package).
-//
-// Trait columns are NULL until update-prices has stored a Scryfall document, so
-// on a hoard that has not been refreshed since the upgrade `rarity:mythic`
-// correctly returns nothing — and looks exactly like a hoard containing no
-// mythics. Only the count can tell those apart, and without saying so the
-// feature reads as broken.
 func (m *Model) refreshEmptyNote() {
 	m.emptyNote = ""
-	// The pane the query emptied, not the holdings pane specifically: the
-	// same trait terms narrow the analytical views, and a movers list emptied
-	// by `rarity:mythic` needs the same explanation.
+
 	rows := m.viewRowCount()
 	if m.view == viewWatches {
-		// Rows, not slots: this screen's count includes one cursor slot per
-		// empty table (see watchRegion), and reading three empty tables as
-		// "something is showing" would suppress the note exactly when a
-		// trait query has emptied the screen and needs explaining.
+
 		rows = m.watchTotalRows()
 	}
 	if rows > 0 || m.filter.empty() || !m.filter.needsCatalog() {
@@ -809,18 +555,10 @@ func (m *Model) refreshEmptyNote() {
 	}
 }
 
-// setFilter parses a query and resolves whatever part of it the catalog has to
-// answer.
-//
-// Called on every keystroke while the bar is open, so the catalog query is
-// skipped unless a trait term is actually present — which keeps a plain name
-// search, the overwhelmingly common case, free of database work.
 func (m *Model) setFilter(text string) {
 	f, err := parseFilter(text)
 	if err != nil {
-		// The rows keep whatever the last valid query produced. Emptying the
-		// pane on a half-typed `cmc>` would make the list flicker between every
-		// keystroke of a comparison.
+
 		m.filterErr = err.Error()
 		return
 	}
@@ -836,19 +574,15 @@ func (m *Model) setFilter(text string) {
 		}
 		m.allowed = ids
 	}
-	// A changed query reads from its first page, on whichever list it
-	// narrows — the bar is one query over whatever view is showing.
+
 	m.cardsPage, m.moversPage = 0, 0
-	// deriveView first: applyFilter's tail explains an empty pane, and on an
-	// analytical view the pane it must read is the one deriveView rebuilds.
+
 	m.deriveView()
 	m.applyFilter()
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
 }
 
-// clearFilter drops the query and restores the full pane — and the full
-// analytical list beside it, since deriveView narrows through the same query.
 func (m *Model) clearFilter() {
 	m.filtering = false
 	m.filterText = ""
@@ -862,8 +596,6 @@ func (m *Model) clearFilter() {
 	m.offset[paneCards] = 0
 }
 
-// selectedContainer is the container under the left cursor, or nil when there
-// are none.
 func (m Model) selectedContainer() *container {
 	if len(m.containers) == 0 {
 		return nil
@@ -872,8 +604,6 @@ func (m Model) selectedContainer() *container {
 	return &m.containers[i]
 }
 
-// selectedCard is the card under the right cursor, or nil when the pane is
-// empty — an empty deck, or a filter that matched nothing.
 func (m Model) selectedCard() *card {
 	if len(m.cards) == 0 {
 		return nil
@@ -882,7 +612,6 @@ func (m Model) selectedCard() *card {
 	return &m.cards[i]
 }
 
-// rowCount is how many rows the focused pane holds.
 func (m Model) rowCount(p pane) int {
 	if p == paneContainers {
 		return len(m.containers)
@@ -890,7 +619,6 @@ func (m Model) rowCount(p pane) int {
 	return m.viewRowCount()
 }
 
-// clampCursor keeps a cursor inside its pane after the rows underneath change.
 func (m *Model) clampCursor(p pane) {
 	n := m.rowCount(p)
 	if n == 0 {
@@ -900,40 +628,16 @@ func (m *Model) clampCursor(p pane) {
 	m.cursor[p] = min(max(m.cursor[p], 0), n-1)
 }
 
-// Init arms the confirm-bridge pump (nil without WithConfirm). Everything
-// else is loaded before the first frame.
 func (m Model) Init() tea.Cmd {
-	// The live refresh's poll chain starts here and re-arms itself for the
-	// life of the program; the first tick only takes a baseline. See
-	// live.go for why it is always on and has no flag.
+
 	init := tea.Batch(awaitConfirm(m.ctx, m.confirmCh), livePoll())
-	// The first-run catalog download starts itself: its whole value is
-	// fast lookups in the add flow, so it belongs before the first add —
-	// visible in the ordinary op slot, cancellable like any operation.
+
 	if m.catalogOffer && m.opCatalogUpdate != nil {
 		return tea.Batch(init, func() tea.Msg { return catalogFirstRunMsg{} })
 	}
 	return init
 }
 
-// Update handles keys and resizes.
-// handleMouse turns a wheel notch or trackpad gesture into scrolling.
-//
-// Mouse capture is only ever on while the detail overlay is open (see Update),
-// because claiming the mouse is what stops the terminal doing its own text
-// selection and copy-on-select. The pane branch below is still needed: capture
-// is released as the overlay closes, and an event already in flight lands after
-// the detail is gone.
-//
-//   - Over the overlay, the wheel scrolls the text. It cannot just replay
-//     arrows: the overlay's arrows drive the held-list cursor, so they would
-//     move a cursor instead of revealing PRICE.
-//   - Otherwise, replay the arrow keys the terminal's alternate-scroll used to
-//     synthesise, through the same handleKey the keyboard uses, so the wheel
-//     inherits the panes' clamping and scroll-into-view rather than becoming a
-//     second definition of "down".
-//
-// Three lines a notch: the convention, and what alternate-scroll sent.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
@@ -941,8 +645,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	const wheelStep = 3
 
 	if m.detail != nil {
-		// Clamping down is the render's job — detailView knows the line count
-		// — so only the top needs a floor here.
+
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			m.detail.scroll = max(m.detail.scroll-wheelStep, 0)
@@ -959,8 +662,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseButtonWheelDown:
 		key = tea.KeyMsg{Type: tea.KeyDown}
 	default:
-		// Clicks and drags are deliberately unwired: a click that moved the
-		// cursor would let a stray trackpad tap destroy the reader's place.
+
 		return m, nil
 	}
 	cur := m
@@ -968,9 +670,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	for range wheelStep {
 		next, cmd := cur.handleKey(key)
 		cmds = append(cmds, cmd)
-		// Checked rather than asserted: handleKey returns tea.Model, and every
-		// path through it returns this Model today. If one ever stops doing so,
-		// handing that model straight back beats a panic mid-gesture.
+
 		n, ok := next.(Model)
 		if !ok {
 			return next, tea.Batch(cmds...)
@@ -980,20 +680,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return cur, tea.Batch(cmds...)
 }
 
-// Update wraps the real handler to keep mouse capture tied to the overlay.
-//
-// The mouse is claimed only while the detail overlay is open, and released the
-// moment it closes. That is the whole trick to not making people hold shift:
-// claiming the mouse is what stops the terminal doing its own text selection
-// and copy-on-select, so hoard claims it for the one view that needs a scroll
-// gesture and hands it back everywhere else. In the panes — where card names
-// and prices are what anyone would want to copy — selection behaves as it does
-// in any other program, and the terminal's own alternate-scroll keeps
-// translating the wheel into the arrow keys the panes already answer.
-//
-// Derived here rather than emitted from the open and close sites: there is one
-// place the overlay opens and four where it closes, and a fifth added later
-// would silently leave the mouse captured over the panes.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	had := m.detail != nil
 	next, cmd := m.update(msg)
@@ -1021,18 +707,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addChild = &child
 		}
 		var cmds []tea.Cmd
-		// Art rendered for the old size clips off a narrower window's
-		// edge (and undersells a wider one) — re-render at what the new
-		// size wants. The old art holds the layout until the replacement
-		// lands, which is near-instant off the disk cache.
+
 		if d := m.detail; d != nil && !d.imagePending && len(d.image) > 0 &&
 			d.imageColsDrawn != m.detailImageCols() {
 			cmds = append(cmds, m.fetchDetailImage())
 		}
-		// Resizing dirties the upload: frames flushed mid-storm can drop,
-		// so every frame carries the transmit until the settle tick
-		// declares one delivered — placeholders must never outlive the
-		// image data they address (a zoomed crop, observed live).
+
 		if d := m.detail; d != nil && (d.imageTransmit != "" || d.imagePending) {
 			cmds = append(cmds, m.transmitSettle())
 		}
@@ -1052,8 +732,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opProgressMsg:
 		return m.onOpProgress(msg)
 	case opDoneMsg:
-		// Handled by the browser even while the cascade covers the panes —
-		// this is what lets an op finish behind an add.
+
 		return m.onOpDone(msg)
 	case opConfirmMsg:
 		return m.onOpConfirm(msg)
@@ -1064,10 +743,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveQuietMsg:
 		return m.onLiveQuiet(msg)
 	case spinner.TickMsg:
-		// Delivered to both models: bubbles tags ticks with the owning
-		// spinner's ID and each Update rejects foreign ones, so the two
-		// re-arm chains stay singular. Browse's side only animates while
-		// something is in flight, or the program wakes forever.
+
 		var cmds []tea.Cmd
 		if m.marketLoading || m.op != nil {
 			var cmd tea.Cmd
@@ -1081,9 +757,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	}
-	// Everything unnamed belongs to the cascade while it is up: its message
-	// types are unexported, so this default forward is the only routing
-	// possible — and the right one. After it closes, stragglers die here.
+
 	if m.addChild != nil {
 		return m.forwardToChild(msg)
 	}
@@ -1110,28 +784,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleBrowseKey(msg)
 }
 
-// handleDetailKey drives the card overlay: close, quit, walk the vendor
-// links, open one.
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "q":
-		// The same y/n every other surface gives the quit key; the
-		// confirm renders in the overlay's status slot.
+
 		m.stageQuit()
 	case "esc", "backspace":
 		m.detail = nil
 		m.detailComps = nil
 	case "enter":
-		// In the held zone, enter edits the highlighted field of the row
-		// under the cursor.
+
 		if m.detail.zone == zoneHeld {
 			m.editHeldField()
 			return m, nil
 		}
-		// Enter used to close (esc's job too); with links it opens the
-		// selected vendor page instead — the reason to have a cursor.
+
 		if m.openURL != nil && len(m.detail.links) > 0 {
 			l := m.detail.links[m.detail.linkCursor]
 			if err := m.openURL(l.url); err != nil {
@@ -1141,48 +810,36 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.detail = nil
 	case "tab":
-		// A tab order, not a zone toggle: the row's fields in turn, then the
-		// links, then back to the row. Tab means "the next thing" everywhere
-		// else, and a key that jumped straight past four editable fields to a
-		// different strip of the overlay did not.
-		//
-		// ←/→ still walk the fields and ↑/↓ still walk the rows, so nothing
-		// here is the only way to reach anything: tab is what you press when
-		// you do not want to think about which axis you are on. Deep in a long
-		// held list the links are at most heldFieldCount presses away, which is
-		// what this replaced ↓-past-every-row with.
+
 		if m.detail.zone == zoneHeld {
 			if m.detail.heldField < heldFieldCount-1 {
 				m.detail.heldField++
 				break
 			}
-			// Out of the row and onto the first link, not merely into the
-			// zone: landing on whichever link the cursor last sat on would
-			// skip the ones before it, and the order would depend on history.
+
 			m.detail.zone = zoneLinks
 			m.detail.linkCursor = 0
-			m.detail.scroll = 1 << 20 // the links render last; clamped at render
+			m.detail.scroll = 1 << 20
 			break
 		}
 		if n := len(m.detail.links); m.detail.linkCursor < n-1 {
 			m.detail.linkCursor++
 			break
 		}
-		// Past the last link, back to the top of the row.
+
 		if len(m.detail.holdings) > 0 {
 			m.detail.zone = zoneHeld
 			m.detail.heldField = 0
 			m.detail.scrollHeldIntoView = true
 		}
 	case "shift+tab":
-		// The same order backwards. A tab order without a reverse strands
-		// anyone who overshoots by one.
+
 		if m.detail.zone == zoneHeld {
 			if m.detail.heldField > 0 {
 				m.detail.heldField--
 				break
 			}
-			// Before the first field is the last link.
+
 			m.detail.zone = zoneLinks
 			m.detail.linkCursor = max(len(m.detail.links)-1, 0)
 			m.detail.scroll = 1 << 20
@@ -1198,9 +855,7 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail.scrollHeldIntoView = true
 		}
 	case "up", "k":
-		// The vertical axis climbs into the held list first, then walks
-		// it; a different printing re-points the overlay and refetches
-		// its art.
+
 		if m.detail.zone == zoneLinks && len(m.detail.holdings) > 0 {
 			m.detail.zone = zoneHeld
 			m.detail.scrollHeldIntoView = true
@@ -1210,7 +865,7 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.detail.zone == zoneHeld {
 			if m.detail.heldCursor >= len(m.detail.holdings)-1 {
-				// Off the bottom of the held list is back to the links.
+
 				m.detail.zone = zoneLinks
 				return m, nil
 			}
@@ -1229,43 +884,32 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail.linkCursor = min(m.detail.linkCursor+1, n-1)
 		}
 	case "+", "=":
-		// The held list is where a wrong count gets noticed, so the count
-		// is editable right here — same keys, same rules as the holdings
-		// pane (deck rows refuse; the imported list owns them).
+
 		return m, m.adjustHeldQuantity(1)
 	case "-", "_":
 		return m, m.adjustHeldQuantity(-1)
 	case "d":
 		m.askHeldRemoval()
 	case "pgup":
-		// The overlay scrolls: a short window pushes PRICE and COMPS past
-		// the fold, and widening the terminal shouldn't be the only way
-		// back to them.
+
 		m.detail.scroll = max(m.detail.scroll-max(m.visibleRows()-1, 1), 0)
 	case "pgdown":
-		// Clamped at render time, where the overlay's line count is known.
+
 		m.detail.scroll += max(m.visibleRows()-1, 1)
 	case ":", "ctrl+p":
-		// The palette opens over the overlay — narrowed to the price
-		// refreshers (see detailPaletteIDs): running one must not cost
-		// the reader their place, and everything else waits an esc away.
+
 		m.openPalette()
 	}
 	return m, nil
 }
 
-// handleBrowseKey is the ordinary two-pane surface: navigation, edits, and
-// everything the help line advertises.
 func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Deliberate actions live in the registry; what remains below is
-	// navigation and mode openers.
+
 	if cmd, ok := m.runCommand(msg.String()); ok {
 		return m, cmd
 	}
 	switch msg.String() {
-	// ctrl+c quits immediately (with a confirm only when an op would be
-	// stranded); q asks first — quit intent from a single printable key
-	// deserves a y/n, not a dumped session.
+
 	case "ctrl+c":
 		if m.op != nil {
 			m.stageQuit()
@@ -1281,7 +925,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "+", "=":
-		// "=" is the unshifted key "+" lives on, so both work.
+
 		m.adjustQuantity(1)
 		return m, nil
 	case "-", "_":
@@ -1297,8 +941,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			comps := m.openDetail()
 			return m, tea.Batch(m.fetchDetailImage(), comps)
 		} else {
-			// Enter on a container is "show me this one", which means moving to
-			// its cards — the same thing tab does, but where the hand already is.
+
 			m.focus = paneCards
 		}
 		return m, nil
@@ -1310,8 +953,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "esc":
 		if m.watchPick {
-			// The pick began on the watches view; cancelling puts the
-			// reader back there rather than stranding them on holdings.
+
 			m.watchPick = false
 			cmd := m.showView(viewWatches)
 			m.status, m.statusErr = "watch cancelled", false
@@ -1329,21 +971,16 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.op != nil {
-			// Late in the chain, so the everyday esc reflexes above can
-			// never eat a minutes-long operation by accident.
+
 			m.cancelOp()
 			return m, nil
 		}
-		// Nothing left to back out of: esc at the top frame asks about
-		// leaving, so backing "up" one frame too many never dumps the
-		// session without warning.
+
 		m.stageQuit()
 		return m, nil
 
 	case "tab":
-		// Tab is what people press without thinking in a two-pane layout, so it
-		// toggles rather than only ever moving one way. The container pane
-		// applies on every view: it filters the analysis to the selection.
+
 		if m.focus == paneContainers {
 			m.focus = paneCards
 		} else {
@@ -1360,11 +997,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 
-	// Navigation clears any transient status, like the pane switches above:
-	// moving the cursor is asking about a new row, and the answer is the
-	// per-row status line (the market note, the position elsewhere) — not a
-	// receipt from an action that already happened (observed live: "sorted
-	// by arbitrage · profit" outliving every selection change).
 	case "up", "k":
 		m.move(-1)
 		m.status = ""
@@ -1394,8 +1026,6 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// askRemoval stages a delete for confirmation. Which pane has focus decides
-// what is being removed: a deck on the left, a card on the right.
 func (m *Model) askRemoval() {
 	if m.focus == paneContainers {
 		sel := m.selectedContainer()
@@ -1406,8 +1036,7 @@ func (m *Model) askRemoval() {
 			m.status, m.statusErr = allCardsName+" is every container merged; remove its subsets instead", true
 			return
 		}
-		// Before the deck confirm: a set row would otherwise stage a deck
-		// removal against its synthetic id.
+
 		if sel.Kind == kindSet {
 			m.status, m.statusErr = "a set is how cards were printed, not where they live · remove cards from their binders", true
 			return
@@ -1429,23 +1058,18 @@ func (m *Model) askRemoval() {
 		return
 	}
 
-	// On the watches screen, 'd' removes the watch under the cursor.
 	if w := m.selectedWatch(); w != nil {
 		m.askWatchRemoval(*w)
 		return
 	}
 	if m.view == viewWatches {
-		// The screen's third table holds cards, not watches, and this key
-		// has never removed a card from here. Say so: the same press two
-		// rows higher stages a removal, and silence reads as a broken key.
+
 		if m.selectedUnpricedRow() != nil {
 			m.status, m.statusErr = "d removes a watch · this row is a card you hold, not a watch", true
 		}
 		return
 	}
 
-	// A set row is removed from the binders that hold it, not from the set —
-	// which is a printing fact, not a place.
 	if sel := m.selectedContainer(); m.view == viewHoldings && sel != nil && sel.Kind == kindSet {
 		m.askSetRemoval()
 		return
@@ -1467,11 +1091,6 @@ func (m *Model) askRemoval() {
 	}
 }
 
-// handleConfirmKey answers a staged confirm; see pendingConfirm for the
-// only-y-proceeds contract.
-// stageQuit asks before leaving: the plain quit confirm, or — with an
-// operation still running — the variant whose yes also cancels it so no
-// goroutine writes into a dead program.
 func (m *Model) stageQuit() {
 	if m.op != nil {
 		title := m.op.title
@@ -1479,8 +1098,7 @@ func (m *Model) stageQuit() {
 			prompt: title + " is still running. Quit anyway?",
 			help:   "y quit · any other key stays",
 			onYes: func(m *Model) tea.Cmd {
-				// A bridge question parked behind this confirm dies with the
-				// program — answer it, or its worker blocks past exit.
+
 				m.declineDeferredAsk()
 				m.cancelOp()
 				return tea.Quit
@@ -1500,10 +1118,7 @@ func (m *Model) stageQuit() {
 
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		// Hard exit, but nobody gets left hanging: a bridge worker blocked
-		// on this question hears "no", a parked follow-up question hears the
-		// same, and a running op is cancelled so it unwinds before the store
-		// closes underneath it.
+
 		if m.confirm.onNo != nil {
 			m.confirm.onNo(&m)
 		}
@@ -1516,8 +1131,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if msg.String() != "y" {
-		// The generic receipt first, so an onNo with something better to
-		// say (the catalog offer's palette pointer) gets the last word.
+
 		m.status, m.statusErr = "cancelled", false
 		if c.onNo != nil {
 			c.onNo(&m)
@@ -1525,7 +1139,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	} else {
 		cmd = c.onYes(&m)
 	}
-	// A question the bridge parked while this confirm was up comes next.
+
 	if m.deferredAsk != nil {
 		req := *m.deferredAsk
 		m.deferredAsk = nil
@@ -1534,21 +1148,12 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleFilterKey edits the query while the bar is open.
-//
-// The pane narrows on every keystroke rather than on enter, so the query is
-// judged by what it selects instead of by whether it reads right — which is the
-// only way to discover that `type:creature` finds nothing because the catalog
-// was never refreshed.
 func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
 	case tea.KeyEsc:
-		// Escape abandons the whole query; enter keeps it and closes the bar.
-		// In a watch pick it abandons the pick with it, back to the watches
-		// view the flow began on — the help line says "esc cancel", and a
-		// cancel that leaves you somewhere new is not one.
+
 		m.clearFilter()
 		if m.watchPick {
 			m.watchPick = false
@@ -1558,8 +1163,7 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyTab:
-		// Tab keeps the query but crosses to the containers pane: picking a
-		// watch target (or plain filtering) may need another binder's cards.
+
 		m.filtering = false
 		if m.filter.empty() {
 			m.filterText = ""
@@ -1571,8 +1175,7 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.filter.empty() {
 			m.filterText = ""
 		}
-		// Picking a watch target: enter on the narrowed list is the pick
-		// itself, not just closing the bar — filter, enter, done.
+
 		if m.watchPick && m.focus == paneCards {
 			m.finishWatchPick()
 		}
@@ -1596,8 +1199,7 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterText += string(msg.Runes)
 		m.setFilter(m.filterText)
 		return m, nil
-	// Moving the cursor with the bar still open is worth allowing: you narrow
-	// to a handful of cards and want to look at one without closing anything.
+
 	case tea.KeyUp:
 		m.move(-1)
 		return m, nil
@@ -1608,10 +1210,6 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// move walks the focused pane's cursor, clamping at both ends rather than
-// wrapping: a list that jumps from the last row to the first loses your place
-// on a long collection. On views that grey out empty containers the left
-// cursor steps over them rather than resting on a row it cannot select.
 func (m *Model) move(delta int) {
 	n := m.rowCount(m.focus)
 	if n == 0 {
@@ -1625,8 +1223,6 @@ func (m *Model) move(delta int) {
 	m.onCursorMoved()
 }
 
-// moveTo jumps the focused cursor to target — the home/end keys. An
-// ineligible target walks back toward All Cards, which is always eligible.
 func (m *Model) moveTo(target int) {
 	n := m.rowCount(m.focus)
 	if n == 0 {
@@ -1642,9 +1238,6 @@ func (m *Model) moveTo(target int) {
 	m.onCursorMoved()
 }
 
-// stepEligible walks up to |delta| eligible container rows in delta's
-// direction, landing on the furthest one found; with none in that
-// direction the cursor stays put.
 func (m Model) stepEligible(from, delta int) int {
 	if delta == 0 {
 		return from
@@ -1663,9 +1256,6 @@ func (m Model) stepEligible(from, delta int) int {
 	return last
 }
 
-// onCursorMoved is what every cursor move ends with: the scroll follows,
-// and a move in the container pane re-scopes both the card pane and the
-// current view's rows.
 func (m *Model) onCursorMoved() {
 	m.scrollIntoView()
 	if m.focus != paneContainers {
@@ -1678,8 +1268,6 @@ func (m *Model) onCursorMoved() {
 	m.deriveView()
 }
 
-// setError puts a failure on the status line rather than ending the session.
-// The screen already holds content worth keeping.
 func (m *Model) setError(err error) {
 	m.status = err.Error()
 	m.statusErr = true

@@ -1,18 +1,5 @@
-// The foil sparkle's template. GENERATED — do not hand-edit.
-//
-//     make cardkit
-//     ./bin/cardkit-probe --sparkle-fit scan/foil-corpus \
-//         scan/hoard-scan/Sources/BorderKit/SparkleTemplateData.swift
-//
-// 52x34 cells spanning
-// SparkleTemplate.spanU x spanV of the card, zero-mean and unit-norm, so
-// correlating a normalised patch against it is a plain dot product. See
-// Sparkle.swift for what it is and why it is shaped this way.
-
 import CoreGraphics
 
-/// How many foil captures were averaged into this. Recorded because the
-/// threshold beside it is only as good as the corpus behind both.
 public let sparkleTemplateFittedFrom = 27
 
 public let sparkleTemplate: [CGFloat] = [

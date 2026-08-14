@@ -1,8 +1,5 @@
 package command
 
-// The deck commands: importing a decklist from a URL or a text file, re-pinning
-// it to the set it came from, and removing it again.
-
 import (
 	"context"
 	"errors"
@@ -20,21 +17,12 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdDeck builds `hoard deck`, a group with no bare form: unlike binder and
-// watch, there is no one thing "deck" on its own should mean.
 func NewCmdDeck(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "deck",
 		GroupID: groupDeck,
 		Short:   "Import, refresh and remove decks",
-		// --dry-run gets a line of its own rather than a fourth bracket on the
-		// --file form: that line is already 57 of the 58 columns a 60-column
-		// terminal leaves after the indent. A continuation line was the other
-		// option — import wraps that way — but the renderer re-indents every
-		// example to two spaces, so a continuation arrives looking like a form
-		// with the command name missing. Better a short real one. It is shown
-		// on the --file form because that is the workflow it is for, the same
-		// way --refresh is shown only on the URL form though both accept it.
+
 		Example: "hoard deck add <archidekt-url> [--refresh]\n" +
 			"hoard deck add --file <path> [--name NAME] [--source S]\n" +
 			"hoard deck add --file <path> --dry-run\n" +
@@ -42,9 +30,7 @@ func NewCmdDeck(a *app) *cobra.Command {
 			"hoard deck remove <name>\n" +
 			"hoard deck repin <name> <set>",
 		Args: cobra.NoArgs,
-		// An error, not cmd.Usage(): `hoard deck` alone has always been a
-		// mistake rather than a request, and it exits non-zero accordingly.
-		// The list now names repin, which it has always accepted.
+
 		RunE: func(*cobra.Command, []string) error {
 			return cli.Usagef("deck requires a subcommand: add|remove|repin")
 		},
@@ -53,8 +39,6 @@ func NewCmdDeck(a *app) *cobra.Command {
 	return cmd
 }
 
-// deckAddOpts are the flags, gathered as import's are so the constructor and
-// the run half do not have to agree on a nine-parameter call.
 type deckAddOpts struct {
 	file    string
 	name    string
@@ -82,17 +66,13 @@ func newDeckAddCmd(a *app) *cobra.Command {
 		"provider label for text imports (e.g. moxfield)")
 	cmd.Flags().BoolVar(&o.refresh, "refresh", false,
 		"replace an already-imported deck without asking (discards manual edits to its cards)")
-	// Worded exactly as import's, because it is the same promise: the list is
-	// fetched and resolved for real — only the writing is withheld.
+
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
 	return cmd
 }
 
 func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o deckAddOpts) error {
-	// Acquiring the deck stays here — file paths and pasted URLs are
-	// frontend-shaped; everything after them is the shared capability. A dry
-	// run still acquires: a URL that 404s or a file that will not parse is
-	// exactly what the rehearsal is meant to find out.
+
 	var deck *decksource.Deck
 	var err error
 	switch {
@@ -109,12 +89,6 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 		return err
 	}
 
-	// The re-import gate: an existing deck's entries are replaced wholesale,
-	// so DeckAdd asks first. --refresh pre-answers for scripts; otherwise
-	// the terminal gets the same [y/N] every confirm in hoard speaks. A dry
-	// run is never asked at all — DeckAdd reports the collision instead —
-	// so --refresh alongside it is redundant rather than contradictory, and
-	// is accepted in silence the way import accepts --dry-run --again.
 	deps := addDeps(st)
 	if o.refresh {
 		deps.Confirm = func(string) bool { return true }
@@ -129,10 +103,7 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	}
 
 	r := env.Report()
-	// No "#%d" on a rehearsal: the deck was never created, so there is no id
-	// to name, and printing the zero one would invent a row that does not
-	// exist. Below the headline the two paths say the same things, except
-	// for the replacement warning only a rehearsal is in a position to give.
+
 	if o.dryRun {
 		r.Result("Would import deck %q (%s): %s resolved.",
 			res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
@@ -164,25 +135,6 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	return err
 }
 
-// readDeckFromStdin reads a decklist from a pipe, so the round trip import
-// recommends — export a deck to text, read it back — composes as one line
-// instead of needing a temporary file between the halves.
-//
-// The dash is refused without --name, and that is the decision this function
-// exists to hold. Everywhere else a dash is a straight substitution for the
-// path, but here the path is not only where the bytes come from: it is also
-// what the deck is called, and a deck's name is not cosmetic — deck remove
-// and deck repin take one, and browse lists it. A pipe carries no file name
-// and a decklist has no name inside it (export writes board headers, not a
-// title), so a dash would have to invent one. Naming a deck "-", or "stdin",
-// files it under something the user never said, which is the objection
-// add --binder already makes on the path that cannot honour it. --name
-// already exists for exactly this, so the refusal costs a flag rather than a
-// feature.
-//
-// Separate from importTextDeck deliberately: browse's file prompt calls that
-// one, and inside the TUI a dash names no stream the browser does not
-// already own.
 func readDeckFromStdin(name, source string) (*decksource.Deck, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, cli.Usagef("reading a decklist from stdin needs --name: " +
@@ -221,9 +173,6 @@ func newDeckRepinCmd(a *app) *cobra.Command {
 	}
 }
 
-// runDeckRepin re-points a deck's cards at the set it actually came from.
-// Name-only imports resolve to arbitrary printings — typically the newest —
-// which misattributes a precon's cards to sets it was never part of.
 func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, setCode string) error {
 	cat := openCatalog()
 	if cat != nil {
@@ -247,8 +196,7 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 		r.Detail("Run `hoard update-prices` to price the corrected printings.")
 	}
 	if len(res.Missing) > 0 {
-		// The set code sits mid-sentence, so the two halves that agree with
-		// the count are separated by it and cannot share one Plural call.
+
 		left := "were left untouched:"
 		if len(res.Missing) == 1 {
 			left = "was left untouched:"
@@ -291,7 +239,4 @@ func runDeckRemove(st *store.Store, env *cli.Env, ref string) error {
 	return nil
 }
 
-// cardResolver is the shared import pipeline (bulk lookup, name retry, finish
-// correction). One instance so tests can swap its Fetch for a fixture-backed
-// lookup and cover deck add and import through the same seam.
 var cardResolver = &resolve.Resolver{}

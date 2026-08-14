@@ -12,14 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// renderHelp writes one command's help at a fixed terminal shape, through the
-// real tree.
-//
-// buildRoot, not rootCommand plus a hand-assembled copy of the wiring around
-// it: the near-copy this replaced left out the two persistent flags buildRoot
-// registers, so every assertion here was made against a tree that had no --db
-// and no --json to render. That is the exact failure buildRoot's envFor
-// parameter exists to prevent, and this was the one caller not using it.
 func renderHelp(w io.Writer, env ui.Env, args ...string) {
 	root, _ := buildRoot(
 		&app{env: &cli.Env{Out: w, Err: w, OutEnv: env, ErrEnv: env}},
@@ -29,19 +21,6 @@ func renderHelp(w io.Writer, env ui.Env, args ...string) {
 	_ = root.Execute()
 }
 
-// helpPaths walks the real tree and returns the argv prefix of every page
-// help can render, root (the empty prefix) first.
-//
-// Walking beats a written-out list for the same reason the root help is
-// generated: a list is a second place to forget. A subcommand added tomorrow
-// is width-checked the day it is added, without anyone remembering to add it
-// here.
-//
-// `completion` is the one subtree left out. Its pages are cobra's own prose,
-// several paragraphs of shell instructions hoard neither wrote nor can reword,
-// so checking them would assert something about cobra rather than about
-// hoard's help. The root row that advertises the command is still checked,
-// because that line is rendered by writeRootHelp from the command's Short.
 func helpPaths(t *testing.T) [][]string {
 	t.Helper()
 	env := ui.Env{Width: 60, Clamp: true}
@@ -66,25 +45,6 @@ func helpPaths(t *testing.T) [][]string {
 	return paths
 }
 
-// Help is generated from the command tree, so a command that exists is a
-// command that appears — the hand-written table this replaced was a separate
-// var that nothing checked against the dispatch switch.
-//
-// It responds to the terminal's width: at 60 columns every line fits, with
-// names and descriptions truncated rather than run off the edge.
-//
-// Every page, not just root's. The table the root help draws is laid out by
-// ui.Table, which clamps; a command's own page is not — writeCommandHelp
-// copies Long and Example through verbatim, because they are prose someone
-// wrote by hand and wrapping them would break the alignment of the forms. So
-// the only thing keeping them inside the terminal is that someone counted,
-// and checking root alone checked the half that cannot fail. That gap let a
-// 69-column `deck add` example ship under a green suite; it was caught by an
-// ad-hoc sweep instead.
-//
-// Measure here, through renderHelp, and nowhere else: hoard does not read
-// COLUMNS, and piping the binary's help drops the TTY so detectEnv falls back
-// to 80 columns — a sweep run that way reports every line as fitting.
 func TestUsageFitsANarrowTerminal(t *testing.T) {
 	for _, path := range helpPaths(t) {
 		name := "hoard"
@@ -103,9 +63,6 @@ func TestUsageFitsANarrowTerminal(t *testing.T) {
 	}
 }
 
-// The root help now lists commands one line each rather than spelling out every
-// form of every command, which ran to 44 rows. Every command must still be
-// present, and the text must survive piping intact.
 func TestUsagePipedListsEveryCommand(t *testing.T) {
 	var b bytes.Buffer
 	renderHelp(&b, ui.Env{Width: 100})
@@ -118,7 +75,7 @@ func TestUsagePipedListsEveryCommand(t *testing.T) {
 		"add", "update-prices", "movers", "backfill-prices", "unpriced", "guessed",
 		"repair-finishes", "vacuum", "market", "report", "watch", "catalog",
 		"binder", "deck", "export", "import", "merge", "schema", "version",
-		"completion", // cobra's, and worth advertising
+		"completion",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("root help lost %q", want)
@@ -132,12 +89,6 @@ func TestUsagePipedListsEveryCommand(t *testing.T) {
 	}
 }
 
-// --db and --json are the whole of hoard's global surface, and the shipped
-// binary documented neither: the root help stopped after the command table and
-// every per-command page rendered LocalFlags, which is defined to exclude what
-// a parent declared. A user reading only --help could not learn that JSON
-// output existed, nor that --db is how you point hoard at a scratch database
-// instead of the real one.
 func TestGlobalFlagsAppearInHelp(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -145,19 +96,14 @@ func TestGlobalFlagsAppearInHelp(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		// Root is JSONCapable, and is where a reader goes to find out what
-		// exists at all, so it carries both.
+
 		{"root", nil, []string{"Global flags:", "--db", "--json"}, nil},
-		// A command that declared AnnotationJSON repeats --json, because there
-		// it works.
+
 		{"export", []string{"export"}, []string{"Global flags:", "--db", "--json"}, nil},
-		// A group whose bare form is a listing carries it too: `hoard binder`
-		// lists, and its ids are what --binder takes elsewhere.
+
 		{"binder", []string{"binder"}, []string{"Global flags:", "--db", "--json"}, nil},
 		{"binder list", []string{"binder", "list"}, []string{"Global flags:", "--db", "--json"}, nil},
-		// One that did not declare it must not advertise it: CheckJSON rejects
-		// `hoard add --json` outright, so printing it here would make help the
-		// only place in hoard that claims the flag is accepted.
+
 		{"add", []string{"add"}, []string{"Global flags:", "--db"}, []string{"--json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -178,9 +124,6 @@ func TestGlobalFlagsAppearInHelp(t *testing.T) {
 	}
 }
 
-// The forms the old root table carried now live in each command's own help,
-// which is the trade the two-level layout makes. If they were not reachable
-// there, the information would simply be gone.
 func TestPerCommandHelpCarriesTheForms(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
@@ -200,9 +143,9 @@ func TestPerCommandHelpCarriesTheForms(t *testing.T) {
 		{[]string{"export"}, []string{
 			"[--format csv|json|text|moxfield|archidekt]",
 		}},
-		// A ported command shows its real flags, which the legacy ones cannot.
+
 		{[]string{"movers"}, []string{"--since", "--limit", "how far back to compare"}},
-		// A group lists its subcommands.
+
 		{[]string{"binder"}, []string{"rename", "Rename a binder", "rm", "Remove an empty binder"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {

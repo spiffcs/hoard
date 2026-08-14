@@ -1,13 +1,7 @@
 package browse
 
-// The watches screen as three tables: OVERS, UNDERS and the UNPRICED
-// holdings that used to be a view of their own. The negative controls are
-// the point of this file — a table that renders somebody else's rows is
-// the failure this change is most likely to introduce, so every assertion
-// here is about which section a row landed in, not merely that it rendered
-// somewhere.
-
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -16,24 +10,16 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// watchOn builds a watch row in one direction. Op is the raw column the
-// store writes; "under" and "over" are the only two validateWatch admits.
 func watchOn(name, id, set, op string, threshold float64, price *float64) store.WatchStatus {
 	w := store.WatchStatus{Name: name, SetCode: set, CollectorNumber: "1", PriceUSD: price}
-	w.ScryfallID, w.Finish, w.Op, w.Threshold = id, "nonfoil", op, threshold
+	w.ScryfallID, w.Finish, w.Op, w.Threshold = id, finish.Nonfoil, op, threshold
 	return w
 }
 
-// shownWatches is every watch on screen across the two watch tables — the
-// count the old single-table m.watches used to carry, for the tests that
-// only care that a row survived the container or set filter. Which table it
-// landed in is the negative controls' business.
 func shownWatches(m Model) []store.WatchStatus {
 	return append(append([]store.WatchStatus(nil), m.overs...), m.unders...)
 }
 
-// threeTableStore seeds one row for each of the three tables, with names,
-// sets and ids pairwise distinct so a leak between sections is visible.
 func threeTableStore() *fakeStore {
 	st := testStore()
 	st.watches = []store.WatchStatus{
@@ -42,13 +28,11 @@ func threeTableStore() *fakeStore {
 	}
 	st.unpriced = []store.UnpricedRow{{
 		ScryfallID: "unpriced-id", Name: "Nopricehere", SetCode: "ccc",
-		CollectorNumber: "3", Finish: "foil", Copies: 2, HeldIn: "Collection",
+		CollectorNumber: "3", Finish: finish.Foil, Copies: 2, HeldIn: "Collection",
 	}}
 	return st
 }
 
-// onWatches puts the model on the watches screen, at All Cards, in a window
-// tall enough for three tables to show a row each.
 func onWatches(t *testing.T, st *fakeStore) Model {
 	t.Helper()
 	m := atAllCards(t, newTestModel(t, st))
@@ -61,7 +45,6 @@ func onWatches(t *testing.T, st *fakeStore) Model {
 	return m
 }
 
-// THE SHAPE: one screen, three headings, in the owner's order.
 func TestWatchesScreenHasThreeTables(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	out := m.View()
@@ -77,9 +60,6 @@ func TestWatchesScreenHasThreeTables(t *testing.T) {
 	}
 }
 
-// THE NEGATIVE CONTROL: each row renders under its own heading and nowhere
-// else. An over listed under UNDERS, or an unpriced holding listed as a
-// watch, is the way this change fails.
 func TestWatchesTablesDoNotLeakRows(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	out := m.View()
@@ -104,8 +84,6 @@ func TestWatchesTablesDoNotLeakRows(t *testing.T) {
 	}
 }
 
-// The unpriced view is gone from the 'v' cycle: four presses from holdings
-// come back to holdings.
 func TestUnpricedIsNoLongerItsOwnView(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	(&m).showView(viewHoldings)
@@ -124,13 +102,11 @@ func TestUnpricedIsNoLongerItsOwnView(t *testing.T) {
 	}
 }
 
-// An empty table keeps its heading over a note: two empty sections must
-// read as empty tables, not as a broken screen.
 func TestWatchesEmptyTablesKeepTheirHeadings(t *testing.T) {
 	st := testStore()
 	st.unpriced = []store.UnpricedRow{{
 		ScryfallID: "unpriced-id", Name: "Nopricehere", SetCode: "ccc",
-		CollectorNumber: "3", Finish: "foil", Copies: 2, HeldIn: "Collection",
+		CollectorNumber: "3", Finish: finish.Foil, Copies: 2, HeldIn: "Collection",
 	}}
 	m := onWatches(t, st)
 	out := m.View()
@@ -141,8 +117,6 @@ func TestWatchesEmptyTablesKeepTheirHeadings(t *testing.T) {
 	}
 }
 
-// `/` narrows all three tables through the same grammar the holdings pane
-// uses — the defect fixed for movers in 1515cd1, extended here.
 func TestWatchesFilterNarrowsEveryTable(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	m = typeFilter(m, "under")
@@ -161,8 +135,6 @@ func TestWatchesFilterNarrowsEveryTable(t *testing.T) {
 	}
 }
 
-// A term no row on this screen can answer says so rather than quietly
-// selecting nothing — the unsupportedOnMovers idiom.
 func TestWatchesFilterRefusesValueTerm(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	m = typeFilter(m, "value>1")
@@ -174,9 +146,6 @@ func TestWatchesFilterRefusesValueTerm(t *testing.T) {
 	}
 }
 
-// The cursor spans three tables of two different row types, so the
-// selection helpers must disambiguate: a watch row is a watch, an unpriced
-// row is not, and enter opens the card either way.
 func TestWatchesCursorDisambiguatesRowTypes(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	if w := m.selectedWatch(); w == nil || w.Name != "Overseer" {
@@ -185,8 +154,8 @@ func TestWatchesCursorDisambiguatesRowTypes(t *testing.T) {
 	if r := m.selectedUnpricedRow(); r != nil {
 		t.Errorf("selectedUnpricedRow on a watch row = %+v, want nil", r)
 	}
-	m = key(m, "down") // Underling
-	m = key(m, "down") // Nopricehere
+	m = key(m, "down")
+	m = key(m, "down")
 	if w := m.selectedWatch(); w != nil {
 		t.Errorf("selectedWatch on an unpriced row = %+v, want nil", w)
 	}
@@ -201,10 +170,6 @@ func TestWatchesCursorDisambiguatesRowTypes(t *testing.T) {
 	}
 }
 
-// The data model puts no card in one table only: watches key on
-// (scryfall_id, finish, op), so one printing can carry both a rise alert and
-// a fall alert at once. Both are real, and each belongs under its own
-// heading — one row in OVERS and one in UNDERS, not a duplicate.
 func TestOneCardCanSitInBothWatchTables(t *testing.T) {
 	st := testStore()
 	st.watches = []store.WatchStatus{
@@ -225,8 +190,7 @@ func TestOneCardCanSitInBothWatchTables(t *testing.T) {
 	if got := strings.Count(out, "$20.00"); got != 1 {
 		t.Errorf("the fall threshold rendered %d times, want once", got)
 	}
-	// Both rows are reachable and each is its own watch — removing one must
-	// not be ambiguous about which.
+
 	if w := m.selectedWatch(); w == nil || w.Threshold != 60 {
 		t.Fatalf("cursor at rest = %v, want the over", w)
 	}
@@ -236,9 +200,6 @@ func TestOneCardCanSitInBothWatchTables(t *testing.T) {
 	}
 }
 
-// Each table keeps its own sort: 's' acts on the table the cursor is in and
-// leaves the other two exactly as they were. Before the three-table screen,
-// one sort spoke for one list; this is the property that replaces it.
 func TestWatchSortIsPerTable(t *testing.T) {
 	st := testStore()
 	st.watches = []store.WatchStatus{
@@ -250,11 +211,10 @@ func TestWatchSortIsPerTable(t *testing.T) {
 	m := onWatches(t, st)
 	before := []string{m.unders[0].Name, m.unders[1].Name}
 
-	// The cursor starts in OVERS; sort it by name.
 	if sec, _ := m.watchCursorPos(); sec != secOvers {
 		t.Fatalf("cursor starts in %v, want OVERS", sec)
 	}
-	m = key(m, "s") // state → name
+	m = key(m, "s")
 	if m.sortLabel() != "OVERS · name" {
 		t.Fatalf("label = %q, want the sorted table named", m.sortLabel())
 	}
@@ -265,7 +225,7 @@ func TestWatchSortIsPerTable(t *testing.T) {
 		t.Errorf("UNDERS moved under a sort aimed at OVERS: %v → %v/%v",
 			before, m.unders[0].Name, m.unders[1].Name)
 	}
-	// ] moves to UNDERS, and 's' there leaves OVERS alone.
+
 	m = key(m, "]")
 	if sec, _ := m.watchCursorPos(); sec != secUnders {
 		t.Fatalf("] landed in %v, want UNDERS", sec)
@@ -277,7 +237,7 @@ func TestWatchSortIsPerTable(t *testing.T) {
 	if m.overs[0].Name != "Abe" {
 		t.Errorf("OVERS lost its own order: %s first", m.overs[0].Name)
 	}
-	// And ] again reaches the third table, whose cycle is a different one.
+
 	m = key(m, "]")
 	if sec, _ := m.watchCursorPos(); sec != secUnpriced {
 		t.Errorf("] landed in %v, want UNPRICED", sec)

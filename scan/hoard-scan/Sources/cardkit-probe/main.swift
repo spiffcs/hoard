@@ -1,20 +1,3 @@
-// cardkit-probe — run CardKit over an image file and print the result.
-//
-// CardKit runs on the phone, which makes it awkward to measure. This is the same
-// code built for macOS and pointed at a file, so a read can be scored without a
-// phone in the loop. It is what drives both offline harnesses:
-//
-//     make cardkit-score    # scan/corpus, the labelled accuracy table
-//     make scan-check       # scan/fixtures, real photographs against goldens
-//
-// It emits ScanWire's `scan` event — the same shape the phone sends the Mac —
-// so the harnesses read one format whatever produced it.
-//
-// It began as an adapter for comparing this pipeline against the macOS helper's
-// on the same ground truth. That comparison is over: the helper's reader was
-// deleted with the Continuity Camera path it served, and this is now the only
-// reader there is to score.
-
 import CardKit
 import CoreGraphics
 import Foundation
@@ -39,15 +22,9 @@ func writePNG(_ image: CGImage, to path: String) {
     guard CGImageDestinationFinalize(dest) else { die("could not write \(path)") }
 }
 
-/// The whole program, in a function so its availability can be annotated. Top
-/// level code cannot be, and a `guard #available` there does not narrow what
-/// follows it.
 @available(macOS 15, *)
 func run() async -> Never {
     let args = Array(CommandLine.arguments.dropFirst())
-    // --bench reads a directory in one process. The per-image mode launches a
-    // process per card, which is right for scoring but useless for timing: the
-    // launch costs more than the read it is trying to measure.
     if let b = args.firstIndex(of: "--bench"), b + 1 < args.count {
         await bench(dir: args[b + 1])
     }
@@ -57,7 +34,6 @@ func run() async -> Never {
     if let m = args.firstIndex(of: "--score"), m + 1 < args.count {
         await score(manifest: args[m + 1], misses: args.contains("--misses"))
     }
-    // The foil-sparkle corpus: fit the template, and score it back.
     if let f = args.firstIndex(of: "--sparkle-fit"), f + 2 < args.count {
         var only: String? = nil
         if let s = args.firstIndex(of: "--only-session"), s + 1 < args.count {
@@ -77,30 +53,18 @@ func run() async -> Never {
         sparkleScoreCorpus(dir: args[s + 1], verbose: args.contains("--cards"),
                            onlySession: only)
     }
-    // --sparkle-where re-runs the marker search over a deliberately wide window
-    // and reports where the peak actually is, against the shipping window's
-    // answer. Diagnosis only, never a verdict: `SparkleWindow` is overridable
-    // for exactly this, because a score taken at the edge of the fitted window
-    // cannot say whether the marker is faint or merely outside.
     if let s = args.firstIndex(of: "--sparkle-chroma-trial"), s + 1 < args.count {
         sparkleChromaTrial(dir: args[s + 1])
     }
     if let s = args.firstIndex(of: "--sparkle-where"), s + 1 < args.count {
         await sparkleWhere(path: args[s + 1])
     }
-    // --credit-anchor measures the band's text-row boxes against the sparkle
-    // peak, per still — the fitting data for text-anchored marker search.
     if let s = args.firstIndex(of: "--credit-anchor"), s + 1 < args.count {
         await creditAnchor(path: args[s + 1])
     }
-    // --sparkle-shape scores the binarised patch against the binarised
-    // template — the shape-channel experiment. Diagnosis only.
     if let s = args.firstIndex(of: "--sparkle-shape"), s + 1 < args.count {
         await sparkleShape(path: args[s + 1])
     }
-    // --sparkle-control scores the marker patch against two markerless control
-    // patches on the same row — the exposure-invariance experiment. Diagnosis
-    // only, never a verdict.
     if let s = args.firstIndex(of: "--sparkle-control"), s + 1 < args.count {
         await sparkleControl(path: args[s + 1])
     }
@@ -117,20 +81,10 @@ func run() async -> Never {
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
     else { die("could not read image: \(path)") }
 
-    // The orientation tag is baked into the pixels before anything reads them,
-    // the same normalisation the live path does — applying it twice puts the
-    // title at the bottom.
     let orientation = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
         .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
         .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
 
-    // --emit-sparkle writes the foil marker's neighbourhood from the located,
-    // perspective-flattened card: the sparkle search window plus a context
-    // margin wide enough to absorb the V drift the live reader corrects for.
-    // It is the classifier training set's raw material — the crop is what the
-    // reader itself would judge, extracted by the same geometry, so the model
-    // trains on exactly the reader's view and nothing flattering. Exit 4,
-    // distinct from 3's "nothing readable", means no card was located to emit.
     let emitSparkle = flagValue(args, "--emit-sparkle")
     if emitSparkle != nil {
         guard let card = locateCard(uprighted(cg, orientation)) else { exit(4) }
@@ -148,13 +102,6 @@ func run() async -> Never {
     }
 
     let reading = await readCard(uprighted(cg, orientation))
-    // --border prints what the border reader saw, verdict or not.
-    //
-    // The scan event carries only the colour, which is right for the wire and
-    // useless for diagnosis: a card that abstains looks identical to one never
-    // asked. Every gate's number rides along here so a fixture can be argued
-    // about from the numbers rather than from a hypothesis — which is what the
-    // white-on-white failures needed and did not have.
     if args.contains("--border") {
         let b = reading.border
         let out: [String: Any] = [
@@ -167,9 +114,6 @@ func run() async -> Never {
             "cardHeightPx": b.cardHeightPx,
             "borderMS": reading.timings.border,
             "horizontalAnchor": b.horizontalAnchor,
-            // The sparkle rides along because diagnosing a finish means seeing
-            // both: a card can read a perfect border and no marker, or the
-            // reverse, and the two are measured off different pixels.
             "sparkleScore": reading.sparkle?.luma.map { Double($0.score) } ?? -9,
             "sparkleOffsetU": reading.sparkle?.luma.map { Double($0.offsetU) } ?? 0,
             "sparkleOffsetV": reading.sparkle?.luma.map { Double($0.offsetV) } ?? 0,
@@ -189,23 +133,10 @@ func run() async -> Never {
         }
         exit(b.color == nil ? 3 : 0)
     }
-    // Through ScanWire's emit, so this speaks the identical dialect the helper
-    // does rather than a probe-shaped approximation of it.
     emit(reading.scanEvent(rotation: rotation))
     exit(reading.title.isEmpty ? 3 : 0)
 }
 
-/// score replays the labelled corpus in one process.
-///
-/// Same rules as `scan/corpus/score.py` — lenient on the name because the job
-/// is to hand fuzzy matching something it can land, strict on the number,
-/// with an empty number counting as correct before 1998 when cards printed
-/// none. Kept in step with that file deliberately: this is the fast path, not
-/// a second opinion.
-///
-/// It exists because `sweep.sh` spends its time launching 231 processes rather
-/// than reading 231 cards, which made the one loop that guards against
-/// accuracy regressions the slowest loop in the project.
 @available(macOS 15, *)
 func score(manifest: String, misses: Bool) async -> Never {
     let dir = URL(fileURLWithPath: manifest).deletingLastPathComponent()
@@ -217,9 +148,6 @@ func score(manifest: String, misses: Bool) async -> Never {
     }
 
     var foreignTotal = 0, foreignNameOK = 0, foreignNumOK = 0
-    // The language read, scored against the manifest's own lang column across
-    // every card — English included, since claiming a foreign language for an
-    // English card is the failure that would send a scan to the wrong printing.
     var langAsked = 0, langAnswered = 0, langRight = 0
     var langWrong: [String] = []
     var borderAsked = 0, borderAnswered = 0, borderRight = 0
@@ -232,9 +160,6 @@ func score(manifest: String, misses: Bool) async -> Never {
 
     for row in text.split(separator: "\n").dropFirst() {
         let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        // Manifest columns: sid, era, border, name, set, number, rel, lang —
-        // the set sits between the name and the number, which is easy to skip
-        // past, and lang was appended later so older manifests lack it.
         guard f.count >= 6 else { continue }
         let (sid, era, border, wantName, wantNum) = (f[0], f[1], f[2], f[3], f[5])
         let lang = f.count >= 8 ? f[7] : "en"
@@ -247,10 +172,6 @@ func score(manifest: String, misses: Bool) async -> Never {
 
         let r = await readCard(uprighted(cg, orientation))
         times.append(r.timings.total)
-        // Border scoring, against the manifest's own border column. The reader
-        // may only claim white/black/gold/silver, so anything else in the
-        // ground truth (borderless, yellow) is counted as "not asked" rather
-        // than as a miss it could never have avoided.
         if ["white", "black", "gold", "silver"].contains(border) {
             borderAsked += 1
             let cover = r.cardBox.map { Double($0.width * $0.height) } ?? 0
@@ -280,10 +201,6 @@ func score(manifest: String, misses: Bool) async -> Never {
         let numOK = r.printing.number == wantNum
             || (era == "pre1998" && r.printing.number.isEmpty)
 
-        // Language, scored on every card. It is the signal that separates a
-        // foreign-only printing from its English namesake — war/97 and war/97★
-        // share a set and a number — so a wrong answer costs a whole printing,
-        // and silence is the safe failure the parent already treats as such.
         langAsked += 1
         if let read = scryfallLanguage(r.printing.language) {
             langAnswered += 1
@@ -291,16 +208,6 @@ func score(manifest: String, misses: Bool) async -> Never {
             else { langWrong.append("  \(wantName): said \(read), is \(lang)") }
         }
 
-        // Non-English printings are scored apart, not counted as failures.
-        //
-        // Their images are Italian, Spanish, Japanese cards; the manifest holds
-        // the *English* name because that is what the catalog is keyed on. A
-        // perfect read of "Miniera a Cielo Aperto" was being marked a failure
-        // to read "Strip Mine" — a fifth of all name misses, and most of why
-        // pre-1998 black looked 35 points worse than its white sibling.
-        //
-        // Reading them properly is its own piece of work. Until then the
-        // headline answers "how well does this read the cards it is for".
         if lang != "en" {
             foreignTotal += 1
             if nameOK { foreignNameOK += 1 }
@@ -319,8 +226,6 @@ func score(manifest: String, misses: Bool) async -> Never {
         }
     }
 
-    // Plain padding rather than String(format:) — "%s" there expects a C
-    // string and hands a Swift String straight to a segfault.
     func pad(_ s: String, _ n: Int) -> String {
         s.count >= n ? s : s + String(repeating: " ", count: n - s.count)
     }
@@ -353,8 +258,6 @@ func score(manifest: String, misses: Bool) async -> Never {
     print(pad("ALL", 24) + pad("\(totals.n)", 6) + pad(pct(totals.name, totals.n), 8)
         + pct(totals.num, totals.n)
         + "   (median read " + String(format: "%.0f", med) + "ms)")
-    // The two numbers that decide whether a border may ever settle a printing:
-    // how often it answers at all, and how often it is right when it does.
     let cover = borderAsked == 0 ? 0 : 100 * borderAnswered / borderAsked
     let acc = borderAnswered == 0 ? 0 : 100 * borderRight / borderAnswered
     print("border: asked \(borderAsked), answered \(borderAnswered) (\(cover)%), "
@@ -377,9 +280,6 @@ func score(manifest: String, misses: Bool) async -> Never {
     exit(0)
 }
 
-/// flatten writes what the reader actually sees: the perspective-corrected
-/// card, not the photograph. Every border question is asked of these pixels, so
-/// looking at the photograph instead is looking at the wrong image.
 @available(macOS 15, *)
 func flatten(dir: String, out: String) async -> Never {
     try? FileManager.default.createDirectory(
@@ -391,10 +291,6 @@ func flatten(dir: String, out: String) async -> Never {
     for (i, url) in urls.enumerated() {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { continue }
-        // Phone stills arrive in sensor orientation with no EXIF tag, so the
-        // tag says .up and the pixels are a quarter turn out. The live read
-        // applies .right before anything looks at them; a fixture that does not
-        // is a picture of a sideways card, which no aspect check will accept.
         let tagged = CGImageSourceCopyPropertiesAtIndex(src, 0, nil)
             .flatMap { ($0 as NSDictionary)[kCGImagePropertyOrientation] as? UInt32 }
             .flatMap { CGImagePropertyOrientation(rawValue: $0) }
@@ -415,8 +311,6 @@ func flatten(dir: String, out: String) async -> Never {
             CGImageDestinationAddImage(d, card.image, nil)
             CGImageDestinationFinalize(d)
         }
-        // Both readers on the same pixels, so they can be scored side by side
-        // against the same labels rather than across separate runs.
         let r = await readCard(up)
         print(String(format: "%d\tset=%@\tnum=%@\tfinish=%@\tyear=%@\trecovered=%@\t%@",
                      i + 1,

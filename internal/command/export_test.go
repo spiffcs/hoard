@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// exportStore builds a hoard with a card in the default binder, a foil of the
-// same printing in a second binder, and an unpriced card in a deck — enough to
-// exercise container labels, finish pricing, and the nil-price cell.
 func exportStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
@@ -24,14 +22,14 @@ func exportStore(t *testing.T) *store.Store {
 
 	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125", Name: "Sol Ring",
 		ScryfallURL: "http://x", PriceUSD: f(2), PriceUSDFoil: f(12.5)}
-	if err := st.AddCardFinish(sol, "nonfoil", 2); err != nil {
+	if err := st.AddCardFinish(sol, finish.Nonfoil, 2); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	trade, err := st.CreateBinder("Trade")
 	if err != nil {
 		t.Fatalf("CreateBinder: %v", err)
 	}
-	if err := st.AddCardFinishTo(trade, sol, "foil", 1); err != nil {
+	if err := st.AddCardFinishTo(trade, sol, finish.Foil, 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
 
@@ -41,7 +39,7 @@ func exportStore(t *testing.T) *store.Store {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := st.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
-		[]store.Entry{{ScryfallID: "rem", Finish: "nonfoil", Board: "main", Quantity: 1}}); err != nil {
+		[]store.Entry{{ScryfallID: "rem", Finish: finish.Nonfoil, Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 	return st
@@ -97,8 +95,6 @@ func TestCmdExportRejectsBadFlagCombos(t *testing.T) {
 	}
 }
 
-// TestCmdExportJSON walks the whole wiring — store, row assembly, canonical
-// sort, document envelope — and pins the exact bytes a script consumes.
 func TestCmdExportJSON(t *testing.T) {
 	st := exportStore(t)
 	out := filepath.Join(t.TempDir(), "out.json")
@@ -164,11 +160,6 @@ func TestCmdExportJSON(t *testing.T) {
 	}
 }
 
-// The bug this format exists for: a deck could be exported and never restored.
-// `import` skips deck rows on purpose and `deck add --file` reads text
-// decklists only, which nothing emitted — so this is the whole loop, both real
-// commands, asserting that the cards, their counts, their printings, their
-// finishes and their boards all come home.
 func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
 	src := importStore(t)
 	cards := importFixtures()
@@ -178,9 +169,9 @@ func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
 	}
 	if _, err := src.UpsertDeck(store.DeckMeta{Name: "Fish", Source: "manual", SourceID: "deck:fish"},
 		[]store.Entry{
-			{ScryfallID: "sol-id-1", Finish: "foil", Board: "main", Quantity: 1},
-			{ScryfallID: "bolt-id-1", Finish: "nonfoil", Board: "main", Quantity: 4},
-			{ScryfallID: "remora-id-1", Finish: "nonfoil", Board: "commander", Quantity: 1},
+			{ScryfallID: "sol-id-1", Finish: finish.Foil, Board: "main", Quantity: 1},
+			{ScryfallID: "bolt-id-1", Finish: finish.Nonfoil, Board: "main", Quantity: 4},
+			{ScryfallID: "remora-id-1", Finish: finish.Nonfoil, Board: "commander", Quantity: 1},
 		}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
@@ -194,8 +185,7 @@ func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	// Read back into a *different* database, because that is what a restore
-	// is: the source hoard is gone and only the file is left.
+
 	dst := importStore(t)
 	if _, err := execCmd(context.Background(), dst,
 		[]string{"deck", "add", "--file", file, "--name", "RoundTrip"}, false); err != nil {
@@ -216,7 +206,7 @@ func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
 	}
 	got := make(map[string]held, len(entries))
 	for _, e := range entries {
-		got[e.Card.Name] = held{e.Finish, e.Board, e.Quantity}
+		got[e.Card.Name] = held{e.Finish.String(), e.Board, e.Quantity}
 	}
 	want := map[string]held{
 		"Sol Ring":       {"foil", "main", 1},
@@ -233,15 +223,12 @@ func TestCmdExportTextRoundTripsThroughDeckAdd(t *testing.T) {
 	}
 }
 
-// --format text writes a file `deck add --file` turns into exactly one deck,
-// so an unscoped export would restore as one deck holding every deck's cards.
-// It has to be a usage error rather than a merge.
 func TestCmdExportTextRefusesMoreThanOneContainer(t *testing.T) {
 	st := exportStore(t)
 	if _, err := execCmd(context.Background(), st, []string{"export", "--format", "text"}, false); err == nil {
 		t.Error("hoard export --format text over the whole collection succeeded, want a usage error")
 	}
-	// Scoped to one container it is exactly the file the reader wants.
+
 	out, err := execCmd(context.Background(), st, []string{"export", "--deck", "Fish", "--format", "text"}, false)
 	if err != nil {
 		t.Fatalf("hoard export --deck Fish --format text: %v", err)
@@ -251,15 +238,10 @@ func TestCmdExportTextRefusesMoreThanOneContainer(t *testing.T) {
 	}
 }
 
-// A scope flag given twice used to take the last one without a word, so
-// `--deck A --deck B` answered with B's container alone: a smaller document
-// that is a plausible answer to a question nobody asked. Both names exist and
-// both hold cards here, because a repeat whose second name is a typo errors on
-// its own and hides the defect.
 func TestCmdExportRefusesARepeatedScopeFlag(t *testing.T) {
 	st := exportStore(t)
 	if _, err := st.UpsertDeck(store.DeckMeta{Name: "Goblins", Source: "manual", SourceID: "deck:goblins"},
-		[]store.Entry{{ScryfallID: "sol", Finish: "nonfoil", Board: "main", Quantity: 1}}); err != nil {
+		[]store.Entry{{ScryfallID: "sol", Finish: finish.Nonfoil, Board: "main", Quantity: 1}}); err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
 	}
 	for _, args := range [][]string{
@@ -277,9 +259,6 @@ func TestCmdExportRefusesARepeatedScopeFlag(t *testing.T) {
 	}
 }
 
-// The clean case the refusal must not touch: one --deck writes exactly the
-// bytes it always wrote. Asserted whole rather than by substring, because the
-// risk a validation change carries is refusing something that used to work.
 func TestCmdExportOneScopeFlagIsUnchanged(t *testing.T) {
 	st := exportStore(t)
 	got := mustExec(t, context.Background(), st, []string{"export", "--deck", "Fish"})
@@ -293,7 +272,6 @@ func TestCmdExportOneScopeFlagIsUnchanged(t *testing.T) {
 	}
 }
 
-// --json with a foreign --format is a contradiction, not a precedence puzzle.
 func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
 	st := exportStore(t)
 	if _, err := execCmd(context.Background(), st, []string{"export", "--format", "moxfield"}, true); err == nil {
@@ -301,11 +279,6 @@ func TestCmdExportJSONConflictsWithForeignFormat(t *testing.T) {
 	}
 }
 
-// An explicit --format csv alongside --json is the same contradiction as
-// --format moxfield: the user named two output shapes. It used to be
-// indistinguishable from the default because the reconciliation tested the
-// flag's value rather than whether it was set, so a script that says
-// --format csv and inherits --json from a wrapper got JSON without a word.
 func TestCmdExportJSONConflictsWithExplicitCSV(t *testing.T) {
 	st := exportStore(t)
 	out, err := execCmd(context.Background(), st, []string{"export", "--format", "csv"}, true)
@@ -317,8 +290,6 @@ func TestCmdExportJSONConflictsWithExplicitCSV(t *testing.T) {
 	}
 }
 
-// The two non-contradictions still stand: --json alone is the JSON document,
-// and --format json --json says one thing twice.
 func TestCmdExportJSONAgreesWithItself(t *testing.T) {
 	st := exportStore(t)
 	bare, err := execCmd(context.Background(), st, []string{"export"}, true)

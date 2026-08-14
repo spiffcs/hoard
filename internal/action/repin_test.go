@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// fakePrints answers SearchPrints from a fixture map of name → printings.
 type fakePrints struct {
 	prints map[string][]scryfall.Card
 }
@@ -19,9 +19,6 @@ func (f fakePrints) SearchPrints(_ context.Context, name string) ([]scryfall.Car
 	return f.prints[name], nil
 }
 
-// RepinDeck re-points off-set printings at the named set, counts the ones
-// already there, reports the names the set never printed, and picks the
-// lowest collector number when the set printed a name more than once.
 func TestRepinDeck(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {
@@ -42,10 +39,10 @@ func TestRepinDeck(t *testing.T) {
 	}
 	deckID, err := st.UpsertDeck(store.DeckMeta{Name: "Guided by Nature", Source: "text", SourceID: "gbn"},
 		[]store.Entry{
-			{ScryfallID: "we-hob", Finish: "nonfoil", Board: "main", Quantity: 1},
-			{ScryfallID: "sol-cma", Finish: "nonfoil", Board: "main", Quantity: 1},
-			{ScryfallID: "odd-mh3", Finish: "nonfoil", Board: "main", Quantity: 1},
-			{ScryfallID: "forest-fdn", Finish: "nonfoil", Board: "main", Quantity: 5},
+			{ScryfallID: "we-hob", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
+			{ScryfallID: "sol-cma", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
+			{ScryfallID: "odd-mh3", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
+			{ScryfallID: "forest-fdn", Finish: finish.Nonfoil, Board: "main", Quantity: 5},
 		})
 	if err != nil {
 		t.Fatalf("UpsertDeck: %v", err)
@@ -57,8 +54,8 @@ func TestRepinDeck(t *testing.T) {
 			{ID: "we-cma", Set: "cma", CollectorNumber: "154", Name: "Wood Elves", ScryfallURL: "http://x"},
 		},
 		"Sol Ring": {solRight},
-		"Oddball":  {oddball}, // no cma printing exists
-		"Forest": { // two cma basics: the lowest collector number wins
+		"Oddball":  {oddball},
+		"Forest": {
 			{ID: "forest-cma2", Set: "cma", CollectorNumber: "300", Name: "Forest", ScryfallURL: "http://x"},
 			{ID: "forest-cma1", Set: "cma", CollectorNumber: "299", Name: "Forest", ScryfallURL: "http://x"},
 			forest,
@@ -94,7 +91,6 @@ func TestRepinDeck(t *testing.T) {
 		}
 	}
 
-	// A second run is a no-op: everything resolvable is already on the set.
 	res, err = RepinDeck(context.Background(), st, prints, "Guided by Nature", "cma")
 	if err != nil {
 		t.Fatalf("second RepinDeck: %v", err)

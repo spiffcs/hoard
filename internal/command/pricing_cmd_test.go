@@ -10,13 +10,10 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// pricedStore holds two priced cards and nothing unpriced, so a refresh
-// touches no gap-fill network path.
 func pricedStore(t *testing.T) *store.Store {
 	t.Helper()
 	st := exportStore(t)
-	// exportStore's Mystic Remora is unpriced; price it so FillGaps stays
-	// offline (a gap would send the test to MTGJSON).
+
 	rem := scryfall.Card{ID: "rem", Set: "ice", CollectorNumber: "78",
 		Name: "Mystic Remora", ScryfallURL: "http://y", PriceUSD: f(4)}
 	if err := st.UpsertPrintings([]scryfall.Card{rem}); err != nil {
@@ -25,13 +22,6 @@ func pricedStore(t *testing.T) *store.Store {
 	return st
 }
 
-// The stdout lock for update-prices: these bytes are the piped contract, and
-// the action migration must never change them.
-//
-// The summary sentence has moved once since, deliberately: it now names the
-// population it counted over, because a printing needs a price recorded at or
-// before the cutoff to have a baseline at all and the old wording reported
-// that shortfall as stillness. See report.Movers. No figure changed.
 func TestRunUpdatePricesStdoutGolden(t *testing.T) {
 	st := pricedStore(t)
 	stubFetch(t, watchCard(), scryfall.Card{ID: "rem", Set: "ice", CollectorNumber: "78",

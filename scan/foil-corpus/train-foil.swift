@@ -1,20 +1,4 @@
 #!/usr/bin/env swift
-// Train the foil/nonfoil marker-patch classifier, held-out by rig.
-//
-//   swift train-foil.swift s9            train on the other rigs, score on s9
-//   swift train-foil.swift all out.mlmodel   train on everything, save the artifact
-//
-// The held-out form is the ship-gate: the chroma score looked perfect until it
-// was scored on a rig it was not fitted on, and then it ranked the classes
-// backwards. A model only ships if every rig, held out in turn, comes back
-// with zero false-foils — the operator's standing constraint. Accuracy on the
-// training rigs proves memorisation, not the model.
-//
-// CreateML rather than anything heavier: transfer learning off the OS's
-// feature extractor works at this corpus size (~120 crops), trains in minutes
-// on this Mac, needs no services, and emits a CoreML artifact both the phone
-// and cardkit-probe can run in single-digit milliseconds.
-
 import CreateML
 import Foundation
 
@@ -37,9 +21,6 @@ guard heldOut == "all" || rigs.contains(heldOut) else {
     exit(2)
 }
 
-// Merge the training rigs into one class-per-directory tree via symlinks —
-// MLImageClassifier reads one root, the corpus keeps rigs separate on disk so
-// holding one out stays possible.
 let work = fm.temporaryDirectory.appendingPathComponent("hoard-foil-train-\(UUID().uuidString)")
 defer { try? fm.removeItem(at: work) }
 for cls in ["foil", "nonfoil"] {
@@ -58,8 +39,6 @@ for rig in rigs where heldOut == "all" || rig != heldOut {
 }
 
 var params = MLImageClassifier.ModelParameters()
-// Augmentation stands in for the corpus the rigs have not photographed yet:
-// exposure and blur are exactly the axes the rigs differ on.
 params.augmentationOptions = [.exposure, .blur, .rotation]
 params.maxIterations = 25
 
@@ -78,11 +57,6 @@ if heldOut == "all" {
     exit(0)
 }
 
-// Score the held-out rig through the compiled CoreML model so every crop
-// gets a calibrated p(foil), not just the argmax label — the argmax study
-// measured 4/33 held-out nonfoils reading foil, and whether a probability
-// bar can buy them back is exactly what `sweep-threshold.py` decides from
-// the PROB lines emitted here.
 import CoreML
 import Vision
 
@@ -108,7 +82,6 @@ for cls in ["foil", "nonfoil"] {
     for f in files where f.hasSuffix(".png") {
         total += 1
         guard let p = pFoil(dir.appendingPathComponent(f)) else { continue }
-        // PROB <rig> <truth> <p(foil)> <file> — the sweep's input.
         print(String(format: "PROB\t%@\t%@\t%.4f\t%@", heldOut, cls, p, f))
         let got = p >= 0.5 ? "foil" : "nonfoil"
         if got == cls {

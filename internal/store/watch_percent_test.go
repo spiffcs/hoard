@@ -1,30 +1,22 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// The present these tests measure against, and a date comfortably before every
-// window they open, so a series can be made to reach back past its own window
-// the way a real printing's record does.
 const (
 	testNow   = "2026-08-10T21:00:00Z"
 	longAgo   = "2026-06-01T00:00:00Z"
 	beforeNow = "2026-08-09T00:00:00Z"
 )
 
-// fixtureSource is the vendor a percent watch on the shared fixture card
-// anchors on: ulamog() carries Scryfall prices, so that is where its effective
-// price comes from, and the anchor follows the effective price.
 const fixtureSource = "scryfall"
 
-// observe writes one price observation straight into history, which is what
-// update-prices leaves behind. The source is the anchored one unless a test is
-// specifically about a vendor the anchor should ignore.
-func observe(t *testing.T, s *Store, finish string, price float64, asOf string, source ...string) {
+func observe(t *testing.T, s *Store, fin finish.Finish, price float64, asOf string, source ...string) {
 	t.Helper()
 	src := fixtureSource
 	if len(source) > 0 {
@@ -32,25 +24,19 @@ func observe(t *testing.T, s *Store, finish string, price float64, asOf string, 
 	}
 	if _, err := s.db.Exec(
 		`INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
-		 VALUES ('ulamog-id', ?, ?, ?, ?)`, finish, price, src, asOf); err != nil {
+		 VALUES ('ulamog-id', ?, ?, ?, ?)`, fin, price, src, asOf); err != nil {
 		t.Fatalf("seeding history at %s: %v", asOf, err)
 	}
-	// The catalog moves with it. A row exists in history *because* the
-	// effective price took that value — RecordPrices writes one from the other —
-	// so a fixture where the two disagree is not a state hoard can reach, and a
-	// percent watch compares the catalog's price against the series' extreme.
+
 	if src == fixtureSource {
-		priceIs(t, s, finish, price)
+		priceIs(t, s, fin, price)
 	}
 }
 
-// priceIs sets the catalog's effective price for one finish, for the tests that
-// have to say what the price is now independently of the order rows were
-// seeded in.
-func priceIs(t *testing.T, s *Store, finish string, price float64) {
+func priceIs(t *testing.T, s *Store, fin finish.Finish, price float64) {
 	t.Helper()
 	c := ulamog()
-	if finish == "foil" {
+	if fin == finish.Foil {
 		c.PriceUSDFoil = &price
 	} else {
 		c.PriceUSD = &price
@@ -60,16 +46,13 @@ func priceIs(t *testing.T, s *Store, finish string, price float64) {
 	}
 }
 
-// percentWatch stands one movement watch on the shared fixture card, backdated
-// so the watch's own creation is never the binding lower bound unless a test
-// says so.
-func percentWatch(t *testing.T, s *Store, finish, op string, pct, minMove float64) {
+func percentWatch(t *testing.T, s *Store, fin finish.Finish, op string, pct, minMove float64) {
 	t.Helper()
-	if err := s.AddCardFinish(ulamog(), finish, 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), fin, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if err := s.AddWatchInput(WatchInput{
-		ScryfallID: "ulamog-id", Display: "Ulamog", Finish: finish,
+		ScryfallID: "ulamog-id", Display: "Ulamog", Finish: fin,
 		Op: op, Pct: pct, MinMove: minMove, WindowDays: DefaultWindowDays,
 	}); err != nil {
 		t.Fatalf("AddWatchInput: %v", err)
@@ -79,7 +62,6 @@ func percentWatch(t *testing.T, s *Store, finish, op string, pct, minMove float6
 	}
 }
 
-// watchAt reads the one watch as of a named present.
 func watchAt(t *testing.T, s *Store, at string) WatchStatus {
 	t.Helper()
 	all, err := s.listWatchesAt(at)
@@ -101,14 +83,12 @@ func checkAt(t *testing.T, s *Store, at string) []WatchStatus {
 	return fired
 }
 
-// A trailing drop measures from the window's high, not from the first price it
-// ever saw: that difference is the whole feature.
 func TestPercentDropAnchorsOnTheWindowHigh(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 30.00, longAgo)                // the record reaches back
-	observe(t, s, "nonfoil", 38.43, "2026-07-25T00:00:00Z") // the high
-	observe(t, s, "nonfoil", 34.57, beforeNow)              // -10.1% off it
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 30.00, longAgo)
+	observe(t, s, finish.Nonfoil, 38.43, "2026-07-25T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 34.57, beforeNow)
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor == nil || *w.Anchor != 38.43 {
@@ -120,20 +100,18 @@ func TestPercentDropAnchorsOnTheWindowHigh(t *testing.T) {
 	if !w.Met() {
 		t.Errorf("a 10.1%% fall from the high did not meet a 10%% drop watch: %+v", w)
 	}
-	// A pinned anchor would have been the 30.00 and answered "up 15%".
+
 	if w.PriceUSD == nil || *w.PriceUSD != 34.57 {
 		t.Errorf("price = %v, want hoard's effective price", w.PriceUSD)
 	}
 }
 
-// A rise anchors on the window's low, from the same series and the same rules
-// read the other way up.
 func TestPercentRiseAnchorsOnTheWindowLow(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "rise", 0.10, 0)
-	observe(t, s, "nonfoil", 60.00, longAgo)
-	observe(t, s, "nonfoil", 46.54, "2026-07-25T00:00:00Z") // the low
-	observe(t, s, "nonfoil", 51.96, beforeNow)              // +11.6% off it
+	percentWatch(t, s, finish.Nonfoil, "rise", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 60.00, longAgo)
+	observe(t, s, finish.Nonfoil, 46.54, "2026-07-25T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 51.96, beforeNow)
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor == nil || *w.Anchor != 46.54 {
@@ -144,24 +122,13 @@ func TestPercentRiseAnchorsOnTheWindowLow(t *testing.T) {
 	}
 }
 
-// NEGATIVE CONTROL: the window's lower bound must be RFC 3339.
-//
-// datetime(now,'-30 days') renders the same instant as "2026-07-11 21:00:00" —
-// space separator, no Z — while as_of is "2026-07-11T05:00:00Z". SQLite
-// compares them as text and 'T' (0x54) sorts above ' ' (0x20), so a bound that
-// means to exclude most of the cutoff day admits all of it.
-//
-// The spike below sits in exactly that one day of slop. With the correct bound
-// the anchor is the $50 the price stood at when the window opened and a 6%
-// fall says nothing; under a datetime() bound the anchor becomes the $100
-// spike and the watch reports a 53% collapse that never happened.
 func TestPercentWindowBoundIsRFC3339(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 50.00, longAgo)
-	observe(t, s, "nonfoil", 100.00, "2026-07-11T05:00:00Z") // before the cutoff, same day
-	observe(t, s, "nonfoil", 50.00, "2026-07-11T20:00:00Z")  // the price the window opens at
-	observe(t, s, "nonfoil", 47.00, beforeNow)               // -6% from 50, -53% from 100
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 50.00, longAgo)
+	observe(t, s, finish.Nonfoil, 100.00, "2026-07-11T05:00:00Z")
+	observe(t, s, finish.Nonfoil, 50.00, "2026-07-11T20:00:00Z")
+	observe(t, s, finish.Nonfoil, 47.00, beforeNow)
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor == nil {
@@ -174,8 +141,6 @@ func TestPercentWindowBoundIsRFC3339(t *testing.T) {
 		t.Error("a 6% fall fired a 10% drop watch: the bound admitted a pre-window spike")
 	}
 
-	// The trap itself, so the reason this test exists cannot be argued away:
-	// the two spellings of one instant do not select the same rows.
 	var rfc, dt int
 	if err := s.db.QueryRow(`
 SELECT (SELECT COUNT(*) FROM card_price_history
@@ -189,19 +154,12 @@ SELECT (SELECT COUNT(*) FROM card_price_history
 	}
 }
 
-// NEGATIVE CONTROL: firing re-anchors, so one slide is one alert.
-//
-// Prismatic Vista's real shape on the owner's database: a fall through the
-// line, a bounce back over it, then a further fall. Crossing semantics alone
-// fire twice, because the anchor does not move when the alert does.
-// last_fired_at as a third lower bound collapses it to the one alert a person
-// would want, and leaves the watch armed at the new level.
 func TestPercentFiringReAnchors(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 38.00, longAgo)
-	observe(t, s, "nonfoil", 38.43, "2026-07-20T00:00:00Z")
-	observe(t, s, "nonfoil", 34.57, "2026-07-25T00:00:00Z") // -10.0%: the alert
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 38.00, longAgo)
+	observe(t, s, finish.Nonfoil, 38.43, "2026-07-20T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 34.57, "2026-07-25T00:00:00Z")
 
 	fired := checkAt(t, s, "2026-07-25T01:00:00Z")
 	if len(fired) != 1 {
@@ -211,36 +169,27 @@ func TestPercentFiringReAnchors(t *testing.T) {
 		t.Errorf("the alert reported anchor %v, want 38.43", fired[0].Anchor)
 	}
 
-	// The bounce un-mets the watch; the further fall is 0.5% below the price
-	// that fired. A *further* ten percent would be worth hearing — this is the
-	// same slide, and without the re-anchor the old 38.43 is still in the
-	// window and both of these fire.
-	observe(t, s, "nonfoil", 36.50, "2026-07-26T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 36.50, "2026-07-26T00:00:00Z")
 	if fired := checkAt(t, s, "2026-07-26T01:00:00Z"); len(fired) != 0 {
 		t.Fatalf("the bounce fired %d alerts, want 0", len(fired))
 	}
-	observe(t, s, "nonfoil", 34.41, "2026-07-27T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 34.41, "2026-07-27T00:00:00Z")
 	if fired := checkAt(t, s, "2026-07-27T01:00:00Z"); len(fired) != 0 {
 		t.Fatalf("the same slide fired again (%d alerts): the anchor did not move with it", len(fired))
 	}
 
-	// A genuine further fall off the new level still speaks.
-	observe(t, s, "nonfoil", 30.50, "2026-07-28T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 30.50, "2026-07-28T00:00:00Z")
 	if fired := checkAt(t, s, "2026-07-28T01:00:00Z"); len(fired) != 1 {
 		t.Fatalf("a further 16%% fall fired %d alerts, want 1", len(fired))
 	}
 }
 
-// A glance at the browser is not an acknowledgment, and for a percent watch
-// that matters more than for an absolute one: writing last_fired_at here would
-// move the baseline the next alert is measured from, destroying the movement
-// rather than merely previewing it.
 func TestWouldFireLeavesTheAnchorAlone(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 38.00, longAgo)
-	observe(t, s, "nonfoil", 38.43, "2026-07-20T00:00:00Z")
-	observe(t, s, "nonfoil", 34.57, "2026-07-25T00:00:00Z")
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 38.00, longAgo)
+	observe(t, s, finish.Nonfoil, 38.43, "2026-07-20T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 34.57, "2026-07-25T00:00:00Z")
 
 	for i := range 2 {
 		would, err := s.wouldFireAt(testNow)
@@ -263,19 +212,11 @@ func TestWouldFireLeavesTheAnchorAlone(t *testing.T) {
 	}
 }
 
-// NEGATIVE CONTROL: a series younger than the window it claims to summarise
-// cannot answer, and says so rather than firing.
-//
-// The whole series here is seven days old and falls 20%. A thirty-day high
-// read off seven days of a printing's first fortnight is not a high, and the
-// guard is about the reach of the record rather than the number of rows in it
-// — which is why the second half of this test adds one old observation and
-// nothing else, and the same shape then answers.
 func TestPercentWaitsOnAYoungSeries(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 50.00, "2026-08-04T00:00:00Z")
-	observe(t, s, "nonfoil", 40.00, beforeNow) // -20%
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 50.00, "2026-08-04T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 40.00, beforeNow)
 
 	w := watchAt(t, s, testNow)
 	if !w.WaitingOnHistory() {
@@ -288,9 +229,8 @@ func TestPercentWaitsOnAYoungSeries(t *testing.T) {
 		t.Errorf("the check fired %d alerts on a series too young to have a high", len(fired))
 	}
 
-	// Only the record's reach changes; the price is still the fallen one.
-	observe(t, s, "nonfoil", 50.00, longAgo)
-	priceIs(t, s, "nonfoil", 40.00)
+	observe(t, s, finish.Nonfoil, 50.00, longAgo)
+	priceIs(t, s, finish.Nonfoil, 40.00)
 	w = watchAt(t, s, testNow)
 	if w.WaitingOnHistory() {
 		t.Fatalf("a series older than the window still read as waiting: %+v", w)
@@ -300,19 +240,10 @@ func TestPercentWaitsOnAYoungSeries(t *testing.T) {
 	}
 }
 
-// The carry-forward: history is a change log, so a printing whose price has
-// not moved writes nothing, and a perfectly well-known price can be absent
-// from the window entirely.
-//
-// This is Talon Gates of Madara's real shape — five observations in May and
-// nothing for the ninety days since. Anchoring only on rows inside the window
-// would give it no anchor at all, and worse, the row that finally recorded a
-// fall would be the only row in the window, so the anchor would equal the
-// fallen price and the alert would be lost rather than merely delayed.
 func TestPercentCarriesTheStablePriceIntoTheWindow(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 132.14, "2026-05-12T00:00:00Z") // then flat for 90 days
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 132.14, "2026-05-12T00:00:00Z")
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor == nil || *w.Anchor != 132.14 {
@@ -325,8 +256,7 @@ func TestPercentCarriesTheStablePriceIntoTheWindow(t *testing.T) {
 		t.Error("a flat price met a drop watch")
 	}
 
-	// The fall arrives as a single row, the only one inside the window.
-	observe(t, s, "nonfoil", 110.00, beforeNow) // -16.8%
+	observe(t, s, finish.Nonfoil, 110.00, beforeNow)
 	w = watchAt(t, s, testNow)
 	if w.Anchor == nil || *w.Anchor != 132.14 {
 		t.Fatalf("anchor = %v, want 132.14 — the window forgot the price it opened at", w.Anchor)
@@ -336,16 +266,13 @@ func TestPercentCarriesTheStablePriceIntoTheWindow(t *testing.T) {
 	}
 }
 
-// The anchor reads one printing, one finish and one vendor. A foil watch
-// anchored on the nonfoil series would compare a $136 foil against a nonfoil
-// high and report every foil watch as already met.
 func TestPercentAnchorIgnoresOtherSeries(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "foil", "drop", 0.10, 0)
-	observe(t, s, "foil", 100.00, longAgo)
-	observe(t, s, "nonfoil", 900.00, "2026-07-21T00:00:00Z")             // another finish
-	observe(t, s, "foil", 800.00, "2026-07-22T00:00:00Z", "cardkingdom") // another vendor
-	observe(t, s, "foil", 95.00, beforeNow)                              // -5% on the anchored series
+	percentWatch(t, s, finish.Foil, "drop", 0.10, 0)
+	observe(t, s, finish.Foil, 100.00, longAgo)
+	observe(t, s, finish.Nonfoil, 900.00, "2026-07-21T00:00:00Z")
+	observe(t, s, finish.Foil, 800.00, "2026-07-22T00:00:00Z", "cardkingdom")
+	observe(t, s, finish.Foil, 95.00, beforeNow)
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor == nil || *w.Anchor != 100.00 {
@@ -356,41 +283,36 @@ func TestPercentAnchorIgnoresOtherSeries(t *testing.T) {
 	}
 }
 
-// The dollar floor is what makes the feature usable on a collection that is
-// mostly cheap, and it has to suppress the alert rather than merely annotate
-// it.
 func TestPercentMinMoveSuppresses(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, DefaultMinMove)
-	observe(t, s, "nonfoil", 1.00, longAgo)
-	observe(t, s, "nonfoil", 0.80, beforeNow) // -20%, but only twenty cents
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, DefaultMinMove)
+	observe(t, s, finish.Nonfoil, 1.00, longAgo)
+	observe(t, s, finish.Nonfoil, 0.80, beforeNow)
 
 	if w := watchAt(t, s, testNow); w.Met() {
 		t.Error("a twenty cent move fired a watch with a twenty-five cent floor")
 	}
-	// The same percentage where it is worth saying still speaks.
+
 	if _, err := s.db.Exec(`DELETE FROM card_price_history`); err != nil {
 		t.Fatalf("clearing: %v", err)
 	}
-	observe(t, s, "nonfoil", 40.00, longAgo)
-	observe(t, s, "nonfoil", 32.00, beforeNow) // -20%, eight dollars
+	observe(t, s, finish.Nonfoil, 40.00, longAgo)
+	observe(t, s, finish.Nonfoil, 32.00, beforeNow)
 	if w := watchAt(t, s, testNow); !w.Met() {
 		t.Error("an eight dollar move was suppressed by a twenty-five cent floor")
 	}
 }
 
-// Absolute watches are untouched by any of it: no anchor, no window, and the
-// same branch of Met they have always taken.
 func TestAbsoluteWatchesAreUnchanged(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 12); err != nil {
+	if err := s.AddWatch("ulamog-id", "Ulamog", finish.Nonfoil, "under", 12); err != nil {
 		t.Fatalf("AddWatch: %v", err)
 	}
-	observe(t, s, "nonfoil", 999.00, longAgo) // would be a wild anchor
-	priceIs(t, s, "nonfoil", 10.00)           // but the price today is the catalog's
+	observe(t, s, finish.Nonfoil, 999.00, longAgo)
+	priceIs(t, s, finish.Nonfoil, 10.00)
 
 	w := watchAt(t, s, testNow)
 	if w.Anchor != nil {
@@ -402,7 +324,7 @@ func TestAbsoluteWatchesAreUnchanged(t *testing.T) {
 	if w.Pct != 0 || w.WindowDays != DefaultWindowDays {
 		t.Errorf("pct = %v, window = %d — want the inert defaults", w.Pct, w.WindowDays)
 	}
-	// Price is the catalog's effective 10.00, not the 999 sitting in history.
+
 	if w.PriceUSD == nil || *w.PriceUSD != 10.00 {
 		t.Errorf("price = %v, want the effective price 10.00", w.PriceUSD)
 	}
@@ -414,13 +336,10 @@ func TestAbsoluteWatchesAreUnchanged(t *testing.T) {
 	}
 }
 
-// A percent watch and an absolute one coexist on one printing, because drop
-// and rise are new values of op rather than a new dimension — so the existing
-// UNIQUE(scryfall_id, finish, op) keeps meaning what its comment says.
 func TestPercentAndAbsoluteCoexist(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "over", 149.86); err != nil {
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	if err := s.AddWatch("ulamog-id", "Ulamog", finish.Nonfoil, "over", 149.86); err != nil {
 		t.Fatalf("AddWatch over: %v", err)
 	}
 	all, err := s.listWatchesAt(testNow)
@@ -437,12 +356,9 @@ func TestPercentAndAbsoluteCoexist(t *testing.T) {
 	}
 }
 
-// The units cannot be crossed: threshold and pct are separate columns exactly
-// so neither can stand in for the other, and a row filling the wrong one would
-// evaluate against zero and either never fire or fire on every check.
 func TestPercentValidationRefusesCrossedUnits(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	for _, tc := range []struct {
@@ -457,7 +373,7 @@ func TestPercentValidationRefusesCrossedUnits(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := tc.in
-			in.ScryfallID, in.Display, in.Finish = "ulamog-id", "Ulamog", "nonfoil"
+			in.ScryfallID, in.Display, in.Finish = "ulamog-id", "Ulamog", finish.Nonfoil
 			err := s.AddWatchInput(in)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want one naming %q", err, tc.want)
@@ -466,19 +382,17 @@ func TestPercentValidationRefusesCrossedUnits(t *testing.T) {
 	}
 }
 
-// Re-adding a percent watch re-arms it: the moment the *old* rule fired is not
-// a bound the new one may anchor from.
 func TestReAddingAPercentWatchClearsTheFireMoment(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 38.00, longAgo)
-	observe(t, s, "nonfoil", 38.43, "2026-07-20T00:00:00Z")
-	observe(t, s, "nonfoil", 34.57, "2026-07-25T00:00:00Z")
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 38.00, longAgo)
+	observe(t, s, finish.Nonfoil, 38.43, "2026-07-20T00:00:00Z")
+	observe(t, s, finish.Nonfoil, 34.57, "2026-07-25T00:00:00Z")
 	if fired := checkAt(t, s, "2026-07-25T01:00:00Z"); len(fired) != 1 {
 		t.Fatalf("setup: fired %d, want 1", len(fired))
 	}
 
-	percentWatch(t, s, "nonfoil", "drop", 0.20, 0) // same direction, new size
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.20, 0)
 	var lastFired, lastState string
 	if err := s.db.QueryRow(`SELECT last_fired_at, last_state FROM watches`).
 		Scan(&lastFired, &lastState); err != nil {
@@ -490,17 +404,9 @@ func TestReAddingAPercentWatchClearsTheFireMoment(t *testing.T) {
 	}
 }
 
-// NEGATIVE CONTROL: RecordPrices must not write a price that has not changed.
-//
-// This is not an optimisation and it is the reason a derived anchor is exact.
-// MAX(price_usd) over a range is the true running high only because every row
-// in the range is a distinct transition. If an unchanged price were written on
-// every tick, a re-anchored watch — whose window opens at the moment it fired —
-// would find a fresh row carrying the old price and re-fire on it. Anything
-// that "optimises" RecordPrices into writing every tick breaks this test first.
 func TestRecordPricesSkipsUnchangedPrices(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	countRows := func() int {
@@ -519,11 +425,7 @@ func TestRecordPricesSkipsUnchangedPrices(t *testing.T) {
 	if first != 1 {
 		t.Fatalf("the first observation wrote %d rows, want 1", first)
 	}
-	// The stored rows are walked back a day between refreshes. appendPrices
-	// deliberately lets two refreshes inside one second collide on the primary
-	// key, so a test this fast would otherwise watch a spurious write overwrite
-	// itself and report a pass — which is exactly what this control checked
-	// for and did not catch until the rows were separated in time.
+
 	for range 3 {
 		if _, err := s.db.Exec(`UPDATE card_price_history
 			SET as_of = strftime('%Y-%m-%dT%H:%M:%SZ', as_of, '-1 day')`); err != nil {
@@ -537,7 +439,7 @@ func TestRecordPricesSkipsUnchangedPrices(t *testing.T) {
 				"history is a change log and every percent watch depends on it", got, first)
 		}
 	}
-	// A real change is still recorded.
+
 	c := ulamog()
 	c.PriceUSD = f(11.00)
 	if err := s.UpsertPrintings([]scryfall.Card{c}); err != nil {
@@ -551,24 +453,11 @@ func TestRecordPricesSkipsUnchangedPrices(t *testing.T) {
 	}
 }
 
-// FINDING #4, the half the demo report's suggested wording would have got
-// wrong: a percent watch does NOT wait for the price to cross back.
-//
-// The report proposed documenting "it re-arms when the price crosses back",
-// and flagged that it had not verified the rule. For under and over that is
-// right. For drop and rise it is not: firing writes last_fired_at, which
-// becomes the anchor's lower bound, so the anchor collapses to about the price
-// that fired and the very next check reads unmet — with no new observation, no
-// price change, and nothing for the user to do. The watch is re-armed at the
-// new level and speaks again only on a further move of its own size.
-//
-// A single sentence covering both ops would therefore have been false about
-// half of them.
 func TestPercentReArmsOnFiringAlone(t *testing.T) {
 	s := newTestStore(t)
-	percentWatch(t, s, "nonfoil", "drop", 0.10, 0)
-	observe(t, s, "nonfoil", 50.00, longAgo)
-	observe(t, s, "nonfoil", 40.00, beforeNow) // -20%: the alert
+	percentWatch(t, s, finish.Nonfoil, "drop", 0.10, 0)
+	observe(t, s, finish.Nonfoil, 50.00, longAgo)
+	observe(t, s, finish.Nonfoil, 40.00, beforeNow)
 
 	if fired := checkAt(t, s, testNow); len(fired) != 1 {
 		t.Fatalf("the fall fired %d alerts, want 1", len(fired))
@@ -577,8 +466,6 @@ func TestPercentReArmsOnFiringAlone(t *testing.T) {
 		t.Fatalf("after firing: last_state=%q last_fired_at=%q", w.LastState, w.LastFiredAt)
 	}
 
-	// Nothing happens. No observation, no price change, no user action — and
-	// the watch is armed again, because the anchor moved with the alert.
 	if fired := checkAt(t, s, testNow); len(fired) != 0 {
 		t.Fatalf("the second check fired %d alerts, want 0", len(fired))
 	}
@@ -593,27 +480,19 @@ func TestPercentReArmsOnFiringAlone(t *testing.T) {
 		t.Errorf("last_state = %q, want unmet — re-armed with no crossing back", w.LastState)
 	}
 
-	// And it speaks again on a further fall of its own size, measured from the
-	// new level rather than from the old high. The observation has to be later
-	// than the fire moment — an anchor cannot read a price recorded before the
-	// bound it was re-anchored at, which is the same carry-forward rule that
-	// makes the collapse above work.
-	observe(t, s, "nonfoil", 35.00, "2026-08-10T23:00:00Z") // -12.5% from 40
+	observe(t, s, finish.Nonfoil, 35.00, "2026-08-10T23:00:00Z")
 	if fired := checkAt(t, s, "2026-08-11T00:00:00Z"); len(fired) != 1 {
 		t.Error("a further 12.5% fall did not fire: the watch did not re-arm")
 	}
 }
 
-// The negative control's mirror: an absolute watch on the same shape stays
-// latched, so the difference between the two ops is the behaviour and not the
-// fixture.
 func TestAbsoluteDoesNotReArmOnFiringAlone(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.AddCardFinish(ulamog(), "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	priceIs(t, s, "nonfoil", 40.00)
-	if err := s.AddWatch("ulamog-id", "Ulamog", "nonfoil", "under", 45); err != nil {
+	priceIs(t, s, finish.Nonfoil, 40.00)
+	if err := s.AddWatch("ulamog-id", "Ulamog", finish.Nonfoil, "under", 45); err != nil {
 		t.Fatalf("AddWatch: %v", err)
 	}
 	if fired := checkAt(t, s, testNow); len(fired) != 1 {

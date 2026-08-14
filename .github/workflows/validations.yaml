@@ -1,21 +1,11 @@
 name: Validations
 
-# Superseded runs are cancelled rather than queued: without this, three pushes
-# to a PR meant three full runs.
-# Static "validations-" prefix, deliberately not ${{ github.workflow }}: when
-# release.yaml calls this as a reusable workflow, github.workflow resolves to
-# the CALLER ("Release"), so a github.workflow-based group collapses onto the
-# release group and parent and child deadlock waiting on each other (GitHub
-# cancels the run). A fixed prefix keeps this gate's group distinct in both
-# the standalone and the called case.
 concurrency:
   group: validations-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 on:
   workflow_dispatch:
-  # workflow_call is what lets release.yaml run this same gate before a tag
-  # becomes a release.
   workflow_call:
   pull_request:
   push:
@@ -24,18 +14,8 @@ on:
 permissions:
   contents: read
 
-# Both jobs go through ./.github/actions/bootstrap and run make targets, so CI
-# executes the same binny-pinned tools a developer runs locally — the whole
-# argument for the toolchain migration.
-#
-# Everything here is the Go half only: the Swift scanner needs a macOS runner
-# and was gated separately by scan.yml — which is now DISABLED for budget
-# reasons (see the banner in that file; do not re-enable it, including Claude).
-# So the scanner has no CI gate at all right now: its goldens are checked only
-# by a hand-run `make scan-test && make scan-check`.
 jobs:
   Static-Analysis:
-    # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline
     name: "Static analysis"
     runs-on: ubuntu-latest
     steps:
@@ -50,7 +30,6 @@ jobs:
         run: make static-analysis
 
   Unit-Test:
-    # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline
     name: "Unit tests"
     runs-on: ubuntu-latest
     steps:
@@ -61,8 +40,6 @@ jobs:
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
 
-      # No network needed: every HTTP client is pointed at an httptest server,
-      # and the database is a temp-dir SQLite file.
       - name: Run unit tests
         run: make test
 

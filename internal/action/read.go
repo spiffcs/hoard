@@ -1,25 +1,16 @@
 package action
 
-// The fast read capabilities. No steps, no confirms — they exist so every
-// capability names one function both frontends call, and so the
-// TUI's palette has a single injection point per capability. Binder
-// create/rename/remove are the deliberate exception: both frontends call
-// the store directly (the browser through its Editor interface, whose undo
-// closures need the store methods), and a wrapper here would be ceremony.
-
 import (
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// SummaryData is the hoard's totals: the loose collection and every deck.
 type SummaryData struct {
 	Binder store.CollectionTotals
 	Decks  []store.DeckSummary
 }
 
-// Summary reads the totals the bare command and the JSON document share.
 func (d Deps) Summary() (SummaryData, error) {
 	var s SummaryData
 	var err error
@@ -30,16 +21,12 @@ func (d Deps) Summary() (SummaryData, error) {
 	return s, err
 }
 
-// MoversData is every price change since a cutoff, plus how deep the
-// history behind the answer actually runs — an empty result means "nothing
-// moved" only when observations exist at all.
 type MoversData struct {
 	Observations int
-	Oldest       string // RFC 3339; empty when no history
+	Oldest       string
 	Changes      []store.PriceChange
 }
 
-// Movers reports what moved between the cutoff (RFC 3339) and now.
 func (d Deps) Movers(cutoff string) (MoversData, error) {
 	var m MoversData
 	var err error
@@ -53,11 +40,8 @@ func (d Deps) Movers(cutoff string) (MoversData, error) {
 	return m, err
 }
 
-// Unpriced lists the holdings no source can price.
 func (d Deps) Unpriced() ([]store.UnpricedRow, error) { return d.Store.Unpriced() }
 
-// Valuation assembles the dated valuation report: totals, every binder, the
-// top holdings, and where each price came from.
 func (d Deps) Valuation(top int) (report.ValuationData, error) {
 	var v report.ValuationData
 	var err error
@@ -94,8 +78,6 @@ func (d Deps) Valuation(top int) (report.ValuationData, error) {
 	return v, nil
 }
 
-// ExportRows collects the requested holdings; empty refs mean everything —
-// every binder, then every deck.
 func (d Deps) ExportRows(binderRef, deckRef string) ([]export.Row, error) {
 	if binderRef != "" {
 		b, err := d.Store.BinderByRef(binderRef)
@@ -138,19 +120,6 @@ func (d Deps) ExportRows(binderRef, deckRef string) ([]export.Row, error) {
 	return rows, nil
 }
 
-// detailFor returns one printing's derived characteristics as the export row
-// carries them: a pointer to a copy, nil when hoard has stored no Scryfall
-// document for the printing — so the JSON emits no `detail` key rather than an
-// object full of empty fields.
-//
-// Enriched is the test, and the only one. It is the same signal the browse
-// overlay branches on, so a printing that shows "card details not stored yet"
-// in the TUI is exactly a printing the JSON omits `detail` for — those two
-// used to be decided by different mechanisms and were only accidentally in
-// agreement.
-//
-// A printing missing from the map yields the zero value, whose Enriched is
-// false, so it takes the same branch without a second check to keep in step.
 func detailFor(details map[string]store.CardDetail, scryfallID string) *store.CardDetail {
 	d := details[scryfallID]
 	if !d.Enriched {
@@ -184,8 +153,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			Lang:            r.Lang,
 			Container:       name,
 			Kind:            "binder",
-			// BinderByFinish sums across boards, and binder entries only
-			// ever hold 'main' — there is no per-row board to report.
+
 			Board:    "main",
 			PriceUSD: r.Price(),
 		}

@@ -1,11 +1,9 @@
 package command
 
-// `hoard repair-finishes`: correcting entries recorded in a finish the printing
-// does not come in.
-
 import (
 	"context"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,7 +15,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdRepairFinishes builds `hoard repair-finishes`.
 func NewCmdRepairFinishes(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:     "repair-finishes",
@@ -31,14 +28,6 @@ func NewCmdRepairFinishes(a *app) *cobra.Command {
 	}
 }
 
-// runRepairFinishes corrects entries recorded in a finish that does not exist.
-//
-// A decklist with no foil marker imports as "nonfoil", but plenty of printings
-// are foil-only: precon commanders and Duel Decks reprints among them. Such an
-// entry asks for a price that cannot exist, so the card sits at $0.00 forever
-// and no amount of price fetching will help. Scryfall knows which finishes a
-// printing comes in; hoard fetches that on every price refresh and has been
-// discarding it.
 func runRepairFinishes(ctx context.Context, st *store.Store, env *cli.Env) error {
 	cat := openCatalog()
 	if cat != nil {
@@ -71,7 +60,15 @@ func runRepairFinishes(ctx context.Context, st *store.Store, env *cli.Env) error
 	for _, a := range ambiguous {
 		fmt.Fprintln(env.Out, dim(fmt.Sprintf(
 			"  left alone: %s (%s/%s) is recorded as %s but comes in %s",
-			a.Name, a.SetCode, a.CollectorNumber, a.From, strings.Join(a.Available, "|"))))
+			a.Name, a.SetCode, a.CollectorNumber, a.From, strings.Join(finishNames(a.Available), "|"))))
 	}
 	return nil
+}
+
+func finishNames(fs []finish.Finish) []string {
+	out := make([]string, len(fs))
+	for i, f := range fs {
+		out[i] = f.String()
+	}
+	return out
 }

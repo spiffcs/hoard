@@ -1,8 +1,5 @@
 package command
 
-// `hoard market`: what vendors are asking and bidding against TCGplayer's
-// last-sold prices.
-
 import (
 	"context"
 	"fmt"
@@ -19,7 +16,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdMarket builds `hoard market`.
 func NewCmdMarket(a *app) *cobra.Command {
 	var minValue float64
 	var limit int
@@ -48,8 +44,7 @@ func runMarket(ctx context.Context, st *store.Store, env *cli.Env, minValue floa
 		return err
 	}
 	if env.JSON {
-		// --min still shapes the data (it is a selection, not a truncation);
-		// --limit does not, for the same reason movers emits everything.
+
 		return hoardjson.Write(env.Out, hoardjson.FromMarket(res))
 	}
 

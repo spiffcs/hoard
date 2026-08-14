@@ -1,12 +1,9 @@
 package browse
 
-// The container pane as a filter over the analytical views: membership
-// joins, eligibility greying and skipping, the view-switch snap, and the
-// market view's fixed-region layout.
-
 import (
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -16,29 +13,24 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// mover builds one price change over a fixture-held printing.
-func mover(scryfallID, finish string, copies int, old, now float64) store.PriceChange {
+func mover(scryfallID string, fin finish.Finish, copies int, old, now float64) store.PriceChange {
 	return store.PriceChange{
 		ScryfallID: scryfallID, Name: strings.TrimSuffix(scryfallID, "-id"),
-		SetCode: "uma", CollectorNumber: "1", Finish: finish,
+		SetCode: "uma", CollectorNumber: "1", Finish: fin,
 		Copies: copies, Old: old, New: now,
 	}
 }
 
-// The movers view narrows to the selected container: the binder shows its
-// own movers, a deck its own, All Cards everything — and a foil-priced
-// mover matches a container that holds only the etched printing, because
-// price feeds fold etched into foil.
 func TestMoversFilterByContainer(t *testing.T) {
 	st := testStore()
-	st.deckCards[201] = append(st.deckCards[201], entry("Etched Card", "main", "etched", 1, 5))
+	st.deckCards[201] = append(st.deckCards[201], entry("Etched Card", "main", finish.Etched, 1, 5))
 	st.movers = []store.PriceChange{
-		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
-		mover("Solitude-id", "nonfoil", 1, 30, 34),
-		mover("Force of Will-id", "foil", 2, 40, 45),
-		mover("Etched Card-id", "foil", 1, 4, 5),
+		mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34),
+		mover("Solitude-id", finish.Nonfoil, 1, 30, 34),
+		mover("Force of Will-id", finish.Foil, 2, 40, 45),
+		mover("Etched Card-id", finish.Foil, 1, 4, 5),
 	}
-	m := newTestModel(t, st) // the default binder is selected
+	m := newTestModel(t, st)
 
 	m = key(m, "v")
 	if m.view != viewMovers {
@@ -51,18 +43,18 @@ func TestMoversFilterByContainer(t *testing.T) {
 		t.Errorf("header = %q, want the selection named", title)
 	}
 
-	m = key(m, "tab")  // into the container pane
-	m = key(m, "down") // Rich Deck
+	m = key(m, "tab")
+	m = key(m, "down")
 	if len(m.movers) != 2 || m.movers[0].Name != "Force of Will" {
 		t.Fatalf("rich deck movers = %+v, want its two cards, biggest impact first", m.movers)
 	}
 
-	m = key(m, "down") // Cheap Deck: holds the etched printing of a foil-priced mover
+	m = key(m, "down")
 	if len(m.movers) != 1 || m.movers[0].Name != "Etched Card" {
 		t.Fatalf("cheap deck movers = %+v, want the foil-priced mover matching the etched holding", m.movers)
 	}
 
-	m = key(m, "home") // All Cards
+	m = key(m, "home")
 	if len(m.movers) != 4 {
 		t.Errorf("all-cards movers = %d rows, want all 4", len(m.movers))
 	}
@@ -71,19 +63,14 @@ func TestMoversFilterByContainer(t *testing.T) {
 	}
 }
 
-// The watches screen greys out containers with nothing to show: switching
-// to it from an ineligible selection snaps to All Cards, and the container
-// cursor steps over the greyed rows in both directions. Its unpriced table
-// is as much a reason to keep a container lit as a watch is, which is what
-// this exercises — the only rows seeded are unpriced ones.
 func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 	st := testStore()
 	st.unpriced = []store.UnpricedRow{
 		{ScryfallID: "Solitude-id", Name: "Solitude", SetCode: "mh3", CollectorNumber: "1",
-			Finish: "nonfoil", Copies: 1, HeldIn: "Rich Deck"},
+			Finish: finish.Nonfoil, Copies: 1, HeldIn: "Rich Deck"},
 	}
-	m := newTestModel(t, st) // binder selected — no unpriced card lives there
-	m = key(m, "v")          // movers
+	m := newTestModel(t, st)
+	m = key(m, "v")
 	_ = (&m).showView(viewWatches)
 
 	if m.cursor[paneContainers] != 0 {
@@ -100,8 +87,8 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 			m.containerEligible(1), m.containerEligible(2), m.containerEligible(3))
 	}
 
-	m = key(m, "tab")  // into the container pane, at All Cards
-	m = key(m, "down") // skips the binder, lands on Rich Deck
+	m = key(m, "tab")
+	m = key(m, "down")
 	if m.cursor[paneContainers] != 2 {
 		t.Fatalf("cursor = %d, want the greyed binder skipped", m.cursor[paneContainers])
 	}
@@ -109,33 +96,31 @@ func TestUnpricedGreysAndSkipsIneligibleContainers(t *testing.T) {
 		t.Errorf("rich deck unpriced = %+v", m.unpriced)
 	}
 
-	m = key(m, "down") // nothing eligible below: the cursor stays
+	m = key(m, "down")
 	if m.cursor[paneContainers] != 2 {
 		t.Errorf("cursor = %d, want to stay with no eligible row below", m.cursor[paneContainers])
 	}
-	m = key(m, "end") // the last eligible row, not the last row
+	m = key(m, "end")
 	if m.cursor[paneContainers] != 2 {
 		t.Errorf("end landed on %d, want the last eligible row", m.cursor[paneContainers])
 	}
-	m = key(m, "up") // back over the binder to All Cards
+	m = key(m, "up")
 	if m.cursor[paneContainers] != 0 {
 		t.Errorf("cursor = %d, want All Cards", m.cursor[paneContainers])
 	}
 }
 
-// The watches view filters like movers — price-finish join — and greys out
-// containers holding no watched card.
 func TestWatchesFilterByContainer(t *testing.T) {
 	st := testStore()
 	w1 := store.WatchStatus{Name: "Bitterblossom", PriceUSD: price(34)}
-	w1.ScryfallID, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", "nonfoil", "under", 30
+	w1.ScryfallID, w1.Finish, w1.Op, w1.Threshold = "Bitterblossom-id", finish.Nonfoil, "under", 30
 	w2 := store.WatchStatus{Name: "Force of Will", PriceUSD: price(45)}
-	w2.ScryfallID, w2.Finish, w2.Op, w2.Threshold = "Force of Will-id", "foil", "over", 50
+	w2.ScryfallID, w2.Finish, w2.Op, w2.Threshold = "Force of Will-id", finish.Foil, "over", 50
 	st.watches = []store.WatchStatus{w1, w2}
 
 	m := atAllCards(t, newTestModel(t, st))
 	for range 3 {
-		m = key(m, "v") // movers → market → watches
+		m = key(m, "v")
 	}
 	if m.view != viewWatches {
 		t.Fatalf("view = %v, want watches", m.view)
@@ -145,9 +130,8 @@ func TestWatchesFilterByContainer(t *testing.T) {
 	}
 
 	m = key(m, "tab")
-	m = key(m, "down") // the binder holds the Bitterblossom watch
-	// It waits for a fall, so it is the UNDERS table's row and the OVERS
-	// table is empty — the container filter narrows both.
+	m = key(m, "down")
+
 	if m.cursor[paneContainers] != 1 || len(m.unders) != 1 || len(m.overs) != 0 ||
 		m.unders[0].Name != "Bitterblossom" {
 		t.Fatalf("binder watches = %+v/%+v at cursor %d", m.overs, m.unders, m.cursor[paneContainers])
@@ -155,19 +139,16 @@ func TestWatchesFilterByContainer(t *testing.T) {
 	if title, _ := m.viewHeader(); !strings.Contains(title, "WATCHES · BINDER") {
 		t.Errorf("header = %q, want the selection named", title)
 	}
-	m = key(m, "down") // Rich Deck holds the Force of Will watch, an over
+	m = key(m, "down")
 	if len(m.overs) != 1 || len(m.unders) != 0 || m.overs[0].Name != "Force of Will" {
 		t.Fatalf("rich deck watches = %+v/%+v", m.overs, m.unders)
 	}
-	m = key(m, "down") // Cheap Deck holds no watch: greyed, skipped
+	m = key(m, "down")
 	if m.cursor[paneContainers] != 2 {
 		t.Errorf("cursor = %d, want the watchless deck skipped", m.cursor[paneContainers])
 	}
 }
 
-// Market rows and comps follow the container, and the filter runs before
-// the per-section ranking — a deck gets its own table, not the subset of
-// the hoard-wide top rows that happens to mention it.
 func TestMarketRowsFollowContainer(t *testing.T) {
 	bitter := opp("Bitter", 2, 20)
 	bitter.Card.ScryfallID = "Bitterblossom-id"
@@ -183,7 +164,7 @@ func TestMarketRowsFollowContainer(t *testing.T) {
 		Compared:      4,
 	}
 
-	m := newTestModel(t, testStore()) // binder selected
+	m := newTestModel(t, testStore())
 	m.view = viewMarket
 	m.marketResult = res
 	m.marketLoaded = true
@@ -200,7 +181,7 @@ func TestMarketRowsFollowContainer(t *testing.T) {
 	}
 
 	m.focus = paneContainers
-	m.move(1) // Rich Deck: Solitude's rows
+	m.move(1)
 	if len(m.marketRows) != 1 || m.marketRows[0].Card.Name != "Sol" {
 		t.Fatalf("rich deck market rows = %+v", m.marketRows)
 	}
@@ -208,16 +189,13 @@ func TestMarketRowsFollowContainer(t *testing.T) {
 		t.Fatalf("rich deck comps = %+v", m.marketComps)
 	}
 
-	m.moveTo(0) // All Cards: everything
+	m.moveTo(0)
 	if len(m.marketRows) != 2 || len(m.marketComps) != 2 {
 		t.Errorf("all-cards market = %d rows, %d comps, want 2 and 2",
 			len(m.marketRows), len(m.marketComps))
 	}
 }
 
-// The market tables hold fixed regions: each scrolls its own rows inside
-// its budget, an overflowing section says where it is on its title line,
-// and an empty one keeps its title over a note.
 func TestMarketSectionRegionsScroll(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -231,9 +209,6 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 		comp("C4", 30, 25, 20), comp("C5", 20, 15, 10),
 	}
 
-	// Height 22 → 16 visible rows (the market help line wraps once at this
-	// width); 8 lines of furniture leave a pool of 8. Both live sections
-	// are overfull, so they split it: profit 4, comps 4.
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 22})
 	m = next.(Model)
 	if got := m.marketSectionBudgets(); got != [3]int{4, 0, 4} {
@@ -251,7 +226,6 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 		t.Errorf("profit region should show rows 1–4 only:\n%s", view)
 	}
 
-	// Walking past the region's bottom scrolls only that section.
 	for range 4 {
 		m = key(m, "down")
 	}
@@ -263,8 +237,6 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 		t.Errorf("profit scrolled without disturbing comps:\n%s", view)
 	}
 
-	// Crossing into comps scrolls that region independently. Seven steps,
-	// not six: the empty liquid table's heading is a stop of its own.
 	for range 7 {
 		m = key(m, "down")
 	}
@@ -275,8 +247,6 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 		t.Errorf("comps offset = %d, want 1", m.marketSecOffset[compsSection])
 	}
 
-	// An underfull section donates its slack: with one comp, comps takes 1
-	// and the profit table gets everything it can use.
 	m.marketComps = m.marketComps[:1]
 	m.cursor[paneCards] = 0
 	m.marketSecOffset = [3]int{}
@@ -285,8 +255,6 @@ func TestMarketSectionRegionsScroll(t *testing.T) {
 	}
 }
 
-// b flips the comps table between its two halves: the sell side judges the
-// bid against the sale price, the buy side lines up the asks.
 func TestCompsSidesToggle(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -296,11 +264,9 @@ func TestCompsSidesToggle(t *testing.T) {
 	m.deriveMarketPages()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	m = next.(Model)
-	// 'b' acts on the table the cursor is in, so put it on the comp sheet.
+
 	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 
-	// The assertions scope to the comps section: the liquid table's title
-	// above it says BUYLIST too.
 	compsPart := func(view string) string {
 		if i := strings.Index(view, "COMPS"); i >= 0 {
 			return view[i:]
@@ -312,8 +278,7 @@ func TestCompsSidesToggle(t *testing.T) {
 		!strings.Contains(view, "PRICE DISPERSION") {
 		t.Fatalf("default side should comp the sale prices with their dispersion:\n%s", view)
 	}
-	// SPREAD is the buy side's word — a true bid-ask gap; the sell side's
-	// number is vendor disagreement, not a spread.
+
 	if strings.Contains(view, "SPREAD") || strings.Contains(view, "BUYLIST") ||
 		strings.Contains(view, "LOW") {
 		t.Errorf("the bid vocabulary belongs to the buy side:\n%s", view)
@@ -344,8 +309,6 @@ func TestCompsSidesToggle(t *testing.T) {
 	}
 }
 
-// The market status counts within the cursor's own table — 36/50 across
-// every table read as nonsense on the comps sheet (observed live).
 func TestMarketStatusCountsPerTable(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -358,16 +321,15 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	m = next.(Model)
 
-	m.cursor[paneCards] = 1 // second profit row
+	m.cursor[paneCards] = 1
 	if got := m.marketStatus(); !strings.Contains(got, "2/3") {
 		t.Errorf("status = %q, want 2/3 within the profit table", got)
 	}
-	m.cursor[paneCards] = m.marketSections()[compsSection].curStart // first comp
+	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 	if got := m.marketStatus(); !strings.Contains(got, "1/2") {
 		t.Errorf("status = %q, want 1/2 within the comps", got)
 	}
-	// Each comp side teaches its own derived-column formula in place of
-	// the freshness disclaimer.
+
 	if got := m.marketStatus(); !strings.Contains(got, "PRICE DISPERSION = high sale minus low sale") {
 		t.Errorf("status = %q, want the dispersion formula on the sell side", got)
 	}
@@ -378,9 +340,6 @@ func TestMarketStatusCountsPerTable(t *testing.T) {
 	m.compsBuySide = false
 }
 
-// ]/[ jump between market tables, stopping at every one — an empty table
-// keeps its heading, and its heading is where its own keys land — and
-// clamping at the ends.
 func TestMarketTableJumpKeys(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -394,33 +353,32 @@ func TestMarketTableJumpKeys(t *testing.T) {
 	m = next.(Model)
 
 	secs := m.marketSections()
-	m = key(m, "down") // mid-table, so the jump has somewhere to come from
-	m = key(m, "]")    // onto the empty buylist table's heading
+	m = key(m, "down")
+	m = key(m, "]")
 	if m.cursor[paneCards] != secs[market.KindLiquid].curStart {
 		t.Fatalf("cursor = %d, want the empty buylist table's heading", m.cursor[paneCards])
 	}
-	m = key(m, "]") // and on into the comps
+	m = key(m, "]")
 	if m.cursor[paneCards] != secs[compsSection].curStart {
 		t.Fatalf("cursor = %d, want the comps section's first row", m.cursor[paneCards])
 	}
-	m = key(m, "]") // nothing beyond comps: the cursor stays
+	m = key(m, "]")
 	if m.cursor[paneCards] != secs[compsSection].curStart {
 		t.Errorf("cursor = %d, want to clamp at the last table", m.cursor[paneCards])
 	}
-	m = key(m, "[") // back onto the buylist heading
+	m = key(m, "[")
 	if m.cursor[paneCards] != secs[market.KindLiquid].curStart {
 		t.Fatalf("cursor = %d, want the empty buylist table's heading", m.cursor[paneCards])
 	}
-	m = key(m, "[") // back to the profit table's first row
+	m = key(m, "[")
 	if m.cursor[paneCards] != 0 {
 		t.Fatalf("cursor = %d, want the profit table's first row", m.cursor[paneCards])
 	}
-	m = key(m, "[") // nothing before it: stays
+	m = key(m, "[")
 	if m.cursor[paneCards] != 0 {
 		t.Errorf("cursor = %d, want to clamp at the first table", m.cursor[paneCards])
 	}
 
-	// The jump is a card-pane gesture even when the hand is on the left.
 	m.focus = paneContainers
 	m = key(m, "]")
 	if m.focus != paneCards || m.cursor[paneCards] != len(m.marketRows) {
@@ -428,13 +386,11 @@ func TestMarketTableJumpKeys(t *testing.T) {
 	}
 }
 
-// Cycling the floor re-derives from the pristine rows without touching the
-// store: what the floor hid comes back when it lifts.
 func TestCycleFloorKeepsPristine(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
-		mover("Sol Ring-id", "nonfoil", 1, 1, 2), // under the $5 floor
+		mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34),
+		mover("Sol Ring-id", finish.Nonfoil, 1, 1, 2),
 	}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v")
@@ -443,12 +399,12 @@ func TestCycleFloorKeepsPristine(t *testing.T) {
 	}
 
 	st.err = errors.New("the floor must not re-query")
-	m = key(m, "M") // $5
+	m = key(m, "M")
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Fatalf("floored movers = %+v", m.movers)
 	}
 	for range len(floorLevels) - 1 {
-		m = key(m, "M") // the rest of the cycle, back to off
+		m = key(m, "M")
 	}
 	if len(m.movers) != 2 {
 		t.Errorf("movers = %d after the floor lifted, want the hidden row back", len(m.movers))
@@ -458,17 +414,15 @@ func TestCycleFloorKeepsPristine(t *testing.T) {
 	}
 }
 
-// Reload re-reads the analytical view too — it now depends on membership,
-// so "reloaded" must include the rows on screen.
 func TestReloadRederivesView(t *testing.T) {
 	st := testStore()
-	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v")
 	if len(m.movers) != 1 {
 		t.Fatalf("movers = %d, want 1", len(m.movers))
 	}
-	st.movers = append(st.movers, mover("Solitude-id", "nonfoil", 1, 30, 34))
+	st.movers = append(st.movers, mover("Solitude-id", finish.Nonfoil, 1, 30, 34))
 	m = key(m, "r")
 	if len(m.movers) != 2 {
 		t.Errorf("movers = %d after reload, want the new row", len(m.movers))
@@ -478,21 +432,16 @@ func TestReloadRederivesView(t *testing.T) {
 	}
 }
 
-// W serves an already-seen window from the session cache — the movers
-// query walks the whole price history twice, and paying that per press
-// made the key feel broken. A refresh invalidates the cache.
 func TestMoversWindowCacheMakesWInstant(t *testing.T) {
 	st := testStore()
-	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st))
-	m = key(m, "v") // movers: 30-day window queried and cached
-	m = key(m, "W") // 90 days
-	m = key(m, "W") // 7 days
+	m = key(m, "v")
+	m = key(m, "W")
+	m = key(m, "W")
 
-	// Every window has been seen once; cycling back must not touch the
-	// store at all.
 	st.err = errors.New("the cache must answer")
-	m = key(m, "W") // back to 30 days
+	m = key(m, "W")
 	if m.statusErr {
 		t.Fatalf("cached window hit the store: %q", m.status)
 	}
@@ -501,9 +450,7 @@ func TestMoversWindowCacheMakesWInstant(t *testing.T) {
 	}
 	st.err = nil
 
-	// New data invalidates: a reload re-queries the current window, and
-	// the other windows miss the stale cache too.
-	st.movers = append(st.movers, mover("Solitude-id", "nonfoil", 1, 30, 34))
+	st.movers = append(st.movers, mover("Solitude-id", finish.Nonfoil, 1, 30, 34))
 	m = key(m, "r")
 	if len(m.movers) != 2 {
 		t.Fatalf("reloaded movers = %d rows, want the new row visible", len(m.movers))
@@ -514,14 +461,11 @@ func TestMoversWindowCacheMakesWInstant(t *testing.T) {
 	}
 }
 
-// Movers hides sub-$0.20 cards by default — bulk twitching by cents is
-// noise — and the palette command shows them; the gate is independent of
-// the value floor.
 func TestMoversPennyGate(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
-		mover("Sol Ring-id", "nonfoil", 1, 0.15, 0.18), // at the gate
+		mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34),
+		mover("Sol Ring-id", finish.Nonfoil, 1, 0.15, 0.18),
 	}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v")
@@ -531,34 +475,29 @@ func TestMoversPennyGate(t *testing.T) {
 	if m.status != "showing movers · sorted by impact · penny filter ≤ $0.50" {
 		t.Errorf("arrival beat = %q, want the sort and the armed filter named", m.status)
 	}
-	m.status = "" // the arrival beat yields to the position line
+	m.status = ""
 	if !strings.Contains(m.View(), "penny filter ≤ $0.50") {
 		t.Error("the default gate must announce itself on the status line")
 	}
 
-	// The palette toggle brings them back without touching the store.
 	m.moversPennies = true
 	m.deriveView()
 	if len(m.movers) != 2 {
 		t.Fatalf("with pennies shown movers = %d rows, want both", len(m.movers))
 	}
 
-	// The value floor is a separate gate layered on top.
-	m.floorIdx = 1 // $5
+	m.floorIdx = 1
 	m.deriveView()
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Errorf("floor over pennies = %+v, want only the $34 card", m.movers)
 	}
 }
 
-// SetPennyFilter moves the gate's line through a validated prompt: garbage
-// and out-of-range amounts refuse to commit, a good amount re-arms the
-// gate at its new height.
 func TestSetPennyFilter(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{
-		mover("Bitterblossom-id", "nonfoil", 4, 30, 34),
-		mover("Sol Ring-id", "nonfoil", 1, 0.15, 0.18),
+		mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34),
+		mover("Sol Ring-id", finish.Nonfoil, 1, 0.15, 0.18),
 	}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v")
@@ -579,7 +518,6 @@ func TestSetPennyFilter(t *testing.T) {
 		t.Errorf("validate($1.50) = %v, want accepted", err)
 	}
 
-	// Raising the line to $40 swallows the $34 card too.
 	m.prompt.commit(&m, "$40")
 	if len(m.movers) != 0 {
 		t.Errorf("limit $40 movers = %+v, want all gated", m.movers)
@@ -588,8 +526,6 @@ func TestSetPennyFilter(t *testing.T) {
 		t.Errorf("status = %q, want the new limit named", m.status)
 	}
 
-	// Lowering it below the penny row shows everything; the status hint
-	// names the moved line.
 	m.promptSetPennyLimit()
 	m.prompt.commit(&m, "0.10")
 	m.prompt = nil
@@ -601,7 +537,6 @@ func TestSetPennyFilter(t *testing.T) {
 		t.Errorf("status hint must track the moved line")
 	}
 
-	// Setting a line re-arms the gate even if pennies were showing.
 	m.moversPennies = true
 	m.promptSetPennyLimit()
 	m.prompt.commit(&m, "0.20")
@@ -610,9 +545,6 @@ func TestSetPennyFilter(t *testing.T) {
 	}
 }
 
-// Cycling views must not bounce the bottom gutter: every view reserves the
-// tallest help any of them needs, so the rule and status lines hold still
-// even when one view's help wraps shorter (unpriced, observed live).
 func TestViewCycleKeepsGutterSteady(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	frame := func() (total, rule int) {
@@ -636,39 +568,31 @@ func TestViewCycleKeepsGutterSteady(t *testing.T) {
 	}
 }
 
-// A scoped view quotes the selected container's own copy count, not the
-// hoard-wide total: a card held across several decks shows each deck's
-// quantity when that deck is selected (observed live on MOVERS: a
-// one-copy deck wearing every copy in the collection, inflating QTY and
-// IMPACT). The market comps rescale VALUE alongside, keeping the per-copy
-// figure intact.
 func TestScopedViewsShowContainerQuantity(t *testing.T) {
 	st := testStore()
-	// Solitude: 1 copy in Rich Deck (fixture) plus 3 more in Cheap Deck.
-	st.deckCards[201] = append(st.deckCards[201], entry("Solitude", "main", "nonfoil", 3, 34))
-	st.movers = []store.PriceChange{mover("Solitude-id", "nonfoil", 4, 30, 34)}
 
-	m := newTestModel(t, st) // the default binder is selected
+	st.deckCards[201] = append(st.deckCards[201], entry("Solitude", "main", finish.Nonfoil, 3, 34))
+	st.movers = []store.PriceChange{mover("Solitude-id", finish.Nonfoil, 4, 30, 34)}
+
+	m := newTestModel(t, st)
 	m = key(m, "v")
 	if len(m.movers) != 0 {
 		t.Fatalf("binder movers = %+v, want none (Solitude lives in decks)", m.movers)
 	}
 	m = key(m, "tab")
-	m = key(m, "down") // Rich Deck
+	m = key(m, "down")
 	if len(m.movers) != 1 || m.movers[0].Copies != 1 {
 		t.Fatalf("rich deck movers = %+v, want Solitude at the deck's 1 copy", m.movers)
 	}
-	m = key(m, "down") // Cheap Deck
+	m = key(m, "down")
 	if len(m.movers) != 1 || m.movers[0].Copies != 3 {
 		t.Fatalf("cheap deck movers = %+v, want Solitude at the deck's 3 copies", m.movers)
 	}
-	m = key(m, "home") // All Cards
+	m = key(m, "home")
 	if len(m.movers) != 1 || m.movers[0].Copies != 4 {
 		t.Fatalf("all-cards movers = %+v, want the hoard-wide 4 copies", m.movers)
 	}
 
-	// The comp sheet follows: hoard-wide 4 copies at $136 become the deck's
-	// 1 copy at $34.
 	sc := comp("SolC", 136, 34, 30)
 	sc.Card.ScryfallID = "Solitude-id"
 	sc.Card.Copies = 4
@@ -677,23 +601,19 @@ func TestScopedViewsShowContainerQuantity(t *testing.T) {
 	m.marketLoaded = true
 	m.focus = paneContainers
 	m.moveTo(0)
-	m.move(2) // Rich Deck
+	m.move(2)
 	if len(m.marketComps) != 1 || m.marketComps[0].Card.Copies != 1 {
 		t.Fatalf("rich deck comps = %+v, want the deck's single copy", m.marketComps)
 	}
 	if v := m.marketComps[0].Card.Value; v != 34 {
 		t.Errorf("scoped comp value = %v, want 34 (one copy's worth)", v)
 	}
-	m.moveTo(0) // All Cards
+	m.moveTo(0)
 	if len(m.marketComps) != 1 || m.marketComps[0].Card.Copies != 4 || m.marketComps[0].Card.Value != 136 {
 		t.Fatalf("all-cards comps = %+v, want the hoard-wide figures restored", m.marketComps)
 	}
 }
 
-// Moving the cursor clears a transient status: a sort receipt must not
-// outlive the selection it described — the next row's own status line
-// (the market note here, the position line elsewhere) takes the slot back
-// (observed live: "sorted by arbitrage · profit" persisting forever).
 func TestCursorMovementRestoresStatusLine(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -715,11 +635,6 @@ func TestCursorMovementRestoresStatusLine(t *testing.T) {
 	}
 }
 
-// The market view's penny filter: the $1 floor is live state, not a build
-// constant. Toggling it off re-collects from the day cache with no floor
-// (bulk appears instantly), SetPennyFilter moves the line, and both
-// receipts name the filter. A dead day cache downgrades to "press F"
-// rather than showing rows filtered by a line the user just moved.
 func TestMarketPennyFilterReCollects(t *testing.T) {
 	cheap := comp("Bulk", 0.30, 0.30, 0.10)
 	mid := comp("Mid", 0.50, 0.50, 0.30)
@@ -777,8 +692,6 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 		t.Fatalf("re-armed comps = %+v status %q, want the floor back", m.marketComps, m.status)
 	}
 
-	// Moving the line lands between: $0.40 keeps Mid and Dear, and the
-	// prompt shares the movers filter's validation.
 	m.promptSetMarketFloor()
 	if m.prompt == nil || m.prompt.text != "1" {
 		t.Fatalf("prompt = %+v, want prefilled with the current floor", m.prompt)
@@ -795,7 +708,6 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 		t.Errorf("floor = %v status %q, want the moved line named", m.marketFloor, m.status)
 	}
 
-	// The day cache dying mid-adjustment must not fake an answer.
 	cacheAlive = false
 	m = runByID(m, "market.pennies")
 	if m.marketLoaded || !strings.Contains(m.status, "press F") {
@@ -803,10 +715,6 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 	}
 }
 
-// The market tables page: each shows pageSize rows, >/< turn the
-// cursor's table, the title names the leafing, and a page turn lands the
-// cursor on the new page's first row. Sorting resets its table to page
-// one — the new order's first row lives there.
 func TestMarketTablesPage(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	m.view = viewMarket
@@ -831,7 +739,7 @@ func TestMarketTablesPage(t *testing.T) {
 		t.Fatalf("titles must name each page's slice of the ranking:\n%s", view)
 	}
 
-	m = key(m, ">") // the cursor starts in the profit table
+	m = key(m, ">")
 	if len(m.marketRows) != 10 || m.marketRows[0].Card.Name != "P050" {
 		t.Fatalf("page 2 rows = %d starting %q, want the ranking's tail", len(m.marketRows), m.marketRows[0].Card.Name)
 	}
@@ -850,8 +758,8 @@ func TestMarketTablesPage(t *testing.T) {
 		t.Fatalf("back to page 1 = %q status %q", m.marketRows[0].Card.Name, m.status)
 	}
 
-	m = key(m, "]") // onto the empty liquid table's heading
-	m = key(m, "]") // and into the comps
+	m = key(m, "]")
+	m = key(m, "]")
 	m = key(m, ">")
 	m = key(m, ">")
 	if len(m.marketComps) != 20 || m.marketComps[0].Card.Name != "C100" {
@@ -861,25 +769,22 @@ func TestMarketTablesPage(t *testing.T) {
 		t.Errorf("cursor = %d, want the comps section's first row", m.cursor[paneCards])
 	}
 
-	m = key(m, "s") // sorting speaks for the whole ranking: back to page one
+	m = key(m, "s")
 	if m.marketPage[compsSection] != 0 || len(m.marketComps) != 50 {
 		t.Errorf("after sorting page = %d with %d rows, want page one full", m.marketPage[compsSection], len(m.marketComps))
 	}
 }
 
-// The status line's position segment leads with x/y, then the selection:
-// the card's name on the right pane, the binder or deck's on the left —
-// the position sits in a fixed spot while the name varies in length.
 func TestStatusLineLeadsWithPosition(t *testing.T) {
 	st := testStore()
-	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
-	m := atAllCards(t, newTestModel(t, st)) // focus rests on the container pane
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34)}
+	m := atAllCards(t, newTestModel(t, st))
 	m.status = ""
 	if got := m.statusLine(); !strings.Contains(got, "1/4 · All Cards") {
 		t.Errorf("container status = %q, want position then the selected container", got)
 	}
 
-	m = key(m, "tab") // the cards pane: the card follows the position instead
+	m = key(m, "tab")
 	if got := m.statusLine(); !strings.Contains(got, "1/6 · Force of Will") {
 		t.Errorf("holdings status = %q, want position then the selected card", got)
 	}
@@ -888,13 +793,12 @@ func TestStatusLineLeadsWithPosition(t *testing.T) {
 		t.Errorf("moved status = %q, want position then the new selection", got)
 	}
 
-	m = key(m, "v") // movers
+	m = key(m, "v")
 	m.status = ""
 	if got := m.statusLine(); !strings.Contains(got, "1/1 · Bitterblossom") {
 		t.Errorf("movers status = %q, want position then the mover's name", got)
 	}
 
-	// The market view's own status line leads the same way.
 	m.view = viewMarket
 	m.marketLoaded = true
 	m.focus = paneCards
@@ -906,14 +810,10 @@ func TestStatusLineLeadsWithPosition(t *testing.T) {
 	}
 }
 
-// The penny filters survive a restart: changing either view's gate writes
-// the preference, and a new session starts from what was stored — garbage
-// values leave the defaults standing.
 func TestPennyFiltersPersist(t *testing.T) {
 	st := testStore()
 	m := atAllCards(t, newTestModel(t, st))
 
-	// Move the movers line and toggle the market floor off.
 	m.promptSetPennyLimit()
 	m.prompt.commit(&m, "0.55")
 	m.prompt = nil
@@ -924,7 +824,6 @@ func TestPennyFiltersPersist(t *testing.T) {
 		t.Fatalf("stored = %v, want both changes written", st.settings)
 	}
 
-	// A fresh session restores them.
 	m2 := newTestModel(t, st)
 	if m2.moversPennyLimit != 0.55 || !m2.marketPennies {
 		t.Errorf("restored limit %v pennies %v, want the stored session back",
@@ -934,7 +833,6 @@ func TestPennyFiltersPersist(t *testing.T) {
 		t.Errorf("market floor = %v, want the default where nothing was stored differently", m2.marketFloor)
 	}
 
-	// Garbage never beats a default.
 	st.settings[setMarketFloor] = "over 9000"
 	st.settings[setMoversPennyLine] = "-3"
 	m3 := newTestModel(t, st)
@@ -944,18 +842,14 @@ func TestPennyFiltersPersist(t *testing.T) {
 	}
 }
 
-// The holdings pane pages like the market tables: fifty rows at a time,
-// >/< leafing with the status naming the slice, the header carrying the
-// page phrase, and sorts, filters and edits interacting with the page the
-// way the market taught.
 func TestHoldingsTablePages(t *testing.T) {
 	st := testStore()
 	for i := range 80 {
 		st.collection = append(st.collection,
-			row(fmt.Sprintf("Filler %02d", i), "set", fmt.Sprint(i), "nonfoil", 1, float64(10000-i)))
+			row(fmt.Sprintf("Filler %02d", i), "set", fmt.Sprint(i), finish.Nonfoil, 1, float64(10000-i)))
 	}
 	m := newTestModel(t, st)
-	m = key(m, "tab") // the cards pane
+	m = key(m, "tab")
 	total := len(m.filteredCards)
 	if len(m.cards) != singleTablePageSize || total <= singleTablePageSize {
 		t.Fatalf("page 1 = %d rows of %d, want %d of more", len(m.cards), total, singleTablePageSize)
@@ -982,24 +876,20 @@ func TestHoldingsTablePages(t *testing.T) {
 		t.Fatalf("back to page 1 = %q status %q", m.cards[0].Name, m.status)
 	}
 
-	// An edit deep in page two stays on page two. (The row itself may move
-	// pages: the value sort reorders around its doubled quantity.)
 	m = key(m, ">")
 	m = key(m, "+")
 	if m.cardsPage != 1 {
 		t.Fatalf("after an edit: page %d, want page 2 kept", m.cardsPage+1)
 	}
 
-	// Sorting resets the leafing: the new order's first rows are page one.
 	m = key(m, "s")
 	if m.cardsPage != 0 {
 		t.Errorf("page after sort = %d, want the first", m.cardsPage)
 	}
 
-	// Typing a filter snaps to page one and counts the whole result.
 	m = key(m, ">")
 	m = key(m, "/")
-	m = key(m, "f") // matches every Filler row
+	m = key(m, "f")
 	if m.cardsPage != 0 {
 		t.Errorf("page after filtering = %d, want the first", m.cardsPage)
 	}
@@ -1009,16 +899,14 @@ func TestHoldingsTablePages(t *testing.T) {
 	}
 }
 
-// MOVERS pages the same way, with W's window cycle starting over at page
-// one and the gradient normalized against the whole filtered ranking.
 func TestMoversTablePages(t *testing.T) {
 	st := testStore()
 	for i := range 80 {
 		st.movers = append(st.movers,
-			mover(fmt.Sprintf("M%02d-id", i), "nonfoil", 1, 10, 10+float64(80-i)))
+			mover(fmt.Sprintf("M%02d-id", i), finish.Nonfoil, 1, 10, 10+float64(80-i)))
 	}
 	m := atAllCards(t, newTestModel(t, st))
-	m = key(m, "v") // movers
+	m = key(m, "v")
 	if m.view != viewMovers {
 		t.Fatalf("view = %v, want movers", m.view)
 	}
@@ -1037,7 +925,6 @@ func TestMoversTablePages(t *testing.T) {
 		t.Fatalf("page 2 starts %q status %q", m.movers[0].Name, m.status)
 	}
 
-	// W cycles the lookback and reads the new window from its first page.
 	m = key(m, "W")
 	if m.moversPage != 0 {
 		t.Errorf("page after W = %d, want the first", m.moversPage)

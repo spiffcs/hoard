@@ -2,6 +2,7 @@ package browse
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -21,9 +22,6 @@ func openTestPalette(t *testing.T) Model {
 	return m
 }
 
-// The empty query lists every applicable, visible command — the hidden key
-// reflexes (sort, floor, view cycling) never appear; typing narrows by fuzzy
-// match; enter runs the selection and closes the drawer.
 func TestPaletteNarrowsAndRuns(t *testing.T) {
 	m := openTestPalette(t)
 	visible := 0
@@ -61,7 +59,6 @@ func TestPaletteNarrowsAndRuns(t *testing.T) {
 	}
 }
 
-// Hidden commands stay bound: their keys work exactly as before.
 func TestHiddenCommandsKeepTheirKeys(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -75,8 +72,6 @@ func TestHiddenCommandsKeepTheirKeys(t *testing.T) {
 	}
 }
 
-// The highlighted command's description renders under the help line — and
-// costs a chrome row, so the frame keeps its height.
 func TestPaletteShowsSelectedDescription(t *testing.T) {
 	m := openTestPalette(t)
 	desc := m.paletteDesc()
@@ -104,17 +99,13 @@ func TestPaletteEscClosesWithoutRunning(t *testing.T) {
 	}
 }
 
-// The drawer takes its rows from the panes so the frame keeps its height,
-// and the input line owns the status slot.
 func TestPaletteDrawerGeometry(t *testing.T) {
 	m := newTestModel(t, testStore())
 	rows := m.visibleRows()
 	closedHelp := m.helpRows()
 	closedFrame := strings.Count(m.View(), "\n")
 	m = key(m, ":")
-	// The drawer takes its rows from the panes; the help line may cost a
-	// different number of rows in palette mode (its help is shorter), so
-	// the expectation accounts for both.
+
 	if got, want := m.visibleRows(), rows-m.paletteRows()+closedHelp-m.helpRows(); got != want {
 		t.Errorf("visibleRows = %d with palette open, want %d", got, want)
 	}
@@ -125,8 +116,7 @@ func TestPaletteDrawerGeometry(t *testing.T) {
 	if !strings.Contains(out, "▸ ") {
 		t.Errorf("view has no palette cursor row:\n%s", out)
 	}
-	// The drawer takes rows from the panes, so the frame height is
-	// unchanged — the invariant that keeps the screen from jumping.
+
 	if got := strings.Count(out, "\n"); got != closedFrame {
 		t.Errorf("frame is %d newlines with the drawer open, want %d (same as closed)", got, closedFrame)
 	}
@@ -143,7 +133,7 @@ func TestPaletteNoMatchRow(t *testing.T) {
 	if !strings.Contains(m.View(), "no matching command") {
 		t.Error("empty result row missing")
 	}
-	// Enter on nothing does nothing.
+
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.palette == nil {
@@ -151,8 +141,6 @@ func TestPaletteNoMatchRow(t *testing.T) {
 	}
 }
 
-// ctrl+p is the unadvertised alias, and ':' works from the detail overlay
-// (closing it — context commands come later).
 func TestPaletteAliasAndDetail(t *testing.T) {
 	m := newTestModel(t, testStore())
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
@@ -164,7 +152,7 @@ func TestPaletteAliasAndDetail(t *testing.T) {
 	m = next.(Model)
 
 	m = key(m, "tab")
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // open detail
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.detail == nil {
 		t.Fatal("setup: detail did not open")
@@ -176,8 +164,6 @@ func TestPaletteAliasAndDetail(t *testing.T) {
 	}
 }
 
-// Direct keys run through the registry: the palette's hint column and the
-// real bindings share one definition, checked here for one exemplar.
 func TestRegistryKeyParity(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "v")
@@ -191,8 +177,6 @@ func TestRegistryKeyParity(t *testing.T) {
 	}
 }
 
-// Over the card detail the palette narrows to the price refreshers: the
-// overlay is a reading surface, and every other verb waits an esc away.
 func TestDetailPaletteOffersOnlyPriceRefreshers(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
@@ -213,10 +197,6 @@ func TestDetailPaletteOffersOnlyPriceRefreshers(t *testing.T) {
 	}
 }
 
-// Spaced queries keep matching PascalCase titles: the palette derives the
-// spaced words from each title, so "update prices" finds UpdatePrices
-// without every command restating its own name in aliases.
-// The registry search targets stay spaced-query friendly end to end.
 func TestPaletteMatchesSpacedQuery(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.opUpdatePrices = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
@@ -234,15 +214,12 @@ func TestPaletteMatchesSpacedQuery(t *testing.T) {
 	}
 }
 
-// The movers palette drops RepairFinishes — every row there is priced, so
-// the repair has nothing to fix — and ranks WatchThisCard above the
-// everyday holdings verbs like AddCards.
 func TestMoversPaletteRanking(t *testing.T) {
 	st := testStore()
-	st.movers = []store.PriceChange{mover("Bitterblossom-id", "nonfoil", 4, 30, 34)}
+	st.movers = []store.PriceChange{mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st))
 	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
-	m = key(m, "v") // movers
+	m = key(m, "v")
 	m.openPalette()
 	watchAt, addAt := -1, -1
 	for i, match := range m.palette.matches {
@@ -260,13 +237,10 @@ func TestMoversPaletteRanking(t *testing.T) {
 	}
 }
 
-// The watches palette keeps the two add-a-watch verbs together — the
-// collection picker leads, the by-name fallback sits directly under it —
-// and drops the holdings-editing verbs (their keys stay bound).
 func TestWatchesPaletteRanking(t *testing.T) {
 	st := testStore()
 	w := store.WatchStatus{Name: "Bitterblossom"}
-	w.ScryfallID, w.Finish, w.Op, w.Threshold = "Bitterblossom-id", "nonfoil", "<=", 30
+	w.ScryfallID, w.Finish, w.Op, w.Threshold = "Bitterblossom-id", finish.Nonfoil, "<=", 30
 	st.watches = []store.WatchStatus{w}
 	m := atAllCards(t, newTestModel(t, st))
 	m.opWatchAdd = func(ctx context.Context, p progress.Fn, name, op string, threshold float64) (string, error) {
@@ -274,7 +248,7 @@ func TestWatchesPaletteRanking(t *testing.T) {
 	}
 	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
 	for range 3 {
-		m = key(m, "v") // movers → market → watches
+		m = key(m, "v")
 	}
 	if m.view != viewWatches {
 		t.Fatalf("view = %v, want watches", m.view)
@@ -293,8 +267,7 @@ func TestWatchesPaletteRanking(t *testing.T) {
 			t.Errorf("%s offered on watches", m.commands[match.index].id)
 		}
 	}
-	// RepairFinishes belongs here now: this screen carries the unpriced
-	// table, which is where a wrong finish shows up as a missing price.
+
 	if repairAt == -1 {
 		t.Error("RepairFinishes must be offered where the unpriced table lives")
 	}
@@ -303,8 +276,6 @@ func TestWatchesPaletteRanking(t *testing.T) {
 			pickAt, byNameAt)
 	}
 
-	// Hidden from the listing, not unbound: d still stages the removal of
-	// the watch under the cursor.
 	m.palette = nil
 	m = key(m, "d")
 	if m.confirm == nil {
@@ -312,8 +283,6 @@ func TestWatchesPaletteRanking(t *testing.T) {
 	}
 }
 
-// The market palette drops the holdings-editing verbs too: nothing on the
-// vendor sheets is a row you'd remove or an edit you'd undo.
 func TestMarketPaletteDropsEditVerbs(t *testing.T) {
 	m := newTestModel(t, testStore())
 	for m.view != viewMarket {
@@ -327,7 +296,6 @@ func TestMarketPaletteDropsEditVerbs(t *testing.T) {
 	}
 }
 
-// BrowseBySets lists in the palette with its key hint, and runs.
 func TestPaletteListsBrowseBySets(t *testing.T) {
 	m := openTestPalette(t)
 	found := false

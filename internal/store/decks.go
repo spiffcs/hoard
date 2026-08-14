@@ -8,12 +8,6 @@ import (
 	"strings"
 )
 
-// Decks: importing one, listing them, and reading what is inside.
-
-// DeckBySource reports the deck previously imported from (source, sourceID):
-// its id and display name, or ok=false when no such deck exists. It is the
-// pre-flight for UpsertDeck's replacement semantics — callers who would
-// destroy a user's manual edits ask this first and confirm before they do.
 func (s *Store) DeckBySource(source, sourceID string) (id int64, name string, ok bool, err error) {
 	err = s.db.QueryRow(`SELECT id, name FROM containers WHERE source=? AND source_id=?`,
 		source, sourceID).Scan(&id, &name)
@@ -26,13 +20,6 @@ func (s *Store) DeckBySource(source, sourceID string) (id int64, name string, ok
 	return id, name, true, nil
 }
 
-// UpsertDeck inserts or updates a deck by (source, source_id) and replaces its
-// entries wholesale, so re-importing is idempotent. Returns the deck's id.
-//
-// Replacement is total: conditions assessed and printings corrected in browse
-// are discarded with the old entries. That is the right behavior for an undo
-// restoring a deck it just removed, and the wrong surprise for a casual
-// re-import — which is why DeckAdd confirms against DeckBySource first.
 func (s *Store) UpsertDeck(meta DeckMeta, entries []Entry) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -46,9 +33,6 @@ func (s *Store) UpsertDeck(meta DeckMeta, entries []Entry) (int64, error) {
 	return id, tx.Commit()
 }
 
-// upsertDeckTx is UpsertDeck's body without the transaction, so a merge — which
-// must land its decks, binders and catalog together or not at all — can call it
-// inside its own. The same split UpsertPrintings and upsertPrintingsTx use.
 func upsertDeckTx(tx *sql.Tx, meta DeckMeta, entries []Entry) (int64, error) {
 	ts := now()
 	if _, err := tx.Exec(`
@@ -86,14 +70,11 @@ ON CONFLICT(source, source_id) DO UPDATE SET
 	return id, nil
 }
 
-// containerSelect reads one container. Since v19 containers.name is the
-// display name for every row, the default binder included.
 const containerSelect = `
 SELECT ct.id, ct.kind, ct.name, ct.source,
        COALESCE(ct.source_id,''), COALESCE(ct.source_url,''), COALESCE(ct.format,'')
 FROM containers ct WHERE ct.kind=?`
 
-// ListDecks returns all decks with rolled-up card counts and value.
 func (s *Store) ListDecks() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
@@ -139,23 +120,12 @@ func scanContainer(sc interface{ Scan(...any) error }) (*Container, error) {
 	return &c, nil
 }
 
-// DeckByRef resolves a deck by numeric id, exact name, or a case-insensitive
-// fragment of its name.
-//
-// Deck names are long ("Duel Decks Anthology: Divine vs. Demonic (Demonic)"),
-// so requiring the full string makes them impractical to type. A fragment is
-// accepted whenever it names exactly one deck; when it names several the error
-// lists them rather than picking one, since silently acting on the wrong deck is
-// the worst outcome for `deck remove`.
 func (s *Store) DeckByRef(ref string) (*Container, error) {
 	return s.containerByRef(KindDeck, "deck", ref)
 }
 
-// containerByRef is the id / exact-name / unique-fragment resolution shared by
-// decks and binders. For binders the reserved aliases resolve to the default
-// binder whatever its current name. noun is what the errors call the thing.
 func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
-	// A bare integer is an id, never a name fragment.
+
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		c, err := scanContainer(s.db.QueryRow(containerSelect+` AND ct.id=?`, kind, id))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -164,8 +134,6 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 		return c, err
 	}
 
-	// An exact name wins outright, so a name that is a fragment of another's
-	// stays reachable.
 	c, err := scanContainer(s.db.QueryRow(
 		containerSelect+` AND ct.name=? COLLATE NOCASE`, kind, ref))
 	if err == nil {
@@ -175,10 +143,6 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 		return nil, err
 	}
 
-	// A reserved alias names the default binder whatever it is called now:
-	// every export ever written stamps "Binder" in its Container column, and
-	// pre-v19 databases stored "Collection". Checked after the exact match so
-	// a default binder literally named "Binder" resolves the ordinary way.
 	if kind == KindCollection && IsReservedBinderName(ref) {
 		id, err := s.collectionID()
 		if err != nil {
@@ -187,8 +151,6 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 		return scanContainer(s.db.QueryRow(containerSelect+` AND ct.id=?`, kind, id))
 	}
 
-	// Otherwise accept a fragment, as long as it picks out exactly one.
-	// LIKE is already case-insensitive for ASCII in SQLite.
 	rows, err := s.db.Query(
 		containerSelect+` AND ct.name LIKE ? ESCAPE '\' ORDER BY ct.name`,
 		kind, "%"+escapeLike(ref)+"%")
@@ -228,15 +190,11 @@ func (s *Store) containerByRef(kind, noun, ref string) (*Container, error) {
 	}
 }
 
-// escapeLike neutralizes the wildcards in a user-supplied LIKE pattern, so a
-// deck name containing % or _ is matched literally.
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
 }
 
-// DeckEntries returns a deck's entries joined to catalog cards, ordered by
-// board then name.
 func (s *Store) DeckEntries(containerID int64) ([]EntryView, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
@@ -267,8 +225,6 @@ ORDER BY
 	return out, rows.Err()
 }
 
-// RemoveContainer deletes a container (and, via cascade, its entries). Returns
-// the number of containers removed.
 func (s *Store) RemoveContainer(id int64) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM containers WHERE id=?`, id)
 	if err != nil {

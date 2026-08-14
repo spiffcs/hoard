@@ -12,9 +12,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// One line per row: an accent bar on the selection, pips for a printing
-// with a known identity, nothing (not a dash) for an unknown one, dim
-// description text appended.
 func TestCascadeDelegateRendersOneLine(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -45,14 +42,12 @@ func TestCascadeDelegateRendersOneLine(t *testing.T) {
 	if withPips == "" || without == "" {
 		t.Fatalf("rows missing from view:\n%q", view)
 	}
-	// Each pip letter carries its own color, so W and U are separately
-	// wrapped rather than contiguous.
+
 	if !strings.Contains(withPips, "mW\x1b[0m") || !strings.Contains(withPips, "mU\x1b[0m") ||
 		!strings.Contains(withPips, "38;2;") {
 		t.Errorf("identity row lost its colored pips: %q", withPips)
 	}
-	// Only the title segment matters here — the dim description may carry
-	// its own em dashes ("$— / $—f" for an unpriced card).
+
 	title := without
 	if i := strings.Index(without, "\x1b[2m"); i >= 0 {
 		title = without[:i]

@@ -1,16 +1,5 @@
 package action_test
 
-// Stage-by-stage wall-clock for what the browser's Movers view runs when a
-// fresh demo asks it to populate: UpdatePrices, then BackfillPrices(90).
-// Gated behind an env var so the suite never touches the network:
-//
-//	HOARD_PROFILE_DEMO=1 go test ./internal/action/ -run TestProfileDemoPopulate -v -timeout 20m
-//
-// It seeds a throwaway store from the same document `hoard demo` uses and
-// reads through the real caches, so a warm run measures what a second
-// reader pays and a cold one (clear ~/Library/Caches/hoard/mtgjson) what
-// the first reader does.
-
 import (
 	"context"
 	"fmt"
@@ -30,8 +19,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// stepTimer accumulates wall-clock per progress Step, charging the time
-// between one event and the next to the step the earlier event named.
 type stepTimer struct {
 	t     *testing.T
 	total map[string]time.Duration
@@ -46,10 +33,6 @@ func newStepTimer(t *testing.T) *stepTimer {
 	return &stepTimer{t: t, total: map[string]time.Duration{}, at: now, start: now}
 }
 
-// bucket names the phase an event belongs to. Step alone is too coarse:
-// resolve, the treated-foil overlay and the archive scan all report under
-// "downloading price history" and differ only in their note, so the text
-// before the note's first separator joins the key.
 func bucket(ev progress.Event) string {
 	if ev.Note == "" {
 		return ev.Step
@@ -109,11 +92,6 @@ func TestProfileDemoPopulate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "demo.db")
 
-	// HOARD_PROFILE_DEMO_DB profiles a real hoard instead of the sample, which
-	// is the only way to see the costs that scale: resolve pays per distinct
-	// set, and the contradicted-price sweep pays per TCGplayer group. It is
-	// copied first — this runs a backfill, and a profiler must never write to
-	// the database it is measuring.
 	if src := os.Getenv("HOARD_PROFILE_DEMO_DB"); src != "" {
 		b, err := os.ReadFile(src)
 		if err != nil {
@@ -162,9 +140,6 @@ func TestProfileDemoPopulate(t *testing.T) {
 		t.Logf("catalog: %d cards", cat.CardCount())
 	}
 
-	// Cold mode gives the price caches a directory of their own, which is
-	// what a machine that has never run hoard has. pricing derives the
-	// tcgcsv cache as a sibling of this path, so both go cold together.
 	cacheDir := pricing.DefaultCacheDir()
 	if os.Getenv("HOARD_PROFILE_DEMO_COLD") != "" {
 		cacheDir = filepath.Join(dir, "cache", "mtgjson")
@@ -177,11 +152,6 @@ func TestProfileDemoPopulate(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// UpdatePrices is decomposed rather than timed whole: it emits a Step for
-	// only some of what it does, so a progress-driven timer charges the
-	// contradicted-price sweep — which is one tcgcsv download per owned
-	// TCGplayer group, and silent unless it finds something — to whatever step
-	// ran before it. That is exactly the phase worth seeing.
 	upStart := time.Now()
 	stage := func(name string, fn func() error) {
 		t.Helper()
@@ -217,10 +187,7 @@ func TestProfileDemoPopulate(t *testing.T) {
 		_, err := st.RecordPrices()
 		return err
 	})
-	// Everything above is RefreshPrices, and it is what the browser waits for
-	// before it redraws. The two below are the deferred half — they still
-	// happen, and still cost what they cost, but with the reader's numbers
-	// already on screen.
+
 	blocking := time.Since(upStart)
 	var refused, repaired int
 	stage("checking prices against asks (tcgcsv) [DEFERRED]", func() (err error) {

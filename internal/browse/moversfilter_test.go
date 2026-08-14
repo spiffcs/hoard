@@ -2,6 +2,7 @@ package browse
 
 import (
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 	"testing"
@@ -14,23 +15,19 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// moversFilterStore seeds three movers whose names, sets and finishes are
-// pairwise distinguishable, so one query can be shown to select a subset
-// rather than happening to select everything.
 func moversFilterStore() *fakeStore {
 	st := testStore()
 	st.movers = []store.PriceChange{
 		{ScryfallID: "riser-id", Name: "Riser", SetCode: "aaa", CollectorNumber: "1",
-			Finish: "nonfoil", Copies: 2, Old: 1, New: 5},
+			Finish: finish.Nonfoil, Copies: 2, Old: 1, New: 5},
 		{ScryfallID: "sinker-id", Name: "Sinker", SetCode: "bbb", CollectorNumber: "2",
-			Finish: "foil", Copies: 1, Old: 50, New: 10},
+			Finish: finish.Foil, Copies: 1, Old: 50, New: 10},
 		{ScryfallID: "brainstorm-id", Name: "Brainstorm", SetCode: "aaa", CollectorNumber: "3",
-			Finish: "nonfoil", Copies: 4, Old: 2, New: 3},
+			Finish: finish.Nonfoil, Copies: 4, Old: 2, New: 3},
 	}
 	return st
 }
 
-// onMovers puts the model on the movers view with every seeded row visible.
 func onMovers(t *testing.T, st *fakeStore) Model {
 	t.Helper()
 	m := atAllCards(t, newTestModel(t, st))
@@ -44,9 +41,6 @@ func onMovers(t *testing.T, st *fakeStore) Model {
 	return m
 }
 
-// THE BUG: `/` on the movers view opens the bar and takes the query, but
-// nothing consumes it when the movers rows are built — so the list does not
-// narrow the way All Cards does.
 func TestMoversFilterNarrowsLive(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "ris")
@@ -61,7 +55,6 @@ func TestMoversFilterNarrowsLive(t *testing.T) {
 		t.Fatalf("movers = %+v, want only Riser", moverNames(m.movers))
 	}
 
-	// Rendered, not just held: the pane on screen is what the owner reads.
 	out := m.View()
 	if !strings.Contains(out, "Riser") {
 		t.Errorf("the matching row must still render:\n%s", out)
@@ -72,26 +65,22 @@ func TestMoversFilterNarrowsLive(t *testing.T) {
 		}
 	}
 
-	// The bar's own count speaks for the list it is filtering.
 	if !strings.Contains(out, "1 match") {
 		t.Errorf("filter bar must count the movers it selected:\n%s", out)
 	}
 }
 
-// The header's count and net describe the filtered ranking, not the pristine
-// one — a filtered view that still claims 3 moved is a lie about the hoard.
 func TestMoversFilterCorrectsTheHeader(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "ris")
 
 	_, totals := m.viewHeader()
-	// Riser alone: 2 copies × +$4 = +$8.
+
 	if !strings.Contains(totals, "1 moved") || !strings.Contains(totals, "$8.00") {
 		t.Errorf("movers totals = %q, want the filtered count and net", totals)
 	}
 }
 
-// esc clears the query and restores every row, as on All Cards.
 func TestMoversFilterEscRestores(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "ris")
@@ -109,8 +98,6 @@ func TestMoversFilterEscRestores(t *testing.T) {
 	}
 }
 
-// The query survives closing the bar with enter — the bar edits the query,
-// it is not the query.
 func TestMoversFilterSurvivesEnter(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "ris")
@@ -125,8 +112,6 @@ func TestMoversFilterSurvivesEnter(t *testing.T) {
 	}
 }
 
-// The grammar the movers row can answer: set, finish and qty read off the
-// row itself, and trait terms come from the id set the catalog matched.
 func TestMoversFilterHonoursFieldTerms(t *testing.T) {
 	tests := []struct {
 		query string
@@ -158,8 +143,6 @@ func TestMoversFilterHonoursFieldTerms(t *testing.T) {
 	}
 }
 
-// A trait term is answered by the catalog id set, which a mover row carries
-// a scryfall id for — so the trait half of the grammar works unchanged.
 func TestMoversFilterHonoursTraitTerms(t *testing.T) {
 	st := moversFilterStore()
 	st.traits = map[string][]string{
@@ -177,8 +160,6 @@ func TestMoversFilterHonoursTraitTerms(t *testing.T) {
 	}
 }
 
-// A movers list emptied by the query says so. "no price movement in this
-// window" would send the reader to F to fetch prices they already have.
 func TestMoversEmptiedByFilterReadsAsFiltered(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "zzz")
@@ -186,7 +167,7 @@ func TestMoversEmptiedByFilterReadsAsFiltered(t *testing.T) {
 		t.Fatalf("movers = %v, want nothing to match", moverNames(m.movers))
 	}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // close the bar; the query stays
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	out := m.View()
 	if strings.Contains(out, "no price movement") {
@@ -197,9 +178,6 @@ func TestMoversEmptiedByFilterReadsAsFiltered(t *testing.T) {
 	}
 }
 
-// board is the one term a mover row cannot answer — store.Movers sums copies
-// across every holding of a card+finish, so there is no board to compare. The
-// bar says so instead of quietly selecting nothing.
 func TestMoversFilterSaysWhatItCannotAnswer(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	m = typeFilter(m, "board:main")
@@ -212,11 +190,6 @@ func TestMoversFilterSaysWhatItCannotAnswer(t *testing.T) {
 	}
 }
 
-// Every view the query narrows counts for itself, and each counts its own
-// whole result — a number describing the holdings pane, quoted over a table
-// the query is not touching, would be worse than no number. With market
-// fixed there is no view left returning -1, and the -1 path stays for the
-// next one added rather than because a view uses it today.
 func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 	st := moversFilterStore()
 	m := atAllCards(t, newTestModel(t, st))
@@ -232,14 +205,12 @@ func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 				t.Errorf("movers count = %d, want %d", got, len(m.filteredMovers))
 			}
 		case viewWatches:
-			// The watches screen consumes the query across all three of its
-			// tables, so it does have a number to give — one for the screen.
+
 			if got != m.watchTotalRows() {
 				t.Errorf("watches count = %d, want %d", got, m.watchTotalRows())
 			}
 		default:
-			// Market counts the same way, over the full rankings rather than
-			// the three pages on screen.
+
 			want := len(m.marketAllRows) + len(m.marketAllComps)
 			if got != want {
 				t.Errorf("market count = %d, want %d", got, want)
@@ -248,8 +219,6 @@ func TestFilterMatchCountOnlyWhereItApplies(t *testing.T) {
 	}
 }
 
-// moverNames is names' twin for the movers rows; the two cannot share one
-// generic without naming a field, which is the whole difference between them.
 func moverNames(rows []store.PriceChange) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -258,14 +227,10 @@ func moverNames(rows []store.PriceChange) []string {
 	return out
 }
 
-// The header's summary trails the page phrase, so the net lands at the far
-// right where these totals are anchored — directly over IMPACT, the column it
-// is the sum of. Order, not just presence: every other assertion on this
-// header uses Contains and would pass either way round.
 func TestMoversHeaderPutsTheNetLast(t *testing.T) {
 	st := testStore()
 	for i := range 80 {
-		st.movers = append(st.movers, mover(fmt.Sprintf("M%02d-id", i), "nonfoil", 1, 10, 12))
+		st.movers = append(st.movers, mover(fmt.Sprintf("M%02d-id", i), finish.Nonfoil, 1, 10, 12))
 	}
 	m := atAllCards(t, newTestModel(t, st))
 	m = key(m, "v")
@@ -284,8 +249,6 @@ func TestMoversHeaderPutsTheNetLast(t *testing.T) {
 	}
 }
 
-// A collection small enough not to page has no page phrase at all, and the
-// summary must not inherit its separator.
 func TestMoversHeaderWithoutPaging(t *testing.T) {
 	m := onMovers(t, moversFilterStore())
 	_, totals := m.viewHeader()
@@ -297,14 +260,8 @@ func TestMoversHeaderWithoutPaging(t *testing.T) {
 	}
 }
 
-// The net wears the movers ramp's own endpoint, so the header agrees with the
-// IMPACT column it totals. Direction only — a lone total has no distribution
-// to grade against — and an unmoved hoard takes the ramp's neutral gray.
 func TestMoversHeaderColorsTheNet(t *testing.T) {
-	// A test binary has no TTY, so lipgloss resolves to Ascii and renders every
-	// style to bare text — the assertions below would compare "" against "" and
-	// pass on a header that colors nothing. theme_test.go pins the profile for
-	// the same reason.
+
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
@@ -319,10 +276,10 @@ func TestMoversHeaderColorsTheNet(t *testing.T) {
 		_, totals := m.viewHeader()
 		return totals
 	}
-	gain := paint(t, []store.PriceChange{mover("up-id", "nonfoil", 1, 10, 12)})
-	loss := paint(t, []store.PriceChange{mover("dn-id", "nonfoil", 1, 12, 10)})
+	gain := paint(t, []store.PriceChange{mover("up-id", finish.Nonfoil, 1, 10, 12)})
+	loss := paint(t, []store.PriceChange{mover("dn-id", finish.Nonfoil, 1, 12, 10)})
 	flat := paint(t, []store.PriceChange{
-		mover("up-id", "nonfoil", 1, 10, 12), mover("dn-id", "nonfoil", 1, 12, 10)})
+		mover("up-id", finish.Nonfoil, 1, 10, 12), mover("dn-id", finish.Nonfoil, 1, 12, 10)})
 
 	env := ui.Env{Color: true}
 	for _, tc := range []struct {
@@ -338,8 +295,7 @@ func TestMoversHeaderColorsTheNet(t *testing.T) {
 			t.Errorf("%s: totals = %q, want it to carry %q", tc.name, tc.totals, want)
 		}
 	}
-	// The colors have to differ, or the assertions above would pass against a
-	// single style that says nothing about direction.
+
 	if env.Diverge(1)("x") == env.Diverge(-1)("x") {
 		t.Fatal("the ramp paints gains and losses the same; this test proves nothing")
 	}

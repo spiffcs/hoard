@@ -1,13 +1,12 @@
 package store
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// VacuumPrintings removes orphans and their cascaded history, sparing
-// everything held or watched.
 func TestVacuumPrintings(t *testing.T) {
 	s := newTestStore(t)
 	held := scryfall.Card{ID: "held-1", Set: "uma", CollectorNumber: "1",
@@ -19,13 +18,13 @@ func TestVacuumPrintings(t *testing.T) {
 	if err := s.UpsertPrintings([]scryfall.Card{held, orphan, watched}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
-	if err := s.AddCardFinish(held, "nonfoil", 1); err != nil {
+	if err := s.AddCardFinish(held, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	if err := s.AddWatch("watched-1", "Watched", "nonfoil", "under", 5); err != nil {
+	if err := s.AddWatch("watched-1", "Watched", finish.Nonfoil, "under", 5); err != nil {
 		t.Fatalf("AddWatch: %v", err)
 	}
-	// The orphan carries junk history the cascade must take with it.
+
 	if _, err := s.db.Exec(`
 INSERT INTO card_price_history (scryfall_id, finish, price_usd, source, as_of)
 VALUES ('orphan-1', 'nonfoil', 3, 'test', '2026-08-01T00:00:00Z')`); err != nil {
@@ -51,7 +50,6 @@ WHERE scryfall_id = 'orphan-1'`).Scan(&history); err != nil {
 		t.Errorf("cards = %d, orphan history = %d; want 2 survivors and no history", cards, history)
 	}
 
-	// A second pass finds nothing.
 	if removed, err = s.VacuumPrintings(); err != nil || removed != 0 {
 		t.Errorf("second vacuum = %d, %v; want a clean no-op", removed, err)
 	}

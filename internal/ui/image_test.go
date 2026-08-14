@@ -11,16 +11,10 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
-// The tier ladder, on by default: kitty-protocol terminals by any of
-// their fingerprints; truecolor (and iTerm2, whose own protocol fights the
-// renderer) → halfblocks. HOARD_CARD_IMAGES=0 opts out, =kitty/=halfblock
-// forces past the fingerprinting; NO_COLOR and multiplexers get nothing.
 func TestDetectImageTier(t *testing.T) {
 	clear := func(t *testing.T) {
 		t.Helper()
-		// Set-but-empty reads as absent everywhere except NO_COLOR, which
-		// is presence-tested and must be genuinely unset — t.Setenv first
-		// so the original value is restored after the test.
+
 		for _, k := range []string{"HOARD_CARD_IMAGES", "TERM",
 			"TERM_PROGRAM", "KITTY_WINDOW_ID", "COLORTERM"} {
 			t.Setenv(k, "")
@@ -62,8 +56,6 @@ func TestDetectImageTier(t *testing.T) {
 	}
 }
 
-// testImage is a 2×4 image with known colors, so the halfblock pairing
-// (top pixel → foreground, bottom → background) is checkable exactly.
 func testImage() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 4))
 	colors := []color.RGBA{
@@ -91,21 +83,15 @@ func TestHalfblocks(t *testing.T) {
 			t.Errorf("line does not reset: %q", l)
 		}
 	}
-	// Top-left cell: red over blue.
+
 	if !strings.Contains(lines[0], "\x1b[38;2;255;0;0m\x1b[48;2;0;0;255m▀") {
 		t.Errorf("top-left cell wrong: %q", lines[0])
 	}
 }
 
-// The detail overlay downscales a 488×680 card into 40×54, so a destination
-// pixel covers a 12×12 block. Taking one pixel out of that block is a random
-// sample rather than an approximation, and it turned rules text into speckle.
-// This checks the property at the smallest size that can show it.
 func TestSampleAveragesTheBlockItCovers(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
-	// Each 2×2 quadrant gets four values whose mean is exact, so the assertion
-	// needs no rounding tolerance. Point sampling would return each quadrant's
-	// bottom-right pixel — the largest of its four — so it cannot pass by luck.
+
 	for qy := range 2 {
 		for qx := range 2 {
 			base := uint8(10 + 40*(qy*2+qx))
@@ -118,7 +104,7 @@ func TestSampleAveragesTheBlockItCovers(t *testing.T) {
 	got := sample(img, 2, 2)
 	for qy := range 2 {
 		for qx := range 2 {
-			want := uint8(10 + 40*(qy*2+qx) + 15) // mean of base..base+30
+			want := uint8(10 + 40*(qy*2+qx) + 15)
 			if p := got[qy][qx]; p.r != want || p.g != want || p.b != want {
 				t.Errorf("cell (%d,%d) = %v, want %d on every channel — the mean of its 2×2 block",
 					qx, qy, p, want)

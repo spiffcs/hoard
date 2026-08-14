@@ -1,13 +1,5 @@
 package command
 
-// The merge command: folding a second hoard database into this one.
-//
-// A collection kept separately — a bulk box, an inherited hoard, the database
-// from another machine — is a whole hoard, not a CSV. It travels as hoard's own
-// interchange document rather than by splicing SQLite files, so every card
-// arrives through the same vetting an import goes through and the data model is
-// what guarantees nothing is lost.
-
 import (
 	"fmt"
 	"slices"
@@ -18,7 +10,6 @@ import (
 	"github.com/spiffcs/hoard/internal/cli"
 )
 
-// mergeOpts are the flags, gathered as importOpts is.
 type mergeOpts struct {
 	dryRun         bool
 	again          bool
@@ -27,7 +18,6 @@ type mergeOpts struct {
 	outPath        string
 }
 
-// NewCmdMerge builds `hoard merge`.
 func NewCmdMerge(a *app) *cobra.Command {
 	var o mergeOpts
 
@@ -37,7 +27,7 @@ func NewCmdMerge(a *app) *cobra.Command {
 		Short:   "Fold another hoard database into this one",
 		Example: "hoard merge OTHER.db [--dry-run] [--again]\n" +
 			"       [--replace-decks] [--replace-watches] [-o FILE]",
-		// As import does: the sentence says more than cobra's arity message.
+
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return cli.Usagef("merge needs exactly one hoard database")
@@ -55,7 +45,7 @@ func NewCmdMerge(a *app) *cobra.Command {
 		"overwrite decks this hoard already has from the same origin")
 	cmd.Flags().BoolVar(&o.replaceWatches, "replace-watches", false,
 		"overwrite the thresholds of watches this hoard already stands")
-	// See NewCmdReport on why -o hangs off a long name.
+
 	cmd.Flags().StringVarP(&o.outPath, "output", "o", "",
 		"also write the interchange document to FILE")
 	return cmd
@@ -99,9 +89,6 @@ func runMerge(a *app, path string, o mergeOpts) error {
 	r.Detail("%s carried, card documents included.",
 		count(res.Printings, "printing", "printings"))
 
-	// The fold is the one binder rule that surprises people: two hoards each
-	// have a default binder, and the reserved names resolve to whichever one
-	// this hoard has, so they cannot stay apart.
 	if res.FoldedInto != "" {
 		r.Detail("The other hoard's default binder folded into %s.", res.FoldedInto)
 	}
@@ -133,9 +120,6 @@ func runMerge(a *app, path string, o mergeOpts) error {
 	return nil
 }
 
-// count writes "1 deck" but "2 decks". The merge report counts four different
-// things and routinely counts one of them, where "1 decks" reads as a bug in
-// the thing that just rewrote your collection.
 func count(n int, singular, plural string) string {
 	if n == 1 {
 		return "1 " + singular
@@ -143,9 +127,6 @@ func count(n int, singular, plural string) string {
 	return fmt.Sprintf("%d %s", n, plural)
 }
 
-// writeMergeDocument saves the interchange document through the atomic writer,
-// which also refuses to overwrite a SQLite file — the mistake this command
-// invites most, since both of its arguments are databases.
 func writeMergeDocument(path string, doc []byte) error {
 	f, err := createOutput(path)
 	if err != nil {

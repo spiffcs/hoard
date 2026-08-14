@@ -15,7 +15,7 @@
 # and stop.
 #
 # To re-enable (owner only), all three:
-#   1. uncomment the `push:` and `pull_request:` blocks below
+#   1. add `push:` and `pull_request:` triggers to the `on:` block below
 #   2. delete the `if: false` line on the `scan` job
 #   3. delete this banner
 #
@@ -23,81 +23,20 @@
 # before any scanner change lands:
 #   make scan-test && make scan-check
 # ===========================================================================
-#
-# The Swift side of the scanner: compile the Mac helper and the card reader,
-# unit-test them, and replay the checked-in capture fixtures (scan/fixtures/)
-# against their golden card lists.
-#
-# ---------------------------------------------------------------------------
-# This job needs a macOS runner: the helper links AppKit and Network.framework
-# and the reader links Vision, so neither builds on the ubuntu runner
-# validations.yaml uses. macOS bills private-repo minutes at 10x — a run is
-# ~30s of work but 2-3 wall-clock minutes with image spin-up — which is why
-# the triggers are path-filtered to the scanner's own inputs: Go-only changes
-# never pay for one.
-#
-# The workflow was manual-only for a while on cost grounds, and the price of
-# that was written into this header at the time: "nothing checks the goldens
-# automatically any more" — a change altering what the scanner reads could
-# reach main unnoticed unless somebody remembered the local sweep
-# (`make scan-test && make scan-check`). The feature with the
-# most surface area and the least test automation had no gate; the filtered
-# triggers were the compromise that paid only for scanner changes.
-#
-# That compromise is now suspended, not solved: the triggers below are
-# commented out and the job is guarded, so we are back to owing the goldens a
-# manual sweep. Accept that debt knowingly — the exposure above is real and
-# still applies.
-# ---------------------------------------------------------------------------
 name: Scan helper
 
-# workflow_dispatch is the only trigger left, and it stays UNcommented purely
-# so this file remains a valid workflow — a workflow with no `on:` block is an
-# "Invalid workflow file" error, which GitHub reports as a failed run on every
-# push. That would put CI back in the red, which is the opposite of the point.
-# Dispatch cannot spend anything either: the job below is guarded `if: false`.
 on:
   workflow_dispatch:
-
-  # DISABLED — see the banner at the top of this file. Do not uncomment.
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - "scan/**"
-  #     - "build-scan.sh"
-  #     # The scan recipes live in the Taskfile; the Makefile is only the shim
-  #     # that forwards to it, but both stay listed since either can move them.
-  #     - "Taskfile.yaml"
-  #     - "Makefile"
-  #     - ".github/workflows/scan.yml"
-  # pull_request:
-  #   paths:
-  #     - "scan/**"
-  #     - "build-scan.sh"
-  #     - "Taskfile.yaml"
-  #     - "Makefile"
-  #     - ".github/workflows/scan.yml"
 
 permissions:
   contents: read
 
-# Superseded runs are cancelled rather than queued: without this, three pushes
-# to a PR meant three full macOS runs.
 concurrency:
   group: scan-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Pinned to macos-15, not -latest: the goldens pin Vision's OCR output,
-  # which drifts across macOS releases — moving to a newer runner image must
-  # be a deliberate golden refresh (sweep.sh --update), not a surprise red
-  # build.
   scan:
-    # DISABLED — see the banner at the top of this file. Do not delete this
-    # line. It is the hard lock: with the triggers commented out, only a
-    # manual dispatch can reach this job, and `if: false` makes even that a
-    # skip, so no macOS runner is ever allocated and no minutes are ever
-    # billed. Removing this alone would silently re-arm the cost.
     if: false
     runs-on: macos-15
     steps:
@@ -105,21 +44,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # The helper's Package.swift declares swift-tools-version 6.0, so a runner
-      # image that regressed to an older Xcode fails the build with a manifest
-      # error rather than anything to do with the scanner. Printing the version
-      # first makes that five seconds to diagnose instead of a puzzle.
       - name: toolchain
         run: swift --version
 
-      # Before the sweep: seconds rather than a minute, and a broken trigger
-      # rule or parser predicate is far easier to read here than as a golden
-      # diff. Debug rather than release deliberately — release was measured
-      # slower (10s vs 8s), since the test target compiles fresh either way.
       - name: unit tests
         run: make scan-test
 
-      # Builds cardkit-probe as a dependency: the reader behind the goldens is
-      # CardKit, the same pipeline the iPhone app runs.
       - name: fixture sweep
         run: make scan-check

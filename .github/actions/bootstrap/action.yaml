@@ -16,7 +16,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # note: go mod and build is automatically cached on default with v4+
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       if: inputs.go-version != ''
       with:

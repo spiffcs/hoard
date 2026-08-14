@@ -12,7 +12,7 @@ Usage: sweep-threshold.py /tmp/foil-probs.txt
 import sys
 from collections import defaultdict
 
-rows = []  # (rig, truth, p)
+rows = []
 for line in open(sys.argv[1]):
     if not line.startswith("PROB\t"):
         continue
@@ -47,7 +47,6 @@ if best:
           f"({100*caught/len(foils):.0f}%), 0 false-foils on every held-out rig")
 else:
     print("NO bar meets the gate: some nonfoil outscores foils on every candidate")
-# The highest nonfoil per rig is the number the chosen bar must clear.
 for r in rigs:
     top = max((p for rig, _, p in nonfoils if rig == r), default=0)
     print(f"  highest held-out nonfoil p(foil) on {r}: {top:.4f}")

@@ -11,16 +11,13 @@ import (
 	"testing"
 )
 
-// bulkServer serves both routes and counts what was asked for, so a test can
-// assert the route taken rather than only the answer returned.
 type bulkServer struct {
 	mu             sync.Mutex
 	groupGets      int
 	archiveHeads   int
 	archiveGets    int
 	archiveMissing bool
-	// groupBytes pads each group response so the size comparison has real
-	// numbers to work with.
+
 	groupBytes int
 	opts       Options
 }
@@ -37,8 +34,7 @@ func newBulkServer(t *testing.T, groupBytes int) *bulkServer {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			// The body is never parsed as 7z — readArchiveMembers is stubbed —
-			// so its only job is to have a length worth comparing.
+
 			body := strings.Repeat("z", archiveFixtureBytes)
 			if r.Method == http.MethodHead {
 				b.archiveHeads++
@@ -62,10 +58,6 @@ func newBulkServer(t *testing.T, groupBytes int) *bulkServer {
 
 const archiveFixtureBytes = 4 << 20
 
-// priceFixture is one group's price list, padded to about n bytes with rows
-// that parse. The padding ids start high and count up: a leading zero is not
-// legal JSON, and a fixture that fails to decode reads exactly like the group
-// being unreachable.
 func priceFixture(gid string, n int) string {
 	var sb strings.Builder
 	sb.WriteString(`{"results": [{"productId": ` + gid + `, "marketPrice": 12.5, "lowPrice": 1.0, "subTypeName": "Normal"}`)
@@ -76,9 +68,6 @@ func priceFixture(gid string, n int) string {
 	return sb.String()
 }
 
-// stubArchive makes the extractor answer for the given groups without a real
-// PPMd archive — no Go writer exists to build one with, and the reading itself
-// is proven against the live archives.
 func stubArchive(t *testing.T, date string, gids ...int) {
 	t.Helper()
 	prev := readArchiveMembers
@@ -110,10 +99,6 @@ func ids(n int) []int {
 	return out
 }
 
-// A small hoard must not touch the archive. Eight groups is about 650 KB
-// against a ~4 MB archive covering every category TCGplayer sells, so taking it
-// would move six times the bytes and discard most of them — and the check is
-// cheap enough that it does not even cost a HEAD to decide.
 func TestBulkKeepsPerGroupForASmallHoard(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 82<<10)
@@ -133,11 +118,6 @@ func TestBulkKeepsPerGroupForASmallHoard(t *testing.T) {
 	}
 }
 
-// A large hoard must take the archive: ninety groups is over 7 MB one at a
-// time against a ~4 MB archive, so the archive is both fewer requests and
-// fewer bytes. The per-group counter is the assertion that matters — an
-// implementation that downloaded the archive and then fetched every group
-// anyway would still return the right answer.
 func TestBulkTakesTheArchiveForALargeHoard(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 82<<10)
@@ -158,8 +138,6 @@ func TestBulkTakesTheArchiveForALargeHoard(t *testing.T) {
 		t.Errorf("%d per-group requests after taking the archive, want 0", b.groupGets)
 	}
 
-	// The archive writes the same day-cache files the per-group route reads, so
-	// the next reader — the treated-foil overlay included — pays nothing.
 	before := b.archiveGets + b.groupGets
 	if _, err := GroupQuotesBulk(context.Background(), b.opts, want); err != nil {
 		t.Fatalf("second read: %v", err)
@@ -169,16 +147,12 @@ func TestBulkTakesTheArchiveForALargeHoard(t *testing.T) {
 	}
 }
 
-// The decision is about what this call would actually fetch, not how big the
-// collection is. A hoard large enough to prefer the archive, with all but a
-// handful of its groups already read today, should quietly read the handful.
 func TestBulkSizesTheFetchNotTheCollection(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 82<<10)
 	want := ids(90)
 	stubArchive(t, "2026-08-12", want...)
 
-	// Prime all but three.
 	if _, err := GroupQuotesBulk(context.Background(), b.opts, want[:87]); err != nil {
 		t.Fatalf("priming: %v", err)
 	}
@@ -202,8 +176,6 @@ func TestBulkSizesTheFetchNotTheCollection(t *testing.T) {
 	}
 }
 
-// A day whose archive is not published yet must not cost the caller its
-// answer. The route simply does not work out and the per-group one still does.
 func TestBulkFallsBackWhenTheArchiveIsMissing(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 82<<10)
@@ -222,14 +194,10 @@ func TestBulkFallsBackWhenTheArchiveIsMissing(t *testing.T) {
 	if b.groupGets != 90 {
 		t.Errorf("%d per-group requests, want 90", b.groupGets)
 	}
-	// A missing archive is decided by the size check, which fails closed, so
-	// nothing needs saying — but if the download itself failed the caller is
-	// told which route ran.
+
 	_ = noted
 }
 
-// With no cache directory there is nowhere to put an extraction, so the archive
-// would be downloaded and thrown away. The per-group route is the only sane one.
 func TestBulkWithoutACacheKeepsPerGroup(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 82<<10)
@@ -247,9 +215,6 @@ func TestBulkWithoutACacheKeepsPerGroup(t *testing.T) {
 	}
 }
 
-// A group the chosen route could not read comes back absent rather than empty.
-// The caller uses that to tell "not checked" from "checked and clean", which is
-// what stops an outage from retiring corrections it never re-examined.
 func TestBulkLeavesUnreadableGroupsAbsent(t *testing.T) {
 	pinDate(t, "2026-08-12")
 	b := newBulkServer(t, 1<<10)
@@ -261,7 +226,7 @@ func TestBulkLeavesUnreadableGroupsAbsent(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("read %d groups, want 2", len(got))
 	}
-	// Now break one and clear the cache for it.
+
 	os.Remove(dayCachePath(b.opts, 1001))
 	b.archiveMissing = true
 	srvDown := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

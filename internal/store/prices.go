@@ -3,34 +3,19 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 )
 
-// SourceCount is how much of the collection one price source covers: a
-// printing-finish combination counts once however many copies are held, and
-// Copies counts them all. Source is "scryfall", a fallback vendor's name, or
-// "" for the printings nothing can price.
 type SourceCount struct {
 	Source    string
 	Printings int
 	Copies    int
 }
 
-// PriceSources reports where every owned printing-finish's price comes from,
-// largest source first. The valuation report prints this so a reader knows
-// which figures are Scryfall's, which are a fallback vendor's estimate, and
-// how much of the total is standing on nothing at all.
 func (s *Store) PriceSources() ([]SourceCount, error) {
-	// The inner query classifies each owned printing-finish exactly as
-	// entryValue prices it: the foil price for foil and etched, with Scryfall
-	// preferred over the fallback — so the counts and the totals they explain
-	// cannot disagree.
-	//
-	// Condition is not in the grouping, and must not be: this counts how many
-	// printings each price source covers, and a card held NM and LP is one
-	// printing priced once. Adding it would inflate every source's coverage by
-	// however many conditions the user happened to record.
+
 	rows, err := s.db.Query(`
 SELECT src, COUNT(*) AS printings, SUM(copies) AS copies FROM (
   SELECT CASE
@@ -43,7 +28,7 @@ SELECT src, COUNT(*) AS printings, SUM(copies) AS copies FROM (
            CASE WHEN c.price_usd_foil IS NOT NULL THEN 'scryfall'
                 WHEN a.price_usd_foil IS NOT NULL THEN a.source_usd_foil
                 ELSE '' END
-         ELSE
+         WHEN e.finish = 'nonfoil' THEN
            CASE WHEN c.price_usd IS NOT NULL THEN 'scryfall'
                 WHEN a.price_usd IS NOT NULL THEN a.source_usd
                 ELSE '' END
@@ -71,11 +56,6 @@ ORDER BY printings DESC, src`)
 	return out, rows.Err()
 }
 
-// LatestPriceStamp is when the prices being reported were observed: the
-// newest history row, or — before any history exists — the newest card
-// fetch. Empty only when the database has never seen a price at all. A
-// valuation carries this date because "what it's worth" is meaningless
-// without "as of when".
 func (s *Store) LatestPriceStamp() (string, error) {
 	var stamp sql.NullString
 	if err := s.db.QueryRow(
@@ -93,26 +73,14 @@ func (s *Store) LatestPriceStamp() (string, error) {
 	return stamp.String, nil
 }
 
-// Prices Scryfall could not supply, and the gaps that remain after trying.
-
-// PriceGap is a card that has no price for a finish it is actually owned in.
 type PriceGap struct {
 	ScryfallID string
 	SetCode    string
 	Name       string
-	// CheckedAt is when MTGJSON was last asked about this card and had nothing,
-	// or nil if it has never been asked. Callers use it to avoid paying for a
-	// 50 MB scan to re-learn an answer they already have.
+
 	CheckedAt *string
 }
 
-// UnpricedByOwnedFinish returns cards Scryfall could not price for a finish the
-// user actually holds.
-//
-// The finish matters: a card owned only in non-foil needs no foil price, and
-// counting it as a gap would send every run chasing prices that will never be
-// used. Cards already carrying a usable fallback are excluded too, so a second
-// run is cheap.
 func (s *Store) UnpricedByOwnedFinish() ([]PriceGap, error) {
 	rows, err := s.db.Query(`
 SELECT DISTINCT c.scryfall_id, c.set_code, c.name, g.checked_at
@@ -137,12 +105,6 @@ ORDER BY c.set_code, c.name`)
 	return out, rows.Err()
 }
 
-// AltPricedOwned lists the held printings whose value already rides a
-// fallback price. FillGaps re-asks MTGJSON about these on every pass:
-// a fallback filled once and never refreshed freezes the card's value —
-// it can never move again, and a vendor-preference change never lands
-// (observed live: the ripple foils stayed on Card Kingdom's ask after
-// the foil order moved to Manapool).
 func (s *Store) AltPricedOwned() ([]PriceGap, error) {
 	rows, err := s.db.Query(`
 SELECT DISTINCT c.scryfall_id, c.set_code, c.name, NULL
@@ -165,48 +127,27 @@ ORDER BY c.set_code, c.name`)
 	return out, rows.Err()
 }
 
-// UnpricedRow is one card-and-finish that no source can price, with where it is
-// held so the reader can see which totals are understated.
 type UnpricedRow struct {
 	ScryfallID      string
 	MTGJSONUUID     string
 	Name            string
 	SetCode         string
 	CollectorNumber string
-	Finish          string
+	Finish          finish.Finish
 	Copies          int
-	// Containers holds each container's display label, sorted; HeldIn is the
-	// comma-joined form for one-cell display. Both exist because a name may
-	// itself contain a comma, which makes the joined form unsplittable.
+
 	Containers []string
 	HeldIn     string
-	// Treatment is the foil treatment's display word, empty for plain —
-	// same semantics as Card.Treatment.
+
 	Treatment string
-	// ColorIdentity is the printing's WUBRG identity, nil when unknown —
-	// same semantics as Card.ColorIdentity.
+
 	ColorIdentity []string
-	// Lang is the printing's language code ("en", "ja"), empty when the card's
-	// document has not been stored — same semantics as Card.Lang.
+
 	Lang string
 }
 
-// Unpriced lists the same gaps as UnpricedByOwnedFinish, broken out per finish
-// and annotated for display.
-//
-// Kept separate from UnpricedByOwnedFinish because the two want different
-// shapes: the fill needs distinct cards to look up, this needs one row per
-// finish with its containers. They share unpricedPredicate so the two can never
-// disagree about what counts as unpriced.
-//
-// Not split by condition: an unpriced card is unpriced whatever condition it is
-// in, and listing it once per condition would report the same gap several times.
 func (s *Store) Unpriced() ([]UnpricedRow, error) {
-	// The labels are aggregated twice: once with DISTINCT for the display
-	// string, and once more on an unprintable separator (unit separator, 0x1f)
-	// for the list — a name may contain a comma, so the display string cannot
-	// be split back apart, and SQLite refuses a custom separator alongside
-	// DISTINCT, so one aggregate cannot serve both.
+
 	rows, err := s.db.Query(`
 SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''),
        c.name, c.set_code, c.collector_number, e.finish,
@@ -243,18 +184,11 @@ ORDER BY c.name, e.finish`)
 	return out, rows.Err()
 }
 
-// dedupeSorted sorts labels and drops duplicates — the Go half of a DISTINCT
-// the SQL aggregate above is not allowed to express.
 func dedupeSorted(labels []string) []string {
 	slices.Sort(labels)
 	return slices.Compact(labels)
 }
 
-// AltPrice is a fallback price to record for one card.
-//
-// The two finishes carry their own vendor because they are looked up
-// independently: the shop that prices a card's non-foil printing often has no
-// figure for its foil, and vice versa.
 type AltPrice struct {
 	ScryfallID    string
 	MTGJSONUUID   string
@@ -264,11 +198,6 @@ type AltPrice struct {
 	SourceUSDFoil string
 }
 
-// UpsertAltPrices records fallback prices, replacing any previous ones.
-//
-// Rows are rewritten rather than inserted once: a vendor's price moves, and a
-// card Scryfall later learns to price should not be left showing a stale
-// fallback underneath it.
 func (s *Store) UpsertAltPrices(prices []AltPrice) error {
 	if len(prices) == 0 {
 		return nil
@@ -305,13 +234,6 @@ ON CONFLICT(scryfall_id) DO UPDATE SET
 	return tx.Commit()
 }
 
-// RecordPriceGapChecks notes that MTGJSON was asked about these cards and had
-// no usable price.
-//
-// Recorded for every card asked about, not only the ones that came back empty:
-// a card MTGJSON priced is no longer a gap, so it will not be asked about again
-// regardless, and writing a row for it would be describing a state that no
-// longer exists.
 func (s *Store) RecordPriceGapChecks(scryfallIDs []string) error {
 	if len(scryfallIDs) == 0 {
 		return nil
@@ -339,8 +261,6 @@ ON CONFLICT(scryfall_id) DO UPDATE SET checked_at = excluded.checked_at`)
 	return tx.Commit()
 }
 
-// nullable stores an empty string as SQL NULL, so "no vendor for this finish"
-// is distinguishable from a vendor whose name happens to be blank.
 func nullable(s string) any {
 	if s == "" {
 		return nil

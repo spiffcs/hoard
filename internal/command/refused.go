@@ -1,8 +1,5 @@
 package command
 
-// `hoard refused`: the prices hoard declined to report, and what it used
-// instead.
-
 import (
 	"fmt"
 
@@ -14,7 +11,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// NewCmdRefused builds `hoard refused`.
 func NewCmdRefused(a *app) *cobra.Command {
 	return cli.JSONCapable(&cobra.Command{
 		Use:     "refused",
@@ -41,12 +37,6 @@ lapse on their own once the feed's figure is sane.`,
 	})
 }
 
-// runRefused lists the corrections in force.
-//
-// The counterpart to `hoard unpriced`: that one finds holdings counting for
-// nothing, this one finds holdings counted at a number the catalog did not
-// supply. Both exist because a total is only trustworthy if you can ask it
-// where each figure came from.
 func runRefused(st *store.Store, env *cli.Env) error {
 	rows, err := st.PriceOverrides()
 	if err != nil {

@@ -1,14 +1,3 @@
-// Package mtgjson fetches card prices from MTGJSON, as a fallback for printings
-// Scryfall cannot price.
-//
-// Scryfall's USD prices come from TCGplayer alone, so a printing TCGplayer has
-// no record of is simply unpriced there. That is not rare: the Modern Horizons 3
-// Commander ripple foils have no `usd_foil` at all, which leaves whole decks
-// valued at zero. MTGJSON aggregates several vendors and prices those cards.
-//
-// This package deliberately reads only what that gap needs: today's USD paper
-// retail prices, and the Scryfall-ID-to-MTGJSON-UUID map required to look them
-// up. It is not a general MTGJSON client.
 package mtgjson
 
 import (
@@ -18,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"net/http"
 	"os"
@@ -32,61 +22,14 @@ import (
 	"github.com/spiffcs/hoard/internal/buildinfo"
 )
 
-// apiBase is the MTGJSON v5 file root. It is a var (not const) so tests can
-// point the client at a local httptest server.
 var apiBase = "https://mtgjson.com/api/v5"
 
-// providerOrder is the preference order for USD paper prices.
-//
-// TCGplayer first because it is the source Scryfall itself uses, so where it
-// exists the number is consistent with every other price in the hoard. Card
-// Kingdom and Manapool follow as genuine USD retailers that cover printings
-// TCGplayer misses. Cardmarket is absent on purpose: it quotes EUR, and a
-// second currency inside a USD total would be a lie.
 var providerOrder = []string{"tcgplayer", "cardkingdom", "manapool"}
 
-// foilProviderOrder is the preference order for FOIL prices: Manapool
-// before Card Kingdom once TCGplayer has nothing. TCGplayer publishes no
-// foil data for the treated printings (ripple foils and friends), and for
-// those Manapool's marketplace ask covers more cards (344/345 vs 333 of
-// the hoard's ripples), runs deeper (90 vs 87 days), and sits a median
-// 45% under Card Kingdom's premium retail ask — closer to what the cards
-// actually trade at (owner's call, measured live). Normal keeps the old
-// order: TCGplayer answers nearly everything there and the fallback
-// rarely fires.
 var foilProviderOrder = []string{"tcgplayer", "manapool", "cardkingdom"}
 
-// ListingOutlierRatio is how far a figure may sit from its corroboration
-// before it stops counting as a price at all.
-//
-// Upward it rejects marketplace troll listings: a vendor's quote more than
-// this many times the cheapest other vendor's quote for the same finish is
-// a joke listing surfacing as a "lowest ask" (a $7,362,059.74 Legion
-// Loyalty, observed live), not a price — the pick moves to the next vendor.
-// Only fires when another vendor quotes the finish: with one voice there is
-// nothing to compare against.
-//
-// Downward it rejects a market price taken over no sales at all — the same
-// judgement, and measurement puts the boundary in the same place. Across
-// 2,604 owned TCGplayer products, 39 quote a market price under the
-// cheapest ask and 38 of those are healthy illiquid foils topping out at
-// 3.3x; the one real defect sits at 174x. Across 2,099 owned series with
-// two or more vendors, nothing but that same card exceeds 5.7x. Twenty
-// leaves roughly six times' margin on the healthy side and eight on the
-// broken side, which is why both directions can share one number and why
-// it is not an operator-facing knob.
-//
-// Exported so the pricing and market layers read this constant rather than
-// keeping copies: it was already duplicated once, and a threshold that
-// drifts between the layer that rejects and the layer that displays would
-// show the owner a figure no valuation used.
 const ListingOutlierRatio = 20
 
-// Price is one card's USD paper prices and the vendor behind each.
-//
-// The two finishes carry separate sources because they are resolved
-// independently: a shop that prices the non-foil printing often has no figure
-// for the foil, so the two routinely come from different vendors.
 type Price struct {
 	UUID       string
 	USD        *float64
@@ -95,19 +38,8 @@ type Price struct {
 	FoilSource string
 }
 
-// httpClient is shared across requests. It carries no whole-request timeout:
-// the files here range from a sub-megabyte set file to the ~150 MB price
-// archive, and any single deadline is either too tight for the archive on a
-// slow link or too slack to be worth setting for the rest. The transport does
-// bound the header wait, so a server that accepts the connection and then goes
-// silent fails in seconds instead of hanging a command that has printed nothing.
 var httpClient = &http.Client{Transport: headerBoundedTransport()}
 
-// The request pacer, matching tcgcsv's: no two download starts closer
-// than requestGap. MTGJSON traffic is already a handful of day-cached
-// files, so this changes nothing today — it is insurance that no future
-// call site can turn the per-set loop into a burst. Cache hits never
-// reach here. Vars so tests pin them.
 var (
 	requestGap = 250 * time.Millisecond
 	paceMu     sync.Mutex
@@ -115,7 +47,6 @@ var (
 	paceSleep  = time.Sleep
 )
 
-// pace blocks until this request start is requestGap after the previous one.
 func pace() {
 	paceMu.Lock()
 	wait := requestGap - time.Since(lastStart)
@@ -126,33 +57,22 @@ func pace() {
 	paceMu.Unlock()
 }
 
-// headerBoundedTransport is the default transport with a response-header
-// deadline — the one timeout that is safe for arbitrarily large bodies.
 func headerBoundedTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 30 * time.Second
 	return t
 }
 
-// today is a var so tests can pin the cache key.
 var today = func() string { return time.Now().Format("2006-01-02") }
 
-// Options configures a fetch: where downloads cache, and who watches the
-// bytes arrive.
 type Options struct {
-	// CacheDir, when non-empty, keeps downloaded files so repeated runs on
-	// the same day don't re-fetch them.
 	CacheDir string
-	// Progress receives cumulative downloaded bytes against the response's
-	// total (0 when the server did not say). Only a genuine download
-	// reports; a cache hit is instant and silent. Nil is silent.
+
 	Progress func(done, total int64)
-	// BaseURL overrides the MTGJSON file root — how tests outside this
-	// package point a Fetcher at a local server. Empty means the real one.
+
 	BaseURL string
 }
 
-// progressWriter tees byte counts to Options.Progress as a download lands.
 type progressWriter struct {
 	w           io.Writer
 	done, total int64
@@ -166,16 +86,8 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// idleAfter is how long a download may deliver zero bytes before it is
-// declared stalled. The transport already bounds the header wait; this
-// bounds the body — the ~150 MB archive on a connection that silently died
-// used to hang forever, printing nothing. Sixty seconds of literally no
-// bytes is not a slow link, it is a dead one. A var so tests can shrink it.
 var idleAfter = 60 * time.Second
 
-// idleReader fails a read that has produced no bytes for idleAfter, by
-// closing the underlying body from a watchdog timer — the only way to
-// unblock a Read parked inside the transport.
 type idleReader struct {
 	r       io.ReadCloser
 	timer   *time.Timer
@@ -208,14 +120,6 @@ func (ir *idleReader) Close() error {
 	return ir.r.Close()
 }
 
-// fetch returns the bytes of one MTGJSON file, from the cache when possible.
-// The caller closes the returned reader.
-//
-// cacheDir, when non-empty, keeps downloaded files so repeated runs on the
-// same day don't re-fetch them. This matters because a card no source can
-// price stays a gap forever, and without a cache every single update-prices
-// would re-download the whole bundle chasing it. MTGJSON rebuilds nightly, so
-// entries are keyed by date and yesterday's are simply never read again.
 func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	var cachePath string
 	if o.CacheDir != "" {
@@ -224,11 +128,7 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 			if gzipMagic(f) {
 				return f, nil
 			}
-			// A cached entry that is not gzip is a poisoned file — a captive
-			// portal or maintenance page that arrived with a 200 on some
-			// earlier run. Served as-is it would wedge every price command
-			// until midnight with "gzip: invalid header"; deleted, this run
-			// simply downloads again.
+
 			f.Close()
 			os.Remove(cachePath)
 		}
@@ -262,11 +162,6 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 		return body, nil
 	}
 
-	// Write through to the cache, then serve from it. A partial download must
-	// not be left behind looking complete, so write to a temp file and rename.
-	// Caching is best-effort: if the cache directory cannot be used, the live
-	// body is returned instead — which is why the close cannot be deferred
-	// here; it would fire before the caller ever read from that body.
 	if err := os.MkdirAll(o.CacheDir, 0o755); err != nil {
 		return body, nil //nolint:nilerr // caching is best-effort
 	}
@@ -278,7 +173,7 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	defer body.Close()
 	dst := io.Writer(tmp)
 	if o.Progress != nil {
-		// ContentLength is -1 when unknown; 0 means indeterminate here.
+
 		dst = &progressWriter{w: tmp, total: max(resp.ContentLength, 0), fn: o.Progress}
 	}
 	if _, err := io.Copy(dst, body); err != nil {
@@ -287,8 +182,7 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	tmp.Close()
-	// Never cache what isn't gzip: a 200 carrying an interstitial page would
-	// otherwise become today's bundle and every later command would fail on it.
+
 	if bad, err := os.Open(tmp.Name()); err == nil {
 		ok := gzipMagic(bad)
 		bad.Close()
@@ -304,9 +198,6 @@ func fetch(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	return os.Open(cachePath)
 }
 
-// gzipMagic reports whether f begins with the gzip magic bytes, leaving the
-// offset back at the start either way. Every file this package fetches is
-// gzip, so anything else is a wrong answer no matter what the status code said.
 func gzipMagic(f *os.File) bool {
 	var hdr [2]byte
 	if _, err := io.ReadFull(f, hdr[:]); err != nil {
@@ -318,9 +209,6 @@ func gzipMagic(f *os.File) bool {
 	return hdr[0] == 0x1f && hdr[1] == 0x8b
 }
 
-// pruneCache deletes entries from previous days. Without it the cache grows by
-// the size of a full bundle every day it is used, and yesterday's files are
-// never read again anyway. Best-effort: failures are not worth reporting.
 func pruneCache(cacheDir string) {
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
@@ -331,11 +219,7 @@ func pruneCache(cacheDir string) {
 		if strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
-		// In-flight temps are not stale entries: fetch writes downloads as
-		// dl-* and the quotes day-cache writes quotes-*, renaming each into
-		// place when complete. Neither carries the date prefix, and two
-		// overlapping fetches each prune — unlinking the other's temp here
-		// made its final rename fail ENOENT, aborting a 150 MB download.
+
 		if strings.HasPrefix(e.Name(), "dl-") || strings.HasPrefix(e.Name(), "quotes-") {
 			continue
 		}
@@ -343,26 +227,17 @@ func pruneCache(cacheDir string) {
 	}
 }
 
-// setFile is the shape of a per-set MTGJSON file, narrowed to the identifier
-// mapping. Everything else in the file is ignored.
 type setFile struct {
 	Data struct {
 		Cards []struct {
 			UUID        string `json:"uuid"`
 			Identifiers struct {
 				ScryfallID string `json:"scryfallId"`
-				// TCGplayer sells treated foils (ripple, textured, …) and
-				// etched cards as separate products; these are their ids.
-				// The feed's own tcgplayer prices cover only the base
-				// product, which is why these matter — see AltProductID.
+
 				TCGProductID string `json:"tcgplayerProductId"`
 				TCGAltFoilID string `json:"tcgplayerAlternativeFoilProductId"`
 				TCGEtchedID  string `json:"tcgplayerEtchedProductId"`
-				// Card Kingdom's, which split differently: one foil id per
-				// printing and no alternative-foil variant, so a treated
-				// printing's foil id *is* the treated product. Etched is the
-				// exception it does split out. Read to tell a vendor's quote
-				// apart from a base-product one — see SetCard.
+
 				CKID       string `json:"cardKingdomId"`
 				CKFoilID   string `json:"cardKingdomFoilId"`
 				CKEtchedID string `json:"cardKingdomEtchedId"`
@@ -375,53 +250,23 @@ type setFile struct {
 	} `json:"data"`
 }
 
-// SetCard is what one set-file card resolves to: the MTGJSON uuid the
-// price files key on, Card Kingdom's sanctioned product links —
-// mtgjson.com redirects, one per finish, maintained by the feed so no
-// vendor URL scheme has to be guessed — and the per-vendor product ids that
-// say which physical product a vendor's price is for.
 type SetCard struct {
 	UUID      string
 	CKURL     string
 	CKFoilURL string
-	// AltProductID is the TCGplayer product id of the treated *foil* version
-	// of this printing — ripple, surge, textured — empty when TCGplayer sells
-	// no such split product. The MTGJSON price feed never carries these
-	// products' prices, so this id is the key to fetching them elsewhere.
-	//
-	// It used to fall back to the etched id when there was no alternative-foil
-	// one, and the overlay wrote every series it fetched into the foil bucket,
-	// so a printing with an etched product and no treated foil had the etched
-	// product's price filling holes in its *foil* series. They are different
-	// products with different prices; they get different fields.
+
 	AltProductID string
-	// EtchedProductID is the TCGplayer product id of the etched version, empty
-	// when there is none. Kept apart from AltProductID so the overlay can put
-	// each series in the bucket its id actually names.
+
 	EtchedProductID string
-	// TCGProductID is the base product — the listing the feed's own
-	// tcgplayer prices describe. Stored beside AltProductID so the pair
-	// shows plainly whether a printing is split at TCGplayer at all.
+
 	TCGProductID string
-	// CKFoilID and CKEtchedID are Card Kingdom's per-finish product ids.
-	// There is deliberately no alternative-foil field: Card Kingdom
-	// publishes one foil id per printing, so on a treated printing that id
-	// is the treated foil, which is what makes its foil quote comparable to
-	// TCGplayer's treated-product price.
+
 	CKFoilID   string
 	CKEtchedID string
 }
 
-// ErrNoSuchSet reports a set code MTGJSON does not publish. Scryfall and MTGJSON
-// mostly agree on set codes but diverge on some promo and supplemental sets, so
-// callers should skip the set rather than fail.
 var ErrNoSuchSet = errors.New("no such MTGJSON set")
 
-// SetIdentifiers maps Scryfall IDs to MTGJSON UUIDs and Card Kingdom
-// links for one set.
-//
-// Per-set files are small (under a megabyte gzipped), which is why this is done
-// set by set: the equivalent whole-catalog file, AllIdentifiers, is over 200 MB.
 func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]SetCard, error) {
 	body, err := fetch(ctx, o, strings.ToUpper(setCode)+".json.gz")
 	if err != nil {
@@ -432,10 +277,6 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	}
 	defer body.Close()
 
-	// Bounded against bytes actually transferred. fetch() abstracts over the
-	// cache file and the network, so no declared size reaches here — and a
-	// declared size would be the weaker bound anyway, being chosen by whoever
-	// serves the response.
 	bc := &boundedio.Counter{R: body}
 	zr, err := gzip.NewReader(bc)
 	if err != nil {
@@ -467,23 +308,12 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	return out, nil
 }
 
-// byFinish is a provider's prices for one side of the counter, keyed by date.
-//
-// Etched is a real bucket in the feed, not a synonym for Foil: an etched card
-// is a separate product every vendor prices separately, and reading it from
-// the foil bucket quotes the wrong card. Sparse — a few hundred uuids against
-// tens of thousands for the other two — but present on every vendor, retail
-// and buylist alike.
 type byFinish struct {
 	Normal map[string]float64 `json:"normal"`
 	Foil   map[string]float64 `json:"foil"`
 	Etched map[string]float64 `json:"etched"`
 }
 
-// foilSlot returns the series that fills hoard's single foil price slot: the
-// foil series, or the etched one for a printing sold only etched. It mirrors
-// scryfall.FoilPrice, which makes the same choice on the Scryfall side, so a
-// card valued from either source lands on the same product.
 func (b byFinish) foilSlot() map[string]float64 {
 	if len(b.Foil) > 0 {
 		return b.Foil
@@ -491,12 +321,6 @@ func (b byFinish) foilSlot() map[string]float64 {
 	return b.Etched
 }
 
-// vendor is one provider's prices for a card, as MTGJSON nests them:
-// data[uuid].paper.<vendor>.{retail,buylist}.{normal,foil}.<date> = price
-//
-// Buylist is what the shop pays you, retail what it charges. Only Card Kingdom
-// publishes a buylist through MTGJSON, so the sell side is one shop's offer
-// rather than a market.
 type vendor struct {
 	Currency string   `json:"currency"`
 	Retail   byFinish `json:"retail"`
@@ -507,49 +331,25 @@ type priceRecord struct {
 	Paper map[string]vendor `json:"paper"`
 }
 
-// Quote is one vendor's price for one finish, on one side of the counter.
-//
-// An etched quote appears only when the vendor publishes an etched series of
-// its own; nothing is invented from the foil bucket here, so a caller can tell
-// "this vendor prices the etched product" from "this vendor does not".
 type Quote struct {
-	Provider string // tcgplayer | cardkingdom | manapool
-	Kind     string // retail (what it charges) | buylist (what it pays)
-	Finish   string // normal | foil | etched
+	Provider string
+	Kind     string
+	Finish   finish.Finish
 	Price    float64
 }
 
-// Quote kinds.
 const (
 	Retail  = "retail"
 	Buylist = "buylist"
 )
 
-// ExtraPrices is one card's prices learned outside the MTGJSON feed, split by
-// the bucket they belong in and keyed by ISO date within each.
-//
-// Foil holds a treated foil's series (ripple, textured, surge); Etched holds
-// the etched product's. They are separate because they are separate products
-// TCGplayer prices separately — merging both into the foil bucket, as this
-// once did, quoted one card's price under the other's name.
 type ExtraPrices struct {
 	Foil   map[string]float64
 	Etched map[string]float64
 }
 
-// ExtraSeries is those prices for every card, keyed by uuid. The feed's
-// tcgplayer prices cover only the base product of each printing, and TCGplayer
-// sells treated foils and etched cards as separate products it never ingests —
-// these series are those products' prices, fetched by the pricing layer from
-// TCGplayer's public catalog. Merged into each record before any vendor
-// selection, so bestUSD, the quote list, and the history fallback all see them
-// as if the feed carried them.
 type ExtraSeries map[string]ExtraPrices
 
-// mergeExtra folds one card's extra series into its record's tcgplayer retail,
-// each series into the bucket its product id named. The feed wins on dates both
-// know: extra fills the holes — which, for the split products this exists for,
-// is the whole series.
 func mergeExtra(rec *priceRecord, extra ExtraPrices) {
 	if len(extra.Foil) == 0 && len(extra.Etched) == 0 {
 		return
@@ -582,17 +382,10 @@ func mergeExtra(rec *priceRecord, extra ExtraPrices) {
 	rec.Paper["tcgplayer"] = v
 }
 
-// TodayQuotes returns every USD paper quote for the requested UUIDs, rather than
-// the single best price TodayPrices settles on.
-//
-// Comparing vendors is the whole point here, so nothing is collapsed: a card
-// with three retail quotes and a buylist offer yields four Quotes. Cardmarket is
-// still excluded, since a euro price cannot be compared against dollar ones.
 func TodayQuotes(ctx context.Context, o Options, want map[string]bool) (map[string][]Quote, error) {
 	return TodayQuotesWith(nil)(ctx, o, want)
 }
 
-// TodayQuotesWith is TodayQuotes with an extra-series overlay.
 func TodayQuotesWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string][]Quote, error) {
 	return func(ctx context.Context, o Options, want map[string]bool) (map[string][]Quote, error) {
 		out := map[string][]Quote{}
@@ -604,17 +397,15 @@ func TodayQuotesWith(extra ExtraSeries) func(context.Context, Options, map[strin
 				if !ok || v.Currency != "USD" {
 					continue
 				}
-				// Fixed slices, not map literals: ranging a map would shuffle the
-				// quote order per run, and arbitrage breaks price ties by position —
-				// two vendors at the same price would give different advice run to run.
+
 				for _, k := range []struct {
 					kind string
 					side byFinish
 				}{{Retail, v.Retail}, {Buylist, v.Buylist}} {
 					for _, f := range []struct {
-						finish string
+						finish finish.Finish
 						byDate map[string]float64
-					}{{"normal", k.side.Normal}, {"foil", k.side.Foil}, {"etched", k.side.Etched}} {
+					}{{finish.Nonfoil, k.side.Normal}, {finish.Foil, k.side.Foil}, {finish.Etched, k.side.Etched}} {
 						if p := latest(f.byDate); p != nil {
 							qs = append(qs, Quote{
 								Provider: name, Kind: k.kind, Finish: f.finish, Price: *p,
@@ -634,27 +425,11 @@ func TodayQuotesWith(extra ExtraSeries) func(context.Context, Options, map[strin
 	}
 }
 
-// Price archives. Today's file holds one observation per card; the full one
-// holds the last 90 days, and is thirty times the size for it.
 const (
 	todayFile   = "AllPricesToday.json.gz"
 	archiveFile = "AllPrices.json.gz"
 )
 
-// PrefetchPriceHistory lands the ~142 MB price archive in the day cache
-// without reading it, so a caller with unrelated work to do first can have the
-// download happening during it rather than after.
-//
-// It exists because the two halves of a backfill sit on different hosts and
-// neither is CPU-bound: the treated-foil overlay is forty seconds of paced
-// tcgcsv requests, and this is six seconds of mtgjson bandwidth that used to
-// wait politely behind all of it. Each host keeps its own request pacer, so
-// overlapping them adds no load to either.
-//
-// Best effort by construction. It writes the cache and reports what went
-// wrong; the real read runs afterwards and will download again if this failed,
-// so nothing here is load-bearing. Without a cache directory there is nothing
-// to warm, and downloading the archive twice would be worse than waiting.
 func PrefetchPriceHistory(ctx context.Context, o Options) error {
 	if o.CacheDir == "" {
 		return nil
@@ -666,16 +441,6 @@ func PrefetchPriceHistory(ctx context.Context, o Options) error {
 	return body.Close()
 }
 
-// streamPrices walks one of the price archives, handing each wanted record to
-// visit.
-//
-// The archive decodes to over a gigabyte covering every card in Magic, and
-// walking it with encoding/json's tokenizer cost ~30 seconds of a 31-second
-// backfill (profiled: disk 0.02s, gunzip 2s, token scan 30s). The wanted
-// keys are searched for directly in the decompressed bytes instead —
-// bytes.Index runs at memory speed — and only their records are decoded.
-// The scan also stops as soon as the last wanted key is found, so on
-// average half the archive is never even decompressed.
 func streamPrices(ctx context.Context, o Options, file string, want map[string]bool, visit func(string, priceRecord)) error {
 	if len(want) == 0 {
 		return nil
@@ -707,19 +472,8 @@ func streamPrices(ctx context.Context, o Options, file string, want map[string]b
 	})
 }
 
-// scanKeyedObjects streams r looking for `"<key>":{...}` for each wanted
-// key, handing the raw object bytes to visit. Keys are matched as
-// quote-key-quote-colon, which only a JSON key position can produce; the
-// wanted keys are UUIDs, which never occur as keys inside a price record
-// (those are vendors, finishes and dates), so a match is the record wanted.
-// Returns once every key is found or the stream ends — absent keys are
-// simply never visited, matching the tokenizer's behavior.
 func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []byte) error) error {
-	// Per-needle searching costs one pass over the stream per wanted key.
-	// A handful of keys beats everything; a whole collection would re-scan
-	// the gigabyte once per card. MTGJSON keys are fixed-length UUIDs, so
-	// past a small count the colon-anchored single pass wins — flat cost
-	// however large the hoard grows.
+
 	if len(want) > setScanMin {
 		if kl := uniformKeyLen(want); kl > 0 {
 			return scanKeyedObjectsSet(r, want, kl, visit)
@@ -740,15 +494,12 @@ func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []by
 	const chunk = 4 << 20
 	buf := make([]byte, 0, chunk*2)
 	tmp := make([]byte, chunk)
-	scanned := 0  // buf[:scanned] has been searched for needle starts
-	pending := -1 // start of a matched needle whose record is still arriving
+	scanned := 0
+	pending := -1
 	for len(needles) > 0 {
 		n, rerr := r.Read(tmp)
 		buf = append(buf, tmp[:n]...)
 
-		// Search the fresh region, backed up so a needle split across the
-		// read boundary is still seen whole; a pending match re-scans from
-		// its own start so its record is retried as bytes arrive.
 		from := max(scanned-maxPat+1, 0)
 		if pending >= 0 && pending < from {
 			from = pending
@@ -768,8 +519,7 @@ func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []by
 			}
 			end := scanJSONValue(buf, objStart)
 			if end < 0 {
-				// Still arriving: remember the earliest such start so the
-				// trim below keeps it, and let other needles keep looking.
+
 				if pending < 0 || start < pending {
 					pending = start
 				}
@@ -784,8 +534,6 @@ func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []by
 		}
 		scanned = len(buf)
 
-		// Trim consumed bytes: keep a needle-sized tail for boundary
-		// splits, and everything from a pending match onward.
 		keep := len(buf) - (maxPat - 1)
 		if pending >= 0 && pending < keep {
 			keep = pending
@@ -808,12 +556,8 @@ func scanKeyedObjects(r io.Reader, want map[string]bool, visit func(string, []by
 	return nil
 }
 
-// setScanMin is the wanted-key count above which the single-pass set scan
-// replaces per-needle searching; a variable so tests can force either path.
 var setScanMin = 24
 
-// uniformKeyLen returns the shared length of every wanted key, or 0 when
-// they differ — the set scan anchors on fixed-width keys.
 func uniformKeyLen(want map[string]bool) int {
 	kl := 0
 	for k := range want {
@@ -826,15 +570,10 @@ func uniformKeyLen(want map[string]bool) int {
 	return kl
 }
 
-// scanKeyedObjectsSet is the one-pass form: every `":` in the stream is a
-// key boundary candidate; the fixed-width key just before it is looked up
-// in the set. One pass whatever the collection size, still with the
-// early exit once everything wanted is found.
 func scanKeyedObjectsSet(r io.Reader, want map[string]bool, keyLen int, visit func(string, []byte) error) error {
 	found := make(map[string]bool, len(want))
 	remaining := len(want)
-	// `"key":` spans keyLen+3 bytes; the tail kept across reads must cover a
-	// pattern split anywhere.
+
 	pat := keyLen + 3
 
 	const chunk = 4 << 20
@@ -858,7 +597,7 @@ func scanKeyedObjectsSet(r io.Reader, want map[string]bool, keyLen int, visit fu
 			}
 			j := i + rel
 			i = j + 1
-			// A wanted key here reads `"<key>":` ending at j.
+
 			ks := j - keyLen - 1
 			if ks < 1 || buf[j-1] != '"' || buf[ks-1] != '"' {
 				continue
@@ -911,16 +650,12 @@ func scanKeyedObjectsSet(r io.Reader, want map[string]bool, keyLen int, visit fu
 	return nil
 }
 
-// scanJSONValue returns the index just past the JSON value starting at
-// buf[i], or -1 when the value runs past the buffer. String-aware, so a
-// brace inside a quoted value cannot end the object early.
 func scanJSONValue(buf []byte, i int) int {
 	if i >= len(buf) {
 		return -1
 	}
 	if buf[i] != '{' && buf[i] != '[' {
-		// A scalar record would be malformed for this file; refuse rather
-		// than guess where it ends.
+
 		return -1
 	}
 	depth, inStr, esc := 0, false, false
@@ -952,18 +687,10 @@ func scanJSONValue(buf []byte, i int) int {
 	return -1
 }
 
-// TodayPrices returns USD paper retail prices for the requested UUIDs.
-//
-// AllPricesToday is ~5 MB gzipped but around 50 MB decoded and covers every card
-// in Magic, so it is streamed and filtered against `want` rather than decoded
-// whole. Only UUIDs asked for are retained.
 func TodayPrices(ctx context.Context, o Options, want map[string]bool) (map[string]Price, error) {
 	return TodayPricesWith(nil)(ctx, o, want)
 }
 
-// TodayPricesWith is TodayPrices with an extra-series overlay: the merged
-// record goes through bestUSD, so a treated foil's effective price can
-// anchor on TCGplayer like every plain card's does.
 func TodayPricesWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string]Price, error) {
 	return func(ctx context.Context, o Options, want map[string]bool) (map[string]Price, error) {
 		out := make(map[string]Price, len(want))
@@ -983,46 +710,24 @@ func TodayPricesWith(extra ExtraSeries) func(context.Context, Options, map[strin
 	}
 }
 
-// Observation is one card's price for one finish on one day.
-//
-// Source travels with the price rather than being assumed by the caller: a
-// stored observation has to say which vendor quoted it, and having the vendor
-// named in two packages is how the two drift apart.
 type Observation struct {
-	Date   string // 'YYYY-MM-DD'
-	Finish string // normal | foil
+	Date   string
+	Finish finish.Finish
 	Price  float64
 	Source string
 }
 
-// bidProvider is the only vendor whose buylist back catalogue is read —
-// Card Kingdom runs the only buylist in the feed, so its series is the bid
-// history, not a choice among several.
 const bidProvider = "cardkingdom"
 
-// CardHistory is one card's dated archive series, both sides of the
-// counter: what TCGplayer's market said it traded at, and what Card
-// Kingdom offered for it.
 type CardHistory struct {
 	Retail []Observation
 	Bids   []Observation
 }
 
-// PriceHistory returns every dated USD observation MTGJSON holds for the
-// requested UUIDs — about 90 days' worth, both finishes, retail and bid.
-//
-// This reads AllPrices rather than AllPricesToday: ~150 MB on the wire against
-// 5 MB, and thirty times the rows, which is why nothing calls it on a schedule
-// — and why both sides come back from the one pass rather than two.
-// Observations come back in no particular order; callers that care sort them.
 func PriceHistory(ctx context.Context, o Options, want map[string]bool) (map[string]CardHistory, error) {
 	return PriceHistoryWith(nil)(ctx, o, want)
 }
 
-// PriceHistoryWith is PriceHistory with an extra-series overlay: the
-// merged record goes through the per-finish vendor fallback, so a treated
-// foil's history rides TCGplayer's own series once the overlay supplies
-// one, instead of a marketplace stand-in.
 func PriceHistoryWith(extra ExtraSeries) func(context.Context, Options, map[string]bool) (map[string]CardHistory, error) {
 	return func(ctx context.Context, o Options, want map[string]bool) (map[string]CardHistory, error) {
 		return priceHistory(ctx, o, want, extra)
@@ -1036,30 +741,21 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 			return nil
 		}
 		var obs []Observation
-		for finish, byDate := range map[string]map[string]float64{
-			"normal": prices.Normal, "foil": prices.Foil,
+		for fin, byDate := range map[finish.Finish]map[string]float64{
+			finish.Nonfoil: prices.Normal, finish.Foil: prices.Foil,
 		} {
 			for date, price := range byDate {
 				obs = append(obs, Observation{
-					Date: date, Finish: finish, Price: price, Source: source,
+					Date: date, Finish: fin, Price: price, Source: source,
 				})
 			}
 		}
 		return obs
 	}
-	// The retail back catalogue resolves per finish, walking providerOrder
-	// exactly like bestUSD: TCGplayer leads — its series is continuous with
-	// the Scryfall prices hoard already holds — but a finish TCGplayer never
-	// lists falls to the next vendor whose series exists. The MH3 ripple
-	// foils are the live case: TCGplayer publishes no foil series for them,
-	// so reading it alone left every Collector's Edition card one
-	// observation deep and invisible to movers (observed live). Whole
-	// series per finish, never spliced — and the fallback vendor is the
-	// same one pricing that finish today, so the history joins up with the
-	// present instead of putting a vendor's markup at a mid-series seam.
-	retailFinish := func(rec priceRecord, finish string) []Observation {
+
+	retailFinish := func(rec priceRecord, fin finish.Finish) []Observation {
 		order := providerOrder
-		if finish == "foil" {
+		if fin == finish.Foil {
 			order = foilProviderOrder
 		}
 		series := func(name string) map[string]float64 {
@@ -1067,15 +763,12 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 			if !ok || v.Currency != "USD" {
 				return nil
 			}
-			if finish == "foil" {
+			if fin == finish.Foil {
 				return v.Retail.foilSlot()
 			}
 			return v.Retail.Normal
 		}
-		// The vendor is chosen by its latest figure under the same troll-
-		// listing guard the day prices use — a polluted marketplace series
-		// (Legion Loyalty's climbed to seven figures, observed live) must
-		// not become ninety days of history.
+
 		type candidate struct {
 			name   string
 			latest float64
@@ -1104,14 +797,14 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 		byDate := series(pickName)
 		obs := make([]Observation, 0, len(byDate))
 		for date, price := range byDate {
-			obs = append(obs, Observation{Date: date, Finish: finish, Price: price, Source: pickName})
+			obs = append(obs, Observation{Date: date, Finish: fin, Price: price, Source: pickName})
 		}
 		return obs
 	}
 	err := streamPrices(ctx, o, archiveFile, want, func(uuid string, rec priceRecord) {
 		mergeExtra(&rec, extra[uuid])
 		var h CardHistory
-		h.Retail = append(retailFinish(rec, "normal"), retailFinish(rec, "foil")...)
+		h.Retail = append(retailFinish(rec, finish.Nonfoil), retailFinish(rec, finish.Foil)...)
 		if v, ok := rec.Paper[bidProvider]; ok {
 			h.Bids = side(v, v.Buylist, bidProvider)
 		}
@@ -1125,15 +818,6 @@ func priceHistory(ctx context.Context, o Options, want map[string]bool, extra Ex
 	return out, nil
 }
 
-// bestUSD resolves each finish independently, walking providerOrder until a
-// vendor quotes that finish in USD.
-//
-// Per finish, not per vendor: TCGplayer lists a non-foil price for the MH3 ripple
-// foils but no foil one, so stopping at the first vendor with *any* price yields a
-// row that looks filled and values the card at nothing.
-//
-// The cost is that a card's two finishes can come from different shops. They are
-// independent numbers and Source records both.
 func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 	pick := func(order []string, retail func(vendor) map[string]float64) (*float64, string) {
 		type quote struct {
@@ -1159,7 +843,7 @@ func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 		}
 		for _, q := range quotes {
 			if NonPrice(q.p, prices) {
-				continue // a troll listing, or an average over no sales
+				continue
 			}
 			p := q.p
 			return &p, q.name
@@ -1178,8 +862,6 @@ func bestUSD(uuid string, rec priceRecord) (Price, bool) {
 	}, true
 }
 
-// latest returns the most recent dated price, or nil when there is none. Keys
-// are ISO dates, so lexical ordering is chronological.
 func latest(byDate map[string]float64) *float64 {
 	var newest string
 	for d := range byDate {
@@ -1194,32 +876,6 @@ func latest(byDate map[string]float64) *float64 {
 	return &v
 }
 
-// NonPrice reports whether one figure among several sits too far from the rest
-// to be a price at all — in either direction. figures is every quote for the
-// finish, including price itself.
-//
-// Upward this is the troll-listing guard: a seven-figure Legion Loyalty
-// standing beside a $29.99 one is a joke, not a lowest ask. Downward it is the
-// same judgement applied to a market price averaged over no completed sales: a
-// $0.56 surge foil beside a $59.99 and a $120.51 is not cheap, it is empty.
-//
-// The two directions cannot share an anchor, and that is the whole subtlety
-// here. The upward test can anchor on the cheapest figure because a troll
-// listing is never the cheapest. Anchoring downward the same way is circular —
-// the cheapest quote is never twenty times below itself, so the guard could
-// never fire on the one figure that needs testing. Worse, the cheapest anchor
-// actively protects the defect: with 0.56 setting the bar, both honest vendors
-// above it are themselves rejected as trolls and the pick falls back to 0.56.
-//
-// So from three figures up, both directions are measured against the median,
-// which a single absurd quote in either direction cannot drag with it. At two
-// there is no majority to appeal to and no way to tell which figure is the
-// broken one, so the older, narrower rule stands: assume the cheaper is real
-// and only a wild upward figure is refused. That is the case the shipped guard
-// has always covered, and it stays covered unchanged.
-//
-// A lone figure is trusted, as ever: with one voice there is nothing to
-// compare against.
 func NonPrice(price float64, figures []float64) bool {
 	if price <= 0 || len(figures) < 2 {
 		return false
@@ -1235,12 +891,6 @@ func NonPrice(price float64, figures []float64) bool {
 	return price/mid >= ListingOutlierRatio || mid/price >= ListingOutlierRatio
 }
 
-// median is the middle of a small set of quotes, averaging the two middle
-// values on an even count.
-//
-// Sorts a copy: the caller's slice is built from a map iteration whose order is
-// already arbitrary, but a helper that reorders its argument is a trap waiting
-// for the next caller.
 func median(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0

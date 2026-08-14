@@ -41,9 +41,6 @@ func TestParseWindowRejectsNonsense(t *testing.T) {
 	}
 }
 
-// movers now writes to the Env it is handed, so its output can be asserted.
-// Before the port it wrote to os.Stdout, which is why this file only ever
-// covered parseWindow — the command itself was unreachable from a test.
 func TestMoversSaysWhenNoHistoryExists(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {
@@ -58,8 +55,6 @@ func TestMoversSaysWhenNoHistoryExists(t *testing.T) {
 	}
 }
 
-// The --json path is reachable the same way, and the tree is what decides
-// that movers may honor --json at all.
 func TestMoversJSONIsWellFormed(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {
@@ -77,9 +72,6 @@ func TestMoversJSONIsWellFormed(t *testing.T) {
 	}
 }
 
-// A bad --since fails with a message that says what to type, and does not drag
-// the command table along with it — cobra's SilenceUsage on the root is what
-// keeps a forty-row dump off a one-line mistake.
 func TestMoversRejectsABadWindow(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
 	if err != nil {

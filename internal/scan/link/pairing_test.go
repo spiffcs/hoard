@@ -1,17 +1,12 @@
 package link
 
-// Code parsing and the proof's own edge cases. The agreement-with-Swift half
-// lives in vectors_test.go; this is behaviour that is ours to define.
-
 import (
 	"errors"
 	"testing"
 )
 
 func TestParseCode(t *testing.T) {
-	// Separators are stripped because the code is read aloud off a phone
-	// screen and typed. PairingCode.display puts a space in the middle, so a
-	// user copying what they see types a space.
+
 	ok := map[string]string{
 		"045208":   "045208",
 		"045 208":  "045208",
@@ -51,16 +46,12 @@ func TestCodeZero(t *testing.T) {
 	if c.IsZero() {
 		t.Error("a parsed code reports itself as zero")
 	}
-	// A session cannot be opened with the zero code, and the failure should
-	// come from the caller checking IsZero rather than from a derived key
-	// that happens to be wrong.
+
 	if _, err := Proof("s", zero, nil); err != nil {
 		t.Errorf("Proof with the zero code errored rather than producing a value: %v", err)
 	}
 }
 
-// TestVerifyRejectsGarbage — the claimed value is attacker-supplied, so it can
-// be anything at all, and none of it should panic or accidentally pass.
 func TestVerifyRejectsGarbage(t *testing.T) {
 	c, err := ParseCode("123456")
 	if err != nil {
@@ -76,10 +67,10 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 
 	junk := []string{
 		"", "x", "!!!!not base64!!!!",
-		good[:len(good)-1],        // truncated
-		good + "=",                // padded
-		"A" + good[1:],            // first byte flipped
-		good[:len(good)-2] + "AA", // last bytes flipped
+		good[:len(good)-1],
+		good + "=",
+		"A" + good[1:],
+		good[:len(good)-2] + "AA",
 	}
 	for _, j := range junk {
 		if VerifyProof(j, "session", c, nil) {
@@ -88,13 +79,6 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 	}
 }
 
-// TestEmptyVersusNilFingerprint pins a distinction that is easy to lose in Go
-// and impossible to lose in Swift, where the parameter is an Optional.
-//
-// A nil fingerprint means "unbound" and skips the separator entirely; an empty
-// non-nil slice means "bound to nothing", which still writes the 0x00. They
-// must produce different proofs, or the binding could be stripped by a peer
-// sending an empty value.
 func TestEmptyVersusNilFingerprint(t *testing.T) {
 	c, err := ParseCode("123456")
 	if err != nil {
@@ -114,8 +98,6 @@ func TestEmptyVersusNilFingerprint(t *testing.T) {
 	}
 }
 
-// TestSessionFreshness — the session id is fresh per connection attempt, which
-// is what makes a captured proof worthless against the next one.
 func TestSessionFreshness(t *testing.T) {
 	c, err := ParseCode("123456")
 	if err != nil {
@@ -138,7 +120,7 @@ func TestDisplay(t *testing.T) {
 	if got := c.Display(); got != "045 208" {
 		t.Errorf("Display() = %q, want %q", got, "045 208")
 	}
-	// The zero code has nothing to group, and must not panic slicing it.
+
 	var zero Code
 	if got := zero.Display(); got != "" {
 		t.Errorf("zero Display() = %q, want empty", got)

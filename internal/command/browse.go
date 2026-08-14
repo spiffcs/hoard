@@ -1,13 +1,10 @@
 package command
 
-// `hoard` with no arguments: the browser at a terminal, the summary document
-// when piped. It replaces what used to be four separate read commands, so the
-// thing reached for most often is what typing nothing gives.
-
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"os"
 	"os/exec"
@@ -29,8 +26,6 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// openInBrowser hands a URL to the platform's opener — the detail view's
-// vendor links. Start, not Run: the browser owns its own lifetime.
 func openInBrowser(u string) error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -41,23 +36,10 @@ func openInBrowser(u string) error {
 	return exec.Command("xdg-open", u).Start()
 }
 
-// browseDeckAdd imports an acquired deck and shapes the browser's report.
-// Both deck-import seams — a pasted link, an exported file — differ only in
-// how they get the list, so everything after that is written once.
 func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *decksource.Deck) (browse.OpReport, error) {
-	// No dry run from the browser: its deck-import prompts commit, and there
-	// is no rehearsal surface to report the result on.
+
 	res, err := action.DeckAdd(ctx, deps, p, deck, action.DeckAddOptions{})
-	// A partial import still did its work, so the sentinel is answered with a
-	// fuller report rather than an error. The CLI answers it with exit 2, and
-	// the browser has no exit code to raise — but that is not the reason this
-	// branch swallows it. onOpDone returns the moment an op reports an error:
-	// it sets the red status line and never opens the text takeover, never
-	// refreshes the panes. Returning the sentinel here would therefore throw
-	// away the very list of dropped lines the reader needs, and leave the
-	// deck absent from the panes it was just imported into. The browser's
-	// error path means "nothing happened"; this is "done, mostly", and the
-	// two report slots below are the surface built to say so.
+
 	if err != nil && !errors.Is(err, errPartial) {
 		return browse.OpReport{}, err
 	}
@@ -66,21 +48,14 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	if res.Refinished > 0 {
 		r.Summary += fmt.Sprintf(" · %d recorded as foil", res.Refinished)
 	}
-	// Two ways a decklist line fails to become a card, and DeckAdd counts
-	// both toward the partial outcome: the line parsed and nothing answered
-	// it, or the line never parsed at all. They are separate sentences here
-	// for the same reason `deck add` prints them separately — a line the
-	// parser could not read was never resolved against anything, so calling
-	// it unresolved would name a lookup that never happened.
+
 	if len(res.Unresolved) > 0 {
 		r.Summary += fmt.Sprintf(" · %d unresolved", len(res.Unresolved))
 		r.Report = append(r.Report,
 			unresolvedHeading(len(res.Unresolved)), "")
 		r.Report = append(r.Report, res.Unresolved...)
 	}
-	// deck.Skipped is the parser's own tally, carried on the argument rather
-	// than the result: the frontend that read the file is the only thing that
-	// saw the lines it could not read, so DeckAdd never has them to return.
+
 	if len(deck.Skipped) > 0 {
 		r.Summary += fmt.Sprintf(" · %d unreadable", len(deck.Skipped))
 		if len(r.Report) > 0 {
@@ -93,26 +68,12 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	return r, nil
 }
 
-// browseUpdatePricesSummary is the status line a finished price refresh
-// leaves behind. Split from the operation that produced it, on the precedent
-// of runUpdatePrices — the render half apart from the dependency glue, so a
-// test can drive it against a fixture and read what it wrote.
-//
-// One line and no report: the browser's price-refresh seam hands back a
-// string, and everything this has to say is a count. UpdatePricesResult
-// carries no list of the identifiers Scryfall stopped answering for, so
-// there is no detail a report block could hold that this line does not.
 func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
 	if res.Total == 0 {
 		return "no cards yet; nothing to update"
 	}
 	s := fmt.Sprintf("prices updated · %s printings", ui.Count(res.Found))
-	// Scryfall no longer answering for a printing is not the same failure as
-	// a printing nothing can price, and the two counters sit side by side —
-	// so this one keeps the CLI's verb rather than borrowing "unpriced".
-	// Silence here is how prices go stale without anyone being told: the
-	// refresh reports what it found and the cards it can never refresh again
-	// simply stop appearing in the number.
+
 	if res.NotFound > 0 {
 		s += fmt.Sprintf(" · %d could not be re-fetched", res.NotFound)
 	}
@@ -122,23 +83,12 @@ func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
 	return s
 }
 
-// browseCorrectPricesSummary is what the deferred half of a price update adds
-// to the line the refresh already left behind.
-//
-// Empty when nothing was refused, and the browser then keeps the earlier
-// summary unchanged. That silence is the right answer here rather than a
-// reassuring "0 refused": the pass runs after every refresh, it finds nothing
-// on almost all of them, and a counter that reads zero forever teaches the
-// reader to stop seeing the line it sits on. A refusal is news; the absence of
-// one is the ordinary state of a hoard.
 func browseCorrectPricesSummary(res action.UpdatePricesResult) string {
 	if res.Refused == 0 && res.Repaired == 0 {
 		return ""
 	}
 	if res.Refused == 0 {
-		// Repairs without refusals are the retirement case: a correction that
-		// yesterday's asks justified and today's do not. The reader is owed the
-		// same notice, because the same series just changed shape.
+
 		return fmt.Sprintf("%s observation(s) corrected", ui.Count(res.Repaired))
 	}
 	s := fmt.Sprintf("%s refused for sitting below the cheapest ask", ui.Count(res.Refused))
@@ -148,13 +98,6 @@ func browseCorrectPricesSummary(res action.UpdatePricesResult) string {
 	return s
 }
 
-// browseBackfillSummary is the status line a finished history import leaves
-// behind, split from the operation for the same reason as the one above.
-//
-// The CLI raises the two shortfalls as warnings on stderr; the browser has
-// one line and no stderr, so they ride the summary as counters. Each names
-// its own reason rather than a noun: the headline already counts printings,
-// and a second "printings" would read as a share of the first.
 func browseBackfillSummary(res action.BackfillResult) string {
 	switch {
 	case res.Printings == 0:
@@ -169,10 +112,7 @@ func browseBackfillSummary(res action.BackfillResult) string {
 	if res.BidInserted > 0 {
 		summary += fmt.Sprintf(" · %s buylist bids", ui.Count(res.BidInserted))
 	}
-	// Skipped is the CLI's own word for the unmapped half and not for the
-	// other: a printing with no MTGJSON id was never asked about, while one
-	// with an id and no history was asked and answered with nothing. Saying
-	// skipped for both would claim the archive was never consulted.
+
 	if res.Unmapped > 0 {
 		summary += fmt.Sprintf(" · %s skipped (no MTGJSON id)", ui.Count(res.Unmapped))
 	}
@@ -182,31 +122,20 @@ func browseBackfillSummary(res action.BackfillResult) string {
 	return summary
 }
 
-// cmdBrowse is what `hoard` with no arguments does: the browser at a terminal,
-// the summary table when piped, so `hoard | grep` keeps working.
-//
-// The loop is the add handoff — `a` quits with a request, we run the cascade, then
-// re-enter. Two bubbletea programs cannot share a terminal, so they take turns.
 func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
-	// --json means the summary document even at a terminal: asking for JSON is
-	// asking for output, not for an interactive session.
+
 	if jsonOut {
 		return writeSummary(st, true)
 	}
 	if !stdoutIsTTY() {
 		return writeSummary(st, false)
 	}
-	// One catalog handle for the whole session; the injected operations and
-	// the embedded add cascade share it.
+
 	cat := openCatalog()
 	if cat != nil {
 		defer cat.Close()
 	}
-	// Deps.Confirm bridges an op goroutine's blocking question (the catalog
-	// download ask inside update-prices) to the browser's confirm surface.
-	// Cap-1 channels on both legs: the ask never blocks on a pump re-arm
-	// race, and the answer never blocks on a worker that gave up. A dead
-	// context answers "no" — the same reading a piped CLI run gives.
+
 	confirmCh := make(chan browse.ConfirmRequest, 1)
 	deps := action.Deps{
 		Store: st, Catalog: cat, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver,
@@ -237,9 +166,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			return browseDeckAdd(ctx, deps, p, deck)
 		}),
-		// The same capability from a file: providers that block fetching
-		// still export, so the browser takes the export directly rather
-		// than sending the reader to the CLI's 'deck add --file'.
+
 		browse.WithDeckAddByFile(func(ctx context.Context, p progress.Fn, path string) (browse.OpReport, error) {
 			deck, perr := importTextDeck(path, "", "")
 			if perr != nil {
@@ -255,16 +182,14 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			res, ierr := action.ImportCollection(ctx, deps, p, action.ImportOptions{
 				Data: data, Display: path, Format: "auto", Again: again,
 			})
-			// The ledger refusal is a question, not a failure: the browser
-			// stages "import it again?" where the CLI prints --again advice.
+
 			var already *action.AlreadyImportedError
 			if errors.As(ierr, &already) {
 				return browse.OpReport{AlreadyImported: fmt.Sprintf(
 					"already imported on %s (%s)", already.When,
 					ui.Plural(already.Cards, "card", "cards"))}, nil
 			}
-			// A partial import still did its work; the outcome reports the
-			// skips rather than erroring away a committed result.
+
 			if ierr != nil && !errors.Is(ierr, errPartial) {
 				return browse.OpReport{}, ierr
 			}
@@ -280,14 +205,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				lines = append(lines, fmt.Sprintf("%d into %s%s", res.PerBinder[name], name, note))
 			}
 			if res.SkippedDeckRows > 0 {
-				// The same sentence the CLI's import prints, kept in step with
-				// it by hand because the browser reaches action.Import
-				// directly and never renders through ui.Report. The wording it
-				// replaced — "decks come back via 'hoard deck add'" — was true
-				// and useless: until --format text landed, nothing hoard wrote
-				// could be read back by 'deck add', so it named a route that
-				// did not exist. Three lines rather than one because the text
-				// takeover does not wrap, and the route is two commands.
+
 				lines = append(lines,
 					fmt.Sprintf("skipped %d deck rows: import fills binders. Restore a deck with:",
 						res.SkippedDeckRows),
@@ -345,8 +263,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if derr != nil {
 				return nil, derr
 			}
-			// The TUI supplies its own width; Detect still decides color, so
-			// NO_COLOR reaches the report overlay too.
+
 			env := ui.Detect(os.Stdout)
 			env.Width, env.Clamp = width, true
 			text := report.Valuation(env, d)
@@ -359,16 +276,13 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			res, ok, err := action.MarketCached(deps, min)
 			return res, ok && err == nil
 		}),
-		browse.WithCardComps(func(id string) (map[string]market.Comp, bool) {
+		browse.WithCardComps(func(id string) (map[finish.Finish]market.Comp, bool) {
 			comps, ok, err := action.CardComps(deps, id)
 			return comps, ok && err == nil
 		}),
 		browse.WithOpenURL(openInBrowser),
 		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
-		// The two halves of a price update, injected apart so the browser can
-		// put the first one's numbers on screen before starting the second.
-		// The CLI's `update-prices` still runs action.UpdatePrices, which is
-		// both of these back to back.
+
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.RefreshPrices(ctx, deps, p)
 			if err != nil {
@@ -431,8 +345,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			res, werr := action.WatchImport(ctx, deps, p,
 				action.WatchImportOptions{Data: data, Display: path})
-			// A partial import still stood its watches; the outcome reports
-			// the skips rather than erroring away a committed result.
+
 			if werr != nil && !errors.Is(werr, errPartial) {
 				return browse.OpReport{}, werr
 			}
@@ -456,22 +369,18 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			return r, nil
 		}),
 		browse.WithAddCascade(func() (tui.Child, error) {
-			// Destinations re-read per invocation, so a binder created in
-			// the browser appears in the cascade's picker.
+
 			dests, derr := destinations(st)
 			if derr != nil {
 				return tui.Child{}, derr
 			}
 			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, "", dests), nil
 		}))
-	// The scan receipt outlives the alternate screen: unattended writes need
-	// a durable record, and the status line dies with the program.
+
 	printScanSummary(sum)
 	return err
 }
 
-// writeSummary prints the hoard's totals, the output `hoard summary` used to
-// produce. It is what a non-interactive `hoard` writes.
 func writeSummary(st *store.Store, jsonOut bool) error {
 	sum, err := action.Deps{Store: st}.Summary()
 	if err != nil {
@@ -484,6 +393,4 @@ func writeSummary(st *store.Store, jsonOut bool) error {
 	return nil
 }
 
-// stdoutIsTTY reports whether output is going to an interactive terminal rather
-// than a pipe or a file.
 func stdoutIsTTY() bool { return isTTY(os.Stdout) }

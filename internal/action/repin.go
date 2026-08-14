@@ -1,13 +1,5 @@
 package action
 
-// `hoard deck repin`: re-pointing a deck's cards at the set it came from.
-//
-// A name-only decklist import resolves each card to whatever printing
-// Scryfall answers with — typically the newest — so a Commander Anthology
-// precon ends up scattered across twenty sets it was never part of. The
-// catalog knows every printing per set; this walks the deck and re-points
-// each off-set entry at the named set's printing of the same card.
-
 import (
 	"context"
 	"fmt"
@@ -18,34 +10,24 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// PrintSearcher is the one lookup repin needs: every printing of an exact
-// name. The catalog satisfies it, as does the CLI's layered searcher, which
-// falls through to the Scryfall API when the catalog is missing or stale.
 type PrintSearcher interface {
 	SearchPrints(ctx context.Context, exactName string) ([]scryfall.Card, error)
 }
 
-// RepinResult is what a repin corrected and what it could not.
 type RepinResult struct {
 	DeckID  int64
 	Deck    string
 	SetCode string
-	// Total is every distinct printing in the deck; Already the ones that
-	// were on the set before the run.
+
 	Total   int
 	Already int
-	// Repinned counts printings re-pointed; Moved the entry rows behind
-	// them (a printing held in two boards moves as two rows).
+
 	Repinned int
 	Moved    int
-	// Missing names have no printing in the set — left untouched, because
-	// re-pointing them anywhere would be inventing an answer.
+
 	Missing []string
 }
 
-// RepinDeck re-points every off-set printing in the deck at the given
-// set's printing of the same card name. Printings the set never had are
-// reported and left alone.
 func RepinDeck(ctx context.Context, st *store.Store, prints PrintSearcher, deckRef, setCode string) (RepinResult, error) {
 	var res RepinResult
 	setCode = strings.ToLower(strings.TrimSpace(setCode))
@@ -62,9 +44,6 @@ func RepinDeck(ctx context.Context, st *store.Store, prints PrintSearcher, deckR
 		return res, err
 	}
 
-	// One decision per distinct printing: DeckEntries is per finish and
-	// board, and asking the catalog once per row would repeat both the
-	// lookup and the answer.
 	type printing struct{ name, set string }
 	seen := map[string]printing{}
 	for _, e := range entries {
@@ -110,9 +89,6 @@ func RepinDeck(ctx context.Context, st *store.Store, prints PrintSearcher, deckR
 	return res, nil
 }
 
-// lowestInSet picks the set's printing with the lowest collector number —
-// deterministic, and for basics it lands on the set's first art rather than
-// whichever the search ranked. ok=false when the set never printed the card.
 func lowestInSet(prints []scryfall.Card, setCode string) (scryfall.Card, bool) {
 	var best scryfall.Card
 	found := false
@@ -127,9 +103,6 @@ func lowestInSet(prints []scryfall.Card, setCode string) (scryfall.Card, bool) {
 	return best, found
 }
 
-// collectorLess orders collector numbers numerically where they are
-// numbers — "9" before "10" — falling back to the string for the suffixed
-// forms ("142a", "★").
 func collectorLess(a, b string) bool {
 	an, aerr := strconv.Atoi(a)
 	bn, berr := strconv.Atoi(b)

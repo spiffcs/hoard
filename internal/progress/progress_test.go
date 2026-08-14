@@ -7,11 +7,9 @@ import (
 
 func TestEmitOnNilFnIsSilent(t *testing.T) {
 	var fn Fn
-	fn.Emit(Event{Step: "anything"}) // must not panic
+	fn.Emit(Event{Step: "anything"})
 }
 
-// The mailbox keeps the newest event: a slow consumer sees the latest state,
-// never a backlog, and the producer never blocks.
 func TestMailboxKeepsNewest(t *testing.T) {
 	m := NewMailbox()
 	fn := m.Fn()
@@ -33,8 +31,6 @@ func TestMailboxKeepsNewest(t *testing.T) {
 	}
 }
 
-// Close releases a blocked consumer and turns later sends into no-ops — the
-// operation may still emit a stray event after the UI stopped listening.
 func TestMailboxClose(t *testing.T) {
 	m := NewMailbox()
 	unblocked := make(chan struct{})
@@ -51,11 +47,10 @@ func TestMailboxClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Close did not release the blocked consumer")
 	}
-	m.Fn()(Event{Step: "late"}) // must not panic or block
-	m.Close()                   // idempotent
+	m.Fn()(Event{Step: "late"})
+	m.Close()
 }
 
-// A full mailbox with a racing consumer must never deadlock the producer.
 func TestMailboxProducerNeverBlocks(t *testing.T) {
 	m := NewMailbox()
 	fn := m.Fn()
@@ -88,11 +83,11 @@ func TestThrottledPassesStepsAndNotesImmediately(t *testing.T) {
 	var got []Event
 	fn := Throttled(func(ev Event) { got = append(got, ev) }, time.Hour)
 
-	fn(Event{Step: "one", Done: 1})                   // step transition: passes
-	fn(Event{Step: "one", Done: 2})                   // count-only inside interval: dropped
-	fn(Event{Step: "one", Done: 3})                   // dropped
-	fn(Event{Step: "one", Done: 4, Note: "retrying"}) // note: passes
-	fn(Event{Step: "two", Done: 0})                   // step transition: passes
+	fn(Event{Step: "one", Done: 1})
+	fn(Event{Step: "one", Done: 2})
+	fn(Event{Step: "one", Done: 3})
+	fn(Event{Step: "one", Done: 4, Note: "retrying"})
+	fn(Event{Step: "two", Done: 0})
 
 	want := []struct {
 		step string

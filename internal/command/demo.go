@@ -14,26 +14,13 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-// NewCmdDemo builds `hoard demo`.
-//
-// The browser is the half of hoard that no static example conveys, and an empty
-// hoard shows none of it: a new user's first run is a blank collection, which
-// looks the same as a broken one. This opens the same browser on a small sample
-// collection so there is something to look at before there is anything to look
-// at.
-//
-// It runs without a database — cli.NoStore — because the database it wants is
-// not the user's. Left to the root's PersistentPreRunE this would open, and on a
-// fresh machine create, the real hoard as a side effect of asking for a demo.
 func NewCmdDemo(a *app) *cobra.Command {
 	var reset bool
 
 	cmd := &cobra.Command{
 		Use:   "demo",
 		Short: "Open the browser on a sample collection",
-		// Hard-wrapped at 60 columns, and it has to stay that way: the help
-		// renderer wraps flag text but copies Long verbatim, and
-		// TestUsageFitsANarrowTerminal holds every help line to 60.
+
 		Long: "Opens the browser on a small sample collection, in a\n" +
 			"database of its own.\n\n" +
 			"Your own hoard is never opened, read, or written by\n" +
@@ -72,10 +59,6 @@ func runDemo(c *cobra.Command, a *app, reset bool) error {
 		}
 	}
 
-	// Seed only what we just created. An existing demo database is the user's
-	// to keep — they may have added cards to it — and re-seeding would double
-	// every quantity, which is the same mistake merging a hoard into itself
-	// makes.
 	_, statErr := os.Stat(path)
 	fresh := os.IsNotExist(statErr)
 
@@ -91,11 +74,7 @@ func runDemo(c *cobra.Command, a *app, reset bool) error {
 		if err != nil {
 			return err
 		}
-		// The history goes in with the cards, not on demand. Movers is the one
-		// view a seeded hoard could not show — it charts a card against its own
-		// past, and a database built a second ago has none — and the only way
-		// to give it one was a ~150 MB download the demo has no business
-		// making. Seeded here, the view is populated before the browser opens.
+
 		hist, err := demo.SeedEmbeddedHistory(st)
 		if err != nil {
 			return err
@@ -103,8 +82,7 @@ func runDemo(c *cobra.Command, a *app, reset bool) error {
 		r.Result("Built a demo hoard: %d printings, %d copies, %d deck cards, %s price observations.",
 			res.Printings, res.Copies, res.DeckCards, ui.Count(hist.Inserted+hist.BidInserted))
 	} else {
-		// An older demo database predates the compiled-in history and would
-		// open movers empty forever otherwise; demo.TopUpHistory decides.
+
 		hist, seeded, err := demo.TopUpHistory(st)
 		if err != nil {
 			return err
@@ -119,13 +97,6 @@ func runDemo(c *cobra.Command, a *app, reset bool) error {
 	return cmdBrowse(c.Context(), st, a.env.JSON)
 }
 
-// demoDBPath is the cache directory, not the data directory.
-//
-// That placement is the whole safety argument: dataDir holds the hoard, which is
-// not re-downloadable and must never be evicted, while everything under the
-// cache is rebuildable by definition. A demo database is rebuildable from a
-// document inside the binary, so it belongs with the catalog and the price
-// downloads — where the README already tells people it is safe to delete.
 func demoDBPath() (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {

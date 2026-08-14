@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// The piped shape is a compatibility surface: exact bytes, no escapes.
 func TestReportPipedBytes(t *testing.T) {
 	var out, errBuf strings.Builder
 	r := &Report{Out: &out, Err: &errBuf}
@@ -38,7 +37,6 @@ func TestReportPipedBytes(t *testing.T) {
 	}
 }
 
-// On a TTY the styled lines carry SGR; the text inside is unchanged.
 func TestReportStyledCarriesSGR(t *testing.T) {
 	var out, errBuf strings.Builder
 	r := &Report{Out: &out, Err: &errBuf,
@@ -55,7 +53,7 @@ func TestReportStyledCarriesSGR(t *testing.T) {
 	if !strings.Contains(errBuf.String(), "\x1b[") {
 		t.Errorf("styled stderr has no escapes: %q", errBuf.String())
 	}
-	// Result and Detail stay plain even in color: headlines are data.
+
 	out.Reset()
 	r.Result("Imported 3 cards.")
 	r.Detail("2 into Binder")
@@ -64,8 +62,6 @@ func TestReportStyledCarriesSGR(t *testing.T) {
 	}
 }
 
-// Only an explicit yes confirms; everything else — n, junk, blank, EOF —
-// declines without error.
 func TestConfirm(t *testing.T) {
 	for input, want := range map[string]bool{
 		"y\n": true, "Y\n": true, "yes\n": true, "YES\n": true,

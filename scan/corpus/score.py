@@ -14,10 +14,8 @@ on the card to read.
 import json
 import sys
 
-
 def norm(s):
     return "".join(c for c in (s or "").lower() if c.isalnum())
-
 
 era, border, want_name, want_num = sys.argv[1:5]
 raw = sys.stdin.readline().strip()
@@ -34,7 +32,6 @@ if raw:
 
 a, b = norm(want_name), norm(got_name)
 name_ok = bool(a) and bool(b) and (a == b or a.startswith(b) or b.startswith(a))
-# Pre-1998 cards print no number; reading none is the right answer there.
 num_ok = got_num == want_num or (era == "pre1998" and got_num == "")
 
 print("\t".join([era, border, "1" if name_ok else "0", "1" if num_ok else "0",

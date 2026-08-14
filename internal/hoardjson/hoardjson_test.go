@@ -7,6 +7,7 @@ package hoardjson
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/spiffcs/hoard/internal/finish"
 	"reflect"
 	"strings"
 	"testing"
@@ -76,9 +77,9 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 	// carry null, not carry zero — and an unmapped card omits mtgjsonUuid.
 	got := write(t, FromExportRows([]export.Row{
 		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
-			Finish: "nonfoil", ScryfallID: "rem", Container: "Fish", Kind: "deck", Board: "main"},
+			Finish: finish.Nonfoil, ScryfallID: "rem", Container: "Fish", Kind: "deck", Board: "main"},
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", ScryfallID: "sol", MTGJSONUUID: "uu-sol", Container: "Binder",
+			Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol", Container: "Binder",
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
@@ -126,7 +127,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 func TestUnpricedDocument(t *testing.T) {
 	got := write(t, FromUnpriced([]store.UnpricedRow{{
 		ScryfallID: "rem", MTGJSONUUID: "uu-rem", Name: "Mystic Remora",
-		SetCode: "ice", CollectorNumber: "78", Finish: "nonfoil", Copies: 3,
+		SetCode: "ice", CollectorNumber: "78", Finish: finish.Nonfoil, Copies: 3,
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
@@ -168,10 +169,10 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
 		[]store.PriceChange{
 			{ScryfallID: "a", Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
-				Finish: "nonfoil", Copies: 1, Old: 30, New: 32, Source: "scryfall",
+				Finish: finish.Nonfoil, Copies: 1, Old: 30, New: 32, Source: "scryfall",
 				OldAsOf: "2026-07-05T00:00:00Z"},
 			{ScryfallID: "b", Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
-				Finish: "nonfoil", Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom",
+				Finish: finish.Nonfoil, Copies: 40, Old: 2, New: 1.5, Source: "cardkingdom",
 				OldAsOf: "2026-06-30T00:00:00Z"},
 		}))
 	want := `{
@@ -244,14 +245,14 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 	// sell-side fields are absent, not zero.
 	tomb := market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "a", MTGJSONUUID: "uu-a", Name: "Ancient Tomb",
-			SetCode: "uma", CollectorNumber: "236", Finish: "nonfoil", Copies: 1, Value: 60},
+			SetCode: "uma", CollectorNumber: "236", Finish: finish.Nonfoil, Copies: 1, Value: 60},
 		Market: 4, BuyAt: 2, BuyFrom: "cardmarket",
 		SellAt: 5, SellTo: "cardkingdom",
 		HasMarket: true, HasRetail: true, HasBuy: true,
 	}
 	ring := market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "b", Name: "Sol Ring",
-			SetCode: "c21", CollectorNumber: "125", Finish: "foil", Copies: 2, Value: 25},
+			SetCode: "c21", CollectorNumber: "125", Finish: finish.Foil, Copies: 2, Value: 25},
 		Market: 20, BuyAt: 10, BuyFrom: "cardkingdom",
 		HasMarket: true, HasRetail: true,
 	}
@@ -345,9 +346,9 @@ func TestReportDocument(t *testing.T) {
 		},
 		Top: []store.OwnedFinish{
 			{ScryfallID: "sol", MTGJSONUUID: "uu-sol", Name: "Sol Ring", SetCode: "c21",
-				CollectorNumber: "125", Finish: "foil", Copies: 1, Value: 12.5},
+				CollectorNumber: "125", Finish: finish.Foil, Copies: 1, Value: 12.5},
 			{ScryfallID: "rem", Name: "Mystic Remora", SetCode: "ice",
-				CollectorNumber: "78", Finish: "nonfoil", Copies: 1, Value: 0},
+				CollectorNumber: "78", Finish: finish.Nonfoil, Copies: 1, Value: 0},
 		},
 		Sources:  []store.SourceCount{{Source: "scryfall", Printings: 2, Copies: 3}},
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
@@ -432,7 +433,7 @@ func TestReportDocument(t *testing.T) {
 
 func TestWatchDocument(t *testing.T) {
 	got := write(t, FromWatchCheck(3, []store.WatchStatus{{
-		Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over", Threshold: 10},
+		Watch: store.Watch{ScryfallID: "sol", Finish: finish.Foil, Op: "over", Threshold: 10},
 		Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125",
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
@@ -486,14 +487,14 @@ func TestWatchDocumentWithNothingFired(t *testing.T) {
 func TestMarketDocumentCarriesComps(t *testing.T) {
 	full := market.Comp{
 		Card: store.OwnedFinish{ScryfallID: "a", Name: "Ancient Tomb", SetCode: "uma",
-			CollectorNumber: "236", Finish: "foil", Copies: 1, Value: 60},
+			CollectorNumber: "236", Finish: finish.Foil, Copies: 1, Value: 60},
 		Market: 60, HasMarket: true, CK: 65, HasCK: true,
 		Low: 60, LowFrom: "tcgplayer",
 		Buylist: 42, BuylistTo: "cardkingdom", HasBuylist: true,
 	}
 	bare := market.Comp{
 		Card: store.OwnedFinish{ScryfallID: "b", Name: "Sol Ring", SetCode: "c21",
-			CollectorNumber: "125", Finish: "nonfoil", Copies: 2, Value: 4},
+			CollectorNumber: "125", Finish: finish.Nonfoil, Copies: 2, Value: 4},
 		Low: 1.99, LowFrom: "manapool", Manapool: 1.99, HasManapool: true,
 	}
 	doc := FromMarket(market.Result{Comps: []market.Comp{full, bare}, Compared: 2})
@@ -524,10 +525,10 @@ func TestMarketDocumentCarriesComps(t *testing.T) {
 func TestHoldingsDocumentCarriesCondition(t *testing.T) {
 	out := write(t, FromExportRows([]export.Row{
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", Condition: "lp", ScryfallID: "sol",
+			Finish: finish.Nonfoil, Condition: "lp", ScryfallID: "sol",
 			Container: "Binder", Kind: "binder", Board: "main"},
 		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", Condition: "unknown", ScryfallID: "sol",
+			Finish: finish.Nonfoil, Condition: "unknown", ScryfallID: "sol",
 			Container: "Binder", Kind: "binder", Board: "main"},
 	}))
 	if !strings.Contains(out, `"condition": "lp"`) {
@@ -545,13 +546,13 @@ func TestHoldingsDocumentCarriesCondition(t *testing.T) {
 func colorIdentityRows() []export.Row {
 	return []export.Row{
 		{Count: 1, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", ScryfallID: "sol", ColorIdentity: []string{},
+			Finish: finish.Nonfoil, ScryfallID: "sol", ColorIdentity: []string{},
 			Container: "Binder", Kind: "binder", Board: "main"},
 		{Count: 1, Name: "Swamp", Set: "c21", CollectorNumber: "300",
-			Finish: "nonfoil", ScryfallID: "swp", ColorIdentity: []string{"B"},
+			Finish: finish.Nonfoil, ScryfallID: "swp", ColorIdentity: []string{"B"},
 			Container: "Binder", Kind: "binder", Board: "main"},
 		{Count: 1, Name: "Unfetched Card", Set: "xxx", CollectorNumber: "1",
-			Finish: "nonfoil", ScryfallID: "unf",
+			Finish: finish.Nonfoil, ScryfallID: "unf",
 			Container: "Binder", Kind: "binder", Board: "main"},
 	}
 }
@@ -765,7 +766,7 @@ func str(v string) *string { return &v }
 func detailRows() []export.Row {
 	return []export.Row{
 		{Count: 1, Name: "Llanowar Elves", Set: "dom", CollectorNumber: "168",
-			Finish: "nonfoil", ScryfallID: "elf", Container: "Binder",
+			Finish: finish.Nonfoil, ScryfallID: "elf", Container: "Binder",
 			Kind: "binder", Board: "main",
 			Detail: &store.CardDetail{
 				Card:   store.Card{ManaCost: str("{G}")},
@@ -777,7 +778,7 @@ func detailRows() []export.Row {
 				TCGplayerID: i64(161475),
 			}},
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: "foil", ScryfallID: "sol", Container: "Binder",
+			Finish: finish.Foil, ScryfallID: "sol", Container: "Binder",
 			Kind: "binder", Board: "main", PriceUSD: f(2),
 			Detail: &store.CardDetail{
 				Card:   store.Card{ManaCost: str("{1}")},
@@ -894,7 +895,7 @@ func TestDetailOmitsFieldsTheCardHasNoValueFor(t *testing.T) {
 func TestHoldingsDocumentOmitsDetailWithoutAStoredDocument(t *testing.T) {
 	out := write(t, FromExportRows([]export.Row{
 		{Count: 1, Name: "Unfetched Card", Set: "xxx", CollectorNumber: "1",
-			Finish: "nonfoil", ScryfallID: "unf",
+			Finish: finish.Nonfoil, ScryfallID: "unf",
 			Container: "Binder", Kind: "binder", Board: "main"},
 	}))
 	if strings.Contains(out, "detail") {
@@ -930,21 +931,21 @@ func TestKindsSharingCardCarryNoDetail(t *testing.T) {
 		"summary": FromSummary(store.CollectionTotals{}, nil),
 		"unpriced": FromUnpriced([]store.UnpricedRow{{
 			ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
-			CollectorNumber: "125", Finish: "nonfoil", Copies: 1}}),
+			CollectorNumber: "125", Finish: finish.Nonfoil, Copies: 1}}),
 		"movers": FromMovers("2026-06-30T00:00:00Z", "", []store.PriceChange{{
 			ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21",
-			CollectorNumber: "125", Finish: "foil", Copies: 1, Old: 1, New: 2}}),
+			CollectorNumber: "125", Finish: finish.Foil, Copies: 1, Old: 1, New: 2}}),
 		"report": FromValuation(report.ValuationData{
 			Top: []store.OwnedFinish{{ScryfallID: "sol", Name: "Sol Ring",
-				SetCode: "c21", CollectorNumber: "125", Finish: "foil",
+				SetCode: "c21", CollectorNumber: "125", Finish: finish.Foil,
 				Copies: 1, Value: 2}}}),
 		"watch": FromWatchCheck(1, []store.WatchStatus{{
-			Watch: store.Watch{ScryfallID: "sol", Finish: "foil", Op: "over"},
+			Watch: store.Watch{ScryfallID: "sol", Finish: finish.Foil, Op: "over"},
 			Name:  "Sol Ring", SetCode: "c21", CollectorNumber: "125"}}),
 		"market": FromMarket(market.Result{Compared: 1,
 			Opportunities: []market.Opportunity{{
 				Card: store.OwnedFinish{ScryfallID: "sol", Name: "Sol Ring",
-					SetCode: "c21", CollectorNumber: "125", Finish: "nonfoil",
+					SetCode: "c21", CollectorNumber: "125", Finish: finish.Nonfoil,
 					Copies: 1, Value: 2}}}}),
 	}
 	for kind, doc := range docs {
@@ -1015,13 +1016,13 @@ func identitiesAt(t *testing.T, doc string, path ...string) map[string]identity 
 // document and the fired-alert document are built from.
 func identityWatches() []store.WatchStatus {
 	return []store.WatchStatus{
-		{Watch: store.Watch{ScryfallID: "sol", Finish: "nonfoil", Op: "over", Threshold: 1},
+		{Watch: store.Watch{ScryfallID: "sol", Finish: finish.Nonfoil, Op: "over", Threshold: 1},
 			Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
 			ColorIdentity: []string{}, PriceUSD: f(2)},
-		{Watch: store.Watch{ScryfallID: "swp", Finish: "nonfoil", Op: "over", Threshold: 1},
+		{Watch: store.Watch{ScryfallID: "swp", Finish: finish.Nonfoil, Op: "over", Threshold: 1},
 			Name: "Swamp", SetCode: "c21", CollectorNumber: "300",
 			ColorIdentity: []string{"B"}, PriceUSD: f(2)},
-		{Watch: store.Watch{ScryfallID: "unf", Finish: "nonfoil", Op: "over", Threshold: 1},
+		{Watch: store.Watch{ScryfallID: "unf", Finish: finish.Nonfoil, Op: "over", Threshold: 1},
 			Name: "Unfetched Card", SetCode: "xxx", CollectorNumber: "1", PriceUSD: f(2)},
 	}
 }
@@ -1032,11 +1033,11 @@ func identityWatches() []store.WatchStatus {
 func identityTop() []store.OwnedFinish {
 	return []store.OwnedFinish{
 		{ScryfallID: "sol", Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
-			Finish: "nonfoil", Copies: 1, Value: 2, ColorIdentity: []string{}},
+			Finish: finish.Nonfoil, Copies: 1, Value: 2, ColorIdentity: []string{}},
 		{ScryfallID: "swp", Name: "Swamp", SetCode: "c21", CollectorNumber: "300",
-			Finish: "nonfoil", Copies: 1, Value: 1, ColorIdentity: []string{"B"}},
+			Finish: finish.Nonfoil, Copies: 1, Value: 1, ColorIdentity: []string{"B"}},
 		{ScryfallID: "unf", Name: "Unfetched Card", SetCode: "xxx", CollectorNumber: "1",
-			Finish: "nonfoil", Copies: 1, Value: 3},
+			Finish: finish.Nonfoil, Copies: 1, Value: 3},
 	}
 }
 
@@ -1098,7 +1099,7 @@ func TestMoversDocumentCarriesThePercentage(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
 		[]store.PriceChange{
 			{ScryfallID: "a", Name: "Cryptolith Rite", SetCode: "soi", CollectorNumber: "200",
-				Finish: "nonfoil", Copies: 3, Old: 6.31, New: 13.54, Source: "scryfall",
+				Finish: finish.Nonfoil, Copies: 3, Old: 6.31, New: 13.54, Source: "scryfall",
 				OldAsOf: "2026-06-30T00:00:00Z"},
 		}))
 	// +114.6% is what the table prints for this row; the document carries the
@@ -1121,7 +1122,7 @@ func TestMoversDocumentOmitsThePercentageOfARiseFromNothing(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "2026-07-01T09:00:00Z",
 		[]store.PriceChange{
 			{ScryfallID: "b", Name: "Barrowgoyf", SetCode: "mh3", CollectorNumber: "185",
-				Finish: "foil", Copies: 1, Old: 0, New: 12, Source: "scryfall",
+				Finish: finish.Foil, Copies: 1, Old: 0, New: 12, Source: "scryfall",
 				OldAsOf: "2026-07-01T09:00:00Z"},
 		}))
 	if strings.Contains(got, "pctChange") {
@@ -1140,10 +1141,10 @@ func TestMoversDocumentOmitsThePercentageOfARiseFromNothing(t *testing.T) {
 // so this checks agreement across a spread of them including the undefined one.
 func TestMoversPercentageTracksTheStoreAccessor(t *testing.T) {
 	changes := []store.PriceChange{
-		{ScryfallID: "a", Name: "Up", Finish: "nonfoil", Copies: 1, Old: 6.31, New: 13.54},
-		{ScryfallID: "b", Name: "Down", Finish: "nonfoil", Copies: 1, Old: 2, New: 1.5},
-		{ScryfallID: "c", Name: "Tiny", Finish: "nonfoil", Copies: 1, Old: 0.02, New: 0.03},
-		{ScryfallID: "d", Name: "FromZero", Finish: "nonfoil", Copies: 1, Old: 0, New: 5},
+		{ScryfallID: "a", Name: "Up", Finish: finish.Nonfoil, Copies: 1, Old: 6.31, New: 13.54},
+		{ScryfallID: "b", Name: "Down", Finish: finish.Nonfoil, Copies: 1, Old: 2, New: 1.5},
+		{ScryfallID: "c", Name: "Tiny", Finish: finish.Nonfoil, Copies: 1, Old: 0.02, New: 0.03},
+		{ScryfallID: "d", Name: "FromZero", Finish: finish.Nonfoil, Copies: 1, Old: 0, New: 5},
 	}
 	doc := FromMovers("2026-06-30T00:00:00Z", "", changes)
 	byID := map[string]PriceChange{}
@@ -1226,9 +1227,9 @@ func TestBindersDocumentEmitsAnEmptyList(t *testing.T) {
 func TestGuessedDocumentKeepsRowsWithIdenticalCards(t *testing.T) {
 	got := write(t, FromGuessed([]store.FinishGuessRow{
 		{ID: 13, ScryfallID: "whisperer", Name: "Primal Whisperer", Set: "lgn",
-			Number: "135", Finish: "nonfoil", GuessedAt: "2026-08-09T18:20:00Z"},
+			Number: "135", Finish: finish.Nonfoil, GuessedAt: "2026-08-09T18:20:00Z"},
 		{ID: 12, ScryfallID: "whisperer", Name: "Primal Whisperer", Set: "lgn",
-			Number: "135", Finish: "nonfoil", GuessedAt: "2026-08-09T18:20:00Z"},
+			Number: "135", Finish: finish.Nonfoil, GuessedAt: "2026-08-09T18:20:00Z"},
 	}))
 	want := `{
   "schemaVersion": "1.1.3",

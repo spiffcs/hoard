@@ -1,6 +1,7 @@
 package market
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,24 +12,19 @@ import (
 
 func ownedFoil(name string) store.OwnedFinish {
 	return store.OwnedFinish{Name: name, SetCode: "m3c", CollectorNumber: "171",
-		Finish: "foil", Copies: 1, Value: 2.49}
+		Finish: finish.Foil, Copies: 1, Value: 2.49}
 }
 
-func q(provider, kind, finish string, price float64) mtgjson.Quote {
-	return mtgjson.Quote{Provider: provider, Kind: kind, Finish: finish, Price: price}
+func q(provider, kind string, fin finish.Finish, price float64) mtgjson.Quote {
+	return mtgjson.Quote{Provider: provider, Kind: kind, Finish: fin, Price: price}
 }
 
-// The listing this design exists for. Manapool quotes Legion Loyalty foil at
-// $138,518.78 against Card Kingdom's $2.49 — real data in MTGJSON. Anchored
-// on the sales price, a lone high ask never becomes a row, and the shared
-// troll clamp (trollListing) drops it from the vendor count too, so "two
-// vendors disagree" keeps meaning two real prices.
 func TestAssessAnchorsOnMarket(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
-		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
-		q("manapool", mtgjson.Retail, "foil", 138518.78),
-		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 3.20),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 2.49),
+		q("manapool", mtgjson.Retail, finish.Foil, 138518.78),
+		q("cardkingdom", mtgjson.Buylist, finish.Foil, 0.75),
 	}
 	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 
@@ -46,16 +42,11 @@ func TestAssessAnchorsOnMarket(t *testing.T) {
 	}
 }
 
-// The clamp matters most on the anchor itself: a joke figure landing in the
-// tcgplayer bucket becomes Market, and every market-relative section then
-// measures real prices against a number nobody pays — the comps table beside
-// them (dropTrollListings) already refused it, and the two tables disagreed
-// about the same card.
 func TestAssessDropsTrollListings(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 7362059.74),
-		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
-		q("manapool", mtgjson.Retail, "foil", 3.00),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 7362059.74),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 2.49),
+		q("manapool", mtgjson.Retail, finish.Foil, 3.00),
 	}
 	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 	if op.HasMarket {
@@ -68,22 +59,18 @@ func TestAssessDropsTrollListings(t *testing.T) {
 		t.Errorf("buy = %v from %q, want the cheapest sane ask", op.BuyAt, op.BuyFrom)
 	}
 
-	// One voice: nothing to compare against, so it stands — same rule as the
-	// comp sheet's.
 	lone, usable := Assess(ownedFoil("Legion Loyalty"), []mtgjson.Quote{
-		q("manapool", mtgjson.Retail, "foil", 500),
+		q("manapool", mtgjson.Retail, finish.Foil, 500),
 	})
 	if usable != 1 || !lone.HasRetail || lone.BuyAt != 500 {
 		t.Errorf("lone figure = %+v (usable %d), want trusted", lone, usable)
 	}
 }
 
-// Without a tcgplayer quote there is no anchor: the row can still say what
-// is buyable and what a shop pays, but the market-relative sections skip it.
 func TestAssessWithoutMarketAnchor(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("cardkingdom", mtgjson.Retail, "foil", 4.49),
-		q("manapool", mtgjson.Retail, "foil", 41.68),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 4.49),
+		q("manapool", mtgjson.Retail, finish.Foil, 41.68),
 	}
 	op, _ := Assess(ownedFoil("Siege-Gang Lieutenant"), qs)
 	if op.HasMarket {
@@ -94,15 +81,13 @@ func TestAssessWithoutMarketAnchor(t *testing.T) {
 	}
 }
 
-// Quotes are per finish: what a shop pays for the non-foil says nothing about
-// the foil, and reading across the two would invent a price.
 func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "normal", 0.42),
-		q("cardkingdom", mtgjson.Retail, "normal", 0.99),
-		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
-		q("cardkingdom", mtgjson.Buylist, "normal", 0.10),
-		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
+		q("tcgplayer", mtgjson.Retail, finish.Nonfoil, 0.42),
+		q("cardkingdom", mtgjson.Retail, finish.Nonfoil, 0.99),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 2.49),
+		q("cardkingdom", mtgjson.Buylist, finish.Nonfoil, 0.10),
+		q("cardkingdom", mtgjson.Buylist, finish.Foil, 0.75),
 	}
 	op, usable := Assess(ownedFoil("Legion Loyalty"), qs)
 	if usable != 1 || op.BuyAt != 2.49 {
@@ -112,9 +97,8 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 		t.Errorf("sell = %v, want the foil buylist 0.75", op.SellAt)
 	}
 
-	// The same card owned in non-foil reads the other quotes instead.
 	normal := ownedFoil("Legion Loyalty")
-	normal.Finish = "nonfoil"
+	normal.Finish = finish.Nonfoil
 	op, usable = Assess(normal, qs)
 	if usable != 2 || op.BuyAt != 0.42 || op.SellAt != 0.10 {
 		t.Errorf("non-foil: buy %v sell %v (%d usable), want 0.42 / 0.10",
@@ -122,13 +106,12 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 	}
 }
 
-// Buylist above the cheapest retail is the only unambiguous signal here.
 func TestAssessIdentifiesRealArbitrage(t *testing.T) {
 	o := ownedFoil("Ugin's Labyrinth")
-	o.Finish = "nonfoil"
+	o.Finish = finish.Nonfoil
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "normal", 14.43),
-		q("cardkingdom", mtgjson.Buylist, "normal", 16.50),
+		q("tcgplayer", mtgjson.Retail, finish.Nonfoil, 14.43),
+		q("cardkingdom", mtgjson.Buylist, finish.Nonfoil, 16.50),
 	}
 	op, _ := Assess(o, qs)
 	if !op.HasBuy || op.Profit() < 2.06 || op.Profit() > 2.08 {
@@ -139,18 +122,15 @@ func TestAssessIdentifiesRealArbitrage(t *testing.T) {
 	}
 }
 
-// A card nobody quotes must not reach the report at all.
 func TestAssessWithNoRetailIsSkipped(t *testing.T) {
 	op, usable := Assess(ownedFoil("Unquoted"), []mtgjson.Quote{
-		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
+		q("cardkingdom", mtgjson.Buylist, finish.Foil, 0.75),
 	})
 	if op.HasRetail || usable != 0 {
 		t.Errorf("op = %+v (%d usable), want nothing usable", op, usable)
 	}
 }
 
-// mk builds an opportunity with just the fields a ranking test reads:
-// the sales-price anchor, the cheapest ask, and the best buylist.
 func mk(name string, market, buy, sell float64) Opportunity {
 	return Opportunity{
 		Card:      store.OwnedFinish{Name: name},
@@ -165,14 +145,14 @@ func mk(name string, market, buy, sell float64) Opportunity {
 
 func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{
-		mk("profit-small", 10, 10, 12), // +$2 profit
-		mk("profit-big", 8, 2, 20),     // +$18 profit (also 75% below market)
-		mk("liquid", 10, 10, 9),        // no profit, buylist pays 90% of sales
-		mk("illiquid", 10, 10, 1),      // no profit, 10% — under the floor
-		mk("under-big", 10, 2, 0),      // asking 80% below the sales price
-		mk("under-small", 10, 7, 0),    // 30% below
-		mk("flat", 5, 5, 0),            // nothing to say
-		mk("no-anchor", 0, 1, 0.9),     // no market: excluded from anchored sections
+		mk("profit-small", 10, 10, 12),
+		mk("profit-big", 8, 2, 20),
+		mk("liquid", 10, 10, 9),
+		mk("illiquid", 10, 10, 1),
+		mk("under-big", 10, 2, 0),
+		mk("under-small", 10, 7, 0),
+		mk("flat", 5, 5, 0),
+		mk("no-anchor", 0, 1, 0.9),
 	}}
 
 	byKind := map[Kind][]string{}
@@ -182,12 +162,10 @@ func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 		}
 	}
 
-	// Real arbitrage, ranked by absolute profit rather than percentage.
 	if got := byKind[KindProfit]; len(got) != 2 || got[0] != "profit-big" {
 		t.Errorf("arbitrage = %v, want the biggest profit first", got)
 	}
-	// Easy to sell excludes anything already profitable, so a card cannot
-	// appear in both of the first two sections and dilute either.
+
 	for _, name := range byKind[KindLiquid] {
 		if strings.HasPrefix(name, "profit-") {
 			t.Errorf("liquid section = %v, want no profitable rows", byKind[KindLiquid])
@@ -196,27 +174,23 @@ func TestSectionsRankEachQuestionSeparately(t *testing.T) {
 	if got := byKind[KindLiquid]; len(got) != 1 || got[0] != "liquid" {
 		t.Errorf("liquid = %v, want only the row above the 70%% floor", got)
 	}
-	// Below market lists real asks under the sales price, deepest discount
-	// first; a flat ask and an unanchored row say nothing.
+
 	if got := byKind[KindBelowMarket]; len(got) != 3 ||
 		got[0] != "under-big" || got[1] != "profit-big" || got[2] != "under-small" {
 		t.Errorf("below market = %v, want the deepest discounts in order", got)
 	}
 }
 
-// The lowball band answers the liquid question backwards: not who will
-// treat you fairly, but who is trying to rob you. Worst offer first, and
-// the 50–70%% middle belongs to neither band.
 func TestLowballsRankTheWorstOffersFirst(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{
-		mk("liquid", 10, 10, 9),     // 90%: the good guys, not this band
-		mk("middle", 10, 10, 6),     // 60%: ordinary, listed in neither band
-		mk("edge", 10, 10, 5),       // exactly 50%: the ceiling is exclusive
-		mk("bad", 10, 10, 4),        // 40%
-		mk("worse", 10, 10, 1),      // 10%
-		mk("no-bid", 10, 10, 0),     // no buylist at all — an absent offer
-		mk("no-anchor", 0, 10, 1),   // nothing to be a fraction of
-		mk("profitable", 10, 2, 20), // pays over market: cannot be a lowball
+		mk("liquid", 10, 10, 9),
+		mk("middle", 10, 10, 6),
+		mk("edge", 10, 10, 5),
+		mk("bad", 10, 10, 4),
+		mk("worse", 10, 10, 1),
+		mk("no-bid", 10, 10, 0),
+		mk("no-anchor", 0, 10, 1),
+		mk("profitable", 10, 2, 20),
 	}}
 
 	var got []string
@@ -228,9 +202,6 @@ func TestLowballsRankTheWorstOffersFirst(t *testing.T) {
 	}
 }
 
-// A card nobody bids on has SellAt 0, so its Liquidity reads 0 — the worst
-// number in the hoard. Without the HasBuy guard it would lead the table,
-// and "no offer" is not the same accusation as "an insulting offer".
 func TestLowballsExcludeCardsWithNoBid(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{mk("unbid", 10, 10, 0)}}
 	if got := Lowballs(res, 10); len(got) != 0 {
@@ -238,8 +209,6 @@ func TestLowballsExcludeCardsWithNoBid(t *testing.T) {
 	}
 }
 
-// The band is browser-only: adding it must not grow the CLI's tables or
-// change what Sections and Rows have always produced.
 func TestLowballIsNotASection(t *testing.T) {
 	for _, k := range Kinds {
 		if k == KindLowball {
@@ -255,8 +224,7 @@ func TestLowballIsNotASection(t *testing.T) {
 }
 
 func TestLowballGradeRunsOppositeToLiquidity(t *testing.T) {
-	// The ceiling is the mild end and the floor saturates — the reverse of
-	// LiquidityGrade, so a heat ramp paints worse offers louder.
+
 	if got := LowballGrade(0.5); got != 0 {
 		t.Errorf("LowballGrade(0.5) = %v, want 0 at the ceiling", got)
 	}
@@ -283,8 +251,6 @@ func TestSectionsRespectTheLimit(t *testing.T) {
 	}
 }
 
-// Rows flattens the sections in reading order, so a scrolling list leads with
-// real arbitrage and still says which question each row answers.
 func TestRowsFlattenInSectionOrder(t *testing.T) {
 	res := Result{Opportunities: []Opportunity{
 		mk("profit", 8, 2, 20),
@@ -314,28 +280,25 @@ func TestCollectFiltersByPrice(t *testing.T) {
 	owned := []store.OwnedFinish{ownedFoil("cheap"), ownedFoil("dear")}
 	owned[0].ScryfallID, owned[1].ScryfallID = "cheap", "dear"
 	quotes := map[string][]mtgjson.Quote{
-		"cheap": {q("a", mtgjson.Retail, "foil", 0.20), q("b", mtgjson.Retail, "foil", 1.99)},
-		"dear":  {q("a", mtgjson.Retail, "foil", 10), q("b", mtgjson.Retail, "foil", 40)},
+		"cheap": {q("a", mtgjson.Retail, finish.Foil, 0.20), q("b", mtgjson.Retail, finish.Foil, 1.99)},
+		"dear":  {q("a", mtgjson.Retail, finish.Foil, 10), q("b", mtgjson.Retail, finish.Foil, 40)},
 	}
 	res := Collect(owned, quotes, 1.0)
 	if len(res.Opportunities) != 1 || res.Opportunities[0].Card.Name != "dear" {
 		t.Errorf("opportunities = %+v, want only the card above the floor", res.Opportunities)
 	}
-	// Both had two vendors, so both counted as compared even though one was
-	// filtered out of the results.
+
 	if res.Compared != 2 {
 		t.Errorf("Compared = %d, want 2", res.Compared)
 	}
 }
 
-// AssessComp builds the full sheet: each vendor's own column, the cheapest
-// ask as Low, and cardkingdom's bid on the buylist side.
 func TestAssessCompBuildsTheSheet(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
-		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
-		q("manapool", mtgjson.Retail, "foil", 4.10),
-		q("cardkingdom", mtgjson.Buylist, "foil", 0.75),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 3.20),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 2.49),
+		q("manapool", mtgjson.Retail, finish.Foil, 4.10),
+		q("cardkingdom", mtgjson.Buylist, finish.Foil, 0.75),
 	}
 	c := AssessComp(ownedFoil("Legion Loyalty"), qs)
 	if !c.HasMarket || c.Market != 3.20 {
@@ -352,12 +315,11 @@ func TestAssessCompBuildsTheSheet(t *testing.T) {
 	}
 }
 
-// The comp sheet reads only the owned finish, like everything else.
 func TestAssessCompUsesOnlyTheOwnedFinish(t *testing.T) {
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "normal", 0.42),
-		q("cardkingdom", mtgjson.Retail, "foil", 2.49),
-		q("cardkingdom", mtgjson.Buylist, "normal", 0.10),
+		q("tcgplayer", mtgjson.Retail, finish.Nonfoil, 0.42),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 2.49),
+		q("cardkingdom", mtgjson.Buylist, finish.Nonfoil, 0.10),
 	}
 	c := AssessComp(ownedFoil("Legion Loyalty"), qs)
 	if c.HasMarket || c.Low != 2.49 || c.HasBuylist {
@@ -365,8 +327,6 @@ func TestAssessCompUsesOnlyTheOwnedFinish(t *testing.T) {
 	}
 }
 
-// Spread is (low − bid)/low, defined only when both sides exist; a bid
-// above the low ask goes negative — genuine arbitrage, maximally real.
 func TestCompSpreadMath(t *testing.T) {
 	c := Comp{Low: 26.00, Buylist: 18.20, HasBuylist: true}
 	if !c.HasSpread() {
@@ -384,8 +344,6 @@ func TestCompSpreadMath(t *testing.T) {
 	}
 }
 
-// The ramp anchors on the hobby's landmarks: 20% saturates green, 85%
-// floors amber, and the negative-arbitrage case clamps to full green.
 func TestMarkupGrade(t *testing.T) {
 	if g := MarkupGrade(0); g != 0 {
 		t.Errorf("MarkupGrade(0) = %v, want the green end", g)
@@ -401,8 +359,6 @@ func TestMarkupGrade(t *testing.T) {
 	}
 }
 
-// Collect gates comps at two retail quotes, filters on the low ask, and
-// ranks by value with the truncation-stable tiebreak.
 func TestCollectBuildsComps(t *testing.T) {
 	cheap := ownedFoil("Penny Card")
 	cheap.ScryfallID, cheap.Value = "penny", 0.30
@@ -412,12 +368,12 @@ func TestCollectBuildsComps(t *testing.T) {
 	lone.ScryfallID, lone.Value = "lone", 50
 
 	quotes := map[string][]mtgjson.Quote{
-		"penny": {q("tcgplayer", mtgjson.Retail, "foil", 0.30),
-			q("cardkingdom", mtgjson.Retail, "foil", 0.35)},
-		"rich": {q("tcgplayer", mtgjson.Retail, "foil", 80),
-			q("cardkingdom", mtgjson.Retail, "foil", 85),
-			q("cardkingdom", mtgjson.Buylist, "foil", 60)},
-		"lone": {q("cardkingdom", mtgjson.Retail, "foil", 55)},
+		"penny": {q("tcgplayer", mtgjson.Retail, finish.Foil, 0.30),
+			q("cardkingdom", mtgjson.Retail, finish.Foil, 0.35)},
+		"rich": {q("tcgplayer", mtgjson.Retail, finish.Foil, 80),
+			q("cardkingdom", mtgjson.Retail, finish.Foil, 85),
+			q("cardkingdom", mtgjson.Buylist, finish.Foil, 60)},
+		"lone": {q("cardkingdom", mtgjson.Retail, finish.Foil, 55)},
 	}
 	res := Collect([]store.OwnedFinish{cheap, rich, lone}, quotes, 1.0)
 
@@ -428,7 +384,6 @@ func TestCollectBuildsComps(t *testing.T) {
 		t.Errorf("Compared = %d, want 2 (the gate is unchanged)", res.Compared)
 	}
 
-	// Without the value filter the penny card joins, ranked below.
 	res = Collect([]store.OwnedFinish{cheap, rich}, quotes, 0)
 	if len(res.Comps) != 2 || res.Comps[0].Card.ScryfallID != "rich" {
 		t.Fatalf("comps order = %+v, want value-descending", res.Comps)
@@ -450,9 +405,6 @@ func TestTopCompsTruncates(t *testing.T) {
 	}
 }
 
-// SaleSpread measures how much the sheet's sale prices disagree — the gap
-// between the highest and lowest present figure, over the highest. One
-// price agrees with nothing.
 func TestCompSaleSpread(t *testing.T) {
 	cases := []struct {
 		name string
@@ -472,7 +424,7 @@ func TestCompSaleSpread(t *testing.T) {
 			t.Errorf("%s: SaleSpread = %v,%v; want %v,%v", tc.name, got, ok, tc.want, tc.ok)
 		}
 	}
-	// The grade anchors: agreement pins the green end, half-off saturates.
+
 	if g := SaleSpreadGrade(0.05); g != 0 {
 		t.Errorf("grade(0.05) = %v, want the green end", g)
 	}
@@ -481,15 +433,12 @@ func TestCompSaleSpread(t *testing.T) {
 	}
 }
 
-// A troll listing on the comp sheet — a marketplace ask orders of
-// magnitude over the other vendors — drops from its column and from LOW,
-// while a lone figure stays trusted.
 func TestAssessCompDropsTrollListings(t *testing.T) {
-	owned := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	owned := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: finish.Foil}
 	qs := []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 2.10},
-		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 2.49},
-		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 7362059.74},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 2.10},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 2.49},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 7362059.74},
 	}
 	c := AssessComp(owned, qs)
 	if c.HasManapool {
@@ -502,30 +451,23 @@ func TestAssessCompDropsTrollListings(t *testing.T) {
 		t.Errorf("low = %v from %q, want 2.10 from tcgplayer", c.Low, c.LowFrom)
 	}
 
-	// One voice: nothing to compare against, so it stands.
 	lone := AssessComp(owned, []mtgjson.Quote{
-		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 500},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 500},
 	})
 	if !lone.HasManapool || lone.Manapool != 500 {
 		t.Errorf("lone figure = %+v, want trusted", lone)
 	}
 }
 
-// A treated foil is one Scryfall printing, so every vendor files its price
-// under the same key while not necessarily selling the same product under it.
-// Manapool publishes no identifier in the feed, so its figure cannot be tied
-// to the copy held and must not sit in a column claiming to compare like with
-// like — this is the live m3c/403 ripple, where a $26.69 something-else beside
-// a $4.61 ripple read as 85% "disagreement".
 func TestAssessCompDropsUnverifiableTreatedQuotes(t *testing.T) {
 	ripple := store.OwnedFinish{
-		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: finish.Foil,
 		Treatment: "ripple", VendorIDsKnown: true,
 	}
 	qs := []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 4.61},
-		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 26.69},
-		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 3.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 4.61},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 26.69},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 3.99},
 	}
 	c := AssessComp(ripple, qs)
 	if c.HasManapool {
@@ -543,31 +485,25 @@ func TestAssessCompDropsUnverifiableTreatedQuotes(t *testing.T) {
 	}
 }
 
-// Only treated printings are ambiguous. An ordinary foil has one product per
-// finish at every vendor, so nothing is suppressed and Manapool keeps its
-// column.
 func TestAssessCompKeepsManapoolOnPlainFoils(t *testing.T) {
-	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: finish.Foil}
 	c := AssessComp(plain, []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 3.20},
-		{Provider: "manapool", Kind: mtgjson.Retail, Finish: "foil", Price: 4.10},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 3.20},
+		{Provider: "manapool", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 4.10},
 	})
 	if !c.HasManapool || c.Manapool != 4.10 {
 		t.Errorf("manapool = %+v, want kept: an untreated printing is unambiguous", c)
 	}
 }
 
-// An unread set file is a gap, not an answer: until hoard has asked, an absent
-// id cannot be read as "this vendor sells no split product", so even the
-// identified vendors stay out of the sheet.
 func TestAssessCompWaitsForVendorIDs(t *testing.T) {
 	unasked := store.OwnedFinish{
-		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: finish.Foil,
 		Treatment: "ripple", VendorIDsKnown: false,
 	}
 	c := AssessComp(unasked, []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 4.61},
-		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "foil", Price: 3.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 4.61},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 3.99},
 	})
 	if c.HasMarket || c.HasCK || c.HasManapool {
 		t.Errorf("comp = %+v, want nothing claimed before the ids are known", c)
@@ -577,15 +513,12 @@ func TestAssessCompWaitsForVendorIDs(t *testing.T) {
 	}
 }
 
-// An etched card is a separate product every vendor prices separately, and
-// the feed carries an etched bucket for it. Reading the foil bucket instead
-// quotes the wrong card.
 func TestAssessCompPrefersTheEtchedBucket(t *testing.T) {
-	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: "etched"}
+	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: finish.Etched}
 	c := AssessComp(owned, []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 9.99},
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "etched", Price: 24.50},
-		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: "etched", Price: 27.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 9.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Etched, Price: 24.50},
+		{Provider: "cardkingdom", Kind: mtgjson.Retail, Finish: finish.Etched, Price: 27.99},
 	})
 	if !c.HasMarket || c.Market != 24.50 {
 		t.Errorf("market = %v, want the etched product's price", c.Market)
@@ -594,30 +527,23 @@ func TestAssessCompPrefersTheEtchedBucket(t *testing.T) {
 		t.Errorf("ck = %v, want the etched product's price", c.CK)
 	}
 
-	// Where no vendor splits it out, the foil bucket is all there is, and a
-	// foil quote beats no quote.
 	fallback := AssessComp(owned, []mtgjson.Quote{
-		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: "foil", Price: 9.99},
+		{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Foil, Price: 9.99},
 	})
 	if !fallback.HasMarket || fallback.Market != 9.99 {
 		t.Errorf("fallback = %+v, want the foil bucket when there is no etched one", fallback)
 	}
 }
 
-// The opportunity sections ran on unfiltered quotes long after the comp sheet
-// learned to drop what it could not tie to a product, so the artifact the comp
-// sheet refuses to draw still reached BELOW MARKET: a $26.69 Manapool ask on a
-// $4.61 ripple reads as "a marketplace is asking 82% under market". Both sides
-// answer questions about the same physical card and must see the same figures.
 func TestAssessDropsUnverifiableTreatedQuotes(t *testing.T) {
 	ripple := store.OwnedFinish{
-		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: finish.Foil,
 		Treatment: "ripple", VendorIDsKnown: true,
 	}
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 4.61),
-		q("manapool", mtgjson.Retail, "foil", 26.69),
-		q("cardkingdom", mtgjson.Retail, "foil", 3.99),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 4.61),
+		q("manapool", mtgjson.Retail, finish.Foil, 26.69),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 3.99),
 	}
 	op, retail := Assess(ripple, qs)
 
@@ -627,52 +553,45 @@ func TestAssessDropsUnverifiableTreatedQuotes(t *testing.T) {
 	if op.BuyAt != 3.99 || op.BuyFrom != "cardkingdom" {
 		t.Errorf("buy = %v from %q, want the unverified figure excluded", op.BuyAt, op.BuyFrom)
 	}
-	// The two sides must agree, which is the whole point of sharing the rule.
+
 	if c := AssessComp(ripple, qs); c.Low != op.BuyAt {
 		t.Errorf("comp low %v != opportunity buy %v: the sheet and the sections disagree", c.Low, op.BuyAt)
 	}
 }
 
-// An untreated printing has one product per finish at every vendor, so nothing
-// is suppressed and the sections keep every quote.
 func TestAssessKeepsManapoolOnPlainFoils(t *testing.T) {
-	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: "foil"}
+	plain := store.OwnedFinish{ScryfallID: "legion", Name: "Legion Loyalty", Finish: finish.Foil}
 	op, retail := Assess(plain, []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 3.20),
-		q("manapool", mtgjson.Retail, "foil", 2.10),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 3.20),
+		q("manapool", mtgjson.Retail, finish.Foil, 2.10),
 	})
 	if retail != 2 || op.BuyAt != 2.10 || op.BuyFrom != "manapool" {
 		t.Errorf("op = %+v (retail %d), want manapool kept: an untreated printing is unambiguous", op, retail)
 	}
 }
 
-// An unread set file is a gap, not an answer, so nothing is claimed until the
-// ids are known — the same rule the comp sheet follows.
 func TestAssessWaitsForVendorIDs(t *testing.T) {
 	unasked := store.OwnedFinish{
-		ScryfallID: "urza", Name: "Urza's Tower", Finish: "foil",
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: finish.Foil,
 		Treatment: "ripple", VendorIDsKnown: false,
 	}
 	op, retail := Assess(unasked, []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 4.61),
-		q("cardkingdom", mtgjson.Retail, "foil", 3.99),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 4.61),
+		q("cardkingdom", mtgjson.Retail, finish.Foil, 3.99),
 	})
 	if retail != 0 || op.HasRetail || op.HasMarket {
 		t.Errorf("op = %+v (retail %d), want nothing claimed before the ids are known", op, retail)
 	}
 }
 
-// The treatment describes the printing's foil finish. A nonfoil copy of a
-// ripple-tagged printing is a plain card with one product per vendor, so
-// suppressing its quotes drops good figures for a question never asked.
 func TestTreatmentDoesNotSuppressNonfoilQuotes(t *testing.T) {
 	nonfoil := store.OwnedFinish{
-		ScryfallID: "urza", Name: "Urza's Tower", Finish: "nonfoil",
+		ScryfallID: "urza", Name: "Urza's Tower", Finish: finish.Nonfoil,
 		Treatment: "ripple", VendorIDsKnown: false,
 	}
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "normal", 0.85),
-		q("manapool", mtgjson.Retail, "normal", 0.60),
+		q("tcgplayer", mtgjson.Retail, finish.Nonfoil, 0.85),
+		q("manapool", mtgjson.Retail, finish.Nonfoil, 0.60),
 	}
 	op, retail := Assess(nonfoil, qs)
 	if retail != 2 || op.BuyAt != 0.60 {
@@ -683,15 +602,12 @@ func TestTreatmentDoesNotSuppressNonfoilQuotes(t *testing.T) {
 	}
 }
 
-// Assess read the foil bucket for an etched holding, so where a vendor prices
-// the etched product separately the sections quoted the wrong card — while the
-// comp sheet, on the same screen, quoted the right one.
 func TestAssessPrefersTheEtchedBucket(t *testing.T) {
-	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: "etched"}
+	owned := store.OwnedFinish{ScryfallID: "kenrith", Name: "Kenrith", Finish: finish.Etched}
 	qs := []mtgjson.Quote{
-		q("tcgplayer", mtgjson.Retail, "foil", 9.99),
-		q("tcgplayer", mtgjson.Retail, "etched", 24.50),
-		q("cardkingdom", mtgjson.Retail, "etched", 27.99),
+		q("tcgplayer", mtgjson.Retail, finish.Foil, 9.99),
+		q("tcgplayer", mtgjson.Retail, finish.Etched, 24.50),
+		q("cardkingdom", mtgjson.Retail, finish.Etched, 27.99),
 	}
 	op, retail := Assess(owned, qs)
 	if !op.HasMarket || op.Market != 24.50 {
@@ -701,9 +617,7 @@ func TestAssessPrefersTheEtchedBucket(t *testing.T) {
 		t.Errorf("op = %+v (retail %d), want only etched quotes", op, retail)
 	}
 
-	// With no etched bucket the foil one is all there is, and a foil quote
-	// beats no quote.
-	fallback, _ := Assess(owned, []mtgjson.Quote{q("tcgplayer", mtgjson.Retail, "foil", 9.99)})
+	fallback, _ := Assess(owned, []mtgjson.Quote{q("tcgplayer", mtgjson.Retail, finish.Foil, 9.99)})
 	if !fallback.HasMarket || fallback.Market != 9.99 {
 		t.Errorf("fallback = %+v, want the foil bucket when there is no etched one", fallback)
 	}

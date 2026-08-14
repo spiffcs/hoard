@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/collsource"
@@ -13,17 +14,8 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// ErrPartial marks an operation that finished its work but had to skip some
-// of it — unresolved cards in an import, say. Frontends map it to exit code
-// 2, so a pipeline can distinguish "done" from "done, mostly" without
-// parsing output.
 var ErrPartial = fmt.Errorf("some items were skipped")
 
-// resolver returns the resolver an operation should fetch through: the
-// injected one when its test seam is armed, else a per-call resolver whose
-// fetches narrate as a "resolving cards" bar. Done accumulates across the
-// pipeline's two passes and Total grows when the name-retry pass adds
-// identifiers — consumers re-read Total on every event by contract.
 func (d Deps) resolver(p progress.Fn) *resolve.Resolver {
 	if d.Resolver != nil && d.Resolver.Fetch != nil {
 		return d.Resolver
@@ -47,21 +39,17 @@ func (d Deps) resolver(p progress.Fn) *resolve.Resolver {
 	}
 }
 
-// ImportOptions is one collection import as requested.
 type ImportOptions struct {
 	Data []byte
-	// Display names the source in the receipt and in errors — a path, or
-	// "stdin".
+
 	Display   string
-	Format    string // auto (sniff the header), manabox, moxfield, delver, hoard
-	BinderRef string // destination binder; "" = the default binder
-	Preserve  bool   // recreate the file's own binders instead
+	Format    string
+	BinderRef string
+	Preserve  bool
 	DryRun    bool
 	Again     bool
 }
 
-// ImportResult is everything the import did, skipped, and dropped — the
-// frontend renders it verbatim.
 type ImportResult struct {
 	Format          string
 	Copies          int
@@ -75,26 +63,6 @@ type ImportResult struct {
 	Gaps            GapReport
 }
 
-// missingBinderAdvice names the fix on the one BinderByRef refusal that has
-// one. A --binder that matches nothing is nearly always a typo, and neither
-// command that resolves it is reachable from the refusal itself: the reader is
-// told the name is wrong and left to guess whether binders are created by a
-// flag, by the import, or at all.
-//
-// Only that refusal. BinderByRef also rejects an *ambiguous* fragment ("Trade"
-// matching three binders), where "create it" is advice to duplicate a binder
-// that already exists, and it surfaces database errors, where the advice is
-// noise. So the sentence is matched, not the error type: store returns a bare
-// fmt.Errorf with no sentinel to test for, and inventing a second way to decide
-// "this binder is absent" — re-scanning ListBinders under rules that must match
-// containerByRef's id/exact/alias/fragment ladder exactly — is the version that
-// can disagree with the store and hand out wrong advice. The coupling is one
-// string, locked by a test; if store rewords it the advice stops appearing and
-// the plain refusal stands, which is the safe direction to fail.
-//
-// The name is quoted inside the suggestion because `binder new` is ExactArgs(1)
-// and binder names contain spaces ("Trade Binder"); an unquoted suggestion
-// would be a command that fails for the reader who pastes it.
 func missingBinderAdvice(err error, ref string) error {
 	if err == nil || err.Error() != fmt.Sprintf("no binder matching %q", ref) {
 		return err
@@ -102,8 +70,6 @@ func missingBinderAdvice(err error, ref string) error {
 	return fmt.Errorf("%w. Create it with 'hoard binder new %q', or see 'hoard binder list'", err, ref)
 }
 
-// ImportCollection adds a collection CSV export — ManaBox, Moxfield, Delver
-// Lens, or hoard's own — to the binder of your choice, as one transaction.
 func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOptions) (ImportResult, error) {
 	var res ImportResult
 	hash := ContentHash(o.Data)
@@ -120,10 +86,6 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	res.Format = coll.Format
 	res.Dropped = coll.Dropped
 
-	// Deck rows in a canonical export are the decks' own contents. Imported
-	// as loose cards they would inflate the binder totals, and re-importing
-	// the decks themselves would then count every card twice — so they are
-	// skipped, and `deck add` remains the way decks come back.
 	keptRows := coll.Rows[:0]
 	for _, r := range coll.Rows {
 		if r.Kind == "deck" {
@@ -134,24 +96,11 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	}
 	coll.Rows = keptRows
 
-	// Destinations, before the resolve rather than after it. ListBinders puts
-	// the default binder first, and its display names are what ManaBox-style
-	// binder columns are matched on.
-	//
-	// The order is the point: this block reads only the store and the options,
-	// so a mistyped --binder is knowable before a single card is looked up.
-	// Resolving first meant a typo cost a full network resolve — 4.6s and a
-	// progress counter climbing to 75/678 — before the destination was even
-	// consulted, so the operator watched what looked like a working import
-	// right up until it wasn't. Nothing below feeds this block and nothing
-	// this block produces feeds the resolve; only the position changed.
 	binders, err := d.Store.ListBinders()
 	if err != nil {
 		return res, err
 	}
-	// Same guard as binderTarget: the default binder's existence is enforced
-	// three call-frames away, and an empty list here must fail the import
-	// before the write plan indexes into it.
+
 	if len(binders) == 0 {
 		return res, fmt.Errorf("no default binder exists to import into; the database is missing its collection container")
 	}
@@ -169,19 +118,13 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		binderIDs[strings.ToLower(b.Name)] = b.ID
 		binderNames[b.ID] = b.Name
 	}
-	// The reserved aliases land in the default binder even after a rename, so
-	// a pre-rename export whose Container column says "Binder" round-trips
-	// into it instead of creating a second binder by that name. A legacy
-	// binder that actually owns one of these names (possible before they were
-	// reserved) keeps its claim via the map entry made above.
+
 	for _, alias := range store.ReservedBinderNames {
 		if _, taken := binderIDs[strings.ToLower(alias)]; !taken {
 			binderIDs[strings.ToLower(alias)] = binders[0].ID
 		}
 	}
 
-	// Resolve every row through the shared pipeline — bulk lookup, name
-	// retry for set+number pairs Scryfall does not know, finish correction.
 	rr, err := d.resolver(p).Resolve(ctx, resolve.Requests(coll.Rows))
 	if err != nil {
 		return res, err
@@ -189,12 +132,10 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	res.Refinished, res.Unresolved = rr.Refinished, rr.Unresolved
 
 	type addition struct {
-		binder string // destination binder; "" = the --binder/default target
+		binder string
 		card   scryfall.Card
-		finish string
-		// condition comes from the file rather than the resolver: the
-		// resolver corrects a finish against what the printing comes in, and
-		// no printing has a canonical condition to correct against.
+		finish finish.Finish
+
 		condition string
 		qty       int
 	}
@@ -213,11 +154,6 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	}
 	res.Resolved = len(adds)
 
-	// Plan every write first, then hand the whole batch to the store as one
-	// transaction: an interrupted import must be nothing rather than half,
-	// because added quantities cannot be told apart from cards actually
-	// owned. New binder names are deduped case-insensitively on their first
-	// spelling.
 	spelling := make(map[string]string)
 	res.PerBinder = make(map[string]int)
 	cardAdds := make([]store.CardAdd, 0, len(adds))
@@ -227,9 +163,7 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		if a.binder != "" {
 			key := strings.ToLower(a.binder)
 			if id, ok := binderIDs[key]; ok {
-				// The binder's own name, not the CSV's spelling: an aliased
-				// "Binder" cell should be receipted under the default
-				// binder's current name.
+
 				dest, name = id, binderNames[id]
 			} else {
 				canonical, seen := spelling[key]
@@ -261,8 +195,6 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 		return res, nil
 	}
 
-	// Price what Scryfall could not, as deck add does, so the import is
-	// worth what it is worth immediately.
 	if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
 		return res, err
 	}

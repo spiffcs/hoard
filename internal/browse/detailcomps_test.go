@@ -1,12 +1,10 @@
 package browse
 
-// The detail overlay's vendor half: bid sparklines, the spread trend, and
-// the per-card comp sheet.
-
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/spiffcs/hoard/internal/finish"
 	"image"
 	"slices"
 	"strings"
@@ -26,20 +24,19 @@ func pp(asOf string, price float64) store.PricePoint {
 	return store.PricePoint{AsOf: asOf, Price: price, Source: "test"}
 }
 
-// Opening a detail loads the bid series alongside the price series.
 func TestDetailOpenLoadsBidSeries(t *testing.T) {
 	st := testStore()
 	st.bidSeries = map[string][]store.PricePoint{
 		"Bitterblossom-id|nonfoil": {pp("2026-07-01T00:00:00Z", 20), pp("2026-07-20T00:00:00Z", 24)},
 	}
 	m := newTestModel(t, st)
-	m = key(m, "tab") // into the card pane
+	m = key(m, "tab")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.detail == nil {
 		t.Fatal("enter did not open the detail")
 	}
-	if got := m.detail.bids["nonfoil"]; len(got) != 2 {
+	if got := m.detail.bids[finish.Nonfoil]; len(got) != 2 {
 		t.Fatalf("bids = %+v, want the seeded series", m.detail.bids)
 	}
 	out := strings.Join(m.hoardLines(*m.detail, 100), "\n")
@@ -48,32 +45,27 @@ func TestDetailOpenLoadsBidSeries(t *testing.T) {
 	}
 }
 
-// The spread row appears when the two series overlap, tracks the trend
-// direction, and stays hidden when they never share a window.
 func TestDetailBidAndSpreadRows(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	d := detail{
-		series: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 10)},
+		series: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 10)},
 		},
-		bids: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 8)},
+		bids: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 8)},
 		},
 	}
 	out := strings.Join(m.hoardLines(d, 120), "\n")
 	if !strings.Contains(out, "buylist") || !strings.Contains(out, "$8.00") {
 		t.Fatalf("bid row missing:\n%s", out)
 	}
-	// Flat $10 retail against a bid rising 5 → 8: the spread halves and
-	// then some, 50% down to 20%.
+
 	if !strings.Contains(out, "spread") || !strings.Contains(out, "50.0% → 20.0%") ||
 		!strings.Contains(out, "tightening") {
 		t.Errorf("spread trend missing or wrong:\n%s", out)
 	}
 
-	// Disjoint windows: a bid series that ends before the retail one
-	// begins has no shared instant to compare at.
-	d.bids["nonfoil"] = []store.PricePoint{pp("2026-01-01T00:00:00Z", 5), pp("2026-02-01T00:00:00Z", 6)}
+	d.bids[finish.Nonfoil] = []store.PricePoint{pp("2026-01-01T00:00:00Z", 5), pp("2026-02-01T00:00:00Z", 6)}
 	out = strings.Join(m.hoardLines(d, 120), "\n")
 	if strings.Contains(out, "spread") {
 		t.Errorf("spread row rendered without overlapping windows:\n%s", out)
@@ -83,14 +75,12 @@ func TestDetailBidAndSpreadRows(t *testing.T) {
 	}
 }
 
-// A bid series with no retail series still renders — the two tables have
-// independent eras.
 func TestDetailBidRowWithoutRetail(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	d := detail{
-		series: map[string][]store.PricePoint{},
-		bids: map[string][]store.PricePoint{
-			"foil": {pp("2026-07-01T00:00:00Z", 3)},
+		series: map[finish.Finish][]store.PricePoint{},
+		bids: map[finish.Finish][]store.PricePoint{
+			finish.Foil: {pp("2026-07-01T00:00:00Z", 3)},
 		},
 	}
 	out := strings.Join(m.hoardLines(d, 120), "\n")
@@ -99,8 +89,6 @@ func TestDetailBidRowWithoutRetail(t *testing.T) {
 	}
 }
 
-// The COMPS section renders the sheet in the market view's vocabulary,
-// notes the missing day cache, and stays absent without the capability.
 func TestDetailCompsSection(t *testing.T) {
 	sheet := market.Comp{
 		Market: 10, HasMarket: true,
@@ -111,24 +99,22 @@ func TestDetailCompsSection(t *testing.T) {
 	}
 	m := atAllCards(t, newTestModel(t, testStore()))
 
-	// Uninjected: no section at all.
-	d := detail{comps: map[string]market.Comp{"nonfoil": sheet}, compsOK: true}
+	d := detail{comps: map[finish.Finish]market.Comp{finish.Nonfoil: sheet}, compsOK: true}
 	if out := strings.Join(m.hoardLines(d, 140), "\n"); strings.Contains(out, "COMPS") {
 		t.Fatalf("COMPS rendered without the capability:\n%s", out)
 	}
 
-	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, false }
-	// No day cache: the section says how to get one.
+	m.cardComps = func(string) (map[finish.Finish]market.Comp, bool) { return nil, false }
+
 	d = detail{compsOK: false}
 	out := strings.Join(m.hoardLines(d, 140), "\n")
 	if !strings.Contains(out, "COMPS") || !strings.Contains(out, "press F on the MARKET view") {
 		t.Fatalf("absent-cache note missing:\n%s", out)
 	}
 
-	// A full sheet, laid out as the aligned table.
 	d = detail{
-		comps: map[string]market.Comp{"nonfoil": sheet}, compsOK: true,
-		holdings: []store.Holding{{ContainerName: "Binder", Finish: "nonfoil", Quantity: 1}},
+		comps: map[finish.Finish]market.Comp{finish.Nonfoil: sheet}, compsOK: true,
+		holdings: []store.Holding{{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 1}},
 	}
 	out = strings.Join(m.hoardLines(d, 140), "\n")
 	for _, want := range []string{
@@ -139,38 +125,33 @@ func TestDetailCompsSection(t *testing.T) {
 			t.Errorf("comps table missing %q:\n%s", want, out)
 		}
 	}
-	// A 70%-pays bid earns no line of its own — the CK PAYS column already
-	// says it, and the liquid verdict was cut as noise.
+
 	if strings.Contains(out, "BUYLIST NEAR MARKET") {
 		t.Errorf("liquid verdict should not render:\n%s", out)
 	}
-	// PRICE always precedes COMPS.
+
 	if strings.Index(out, "PRICE") > strings.Index(out, "COMPS") {
 		t.Errorf("COMPS rendered before PRICE:\n%s", out)
 	}
 
-	// Even a bid over the sales price earns no prose: the verdict line was
-	// cut entirely — CK PAYS and SPREAD already carry the story.
 	arb := sheet
 	arb.Buylist = 10.50
-	d.comps = map[string]market.Comp{"nonfoil": arb}
+	d.comps = map[finish.Finish]market.Comp{finish.Nonfoil: arb}
 	out = strings.Join(m.hoardLines(d, 140), "\n")
 	if strings.Contains(out, "ARBITRAGE") || strings.Contains(out, "ck pays") {
 		t.Errorf("the comps verdict prose must never render:\n%s", out)
 	}
 }
 
-// The finish groups separate with a blank line — non-foil's spread row
-// must not read as foil's opening act.
 func TestDetailPriceGroupsSeparate(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	d := detail{
-		series: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 12)},
-			"foil":    {pp("2026-06-01T00:00:00Z", 20), pp("2026-07-01T00:00:00Z", 24)},
+		series: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 12)},
+			finish.Foil:    {pp("2026-06-01T00:00:00Z", 20), pp("2026-07-01T00:00:00Z", 24)},
 		},
-		bids: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 6)},
+		bids: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 6)},
 		},
 	}
 	lines := m.hoardLines(d, 120)
@@ -197,9 +178,6 @@ func TestDetailPriceGroupsSeparate(t *testing.T) {
 	}
 }
 
-// The detail's LINKS line: arrows move the cursor, enter opens the
-// selected vendor page, esc still closes — and without an opener the old
-// enter-closes behavior stands.
 func TestDetailLinksOpenInBrowser(t *testing.T) {
 	var opened []string
 	st := testStore()
@@ -220,8 +198,6 @@ func TestDetailLinksOpenInBrowser(t *testing.T) {
 		t.Fatalf("links line missing:\n%s", out)
 	}
 
-	// TCGplayer first: the stored product id links the exact page, not a
-	// name search.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
 	if m.detail == nil {
@@ -231,7 +207,6 @@ func TestDetailLinksOpenInBrowser(t *testing.T) {
 		t.Fatalf("opened = %v, want tcgplayer's exact product", opened)
 	}
 
-	// Walk to manapool and open it: the exact printing, slugged name.
 	m = key(m, "right")
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
@@ -239,7 +214,6 @@ func TestDetailLinksOpenInBrowser(t *testing.T) {
 		t.Fatalf("opened = %v, want manapool's exact printing", opened)
 	}
 
-	// The cursor clamps at both ends.
 	for range 10 {
 		m = key(m, "right")
 	}
@@ -259,7 +233,6 @@ func TestDetailLinksOpenInBrowser(t *testing.T) {
 	}
 }
 
-// nameSlug survives the names that need it.
 func TestNameSlug(t *testing.T) {
 	cases := map[string]string{
 		"Sol Ring":                  "sol-ring",
@@ -274,20 +247,17 @@ func TestNameSlug(t *testing.T) {
 	}
 }
 
-// The All Cards list merges same-name same-finish printings into one row:
-// quantities and values sum, and the printing columns survive only when
-// every merged row agrees.
 func TestAllCardsMergesByName(t *testing.T) {
 	st := testStore()
-	// A second Sol Ring printing in a deck: same name+finish, another set.
-	st.deckCards[201] = append(st.deckCards[201], entry("Sol Ring", "main", "nonfoil", 2, 15))
+
+	st.deckCards[201] = append(st.deckCards[201], entry("Sol Ring", "main", finish.Nonfoil, 2, 15))
 	st.deckCards[201][len(st.deckCards[201])-1].Card.ScryfallID = "Sol Ring-alt-id"
 	st.deckCards[201][len(st.deckCards[201])-1].Card.SetCode = "lea"
 	m := atAllCards(t, newTestModel(t, st))
 
 	var merged *card
 	for i := range m.cards {
-		if m.cards[i].Name == "Sol Ring" && m.cards[i].Finish == "nonfoil" {
+		if m.cards[i].Name == "Sol Ring" && m.cards[i].Finish == finish.Nonfoil {
 			if merged != nil {
 				t.Fatalf("Sol Ring nonfoil appears twice:\n%+v", m.cards)
 			}
@@ -308,15 +278,13 @@ func TestAllCardsMergesByName(t *testing.T) {
 	}
 }
 
-// Scrolling the held list onto another printing re-points the overlay:
-// card, series and links follow the selection.
 func TestDetailHeldCursorSwitchesPrinting(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
-			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+			{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
-			{ContainerName: "Rich Deck", Finish: "nonfoil", Quantity: 1, Board: "main",
+			{ContainerName: "Rich Deck", Finish: finish.Nonfoil, Quantity: 1, Board: "main",
 				ScryfallID: "Bitterblossom-mor-id", SetCode: "mor", CollectorNumber: "62"},
 		},
 	}
@@ -334,7 +302,7 @@ func TestDetailHeldCursorSwitchesPrinting(t *testing.T) {
 		t.Fatalf("opened at cursor %d on %s", m.detail.heldCursor, m.detail.card.ScryfallID)
 	}
 
-	m = key(m, "up") // climb into the held zone
+	m = key(m, "up")
 	if m.detail.zone != zoneHeld {
 		t.Fatalf("zone = %d, want the held list after up", m.detail.zone)
 	}
@@ -345,7 +313,7 @@ func TestDetailHeldCursorSwitchesPrinting(t *testing.T) {
 	if m.detail.card.ScryfallID != "Bitterblossom-mor-id" {
 		t.Errorf("card = %s, want the overlay re-pointed", m.detail.card.ScryfallID)
 	}
-	if len(m.detail.bids["nonfoil"]) != 1 {
+	if len(m.detail.bids[finish.Nonfoil]) != 1 {
 		t.Errorf("bids = %+v, want the other printing's series loaded", m.detail.bids)
 	}
 	out := strings.Join(m.hoardLines(*m.detail, 120), "\n")
@@ -359,14 +327,11 @@ func TestDetailHeldCursorSwitchesPrinting(t *testing.T) {
 	}
 }
 
-// A bid at or over the low ask is a zero-or-negative spread — the sheet's
-// best news, which used to render as a blank cell (ui.Percent is empty at
-// or below zero, observed live with all four vendor numbers showing).
 func TestCompsNegativeSpreadRenders(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
-	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, true }
+	m.cardComps = func(string) (map[finish.Finish]market.Comp, bool) { return nil, true }
 	d := detail{
-		comps: map[string]market.Comp{"nonfoil": {
+		comps: map[finish.Finish]market.Comp{finish.Nonfoil: {
 			Market: 10, HasMarket: true,
 			Buylist: 10.50, BuylistTo: "cardkingdom", HasBuylist: true,
 			Low: 10, LowFrom: "tcgplayer",
@@ -379,17 +344,13 @@ func TestCompsNegativeSpreadRenders(t *testing.T) {
 	}
 }
 
-// A printing switch keeps the old art in place until the replacement
-// arrives — blanking it collapsed the beside-image layout for a frame and
-// every section jumped (observed live). When no replacement is coming,
-// the stale art clears instead of captioning the wrong card.
 func TestDetailSwitchKeepsImageInPlace(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
-			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+			{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
-			{ContainerName: "Rich Deck", Finish: "nonfoil", Quantity: 1,
+			{ContainerName: "Rich Deck", Finish: finish.Nonfoil, Quantity: 1,
 				ScryfallID: "Bitterblossom-mor-id", SetCode: "mor", CollectorNumber: "62"},
 		},
 	}
@@ -406,8 +367,8 @@ func TestDetailSwitchKeepsImageInPlace(t *testing.T) {
 	}
 	m.detail.image = []string{"OLD ART"}
 
-	m = key(m, "up")   // into the held zone
-	m = key(m, "down") // a fetch is possible: the old art holds the layout
+	m = key(m, "up")
+	m = key(m, "down")
 	if m.detail.card.ScryfallID != "Bitterblossom-mor-id" {
 		t.Fatalf("switch did not land: %s", m.detail.card.ScryfallID)
 	}
@@ -415,16 +376,13 @@ func TestDetailSwitchKeepsImageInPlace(t *testing.T) {
 		t.Error("old art must hold the layout until the new art lands")
 	}
 
-	m.imageFetch = nil // no replacement possible: stale art must go
+	m.imageFetch = nil
 	m = key(m, "up")
 	if m.detail.image != nil {
 		t.Error("stale art kept with no replacement coming")
 	}
 }
 
-// The Card Kingdom link follows the held finish: foil holdings get the
-// foil page, a missing foil page falls back to the plain product page,
-// and a never-resolved card falls back to the name search.
 func TestCardLinksCKPerFinish(t *testing.T) {
 	var c store.CardDetail
 	c.Name = "Sol Ring"
@@ -449,16 +407,13 @@ func TestCardLinksCKPerFinish(t *testing.T) {
 	}
 }
 
-// Scrolling HELD between finishes of the same printing refreshes the
-// links — Card Kingdom's page is per finish even when nothing else about
-// the overlay changes.
 func TestHeldCursorRefreshesLinksPerFinish(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
-			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+			{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
-			{ContainerName: "Rich Deck", Finish: "foil", Quantity: 1,
+			{ContainerName: "Rich Deck", Finish: finish.Foil, Quantity: 1,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 		},
 	}
@@ -474,8 +429,8 @@ func TestHeldCursorRefreshesLinksPerFinish(t *testing.T) {
 	if !strings.Contains(ckAt(), "links/plain") {
 		t.Fatalf("nonfoil row should link the plain page, got %q", ckAt())
 	}
-	m = key(m, "up")   // into the held zone
-	m = key(m, "down") // same printing, foil finish
+	m = key(m, "up")
+	m = key(m, "down")
 	if m.detail.heldCursor != 1 {
 		t.Fatalf("cursor = %d", m.detail.heldCursor)
 	}
@@ -484,10 +439,6 @@ func TestHeldCursorRefreshesLinksPerFinish(t *testing.T) {
 	}
 }
 
-// While the art fetch runs, the layout reserves its footprint: HELD and
-// everything under it render in their final positions from the first
-// frame, and the art lands without moving them. A failed fetch answers
-// with empty lines, which releases the space.
 func TestDetailReservesImageSpace(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.imgTier = ui.ImageHalfblock
@@ -501,8 +452,7 @@ func TestDetailReservesImageSpace(t *testing.T) {
 		t.Fatalf("detail open must mark the fetch pending (pending=%v cmd=%v)",
 			m.detail != nil && m.detail.imagePending, cmd != nil)
 	}
-	// Tall enough that the vertical layout keeps HELD above the fold with
-	// the full reservation in place.
+
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 45})
 	m = next.(Model)
 	blank := m.blankArt(m.detailImageCols())
@@ -523,7 +473,6 @@ func TestDetailReservesImageSpace(t *testing.T) {
 		t.Fatalf("HELD not visible:\n%s", m.detailView())
 	}
 
-	// The art lands at the reserved height: nothing moves.
 	lines := make([]string, len(blank))
 	for i := range lines {
 		lines[i] = "ART"
@@ -534,7 +483,6 @@ func TestDetailReservesImageSpace(t *testing.T) {
 		t.Errorf("HELD moved %d → %d when the art landed", before, after)
 	}
 
-	// A failure answer releases the reservation.
 	next, _ = m.Update(imageMsg{scryfallID: m.detail.card.ScryfallID})
 	m = next.(Model)
 	if m.detail.imagePending || m.detail.image != nil {
@@ -543,10 +491,6 @@ func TestDetailReservesImageSpace(t *testing.T) {
 	}
 }
 
-// A price refresh run from the detail palette reports in the overlay's
-// status slot — progress while it runs, the summary after — and the
-// overlay's numbers reload when it lands. Silence read as the command not
-// firing (observed live).
 func TestDetailShowsOpProgressAndReloads(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)
@@ -558,7 +502,6 @@ func TestDetailShowsOpProgressAndReloads(t *testing.T) {
 		t.Fatal("no detail")
 	}
 
-	// Run Update prices through the overlay's palette.
 	m.openPalette()
 	m.palette.Query = "update prices"
 	m.refreshPalette()
@@ -574,8 +517,6 @@ func TestDetailShowsOpProgressAndReloads(t *testing.T) {
 		t.Fatalf("overlay hides the running op:\n%s", m.detailView())
 	}
 
-	// Land the op: the summary shows in the overlay, and the detail's
-	// series reload — prove it by growing the bid history underneath.
 	st.bidSeries = map[string][]store.PricePoint{
 		"Bitterblossom-id|nonfoil": {pp("2026-07-01T00:00:00Z", 9)},
 	}
@@ -600,22 +541,19 @@ func TestDetailShowsOpProgressAndReloads(t *testing.T) {
 	if !strings.Contains(m.detailView(), "done") {
 		t.Errorf("overlay hides the op summary:\n%s", m.detailView())
 	}
-	if len(m.detail.bids["nonfoil"]) != 1 {
+	if len(m.detail.bids[finish.Nonfoil]) != 1 {
 		t.Errorf("detail did not reload after the op: bids = %+v", m.detail.bids)
 	}
 }
 
-// The price and buylist rows share one display window per finish: the two
-// tables backfilled on different dates, and sparks captioned "since 29
-// Apr" over "since 1 May" read as deliberately skewed (observed live).
 func TestPriceAndBuylistShareTheirWindow(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	d := detail{
-		series: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-04-29T00:00:00Z", 30), pp("2026-07-01T00:00:00Z", 33)},
+		series: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-04-29T00:00:00Z", 30), pp("2026-07-01T00:00:00Z", 33)},
 		},
-		bids: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-05-01T00:00:00Z", 18), pp("2026-07-01T00:00:00Z", 20)},
+		bids: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-05-01T00:00:00Z", 18), pp("2026-07-01T00:00:00Z", 20)},
 		},
 	}
 	var sinces []string
@@ -629,9 +567,6 @@ func TestPriceAndBuylistShareTheirWindow(t *testing.T) {
 	}
 }
 
-// Modal abilities wrap with a hanging indent: the continuation aligns
-// under the mode's text, not under the bullet, where it read as another
-// mode.
 func TestWrapHangsBulletContinuations(t *testing.T) {
 	got := wrapHang("• Exile target nonland permanent, then return it to the battlefield tapped.", 40)
 	if len(got) < 2 {
@@ -645,25 +580,21 @@ func TestWrapHangsBulletContinuations(t *testing.T) {
 			t.Errorf("continuation %q must hang under the text", l)
 		}
 	}
-	// Plain paragraphs wrap flat, no phantom indent.
+
 	if flat := wrapHang("Choose three. You may choose the same mode more than once.", 30); strings.HasPrefix(flat[1], " ") {
 		t.Errorf("plain continuation %q must not indent", flat[1])
 	}
 }
 
-// The held list edits in place: +/- change the row under the cursor, d
-// stages a y/n removal, and deck rows refuse — the overlay follows the
-// holdings pane's rules, because the detail is where a wrong count gets
-// noticed.
 func TestDetailHeldEditAndRemove(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "nonfoil", Quantity: 4,
+				Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 			{ContainerID: 202, ContainerName: "Rich Deck", ContainerKind: store.KindDeck,
-				Finish: "nonfoil", Quantity: 1, Board: "main",
+				Finish: finish.Nonfoil, Quantity: 1, Board: "main",
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 		},
 	}
@@ -680,7 +611,7 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 
 	binderQty := func() int {
 		for _, r := range st.collection {
-			if r.ScryfallID == "Bitterblossom-id" && r.Finish == "nonfoil" {
+			if r.ScryfallID == "Bitterblossom-id" && r.Finish == finish.Nonfoil {
 				return r.Quantity
 			}
 		}
@@ -699,7 +630,6 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 		t.Errorf("binder quantity = %d after -, want 4", binderQty())
 	}
 
-	// d asks first, names the row, and y removes without closing the overlay.
 	m = key(m, "d")
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "from Binder") {
 		t.Fatalf("confirm = %+v, want the removal staged against the binder row", m.confirm)
@@ -715,12 +645,10 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 		t.Fatal("removal must not close the overlay")
 	}
 
-	// Undo is recorded: the browser's u can put the row back later.
 	if m.undoStack == nil {
 		t.Error("removal recorded no undo")
 	}
 
-	// The deck row refuses both, and the help stops advertising.
 	m = key(m, "down")
 	m.status, m.statusErr = "", false
 	m = key(m, "+")
@@ -736,16 +664,12 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 	}
 }
 
-// Removing the last copy closes the overlay: a detail is a card's
-// holdings, and with none left it would go on showing the row that was just
-// removed. The receipt survives the close, so the main view says what
-// happened.
 func TestDetailClosesWhenTheLastCopyGoes(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "nonfoil", Quantity: 4,
+				Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 		},
 	}
@@ -769,8 +693,6 @@ func TestDetailClosesWhenTheLastCopyGoes(t *testing.T) {
 		t.Errorf("status = %q, want the removal receipt to survive the close", m.status)
 	}
 
-	// The same holds for editing the count to zero, the other way a row
-	// leaves.
 	st2 := testStore()
 	st2.holdingsByName = st.holdingsByName
 	m2 := newTestModel(t, st2)
@@ -785,27 +707,21 @@ func TestDetailClosesWhenTheLastCopyGoes(t *testing.T) {
 	}
 }
 
-// The held zone's field editor: ↑ climbs from the links into the held
-// list, ←/→ highlight quantity, set, or location, and enter edits the
-// highlighted field — quantity by number, set by re-pointing the row at
-// another printing of the same card, location by moving it to another
-// binder.
 func TestDetailHeldFieldEdit(t *testing.T) {
 	st := testStore()
 	st.binders = map[int64]string{7: "Trades"}
 	st.binderRows = map[int64][]store.CollectionRow{7: {}}
-	// The binder holds both printings, so the set edit has a row to merge
-	// into.
-	mor := row("Bitterblossom", "mor", "62", "nonfoil", 4, 100)
+
+	mor := row("Bitterblossom", "mor", "62", finish.Nonfoil, 4, 100)
 	mor.ScryfallID = "Bitterblossom-mor-id"
 	st.collection = append(st.collection, mor)
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "nonfoil", Quantity: 4,
+				Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "nonfoil", Quantity: 4,
+				Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-mor-id", SetCode: "mor", CollectorNumber: "62"},
 		},
 	}
@@ -823,7 +739,6 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Fatal("no detail")
 	}
 
-	// Quantity: the default field. Prompt prefilled, validated, committed.
 	m = key(m, "up")
 	if m.detail.zone != zoneHeld || m.detail.heldField != fieldQty {
 		t.Fatalf("zone/field = %d/%d, want held zone on quantity", m.detail.zone, m.detail.heldField)
@@ -840,7 +755,7 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 	m.prompt = nil
 	qtyOf := func(sid string) int {
 		for _, r := range st.collection {
-			if r.ScryfallID == sid && r.Finish == "nonfoil" {
+			if r.ScryfallID == sid && r.Finish == finish.Nonfoil {
 				return r.Quantity
 			}
 		}
@@ -850,8 +765,6 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Errorf("quantity = %d, want 7", qtyOf("Bitterblossom-id"))
 	}
 
-	// Set: → highlights the printing; a wrong code refuses, a right one
-	// re-points the row and the overlay follows.
 	m = key(m, "right")
 	if m.detail.heldField != fieldSet {
 		t.Fatalf("field = %d, want set", m.detail.heldField)
@@ -890,8 +803,6 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Error("set change recorded no undo")
 	}
 
-	// Location: → passes the finish and condition slots, → again highlights
-	// the container; an unknown binder refuses, a real one takes the row.
 	m = key(m, "right")
 	if m.detail.heldField != fieldFinish {
 		t.Fatalf("field = %d, want finish next", m.detail.heldField)
@@ -936,8 +847,6 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 	}
 }
 
-// On a wide, tall window the art reaches artColsMax and pins to the right
-// edge — written against the constants, so tuning them never breaks the pin.
 func TestDetailImagePinsToRightEdge(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -963,9 +872,6 @@ func TestDetailImagePinsToRightEdge(t *testing.T) {
 	t.Fatal("art not rendered")
 }
 
-// In the overflow layout the art runs down beside the analysis: an art row
-// shares the line with the HELD title, and the PRICE rows keep their full
-// captions — the text column's floor guarantees no clipping.
 func TestDetailImageOverflowsBesideHeld(t *testing.T) {
 	st := testStore()
 	st.bidSeries = map[string][]store.PricePoint{
@@ -1005,8 +911,6 @@ func TestDetailImageOverflowsBesideHeld(t *testing.T) {
 	}
 }
 
-// The pending reservation matches the overflow size, so HELD holds its row
-// when the art lands.
 func TestDetailImageReservationMatchesOverflowCols(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1043,9 +947,6 @@ func TestDetailImageReservationMatchesOverflowCols(t *testing.T) {
 	}
 }
 
-// Below the overflow width the layout goes vertical: the art keeps its
-// size and slots between the card details and HELD — relocation over
-// shrinking (owner's call).
 func TestDetailImageStacksBelowOverflowWidth(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1084,9 +985,6 @@ func TestDetailImageStacksBelowOverflowWidth(t *testing.T) {
 	}
 }
 
-// A resize re-renders the art at the size the new window wants: shrink
-// below what the cached render needs and the art redraws narrower instead
-// of clipping off the edge (observed live).
 func TestDetailImageRerendersOnResize(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m.imgTier = ui.ImageHalfblock
@@ -1104,7 +1002,6 @@ func TestDetailImageRerendersOnResize(t *testing.T) {
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 220, Height: 45})
 	m = next.(Model)
 
-	// Land the art at the wide window's 40 columns.
 	land := func() {
 		t.Helper()
 		cmd := m.fetchDetailImage()
@@ -1123,10 +1020,6 @@ func TestDetailImageRerendersOnResize(t *testing.T) {
 		t.Fatalf("drawn cols = %d, want %d", m.detail.imageColsDrawn, artColsMax)
 	}
 
-	// Shortening the window asks for a narrower render — at 20 rows the
-	// height budget caps the card well under 40 cols. The resize may batch
-	// the re-render with the settle retransmit tick — dig the imageMsg
-	// out of whichever shape comes back.
 	next, cmd := m.Update(tea.WindowSizeMsg{Width: 220, Height: 20})
 	m = next.(Model)
 	if cmd == nil {
@@ -1156,8 +1049,6 @@ func TestDetailImageRerendersOnResize(t *testing.T) {
 		t.Errorf("drawn cols = %d after resize, want %d", m.detail.imageColsDrawn, m.detailImageCols())
 	}
 
-	// A stale-size landing (resized mid-flight) corrects itself: the
-	// mismatched answer immediately re-fetches.
 	stale := imageMsg{scryfallID: m.detail.card.ScryfallID, lines: []string{"x"}, cols: artColsMax}
 	before := fetches
 	next, cmd = m.Update(stale)
@@ -1170,8 +1061,6 @@ func TestDetailImageRerendersOnResize(t *testing.T) {
 	}
 }
 
-// q on the detail stages the same quit confirm as everywhere else: y
-// quits, any other key stays with the overlay intact.
 func TestDetailQuitKeyAsksFirst(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1184,12 +1073,12 @@ func TestDetailQuitKeyAsksFirst(t *testing.T) {
 	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "quit hoard?") {
 		t.Fatalf("confirm = %+v, want the quit question staged", m.confirm)
 	}
-	// Any other key cancels and the overlay is still there.
+
 	m = key(m, "n")
 	if m.confirm != nil || m.detail == nil {
 		t.Fatalf("after n: confirm=%v detail=%v, want the overlay back", m.confirm, m.detail)
 	}
-	// y quits.
+
 	m = key(m, "q")
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m = next.(Model)
@@ -1201,10 +1090,6 @@ func TestDetailQuitKeyAsksFirst(t *testing.T) {
 	}
 }
 
-// Mid-resize the drawn art and the wanted size disagree; the layout must
-// follow the art actually on screen — sizing the text column for the
-// wished-for art pushed lines past the terminal edge and clipped the card
-// (observed live).
 func TestDetailStaleArtNeverOverflows(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1213,8 +1098,7 @@ func TestDetailStaleArtNeverOverflows(t *testing.T) {
 	if m.detail == nil {
 		t.Fatal("no detail")
 	}
-	// Art drawn at 40 on a formerly-wide window; the window has since
-	// shrunk to 30 cols, narrower than the art itself.
+
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 45})
 	m = next.(Model)
 	m.detail.image = []string{strings.Repeat("A", artColsMax)}
@@ -1222,8 +1106,7 @@ func TestDetailStaleArtNeverOverflows(t *testing.T) {
 	if want := m.detailImageCols(); want >= artColsMax {
 		t.Fatalf("fixture broken: wanted cols %d should be under the stale %d", want, artColsMax)
 	}
-	// Stale art wider than the window: the layout must fall to text-only
-	// rather than emit lines past the edge; the re-render restores it.
+
 	for _, line := range strings.Split(m.View(), "\n") {
 		if strings.Contains(line, "AAA") {
 			t.Fatalf("stale over-wide art rendered on a 30-col window:\n%s", line)
@@ -1231,10 +1114,6 @@ func TestDetailStaleArtNeverOverflows(t *testing.T) {
 	}
 }
 
-// While an upload is dirty every frame carries the kitty transmit — the
-// renderer drops intermediate frames, so only frame-after-frame embedding
-// guarantees the flushed one delivers. The settle tick (newest generation
-// only) declares delivery and ends the embedding.
 func TestDetailRetransmitAfterResize(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1248,21 +1127,19 @@ func TestDetailRetransmitAfterResize(t *testing.T) {
 	m.detail.imageTransmit = "TRANSMIT-BYTES"
 	m.detail.transmitSent = true
 
-	// A resize dirties the upload: frames carry it, repeatedly.
 	next, cmd1 := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = next.(Model)
 	gen1 := m.resizeGen
 	if cmd1 == nil || m.detail.transmitSent {
 		t.Fatal("a resize must dirty the upload and schedule a settle tick")
 	}
-	m.detail.imageColsDrawn = m.detailImageCols() // pretend the re-render landed
+	m.detail.imageColsDrawn = m.detailImageCols()
 	for i := range 2 {
 		if out := m.View(); !strings.Contains(out, "TRANSMIT-BYTES") {
 			t.Fatalf("dirty frame %d must embed the transmit", i)
 		}
 	}
 
-	// A second resize supersedes the first tick.
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 118, Height: 40})
 	m = next.(Model)
 	if m.resizeGen != gen1+1 {
@@ -1274,7 +1151,6 @@ func TestDetailRetransmitAfterResize(t *testing.T) {
 		t.Fatal("a superseded tick declared delivery")
 	}
 
-	// The newest tick ends the embedding.
 	next, _ = m.Update(retransmitMsg{gen: m.resizeGen})
 	m = next.(Model)
 	if !m.detail.transmitSent {
@@ -1285,8 +1161,6 @@ func TestDetailRetransmitAfterResize(t *testing.T) {
 	}
 }
 
-// A short window pushes the overlay's sections past the fold; pgdn/pgup
-// scroll to them, and the indicator names what lies past each edge.
 func TestDetailScrolls(t *testing.T) {
 	st := testStore()
 	st.bidSeries = map[string][]store.PricePoint{
@@ -1299,7 +1173,7 @@ func TestDetailScrolls(t *testing.T) {
 	if m.detail == nil {
 		t.Fatal("no detail")
 	}
-	// 12 rows: the frame alone nearly fills the window.
+
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
 	m = next.(Model)
 
@@ -1321,11 +1195,10 @@ func TestDetailScrolls(t *testing.T) {
 		t.Errorf("scrolled view must name the lines above:\n%s", out)
 	}
 
-	// pgup returns to the top; the clamp survives over-scrolling.
 	for range 20 {
 		m = key(m, "pgdown")
 	}
-	m.View() // clamp
+	m.View()
 	if m.detail.scroll == 0 {
 		t.Fatal("over-scroll clamped to the top")
 	}
@@ -1337,8 +1210,6 @@ func TestDetailScrolls(t *testing.T) {
 		t.Errorf("pgup must return to the top (scroll=%d)", m.detail.scroll)
 	}
 
-	// A dirty kitty upload still delivers while scrolled: the transmit
-	// attaches to the first rendered line, wherever the window sits.
 	m.detail.image = []string{"ART"}
 	m.detail.imageTransmit = "TRANSMIT-BYTES"
 	m.detail.transmitSent = false
@@ -1348,19 +1219,15 @@ func TestDetailScrolls(t *testing.T) {
 	}
 }
 
-// A treated foil names its treatment in the holdings FINISH cell, the
-// detail's PRICE label and HELD row, and swaps the TCG link to a search —
-// the plain product page prices a card you don't hold (observed live: a
-// ~$75 ripple foil linking a ~$12 page).
 func TestFoilTreatmentDisplays(t *testing.T) {
 	st := testStore()
-	ripple := row("Eldrazi Confluence", "m3c", "32", "foil", 1, 75)
+	ripple := row("Eldrazi Confluence", "m3c", "32", finish.Foil, 1, 75)
 	ripple.Treatment = "ripple"
 	st.collection = append(st.collection, ripple)
 	st.holdingsByName = map[string][]store.Holding{
 		"Eldrazi Confluence": {
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "foil", Quantity: 1, Treatment: "ripple",
+				Finish: finish.Foil, Quantity: 1, Treatment: "ripple",
 				ScryfallID: "Eldrazi Confluence-id", SetCode: "m3c", CollectorNumber: "32"},
 		},
 	}
@@ -1370,14 +1237,12 @@ func TestFoilTreatmentDisplays(t *testing.T) {
 		t.Errorf("holdings FINISH cell must name the treatment:\n%s", out)
 	}
 
-	// The detail HELD row names it too.
 	d := detail{holdings: st.holdingsByName["Eldrazi Confluence"]}
 	held := strings.Join(m.hoardLines(d, 120), "\n")
 	if !strings.Contains(held, "ripple") {
 		t.Errorf("HELD row must name the treatment:\n%s", held)
 	}
 
-	// Links: treated foil → search page; plain printing keeps the product.
 	tcg := int64(553171)
 	c := store.CardDetail{}
 	c.Name, c.SetCode, c.CollectorNumber = "Eldrazi Confluence", "m3c", "32"
@@ -1397,21 +1262,18 @@ func TestFoilTreatmentDisplays(t *testing.T) {
 	}
 }
 
-// tab flips which zone the arrows drive — from anywhere in a long held
-// list, not just off its bottom edge — scrolling the activated zone into
-// view.
 func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
-			{ContainerName: "Binder", Finish: "nonfoil", Quantity: 4,
+			{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 4,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
-			{ContainerName: "Trade", Finish: "foil", Quantity: 1,
+			{ContainerName: "Trade", Finish: finish.Foil, Quantity: 1,
 				ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85"},
 		},
 	}
 	m := newTestModel(t, st)
-	m.openURL = func(string) error { return nil } // links exist only with an opener
+	m.openURL = func(string) error { return nil }
 	m = key(m, "tab")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
@@ -1419,10 +1281,6 @@ func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 		t.Fatalf("setup: detail should open in the links zone")
 	}
 
-	// Tab is a single cycle through every stop — each link, then each field of
-	// the held row — so reaching the held zone means walking out of the links
-	// rather than one press. Bounded, so a regression that never arrives fails
-	// here instead of spinning.
 	for range len(m.detail.links) + 1 {
 		if m.detail.zone == zoneHeld {
 			break
@@ -1433,7 +1291,7 @@ func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 		t.Fatalf("tab should walk out of the links into the held zone and request a scroll: zone=%d scroll=%v",
 			m.detail.zone, m.detail.scrollHeldIntoView)
 	}
-	// ←/→ now drive the field cursor, not the links.
+
 	was := m.detail.linkCursor
 	m = key(m, "right")
 	if m.detail.heldField != fieldSet || m.detail.linkCursor != was {
@@ -1441,7 +1299,6 @@ func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 			m.detail.heldField, m.detail.linkCursor)
 	}
 
-	// And back out of the fields to the links, the same way.
 	for range heldFieldCount + 1 {
 		if m.detail.zone == zoneLinks {
 			break
@@ -1454,8 +1311,7 @@ func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 	if m.detail.scroll == 0 {
 		t.Errorf("tab to links should scroll toward them (clamped at render)")
 	}
-	// Captured here, not earlier: tab now walks the link cursor itself, so a
-	// value read before the traversal is stale by the time → is pressed.
+
 	atLinks := m.detail.linkCursor
 	m = key(m, "right")
 	if m.detail.linkCursor != atLinks+1 {
@@ -1464,16 +1320,13 @@ func TestDetailZoneArrowsAndTabOrder(t *testing.T) {
 	}
 }
 
-// The comp sheet loads off the UI goroutine: the section holds a pending
-// note, the answer lands only on the printing still shown, and the memo
-// spares a re-fetch when the cursor comes back.
 func TestDetailCompsLoadAsync(t *testing.T) {
 	st := testStore()
 	m := newTestModel(t, st)
 	calls := 0
-	m.cardComps = func(id string) (map[string]market.Comp, bool) {
+	m.cardComps = func(id string) (map[finish.Finish]market.Comp, bool) {
 		calls++
-		return map[string]market.Comp{"nonfoil": {}}, true
+		return map[finish.Finish]market.Comp{finish.Nonfoil: {}}, true
 	}
 	m = key(m, "tab")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1489,7 +1342,6 @@ func TestDetailCompsLoadAsync(t *testing.T) {
 		t.Errorf("pending comps should hold the section's place:\n%s", out)
 	}
 
-	// The background read runs and lands.
 	cmd := m.fetchDetailComps(id)
 	if cmd == nil {
 		t.Fatal("no fetch command for an unanswered printing")
@@ -1505,71 +1357,58 @@ func TestDetailCompsLoadAsync(t *testing.T) {
 			m.detail.compsOK, m.detail.comps)
 	}
 
-	// Memoized: no second fetch for the same printing.
 	if m.fetchDetailComps(id) != nil {
 		t.Error("an answered printing should not fetch again")
 	}
 
-	// A stale answer (overlay re-pointed or closed) lands in the memo only.
 	next, _ = m.Update(detailCompsMsg{scryfallID: "someone-else", ok: true})
 	m = next.(Model)
 	if m.detail.card.ScryfallID != id || !m.detail.compsOK {
 		t.Errorf("a stale answer must not touch the open overlay")
 	}
 
-	// Closing the overlay drops the memo.
 	m = key(m, "esc")
 	if m.detail != nil || m.detailComps != nil {
 		t.Errorf("esc should close the overlay and clear the comp memo")
 	}
 }
 
-// The held list's finish slot always renders — "-" for a plain nonfoil —
-// so treated and plain rows keep the same columns.
 func TestDetailHeldFinishAlwaysRenders(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
 	d := detail{holdings: []store.Holding{
-		{ContainerName: "Binder", Finish: "nonfoil", Quantity: 40,
+		{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 40,
 			ScryfallID: "mtn-a", SetCode: "mh3", CollectorNumber: "300"},
-		{ContainerName: "Binder", Finish: "foil", Treatment: "ripple", Quantity: 1,
+		{ContainerName: "Binder", Finish: finish.Foil, Treatment: "ripple", Quantity: 1,
 			ScryfallID: "mtn-b", SetCode: "mh3", CollectorNumber: "301"},
 	}}
 	out := strings.Join(m.hoardLines(d, 140), "\n")
-	// The finish slot pads to the list's widest word ("ripple"), so the
-	// dash row keeps the same columns as the treated one. The condition slot
-	// follows it and renders the unknown mark for rows nobody has assessed —
-	// it is an editable field, so it holds its place even when every row is
-	// unassessed.
+
 	if !strings.Contains(out, "mh3/300 · -      · — · Binder") {
 		t.Errorf("plain nonfoil should render a padded dash in its finish slot:\n%s", out)
 	}
 	if !strings.Contains(out, "mh3/301 · ripple · — · Binder") {
 		t.Errorf("treated foil should keep its treatment word:\n%s", out)
 	}
-	// Qty right-aligns: ×1 pads to ×40's width.
+
 	if !strings.Contains(out, "  ×40 ·") || !strings.Contains(out, "   ×1 ·") {
 		t.Errorf("quantities should right-align:\n%s", out)
 	}
 }
 
-// The comps verdict prose is gone for good — the CK PAYS and SPREAD
-// columns already say it — and a detail entered from the ARBITRAGE
-// section additionally keeps its PRICE spread trend quiet, since that
-// restates the row the user just came from.
 func TestCompsVerdictGoneAndArbitrageEntrySuppressesSpread(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
-	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, true }
+	m.cardComps = func(string) (map[finish.Finish]market.Comp, bool) { return nil, true }
 	d := detail{
-		holdings: []store.Holding{{ContainerName: "Binder", Finish: "nonfoil", Quantity: 1}},
-		comps: map[string]market.Comp{"nonfoil": {
+		holdings: []store.Holding{{ContainerName: "Binder", Finish: finish.Nonfoil, Quantity: 1}},
+		comps: map[finish.Finish]market.Comp{finish.Nonfoil: {
 			HasMarket: true, Market: 2.29, HasBuylist: true, Buylist: 3.50,
 		}},
 		compsOK: true,
-		series: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 10)},
+		series: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 10), pp("2026-07-01T00:00:00Z", 10)},
 		},
-		bids: map[string][]store.PricePoint{
-			"nonfoil": {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 8)},
+		bids: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {pp("2026-06-01T00:00:00Z", 5), pp("2026-07-01T00:00:00Z", 8)},
 		},
 	}
 	out := strings.Join(m.hoardLines(d, 140), "\n")
@@ -1589,15 +1428,12 @@ func TestCompsVerdictGoneAndArbitrageEntrySuppressesSpread(t *testing.T) {
 	}
 }
 
-// The finish field edits like the others: enter opens a prompt prefilled
-// with the display finish, valid answers re-key the row (merging), and
-// garbage refuses.
 func TestDetailHeldFinishEdit(t *testing.T) {
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {
 			{ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-				Finish: "nonfoil", Quantity: 4, ScryfallID: "Bitterblossom-id",
+				Finish: finish.Nonfoil, Quantity: 4, ScryfallID: "Bitterblossom-id",
 				SetCode: "uma", CollectorNumber: "85"},
 		},
 	}
@@ -1605,9 +1441,9 @@ func TestDetailHeldFinishEdit(t *testing.T) {
 	m = key(m, "tab")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	m = key(m, "up") // into the held zone
+	m = key(m, "up")
 	m = key(m, "right")
-	m = key(m, "right") // qty → set → finish
+	m = key(m, "right")
 	if m.detail.heldField != fieldFinish {
 		t.Fatalf("field = %d, want finish", m.detail.heldField)
 	}
@@ -1629,10 +1465,10 @@ func TestDetailHeldFinishEdit(t *testing.T) {
 	}
 	found := false
 	for _, r := range st.collection {
-		if r.ScryfallID == "Bitterblossom-id" && r.Finish == "foil" && r.Quantity == 4 {
+		if r.ScryfallID == "Bitterblossom-id" && r.Finish == finish.Foil && r.Quantity == 4 {
 			found = true
 		}
-		if r.ScryfallID == "Bitterblossom-id" && r.Finish == "nonfoil" {
+		if r.ScryfallID == "Bitterblossom-id" && r.Finish == finish.Nonfoil {
 			t.Errorf("source finish row survived: %+v", r)
 		}
 	}
@@ -1644,22 +1480,13 @@ func TestDetailHeldFinishEdit(t *testing.T) {
 	}
 }
 
-// The comps table draws one row per sheet it is handed and invents none.
-//
-// This is the display half of the etched-phantom fix: a nonfoil/foil
-// printing whose sheets carry no etched key renders no etched line, and a
-// genuinely etched printing renders one with the etched product's own
-// numbers. The row's presence is decided upstream, in action.CardComps,
-// which is where the phantom was manufactured; this locks the overlay to
-// reporting that decision rather than second-guessing it.
 func TestDetailCompsRowPerSheetOnly(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, testStore()))
-	m.cardComps = func(string) (map[string]market.Comp, bool) { return nil, false }
+	m.cardComps = func(string) (map[finish.Finish]market.Comp, bool) { return nil, false }
 
-	// Bitterblossom uma/85: sold as nonfoil and foil, and nothing else.
-	d := detail{compsOK: true, comps: map[string]market.Comp{
-		"nonfoil": {Market: 34.47, HasMarket: true, Low: 34.47, LowFrom: "tcgplayer"},
-		"foil": {Market: 45.56, HasMarket: true, CK: 54.99, HasCK: true,
+	d := detail{compsOK: true, comps: map[finish.Finish]market.Comp{
+		finish.Nonfoil: {Market: 34.47, HasMarket: true, Low: 34.47, LowFrom: "tcgplayer"},
+		finish.Foil: {Market: 45.56, HasMarket: true, CK: 54.99, HasCK: true,
 			Buylist: 27.50, BuylistTo: "cardkingdom", HasBuylist: true,
 			Low: 45.56, LowFrom: "tcgplayer"},
 	}}
@@ -1671,9 +1498,8 @@ func TestDetailCompsRowPerSheetOnly(t *testing.T) {
 		t.Errorf("etched row for a nonfoil/foil printing:\n%s", out)
 	}
 
-	// Kaalia mh3/489: sold only as etched, and the vendors price it.
-	d.comps = map[string]market.Comp{
-		"etched": {Market: 11.55, HasMarket: true, CK: 6.99, HasCK: true,
+	d.comps = map[finish.Finish]market.Comp{
+		finish.Etched: {Market: 11.55, HasMarket: true, CK: 6.99, HasCK: true,
 			Buylist: 3.50, BuylistTo: "cardkingdom", HasBuylist: true,
 			Low: 6.99, LowFrom: "cardkingdom"},
 	}
@@ -1683,10 +1509,6 @@ func TestDetailCompsRowPerSheetOnly(t *testing.T) {
 	}
 }
 
-// The overlay's lower half — PRICE, COMPS, LINKS — is reachable by pgdn, and
-// pgdn is not a key most people know is there. The arrow keys cannot stand in
-// for it: they drive the held-list cursor, so the oracle text and the art have
-// nothing to walk. The wheel is the affordance that needs no instruction.
 func TestDetailScrollsOnWheel(t *testing.T) {
 	m := newTestModel(t, testStore())
 	m = key(m, "tab")
@@ -1714,8 +1536,6 @@ func TestDetailScrollsOnWheel(t *testing.T) {
 		t.Errorf("wheel up left scroll at %d, want less than %d", m.detail.scroll, down)
 	}
 
-	// The top is a floor, not a cliff: over-scrolling up must not drive the
-	// offset negative and index off the front of the line slice.
 	for range 10 {
 		m = wheel(m, tea.MouseButtonWheelUp)
 	}
@@ -1723,15 +1543,10 @@ func TestDetailScrollsOnWheel(t *testing.T) {
 		t.Errorf("scroll = %d after over-scrolling up, want 0", m.detail.scroll)
 	}
 
-	// A wheel event with no overlay open must not panic or scroll anything.
 	m.detail = nil
 	_ = wheel(m, tea.MouseButtonWheelDown)
 }
 
-// Claiming the mouse silences the terminal's alternate-scroll translation, so
-// the panes stop scrolling the moment mouse reporting is switched on unless
-// hoard replays what the terminal used to send. That regression shipped once;
-// this is the guard.
 func TestPanesScrollOnWheel(t *testing.T) {
 	m := newTestModel(t, testStore())
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -1754,8 +1569,6 @@ func TestPanesScrollOnWheel(t *testing.T) {
 		t.Errorf("wheel up left the cursor at %d, want less than %d", m.cursor[paneContainers], moved)
 	}
 
-	// The wheel must land on the same path the arrow keys use, so it inherits
-	// their clamping rather than needing its own.
 	for range 20 {
 		m = wheel(m, tea.MouseButtonWheelUp)
 	}
@@ -1764,13 +1577,8 @@ func TestPanesScrollOnWheel(t *testing.T) {
 	}
 }
 
-// Claiming the mouse is what takes the terminal's text selection and
-// copy-on-select away, so it is claimed only while the overlay is open. Getting
-// this wrong is invisible in a test that only checks scrolling: the feature
-// works and selection is quietly broken everywhere.
 func TestMouseCaptureFollowsTheOverlay(t *testing.T) {
-	// tea.EnableMouseCellMotion and tea.DisableMouse are funcs, not values, so
-	// the batch is inspected by running it and reading the messages back.
+
 	msgs := func(cmd tea.Cmd) []string {
 		var out []string
 		if cmd == nil {
@@ -1815,17 +1623,13 @@ func TestMouseCaptureFollowsTheOverlay(t *testing.T) {
 	}
 }
 
-// Tab walks the held row's fields and then falls through to the links, rather
-// than jumping straight past every field to a different zone. The arrows must
-// keep working unchanged — tab is a convenience, never the only route.
 func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
-	// The overlay needs a holding to have fields at all, and an opener for the
-	// links to exist: with neither, tab has nowhere to go.
+
 	st := testStore()
 	st.holdingsByName = map[string][]store.Holding{
 		"Bitterblossom": {{
 			ContainerID: 1, ContainerName: "Binder", ContainerKind: store.KindCollection,
-			Finish: "nonfoil", Quantity: 4,
+			Finish: finish.Nonfoil, Quantity: 4,
 			ScryfallID: "Bitterblossom-id", SetCode: "uma", CollectorNumber: "85",
 		}},
 	}
@@ -1847,12 +1651,10 @@ func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = next.(Model)
 
-	// The overlay opens on the links, so that is where the cycle starts.
 	if m.detail.zone != zoneLinks || m.detail.linkCursor != 0 {
 		t.Fatalf("opened at zone=%d link=%d, want the first link", m.detail.zone, m.detail.linkCursor)
 	}
 
-	// One tab per remaining link, in order, without leaving the zone.
 	for want := 1; want < links; want++ {
 		m = key(m, "tab")
 		if m.detail.zone != zoneLinks || m.detail.linkCursor != want {
@@ -1860,14 +1662,12 @@ func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
 		}
 	}
 
-	// Past the last link, into the row at its first field.
 	m = key(m, "tab")
 	if m.detail.zone != zoneHeld || m.detail.heldField != fieldQty {
 		t.Fatalf("zone=%d field=%d after the last link, want the row's first field",
 			m.detail.zone, m.detail.heldField)
 	}
 
-	// One tab per field, in order, without leaving the zone.
 	for want := fieldSet; want < heldFieldCount; want++ {
 		m = key(m, "tab")
 		if m.detail.zone != zoneHeld || m.detail.heldField != want {
@@ -1875,15 +1675,12 @@ func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
 		}
 	}
 
-	// Past the last field, back to the FIRST link — not wherever the cursor was
-	// left, or the order would depend on history.
 	m = key(m, "tab")
 	if m.detail.zone != zoneLinks || m.detail.linkCursor != 0 {
 		t.Fatalf("zone=%d link=%d after the last field, want the first link",
 			m.detail.zone, m.detail.linkCursor)
 	}
 
-	// shift+tab is the same cycle backwards.
 	m = key(m, "shift+tab")
 	if m.detail.zone != zoneHeld || m.detail.heldField != heldFieldCount-1 {
 		t.Fatalf("shift+tab gave zone=%d field=%d, want the row's last field",
@@ -1902,8 +1699,6 @@ func TestDetailTabWalksFieldsThenLinks(t *testing.T) {
 			m.detail.zone, m.detail.linkCursor)
 	}
 
-	// The arrows are untouched: ←/→ still walk their zone's cursor, so nobody
-	// has to tab through everything to move one step.
 	before := m.detail.linkCursor
 	m = key(m, "left")
 	if m.detail.linkCursor != before-1 {

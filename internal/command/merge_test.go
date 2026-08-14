@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// mergeSourceDB builds a second hoard on disk and returns its path.
 func mergeSourceDB(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "other.db")
@@ -26,7 +26,7 @@ func mergeSourceDB(t *testing.T) string {
 		PriceUSD: f(10), ScryfallURL: "https://scryfall.com/card/uma/7",
 		Raw: json.RawMessage(`{"rarity":"mythic","type_line":"Legendary Creature"}`),
 	}
-	if err := st.AddCardFinish(c, "nonfoil", 3); err != nil {
+	if err := st.AddCardFinish(c, finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	if err := st.Close(); err != nil {
@@ -35,7 +35,6 @@ func mergeSourceDB(t *testing.T) string {
 	return path
 }
 
-// mergeTargetStore is the hoard being merged into.
 func mergeTargetStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
@@ -93,8 +92,6 @@ func TestCmdMergeDryRun(t *testing.T) {
 	}
 }
 
-// -o keeps the interchange document, and what it writes is a real hoard
-// document rather than a debug dump.
 func TestCmdMergeWritesDocument(t *testing.T) {
 	ctx := context.Background()
 	st := mergeTargetStore(t)
@@ -125,8 +122,6 @@ func TestCmdMergeWritesDocument(t *testing.T) {
 	}
 }
 
-// -o must not overwrite a database, which is the mistake this command invites:
-// both of its arguments are .db files.
 func TestCmdMergeRefusesToOverwriteADatabase(t *testing.T) {
 	ctx := context.Background()
 	st := mergeTargetStore(t)

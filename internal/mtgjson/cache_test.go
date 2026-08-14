@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// The day-cache prune removes yesterday's entries, not in-flight temps: two
-// overlapping fetches (Prices + Quotes both run treatedExtra and remap) each
-// prune, and sweeping the other's dl-* or quotes-* temp made its final rename
-// fail ENOENT after the whole download.
 func TestPruneCacheSparesInflightTemps(t *testing.T) {
 	oldDay := today
 	today = func() string { return "2026-08-02" }
@@ -22,10 +18,10 @@ func TestPruneCacheSparesInflightTemps(t *testing.T) {
 
 	dir := t.TempDir()
 	for _, name := range []string{
-		"2026-08-01-AllPricesToday.json.gz", // yesterday's: prune
-		"2026-08-02-AllPricesToday.json.gz", // today's: keep
-		"dl-1234",                           // another fetch's in-flight download
-		"quotes-5678",                       // the quotes day-cache mid-write
+		"2026-08-01-AllPricesToday.json.gz",
+		"2026-08-02-AllPricesToday.json.gz",
+		"dl-1234",
+		"quotes-5678",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -43,9 +39,6 @@ func TestPruneCacheSparesInflightTemps(t *testing.T) {
 	}
 }
 
-// A 200 that is not gzip — a captive portal, an outage page — must not become
-// today's cache entry: cached, it would wedge every price command until
-// midnight with an error naming neither the file nor the fix.
 func TestNonGzipResponseIsNotCached(t *testing.T) {
 	serve(t, map[string][]byte{"/M3C.json.gz": []byte("<html>service maintenance</html>")})
 	cacheDir := t.TempDir()
@@ -65,9 +58,6 @@ func TestNonGzipResponseIsNotCached(t *testing.T) {
 	}
 }
 
-// A poisoned entry already in the cache — from a version without the write
-// gate, or a torn disk — heals itself: deleted and re-downloaded, rather than
-// wedging the day.
 func TestPoisonedCacheEntryIsReplaced(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,15 +82,12 @@ func TestPoisonedCacheEntryIsReplaced(t *testing.T) {
 	if hits != 1 || len(got) != 2 {
 		t.Errorf("hits=%d ids=%d, want a single re-download resolving both ids", hits, len(got))
 	}
-	// And the healed entry serves the next call without the network.
+
 	if _, err := SetIdentifiers(context.Background(), Options{CacheDir: cacheDir}, "m3c"); err != nil || hits != 1 {
 		t.Errorf("second call: err=%v hits=%d, want cached", err, hits)
 	}
 }
 
-// Options.Progress sees the download land: cumulative bytes against the
-// Content-Length total — and nothing at all on a cache hit, where there is
-// no wait worth narrating.
 func TestProgressReportsDownloadBytes(t *testing.T) {
 	payload := gzipped(t, `{"data": {}}`)
 	serve(t, map[string][]byte{"/M3C.json.gz": payload})
@@ -125,7 +112,6 @@ func TestProgressReportsDownloadBytes(t *testing.T) {
 		t.Errorf("total = %d, want Content-Length (%d)", lastTotal, len(payload))
 	}
 
-	// Second read is a cache hit: silent.
 	dones = nil
 	if _, err := SetIdentifiers(context.Background(), o, "m3c"); err != nil {
 		t.Fatalf("SetIdentifiers (cached): %v", err)
@@ -135,9 +121,6 @@ func TestProgressReportsDownloadBytes(t *testing.T) {
 	}
 }
 
-// A download that stops delivering bytes must fail with a clear error, not
-// hang forever — the pre-timeout behavior for a silently dead connection
-// under a ~150 MB archive.
 func TestStalledDownloadFailsInsteadOfHanging(t *testing.T) {
 	oldIdle := idleAfter
 	idleAfter = 100 * time.Millisecond
@@ -145,16 +128,14 @@ func TestStalledDownloadFailsInsteadOfHanging(t *testing.T) {
 
 	hang := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A few real bytes, then silence: the connection is alive, the data
-		// is not coming.
+
 		w.Header().Set("Content-Length", "1048576")
 		w.Write([]byte{0x1f, 0x8b})
 		w.(http.Flusher).Flush()
 		<-hang
 	}))
 	t.Cleanup(srv.Close)
-	// Registered after srv.Close so it runs first (cleanups are LIFO):
-	// Close waits for the handler, and the handler waits for this.
+
 	t.Cleanup(func() { close(hang) })
 	oldBase := apiBase
 	apiBase = srv.URL

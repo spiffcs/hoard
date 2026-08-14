@@ -1,14 +1,9 @@
-// Tests for the auto-scan timing constants.
-//
-// They live apart from model_test.go because they pin *measurements* rather
-// than behaviour: each number here was fitted to a recorded session, and the
-// comment saying which session is the point of the test.
-
 package tui
 
 import (
 	"context"
 	"errors"
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
@@ -18,52 +13,28 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-// Both timing constants were fitted to the 61-capture session recorded in
-// docs/specs/scanner-tuning.md rather than guessed, so the measurements that produced
-// them are what this pins.
-//
-// They used to be chosen per source, the phone's values sitting beside an
-// older, shorter pair fitted to the Continuity pipe. The Continuity path is
-// gone and so is the choice; what survives is the requirement that these
-// numbers stay inside the session that justified them.
 func TestNudgeDelayClearsTheObservedSwap(t *testing.T) {
-	// Across 60 result-to-capture gaps on the phone, the fastest was 3856ms and
-	// the median 4896ms. A delay under the fastest observed swap fires while
-	// the operator's hand is still moving, which buys an extra capture per card
-	// instead of catching a parked one.
+
 	if nudgeDelay < 3856*time.Millisecond {
 		t.Errorf("nudge delay %v is below the fastest observed swap (3856ms), "+
 			"so it will fire mid-swap", nudgeDelay)
 	}
-	// And above p75 it stops being a recheck at all — a card genuinely parked
-	// waits longer than the operator does.
+
 	if nudgeDelay > 7047*time.Millisecond {
 		t.Errorf("nudge delay %v exceeds the p75 swap (7047ms), so a parked "+
 			"card waits on the timer rather than the timer catching it", nudgeDelay)
 	}
 }
 
-// The recheck loop widens on repeat echoes and stops widening.
-//
-// The loop used to end instead of widening: the echo branch returned no
-// command, so a card the rules suppressed got exactly one recheck and then
-// waited on the phone's own re-arm — 73.5s in one observed session, for a
-// suppression the ten-second window should have released. Rescheduling
-// unconditionally is the fix; this is what keeps it from becoming a permanent
-// 5.5s poll of a card sitting still on the mat.
 func TestNudgeBacksOffAndCaps(t *testing.T) {
 	if got := nudgeBackoff(0); got != nudgeDelay {
 		t.Errorf("nudgeBackoff(0) = %v, want the base delay %v", got, nudgeDelay)
 	}
-	// Each consecutive echo doubles, so a card being shown repeatedly is asked
-	// about less and less often.
+
 	if got, want := nudgeBackoff(1), 2*nudgeDelay; got != want {
 		t.Errorf("nudgeBackoff(1) = %v, want %v", got, want)
 	}
-	// And the widening stops, because a card that arrives while the timer is
-	// parked does not wait for it — the phone fires on disruption and voids
-	// the pending generation. Only the case geometry cannot see is affected,
-	// and that one should not be left for minutes.
+
 	capped := nudgeDelay << nudgeBackoffSteps
 	if got := nudgeBackoff(nudgeBackoffSteps + 5); got != capped {
 		t.Errorf("nudgeBackoff past the cap = %v, want %v", got, capped)
@@ -74,17 +45,8 @@ func TestNudgeBacksOffAndCaps(t *testing.T) {
 	}
 }
 
-// The escalation has to fit in what is left of the shutter-to-result budget.
 func TestNameTimeoutFitsTheShutterToResultBudget(t *testing.T) {
-	// The budget is 700ms and the phone's own half measured 447ms median, so
-	// the Scryfall escalation gets the ~250ms that remains and no more — past
-	// that the rhythm the sounds depend on starts to slip.
-	//
-	// Fitted against the median rather than the p90 of 472ms, deliberately: at
-	// p90 the budget is already spent before the escalation starts, so pinning
-	// to it would forbid any network call at all. The escalation is a bonus
-	// that catches a card printed since the last catalog build, and the right
-	// trade is that it fits the typical card and is cut short on a slow one.
+
 	const budget = 700 * time.Millisecond
 	const phoneReadMedian = 447 * time.Millisecond
 	if phoneReadMedian+nameTimeout > budget {
@@ -93,12 +55,6 @@ func TestNameTimeoutFitsTheShutterToResultBudget(t *testing.T) {
 	}
 }
 
-// The border breaks a year tie, and only a year tie.
-//
-// Every case here is a card from the live session of 2026-08-04 that queued as
-// "printing unverified" while holding a perfectly-read copyright year. The year
-// narrowed each to printings that share a set, a collector number and a release
-// date, leaving the printed border as the only difference on the card.
 func TestYearAndBorderPicksBetweenSameNumberPrintings(t *testing.T) {
 	for _, tc := range []struct {
 		name, border, wantSet string
@@ -106,8 +62,7 @@ func TestYearAndBorderPicksBetweenSameNumberPrintings(t *testing.T) {
 	}{
 		{"white picks the white-bordered printing", "white", "4ed", scanMatchYearAndMarks},
 		{"black picks the black-bordered printing", "black", "4bb", scanMatchYearAndMarks},
-		// No border read is the old behaviour exactly: 1995 alone cannot
-		// separate 4ED from 4BB and must not pretend to.
+
 		{"no border settles nothing", "", "", scanMatchNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,19 +77,6 @@ func TestYearAndBorderPicksBetweenSameNumberPrintings(t *testing.T) {
 	}
 }
 
-// A collector number that matches nothing silences the number, not the card.
-//
-// The frame stratum: a same-set regular/retro twin pair shares its set, year
-// and border, so when the digits never read only the footer's frame family
-// separates them.
-//
-// Live 2026-08-07: Victimize's copyright row washed out under foil glare on
-// every capture, and the card queued against 19 printings even though the
-// footer's "Illus." row — the retro-frame tell — read fine. Same fail-closed
-// rules as the border stratum: the pick must positively match the read, an
-// unknown catalog frame is never treated as modern, and the session prior
-// only ever breaks ties among printings the physical evidence already
-// supports.
 func TestFrameFamilySeparatesRetroTwins(t *testing.T) {
 	twins := []scryfall.Card{
 		{ID: "reg", Name: "Brainsurge", Set: "mh3", CollectorNumber: "106",
@@ -143,7 +85,6 @@ func TestFrameFamilySeparatesRetroTwins(t *testing.T) {
 			ReleasedAt: "2024-06-14", Frame: "1997", Finishes: []string{"nonfoil", "foil"}},
 	}
 
-	// The headline case: year ties the twins, the frame picks the retro row.
 	ranked, rank := rankByScanStrength(twins, "", "", 2024, "", "", "", "retro", nil)
 	if rank != scanMatchYearAndFrame {
 		t.Fatalf("rank = %v, want year+frame", rank)
@@ -152,24 +93,16 @@ func TestFrameFamilySeparatesRetroTwins(t *testing.T) {
 		t.Errorf("led with %s, want the retro-frame row", ranked[0].ID)
 	}
 
-	// The same glare that eats the digits eats the copyright year, and the
-	// frame's pick does not rest on it: sole positive agreement still wins.
-	// Live: four Brainsurge captures read the "Illus." row cleanly and the
-	// copyright row not at all.
 	ranked, rank = rankByScanStrength(twins, "", "", 0, "", "", "", "retro", nil)
 	if rank != scanMatchYearAndFrame || ranked[0].ID != "retro" {
 		t.Errorf("rank = %v head = %s, want year+frame with no year read",
 			rank, ranked[0].ID)
 	}
 
-	// No tell read → no bet. Absence of the "Illus." row is not evidence of a
-	// modern frame; the card queues exactly as before.
 	if _, rank := rankByScanStrength(twins, "", "", 2024, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want none without a frame read", rank)
 	}
 
-	// Survival is not agreement: a candidate whose frame the catalog does not
-	// know cannot win just because it could not be eliminated.
 	unknown := []scryfall.Card{
 		{ID: "reg", Name: "Brainsurge", Set: "mh3", CollectorNumber: "106",
 			ReleasedAt: "2024-06-14", Frame: "2015", Finishes: []string{"nonfoil"}},
@@ -180,9 +113,6 @@ func TestFrameFamilySeparatesRetroTwins(t *testing.T) {
 		t.Errorf("rank = %v, want none: an unknown frame must not win by elimination", rank)
 	}
 
-	// Two retro printings share the year across sets: the tie stands until
-	// the session prior — and only the prior among frame-agreeing survivors —
-	// breaks it.
 	crossSet := []scryfall.Card{
 		{ID: "reg", Name: "Victimize", Set: "mh3", CollectorNumber: "106",
 			ReleasedAt: "2024-06-14", Frame: "2015", Finishes: []string{"nonfoil"}},
@@ -199,18 +129,12 @@ func TestFrameFamilySeparatesRetroTwins(t *testing.T) {
 		t.Errorf("rank = %v head = %s, want year+frame picking the session's set",
 			rank, ranked[0].ID)
 	}
-	// The prior alone — no frame read — picks nothing. It is a tie-breaker
-	// inside the frame stratum, never evidence of its own.
+
 	if _, rank := rankByScanStrength(crossSet, "", "", 2024, "", "", "", "", []string{"mh3"}); rank != scanMatchNone {
 		t.Errorf("rank = %v, want none: the prior must never pick without physical evidence", rank)
 	}
 }
 
-// Live 2026-08-06: Lion Umbra read 420 off its copyright row, a 2024 copyright
-// year and a foil sparkle, against two printings. 420 matched neither, and the
-// ranker returned scanMatchNone on the spot — so the year and the sparkle, both
-// read cleanly off the same card, never got weighed at all and the card queued
-// as "printing unverified: 2 printings".
 func TestAnUnmatchedNumberFallsBackToTheYear(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "retro", Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426",
@@ -226,29 +150,16 @@ func TestAnUnmatchedNumberFallsBackToTheYear(t *testing.T) {
 		t.Errorf("led with %s, want the 2024 printing", ranked[0].Set)
 	}
 
-	// The sole-printing floor stays out of reach, though. "Only one candidate
-	// and no number was read" is the absence of evidence; a number that agrees
-	// with nothing is a positive reason to doubt the name this list came from,
-	// and it must not be answered by shrugging.
 	lone := prints[:1]
 	if _, rank := rankByScanStrength(lone, "", "999", 0, "", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want none: a lone printing does not rescue a number that matched nothing", rank)
 	}
-	// And with no number read at all, that same lone printing still commits —
-	// the difference between the two is the whole point.
+
 	if _, rank := rankByScanStrength(lone, "", "", 0, "", "", "", "", nil); rank != scanMatchSinglePrint {
 		t.Errorf("rank = %v, want single-print", rank)
 	}
 }
 
-// A black read is dark enough to exclude gold; a white read is not.
-//
-// Mana Leak's 1998 line is sth/36 (black) and wc98/rb36 (gold), and the two
-// answers are not symmetric. Black sits at the dark end of the card's own tone
-// range — measured -0.11 to -0.23 live — where no gold border lands, so it
-// excludes the gold and confirms the Stronghold printing. White cannot: white,
-// gold and silver are all bright, and treating a white read as excluding gold
-// once committed a World Championship card by elimination.
 func TestBlackExcludesGoldButWhiteDoesNot(t *testing.T) {
 	manaLeak := []scryfall.Card{
 		{ID: "gold", Name: "Mana Leak", Set: "wc98", CollectorNumber: "rb36",
@@ -263,12 +174,11 @@ func TestBlackExcludesGoldButWhiteDoesNot(t *testing.T) {
 	if ranked[0].Set != "sth" {
 		t.Errorf("led with %s, want the black-bordered sth", ranked[0].Set)
 	}
-	// And the reverse still fails closed: white leaves the gold standing, and a
-	// winner chosen by elimination is not confirmed by anything.
+
 	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone: white cannot exclude gold", rank)
 	}
-	// The asymmetry, stated directly.
+
 	if !borderRulesOut(manaLeak[0], "black") {
 		t.Error("a black read should exclude a gold printing")
 	}
@@ -277,7 +187,6 @@ func TestBlackExcludesGoldButWhiteDoesNot(t *testing.T) {
 	}
 }
 
-// Borderless is never excluded, by either answer: its edge is art.
 func TestBorderlessIsNeverExcluded(t *testing.T) {
 	bl := scryfall.Card{ID: "b", Name: "X", Set: "x", BorderColor: "borderless"}
 	for _, read := range []string{"white", "black"} {
@@ -287,15 +196,6 @@ func TestBorderlessIsNeverExcluded(t *testing.T) {
 	}
 }
 
-// A colour the reader cannot read must never rule a printing out.
-//
-// The reader answers white or black. Gold and silver were attempted, measured
-// wrong — an absolute chroma gate called three white-bordered cards gold — and
-// removed. So a printing in any other colour stays in contention whatever was
-// read, and the card queues for a human.
-//
-// Mana Leak is the live case: its 1998 line narrows to sth/36 (black) and
-// wc98/rb36 (gold), and a "black" read leaves both standing.
 func TestBorderNeverRulesOutAColourItCannotRead(t *testing.T) {
 	manaLeak := []scryfall.Card{
 		{ID: "a", Name: "Mana Leak", Set: "sth", CollectorNumber: "36",
@@ -303,8 +203,7 @@ func TestBorderNeverRulesOutAColourItCannotRead(t *testing.T) {
 		{ID: "b", Name: "Mana Leak", Set: "wc98", CollectorNumber: "rb36",
 			ReleasedAt: "1998-08-12", BorderColor: "gold"},
 	}
-	// White is the answer that cannot separate them: gold survives it, and a
-	// survivor chosen purely by eliminating its sibling confirms nothing.
+
 	if _, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v, want scanMatchNone: white cannot exclude gold", rank)
 	}
@@ -313,9 +212,8 @@ func TestBorderNeverRulesOutAColourItCannotRead(t *testing.T) {
 	}
 }
 
-// It fails closed at both ends.
 func TestYearAndBorderFailsClosed(t *testing.T) {
-	// A border that rules nothing out added no information.
+
 	allWhite := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "p1", CollectorNumber: "1",
 			ReleasedAt: "1995-01-01", BorderColor: "white"},
@@ -325,19 +223,16 @@ func TestYearAndBorderFailsClosed(t *testing.T) {
 	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "white", "", "", "", nil); rank != scanMatchNone {
 		t.Error("a border matching every printing must settle nothing")
 	}
-	// A border that rules *everything* out disagrees with the whole catalog,
-	// which is a reason to distrust the read rather than to pick from nothing.
+
 	if _, rank := rankByScanStrength(allWhite, "", "", 1995, "black", "", "", "", nil); rank != scanMatchNone {
 		t.Error("a border contradicting every printing must not commit")
 	}
-	// And the border is never consulted without a year to narrow the field
-	// first, because one bit against a whole catalog settles nothing.
+
 	if _, rank := rankByScanStrength(controlMagicPrints(), "", "", 0, "white", "", "", "", nil); rank != scanMatchNone {
 		t.Error("a border with no year must settle nothing")
 	}
 }
 
-// The new rank commits on the same terms year-only does.
 func TestYearAndBorderIsAutoCommittable(t *testing.T) {
 	it := queueItem{
 		canonical: "Control Magic",
@@ -349,28 +244,13 @@ func TestYearAndBorderIsAutoCommittable(t *testing.T) {
 	if !auto {
 		t.Errorf("year+border should commit unattended, queued with: %s", note)
 	}
-	// A rank that pins nothing at all still queues, so the rank is doing the
-	// work rather than the rest of the item happening to pass. (An *ambiguous*
-	// number no longer queues — it commits the front printing — which is why
-	// this uses scanMatchNone rather than the ambiguous rank it once did.)
+
 	it.rank = scanMatchNone
 	if auto, _, _ := verdict(it); auto {
 		t.Error("a rank that pinned no printing must still queue")
 	}
 }
 
-// A phone paired seconds ago is not a question worth asking — and not a browse
-// worth paying for either.
-//
-// Live report: after typing a six-digit code onto the phone, ctrl+o offered it
-// beside the household's other phone — a choice the last six keystrokes had
-// already made. Two sources are still the case to test; they are simply two
-// phones now rather than a phone and a Continuity camera.
-//
-// The list is skipped outright rather than auto-selected from, which is the
-// second half of the same argument: enumerating devices is a browse of the
-// network, and the pairing that just succeeded already proved this phone is on
-// it. Measured, that browse was 2.5s of the pairing hand-off.
 func TestJustPairedPhoneOpensWithoutADeviceList(t *testing.T) {
 	devices := []scan.Device{
 		cam("spare", "Spare iPhone", scan.KindRemote),
@@ -389,8 +269,7 @@ func TestJustPairedPhoneOpensWithoutADeviceList(t *testing.T) {
 	if got.cameraID != "phone" {
 		t.Errorf("opened %q, want the phone that was just paired", got.cameraID)
 	}
-	// One shot: the picker is how a phone gets switched, so the next ctrl+o
-	// has to offer the choice again.
+
 	if got.justPairedID != "" {
 		t.Errorf("the just-paired mark must be consumed by the scan that used it, got %q",
 			got.justPairedID)
@@ -403,20 +282,12 @@ func TestJustPairedPhoneOpensWithoutADeviceList(t *testing.T) {
 		t.Errorf("opened %q, want the just-paired phone", sc.usedDevice)
 	}
 
-	// A later scan is a different situation: with two phones here, the picker
-	// is the only way to switch between them.
 	mm, _ = got.onCameras(camerasMsg{devices: devices})
 	if mm.(model).state != stateCameraPick {
 		t.Error("a later device list should offer the picker again")
 	}
 }
 
-// The mark is consumed even when the open fails, so it cannot surprise a later
-// ctrl+o by silently reopening a camera nobody picked.
-//
-// Failing here is the correct place for it: Open browses for that phone by
-// name and says "not on this network right now", which is the message the
-// device list would have produced anyway, one step later.
 func TestJustPairedMarkIsConsumedWhenTheOpenFails(t *testing.T) {
 	sc := &fakeScanner{
 		devices: []scan.Device{
@@ -436,20 +307,16 @@ func TestJustPairedMarkIsConsumedWhenTheOpenFails(t *testing.T) {
 		t.Errorf("opened %q, want the just-paired phone", sc.usedDevice)
 	}
 
-	// With the mark spent, the next scan goes back through the list.
 	runCmds(m.beginScan())
 	if sc.listed != 1 {
 		t.Errorf("a later scan should ask for a device list, listed = %d", sc.listed)
 	}
 }
 
-// An empty capture is only worth reporting when a person asked for it.
 func TestEmptyAutoCaptureIsSilent(t *testing.T) {
 	sc := &fakeScanner{}
 	base := newModel(context.Background(), fakeSearcher{}, noopAdder, sc, "", nil)
 
-	// Hands-free: the trigger fires on a hand mid-swap or on bare desk several
-	// times a session. Nobody asked, so nothing is said.
 	m := base
 	m.session, m.state = &fakeSession{}, stateCapture
 	mm, _ := m.onSessionEvent(sessionEventMsg{
@@ -465,7 +332,6 @@ func TestEmptyAutoCaptureIsSilent(t *testing.T) {
 		t.Errorf("review = %d, want nothing queued for a frame with no card", len(got.review))
 	}
 
-	// Manual: they pressed space and got nothing. That is worth answering.
 	m2 := base
 	m2.session, m2.state = &fakeSession{}, stateCapturing
 	mm2, _ := m2.onSessionEvent(sessionEventMsg{
@@ -478,12 +344,6 @@ func TestEmptyAutoCaptureIsSilent(t *testing.T) {
 	}
 }
 
-// A better re-read of a queued card replaces it instead of being swallowed.
-//
-// Observed live: Prodigal Sorcerer's first capture abstained on the border
-// ("ring not uniform") and queued as "printing unverified: 23 printings". Its
-// nudge echo read the border cleanly, ranked year+border, and was dropped as a
-// duplicate — so the worse read won by arriving first.
 func TestBetterReReadReplacesTheQueuedEntry(t *testing.T) {
 	prod := scryfall.Card{ID: "p", Name: "Prodigal Sorcerer", Set: "4ed",
 		CollectorNumber: "94", BorderColor: "white"}
@@ -508,7 +368,6 @@ func TestBetterReReadReplacesTheQueuedEntry(t *testing.T) {
 	}
 }
 
-// The swallow still absorbs what it was built for.
 func TestEchoSwallowStillDropsEqualAndWorseReads(t *testing.T) {
 	prod := scryfall.Card{ID: "p", Name: "Prodigal Sorcerer", Set: "4ed", CollectorNumber: "94"}
 	queued := queueItem{id: 1, canonical: "Prodigal Sorcerer", rank: scanMatchYearAndMarks,
@@ -536,7 +395,6 @@ func TestEchoSwallowStillDropsEqualAndWorseReads(t *testing.T) {
 	}
 }
 
-// A different card never displaces anything, however strong.
 func TestUpgradeOnlyMatchesTheSameCard(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, noopAdder, &fakeScanner{}, "", nil)
 	m.review = []queueItem{{id: 1, canonical: "Prodigal Sorcerer", rank: scanMatchNone}}
@@ -545,13 +403,12 @@ func TestUpgradeOnlyMatchesTheSameCard(t *testing.T) {
 	}); ok {
 		t.Error("a different card must not displace a queued entry")
 	}
-	// And an unresolved read has no name to match on.
+
 	if _, ok := m.upgradeQueued(&queueItem{rank: scanMatchSetAndNumber, fromNudge: true}); ok {
 		t.Error("an unnamed read must not displace anything")
 	}
 }
 
-// The card under the cursor is never swapped out mid-cascade.
 func TestUpgradeLeavesTheItemBeingReviewedAlone(t *testing.T) {
 	prod := scryfall.Card{ID: "p", Name: "Prodigal Sorcerer", Set: "4ed", CollectorNumber: "94"}
 	cur := queueItem{id: 1, canonical: "Prodigal Sorcerer", rank: scanMatchNone,
@@ -569,11 +426,6 @@ func TestUpgradeLeavesTheItemBeingReviewedAlone(t *testing.T) {
 	}
 }
 
-// End to end: the queued card is replaced and the better read commits.
-//
-// The unit tests above prove upgradeQueued picks the right entry; this proves
-// the echo then travels the normal path rather than being swallowed on some
-// later check, which is where the original bug actually bit.
 func TestBetterReReadCommitsAndClearsTheQueue(t *testing.T) {
 	prod := scryfall.Card{ID: "p", Name: "Prodigal Sorcerer", Set: "4ed",
 		CollectorNumber: "94", BorderColor: "white"}
@@ -585,7 +437,7 @@ func TestBetterReReadCommitsAndClearsTheQueue(t *testing.T) {
 		id: 1, canonical: "Prodigal Sorcerer", rank: scanMatchNone,
 		prints: []scryfall.Card{prod}, note: "printing unverified: 23 printings",
 	}}
-	// The name was seen a moment ago, which is what arms the swallow.
+
 	m.recentNames = recordName(m.recentNames, "Prodigal Sorcerer", m.now())
 
 	echo := queueItem{
@@ -607,14 +459,6 @@ func TestBetterReReadCommitsAndClearsTheQueue(t *testing.T) {
 	}
 }
 
-// The winner must match the border, not merely survive it.
-//
-// Live mis-commit: Mana Leak's 1998 line is sth/36 (black) and wc98/rb36
-// (gold). The reader said white. Black was ruled out; gold is never ruled out
-// because the reader cannot read gold — so the World Championship printing
-// stood alone and committed. It was chosen by eliminating its only sibling,
-// with nothing positive behind it, and a WC98 card prices nothing like a
-// Stronghold common.
 func TestBorderWinnerMustMatchNotMerelySurvive(t *testing.T) {
 	manaLeak := []scryfall.Card{
 		{ID: "gold", Name: "Mana Leak", Set: "wc98", CollectorNumber: "rb36",
@@ -622,21 +466,15 @@ func TestBorderWinnerMustMatchNotMerelySurvive(t *testing.T) {
 		{ID: "black", Name: "Mana Leak", Set: "sth", CollectorNumber: "36",
 			ReleasedAt: "1998-03-02", BorderColor: "black"},
 	}
-	// A white read eliminates the black printing and leaves only the gold one.
-	// Elimination is not evidence: nothing here says the card is gold.
+
 	if ranked, rank := rankByScanStrength(manaLeak, "", "", 1998, "white", "", "", "", nil); rank != scanMatchNone {
 		t.Errorf("rank = %v leading %s/%s, want scanMatchNone: the survivor is a "+
 			"colour the reader cannot read, so nothing confirmed it",
 			rank, ranked[0].Set, ranked[0].CollectorNumber)
 	}
-	// The black read is the other half of this and is asserted separately, in
-	// TestBlackExcludesGoldButWhiteDoesNot: black is dark enough to exclude a
-	// gold border, so it *does* settle this card. The two answers are not
-	// symmetric, and that asymmetry is the whole design.
+
 }
 
-// The case the feature exists for still commits: the survivor is the colour
-// that was read.
 func TestBorderWinnerMatchingStillCommits(t *testing.T) {
 	ranked, rank := rankByScanStrength(controlMagicPrints(), "", "", 1995, "white", "", "", "", nil)
 	if rank != scanMatchYearAndMarks {
@@ -648,12 +486,6 @@ func TestBorderWinnerMatchingStillCommits(t *testing.T) {
 	}
 }
 
-// A set promo is foil-only, so a bullet rules it out.
-//
-// Both shapes are live review cases, and both are the same trap: the promo and
-// the regular printing share a card, a set and a release date, so the year
-// cannot separate them. The card itself can — the promo only ever existed as a
-// foil, and the regular printing read a nonfoil bullet.
 func TestNonfoilRulesOutTheFoilOnlySetPromo(t *testing.T) {
 	epiphany := []scryfall.Card{
 		{ID: "promo", Name: "Epiphany at the Drownyard", Set: "psoi",
@@ -673,8 +505,6 @@ func TestNonfoilRulesOutTheFoilOnlySetPromo(t *testing.T) {
 	}
 }
 
-// The same rule with a wider field: the year narrows four printings to two, and
-// the marker settles those.
 func TestNonfoilPicksTheRegularPrintingAmongFour(t *testing.T) {
 	baral := []scryfall.Card{
 		{ID: "tdc", Name: "Baral's Expertise", Set: "tdc", CollectorNumber: "146",
@@ -695,7 +525,6 @@ func TestNonfoilPicksTheRegularPrintingAmongFour(t *testing.T) {
 	}
 }
 
-// A foil read rules out a printing that never came in foil.
 func TestFoilRulesOutNonfoilOnlyPrintings(t *testing.T) {
 	cards := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "1",
@@ -709,7 +538,6 @@ func TestFoilRulesOutNonfoilOnlyPrintings(t *testing.T) {
 	}
 }
 
-// Silence is not evidence, and neither is a marker every candidate shares.
 func TestFinishNarrowingFailsClosed(t *testing.T) {
 	promoPair := []scryfall.Card{
 		{ID: "promo", Name: "X", Set: "p", CollectorNumber: "1s",
@@ -717,22 +545,20 @@ func TestFinishNarrowingFailsClosed(t *testing.T) {
 		{ID: "regular", Name: "X", Set: "r", CollectorNumber: "1",
 			ReleasedAt: "2016-04-08", Finishes: []string{"nonfoil", "foil"}},
 	}
-	// An unread marker — an old frame, or a glyph too small — excludes nothing.
+
 	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "", "", "", nil); rank != scanMatchNone {
 		t.Error("an unread finish must settle nothing")
 	}
-	// A foil read fits both printings, so it separates neither.
+
 	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "foil", "", "", nil); rank != scanMatchNone {
 		t.Error("a marker both printings share must settle nothing")
 	}
-	// And a finish no printing offers is a read to distrust, not a licence to
-	// pick from an empty field.
+
 	if _, rank := rankByScanStrength(promoPair, "", "", 2016, "", "etched", "", "", nil); rank != scanMatchNone {
 		t.Error("a finish no printing has must not commit")
 	}
 }
 
-// Border and finish narrow together, and the winner must satisfy both.
 func TestBorderAndFinishNarrowTogether(t *testing.T) {
 	cards := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "1", ReleasedAt: "2003-01-01",
@@ -742,20 +568,13 @@ func TestBorderAndFinishNarrowTogether(t *testing.T) {
 		{ID: "c", Name: "X", Set: "ccc", CollectorNumber: "3", ReleasedAt: "2003-01-01",
 			BorderColor: "white", Finishes: []string{"foil"}},
 	}
-	// White rules out a; nonfoil rules out c. One printing satisfies both.
+
 	ranked, rank := rankByScanStrength(cards, "", "", 2003, "white", "nonfoil", "", "", nil)
 	if rank != scanMatchYearAndMarks || ranked[0].Set != "bbb" {
 		t.Errorf("rank = %v leading %s, want year+marks on bbb", rank, ranked[0].Set)
 	}
 }
 
-// A star names the promo when the promo is the only foil that year.
-//
-// The mirror of the nonfoil case, and it needs no separate machinery: the same
-// filter that drops a foil-only promo on a bullet drops every nonfoil-only
-// printing on a star. Real shape, from the catalog — Cultivate 2011, where the
-// Commander deck printing never came in foil and the Friday Night Magic promo
-// only ever did.
 func TestFoilNamesThePromoWhenItIsTheOnlyFoil(t *testing.T) {
 	cultivate := []scryfall.Card{
 		{ID: "cmd", Name: "Cultivate", Set: "cmd", CollectorNumber: "148",
@@ -774,13 +593,6 @@ func TestFoilNamesThePromoWhenItIsTheOnlyFoil(t *testing.T) {
 	}
 }
 
-// But a star cannot separate a promo from a regular printing that also foils.
-//
-// This is the limit of the evidence, not a gap in the rule. Epiphany at the
-// Drownyard exists as a foil `soi/59` and a foil-only `psoi/59s`; both are real
-// cards a star fits, and preferring the promo would be guessing on the rarer
-// one. The nonfoil read separates them and the foil read does not, which is the
-// honest asymmetry.
 func TestFoilCannotSeparateTwoFoilablePrintings(t *testing.T) {
 	epiphany := []scryfall.Card{
 		{ID: "promo", Name: "Epiphany at the Drownyard", Set: "psoi",
@@ -793,20 +605,12 @@ func TestFoilCannotSeparateTwoFoilablePrintings(t *testing.T) {
 	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "foil", "", "", nil); rank != scanMatchNone {
 		t.Error("both printings come in foil, so a star settles nothing")
 	}
-	// And the bullet still does the work it can.
+
 	if _, rank := rankByScanStrength(epiphany, "", "", 2016, "", "nonfoil", "", "", nil); rank != scanMatchYearAndMarks {
 		t.Error("a bullet must still rule out the foil-only promo")
 	}
 }
 
-// A bullet breaks a collector-number tie against foil-only promos.
-//
-// Live: Zahid read a clean 076/269 and still queued as "printing unverified: 5
-// printings". Number 76 matches dom/76 and both pdom promos, so the number
-// alone is ambiguous — but the card printed a bullet, and both promos are
-// foil-only. The narrowing was only running when there was no number at all,
-// which is backwards: a number matching several printings is exactly when a
-// second signal earns its keep.
 func TestNonfoilBreaksACollectorNumberTie(t *testing.T) {
 	zahid := []scryfall.Card{
 		{ID: "cmm", Name: "Zahid", Set: "cmm", CollectorNumber: "136",
@@ -818,11 +622,11 @@ func TestNonfoilBreaksACollectorNumberTie(t *testing.T) {
 		{ID: "pdoms", Name: "Zahid", Set: "pdom", CollectorNumber: "76s",
 			ReleasedAt: "2018-04-27", Finishes: []string{"foil"}},
 	}
-	// Without the marker the number is genuinely ambiguous, and queuing is right.
+
 	if _, rank := rankByScanStrength(zahid, "", "76", 2018, "", "", "", "", nil); rank != scanMatchNumberAmbiguous {
 		t.Errorf("rank = %v, want number-ambiguous with no marker to break the tie", rank)
 	}
-	// With it, the foil-only promo is excluded and the year corroborates.
+
 	ranked, rank := rankByScanStrength(zahid, "", "76", 2018, "", "nonfoil", "", "", nil)
 	if rank != scanMatchNumberAndYear {
 		t.Fatalf("rank = %v, want number+year: a bullet cannot be a foil-only promo", rank)
@@ -832,8 +636,6 @@ func TestNonfoilBreaksACollectorNumberTie(t *testing.T) {
 	}
 }
 
-// A marker that fits every candidate breaks nothing, and a number that already
-// named one printing is untouched.
 func TestNumberTieNarrowingFailsClosed(t *testing.T) {
 	shared := []scryfall.Card{
 		{ID: "a", Name: "X", Set: "aaa", CollectorNumber: "5",
@@ -844,23 +646,14 @@ func TestNumberTieNarrowingFailsClosed(t *testing.T) {
 	if _, rank := rankByScanStrength(shared, "", "5", 2018, "", "nonfoil", "", "", nil); rank != scanMatchNumberAmbiguous {
 		t.Error("a marker both printings share must not settle a number tie")
 	}
-	// An exact set match still wins outright; the markings never override it.
+
 	if _, rank := rankByScanStrength(shared, "bbb", "5", 2018, "", "nonfoil", "", "", nil); rank != scanMatchSetAndNumber {
 		t.Error("set+number must remain the strongest evidence")
 	}
 }
 
-// The reorder-then-refuse gap, closed.
-//
-// The ranking moved a printing to the front of the review list and then
-// declined to write it down, which meant the queue showed the operator the
-// right answer and made them confirm it. Standing preference: false positives
-// over false negatives — a wrong printing is one row to correct, a queued card
-// is a stop in a session whose point is not stopping.
 func TestAmbiguousNumberCommitsTheFrontPrinting(t *testing.T) {
-	// Zahid's real shape: 76 matches the regular printing and two foil promos.
-	// Newest-first with ties on set code puts `dom` ahead of `pdom`, which is
-	// systematic rather than lucky — a promo set is its set's code with a `p`.
+
 	prints := []scryfall.Card{
 		{ID: "dom", Name: "Zahid", Set: "dom", CollectorNumber: "76",
 			ReleasedAt: "2018-04-27", Finishes: []string{"nonfoil", "foil"}},
@@ -871,26 +664,16 @@ func TestAmbiguousNumberCommitsTheFrontPrinting(t *testing.T) {
 		canonical: "Zahid", prints: prints, rank: scanMatchNumberAmbiguous,
 		match: cardname.Match{Exact: true},
 	}
-	auto, finish, note := verdict(it)
+	auto, fin, note := verdict(it)
 	if !auto {
 		t.Errorf("an ambiguous number should commit the front printing, queued: %s", note)
 	}
-	// And with the nonfoil default, silence included. `dom/76` comes both ways,
-	// so nothing here says which — that is the foil reader's job, not a reason
-	// to stop the session. See verdict's comment at the finish.
-	if finish != "nonfoil" {
-		t.Errorf("finish = %q, want the nonfoil default", finish)
+
+	if fin != finish.Nonfoil {
+		t.Errorf("fin = %q, want the nonfoil default", fin)
 	}
 }
 
-// An unread finish is written as nonfoil rather than stopping the session.
-//
-// Live 2026-08-06, on a pile where every card was a retro-frame foil: Glowrider
-// (LGN/15), Trap Digger (SCG/24) and Hard Evidence (H2R/5) each auto-committed
-// `nonfoil` because the sparkle reader missed them. Queuing instead was built
-// and reversed: the miss is the foil reader's to fix, and making the operator
-// answer for it on every retro card is a worse trade than three rows to
-// correct. This pins the decision so it is not re-litigated by accident.
 func TestUnreadFinishTakesTheNonfoilDefault(t *testing.T) {
 	both := scryfall.Card{ID: "h2r5", Name: "Hard Evidence", Set: "h2r",
 		CollectorNumber: "5", ReleasedAt: "2024-06-14",
@@ -902,33 +685,24 @@ func TestUnreadFinishTakesTheNonfoilDefault(t *testing.T) {
 
 	it := base
 	it.prints = []scryfall.Card{both}
-	if auto, finish, note := verdict(it); !auto || finish != "nonfoil" {
-		t.Errorf("auto=%v finish=%q note=%q, want a nonfoil commit", auto, finish, note)
+	if auto, fin, note := verdict(it); !auto || fin != finish.Nonfoil {
+		t.Errorf("auto=%v fin=%q note=%q, want a nonfoil commit", auto, fin, note)
 	}
 
-	// And the sparkle, when it does fire, is what makes that default rare.
 	it.finishHint = "foil"
-	if auto, finish, note := verdict(it); !auto || finish != "foil" {
-		t.Errorf("auto=%v finish=%q note=%q, want a foil commit", auto, finish, note)
+	if auto, fin, note := verdict(it); !auto || fin != finish.Foil {
+		t.Errorf("auto=%v fin=%q note=%q, want a foil commit", auto, fin, note)
 	}
 
-	// A printing that only ever came one way is not a guess at all.
 	nonfoilOnly := both
 	nonfoilOnly.Finishes = []string{"nonfoil"}
 	it = base
 	it.prints = []scryfall.Card{nonfoilOnly}
-	if auto, finish, _ := verdict(it); !auto || finish != "nonfoil" {
-		t.Errorf("auto=%v finish=%q, want a nonfoil commit", auto, finish)
+	if auto, fin, _ := verdict(it); !auto || fin != finish.Nonfoil {
+		t.Errorf("auto=%v fin=%q, want a nonfoil commit", auto, fin)
 	}
 }
 
-// But never against a year the card actually printed.
-// The year strata get the same contradiction check, and they need it more:
-// the year is their whole evidence. Live, 2026-08-07: Ornithopter ranked
-// year-only on a 2014 read, a misread white border exiled every black row,
-// and the head that committed was a 2022 borderless printing whose foil-only
-// finish became "evidence" — SLD/604 foil written off a card the phone had
-// read as 2014 nonfoil.
 func TestYearRankQueuesWhenTheHeadContradictsTheYear(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "sld", Name: "Ornithopter", Set: "sld", CollectorNumber: "604",
@@ -947,7 +721,7 @@ func TestYearRankQueuesWhenTheHeadContradictsTheYear(t *testing.T) {
 		} else if !strings.Contains(note, "2014") {
 			t.Errorf("rank %v: note = %q, should say which year contradicted it", rank, note)
 		}
-		// The same rank with the year-matching row in front commits as ever.
+
 		it.prints = []scryfall.Card{prints[1], prints[0]}
 		if auto, _, _ := verdict(it); !auto {
 			t.Errorf("rank %v: a head that agrees with its own year must still commit", rank)
@@ -973,26 +747,22 @@ func TestAmbiguousNumberQueuesWhenTheYearDisagrees(t *testing.T) {
 	} else if !strings.Contains(note, "2018") {
 		t.Errorf("note = %q, should say which year contradicted it", note)
 	}
-	// With no year read there is nothing to contradict, so it commits.
+
 	it.raw = scan.Card{}
 	if auto, _, _ := verdict(it); !auto {
 		t.Error("absence of a year is why the pick is uncertain, not a veto")
 	}
 }
 
-// The committed finish rides back on the result.
-//
-// The phone can only report whether it saw a star between the set code and the
-// language, which is a weaker claim than what actually got written: plenty of
-// foils print no marker at all, and a printing that does not come in foil
-// cannot be one however the glyph read. So the finish travels with the price,
-// from the side that has the catalog.
 func TestResultCarriesTheCommittedFinish(t *testing.T) {
 	foil := scryfall.Card{ID: "f", Name: "X", Set: "mh3", CollectorNumber: "301",
 		Finishes: []string{"nonfoil", "foil"}}
-	for _, tc := range []struct{ name, hint, want string }{
-		{"a read marker commits and reports foil", "foil", "foil"},
-		{"no marker falls back to nonfoil, and says so", "", "nonfoil"},
+	for _, tc := range []struct {
+		name, hint string
+		want       finish.Finish
+	}{
+		{"a read marker commits and reports foil", "foil", finish.Foil},
+		{"no marker falls back to nonfoil, and says so", "", finish.Nonfoil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, _ := finishFromEvidence(foil, tc.hint)
@@ -1001,29 +771,16 @@ func TestResultCarriesTheCommittedFinish(t *testing.T) {
 			}
 		})
 	}
-	// A printing that never came in foil records nonfoil whatever was read,
-	// and that is evidence rather than a default.
+
 	nonfoilOnly := scryfall.Card{ID: "n", Name: "X", Set: "cmd",
 		CollectorNumber: "1", Finishes: []string{"nonfoil"}}
 	got, evidenced := finishFromEvidence(nonfoilOnly, "foil")
-	if got != "nonfoil" || !evidenced {
+	if got != finish.Nonfoil || !evidenced {
 		t.Errorf("finish = %q evidenced = %v, want nonfoil/true: the printing "+
 			"has no foil to be", got, evidenced)
 	}
 }
 
-// The parent believes the phone about why a capture happened — with one
-// asymmetry.
-//
-// A physical reason (placed, removed, moved) is believed outright: those paths
-// carry evidence, and a real scan racing a nudge onto the wire must never be
-// echo-dropped. "nudged" is believed only inside the send window, because the
-// phone latches that cause rather than observing it: forceRearm sets it and
-// an abandoned pass never clears it, so a genuinely new card placed well
-// after a rescue rearm still fires as "nudged". Outside the window the claim
-// has outlived its premise — the fire is a card someone put down, and
-// treating it as an echo lost real cards (a playset copy swallowed by the
-// OCR-variant rule).
 func TestFireReasonBeatsTheClock(t *testing.T) {
 	ev, fs := confidentFixture()
 	for _, tc := range []struct {
@@ -1062,16 +819,6 @@ func TestFireReasonBeatsTheClock(t *testing.T) {
 	}
 }
 
-// An old card's serif type costs a glyph or two, and that must still commit.
-//
-// The case that moved the bar: Prodigal Sorcerer read at 0.88 with its year and
-// border already agreeing on a printing, and queued. Pre-1998 titles are small
-// serif type and the corpus is full of these — "Amrou Kichkin", "Sisters of che
-// Flame" — where two characters of a short name is the whole difference.
-//
-// Both ends are asserted deliberately. A threshold is only meaningful if
-// something still fails it, and 0.63 is a real queued read from a live session
-// (Cement Shoes), not an invented number.
 func TestUncorroboratedNameBarAdmitsOldSerifSlips(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -1087,8 +834,7 @@ func TestUncorroboratedNameBarAdmitsOldSerifSlips(t *testing.T) {
 			it := queueItem{
 				canonical: "Prodigal Sorcerer",
 				prints:    solRingPrints(),
-				// Year and markings agree, but no number — so the name gate is
-				// the thing being tested rather than bypassed.
+
 				rank:  scanMatchYearAndMarks,
 				match: cardname.Match{Similarity: tc.similarity},
 				raw:   scan.Card{Confidence: 0.95},
@@ -1102,20 +848,13 @@ func TestUncorroboratedNameBarAdmitsOldSerifSlips(t *testing.T) {
 	}
 }
 
-// dupCapture answers with the most recent sighting, not the oldest.
-//
-// It used to walk the slice forwards and return on the first match, which is
-// the *oldest* row. That was invisible while the answer was only "is this a
-// duplicate, yes or no", and became load-bearing the moment the age mattered:
-// with a card banked five times, the age it reported was the age of the first
-// sighting, so a floor measured against it would let every repeat through.
 func TestDupCaptureReportsTheMostRecentSighting(t *testing.T) {
 	now := time.Date(2026, 8, 5, 19, 21, 57, 0, time.UTC)
 	var recent []recentCommit
-	// The same printing seen three times, a second apart.
+
 	for i := range 3 {
 		at := now.Add(time.Duration(i-3) * time.Second)
-		recent = recordCommit(recent, scryfall.Card{ID: "skirk"}, "nonfoil", i, at, false, false)
+		recent = recordCommit(recent, scryfall.Card{ID: "skirk"}, finish.Nonfoil, i, at, false, false)
 	}
 	prior, since, dup := dupCapture(recent, "skirk", now)
 	if !dup {
@@ -1129,15 +868,10 @@ func TestDupCaptureReportsTheMostRecentSighting(t *testing.T) {
 	}
 }
 
-// touchCommit rolls the anchor forward so a card re-read once a second stays
-// suppressed, rather than the third repeat ageing past a fixed floor.
 func TestTouchCommitRollsTheAnchorForward(t *testing.T) {
 	start := time.Date(2026, 8, 5, 19, 21, 57, 0, time.UTC)
-	recent := recordCommit(nil, scryfall.Card{ID: "skirk"}, "nonfoil", 1, start, false, false)
+	recent := recordCommit(nil, scryfall.Card{ID: "skirk"}, finish.Nonfoil, 1, start, false, false)
 
-	// The Skirk burst's real gaps. Anchored on the original commit these sum
-	// past three seconds by the third repeat; re-anchored on each sighting,
-	// none of them ever does.
 	at := start
 	for _, gap := range []time.Duration{931, 1604, 932, 2595} {
 		at = at.Add(gap * time.Millisecond)
@@ -1151,23 +885,12 @@ func TestTouchCommitRollsTheAnchorForward(t *testing.T) {
 		}
 		recent = touchCommit(recent, "skirk", at)
 	}
-	// And it never banked a second commit while doing it.
+
 	if len(recent) != 1 {
 		t.Errorf("recent has %d rows, want 1 — touching must not bank a commit", len(recent))
 	}
 }
 
-// The fire reasons the Go side matches on are the strings the phone sends.
-//
-// `FireNudge` said "nudge" for its whole life while the phone's enum case is
-// `nudged`, so the branch matching on it never once ran and nudge detection
-// silently fell back to the clock the field was added to replace. It surfaced
-// as an unreadable nudge re-look queueing for review: the phantom kill is
-// gated on `fromNudge`, and `fromNudge` was never true.
-//
-// These strings are `RearmCause`'s raw values in
-// scan/hoard-scan/Sources/CardKit/Trigger/Trigger.swift. Changing one without
-// the other is invisible at both compilers and at runtime.
 func TestFireReasonsMatchTheWireValues(t *testing.T) {
 	for _, tc := range []struct{ constant, wire string }{
 		{scan.FireRemoved, "removed"},
@@ -1181,13 +904,6 @@ func TestFireReasonsMatchTheWireValues(t *testing.T) {
 	}
 }
 
-// The case the language read exists for, and the money it is worth.
-//
-// Scryfall keeps a foreign-only printing beside its English namesake under one
-// collector number, separated by a marker the card does not print: `war/97` is
-// Liliana, Dreadhorde General at $7.95 and `war/97★` the Japanese alternate art
-// at $112.73. OCR reads "97" either way, so the number alone always picked the
-// cheap one and wrote it to the collection without stopping.
 func TestLanguagePicksTheForeignOnlySibling(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
@@ -1201,21 +917,17 @@ func TestLanguagePicksTheForeignOnlySibling(t *testing.T) {
 	if r != scanMatchSetNumberAndLang {
 		t.Errorf("rank = %v, want set+number+lang", r)
 	}
-	// It is corroborated evidence, so it commits like any other pinned match
-	// rather than stopping the session.
+
 	if !corroboratedPrinting(r) || !numberVerified(r) {
 		t.Errorf("rank %v must count as corroborated and number-verified", r)
 	}
 
-	// An English read takes the unmarked row, as it always did.
 	ranked, r = rankByScanStrength(prints, "war", "97", 0, "", "", "en", "", nil)
 	if ranked[0].ID != "en" || r != scanMatchSetNumberAndLang {
 		t.Errorf("english: picked %q rank %v, want the unmarked row", ranked[0].ID, r)
 	}
 }
 
-// A card whose language never read must behave exactly as before: the marked
-// sibling is unreachable and the unmarked row wins. Silence is not evidence.
 func TestNoLanguageReadKeepsTheOldAnswer(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
@@ -1230,9 +942,6 @@ func TestNoLanguageReadKeepsTheOldAnswer(t *testing.T) {
 	}
 }
 
-// A catalog built before the language column stores none. Unknown on the
-// catalog's side must not read as agreement, or every scan would claim a
-// corroboration it never had.
 func TestUnknownCatalogLanguageIsNotAgreement(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "en", Set: "war", CollectorNumber: "97", ReleasedAt: "2019-05-03"},
@@ -1243,7 +952,6 @@ func TestUnknownCatalogLanguageIsNotAgreement(t *testing.T) {
 	}
 }
 
-// The marker trim must not let a foreign read reach a row of another number.
 func TestLanguageDoesNotWidenTheNumberMatch(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "other", Set: "war", CollectorNumber: "98★", Lang: "ja", ReleasedAt: "2019-05-03"},
@@ -1254,23 +962,12 @@ func TestLanguageDoesNotWidenTheNumberMatch(t *testing.T) {
 	}
 }
 
-// The measurement that shaped the rule above.
-//
-// Scored over scan/corpus the language read answers on a fifth of cards and is
-// right four times in five, and its errors are systematic rather than random:
-// a line of rules text parses as a set row and donates a language, so a plainly
-// English card reads as Italian ("Balance of Power: said it, is en", live).
-//
-// What makes that safe to act on is the company it keeps. The same fabrication
-// invents a set code beside the language, and an invented set code matches no
-// printing — so the bogus language arrives attached to a set that rules it out,
-// and the marked sibling never enters the running.
 func TestAFabricatedLanguageCannotStealAnExactMatch(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "en", Set: "war", CollectorNumber: "97", Lang: "en", ReleasedAt: "2019-05-03"},
 		{ID: "it", Set: "war", CollectorNumber: "97★", Lang: "it", ReleasedAt: "2019-05-03"},
 	}
-	// Prose donated "it" and the set code it came with ("PUT") matches nothing.
+
 	ranked, r := rankByScanStrength(prints, "PUT", "97", 0, "", "", "it", "", nil)
 	if ranked[0].ID != "en" {
 		t.Errorf("picked %q, want the exact match: the language came with a set code that checks out against nothing",
@@ -1281,8 +978,6 @@ func TestAFabricatedLanguageCannotStealAnExactMatch(t *testing.T) {
 	}
 }
 
-// A marked sibling is claimed only when the set code agrees too, so a language
-// alone can never reach one.
 func TestAMarkedSiblingNeedsTheSetCodeAsWell(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "ja", Set: "war", CollectorNumber: "97★", Lang: "ja", ReleasedAt: "2019-05-03"},
@@ -1295,15 +990,6 @@ func TestAMarkedSiblingNeedsTheSetCodeAsWell(t *testing.T) {
 	}
 }
 
-// A number that matched nothing may simply be missing its leading digit.
-//
-// Live (scan/foil-corpus/session3-telemetry.log): Meltdown read `18`, matched
-// none of its four printings, and queued as "printing unverified" — the card is
-// mh3/418, and 418 is the only one of the four that ends in 18. The next
-// session read the same physical card as 418 and committed it.
-//
-// Meltdown's real printings, from the catalog, so the "exactly one" guard is
-// being exercised against the actual field rather than a convenient pair.
 func TestTruncatedNumberMatchesByItsTail(t *testing.T) {
 	meltdown := []scryfall.Card{
 		{Name: "Meltdown", Set: "sld", CollectorNumber: "2296", ReleasedAt: "2025-11-17"},
@@ -1319,8 +1005,6 @@ func TestTruncatedNumberMatchesByItsTail(t *testing.T) {
 		t.Errorf("front printing = %s, want the tail match 418", ranked[0].CollectorNumber)
 	}
 
-	// It is a repaired number, not a verified one. The distinction is what keeps
-	// verdict's fallback-line veto and confidence floor standing over it.
 	if numberVerified(scanMatchNumberTail) {
 		t.Error("a tail match must not read as a verified number")
 	}
@@ -1328,8 +1012,6 @@ func TestTruncatedNumberMatchesByItsTail(t *testing.T) {
 		t.Error("a tail match alone is one signal, not two")
 	}
 
-	// And it commits, which is the whole point — this is the evidence Meltdown
-	// queued on.
 	auto, _, note := verdict(queueItem{
 		canonical: "Meltdown", prints: ranked, rank: r,
 		match: cardname.Match{Exact: true},
@@ -1339,19 +1021,12 @@ func TestTruncatedNumberMatchesByItsTail(t *testing.T) {
 	}
 }
 
-// The three misreads the tail match deliberately does not repair.
-//
-// Kept as a test rather than a comment because the temptation here is a fuzzy
-// number match, and this is the measurement that says no: every one of these
-// sits one edit from the right answer, and against fields this small an
-// edit-distance rule would commit all three — two of them to the wrong printing.
-// A tail is the only repair where every digit that was read is still true.
 func TestNumberTailMatchLeavesSubstitutionsAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name, read string
 		prints     []scryfall.Card
 	}{{
-		// h2r/4, so OCR gained a digit rather than losing one.
+
 		name: "Dress Down", read: "14",
 		prints: []scryfall.Card{
 			{Name: "Dress Down", Set: "plst", CollectorNumber: "MH2-39"},
@@ -1361,7 +1036,7 @@ func TestNumberTailMatchLeavesSubstitutionsAlone(t *testing.T) {
 			{Name: "Dress Down", Set: "pmh2", CollectorNumber: "39s"},
 		},
 	}, {
-		// mh3/421 — a 3 read for a 2, in the middle of the number.
+
 		name: "Unstable Amulet", read: "431",
 		prints: []scryfall.Card{
 			{Name: "Unstable Amulet", Set: "mh3", CollectorNumber: "421"},
@@ -1369,7 +1044,7 @@ func TestNumberTailMatchLeavesSubstitutionsAlone(t *testing.T) {
 			{Name: "Unstable Amulet", Set: "mh3", CollectorNumber: "514"},
 		},
 	}, {
-		// mh3/426 — a 0 read for a 6, and only two printings to choose between.
+
 		name: "Lion Umbra", read: "420",
 		prints: []scryfall.Card{
 			{Name: "Lion Umbra", Set: "mh3", CollectorNumber: "426"},
@@ -1384,7 +1059,6 @@ func TestNumberTailMatchLeavesSubstitutionsAlone(t *testing.T) {
 	}
 }
 
-// Every guard on the tail match, each one the reason it is safe to run at all.
 func TestNumberTailMatchFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -1393,8 +1067,7 @@ func TestNumberTailMatchFailsClosed(t *testing.T) {
 		year   int
 		want   scanMatch
 	}{{
-		// Two printings end in 14, so which digits went missing is a guess with
-		// no answer. It queues, exactly as it does today.
+
 		name: "several tails match",
 		prints: []scryfall.Card{
 			{Name: "X", Set: "a", CollectorNumber: "414"},
@@ -1402,9 +1075,7 @@ func TestNumberTailMatchFailsClosed(t *testing.T) {
 		},
 		number: "14", want: scanMatchNone,
 	}, {
-		// The exact match is found first and the fallback never runs, so the
-		// card numbered 14 wins over the card numbered 414. A number that
-		// matched must never be second-guessed.
+
 		name: "an exact match outranks its own tail",
 		prints: []scryfall.Card{
 			{Name: "X", Set: "a", CollectorNumber: "414"},
@@ -1412,27 +1083,24 @@ func TestNumberTailMatchFailsClosed(t *testing.T) {
 		},
 		number: "14", want: scanMatchNumberOnly,
 	}, {
-		// One digit against three is barely a claim — 1, 11, 21, 31 and 41 all
-		// answer to it — so the "exactly one" guard would be doing all the work.
+
 		name:   "one digit is too little to repair",
 		prints: []scryfall.Card{{Name: "X", Set: "a", CollectorNumber: "418"}},
 		number: "8", want: scanMatchNone,
 	}, {
-		// A tail is a question about the printed run of digits. `123a` is a
-		// variant, not a card numbered 23 with something appended.
+
 		name:   "a variant suffix is not a tail",
 		prints: []scryfall.Card{{Name: "X", Set: "a", CollectorNumber: "123a"}},
 		number: "23", want: scanMatchNone,
 	}, {
-		// The year disagreeing is positive evidence against, not absence of it.
+
 		name: "the copyright year contradicts the repair",
 		prints: []scryfall.Card{
 			{Name: "X", Set: "a", CollectorNumber: "414", ReleasedAt: "2024-06-14"},
 		},
 		number: "14", year: 2003, want: scanMatchNone,
 	}, {
-		// And agreeing is the ordinary case, kept here so the year gate is shown
-		// to admit as well as refuse.
+
 		name: "the copyright year agrees",
 		prints: []scryfall.Card{
 			{Name: "X", Set: "a", CollectorNumber: "414", ReleasedAt: "2024-06-14"},
@@ -1447,11 +1115,6 @@ func TestNumberTailMatchFailsClosed(t *testing.T) {
 	}
 }
 
-// A short number that matches exactly is untouched by any of this.
-//
-// Abiding Grace reads a bare `1` off its H2R copyright row and commits, live,
-// every session. The two-digit floor is on the repair path only; putting it
-// anywhere else would break the cards the repair exists to help.
 func TestShortExactNumbersStillCommit(t *testing.T) {
 	prints := []scryfall.Card{
 		{Name: "Abiding Grace", Set: "h2r", CollectorNumber: "1", ReleasedAt: "2024-06-14"},
@@ -1462,15 +1125,6 @@ func TestShortExactNumbersStillCommit(t *testing.T) {
 	}
 }
 
-// A card queues because its footer did not read, and the card is still under
-// the camera at that moment. Look again before waiting out a swap.
-//
-// The failure this exists for is per-photograph, not per-card: measured across
-// two sessions of one pile, every card that queued as "printing unverified" in
-// one session read its collector number correctly in the other (Charitable Levy
-// 390 and Unholy Heat 13 in session 3; Victimize 413, Consuming Corruption 407
-// and Lion Umbra 426 in session 4 — each queued in the session it is not listed
-// under). One more look roughly squares the per-capture failure rate.
 func TestSecondLookOnlyForAnUnverifiedPrinting(t *testing.T) {
 	prints := []scryfall.Card{
 		{Name: "Unholy Heat", Set: "h2r", CollectorNumber: "13"},
@@ -1485,23 +1139,22 @@ func TestSecondLookOnlyForAnUnverifiedPrinting(t *testing.T) {
 		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNone},
 		want: true,
 	}, {
-		// The read is fine and the printing is pinned; whatever queued it was
-		// not the footer, so another photograph of the same footer buys nothing.
+
 		name: "the printing verified",
 		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNumberOnly},
 		want: false,
 	}, {
-		// A repaired number is a pinned printing too.
+
 		name: "a tail match pinned it",
 		it:   queueItem{canonical: "Unholy Heat", prints: prints, rank: scanMatchNumberTail},
 		want: false,
 	}, {
-		// No name to bound the retry against, so there is no retry.
+
 		name: "nothing identified",
 		it:   queueItem{prints: prints, rank: scanMatchNone},
 		want: false,
 	}, {
-		// A lookup that found no printings is not a footer problem.
+
 		name: "no printings at all",
 		it:   queueItem{canonical: "Unholy Heat", rank: scanMatchNone},
 		want: false,
@@ -1515,11 +1168,6 @@ func TestSecondLookOnlyForAnUnverifiedPrinting(t *testing.T) {
 	}
 }
 
-// One look, then the card queues like anything else.
-//
-// The bound is what keeps a card that will never read from holding the session
-// open re-photographing itself — the very cards this retry is for are the ones
-// most likely to fail twice.
 func TestSecondLookIsBoundedToOneAttempt(t *testing.T) {
 	it := queueItem{
 		canonical: "Dress Down",
@@ -1534,7 +1182,7 @@ func TestSecondLookIsBoundedToOneAttempt(t *testing.T) {
 	if m.wantsSecondLook(it) {
 		t.Error("the same card queueing again has had its look")
 	}
-	// A different card is a different run of bad reads.
+
 	other := it
 	other.canonical = "Charitable Levy"
 	if !m.wantsSecondLook(other) {
@@ -1542,18 +1190,6 @@ func TestSecondLookIsBoundedToOneAttempt(t *testing.T) {
 	}
 }
 
-// The retry goes out at queue time, into `held` — the only state where the
-// phone acts on it.
-//
-// forceRearm's first line is `guard phase == .hold`: the phone honours a
-// Rearm exactly while it is parked on the card it just shot (reported as
-// "held"), and silently ignores one sent while "armed". This test's previous
-// shape asserted the exact inverse — hold the retry until the phone reports
-// "armed", then send — which made every retry a guaranteed no-op; the
-// rescues the session logs showed were the phone's own accidental re-fires.
-// The bimodal held→armed gap the old shape was built around (four at ~130ms,
-// fourteen at 760-855ms) is the phone's own disruption accumulation, which
-// the queue-time send skips.
 func TestSecondLookRearmsIntoHeldAtQueueTime(t *testing.T) {
 	prints := []scryfall.Card{
 		{ID: "a", Name: "Dress Down", Set: "mh2", CollectorNumber: "46",
@@ -1580,7 +1216,6 @@ func TestSecondLookRearmsIntoHeldAtQueueTime(t *testing.T) {
 	got := mm.(model)
 	got.autoCapable = true
 
-	// Phone parked on the card it just shot: the retry goes out now.
 	got.autoState = "held"
 	blind := scan.Card{Name: "Dress Down", Candidates: []string{"Dress Down"},
 		Confidence: 0.95, Source: "crop"}
@@ -1593,8 +1228,6 @@ func TestSecondLookRearmsIntoHeldAtQueueTime(t *testing.T) {
 		t.Fatalf("rearms = %d, want exactly one sent into held at queue time", sess.rearms)
 	}
 
-	// Phone already re-armed on its own: a Rearm is a no-op there, so none is
-	// sent — its own fire is coming (or the scene gate is holding it).
 	got.autoState = "armed"
 	blind2 := scan.Card{Name: "Charitable Levy", Candidates: []string{"Charitable Levy"},
 		Confidence: 0.95, Source: "crop"}
@@ -1607,7 +1240,6 @@ func TestSecondLookRearmsIntoHeldAtQueueTime(t *testing.T) {
 		t.Errorf("rearms = %d, want none sent while armed", sess.rearms)
 	}
 
-	// And "armed" reports themselves carry no retry any more.
 	mm, _ = got.onSessionEvent(sessionEventMsg{gen: got.sessionGen, ok: true,
 		ev: scan.Event{Kind: scan.EventAuto, State: "armed"}})
 	if sess.rearms != 1 {

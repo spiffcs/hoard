@@ -142,7 +142,7 @@ func TestSearchPrintsPaginatesAndDecodes(t *testing.T) {
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page := r.URL.Query().Get("page")
 		if page == "" || page == "1" {
-			// First page: exact-name query present, has_more true.
+
 			if q := r.URL.Query().Get("q"); q != `!"Sol Ring" game:paper` {
 				t.Errorf("q = %q", q)
 			}
@@ -151,7 +151,7 @@ func TestSearchPrintsPaginatesAndDecodes(t *testing.T) {
 				"finishes":["nonfoil","foil"],"prices":{"usd":"2.00","usd_foil":"5.00"}}]}`))
 			return
 		}
-		// Second page: no more.
+
 		w.Write([]byte(`{"object":"list","has_more":false,
 			"data":[{"id":"b","name":"Sol Ring","set":"mps","set_name":"Masterpiece","collector_number":"1",
 			"finishes":["foil"],"prices":{"usd":null,"usd_foil":"120.00"}}]}`))
@@ -182,7 +182,7 @@ func TestSearchPrintsPaginatesAndDecodes(t *testing.T) {
 func TestNamedFuzzy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("fuzzy")
-		if q == "Ulomog infinte" { // noisy OCR input still resolves
+		if q == "Ulomog infinte" {
 			w.Write([]byte(`{"object":"card","id":"u1","name":"Ulamog, the Infinite Gyre","set":"uma","collector_number":"7"}`))
 			return
 		}
@@ -241,7 +241,7 @@ func TestEtchedFallbackPrice(t *testing.T) {
 }
 
 func TestFetchCollectionChunksAndAggregates(t *testing.T) {
-	// Build 80 identifiers so the client must split into two chunks (75 + 5).
+
 	ids := make([]Identifier, 80)
 	for i := range ids {
 		ids[i] = Identifier{Name: "Card " + strconv.Itoa(i)}
@@ -256,7 +256,7 @@ func TestFetchCollectionChunksAndAggregates(t *testing.T) {
 			t.Errorf("server decode: %v", err)
 		}
 		chunkSizes = append(chunkSizes, len(req.Identifiers))
-		// Echo back one found card per identifier; mark the very first as not found.
+
 		var resp struct {
 			Object   string       `json:"object"`
 			Data     []apiCard    `json:"data"`
@@ -274,7 +274,6 @@ func TestFetchCollectionChunksAndAggregates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Point the client at the test server for the duration of the test.
 	old := apiBase
 	apiBase = srv.URL
 	defer func() { apiBase = old }()
@@ -294,10 +293,6 @@ func TestFetchCollectionChunksAndAggregates(t *testing.T) {
 	}
 }
 
-// The store keeps whatever Scryfall sends so that fields this package does not
-// name are still available later. If Raw were dropped — or rebuilt by
-// re-marshalling the decoded struct — every unnamed field would vanish, and the
-// loss would only show up much later as an empty column.
 func TestRawCarriesUnmodelledFields(t *testing.T) {
 	const card = `{"id":"raw-id","name":"Bitterblossom","set":"uma",
 	  "collector_number":"85","scryfall_uri":"http://x","prices":{"usd":"34.11"},
@@ -313,7 +308,7 @@ func TestRawCarriesUnmodelledFields(t *testing.T) {
 		if err := json.Unmarshal(c.Raw, &got); err != nil {
 			t.Fatalf("Raw is not valid JSON: %v", err)
 		}
-		// None of these are fields on Card, which is the point.
+
 		for k, want := range map[string]any{
 			"rarity": "mythic", "artist": "Jesper Ejsing", "cmc": 2.0,
 		} {
@@ -339,8 +334,6 @@ func TestRawCarriesUnmodelledFields(t *testing.T) {
 		check(t, *c)
 	})
 
-	// The list endpoints are the ones that must decode in two passes; a single
-	// pass straight to apiCard is what silently loses the bytes.
 	t.Run("FetchCollection", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(`{"data":[` + card + `],"not_found":[]}`))
@@ -374,9 +367,6 @@ func TestRawCarriesUnmodelledFields(t *testing.T) {
 	})
 }
 
-// A 429 on any one chunk used to discard every card fetched before it, so the
-// longer the collection the more work a single throttle threw away. Scryfall's
-// budget is wider than one process, so waiting is the right response.
 func TestFetchCollectionWaitsOutRateLimiting(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,8 +397,6 @@ func TestFetchCollectionWaitsOutRateLimiting(t *testing.T) {
 	}
 }
 
-// A rate-limit wait can be a minute; it must still answer ctrl-c rather than
-// pinning the terminal until Scryfall relents.
 func TestFetchCollectionRateLimitWaitIsCancellable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "60")
@@ -420,7 +408,7 @@ func TestFetchCollectionRateLimitWaitIsCancellable(t *testing.T) {
 	defer func() { apiBase = old }()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already given up before the wait begins
+	cancel()
 
 	done := make(chan error, 1)
 	go func() {
@@ -455,7 +443,7 @@ func TestRetryAfterHeader(t *testing.T) {
 		{"", fallback},
 		{"not-a-number", fallback},
 		{"0", fallback},
-		// A surprising header must not park the process for an afternoon.
+
 		{"86400", 90 * time.Second},
 	} {
 		if got := retryAfter(mk(tc.header), fallback); got != tc.want {

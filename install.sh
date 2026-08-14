@@ -6,13 +6,8 @@ OWNER="spiffcs"
 REPO="${PROJECT_NAME}"
 GITHUB_DOWNLOAD_PREFIX="https://github.com/${OWNER}/${REPO}/releases/download"
 
-# signature verification options
 COSIGN_BINARY="${COSIGN_BINARY:-cosign}"
 VERIFY_SIGN=false
-
-# ------------------------------------------------------------------------
-# logging
-# ------------------------------------------------------------------------
 
 log_info() {
   echo "[info] $*" >&2
@@ -21,10 +16,6 @@ log_info() {
 log_err() {
   echo "[error] $*" >&2
 }
-
-# ------------------------------------------------------------------------
-# platform detection
-# ------------------------------------------------------------------------
 
 get_os() {
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -49,10 +40,6 @@ get_arch() {
   esac
 }
 
-# ------------------------------------------------------------------------
-# http helpers
-# ------------------------------------------------------------------------
-
 http_download() {
   local_file="$1"
   url="$2"
@@ -71,10 +58,6 @@ http_download() {
   fi
 }
 
-# ------------------------------------------------------------------------
-# github release helpers
-# ------------------------------------------------------------------------
-
 get_latest_tag() {
   url="https://github.com/${OWNER}/${REPO}/releases/latest"
   if command -v curl >/dev/null 2>&1; then
@@ -89,10 +72,6 @@ get_latest_tag() {
   fi
   echo "$tag"
 }
-
-# ------------------------------------------------------------------------
-# checksum verification
-# ------------------------------------------------------------------------
 
 hash_sha256() {
   target="$1"
@@ -111,19 +90,12 @@ verify_checksum() {
   checksums="$2"
 
   archive_name=$(basename "$archive")
-  # Anchored, and matching the whole trailing field. checksums.txt lists the
-  # SBOM beside every archive — "hoard_X_os_arch.tar.gz.sbom.json" — so the
-  # archive's own name is a *prefix* of another line. An unanchored grep matched
-  # both, $want became two hashes separated by a newline, and every install
-  # aborted with "checksum mismatch" against a checksum that was in fact correct.
   want=$(grep " ${archive_name}$" "$checksums" | cut -d ' ' -f 1)
 
   if [ -z "$want" ]; then
     log_err "checksum not found for $archive_name"
     return 1
   fi
-  # Belt and braces: if the pattern ever matches more than one line again, fail
-  # loudly here rather than through a confusing mismatch further down.
   if [ "$(printf '%s\n' "$want" | wc -l | tr -d ' ')" != "1" ]; then
     log_err "ambiguous checksum entry for $archive_name"
     return 1
@@ -135,10 +107,6 @@ verify_checksum() {
     return 1
   fi
 }
-
-# ------------------------------------------------------------------------
-# signature verification
-# ------------------------------------------------------------------------
 
 verify_signature() {
   checksums_file="$1"
@@ -160,14 +128,9 @@ verify_signature() {
   log_info "signature verification succeeded"
 }
 
-# ------------------------------------------------------------------------
-# main
-# ------------------------------------------------------------------------
-
 main() {
   install_dir="./bin"
 
-  # parse arguments
   while getopts "b:vh" arg; do
     case "$arg" in
       b) install_dir="$OPTARG" ;;
@@ -188,7 +151,6 @@ EOF
   done
   shift $((OPTIND - 1))
 
-  # get version
   tag="${1:-}"
   if [ -z "$tag" ]; then
     log_info "fetching latest release..."
@@ -201,60 +163,38 @@ EOF
 
   log_info "installing ${PROJECT_NAME} ${tag} (${os}/${arch})"
 
-  # setup temp directory
   tmp_dir=$(mktemp -d)
   trap 'rm -rf "$tmp_dir"' EXIT
 
   download_url="${GITHUB_DOWNLOAD_PREFIX}/${tag}"
   archive_name="${PROJECT_NAME}_${version}_${os}_${arch}.tar.gz"
 
-  # download checksums
   log_info "downloading checksums..."
   http_download "$tmp_dir/checksums.txt" "$download_url/checksums.txt" || exit 1
 
-  # verify signature if requested
   if [ "$VERIFY_SIGN" = true ]; then
     log_info "downloading signature bundle..."
     http_download "$tmp_dir/checksums.txt.sigstore.json" "$download_url/checksums.txt.sigstore.json" || exit 1
     verify_signature "$tmp_dir/checksums.txt" "$tmp_dir/checksums.txt.sigstore.json" || exit 1
   fi
 
-  # download archive
   log_info "downloading ${archive_name}..."
   http_download "$tmp_dir/$archive_name" "$download_url/$archive_name" || exit 1
 
-  # verify checksum
   log_info "verifying checksum..."
   verify_checksum "$tmp_dir/$archive_name" "$tmp_dir/checksums.txt" || exit 1
 
-  # extract and install
-  #
-  # Every step above this point is guarded with `|| exit 1`. These last three
-  # were not, and the gap was not theoretical: `install` into a root-owned
-  # /usr/local/bin — the default on a fresh macOS — fails with "Permission
-  # denied", and the script printed "installed /usr/local/bin/hoard" directly
-  # over the top of that failure. The user is then told the tool is installed
-  # and gets "command not found" from the very next command.
-  #
-  # That is the worst possible first contact with a project, and it is on the
-  # README's front page, so the guards belong here rather than in a note.
   log_info "extracting..."
   tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir" || {
     log_err "could not extract $archive_name"
     exit 1
   }
 
-  # mkdir is guarded too. It is what fails first when $install_dir's parent is
-  # unwritable, and leaving it bare only means the install error becomes the
-  # second confusing message instead of the first clear one.
   mkdir -p "$install_dir" || {
     log_err "could not create $install_dir"
     exit 1
   }
 
-  # The message names both ways out, because the right one depends on where the
-  # directory is: a system path wants sudo, a home path wants a different -b.
-  # Telling someone only "permission denied" leaves them to guess which.
   install "$tmp_dir/${PROJECT_NAME}" "$install_dir/" || {
     log_err "could not write to $install_dir"
     log_err "re-run with a writable directory (-b \"\$HOME/.local/bin\") or with sudo"

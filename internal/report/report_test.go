@@ -1,6 +1,7 @@
 package report
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +18,6 @@ func testCollection() store.CollectionTotals {
 	return store.CollectionTotals{DistinctCards: 2, TotalCopies: 10, Value: 100}
 }
 
-// Deliberately supplied out of order, and with one unpriced deck, so the sort
-// and the zero-value bar are both exercised.
 func testDecks() []store.DeckSummary {
 	mk := func(name string, copies int, value float64) store.DeckSummary {
 		d := store.DeckSummary{TotalCopies: copies, Value: value}
@@ -55,7 +54,6 @@ func TestSummaryTable(t *testing.T) {
 	}
 }
 
-// Decks descend by value; the collection and decks sections must sum to TOTAL.
 func TestSummaryTableSortsByValue(t *testing.T) {
 	out := renderSummary(ui.Env{Width: 80, Clamp: true, Bars: true})
 	alpha := strings.Index(out, "Alpha")
@@ -66,7 +64,6 @@ func TestSummaryTableSortsByValue(t *testing.T) {
 	}
 }
 
-// A tie in value falls back to name order, so unpriced hoards don't shuffle.
 func TestSummaryTableTieBreaksByName(t *testing.T) {
 	mk := func(name string) store.DeckSummary {
 		d := store.DeckSummary{TotalCopies: 1}
@@ -81,8 +78,6 @@ func TestSummaryTableTieBreaksByName(t *testing.T) {
 	}
 }
 
-// The non-terminal profile is the scriptable one: whole names, no bars, and
-// crucially no escape sequences.
 func TestSummaryTablePiped(t *testing.T) {
 	out := renderSummary(ui.Env{Width: 80, Clamp: false, Bars: false})
 	if strings.Contains(out, "\x1b") {
@@ -99,8 +94,6 @@ func TestSummaryTablePiped(t *testing.T) {
 	}
 }
 
-// At a narrow width the layout must still fit exactly — that is the whole point
-// of truncating rather than letting rows wrap and break the bar column.
 func TestSummaryTableNarrow(t *testing.T) {
 	for _, width := range []int{60, 50, 40, 30} {
 		env := ui.Env{Width: width, Clamp: true, Bars: width >= 50}
@@ -112,11 +105,10 @@ func TestSummaryTableNarrow(t *testing.T) {
 	}
 }
 
-// An empty hoard must render zeros rather than dividing by a zero grand total.
 func TestSummaryTableEmpty(t *testing.T) {
 	out := Summary(ui.Env{Width: 80, Clamp: true, Bars: true},
 		store.CollectionTotals{}, nil)
-	// "DECKS · 0" is now the widest label, so it sets the name column.
+
 	want := strings.Join([]string{
 		"BINDER     0  $0.00",
 		"DECKS · 0  0  $0.00",
@@ -129,14 +121,12 @@ func TestSummaryTableEmpty(t *testing.T) {
 	}
 }
 
-// The list is sorted by what a move did to the hoard, not by the change in
-// sticker price. A dime on forty copies beats a dollar on one.
 func TestMoverSectionsSortByTotalImpact(t *testing.T) {
 	changes := []store.PriceChange{
-		change("One Dollar Each", 1, 10.00, 11.00),    // +$1.00
-		change("A Dime, Forty Times", 40, 1.00, 1.10), // +$4.00
-		change("Crashed", 2, 20.00, 15.00),            // -$10.00
-		change("Slipped", 1, 5.00, 4.50),              // -$0.50
+		change("One Dollar Each", 1, 10.00, 11.00),
+		change("A Dime, Forty Times", 40, 1.00, 1.10),
+		change("Crashed", 2, 20.00, 15.00),
+		change("Slipped", 1, 5.00, 4.50),
 	}
 
 	secs := moverSections(changes, 10)
@@ -172,7 +162,7 @@ func TestMoverSectionsTruncate(t *testing.T) {
 			t.Errorf("%s has %d rows, want the limit of 3", sec.Title, len(sec.Rows))
 		}
 	}
-	// A nonsensical limit falls back to the default rather than printing nothing.
+
 	for _, sec := range moverSections(changes, 0) {
 		if len(sec.Rows) != DefaultMoverRows {
 			t.Errorf("%s has %d rows, want the default %d", sec.Title, len(sec.Rows), DefaultMoverRows)
@@ -180,10 +170,6 @@ func TestMoverSectionsTruncate(t *testing.T) {
 	}
 }
 
-// A card that moved but is held nowhere never reaches the sections; one that is
-// held but did not move is not a change. Both are the store's job — what this
-// checks is that a zero-delta row cannot land in either section, which would
-// print a "riser" that rose by nothing.
 func TestMoverSectionsExcludeUnmoved(t *testing.T) {
 	secs := moverSections([]store.PriceChange{change("Flat", 3, 5.00, 5.00)}, 10)
 	for _, sec := range secs {
@@ -196,7 +182,7 @@ func TestMoverSectionsExcludeUnmoved(t *testing.T) {
 func TestMoversTable(t *testing.T) {
 	rows := []store.PriceChange{
 		{Name: "Ulamog, the Infinite Gyre", SetCode: "uma", CollectorNumber: "7",
-			Finish: "foil", Copies: 3, Old: 10.00, New: 12.50},
+			Finish: finish.Foil, Copies: 3, Old: 10.00, New: 12.50},
 	}
 	got := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(rows, 10), time.Time{}).Render()
 
@@ -204,21 +190,20 @@ func TestMoversTable(t *testing.T) {
 		"RISERS",
 		"Ulamog, the Infinite Gyre", "uma/7", "foil",
 		"$10.00", "→", "$12.50",
-		"+25.0%", // the per-copy move
-		"×3",     // how many are held
-		"+$7.50", // what that did to the hoard
+		"+25.0%",
+		"×3",
+		"+$7.50",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered row is missing %q:\n%s", want, got)
 		}
 	}
-	// A section with nothing in it prints no heading.
+
 	if strings.Contains(got, "SINKERS") {
 		t.Errorf("empty section still printed its heading:\n%s", got)
 	}
 }
 
-// Non-foil is the common case and says nothing worth a column of repetition.
 func TestMoversTableMarksOnlyInterestingFinishes(t *testing.T) {
 	got := moversTable(ui.Env{Width: 100, Clamp: true},
 		moverSections([]store.PriceChange{change("Sol Ring", 1, 2.00, 3.00)}, 10), time.Time{}).Render()
@@ -227,14 +212,11 @@ func TestMoversTableMarksOnlyInterestingFinishes(t *testing.T) {
 	}
 }
 
-// Both halves must line up: laid out separately, a five-figure sinker widens its
-// price columns and a narrow terminal drops different columns from each half,
-// printing two differently shaped tables for the same report.
 func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 	changes := []store.PriceChange{
-		{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "1", Finish: "nonfoil",
+		{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "1", Finish: finish.Nonfoil,
 			Copies: 40, Old: 1.00, New: 1.10},
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: finish.Nonfoil,
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	out := moversTable(ui.Env{Width: 70, Clamp: true}, moverSections(changes, 10), time.Time{}).Render()
@@ -251,20 +233,12 @@ func TestMoversTableSharesOneLayoutAcrossSections(t *testing.T) {
 	if riser == "" || sinker == "" {
 		t.Fatalf("expected a row in each section:\n%s", out)
 	}
-	// Both rows carry the same columns, so the impact figures line up: the same
-	// number of fields, ending in the money that sorted them.
+
 	if got, want := len(strings.Fields(riser)), len(strings.Fields(sinker)); got != want {
 		t.Errorf("sections rendered different column sets (%d vs %d fields):\n%s", got, want, out)
 	}
 }
 
-// With color on, the delta columns carry direction as color too: gains in
-// the ok green (SGR 92), losses in the error red (SGR 91). Everything else
-// in the row stays bold/dim — money in place is never colored.
-// The market sections carry the same identity treatment as every other
-// card table — tinted name, per-letter pips — and the profit column is the
-// one gain-colored number (ratios stay plain; a below-market discount in
-// red would read as a loss). Piped output stays escape-free.
 func TestMarketIdentityAndProfitColors(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -272,13 +246,12 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 
 	sec := market.Section{Kind: market.KindProfit, Rows: []market.Opportunity{{
 		Card: store.OwnedFinish{Name: "Absorb", SetCode: "rna", CollectorNumber: "151",
-			Finish: "nonfoil", Copies: 1, ColorIdentity: []string{"W", "U"}},
+			Finish: finish.Nonfoil, Copies: 1, ColorIdentity: []string{"W", "U"}},
 		Market: 1.00, SellAt: 3.00, SellTo: "cardkingdom", HasMarket: true, HasBuy: true,
 	}}}
 
 	out := Market(ui.Env{Width: 100, Color: true, Clamp: true}, sec)
-	// No pips column in the market tables — the name's tint alone carries
-	// the identity in these money-dense rows.
+
 	if strings.Contains(out, "mW\x1b[0m\x1b[38") {
 		t.Errorf("market row still renders a pips column:\n%q", out)
 	}
@@ -295,19 +268,16 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 	}
 }
 
-// The delta columns fade on the diverging ramp, each against its own
-// visible extreme — expectations computed through the ramp, never
-// hardcoded SGR (the termenv round-trip lesson).
 func TestMoversGradientColors(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
 	changes := []store.PriceChange{
-		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: "nonfoil",
-			Copies: 2, Old: 1.00, New: 5.00}, // Pct +400% (the extreme), impact +$8 of max $40
-		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: "nonfoil",
-			Copies: 1, Old: 50.00, New: 10.00}, // impact −$40 (the extreme), Pct −80% of max 400%
+		{Name: "Riser", SetCode: "a", CollectorNumber: "1", Finish: finish.Nonfoil,
+			Copies: 2, Old: 1.00, New: 5.00},
+		{Name: "Sinker", SetCode: "b", CollectorNumber: "2", Finish: finish.Nonfoil,
+			Copies: 1, Old: 50.00, New: 10.00},
 	}
 	e := ui.Env{Color: true}
 	out := moversTable(ui.Env{Width: 100, Color: true, Clamp: true},
@@ -336,22 +306,17 @@ func TestMoversGradientColors(t *testing.T) {
 		t.Errorf("the header row must never be colored:\n%q", out)
 	}
 
-	// Piped (Color:false), the same table emits no escapes at all.
 	plainOut := moversTable(ui.Env{Width: 100, Clamp: true}, moverSections(changes, 10), time.Time{}).Render()
 	if strings.Contains(plainOut, "\x1b[") {
 		t.Errorf("piped movers output carries escapes:\n%q", plainOut)
 	}
 }
 
-// The table has to survive a narrow terminal without wrapping, since it prints
-// straight after a refresh in whatever window the user has open. The five-figure
-// row is the demanding case: it is what widens the money columns and forces
-// columns to be given up.
 func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 	rows := []store.PriceChange{
 		{Name: "Ulamog, the Infinite Gyre", SetCode: "uma", CollectorNumber: "7",
-			Finish: "foil", Copies: 3, Old: 10.00, New: 12.50},
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
+			Finish: finish.Foil, Copies: 3, Old: 10.00, New: 12.50},
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: finish.Nonfoil,
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for _, width := range []int{44, 60, 80, 120} {
@@ -361,7 +326,7 @@ func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 				t.Errorf("at width %d a line is %d cells wide: %q", width, len([]rune(line)), line)
 			}
 		}
-		// Whatever else is given up, the report is the impact figures.
+
 		for _, want := range []string{"+$7.50", "-$1,500.00"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("at width %d the impact %s was dropped:\n%s", width, want, out)
@@ -370,11 +335,9 @@ func TestMoversTableFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
-// An arrow with nothing on its left is nonsense, so the old price must not be
-// given up before the arrow that points away from it.
 func TestMoversTableDropsTheArrowBeforeTheOldPrice(t *testing.T) {
 	rows := []store.PriceChange{
-		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: "nonfoil",
+		{Name: "Black Lotus", SetCode: "lea", CollectorNumber: "232", Finish: finish.Nonfoil,
 			Copies: 1, Old: 20000.00, New: 18500.00},
 	}
 	for width := 40; width <= 120; width++ {
@@ -401,8 +364,6 @@ func TestSignedMoney(t *testing.T) {
 	}
 }
 
-// ui.Percent renders anything at or below zero as empty, which is exactly the
-// half of this list that matters, so movers has its own.
 func TestSignedPercent(t *testing.T) {
 	for _, tc := range []struct {
 		in   float64
@@ -411,7 +372,7 @@ func TestSignedPercent(t *testing.T) {
 		{0.25, "+25.0%"},
 		{-0.25, "-25.0%"},
 		{0.005, "+0.5%"},
-		{0, ""}, // no old price to be a percentage of
+		{0, ""},
 	} {
 		if got := ui.SignedPercent(tc.in); got != tc.want {
 			t.Errorf("ui.SignedPercent(%v) = %q, want %q", tc.in, got, tc.want)
@@ -421,7 +382,7 @@ func TestSignedPercent(t *testing.T) {
 
 func change(name string, copies int, old, now float64) store.PriceChange {
 	return store.PriceChange{
-		Name: name, SetCode: "uma", CollectorNumber: "7", Finish: "nonfoil",
+		Name: name, SetCode: "uma", CollectorNumber: "7", Finish: finish.Nonfoil,
 		Copies: copies, Old: old, New: now,
 	}
 }
@@ -445,7 +406,7 @@ func TestValuationRendersEverySection(t *testing.T) {
 		Decks: testDecks(),
 		Top: []store.OwnedFinish{
 			{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
-				Finish: "nonfoil", Copies: 2, Value: 60},
+				Finish: finish.Nonfoil, Copies: 2, Value: 60},
 		},
 		Sources:  []store.SourceCount{{Source: "scryfall", Printings: 3, Copies: 10}},
 		Unpriced: store.SourceCount{Printings: 1, Copies: 2},
@@ -463,8 +424,6 @@ func TestValuationRendersEverySection(t *testing.T) {
 	}
 }
 
-// One binder means the breakdown restates the totals line above it, so the
-// section must vanish rather than say the same thing twice.
 func TestValuationSkipsSingleBinderBreakdown(t *testing.T) {
 	b := store.DeckSummary{DistinctCards: 2, TotalCopies: 10, Value: 100}
 	b.Name = "Binder"
@@ -480,17 +439,13 @@ func TestValuationSkipsSingleBinderBreakdown(t *testing.T) {
 	}
 }
 
-// The CSV is the full itemized list: exact bytes, dated on every row, with
-// the unpriced row showing 0.00 values (a valuation sums to a number; the
-// "unknown, not free" distinction lives in the report's sources section and
-// the holdings export).
 func TestValuationCSV(t *testing.T) {
 	var sb strings.Builder
 	err := ValuationCSV(&sb, "2026-07-30T09:00:00Z", []store.OwnedFinish{
 		{Name: "Mystic Remora", SetCode: "ice", CollectorNumber: "78",
-			Finish: "nonfoil", Copies: 1, Value: 0},
+			Finish: finish.Nonfoil, Copies: 1, Value: 0},
 		{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
-			Finish: "nonfoil", Copies: 2, Value: 60},
+			Finish: finish.Nonfoil, Copies: 2, Value: 60},
 	})
 	if err != nil {
 		t.Fatalf("ValuationCSV: %v", err)
@@ -506,9 +461,6 @@ func TestValuationCSV(t *testing.T) {
 	}
 }
 
-// The comps table: piped bytes carry the plain letters and dashes; with
-// color, only the spread cell grades (tight green) and the name block
-// tints — money in place stays uncolored.
 func TestCompsSpreadColorsAndDashes(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -517,14 +469,14 @@ func TestCompsSpreadColorsAndDashes(t *testing.T) {
 	comps := []market.Comp{
 		{
 			Card: store.OwnedFinish{Name: "Ancient Tomb", SetCode: "uma", CollectorNumber: "236",
-				Finish: "nonfoil", Copies: 1, Value: 60, ColorIdentity: []string{}},
+				Finish: finish.Nonfoil, Copies: 1, Value: 60, ColorIdentity: []string{}},
 			Market: 60, HasMarket: true, CK: 65, HasCK: true,
 			Low: 60, LowFrom: "tcgplayer",
-			Buylist: 48, BuylistTo: "cardkingdom", HasBuylist: true, // 20% spread → full green
+			Buylist: 48, BuylistTo: "cardkingdom", HasBuylist: true,
 		},
 		{
 			Card: store.OwnedFinish{Name: "Sol Ring", SetCode: "c21", CollectorNumber: "125",
-				Finish: "nonfoil", Copies: 4, Value: 8},
+				Finish: finish.Nonfoil, Copies: 4, Value: 8},
 			Low: 1.99, LowFrom: "manapool", Manapool: 1.99, HasManapool: true,
 		},
 	}
@@ -536,8 +488,7 @@ func TestCompsSpreadColorsAndDashes(t *testing.T) {
 	if !strings.Contains(out, "20.0%") {
 		t.Errorf("spread percent missing:\n%s", out)
 	}
-	// The 20% spread saturates the ramp's green end — asserted through the
-	// ramp itself, since termenv's hex round-trip can drift a channel.
+
 	wantGreen := ui.Env{Color: true}.Heat(market.MarkupGrade(0.20))("20.0%")
 	if !strings.Contains(out, wantGreen) {
 		t.Errorf("tight spread not graded green: want %q in:\n%q", wantGreen, out)

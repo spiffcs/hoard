@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"math"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ func TestMoney(t *testing.T) {
 	}{
 		{0, "$0.00"},
 		{0.5, "$0.50"},
-		{1753.2, "$1,753.20"}, // the trailing zero go-humanize would drop
+		{1753.2, "$1,753.20"},
 		{1753.27, "$1,753.27"},
 		{999.995, "$1,000.00"},
 		{1000, "$1,000.00"},
@@ -66,7 +67,7 @@ func TestBar(t *testing.T) {
 		{"negative renders nothing", -0.5, 10, ""},
 		{"no cells", 0.5, 0, ""},
 		{"tiny nonzero clamps to narrowest glyph", 1e-9, 10, "▏"},
-		// The four shares verified against the live database.
+
 		{"collection 48.9%", 0.4890, 10, "████▉"},
 		{"decks 51.1%", 0.5110, 10, "█████"},
 		{"top deck 5.1%", 0.0509, 10, "▌"},
@@ -83,7 +84,6 @@ func TestBar(t *testing.T) {
 	}
 }
 
-// Bars must never claim more of the column than the share warrants.
 func TestBarNeverExceedsCells(t *testing.T) {
 	for _, frac := range []float64{0.01, 0.33, 0.5, 0.99, 1.0} {
 		for _, cells := range []int{6, 10, 14} {
@@ -104,7 +104,7 @@ func TestTruncate(t *testing.T) {
 		{"abc", 0, ""},
 		{"abc", -1, ""},
 		{"abc", 5, "abc"},
-		{"abcde", 5, "abcde"}, // exact fit is not truncated
+		{"abcde", 5, "abcde"},
 		{"abcdef", 5, "abcd…"},
 		{"abcdef", 1, "…"},
 		{"Æther Vial", 20, "Æther Vial"},
@@ -122,8 +122,6 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// summaryCols mirrors the column set cmdSummary declares, so the ladder test
-// exercises the real layout rather than a synthetic one.
 func summaryCols() []Col {
 	return []Col{
 		{Title: "NAME", Align: Left, Flex: true, Min: 12},
@@ -133,8 +131,6 @@ func summaryCols() []Col {
 	}
 }
 
-// natural widths for the real data: longest name 76, "1,878" 5, "$3,889.28" 9,
-// full bar 10.
 var summaryNatural = []int{76, 5, 9, 10}
 
 func TestFitColumns(t *testing.T) {
@@ -144,15 +140,15 @@ func TestFitColumns(t *testing.T) {
 		wantBar  int
 		wantKeep []bool
 	}{
-		{200, 76, 10, []bool{true, true, true, true}}, // nothing truncated
-		{106, 76, 10, []bool{true, true, true, true}}, // exact natural fit
-		{80, 50, 10, []bool{true, true, true, true}},  // the common case
-		{54, 24, 10, []bool{true, true, true, true}},  // name still above Min
-		{50, 20, 10, []bool{true, true, true, true}},  // name shrinking
-		{42, 12, 10, []bool{true, true, true, true}},  // name at Min, bar intact
-		{36, 18, 0, []bool{true, true, true, false}},  // bar dropped, name reclaims
-		{30, 12, 0, []bool{true, true, true, false}},  // name back to Min
-		{25, 14, 0, []bool{true, false, true, false}}, // cards dropped, name reclaims
+		{200, 76, 10, []bool{true, true, true, true}},
+		{106, 76, 10, []bool{true, true, true, true}},
+		{80, 50, 10, []bool{true, true, true, true}},
+		{54, 24, 10, []bool{true, true, true, true}},
+		{50, 20, 10, []bool{true, true, true, true}},
+		{42, 12, 10, []bool{true, true, true, true}},
+		{36, 18, 0, []bool{true, true, true, false}},
+		{30, 12, 0, []bool{true, true, true, false}},
+		{25, 14, 0, []bool{true, false, true, false}},
 	}
 	for _, c := range cases {
 		env := Env{Width: c.width, Clamp: true, Bars: true}
@@ -170,7 +166,6 @@ func TestFitColumns(t *testing.T) {
 			t.Errorf("width %d: bar = %d, want %d", c.width, widths[3], c.wantBar)
 		}
 
-		// The whole point of the ladder: the line must actually fit.
 		total, n := 0, 0
 		for i := range summaryCols() {
 			if keep[i] {
@@ -185,7 +180,6 @@ func TestFitColumns(t *testing.T) {
 	}
 }
 
-// A non-terminal must never truncate: full names, greppable.
 func TestFitColumnsNoClamp(t *testing.T) {
 	env := Env{Width: 80, Clamp: false}
 	widths, keep := fitColumns(summaryCols(), summaryNatural, DefaultGutter, env, nil)
@@ -236,8 +230,6 @@ func TestRenderPlain(t *testing.T) {
 	}
 }
 
-// The regression test for the reason tabwriter was dropped: styling a cell must
-// not shift any column, because escapes are not display width.
 func TestRenderStyledAlignment(t *testing.T) {
 	env := Env{Width: 40, Clamp: true}
 	plainLines := strings.Split(testTable(env).Render(), "\n")
@@ -282,8 +274,6 @@ func TestRenderTruncatesToWidth(t *testing.T) {
 	}
 }
 
-// Render must stay byte-identical now that it is built from Lines, or every
-// piped table in the CLI shifts.
 func TestLinesJoinToRender(t *testing.T) {
 	env := Env{Width: 60, Clamp: true}
 	tb := testTable(env)
@@ -293,8 +283,6 @@ func TestLinesJoinToRender(t *testing.T) {
 	}
 }
 
-// The contract an interactive list depends on: with a header and no spacers,
-// row i is line i+1. If that slips, a cursor highlights the wrong card.
 func TestLinesRowIndexing(t *testing.T) {
 	tb := Table{
 		Env:    Env{Width: 40, Clamp: true},
@@ -317,7 +305,7 @@ func TestLinesRowIndexing(t *testing.T) {
 	if !strings.Contains(lines[2], "Bitterblossom") {
 		t.Errorf("line 2 = %q, want row 1", lines[2])
 	}
-	// No line carries its own newline; the caller joins them.
+
 	for i, l := range lines {
 		if strings.Contains(l, "\n") {
 			t.Errorf("line %d contains a newline: %q", i, l)
@@ -348,11 +336,11 @@ func TestSpark(t *testing.T) {
 		{"falling", []float64{8, 7, 6, 5, 4, 3, 2, 1}, 8, "█▇▆▅▄▃▂▁"},
 		{"two points", []float64{1, 2}, 8, "▁█"},
 		{"single point", []float64{42}, 8, "▄"},
-		// A card whose price never moved must not look like one that bottomed out.
+
 		{"flat", []float64{5, 5, 5, 5}, 8, "▄▄▄▄"},
 		{"empty", nil, 8, ""},
 		{"no cells", []float64{1, 2, 3}, 0, ""},
-		// Negatives are not prices, but the scale must not assume a zero floor.
+
 		{"negative range", []float64{-4, 0, 4}, 3, "▁▄█"},
 	}
 	for _, tt := range tests {
@@ -377,7 +365,6 @@ func TestSparkNeverExceedsCells(t *testing.T) {
 	}
 }
 
-// A NaN would otherwise become the whole range and flatten every real point.
 func TestSparkIgnoresNonFiniteValues(t *testing.T) {
 	got := Spark([]float64{1, math.NaN(), 8, math.Inf(1)}, 8)
 	if got != "▁█" {
@@ -385,9 +372,6 @@ func TestSparkIgnoresNonFiniteValues(t *testing.T) {
 	}
 }
 
-// Heat runs green to red: the endpoints match the ramp's own anchors
-// (computed through it, never hardcoded — the termenv round-trip lesson),
-// the midpoint differs from both, and a colorless env stays plain.
 func TestHeatRamp(t *testing.T) {
 	e := Env{Color: true}
 	lo, mid, hi := e.Heat(0)("x"), e.Heat(0.5)("x"), e.Heat(1)("x")
@@ -400,16 +384,12 @@ func TestHeatRamp(t *testing.T) {
 	if got := (Env{}).Heat(1)("x"); got != "x" {
 		t.Errorf("colorless heat = %q, want plain", got)
 	}
-	// Agreement wears the same green Grade's top end does.
+
 	if lo != e.Grade(1)("x") {
 		t.Errorf("heat's green end must match grade's: %q vs %q", lo, e.Grade(1)("x"))
 	}
 }
 
-// The Diverge ramp: five distinct stations from the loss red through the
-// neutral gray to the gain green (expectations computed through the ramp,
-// never hardcoded — the termenv round-trip lesson), clamped ends, plain
-// when colorless, and the gain end wearing the same green Grade's top does.
 func TestDivergeRamp(t *testing.T) {
 	e := Env{Color: true}
 	samples := []string{
@@ -429,27 +409,23 @@ func TestDivergeRamp(t *testing.T) {
 	if got := (Env{}).Diverge(-1)("x"); got != "x" {
 		t.Errorf("colorless diverge = %q, want plain", got)
 	}
-	// Diverge carries its own brighter anchors: its gain end must NOT
-	// collapse into Grade's muted green, or the movers table loses the
-	// extra step of brightness it asked for.
+
 	if samples[4] == e.Grade(1)("x") {
 		t.Errorf("diverge's gain end should be brighter than grade's green: %q", samples[4])
 	}
 }
 
-// DivergeFrac: sign preserved, sqrt-compressed magnitude, clamped, with
-// zero values and zero extents both landing on the neutral midpoint.
 func TestDivergeFrac(t *testing.T) {
 	for _, tc := range []struct {
 		v, extent, want float64
 	}{
-		{25, 100, 0.5},   // sqrt shape: quarter of the extent is half the ramp
-		{-25, 100, -0.5}, // sign preserved
+		{25, 100, 0.5},
+		{-25, 100, -0.5},
 		{100, 100, 1},
 		{-100, 100, -1},
-		{200, 100, 1}, // clamped past the extent
+		{200, 100, 1},
 		{0, 100, 0},
-		{5, 0, 0}, // zero extent: everything neutral
+		{5, 0, 0},
 	} {
 		if got := DivergeFrac(tc.v, tc.extent); got != tc.want {
 			t.Errorf("DivergeFrac(%v, %v) = %v, want %v", tc.v, tc.extent, got, tc.want)
@@ -457,14 +433,16 @@ func TestDivergeFrac(t *testing.T) {
 	}
 }
 
-// FinishTreated names a treated printing's foil after its treatment and
-// leaves everything else to Finish.
 func TestFinishTreated(t *testing.T) {
-	for _, tc := range []struct{ finish, treatment, want string }{
-		{"foil", "ripple", "ripple"},
-		{"foil", "", "foil"},
-		{"nonfoil", "ripple", "-"},
-		{"etched", "ripple", "etched"},
+	for _, tc := range []struct {
+		finish    finish.Finish
+		treatment string
+		want      string
+	}{
+		{finish.Foil, "ripple", "ripple"},
+		{finish.Foil, "", "foil"},
+		{finish.Nonfoil, "ripple", "-"},
+		{finish.Etched, "ripple", "etched"},
 	} {
 		if got := FinishTreated(tc.finish, tc.treatment); got != tc.want {
 			t.Errorf("FinishTreated(%q, %q) = %q, want %q", tc.finish, tc.treatment, got, tc.want)
@@ -472,11 +450,6 @@ func TestFinishTreated(t *testing.T) {
 	}
 }
 
-// Condition renders wear for a column, and an unassessed card gets the *unknown*
-// mark rather than the suppressed one. The two are not interchangeable: a
-// non-foil card is definitely non-foil, while an unassessed one is not
-// definitely near mint, and a reader should be able to tell a gap in hoard's
-// knowledge from an ordinary value.
 func TestCondition(t *testing.T) {
 	for in, want := range map[string]string{
 		"unknown": unknown,
@@ -493,10 +466,6 @@ func TestCondition(t *testing.T) {
 	}
 }
 
-// A column whose every cell is a dash is width spent on the absence of
-// information — the FINISH column against a binder with no foils, or COND
-// before anything has been assessed. It is dropped, and its space goes to the
-// columns people are reading.
 func TestBlankColumnIsDropped(t *testing.T) {
 	tbl := Table{Header: true, Cols: []Col{
 		{Title: "NAME", Align: Left},
@@ -504,8 +473,8 @@ func TestBlankColumnIsDropped(t *testing.T) {
 		{Title: "COND", Align: Left, Priority: 3},
 		{Title: "QTY", Align: Right, Priority: 2},
 	}}
-	tbl.Add(C("Sol Ring"), C(Finish("nonfoil")), C(Condition("unknown")), C("×4"))
-	tbl.Add(C("Solitude"), C(Finish("nonfoil")), C(Condition("unknown")), C("×1"))
+	tbl.Add(C("Sol Ring"), C(Finish(finish.Nonfoil)), C(Condition("unknown")), C("×4"))
+	tbl.Add(C("Solitude"), C(Finish(finish.Nonfoil)), C(Condition("unknown")), C("×1"))
 
 	out := strings.Join(tbl.Lines(), "\n")
 	for _, gone := range []string{"FINISH", "COND"} {
@@ -520,8 +489,6 @@ func TestBlankColumnIsDropped(t *testing.T) {
 	}
 }
 
-// One stated value is enough to earn the column: the dashes around it are what
-// give it meaning.
 func TestOneValueKeepsTheColumn(t *testing.T) {
 	tbl := Table{Header: true, Cols: []Col{
 		{Title: "NAME", Align: Left},
@@ -536,9 +503,6 @@ func TestOneValueKeepsTheColumn(t *testing.T) {
 	}
 }
 
-// Both marks count as nothing for the purposes of dropping a column — the
-// hyphen Finish suppresses a dull value with, and the em dash an unknown
-// renders as. Neither tells a reader anything they could act on.
 func TestBothMarksCountAsBlank(t *testing.T) {
 	tbl := Table{Header: true, Cols: []Col{
 		{Title: "NAME", Align: Left},
@@ -552,9 +516,6 @@ func TestBothMarksCountAsBlank(t *testing.T) {
 	}
 }
 
-// A column the table insists on is never dropped, however empty it looks.
-// Priority 0 is the existing way of saying "not optional", and a VALUE column
-// of dashes still states something true about the hoard.
 func TestUndroppableColumnSurvivesBlank(t *testing.T) {
 	tbl := Table{Header: true, Cols: []Col{
 		{Title: "NAME", Align: Left},

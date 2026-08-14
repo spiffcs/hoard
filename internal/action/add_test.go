@@ -13,9 +13,6 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-// deckDeps builds Deps whose resolver answers from an in-memory card set,
-// indexed by the same keys the resolve pipeline looks cards up under. The
-// fixtures carry prices so FillGaps finds no gap and never reaches MTGJSON.
 func deckDeps(t *testing.T, cards ...scryfall.Card) Deps {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
@@ -54,17 +51,12 @@ func deckDeps(t *testing.T, cards ...scryfall.Card) Deps {
 	}
 }
 
-// solRing is a fully priced printing: enough for a one-card decklist that
-// resolves cleanly.
 func solRing() scryfall.Card {
 	return scryfall.Card{ID: "sol-id-1", Set: "c21", CollectorNumber: "125", Name: "Sol Ring",
 		ScryfallURL: "http://sol", PriceUSD: f(2), PriceUSDFoil: f(12.5),
 		Finishes: []string{"nonfoil", "foil"}}
 }
 
-// parseDeck runs the text a user would hand `deck add --file` through the
-// real parser, so the Skipped lines under test are the ones the parser
-// actually produces rather than a hand-built fixture.
 func parseDeck(t *testing.T, name, body string) *decksource.Deck {
 	t.Helper()
 	d, err := decksource.ParseText(name, "", "", "text", strings.NewReader(body))
@@ -74,11 +66,6 @@ func parseDeck(t *testing.T, name, body string) *decksource.Deck {
 	return d
 }
 
-// A decklist whose lines could not all be read was not fully imported, and
-// the exit status has to say so: a scripted restore that cannot tell "read
-// the whole list" from "read one line of it" reports success while dropping
-// most of the deck. AddList already treats an unreadable line as partial;
-// this is the same condition on the deck path.
 func TestDeckAddUnreadableLinesArePartial(t *testing.T) {
 	d := deckDeps(t, solRing())
 	deck := parseDeck(t, "Mixed", "1 Sol Ring\n~~~ garbage ~~~\nalso not a card line\n")
@@ -90,15 +77,12 @@ func TestDeckAddUnreadableLinesArePartial(t *testing.T) {
 	if !errors.Is(err, ErrPartial) {
 		t.Errorf("err = %v, want ErrPartial — 2 lines could not be read", err)
 	}
-	// Partial is "done, mostly": the readable line still landed.
+
 	if res.ID == 0 || res.Resolved != 1 {
 		t.Errorf("result = %+v, want the deck created with 1 card resolved", res)
 	}
 }
 
-// The rehearsal has to report the outcome the real run would have, or it is
-// not a rehearsal — the same argument the unresolved-cards guard beside it
-// already makes.
 func TestDeckAddDryRunUnreadableLinesArePartial(t *testing.T) {
 	d := deckDeps(t, solRing())
 	deck := parseDeck(t, "Mixed", "1 Sol Ring\n~~~ garbage ~~~\nalso not a card line\n")
@@ -119,9 +103,6 @@ func TestDeckAddDryRunUnreadableLinesArePartial(t *testing.T) {
 	}
 }
 
-// The other direction, so the guard is known to be discriminating rather
-// than merely loud: a list every line of which read and resolved exits
-// clean, on both the real run and the rehearsal.
 func TestDeckAddCleanListIsNotPartial(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

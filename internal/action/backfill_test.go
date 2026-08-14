@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"testing"
 
@@ -19,15 +20,12 @@ func backfillStore(t *testing.T) *store.Store {
 	if err := st.AddCardFinish(scryfall.Card{
 		ID: "abc", Name: "Sol Ring", Set: "mh3", CollectorNumber: "123",
 		Finishes: []string{"nonfoil"},
-	}, "nonfoil", 1); err != nil {
+	}, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	return st
 }
 
-// A second backfill the same day against the same holdings skips before the
-// 150 MB download: the ledger receipt is checked ahead of any network work,
-// so this test needs no server — reaching for one would fail it.
 func TestBackfillSkipsSameDayRerun(t *testing.T) {
 	st := backfillStore(t)
 	owned, err := st.OwnedByFinish()
@@ -53,8 +51,6 @@ func TestBackfillSkipsSameDayRerun(t *testing.T) {
 	}
 }
 
-// The key binds to the holdings: adding a card changes it, so the skip can
-// never hide a printing that has no history yet.
 func TestBackfillKeyChangesWithHoldings(t *testing.T) {
 	st := backfillStore(t)
 	owned, _ := st.OwnedByFinish()
@@ -63,7 +59,7 @@ func TestBackfillKeyChangesWithHoldings(t *testing.T) {
 	if err := st.AddCardFinish(scryfall.Card{
 		ID: "def", Name: "Ancient Tomb", Set: "uma", CollectorNumber: "236",
 		Finishes: []string{"nonfoil"},
-	}, "nonfoil", 1); err != nil {
+	}, finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
 	owned, _ = st.OwnedByFinish()

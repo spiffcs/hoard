@@ -17,7 +17,6 @@ func TestParseEvent(t *testing.T) {
 		t.Errorf("candidates = %v, want 2", ev.Candidates)
 	}
 
-	// Collector info read off the card's bottom border.
 	ev, err = parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","collectorNumber":"123","setCode":"MH3",` +
 			`"bottomLines":["0123/0281 R","MH3 • EN"]}`))
@@ -31,8 +30,6 @@ func TestParseEvent(t *testing.T) {
 		t.Errorf("bottomLines = %v, want 2", ev.BottomLines)
 	}
 
-	// A helper too old to report collector info is not an error: cards printed
-	// before 1998 have no number to read either, so empty is the normal case.
 	ev, err = parseEvent([]byte(`{"event":"scan","name":"Black Lotus"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -41,8 +38,6 @@ func TestParseEvent(t *testing.T) {
 		t.Errorf("want empty collector info, got %q/%q", ev.CollectorNumber, ev.SetCode)
 	}
 
-	// A line without a kind isn't one of ours; the reader skips it rather than
-	// treating an unknown shape as a scan.
 	if _, err := parseEvent([]byte(`{"name":"Sol Ring"}`)); err == nil {
 		t.Error("expected an error for an event with no kind")
 	}
@@ -52,14 +47,12 @@ func TestParseEvent(t *testing.T) {
 }
 
 func TestEventLines(t *testing.T) {
-	// Candidates win: they include the best guess first and give the caller
-	// fallbacks when the top-line guess is wrong.
+
 	ev := Event{Kind: EventScan, Name: "Sol Ring", Candidates: []string{"Sol Ring", "Artifact"}}
 	if got := ev.Lines(); len(got) != 2 || got[0] != "Sol Ring" {
 		t.Errorf("Lines() = %v, want the candidate list", got)
 	}
 
-	// An older helper that only reports a name still yields one usable line.
 	ev = Event{Kind: EventScan, Name: "Sol Ring"}
 	if got := ev.Lines(); len(got) != 1 || got[0] != "Sol Ring" {
 		t.Errorf("Lines() = %v, want [Sol Ring]", got)
@@ -71,8 +64,7 @@ func TestEventLines(t *testing.T) {
 }
 
 func TestCardListFallsBackToFlatFields(t *testing.T) {
-	// A helper too old to report a card list still describes exactly one card
-	// in its flat fields; CardList is the one place that compatibility lives.
+
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","candidates":["Sol Ring","Artifact"],` +
 			`"collectorNumber":"125","setCode":"C21"}`))
@@ -87,7 +79,7 @@ func TestCardListFallsBackToFlatFields(t *testing.T) {
 	if c.Name != "Sol Ring" || c.SetCode != "C21" || c.CollectorNumber != "125" || len(c.Candidates) != 2 {
 		t.Errorf("card = %+v, want the flat fields carried over", c)
 	}
-	// And a frame with nothing readable yields no cards, not one empty card.
+
 	if got := (Event{Kind: EventScan}).CardList(); got != nil {
 		t.Errorf("empty event CardList = %+v, want nil", got)
 	}
@@ -108,8 +100,6 @@ func TestParseEventConfidenceFields(t *testing.T) {
 		t.Errorf("card signals = %v/%q, want 0.94/crop", c.Confidence, c.Source)
 	}
 
-	// An old helper omits every new field; zero values must read as unknown,
-	// not as an error.
 	ev, err = parseEvent([]byte(`{"event":"scan","name":"Sol Ring"}`))
 	if err != nil {
 		t.Fatalf("parseEvent: %v", err)
@@ -118,8 +108,6 @@ func TestParseEventConfidenceFields(t *testing.T) {
 		t.Errorf("old-helper event should carry zero signals, got %+v", ev)
 	}
 
-	// The ready event's feature list and the auto event's state ride the same
-	// struct.
 	ev, err = parseEvent([]byte(`{"event":"ready","device":"iPhone","features":["auto"]}`))
 	if err != nil {
 		t.Fatalf("parseEvent: %v", err)
@@ -137,9 +125,7 @@ func TestParseEventConfidenceFields(t *testing.T) {
 }
 
 func TestParseEventCopyrightProvenance(t *testing.T) {
-	// An old-frame read: the number came off the copyright line, with the
-	// range's end year alongside, and an alternative block carries the same
-	// provenance vocabulary.
+
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Remove Soul",` +
 			`"cards":[{"name":"Remove Soul","collectorNumber":"95",` +
@@ -156,8 +142,6 @@ func TestParseEventCopyrightProvenance(t *testing.T) {
 		t.Errorf("alt provenance = %q/%d, want copyright/2001", a.Source, a.Year)
 	}
 
-	// A helper that predates provenance omits the fields: zero values mean a
-	// trusted band read, which is what every number from such a helper is.
 	ev, err = parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring","collectorNumber":"125",` +
 			`"collectorAlts":[{"number":"126"}]}]}`))
@@ -174,8 +158,7 @@ func TestParseEventCopyrightProvenance(t *testing.T) {
 }
 
 func TestCardListCarriesAnchoringIntoFallback(t *testing.T) {
-	// The synthesized flat-fields card borrows Source's vocabulary: its
-	// collector read is card-anchored exactly when the band was.
+
 	ev, _ := parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","collectorNumber":"125","setCode":"C21",` +
 			`"confidence":0.9,"bandAnchored":true}`))
@@ -211,14 +194,6 @@ func TestCardListPassesThroughCards(t *testing.T) {
 	}
 }
 
-// The trigger's measurements decode when sent, and stay nil when not.
-//
-// Nil is the load-bearing case. A helper too old to send these fields must
-// leave the parent on its timing fallback, and the distinction between "the
-// comparison never ran" and "the comparison returned zero" is the reason the
-// fields are pointers: zero is the reading for an identical picture, which is
-// the strongest same-card evidence there is. Decoding an absent field into it
-// would turn a missing measurement into the most confident possible one.
 func TestParseEventTriggerDeltas(t *testing.T) {
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"No-Dachi","fireReason":"replaced",` +
@@ -236,7 +211,6 @@ func TestParseEventTriggerDeltas(t *testing.T) {
 		t.Errorf("FaceDelta = %v, want 32.5", ev.FaceDelta)
 	}
 
-	// A helper that predates the fields.
 	old, err := parseEvent([]byte(`{"event":"scan","name":"No-Dachi","fireReason":"replaced"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -246,7 +220,6 @@ func TestParseEventTriggerDeltas(t *testing.T) {
 			old.HoldDelta, old.FaceDelta)
 	}
 
-	// And a genuine zero is not the same answer as an absent field.
 	zero, err := parseEvent([]byte(`{"event":"scan","name":"No-Dachi","faceDelta":0}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -257,10 +230,7 @@ func TestParseEventTriggerDeltas(t *testing.T) {
 }
 
 func TestParseEventFinishProvenance(t *testing.T) {
-	// Two ways a finish arrives, and the hint itself is identical either way —
-	// the Go side treats a present finish as evidence whatever found it. Only
-	// the provenance differs, and it exists so a session's log can show which
-	// signal is carrying the answer.
+
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Glowrider","cards":[{"name":"Glowrider",` +
 			`"finishHint":"foil","finishSource":"sparkle","copyrightYear":2003}]}`))
@@ -282,9 +252,6 @@ func TestParseEventFinishProvenance(t *testing.T) {
 		t.Errorf("finishSource = %q, want separator", c.FinishSource)
 	}
 
-	// A helper that predates the field omits it. That must read as "no
-	// provenance recorded" and never as "no finish" — the hint is what decides,
-	// and an old helper's foil is still a foil.
 	ev, err = parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring","finishHint":"foil"}]}`))
 	if err != nil {
@@ -299,14 +266,6 @@ func TestParseEventFinishProvenance(t *testing.T) {
 	}
 }
 
-// The sparkle reader's measurement crosses whether or not a verdict followed.
-//
-// A score below the bar is the case this exists for. Live 2026-08-06, four
-// retro-frame foils came back with an empty finish and the session log held
-// nothing that could say whether the marker was nearly found or never found —
-// offline on the same stills they were 0.496 and 0.020, which are two different
-// bugs. The measurement has to travel with the silence, not only with the
-// verdict.
 func TestParseEventSparkleMeasurement(t *testing.T) {
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Glowrider","cards":[{"name":"Glowrider",` +
@@ -322,14 +281,11 @@ func TestParseEventSparkleMeasurement(t *testing.T) {
 	if c.SparkleScore == nil || *c.SparkleScore != 0.02 {
 		t.Fatalf("SparkleScore = %v, want the measurement behind the silence", c.SparkleScore)
 	}
-	// The offset is the sharper half: -0.0238 is exactly the search window's
-	// edge, which says the marker is outside it rather than faint inside it.
+
 	if c.SparkleOffsetU == nil || *c.SparkleOffsetU != -0.0238 {
 		t.Errorf("SparkleOffsetU = %v, want -0.0238", c.SparkleOffsetU)
 	}
 
-	// Never asked is not the same as scored zero, and a pointer is how they
-	// stay different. A helper that predates the field sends neither.
 	ev, err = parseEvent([]byte(
 		`{"event":"scan","name":"Sol Ring","cards":[{"name":"Sol Ring"}]}`))
 	if err != nil {
@@ -340,13 +296,6 @@ func TestParseEventSparkleMeasurement(t *testing.T) {
 	}
 }
 
-// The colour channel arrives on the wire and is never mistaken for a verdict.
-//
-// It has no vote — see SparkleVerdict in BorderKit/Sparkle.swift — so the only
-// thing that must hold is that the numbers survive the trip and that a helper
-// too old to send them reads as "not measured" rather than as a zero score. A
-// zero would be indistinguishable from a patch the reader abstained on, which
-// is the exact confusion the luma pair was added to end.
 func TestParseEventSparkleChroma(t *testing.T) {
 	ev, err := parseEvent([]byte(
 		`{"event":"scan","name":"Charitable Levy","cards":[{"name":"Charitable Levy",` +
@@ -362,7 +311,7 @@ func TestParseEventSparkleChroma(t *testing.T) {
 	if c.SparkleChromaContrast == nil || *c.SparkleChromaContrast != 0.0642 {
 		t.Errorf("chroma contrast = %v, want 0.0642", c.SparkleChromaContrast)
 	}
-	// The finish is still luma's to give, and the source says so.
+
 	if c.FinishSource != "sparkle-luma" {
 		t.Errorf("finishSource = %q, want the channel spelled out", c.FinishSource)
 	}

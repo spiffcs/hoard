@@ -1,6 +1,7 @@
 package browse
 
 import (
+	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -106,8 +107,6 @@ func TestParseFilterRejectsBadInput(t *testing.T) {
 	}
 }
 
-// An unclosed quote is a half-typed value, not a mistake: the pane filters as
-// you type, so failing would flash an error under the cursor mid-word.
 func TestParseFilterToleratesAnUnclosedQuote(t *testing.T) {
 	f, err := parseFilter(`artist:"Seb McKin`)
 	if err != nil {
@@ -118,9 +117,6 @@ func TestParseFilterToleratesAnUnclosedQuote(t *testing.T) {
 	}
 }
 
-// The value goes to the database as a bound parameter; nothing about it is
-// assembled into SQL. This asserts the parser keeps it intact rather than
-// escaping or splitting it, so the store's binding is what it receives.
 func TestParseFilterKeepsHostileValuesIntact(t *testing.T) {
 	f, err := parseFilter(`artist:"'; DROP TABLE cards--"`)
 	if err != nil {
@@ -134,13 +130,13 @@ func TestParseFilterKeepsHostileValuesIntact(t *testing.T) {
 func TestFilterMatches(t *testing.T) {
 	foil := card{
 		ScryfallID: "a", Name: "Ancient Tomb", SetCode: "uma",
-		Finish: "foil", Board: "main", Quantity: 1, Price: price(134), Value: 134,
+		Finish: finish.Foil, Board: "main", Quantity: 1, Price: price(134), Value: 134,
 	}
 	normal := card{
 		ScryfallID: "b", Name: "Sol Ring", SetCode: "c21",
-		Finish: "nonfoil", Board: "side", Quantity: 40, Price: price(1.10), Value: 44,
+		Finish: finish.Nonfoil, Board: "side", Quantity: 40, Price: price(1.10), Value: 44,
 	}
-	unpriced := card{ScryfallID: "c", Name: "Mystery", SetCode: "xyz", Finish: "nonfoil"}
+	unpriced := card{ScryfallID: "c", Name: "Mystery", SetCode: "xyz", Finish: finish.Nonfoil}
 
 	tests := []struct {
 		query string
@@ -148,18 +144,17 @@ func TestFilterMatches(t *testing.T) {
 	}{
 		{"", []string{"a", "b", "c"}},
 		{"sol", []string{"b"}},
-		{"SOL", []string{"b"}}, // matching is case-insensitive
+		{"SOL", []string{"b"}},
 		{"set:uma", []string{"a"}},
 		{"finish:foil", []string{"a"}},
 		{"board:side", []string{"b"}},
 		{"qty>10", []string{"b"}},
 		{"qty>=1", []string{"a", "b"}},
 		{"value>100", []string{"a"}},
-		// A card no source can price is unpriced, not priced at zero, so it must
-		// not satisfy a price comparison at all.
+
 		{"price<1", nil},
 		{"price>0", []string{"a", "b"}},
-		// Terms are ANDed.
+
 		{"finish:nonfoil qty>10", []string{"b"}},
 		{"finish:nonfoil qty>100", nil},
 	}
@@ -182,9 +177,6 @@ func TestFilterMatches(t *testing.T) {
 	}
 }
 
-// A nil id set means the filter asked nothing of the catalog, not that the
-// catalog matched nothing — conflating the two would empty the pane on every
-// plain name search.
 func TestFilterNilAllowedMeansNoOpinion(t *testing.T) {
 	c := card{ScryfallID: "a", Name: "Sol Ring"}
 	f, _ := parseFilter("sol")
