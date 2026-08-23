@@ -44,6 +44,8 @@ type Store interface {
 	EnrichedCount() (enriched, total int, err error)
 
 	Movers(since string) ([]store.PriceChange, error)
+	Dips(o store.TrendOptions) ([]store.TrendRow, error)
+	Momentum(o store.TrendOptions) ([]store.TrendRow, error)
 	Unpriced() ([]store.UnpricedRow, error)
 
 	EntryKeys() ([]store.EntryKey, error)

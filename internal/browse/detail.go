@@ -94,6 +94,11 @@ func (m *Model) openDetail() tea.Cmd {
 		if i := m.cursor[paneCards]; i >= 0 && i < len(m.movers) {
 			id = m.movers[i].ScryfallID
 		}
+	case viewDip:
+
+		if r := m.selectedTrendRow(); r != nil {
+			id = r.ScryfallID
+		}
 	}
 	if id == "" {
 		return nil

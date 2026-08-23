@@ -119,7 +119,7 @@ func TestWatchesFilterByContainer(t *testing.T) {
 	st.watches = []store.WatchStatus{w1, w2}
 
 	m := atAllCards(t, newTestModel(t, st))
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	if m.view != viewWatches {

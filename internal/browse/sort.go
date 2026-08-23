@@ -15,6 +15,7 @@ var sortColumns = [...][]string{
 	viewMovers:   {"impact", "name", "set/num", "was", "now", "change", "qty"},
 	viewWatches:  {"per-table"},
 	viewMarket:   {"per-table"},
+	viewDip:      {"signal", "name", "set/num", "now"},
 }
 
 var marketSortColumns = [...][]string{

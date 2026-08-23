@@ -375,7 +375,8 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				return tui.Child{}, derr
 			}
 			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, "", dests), nil
-		}))
+		}),
+		readOnlyIfCatalog(st))
 
 	printScanSummary(sum)
 	return err

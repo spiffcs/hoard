@@ -15,7 +15,7 @@ import (
 )
 
 func NewCmdBackfillPrices(a *app) *cobra.Command {
-	return &cobra.Command{
+	return cli.Mutating(&cobra.Command{
 		Use:     "backfill-prices",
 		GroupID: groupCollection,
 		Short:   "Load 90 days of past prices from MTGJSON",
@@ -24,7 +24,7 @@ func NewCmdBackfillPrices(a *app) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runBackfillPrices(c.Context(), a.store, a.env)
 		},
-	}
+	})
 }
 
 func runBackfillPrices(ctx context.Context, st *store.Store, env *cli.Env) error {

@@ -110,6 +110,9 @@ func execute(args []string) error {
 			return err
 		}
 		a.store, a.dbPath, closeStore = st, dbPath, func() { st.Close() }
+		if err := refuseIfCatalog(cmd, st); err != nil {
+			return err
+		}
 		if newDB {
 			ui.NewReport().Progress("Initialized hoard database at %s", dbPath)
 		}

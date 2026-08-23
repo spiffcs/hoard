@@ -339,6 +339,11 @@ func (m *Model) scrollIntoView() {
 			m.scrollWatchesIntoView()
 			continue
 		}
+		if pane(p) == paneCards && m.view == viewDip {
+
+			m.scrollDipIntoView()
+			continue
+		}
 		if m.cursor[p] < m.offset[p] {
 			m.offset[p] = m.cursor[p]
 		}
@@ -428,6 +433,8 @@ func (m Model) rightLines(width int) []string {
 		return m.moversLines(width)
 	case viewMarket:
 		return m.marketLines(width)
+	case viewDip:
+		return m.dipLines(width)
 	}
 	return m.cardLines(width)
 }
@@ -697,6 +704,10 @@ func (m Model) helpLine() string {
 			ui.K("]/[", "next/prev table"), ui.K("/", "filter"), ui.K("M", "floor"),
 			ui.K("F", "refresh prices"), ui.K("tab", "collections"),
 			ui.K("v", "next view"), ui.K("↑/↓", "move"), ui.K("s", "sort"))...)
+	case m.view == viewDip:
+		return ui.Help(tail(ui.HelpCommands, ui.K("W", "lookback 7/30/90 days"),
+			ui.K("enter", "detail"), ui.K("M", "floor"), ui.K("/", "filter"),
+			ui.K("tab", "collections"), ui.K("v", "next view"), ui.K("↑/↓", "move"))...)
 	case m.view == viewMovers:
 		return ui.Help(tail(ui.HelpCommands, ui.K("W", "lookback 7/30/90 days"),
 			ui.K("F", "update prices + history"), ui.K("enter", "detail"),

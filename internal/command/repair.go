@@ -16,7 +16,7 @@ import (
 )
 
 func NewCmdRepairFinishes(a *app) *cobra.Command {
-	return &cobra.Command{
+	return cli.Mutating(&cobra.Command{
 		Use:     "repair-finishes",
 		GroupID: groupCollection,
 		Short:   "Fix cards stored as a finish they lack",
@@ -25,7 +25,7 @@ func NewCmdRepairFinishes(a *app) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runRepairFinishes(c.Context(), a.store, a.env)
 		},
-	}
+	})
 }
 
 func runRepairFinishes(ctx context.Context, st *store.Store, env *cli.Env) error {

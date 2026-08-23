@@ -244,7 +244,8 @@ func FoilTreatment(promoTypes sql.NullString) string {
 }
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	catalog bool
 }
 
 func Open(path string) (*Store, error) {
@@ -268,6 +269,10 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err := s.collectionID(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.loadCatalogMode(); err != nil {
 		db.Close()
 		return nil, err
 	}

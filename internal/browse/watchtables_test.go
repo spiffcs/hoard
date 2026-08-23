@@ -88,12 +88,12 @@ func TestUnpricedIsNoLongerItsOwnView(t *testing.T) {
 	m := onWatches(t, threeTableStore())
 	(&m).showView(viewHoldings)
 	seen := []string{}
-	for range 4 {
+	for range 5 {
 		m = key(m, "v")
 		seen = append(seen, m.view.String())
 	}
 	if m.view != viewHoldings {
-		t.Errorf("four v presses landed on %v, want back at holdings · saw %v", m.view, seen)
+		t.Errorf("five v presses landed on %v, want back at holdings · saw %v", m.view, seen)
 	}
 	for _, s := range seen {
 		if s == "unpriced" {

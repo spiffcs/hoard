@@ -83,21 +83,21 @@ func NewCmdBinder(a *app) *cobra.Command {
 			Args: cobra.NoArgs,
 			RunE: func(*cobra.Command, []string) error { return binderList(a.store, a.env) },
 		}),
-		&cobra.Command{
+		cli.Mutating(&cobra.Command{
 			Use: "new NAME", Short: "Create a named binder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return binderNew(a.store, a.env, args) },
-		},
-		&cobra.Command{
+		}),
+		cli.Mutating(&cobra.Command{
 			Use: "rename BINDER NEW-NAME", Short: "Rename a binder",
 			Args: cobra.ExactArgs(2),
 			RunE: func(_ *cobra.Command, args []string) error { return binderRename(a.store, a.env, args) },
-		},
-		&cobra.Command{
+		}),
+		cli.Mutating(&cobra.Command{
 			Use: "rm BINDER", Short: "Remove an empty binder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return binderRemove(a.store, a.env, args) },
-		},
+		}),
 	)
 	return cli.JSONCapable(cmd)
 }

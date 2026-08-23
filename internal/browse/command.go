@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
@@ -405,20 +404,25 @@ func commands() []command {
 
 			id: "table.next", aliases: "next table section",
 			key: "]", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket || m.view == viewWatches },
-			run:   func(m *Model) tea.Cmd { m.jumpSection(1); return nil },
+			where: func(m *Model) bool {
+				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip
+			},
+			run: func(m *Model) tea.Cmd { m.jumpSection(1); return nil },
 		},
 		{
 			id: "table.prev", aliases: "previous table section",
 			key: "[", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMarket || m.view == viewWatches },
-			run:   func(m *Model) tea.Cmd { m.jumpSection(-1); return nil },
+			where: func(m *Model) bool {
+				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip
+			},
+			run: func(m *Model) tea.Cmd { m.jumpSection(-1); return nil },
 		},
 		{
 			id: "page.next", aliases: "next page turn more rows",
 			key: ">", hidden: true,
 			where: func(m *Model) bool {
-				return m.view == viewMarket || m.view == viewMovers || m.view == viewHoldings
+				return m.view == viewMarket || m.view == viewMovers ||
+					m.view == viewHoldings || m.view == viewDip
 			},
 			run: func(m *Model) tea.Cmd { m.turnTablePage(1); return nil },
 		},
@@ -426,7 +430,8 @@ func commands() []command {
 			id: "page.prev", aliases: "previous page turn back",
 			key: "<", hidden: true,
 			where: func(m *Model) bool {
-				return m.view == viewMarket || m.view == viewMovers || m.view == viewHoldings
+				return m.view == viewMarket || m.view == viewMovers ||
+					m.view == viewHoldings || m.view == viewDip
 			},
 			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
 		},
@@ -498,11 +503,14 @@ func singleTableView(v viewMode) bool {
 }
 
 func (m *Model) jumpSection(dir int) {
-	if m.view == viewWatches {
+	switch m.view {
+	case viewWatches:
 		m.jumpWatchSection(dir)
-		return
+	case viewDip:
+		m.jumpDipSection(dir)
+	default:
+		m.jumpMarketSection(dir)
 	}
-	m.jumpMarketSection(dir)
 }
 
 func onView(v viewMode, n int) func(*Model) int {
@@ -615,6 +623,11 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 
 		m.watchSecOffset = [watchSectionCount]int{}
 		m.cursor[paneCards] = m.firstWatchCursor()
+	}
+	if v == viewDip {
+
+		m.dipSecOffset = [2]int{}
+		m.cursor[paneCards] = m.firstDipCursor()
 	}
 
 	m.status = "showing " + m.view.String()

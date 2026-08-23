@@ -68,7 +68,7 @@ func newDeckAddCmd(a *app) *cobra.Command {
 		"replace an already-imported deck without asking (discards manual edits to its cards)")
 
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
-	return cmd
+	return cli.Mutating(cmd)
 }
 
 func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o deckAddOpts) error {
@@ -157,7 +157,7 @@ func importTextDeck(path, name, source string) (*decksource.Deck, error) {
 }
 
 func newDeckRepinCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	return cli.Mutating(&cobra.Command{
 		Use:   "repin DECK SET",
 		Short: "Re-point a deck's cards at the set it came from",
 		Args: func(_ *cobra.Command, args []string) error {
@@ -170,7 +170,7 @@ func newDeckRepinCmd(a *app) *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			return runDeckRepin(c.Context(), a.store, a.env, args[0], args[1])
 		},
-	}
+	})
 }
 
 func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, setCode string) error {
@@ -212,7 +212,7 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 }
 
 func newDeckRemoveCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	return cli.Mutating(&cobra.Command{
 		Use:   "remove DECK",
 		Short: "Remove a deck and its cards",
 		Args: func(_ *cobra.Command, args []string) error {
@@ -224,7 +224,7 @@ func newDeckRemoveCmd(a *app) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runDeckRemove(a.store, a.env, args[0])
 		},
-	}
+	})
 }
 
 func runDeckRemove(st *store.Store, env *cli.Env, ref string) error {

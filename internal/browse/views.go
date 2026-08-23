@@ -19,6 +19,7 @@ const (
 	viewMovers
 	viewWatches
 	viewMarket
+	viewDip
 )
 
 func (v viewMode) String() string {
@@ -31,11 +32,14 @@ func (v viewMode) String() string {
 	case viewMarket:
 
 		return "market"
+	case viewDip:
+
+		return "dip"
 	}
 	return "holdings"
 }
 
-var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewWatches}
+var viewCycle = [...]viewMode{viewHoldings, viewMovers, viewMarket, viewDip, viewWatches}
 
 func (v viewMode) next() viewMode {
 	for i, cur := range viewCycle {
@@ -184,9 +188,49 @@ func (m *Model) loadView() error {
 			return fmt.Errorf("reading unpriced cards: %w", err)
 		}
 		m.allWatches, m.allUnpriced = watches, unpriced
+	case viewDip:
+
+		o := m.trendOptions()
+		dips, err := m.store.Dips(o)
+		if err != nil {
+			return fmt.Errorf("reading dips: %w", err)
+		}
+		momentum, err := m.store.Momentum(o)
+		if err != nil {
+			return fmt.Errorf("reading momentum: %w", err)
+		}
+		m.allDips, m.allMomentum = dips, momentum
 	}
 	m.deriveView()
 	return nil
+}
+
+func (m *Model) filterTrends(rows []store.TrendRow) []store.TrendRow {
+	cid, filtered := m.filterContainerID()
+	set, bySet := m.filterSetCode()
+
+	out := make([]store.TrendRow, 0, len(rows))
+	for _, r := range rows {
+		last := r.Last
+		if m.underFloor(&last) {
+			continue
+		}
+		if filtered {
+			qty := m.containerQtyPriced(cid, r.ScryfallID, r.Finish)
+			if qty == 0 {
+				continue
+			}
+			r.Copies = qty
+		}
+		if bySet && r.SetCode != set {
+			continue
+		}
+		if !m.filter.empty() && !m.filter.matches(trendAsCard(r), m.allowed) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func (m *Model) deriveView() {
@@ -225,6 +269,10 @@ func (m *Model) deriveView() {
 		m.filteredMovers = rows
 		m.moversColW = measureMoverCols(rows, m.moversCutoff())
 		m.applySort()
+	case viewDip:
+		m.filteredDips = m.filterTrends(m.allDips)
+		m.filteredMomentum = m.filterTrends(m.allMomentum)
+		m.deriveDipPages()
 	case viewWatches:
 		watches := make([]store.WatchStatus, 0, len(m.allWatches))
 		for _, w := range m.allWatches {
@@ -332,6 +380,9 @@ func (m Model) viewRowCount() int {
 	case viewMarket:
 
 		return m.marketCursorSlots()
+	case viewDip:
+
+		return m.dipCursorSlots()
 	}
 	return len(m.cards)
 }
@@ -405,6 +456,8 @@ func (m Model) viewHeader() (title, totals string) {
 			joinPhrases(m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers)), summary)
 	case viewMarket:
 		return m.marketHeader()
+	case viewDip:
+		return m.dipHeader()
 	case viewWatches:
 		return m.watchHeader()
 	}

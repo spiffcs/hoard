@@ -556,6 +556,8 @@ func (m *Model) turnTablePage(dir int) {
 	switch m.view {
 	case viewMarket:
 		m.turnMarketPage(dir)
+	case viewDip:
+		m.turnDipPage(dir)
 	case viewMovers:
 		m.turnOnePage(dir, &m.moversPage, len(m.filteredMovers), m.deriveMoversPage)
 	default:

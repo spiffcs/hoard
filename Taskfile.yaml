@@ -253,6 +253,10 @@ tasks:
     desc: Regenerate the sample collection's price history from a live backfill
     cmd: go run ./internal/demo/gen internal/demo/history.json
 
+  catalog-db:
+    desc: Build a full-catalog hoard database with 30 days of price history
+    cmd: go run ./internal/catalogdb/gen {{ .CLI_ARGS }}
+
   unreleased:
     desc: Show unreleased changes since the latest tag
     deps: [tools]

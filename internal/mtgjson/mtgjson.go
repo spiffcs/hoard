@@ -227,27 +227,49 @@ func pruneCache(cacheDir string) {
 	}
 }
 
+type setCardJSON struct {
+	UUID        string `json:"uuid"`
+	Identifiers struct {
+		ScryfallID string `json:"scryfallId"`
+
+		TCGProductID string `json:"tcgplayerProductId"`
+		TCGAltFoilID string `json:"tcgplayerAlternativeFoilProductId"`
+		TCGEtchedID  string `json:"tcgplayerEtchedProductId"`
+
+		CKID       string `json:"cardKingdomId"`
+		CKFoilID   string `json:"cardKingdomFoilId"`
+		CKEtchedID string `json:"cardKingdomEtchedId"`
+	} `json:"identifiers"`
+	PurchaseUrls struct {
+		CardKingdom     string `json:"cardKingdom"`
+		CardKingdomFoil string `json:"cardKingdomFoil"`
+	} `json:"purchaseUrls"`
+}
+
+type setData struct {
+	Cards []setCardJSON `json:"cards"`
+}
+
 type setFile struct {
-	Data struct {
-		Cards []struct {
-			UUID        string `json:"uuid"`
-			Identifiers struct {
-				ScryfallID string `json:"scryfallId"`
+	Data setData `json:"data"`
+}
 
-				TCGProductID string `json:"tcgplayerProductId"`
-				TCGAltFoilID string `json:"tcgplayerAlternativeFoilProductId"`
-				TCGEtchedID  string `json:"tcgplayerEtchedProductId"`
-
-				CKID       string `json:"cardKingdomId"`
-				CKFoilID   string `json:"cardKingdomFoilId"`
-				CKEtchedID string `json:"cardKingdomEtchedId"`
-			} `json:"identifiers"`
-			PurchaseUrls struct {
-				CardKingdom     string `json:"cardKingdom"`
-				CardKingdomFoil string `json:"cardKingdomFoil"`
-			} `json:"purchaseUrls"`
-		} `json:"cards"`
-	} `json:"data"`
+func addSetCards(out map[string]SetCard, cards []setCardJSON) {
+	for _, c := range cards {
+		if c.Identifiers.ScryfallID == "" || c.UUID == "" {
+			continue
+		}
+		out[c.Identifiers.ScryfallID] = SetCard{
+			UUID:            c.UUID,
+			CKURL:           c.PurchaseUrls.CardKingdom,
+			CKFoilURL:       c.PurchaseUrls.CardKingdomFoil,
+			AltProductID:    c.Identifiers.TCGAltFoilID,
+			EtchedProductID: c.Identifiers.TCGEtchedID,
+			TCGProductID:    c.Identifiers.TCGProductID,
+			CKFoilID:        c.Identifiers.CKFoilID,
+			CKEtchedID:      c.Identifiers.CKEtchedID,
+		}
+	}
 }
 
 type SetCard struct {
@@ -291,20 +313,7 @@ func SetIdentifiers(ctx context.Context, o Options, setCode string) (map[string]
 	}
 
 	out := make(map[string]SetCard, len(sf.Data.Cards))
-	for _, c := range sf.Data.Cards {
-		if c.Identifiers.ScryfallID != "" && c.UUID != "" {
-			out[c.Identifiers.ScryfallID] = SetCard{
-				UUID:            c.UUID,
-				CKURL:           c.PurchaseUrls.CardKingdom,
-				CKFoilURL:       c.PurchaseUrls.CardKingdomFoil,
-				AltProductID:    c.Identifiers.TCGAltFoilID,
-				EtchedProductID: c.Identifiers.TCGEtchedID,
-				TCGProductID:    c.Identifiers.TCGProductID,
-				CKFoilID:        c.Identifiers.CKFoilID,
-				CKEtchedID:      c.Identifiers.CKEtchedID,
-			}
-		}
-	}
+	addSetCards(out, sf.Data.Cards)
 	return out, nil
 }
 

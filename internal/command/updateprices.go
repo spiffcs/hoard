@@ -35,7 +35,7 @@ func NewCmdUpdatePrices(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", report.DefaultMoverRows, "risers/sinkers to list")
-	return cmd
+	return cli.Mutating(cmd)
 }
 
 func runUpdatePrices(ctx context.Context, deps action.Deps, env *cli.Env, limit int) error {

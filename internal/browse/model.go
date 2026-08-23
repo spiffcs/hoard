@@ -91,6 +91,16 @@ type Model struct {
 
 	focus pane
 
+	allDips          []store.TrendRow
+	allMomentum      []store.TrendRow
+	filteredDips     []store.TrendRow
+	filteredMomentum []store.TrendRow
+	dips             []store.TrendRow
+	momentum         []store.TrendRow
+
+	dipPage      [2]int
+	dipSecOffset [2]int
+
 	sortIdx [len(sortColumns)]int
 	sortRev [len(sortColumns)]bool
 

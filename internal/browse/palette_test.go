@@ -247,7 +247,7 @@ func TestWatchesPaletteRanking(t *testing.T) {
 		return "", nil
 	}
 	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	if m.view != viewWatches {

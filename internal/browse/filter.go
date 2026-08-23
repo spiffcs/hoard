@@ -318,3 +318,18 @@ func compare(have float64, c store.NumCond) bool {
 func containsFold(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
+
+func trendAsCard(r store.TrendRow) card {
+	return card{
+		ScryfallID:      r.ScryfallID,
+		Name:            r.Name,
+		SetCode:         r.SetCode,
+		CollectorNumber: r.CollectorNumber,
+		Finish:          r.Finish,
+		Quantity:        r.Copies,
+		Price:           &r.Last,
+		Value:           float64(r.Copies) * r.Last,
+		ColorIdentity:   r.ColorIdentity,
+		Treatment:       r.Treatment,
+	}
+}

@@ -54,6 +54,8 @@ type fakeStore struct {
 
 	movers   []store.PriceChange
 	unpriced []store.UnpricedRow
+	dips     []store.TrendRow
+	momentum []store.TrendRow
 
 	dataVersion      int64
 	dataVersionReads int
@@ -1505,6 +1507,10 @@ func TestViewCyclesAndLoads(t *testing.T) {
 		t.Errorf("view = %v, want market after movers", m.view)
 	}
 	m = key(m, "v")
+	if m.view != viewDip {
+		t.Errorf("view = %v, want dip after market", m.view)
+	}
+	m = key(m, "v")
 	if m.view != viewWatches || len(m.unpriced) != 1 {
 		t.Fatalf("view = %v with %d unpriced rows", m.view, len(m.unpriced))
 	}
@@ -1557,6 +1563,7 @@ func TestSortWorksInEveryView(t *testing.T) {
 		t.Errorf("movers by %s = %s first, want Sinker", m.sortLabel(), m.movers[0].Name)
 	}
 
+	m = key(m, "v")
 	m = key(m, "v")
 
 	m = key(m, "v")
@@ -1902,8 +1909,8 @@ func TestArbitrageViewChangeCancels(t *testing.T) {
 	if m.marketLoading {
 		t.Error("still loading after leaving the view")
 	}
-	if m.view != viewWatches {
-		t.Errorf("view = %v, want watches", m.view)
+	if m.view != viewDip {
+		t.Errorf("view = %v, want dip", m.view)
 	}
 	if cap.context().Err() == nil {
 		t.Error("leaving the view did not cancel the fetch")

@@ -27,7 +27,7 @@ func TestWatchesView(t *testing.T) {
 		watchRow("Methas", price(5), "under", 10, "met"),
 	}
 	m := newTestModel(t, st)
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	if m.view != viewWatches {
@@ -391,7 +391,7 @@ func TestWatchByNameChainedPrompts(t *testing.T) {
 
 func TestWatchPickFlow(t *testing.T) {
 	m := newTestModel(t, testStore())
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	m, _ = runPaletteCommand(t, m, "watch.pick")
@@ -503,7 +503,7 @@ func TestWatchEditPrefillsThreshold(t *testing.T) {
 	w.Finish, w.Op, w.Threshold = finish.Nonfoil, "under", 50
 	st.watches = []store.WatchStatus{w}
 	m := newTestModel(t, st)
-	for range 3 {
+	for range 4 {
 		m = key(m, "v")
 	}
 	m = key(m, "w")
