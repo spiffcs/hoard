@@ -1,4 +1,4 @@
-package catalogdb
+package compendium
 
 import (
 	"context"

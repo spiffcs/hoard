@@ -9,8 +9,8 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-func catalogPrintings() []CatalogPrinting {
-	return []CatalogPrinting{
+func catalogPrintings() []CompendiumPrinting {
+	return []CompendiumPrinting{
 		{
 			Card:     withRaw(ulamog(), `{"rarity":"mythic","set_name":"Ultimate Masters"}`),
 			Finishes: []finish.Finish{finish.Nonfoil, finish.Foil},
@@ -42,16 +42,16 @@ func etchedOnly() scryfall.Card {
 	}
 }
 
-func TestSeedCatalogPrintingsMakesEveryPrintingActive(t *testing.T) {
+func TestSeedCompendiumPrintingsMakesEveryPrintingActive(t *testing.T) {
 	s := newTestStore(t)
 	cid, err := s.collectionID()
 	if err != nil {
 		t.Fatalf("collectionID: %v", err)
 	}
 
-	printings, entries, err := s.SeedCatalogPrintings(cid, catalogPrintings())
+	printings, entries, err := s.SeedCompendiumPrintings(cid, catalogPrintings())
 	if err != nil {
-		t.Fatalf("SeedCatalogPrintings: %v", err)
+		t.Fatalf("SeedCompendiumPrintings: %v", err)
 	}
 	if printings != 3 || entries != 4 {
 		t.Fatalf("seeded %d printings and %d entries, want 3 and 4 (ulamog prints in two finishes)",

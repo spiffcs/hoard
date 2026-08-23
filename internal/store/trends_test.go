@@ -38,12 +38,12 @@ func trendStore(t *testing.T, series map[string][]mtgjson.Observation,
 	if err != nil {
 		t.Fatalf("CollectionID: %v", err)
 	}
-	ps := make([]CatalogPrinting, len(cards))
+	ps := make([]CompendiumPrinting, len(cards))
 	for i, c := range cards {
-		ps[i] = CatalogPrinting{Card: c, Finishes: []finish.Finish{finish.Nonfoil}}
+		ps[i] = CompendiumPrinting{Card: c, Finishes: []finish.Finish{finish.Nonfoil}}
 	}
-	if _, _, err := s.SeedCatalogPrintings(cid, ps); err != nil {
-		t.Fatalf("SeedCatalogPrintings: %v", err)
+	if _, _, err := s.SeedCompendiumPrintings(cid, ps); err != nil {
+		t.Fatalf("SeedCompendiumPrintings: %v", err)
 	}
 	if _, _, err := s.BackfillPrices(series); err != nil {
 		t.Fatalf("BackfillPrices: %v", err)

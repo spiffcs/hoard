@@ -28,6 +28,7 @@ func NewCmdDeck(a *app) *cobra.Command {
 			"hoard deck add --file <path> --dry-run\n" +
 			"... | hoard deck add --file - --name NAME\n" +
 			"hoard deck remove <name>\n" +
+			"hoard deck move <name> <folder>\n" +
 			"hoard deck repin <name> <set>",
 		Args: cobra.NoArgs,
 
@@ -35,7 +36,7 @@ func NewCmdDeck(a *app) *cobra.Command {
 			return cli.Usagef("deck requires a subcommand: add|remove|repin")
 		},
 	}
-	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a))
+	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a), newDeckMoveCmd(a))
 	return cmd
 }
 

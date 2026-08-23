@@ -15,6 +15,7 @@ import (
 
 const (
 	KindCollection = "collection"
+	KindFolder     = "folder"
 	KindDeck       = "deck"
 )
 
@@ -74,6 +75,7 @@ type Container struct {
 	SourceID  string
 	SourceURL string
 	Format    string
+	ParentID  int64
 }
 
 type DeckMeta struct {
@@ -245,8 +247,8 @@ func FoilTreatment(promoTypes sql.NullString) string {
 }
 
 type Store struct {
-	db      *sql.DB
-	catalog bool
+	db         *sql.DB
+	compendium bool
 }
 
 func Open(path string) (*Store, error) {
@@ -273,7 +275,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if err := s.loadCatalogMode(); err != nil {
+	if err := s.loadCompendiumMode(); err != nil {
 		db.Close()
 		return nil, err
 	}

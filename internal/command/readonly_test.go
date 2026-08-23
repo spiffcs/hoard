@@ -13,15 +13,15 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-func catalogStore(t *testing.T) *store.Store {
+func compendiumStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "catalog.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.SetCatalogMode(true); err != nil {
-		t.Fatalf("SetCatalogMode: %v", err)
+	if err := st.SetCompendiumMode(true); err != nil {
+		t.Fatalf("SetCompendiumMode: %v", err)
 	}
 	return st
 }
@@ -37,12 +37,12 @@ func TestMutatingCommandsRefuseACatalogDatabase(t *testing.T) {
 		{"binder", "new", "Trades"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			_, err := execCmd(ctx, catalogStore(t), args, false)
+			_, err := execCmd(ctx, compendiumStore(t), args, false)
 			if err == nil {
-				t.Fatalf("hoard %v succeeded against a catalog database", args)
+				t.Fatalf("hoard %v succeeded against a compendium database", args)
 			}
-			if !strings.Contains(err.Error(), "catalog") {
-				t.Errorf("error = %q, want it to name the catalog database as the reason", err)
+			if !strings.Contains(err.Error(), "compendium") {
+				t.Errorf("error = %q, want it to name the compendium database as the reason", err)
 			}
 		})
 	}
@@ -98,7 +98,7 @@ func TestReadOnlyCommandsStillWorkOnACatalogDatabase(t *testing.T) {
 		{"export"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			if _, err := execCmd(ctx, catalogStore(t), args, false); err != nil {
+			if _, err := execCmd(ctx, compendiumStore(t), args, false); err != nil {
 				t.Errorf("hoard %v failed on a catalog database: %v", args, err)
 			}
 		})

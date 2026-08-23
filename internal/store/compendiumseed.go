@@ -7,14 +7,14 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-type CatalogPrinting struct {
+type CompendiumPrinting struct {
 	Card     scryfall.Card
 	Finishes []finish.Finish
 }
 
 func (s *Store) CollectionID() (int64, error) { return s.collectionID() }
 
-func (s *Store) SeedCatalogPrintings(containerID int64, ps []CatalogPrinting) (printings, entries int, err error) {
+func (s *Store) SeedCompendiumPrintings(containerID int64, ps []CompendiumPrinting) (printings, entries int, err error) {
 	if len(ps) == 0 {
 		return 0, 0, nil
 	}

@@ -1,4 +1,4 @@
-package catalogdb
+package compendium
 
 import (
 	"bytes"
@@ -184,7 +184,7 @@ func TestBuildStampsTheDatabaseAsACatalog(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	if st.CatalogMode() {
+	if st.CompendiumMode() {
 		t.Fatal("setup: a fresh database is already stamped")
 	}
 
@@ -197,7 +197,7 @@ func TestBuildStampsTheDatabaseAsACatalog(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if !st.CatalogMode() {
+	if !st.CompendiumMode() {
 		t.Error("Build left the database unstamped; hoard cannot know to guard it")
 	}
 }

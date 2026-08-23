@@ -9,7 +9,7 @@ import (
 )
 
 var errReadOnly = errors.New(
-	"this is a catalog database, not your collection; it is read-only")
+	"this is a compendium database, not your collection; it is read-only")
 
 type readOnly struct{ Store }
 

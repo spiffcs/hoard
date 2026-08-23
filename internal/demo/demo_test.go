@@ -17,7 +17,7 @@ func TestCollectionIsAUsableHoardDocument(t *testing.T) {
 		t.Fatal("no printings: the demo would open on an empty collection")
 	}
 	if len(h.Holdings.Rows) == 0 {
-		t.Fatal("no holdings: printings without holdings are a catalog, not a collection")
+		t.Fatal("no holdings: printings without holdings are a compendium, not a collection")
 	}
 
 	var binders, decks int

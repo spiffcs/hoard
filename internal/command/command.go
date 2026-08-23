@@ -110,7 +110,7 @@ func execute(args []string) error {
 			return err
 		}
 		a.store, a.dbPath, closeStore = st, dbPath, func() { st.Close() }
-		if err := refuseIfCatalog(cmd, st); err != nil {
+		if err := refuseIfCompendium(cmd, st); err != nil {
 			return err
 		}
 		if newDB {

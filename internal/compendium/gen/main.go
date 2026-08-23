@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spiffcs/hoard/internal/catalogdb"
+	"github.com/spiffcs/hoard/internal/compendium"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
@@ -32,7 +32,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(flag.Arg(0), catalogdb.Options{
+	if err := run(flag.Arg(0), compendium.Options{
 		Since:      *since,
 		Sets:       split(*sets),
 		Rarities:   split(*rarity),
@@ -40,12 +40,12 @@ func main() {
 		Days:       *days,
 		CacheDir:   pricing.DefaultCacheDir(),
 	}); err != nil {
-		fmt.Fprintln(os.Stderr, "catalogdb/gen:", err)
+		fmt.Fprintln(os.Stderr, "compendium/gen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(path string, o catalogdb.Options) error {
+func run(path string, o compendium.Options) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -65,7 +65,7 @@ func run(path string, o catalogdb.Options) error {
 		}
 	})
 
-	res, err := catalogdb.Build(context.Background(), st, o, p)
+	res, err := compendium.Build(context.Background(), st, o, p)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func run(path string, o catalogdb.Options) error {
 	return nil
 }
 
-func days(o catalogdb.Options) int {
+func days(o compendium.Options) int {
 	if o.Days <= 0 {
 		return 30
 	}

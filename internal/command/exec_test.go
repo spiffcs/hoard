@@ -34,7 +34,7 @@ func execCmd(ctx context.Context, st *store.Store, args []string, jsonOut bool) 
 		if err := cli.CheckJSON(cmd, jsonOut); err != nil {
 			return err
 		}
-		return refuseIfCatalog(cmd, st)
+		return refuseIfCompendium(cmd, st)
 	}
 
 	if jsonOut {

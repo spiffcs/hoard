@@ -23,7 +23,7 @@ func TestReadOnlyRefusesEveryEdit(t *testing.T) {
 			t.Errorf("%s succeeded on a read-only store; it must refuse", name)
 			continue
 		}
-		if !strings.Contains(err.Error(), "catalog") {
+		if !strings.Contains(err.Error(), "compendium") {
 			t.Errorf("%s error = %q, want it to say why", name, err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestBrowseRefusesQuantityEditsOnAReadOnlyStore(t *testing.T) {
 	if m.status == "" || !m.statusErr {
 		t.Fatalf("pressing + reported status %q (err=%v), want a refusal", m.status, m.statusErr)
 	}
-	if !strings.Contains(m.status, "catalog") {
-		t.Errorf("status = %q, want it to name the catalog database as the reason", m.status)
+	if !strings.Contains(m.status, "compendium") {
+		t.Errorf("status = %q, want it to name the compendium database as the reason", m.status)
 	}
 }

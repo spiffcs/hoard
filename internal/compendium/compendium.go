@@ -1,4 +1,4 @@
-package catalogdb
+package compendium
 
 import (
 	"bufio"
@@ -77,7 +77,7 @@ func Build(ctx context.Context, st *store.Store, o Options, p progress.Fn) (Resu
 	if err != nil {
 		return res, err
 	}
-	if err := st.SetCatalogMode(false); err != nil {
+	if err := st.SetCompendiumMode(false); err != nil {
 		return res, err
 	}
 
@@ -104,7 +104,7 @@ func Build(ctx context.Context, st *store.Store, o Options, p progress.Fn) (Resu
 		return res, err
 	}
 	res.Observations, res.Bids = back.Inserted, back.BidInserted
-	return res, st.SetCatalogMode(true)
+	return res, st.SetCompendiumMode(true)
 }
 
 type bulkCard struct {
@@ -161,12 +161,12 @@ func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f
 	sc := bufio.NewScanner(bundle)
 	sc.Buffer(make([]byte, 0, 256*1024), 4*1024*1024)
 
-	batch := make([]store.CatalogPrinting, 0, batchSize)
+	batch := make([]store.CompendiumPrinting, 0, batchSize)
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
 		}
-		n, e, err := st.SeedCatalogPrintings(cid, batch)
+		n, e, err := st.SeedCompendiumPrintings(cid, batch)
 		if err != nil {
 			return err
 		}
@@ -213,7 +213,7 @@ func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f
 	return printings, entries, flush()
 }
 
-func printing(c bulkCard, line []byte) store.CatalogPrinting {
+func printing(c bulkCard, line []byte) store.CompendiumPrinting {
 	raw := make([]byte, len(line))
 	copy(raw, line)
 
@@ -236,7 +236,7 @@ func printing(c bulkCard, line []byte) store.CatalogPrinting {
 		PriceUSDEtched:  etched,
 		Raw:             raw,
 	}
-	return store.CatalogPrinting{Card: card, Finishes: scryfall.Finishes(card)}
+	return store.CompendiumPrinting{Card: card, Finishes: scryfall.Finishes(card)}
 }
 
 type filter struct {

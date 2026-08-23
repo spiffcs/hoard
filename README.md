@@ -99,6 +99,18 @@ With nothing imported yet, `hoard demo` shows the same browser with sample data;
 `hoard demo --reset` starts that sample over. When you're in the main browser you can use `:` to
 view the main command palette.
 
+The browser does not have to be pointed at cards you own. The [compendium
+generator](internal/compendium/gen/README.md) builds a read-only database from a
+slice of Magic. The example shows every mythic and rare since 2020 but feel free to make your own
+
+A handful of sets priced and backfilled helps people browse and chart it with the same screens. 
+Helps when building/pricing decks for new formats
+
+```sh
+task compendium -- -rarity mythic,rare -since 2020 mythics-rare.db
+HOARD_DB=mythics-rare.db hoard
+```
+
 <p align="center">
     <img src="docs/assets/browse.png" width="100%" alt="The browser: the sets you own cards from listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
 </p>

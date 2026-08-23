@@ -90,6 +90,8 @@ func rootCommand(a *app) *cobra.Command {
 
 		NewCmdDeck(a),
 
+		NewCmdFolder(a),
+
 		NewCmdExport(a),
 
 		NewCmdImport(a),
