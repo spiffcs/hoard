@@ -138,7 +138,7 @@ func Market(env ui.Env, sec market.Section) string {
 		switch sec.Kind {
 		case market.KindProfit:
 			t.Add(append(cardCells(o),
-				ui.C(ui.Money(o.Market)), ui.C("last sold"),
+				ui.C(ui.Money(o.BuyAt)), ui.C(o.BuyFrom),
 				ui.C(ui.Money(o.SellAt)), ui.C(o.SellTo),
 				ui.Cell{Text: "+" + ui.Money(o.Profit()), Style: env.Gain()})...)
 		case market.KindLiquid:

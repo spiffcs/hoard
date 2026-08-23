@@ -350,6 +350,7 @@ type Quote struct {
 const (
 	Retail  = "retail"
 	Buylist = "buylist"
+	Ask     = "ask"
 )
 
 type ExtraPrices struct {

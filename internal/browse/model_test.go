@@ -34,10 +34,11 @@ type fakeStore struct {
 	collection []store.CollectionRow
 	deckCards  map[int64][]store.EntryView
 
-	traits   map[string][]string
-	enriched int
-	watches  []store.WatchStatus
-	binders  map[int64]string
+	traits    map[string][]string
+	enriched  int
+	watches   []store.WatchStatus
+	binders   map[int64]string
+	uncounted map[int64]bool
 
 	binderRows map[int64][]store.CollectionRow
 
@@ -149,13 +150,14 @@ func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 		TotalCopies:   f.totals.TotalCopies,
 		Value:         f.totals.Value,
 		IsDefault:     true,
+		Counted:       !f.uncounted[defaultBinderID],
 	}
 	b.ID = defaultBinderID
 	b.Name = store.LooseName
 	b.Kind = store.KindCollection
 	out := []store.DeckSummary{b}
 	for id, name := range f.binders {
-		nb := store.DeckSummary{}
+		nb := store.DeckSummary{Counted: !f.uncounted[id]}
 		nb.ID, nb.Name, nb.Kind = id, name, store.KindCollection
 		out = append(out, nb)
 	}
@@ -739,7 +741,8 @@ func atAllCards(t *testing.T, m Model) Model {
 func key(m Model, k string) Model {
 	var msg tea.KeyMsg
 	switch k {
-	case "up", "down", "tab", "left", "right", "home", "end", "pgup", "pgdown":
+	case "up", "down", "tab", "left", "right", "home", "end", "pgup", "pgdown",
+		"shift+up", "shift+down":
 		msg = tea.KeyMsg{Type: keyType(k)}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
@@ -768,6 +771,10 @@ func keyType(k string) tea.KeyType {
 		return tea.KeyPgUp
 	case "pgdown":
 		return tea.KeyPgDown
+	case "shift+up":
+		return tea.KeyShiftUp
+	case "shift+down":
+		return tea.KeyShiftDown
 	}
 	return tea.KeyNull
 }
@@ -1591,7 +1598,7 @@ func TestMarketSortIsPerTable(t *testing.T) {
 	opp := func(name string, buy, sell, lastSold float64) market.Opportunity {
 		o := market.Opportunity{BuyAt: buy, SellAt: sell, Market: lastSold,
 			HasMarket: lastSold > 0, HasRetail: true, HasBuy: sell > 0}
-		o.Card.Name = name
+		o.Card.Name, o.Card.Copies = name, 1
 		return o
 	}
 	m.marketAllRows = []market.Row{
@@ -1702,7 +1709,7 @@ func marketModel(t *testing.T, fn MarketFunc) Model {
 func opp(name string, buy, sell float64) market.Opportunity {
 	return market.Opportunity{
 		Card: store.OwnedFinish{ScryfallID: "sf-" + name, Name: name,
-			SetCode: "mh3", CollectorNumber: "1", Finish: finish.Nonfoil},
+			SetCode: "mh3", CollectorNumber: "1", Finish: finish.Nonfoil, Copies: 1},
 		Market:    buy,
 		BuyAt:     buy,
 		SellAt:    sell,

@@ -122,10 +122,14 @@ func (f *Fetcher) RefreshQuotes(ctx context.Context, refs []Ref) (map[string][]m
 
 	extra := f.treatedExtra(ctx, refs, 1, uuids)
 	out, _, err := remap(f, ctx, refs, uuids, "quotes", mtgjson.TodayQuotesWith(extra))
-	if err == nil {
-		f.saveQuotes(refs, out)
+	if err != nil {
+		return out, err
 	}
-	return out, err
+	for sid, asks := range f.asks(ctx, refs) {
+		out[sid] = append(out[sid], asks...)
+	}
+	f.saveQuotes(refs, out)
+	return out, nil
 }
 
 func (f *Fetcher) History(ctx context.Context, refs []Ref, days int) (map[string]mtgjson.CardHistory, int, error) {

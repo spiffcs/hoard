@@ -40,6 +40,7 @@ type container struct {
 	Value  float64
 
 	isDefault bool
+	Counted   bool
 
 	setCode string
 
@@ -100,6 +101,8 @@ type Model struct {
 
 	dipPage      [2]int
 	dipSecOffset [2]int
+
+	selAnchor int
 
 	sortIdx [len(sortColumns)]int
 	sortRev [len(sortColumns)]bool
@@ -262,7 +265,8 @@ func New(st Store, opts ...Option) (Model, error) {
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		cellAspect: ui.CellAspectOverride(), setsMode: true,
 		commands: commands(), moversPennyLimit: defaultPennyLimit,
-		marketFloor: defaultMarketFloor, helpRowsMemo: map[helpRowsKey]int{}}
+		marketFloor: defaultMarketFloor, helpRowsMemo: map[helpRowsKey]int{},
+		selAnchor: noSelection}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -331,7 +335,11 @@ func (m *Model) loadContainers() error {
 		out = append(out, container{
 			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
 			Copies: b.TotalCopies, Value: b.Value, isDefault: b.IsDefault,
+			Counted: b.Counted,
 		})
+		if !b.Counted {
+			continue
+		}
 		out[0].Copies += b.TotalCopies
 		out[0].Value += b.Value
 	}
@@ -353,6 +361,7 @@ func (m *Model) loadContainers() error {
 }
 
 func (m *Model) loadCards() error {
+	m.clearSelection()
 	sel := m.selectedContainer()
 	if sel == nil {
 		m.cards = nil
@@ -962,6 +971,11 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "esc":
+		if _, _, ok := m.selectionRange(); ok {
+			m.clearSelection()
+			m.status, m.statusErr = "selection cleared", false
+			return m, nil
+		}
 		if m.watchPick {
 
 			m.watchPick = false
@@ -1007,6 +1021,12 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 
+	case "x":
+		m.toggleBinderCounted()
+	case "shift+down":
+		m.extendSelection(1)
+	case "shift+up":
+		m.extendSelection(-1)
 	case "up", "k":
 		m.move(-1)
 		m.status = ""
@@ -1221,6 +1241,7 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) move(delta int) {
+	m.clearSelection()
 	n := m.rowCount(m.focus)
 	if n == 0 {
 		return
@@ -1234,6 +1255,7 @@ func (m *Model) move(delta int) {
 }
 
 func (m *Model) moveTo(target int) {
+	m.clearSelection()
 	n := m.rowCount(m.focus)
 	if n == 0 {
 		return

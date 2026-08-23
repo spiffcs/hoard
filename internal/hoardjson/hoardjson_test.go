@@ -283,7 +283,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         "belowMarket": 0.5,
         "sellUsd": 5,
         "sellTo": "cardkingdom",
-        "profitUsd": 1,
+        "profitUsd": 3,
         "liquidity": 1.25
       },
       {
@@ -304,7 +304,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
         "belowMarket": 0.5,
         "sellUsd": 5,
         "sellTo": "cardkingdom",
-        "profitUsd": 1,
+        "profitUsd": 3,
         "liquidity": 1.25
       },
       {

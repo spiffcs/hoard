@@ -41,6 +41,7 @@ func TestArbitrageCachedReadsDayCache(t *testing.T) {
 		"asked": []string{"sol"},
 		"quotes": map[string][]mtgjson.Quote{"sol": {
 			{Provider: "tcgplayer", Kind: mtgjson.Retail, Finish: finish.Nonfoil, Price: 2.00},
+			{Provider: "tcgplayer", Kind: mtgjson.Ask, Finish: finish.Nonfoil, Price: 2.00},
 			{Provider: "cardkingdom", Kind: mtgjson.Buylist, Finish: finish.Nonfoil, Price: 2.50},
 		}},
 	}

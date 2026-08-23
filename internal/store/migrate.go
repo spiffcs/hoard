@@ -45,6 +45,7 @@ var migrations = []migration{
 	{28, percentWatches},
 	{29, contradictedPrices},
 	{30, purgePhantomFinishSeries},
+	{31, binderCounted},
 }
 
 var schemaVersion = migrations[len(migrations)-1].Version
@@ -754,3 +755,7 @@ DELETE FROM card_bid_history WHERE rowid IN (
      AND json_extract(c.raw_json, '$.finishes') NOT LIKE '%"' || b.finish || '"%'
      AND NOT (b.finish = 'foil'
               AND json_extract(c.raw_json, '$.finishes') LIKE '%"etched"%'));`
+
+const binderCounted = `
+ALTER TABLE containers ADD COLUMN counted INTEGER NOT NULL DEFAULT 1;
+`

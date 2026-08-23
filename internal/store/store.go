@@ -110,6 +110,7 @@ type DeckSummary struct {
 	Value         float64
 
 	IsDefault bool
+	Counted   bool
 }
 
 const (

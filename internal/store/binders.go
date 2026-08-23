@@ -29,6 +29,7 @@ func (s *Store) ListBinders() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
        ct.source_id = '`+collectionSourceID+`' AS is_default,
+       ct.counted,
        -- COUNT(DISTINCT ...) rather than COUNT(...): the column means distinct
        -- printings, which is what CollectionTotals has always reported and what
        -- the JSON model documents. Counting rows instead made a card held in two
@@ -56,7 +57,7 @@ ORDER BY CASE WHEN ct.source_id = '`+collectionSourceID+`' THEN 0 ELSE 1 END, ct
 		var d DeckSummary
 		d.Kind = KindCollection
 		if err := rows.Scan(&d.ID, &d.Name, &d.Source, &d.SourceURL, &d.Format,
-			&d.IsDefault, &d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
+			&d.IsDefault, &d.Counted, &d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

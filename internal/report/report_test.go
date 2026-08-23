@@ -247,7 +247,9 @@ func TestMarketIdentityAndProfitColors(t *testing.T) {
 	sec := market.Section{Kind: market.KindProfit, Rows: []market.Opportunity{{
 		Card: store.OwnedFinish{Name: "Absorb", SetCode: "rna", CollectorNumber: "151",
 			Finish: finish.Nonfoil, Copies: 1, ColorIdentity: []string{"W", "U"}},
-		Market: 1.00, SellAt: 3.00, SellTo: "cardkingdom", HasMarket: true, HasBuy: true,
+		Market: 1.00, BuyAt: 1.00, BuyFrom: "tcgplayer", LowAsk: 1.00,
+		SellAt: 3.00, SellTo: "cardkingdom",
+		HasMarket: true, HasRetail: true, HasBuy: true, HasLowAsk: true,
 	}}}
 
 	out := Market(ui.Env{Width: 100, Color: true, Clamp: true}, sec)

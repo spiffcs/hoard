@@ -174,8 +174,9 @@ const ownedByPriceFinish = `
                      THEN 'etched'
                 WHEN e.finish IN ('foil','etched') THEN 'foil'
                 WHEN e.finish = 'nonfoil' THEN 'nonfoil' END AS pfinish,
-           SUM(e.quantity) AS copies
+           SUM(` + countedQuantity + `) AS copies
     FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+    JOIN containers ctc ON ctc.id = e.container_id
     GROUP BY sid, pfinish`
 
 const pricesAt = `
@@ -256,7 +257,7 @@ SELECT ?,
        'observed'
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
-JOIN containers ct ON ct.id = e.container_id
+JOIN containers ct ON ct.id = e.container_id AND ct.counted = 1
 `+altJoinEntries+`
 ON CONFLICT(as_of) DO UPDATE SET
     binder = excluded.binder,

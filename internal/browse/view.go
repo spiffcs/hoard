@@ -412,10 +412,10 @@ func (m Model) containerLines(width int) []string {
 		}}
 		for i, c := range m.containers {
 			mark := ""
-			if c.settling(now) {
+			if c.settling(now) || c.skipped() {
 				mark = settlingMark
 			}
-			if !m.containerEligible(i) {
+			if !m.containerEligible(i) || c.skipped() {
 				t.AddStyled(env.Dim(), ui.C(mark), ui.C(c.Name), ui.C(ui.Money(c.Value)))
 				continue
 			}
@@ -502,6 +502,9 @@ func (m Model) window(lines []string, p pane, width int) []string {
 		line := fit(rows[i], width)
 		switch {
 		case i == m.cursor[p] && m.focus == p:
+
+			line = ui.Restyle(line, m.theme.Cursor)
+		case p == paneCards && m.selectedRow(i):
 
 			line = ui.Restyle(line, m.theme.Cursor)
 		case i == m.cursor[p] && (p == paneContainers || (m.view == viewHoldings && i > 0)):
@@ -736,6 +739,15 @@ func (m Model) helpLine() string {
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
 			e = append(e, ui.K("R", "rename"), ui.K("d", "remove"))
 		}
+		if sel := m.selectedContainer(); sel != nil &&
+			sel.Kind == store.KindCollection && sel.ID != allCardsID {
+
+			label := "exclude"
+			if !sel.Counted {
+				label = "include"
+			}
+			e = append(e, ui.K("x", label))
+		}
 		e = append(e, ui.K("/", "filter"), ui.K("M", "floor"),
 			ui.K("F", "refresh prices"), ui.K("v", "views"))
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
@@ -750,6 +762,7 @@ func (m Model) helpLine() string {
 		lens = "sets"
 	}
 	e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", lens), ui.K("enter", "detail"),
+		ui.K("shift+↑/↓", "select"),
 		ui.K(">/<", "page"), ui.K("/", "filter"), ui.K("M", "floor"),
 		ui.K("s", "sort"), ui.K("S", "reverse"), ui.K("F", "refresh prices"),
 		ui.K("v", "views"), ui.K("a", "add")}

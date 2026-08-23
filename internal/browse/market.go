@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
@@ -222,7 +221,11 @@ func (m Model) marketSectionHead(i int) (title, note string) {
 	if kind == market.KindLiquid && m.liquidLowball {
 		kind = market.KindLowball
 	}
-	return kind.Title(), kind.Note()
+	note = kind.Note()
+	if kind == market.KindProfit && m.marketResult.Unverified > 0 {
+		note += " · " + ui.Count(m.marketResult.Unverified) + " hidden · no verified ask"
+	}
+	return kind.Title(), note
 }
 
 func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row, lowball bool) ui.Table {
@@ -244,10 +247,13 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row, lowball
 	case market.KindProfit:
 
 		t = ui.Table{Cols: []ui.Col{name, setNum, fin,
-			money("TCG SOLD"), money("CK BUYLIST"), money("PROFIT")}}
+			money("BUY AT"), vendor("FROM"),
+			{Title: "TCG SOLD", Align: ui.Right, Priority: 3, Style: env.Dim()},
+			money("CK BUYLIST"), money("PROFIT")}}
 		for _, r := range rows {
 
 			t.Add(append(cardCells(r),
+				ui.C(ui.Money(r.BuyAt)), ui.C(r.BuyFrom),
 				ui.C(ui.Money(r.Market)), ui.C(ui.Money(r.SellAt)),
 				ui.Cell{Text: "+" + ui.Money(r.Profit()), Style: env.Gain()})...)
 		}

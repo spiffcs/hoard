@@ -17,11 +17,21 @@ func Binders(env ui.Env, binders []store.DeckSummary) string {
 			{Title: "VALUE", Align: ui.Right},
 		},
 	}
+	var uncounted bool
 	for _, b := range binders {
-		t.Add(ui.C(fmt.Sprint(b.ID)), ui.C(b.Name),
+		name := b.Name
+		if !b.Counted {
+			name += " *"
+			uncounted = true
+		}
+		t.Add(ui.C(fmt.Sprint(b.ID)), ui.C(name),
 			ui.C(ui.Count(b.TotalCopies)), ui.C(ui.Money(b.Value)))
 	}
-	return t.Render()
+	out := t.Render()
+	if uncounted {
+		out += env.Dim()("* not counted toward your collection") + "\n"
+	}
+	return out
 }
 
 func FinishRepairs(env ui.Env, fixed []store.FinishFix) string {

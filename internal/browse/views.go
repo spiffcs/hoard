@@ -462,6 +462,9 @@ func (m Model) viewHeader() (title, totals string) {
 		return m.watchHeader()
 	}
 	if sel := m.selectedContainer(); sel != nil {
+		if picked := m.selectionSummary(); picked != "" {
+			return "CARDS · " + strings.ToUpper(sel.Name), picked
+		}
 		return "CARDS · " + strings.ToUpper(sel.Name),
 			fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value)) +
 				m.tablePagePhrase(len(m.cards), m.cardsPage, len(m.filteredCards))

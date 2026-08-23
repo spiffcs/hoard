@@ -24,6 +24,9 @@ type Comp struct {
 	Low     float64
 	LowFrom string
 
+	Ask    float64
+	HasAsk bool
+
 	Buylist    float64
 	BuylistTo  string
 	HasBuylist bool
@@ -121,6 +124,10 @@ func AssessComp(o store.OwnedFinish, qs []mtgjson.Quote) Comp {
 			}
 			if c.LowFrom == "" || q.Price < c.Low {
 				c.Low, c.LowFrom = q.Price, q.Provider
+			}
+		case mtgjson.Ask:
+			if !c.HasAsk || q.Price < c.Ask {
+				c.Ask, c.HasAsk = q.Price, true
 			}
 		case mtgjson.Buylist:
 			if q.Price > c.Buylist {

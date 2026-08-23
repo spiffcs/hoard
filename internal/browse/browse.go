@@ -19,6 +19,7 @@ type Editor interface {
 	CreateBinder(name string) (int64, error)
 	RenameBinder(id int64, name string) error
 	DeleteBinder(id int64) error
+	SetBinderCounted(id int64, counted bool) error
 
 	SetHoldingQuantityIn(containerID int64, scryfallID string, fin finish.Finish, condition string, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)

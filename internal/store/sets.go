@@ -18,7 +18,7 @@ SELECT c.set_code,
        COALESCE(SUM(e.quantity), 0) AS copies,
        COALESCE(SUM(e.quantity * ` + entryValue + `), 0) AS value
 FROM card_entries e
-JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN cards c ON c.scryfall_id = e.scryfall_id` + countedEntries + `
 ` + altJoinCards + `
 GROUP BY c.set_code
 ORDER BY MAX(c.released_at) DESC, c.set_code`)

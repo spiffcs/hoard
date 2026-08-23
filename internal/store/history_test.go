@@ -811,6 +811,7 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		`ALTER TABLE cards DROP COLUMN loyalty`,
 		`ALTER TABLE cards DROP COLUMN flavor_text`,
 		`ALTER TABLE cards DROP COLUMN image_uri`,
+		`ALTER TABLE containers DROP COLUMN counted`,
 		`PRAGMA user_version = 8`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {

@@ -66,6 +66,29 @@ func binderRemove(st *store.Store, env *cli.Env, args []string) error {
 	return nil
 }
 
+func binderCounted(st *store.Store, env *cli.Env, args []string, counted bool) error {
+	verb := "exclude"
+	if counted {
+		verb = "include"
+	}
+	if len(args) != 1 {
+		return cli.Usagef("binder %s takes one binder: hoard binder %s BINDER", verb, verb)
+	}
+	b, err := st.BinderByRef(args[0])
+	if err != nil {
+		return err
+	}
+	if err := st.SetBinderCounted(b.ID, counted); err != nil {
+		return err
+	}
+	if counted {
+		fmt.Fprintf(env.Out, "Binder %q counts toward your collection again\n", b.Name)
+		return nil
+	}
+	fmt.Fprintf(env.Out, "Binder %q is no longer counted toward your collection\n", b.Name)
+	return nil
+}
+
 func NewCmdBinder(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "binder",
@@ -97,6 +120,22 @@ func NewCmdBinder(a *app) *cobra.Command {
 			Use: "rm BINDER", Short: "Remove an empty binder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return binderRemove(a.store, a.env, args) },
+		}),
+		cli.Mutating(&cobra.Command{
+			Use: "exclude BINDER", Short: "Stop a binder counting toward your collection",
+			Example: "hoard binder exclude Want",
+			Args:    cobra.ExactArgs(1),
+			RunE: func(_ *cobra.Command, args []string) error {
+				return binderCounted(a.store, a.env, args, false)
+			},
+		}),
+		cli.Mutating(&cobra.Command{
+			Use: "include BINDER", Short: "Count a binder toward your collection again",
+			Example: "hoard binder include Want",
+			Args:    cobra.ExactArgs(1),
+			RunE: func(_ *cobra.Command, args []string) error {
+				return binderCounted(a.store, a.env, args, true)
+			},
 		}),
 	)
 	return cli.JSONCapable(cmd)

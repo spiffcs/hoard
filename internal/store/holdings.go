@@ -116,7 +116,7 @@ SELECT ` + cardCols(altSourceForEntry) + `,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * ` + entryValue + `) AS value
 FROM card_entries e
-JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN cards c ON c.scryfall_id = e.scryfall_id` + countedEntries + `
 ` + altJoinCards + `
 GROUP BY c.scryfall_id, e.finish, e.condition
 ORDER BY value DESC, c.name`)
@@ -169,13 +169,14 @@ func (s *Store) OwnedByFinish() ([]OwnedFinish, error) {
 	rows, err := s.db.Query(`
 SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
        c.collector_number, e.finish,
-       SUM(e.quantity) AS copies,
-       SUM(e.quantity * ` + entryValue + `) AS value,
+       SUM(` + countedQuantity + `) AS copies,
+       SUM(` + countedQuantity + ` * ` + entryValue + `) AS value,
        c.color_identity, c.promo_types,
        COALESCE(c.tcg_alt_product_id, ''), COALESCE(c.ck_foil_id, ''),
        c.ck_foil_id IS NOT NULL, COALESCE(c.lang, '')
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ctc ON ctc.id = e.container_id
 ` + altJoinCards + `
 GROUP BY c.scryfall_id, e.finish
 ORDER BY value DESC, c.name`)
@@ -243,7 +244,8 @@ SELECT COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
 FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
 `+altJoinEntries+`
-WHERE ct.kind = ?`, KindCollection).Scan(&t.DistinctCards, &t.TotalCopies, &t.Value)
+WHERE ct.kind = ? AND ct.counted = 1`, KindCollection).Scan(
+		&t.DistinctCards, &t.TotalCopies, &t.Value)
 	if err != nil {
 		return CollectionTotals{}, fmt.Errorf("collection totals: %w", err)
 	}

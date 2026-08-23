@@ -100,8 +100,8 @@ func TestAssessUsesOnlyTheOwnedFinish(t *testing.T) {
 	normal := ownedFoil("Legion Loyalty")
 	normal.Finish = finish.Nonfoil
 	op, usable = Assess(normal, qs)
-	if usable != 2 || op.BuyAt != 0.42 || op.SellAt != 0.10 {
-		t.Errorf("non-foil: buy %v sell %v (%d usable), want 0.42 / 0.10",
+	if usable != 2 || op.BuyAt != 0.99 || op.SellAt != 0.10 {
+		t.Errorf("non-foil: buy %v sell %v (%d usable), want 0.99 / 0.10",
 			op.BuyAt, op.SellAt, usable)
 	}
 }
@@ -111,6 +111,7 @@ func TestAssessIdentifiesRealArbitrage(t *testing.T) {
 	o.Finish = finish.Nonfoil
 	qs := []mtgjson.Quote{
 		q("tcgplayer", mtgjson.Retail, finish.Nonfoil, 14.43),
+		q("tcgplayer", mtgjson.Ask, finish.Nonfoil, 14.43),
 		q("cardkingdom", mtgjson.Buylist, finish.Nonfoil, 16.50),
 	}
 	op, _ := Assess(o, qs)
@@ -133,7 +134,7 @@ func TestAssessWithNoRetailIsSkipped(t *testing.T) {
 
 func mk(name string, market, buy, sell float64) Opportunity {
 	return Opportunity{
-		Card:      store.OwnedFinish{Name: name},
+		Card:      store.OwnedFinish{Name: name, Copies: 1},
 		Market:    market,
 		BuyAt:     buy,
 		SellAt:    sell,
@@ -613,7 +614,7 @@ func TestAssessPrefersTheEtchedBucket(t *testing.T) {
 	if !op.HasMarket || op.Market != 24.50 {
 		t.Errorf("market = %v, want the etched product's price", op.Market)
 	}
-	if retail != 2 || op.BuyAt != 24.50 {
+	if retail != 2 || op.BuyAt != 27.99 {
 		t.Errorf("op = %+v (retail %d), want only etched quotes", op, retail)
 	}
 

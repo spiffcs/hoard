@@ -144,6 +144,7 @@ type priceRows struct {
 		LowPrice    float64 `json:"lowPrice"`
 		MidPrice    float64 `json:"midPrice"`
 		HighPrice   float64 `json:"highPrice"`
+		DirectLow   float64 `json:"directLowPrice"`
 		SubTypeName string  `json:"subTypeName"`
 	} `json:"results"`
 }
@@ -152,6 +153,8 @@ type Quote struct {
 	Market float64
 
 	Low, Mid, High float64
+
+	Direct float64
 }
 
 const (
@@ -178,6 +181,7 @@ func allQuotes(b []byte) (map[string]map[string]Quote, error) {
 			Low:    r.LowPrice,
 			Mid:    r.MidPrice,
 			High:   r.HighPrice,
+			Direct: r.DirectLow,
 		}
 	}
 	return out, nil

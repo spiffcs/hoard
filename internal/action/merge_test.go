@@ -502,7 +502,7 @@ func stampVersion(path string, v int, undo ...string) error {
 	return err
 }
 
-var newestUndo []string
+var newestUndo = []string{`ALTER TABLE containers DROP COLUMN counted`}
 
 func rawJSON(t *testing.T, path, scryfallID string) string {
 	t.Helper()

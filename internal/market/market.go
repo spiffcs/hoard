@@ -21,9 +21,11 @@ type Opportunity struct {
 	BuyFrom   string
 	SellAt    float64
 	SellTo    string
+	LowAsk    float64
 	HasMarket bool
 	HasRetail bool
 	HasBuy    bool
+	HasLowAsk bool
 }
 
 func (o Opportunity) Liquidity() float64 { return o.SellAt / o.Market }
@@ -43,7 +45,7 @@ func grade(v, lo, hi float64) float64 {
 
 func (o Opportunity) BelowMarket() float64 { return 1 - o.BuyAt/o.Market }
 
-func (o Opportunity) Profit() float64 { return o.SellAt - o.Market }
+func (o Opportunity) Profit() float64 { return o.SellAt - o.BuyAt }
 
 func (o Opportunity) Printing() string {
 	return ui.Printing(o.Card.SetCode, o.Card.CollectorNumber)
@@ -55,6 +57,8 @@ type Result struct {
 	Comps []Comp
 
 	Compared int
+
+	Unverified int
 }
 
 func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minValue float64) Result {
@@ -71,6 +75,9 @@ func Collect(owned []store.OwnedFinish, quotes map[string][]mtgjson.Quote, minVa
 			if c := AssessComp(o, qs); c.Figures() >= 2 && c.Low >= minValue {
 				res.Comps = append(res.Comps, c)
 			}
+		}
+		if op.HasBuy && !op.HasRetail {
+			res.Unverified++
 		}
 		if op.HasRetail && op.BuyAt >= minValue {
 			res.Opportunities = append(res.Opportunities, op)
@@ -119,7 +126,16 @@ func Assess(o store.OwnedFinish, qs []mtgjson.Quote) (op Opportunity, retailCoun
 			}
 			retailCount++
 			if q.Provider == MarketProvider {
+
 				op.Market, op.HasMarket = q.Price, true
+				continue
+			}
+			if !op.HasRetail || q.Price < op.BuyAt {
+				op.BuyAt, op.BuyFrom, op.HasRetail = q.Price, q.Provider, true
+			}
+		case mtgjson.Ask:
+			if !op.HasLowAsk || q.Price < op.LowAsk {
+				op.LowAsk, op.HasLowAsk = q.Price, true
 			}
 			if !op.HasRetail || q.Price < op.BuyAt {
 				op.BuyAt, op.BuyFrom, op.HasRetail = q.Price, q.Provider, true
@@ -172,7 +188,7 @@ func (k Kind) Title() string {
 func (k Kind) Note() string {
 	switch k {
 	case KindProfit:
-		return "CK buylist pays more than TCG last-sold"
+		return "CK buylist pays more than the cheapest verified listing"
 	case KindLiquid:
 		return "CK buylist pays at least 70% of TCG last-sold"
 	case KindLowball:
@@ -224,19 +240,23 @@ func Lowballs(r Result, limit int) []Opportunity {
 }
 
 func top(all []Opportunity, limit int, k Kind) []Opportunity {
-	keep := func(o Opportunity) bool { return o.HasBuy && o.HasMarket && o.Profit() > 0 }
+	held := func(o Opportunity) bool { return o.Card.Copies > 0 }
+	keep := func(o Opportunity) bool {
+		return held(o) && o.HasBuy && o.HasRetail && o.Profit() > 0
+	}
 	order := func(a, b Opportunity) int { return cmp.Compare(b.Profit(), a.Profit()) }
 	switch k {
 	case KindLiquid:
 
 		keep = func(o Opportunity) bool {
-			return o.HasBuy && o.HasMarket && o.Profit() <= 0 && o.Liquidity() >= liquidFloor
+			return held(o) && o.HasBuy && o.HasMarket &&
+				!(o.HasRetail && o.Profit() > 0) && o.Liquidity() >= liquidFloor
 		}
 		order = func(a, b Opportunity) int { return cmp.Compare(b.Liquidity(), a.Liquidity()) }
 	case KindLowball:
 
 		keep = func(o Opportunity) bool {
-			return o.HasBuy && o.HasMarket && o.Liquidity() < lowballCeiling
+			return held(o) && o.HasBuy && o.HasMarket && o.Liquidity() < lowballCeiling
 		}
 		order = func(a, b Opportunity) int { return cmp.Compare(a.Liquidity(), b.Liquidity()) }
 	case KindBelowMarket:
