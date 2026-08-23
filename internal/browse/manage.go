@@ -133,6 +133,7 @@ func (m *Model) focusContainer(id int64) {
 	for i, c := range m.containers {
 		if c.ID == id {
 			m.cursor[paneContainers] = i
+			m.displacedContainer = 0
 			m.scrollIntoView()
 
 			m.deriveView()

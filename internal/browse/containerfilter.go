@@ -1,8 +1,11 @@
 package browse
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
+
+	"github.com/spiffcs/hoard/internal/finish"
+
+	"github.com/spiffcs/hoard/internal/store"
 )
 
 func entryKey(scryfallID, finish string) string {
@@ -23,6 +26,19 @@ func (m *Model) rebuildEntryIndex() error {
 			idx[k.ContainerID] = set
 		}
 		set[entryKey(k.ScryfallID, k.Finish.String())] += k.Quantity
+	}
+	for _, c := range m.containers {
+		if c.Kind != store.KindDeck || c.parentID == 0 {
+			continue
+		}
+		roll := idx[c.parentID]
+		if roll == nil {
+			roll = make(map[string]int)
+			idx[c.parentID] = roll
+		}
+		for k, n := range idx[c.ID] {
+			roll[k] += n
+		}
 	}
 	m.entryIndex = idx
 	return nil
@@ -110,4 +126,53 @@ func (m Model) viewScope() string {
 		return " · " + strings.ToUpper(sel.Name)
 	}
 	return ""
+}
+
+func (m Model) containerIndexOf(id int64) int {
+	for i, c := range m.containers {
+		if c.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) selectContainer(i int) error {
+	m.cursor[paneContainers] = i
+	m.scrollIntoView()
+	if err := m.loadCards(); err != nil {
+		return err
+	}
+	m.deriveView()
+	return nil
+}
+
+func (m *Model) restorePick() error {
+	if len(m.containers) == 0 {
+		return nil
+	}
+	if !m.containerEligible(m.cursor[paneContainers]) {
+		displaced := m.selectedContainer()
+		if err := m.selectContainer(0); err != nil {
+			return err
+		}
+		if displaced != nil && displaced.Kind != kindAllCards {
+			m.displacedContainer = displaced.ID
+			m.status = displaced.Name + " has no " + m.view.String() + " · showing all cards"
+		}
+		return nil
+	}
+	if m.displacedContainer == 0 {
+		return nil
+	}
+	want := m.containerIndexOf(m.displacedContainer)
+	if m.cursor[paneContainers] != 0 || want < 0 {
+		m.displacedContainer = 0
+		return nil
+	}
+	if !m.containerEligible(want) {
+		return nil
+	}
+	m.displacedContainer = 0
+	return m.selectContainer(want)
 }

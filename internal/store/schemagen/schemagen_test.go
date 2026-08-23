@@ -2,6 +2,7 @@ package schemagen
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,5 +91,28 @@ func TestSplitTopLevelIgnoresQuotedCommas(t *testing.T) {
 	got := splitTopLevel(`a TEXT NOT NULL DEFAULT 'x,y', b TEXT`)
 	if len(got) != 2 || got[0] != `a TEXT NOT NULL DEFAULT 'x,y'` || got[1] != "b TEXT" {
 		t.Errorf("split = %q, want two parts with the quoted comma intact", got)
+	}
+}
+
+func TestGeneratedSchemaReplaysIntoAnEmptyDatabase(t *testing.T) {
+	out, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "replay.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(string(out)); err != nil {
+		t.Fatalf("the published schema is not executable SQL: %v", err)
+	}
+	var triggers int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'`).Scan(&triggers); err != nil {
+		t.Fatalf("counting triggers: %v", err)
+	}
+	if triggers != 2 {
+		t.Errorf("replayed schema has %d triggers, want the 2 guarding card_entries", triggers)
 	}
 }

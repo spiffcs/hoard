@@ -69,8 +69,13 @@ func TestFolderNewThenDeckMoveFilesTheDeck(t *testing.T) {
 		t.Fatalf("decks = %+v, want Atraxa under folder %d", decks, folders[0].ID)
 	}
 
-	if out := run(t, st, "folder", "list"); !strings.Contains(out, "commander") {
+	out := run(t, st, "folder", "list")
+	if !strings.Contains(out, "commander") {
 		t.Errorf("folder list = %q, want commander listed", out)
+	}
+	if strings.Contains(out, "not counted toward your collection") {
+		t.Errorf("folder list = %q, want no binder exclusion marker: "+
+			"a folder holds decks, which never count toward the collection", out)
 	}
 }
 

@@ -311,14 +311,29 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { m.promptWatchImportPath(); return nil },
 		},
 		{
-			id: "binder.new", title: "NewBinder", aliases: "create folder",
+			id: "folder.new", title: "NewFolder", aliases: "folder group decks create",
+			desc:  "Create a folder to group decks under.",
+			where: func(m *Model) bool { return m.view == viewHoldings && !m.setsMode },
+			rank:  onView(viewHoldings, 2),
+			run:   func(m *Model) tea.Cmd { m.promptNewFolder(); return nil },
+		},
+		{
+			id: "deck.move", title: "MoveDeckToFolder", aliases: "group file organise organize",
+			desc:  "Put the selected deck in a folder, or move it back to the top level.",
+			key:   "m",
+			where: func(m *Model) bool { return m.view == viewHoldings && !m.setsMode },
+			rank:  onView(viewHoldings, 2),
+			run:   func(m *Model) tea.Cmd { m.promptMoveDeck(); return nil },
+		},
+		{
+			id: "binder.new", title: "NewBinder", aliases: "create labelled part",
 			desc: "Create a named binder and switch to it, ready for cards.",
 			key:  "n",
 			rank: onView(viewHoldings, 2),
 			run:  func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
 		},
 		{
-			id: "binder.rename", title: "RenameBinder", aliases: "name folder",
+			id: "binder.rename", title: "RenameBinder", aliases: "name label",
 			desc: "Rename the selected binder.",
 			key:  "R",
 			run:  func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
@@ -642,17 +657,9 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	}
 	m.statusErr = false
 
-	if !m.containerEligible(m.cursor[paneContainers]) {
-		sel := m.selectedContainer()
-		m.cursor[paneContainers], m.offset[paneContainers] = 0, 0
-		if err := m.loadCards(); err != nil {
-			m.setError(err)
-			return nil
-		}
-		m.deriveView()
-		if sel != nil {
-			m.status = fmt.Sprintf("%s has no %s · showing all cards", sel.Name, m.view.String())
-		}
+	if err := m.restorePick(); err != nil {
+		m.setError(err)
+		return nil
 	}
 	if v == viewMarket {
 

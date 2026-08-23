@@ -72,12 +72,14 @@ ON CONFLICT(source, source_id) DO UPDATE SET
 
 const containerSelect = `
 SELECT ct.id, ct.kind, ct.name, ct.source,
-       COALESCE(ct.source_id,''), COALESCE(ct.source_url,''), COALESCE(ct.format,'')
+       COALESCE(ct.source_id,''), COALESCE(ct.source_url,''), COALESCE(ct.format,''),
+       COALESCE(ct.parent_id,0)
 FROM containers ct WHERE ct.kind=?`
 
 func (s *Store) ListDecks() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
+       COALESCE(ct.parent_id,0) AS parent_id,
        -- COUNT(DISTINCT ...) rather than COUNT(...): the column means distinct
        -- printings, which is what CollectionTotals has always reported and what
        -- the JSON model documents. Counting rows instead made a card held in two
@@ -103,7 +105,7 @@ ORDER BY ct.name`, KindDeck)
 	for rows.Next() {
 		var d DeckSummary
 		d.Kind = KindDeck
-		if err := rows.Scan(&d.ID, &d.Name, &d.Source, &d.SourceURL, &d.Format,
+		if err := rows.Scan(&d.ID, &d.Name, &d.Source, &d.SourceURL, &d.Format, &d.ParentID,
 			&d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
 			return nil, err
 		}
@@ -114,7 +116,8 @@ ORDER BY ct.name`, KindDeck)
 
 func scanContainer(sc interface{ Scan(...any) error }) (*Container, error) {
 	var c Container
-	if err := sc.Scan(&c.ID, &c.Kind, &c.Name, &c.Source, &c.SourceID, &c.SourceURL, &c.Format); err != nil {
+	if err := sc.Scan(&c.ID, &c.Kind, &c.Name, &c.Source, &c.SourceID, &c.SourceURL, &c.Format,
+		&c.ParentID); err != nil {
 		return nil, err
 	}
 	return &c, nil

@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-func binderSourceID(name string) string {
-	slug := strings.ToLower(strings.TrimSpace(name))
-	slug = strings.Map(func(r rune) rune {
+func containerSlug(name string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			return r
@@ -15,9 +14,10 @@ func binderSourceID(name string) string {
 			return '-'
 		}
 		return -1
-	}, slug)
-	return "binder:" + slug
+	}, strings.ToLower(strings.TrimSpace(name)))
 }
+
+func binderSourceID(name string) string { return "binder:" + containerSlug(name) }
 
 func IsDefaultBinder(c Container) bool { return c.SourceID == collectionSourceID }
 

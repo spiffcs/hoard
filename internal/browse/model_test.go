@@ -42,6 +42,10 @@ type fakeStore struct {
 
 	binderRows map[int64][]store.CollectionRow
 
+	folders     []store.DeckSummary
+	folderRows  map[int64][]store.CollectionRow
+	folderMoves [][2]int64
+
 	entryKeys []store.EntryKey
 
 	settings map[string]string
@@ -164,6 +168,48 @@ func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 	return out, nil
 }
 func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) { return f.decks, f.err }
+func (f *fakeStore) ListFolders() ([]store.DeckSummary, error) {
+	return f.folders, f.err
+}
+
+func (f *fakeStore) CreateFolder(name string) (int64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	for _, existing := range f.folders {
+		if strings.EqualFold(existing.Name, name) {
+			return 0, fmt.Errorf("a folder named %q already exists", existing.Name)
+		}
+	}
+	f.nextID++
+	d := store.DeckSummary{}
+	d.ID, d.Name, d.Kind = f.nextID, name, store.KindFolder
+	d.Counted = true
+	f.folders = append(f.folders, d)
+	return d.ID, nil
+}
+
+func (f *fakeStore) MoveDeckToFolder(deckID, folderID int64) error {
+	if f.err != nil {
+		return f.err
+	}
+	if folderID != 0 && !slices.ContainsFunc(f.folders,
+		func(d store.DeckSummary) bool { return d.ID == folderID }) {
+		return fmt.Errorf("no folder #%d", folderID)
+	}
+	for i := range f.decks {
+		if f.decks[i].ID != deckID {
+			continue
+		}
+		f.decks[i].ParentID = folderID
+		f.folderMoves = append(f.folderMoves, [2]int64{deckID, folderID})
+		return nil
+	}
+	return fmt.Errorf("no deck #%d", deckID)
+}
+func (f *fakeStore) FolderByFinish(id int64) ([]store.CollectionRow, error) {
+	return f.folderRows[id], f.err
+}
 func (f *fakeStore) BinderByFinish(id int64) ([]store.CollectionRow, error) {
 	if rows, ok := f.binderRows[id]; ok {
 		return rows, f.err
@@ -742,7 +788,7 @@ func key(m Model, k string) Model {
 	var msg tea.KeyMsg
 	switch k {
 	case "up", "down", "tab", "left", "right", "home", "end", "pgup", "pgdown",
-		"shift+up", "shift+down":
+		"shift+up", "shift+down", "enter", "esc":
 		msg = tea.KeyMsg{Type: keyType(k)}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
@@ -775,6 +821,10 @@ func keyType(k string) tea.KeyType {
 		return tea.KeyShiftUp
 	case "shift+down":
 		return tea.KeyShiftDown
+	case "enter":
+		return tea.KeyEnter
+	case "esc":
+		return tea.KeyEsc
 	}
 	return tea.KeyNull
 }

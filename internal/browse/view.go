@@ -415,11 +415,12 @@ func (m Model) containerLines(width int) []string {
 			if c.settling(now) || c.skipped() {
 				mark = settlingMark
 			}
+			name := strings.Repeat("  ", c.depth) + c.Name
 			if !m.containerEligible(i) || c.skipped() {
-				t.AddStyled(env.Dim(), ui.C(mark), ui.C(c.Name), ui.C(ui.Money(c.Value)))
+				t.AddStyled(env.Dim(), ui.C(mark), ui.C(name), ui.C(ui.Money(c.Value)))
 				continue
 			}
-			t.Add(ui.C(mark), ui.C(c.Name), ui.C(ui.Money(c.Value)))
+			t.Add(ui.C(mark), ui.C(name), ui.C(ui.Money(c.Value)))
 		}
 		return t
 	})
@@ -735,6 +736,10 @@ func (m Model) helpLine() string {
 		}
 		e := []ui.HelpEntry{ui.HelpCommands, ui.K("tab", "cards"), ui.K("B", "by set"),
 			ui.K("n", "new binder"), ui.K("a", "add cards")}
+
+		if sel := m.selectedContainer(); sel != nil && sel.Kind == store.KindDeck {
+			e = append(e, ui.K("m", "move to folder"))
+		}
 
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
 			e = append(e, ui.K("R", "rename"), ui.K("d", "remove"))

@@ -20,6 +20,8 @@ type Editor interface {
 	RenameBinder(id int64, name string) error
 	DeleteBinder(id int64) error
 	SetBinderCounted(id int64, counted bool) error
+	CreateFolder(name string) (int64, error)
+	MoveDeckToFolder(deckID, folderID int64) error
 
 	SetHoldingQuantityIn(containerID int64, scryfallID string, fin finish.Finish, condition string, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)
@@ -38,6 +40,8 @@ type Store interface {
 
 	ListBinders() ([]store.DeckSummary, error)
 	ListDecks() ([]store.DeckSummary, error)
+	ListFolders() ([]store.DeckSummary, error)
+	FolderByFinish(folderID int64) ([]store.CollectionRow, error)
 	BinderByFinish(containerID int64) ([]store.CollectionRow, error)
 	DeckEntries(containerID int64) ([]store.EntryView, error)
 

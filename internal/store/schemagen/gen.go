@@ -77,12 +77,24 @@ WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`)
 		return nil, err
 	}
 	sort.Slice(objs, func(i, j int) bool {
-		if objs[i].kind != objs[j].kind {
-			return objs[i].kind == "table"
+		if a, b := kindRank(objs[i].kind), kindRank(objs[j].kind); a != b {
+			return a < b
 		}
 		return objs[i].name < objs[j].name
 	})
 	return objs, nil
+}
+
+func kindRank(kind string) int {
+	switch kind {
+	case "table":
+		return 0
+	case "index":
+		return 1
+	case "trigger":
+		return 2
+	}
+	return 3
 }
 
 func render(objs []object, userVersion int) []byte {
@@ -91,7 +103,12 @@ func render(objs []object, userVersion int) []byte {
 
 	for _, o := range objs {
 		b.WriteString("\n")
-		b.WriteString(format(o.sql))
+		if o.kind == "trigger" {
+
+			b.WriteString(strings.TrimSpace(o.sql))
+		} else {
+			b.WriteString(format(o.sql))
+		}
 		b.WriteString(";\n")
 	}
 	return []byte(b.String())

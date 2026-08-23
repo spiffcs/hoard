@@ -46,6 +46,7 @@ var migrations = []migration{
 	{29, contradictedPrices},
 	{30, purgePhantomFinishSeries},
 	{31, binderCounted},
+	{32, deckFolders},
 }
 
 var schemaVersion = migrations[len(migrations)-1].Version
@@ -758,4 +759,28 @@ DELETE FROM card_bid_history WHERE rowid IN (
 
 const binderCounted = `
 ALTER TABLE containers ADD COLUMN counted INTEGER NOT NULL DEFAULT 1;
+`
+
+// parent_id is ON DELETE SET NULL, never CASCADE: card_entries cascades from
+// containers, so a cascading parent would delete a folder's decks and every
+// card in them. Dropping a folder loses the grouping and nothing else.
+const deckFolders = `
+ALTER TABLE containers ADD COLUMN parent_id INTEGER
+    REFERENCES containers(id) ON DELETE SET NULL;
+
+CREATE INDEX containers_parent ON containers(parent_id);
+
+CREATE TRIGGER card_entries_folder_insert
+BEFORE INSERT ON card_entries
+WHEN (SELECT kind FROM containers WHERE id = NEW.container_id) = '` + KindFolder + `'
+BEGIN
+    SELECT RAISE(ABORT, 'a folder holds decks, not cards');
+END;
+
+CREATE TRIGGER card_entries_folder_update
+BEFORE UPDATE OF container_id ON card_entries
+WHEN (SELECT kind FROM containers WHERE id = NEW.container_id) = '` + KindFolder + `'
+BEGIN
+    SELECT RAISE(ABORT, 'a folder holds decks, not cards');
+END;
 `

@@ -118,6 +118,7 @@ func (m Model) anySettling(now time.Time) bool {
 func (m *Model) toggleSetsMode() {
 	m.setsMode = !m.setsMode
 	m.cursor[paneContainers], m.offset[paneContainers] = 0, 0
+	m.displacedContainer = 0
 	if err := m.loadContainers(); err != nil {
 
 		m.setsMode = !m.setsMode

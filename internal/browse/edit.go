@@ -35,6 +35,9 @@ func (m Model) editable() (bool, string) {
 	if sel.Kind == kindSet {
 		return false, "this list is every printing from " + sel.Name + " · edit the card in its binder or deck"
 	}
+	if sel.Kind == kindFolder {
+		return false, sel.Name + " groups decks · edit the card in the deck that holds it"
+	}
 	if sel.Kind != store.KindCollection {
 		return false, "deck cards are owned by the imported list; edit the binder instead"
 	}

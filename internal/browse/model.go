@@ -1,10 +1,13 @@
 package browse
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"github.com/spiffcs/hoard/internal/finish"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -30,6 +33,8 @@ const kindAllCards = "all"
 
 const kindSet = "set"
 
+const kindFolder = store.KindFolder
+
 const allCardsName = "All Cards"
 
 type container struct {
@@ -41,6 +46,9 @@ type container struct {
 
 	isDefault bool
 	Counted   bool
+
+	parentID int64
+	depth    int
 
 	setCode string
 
@@ -188,6 +196,8 @@ type Model struct {
 	entryIndex   map[int64]map[string]int
 	viewEligible map[int64]bool
 
+	displacedContainer int64
+
 	marketSortIdx [3]int
 	marketSortRev [3]bool
 	marketComps   []market.Comp
@@ -326,8 +336,12 @@ func (m *Model) loadContainers() error {
 	if err != nil {
 		return fmt.Errorf("reading decks: %w", err)
 	}
+	folders, err := m.store.ListFolders()
+	if err != nil {
+		return fmt.Errorf("reading folders: %w", err)
+	}
 
-	out := make([]container, 0, len(binders)+len(decks)+1)
+	out := make([]container, 0, len(binders)+len(decks)+len(folders)+1)
 
 	all := container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards}
 	out = append(out, all)
@@ -343,21 +357,64 @@ func (m *Model) loadContainers() error {
 		out[0].Copies += b.TotalCopies
 		out[0].Value += b.Value
 	}
-	for _, d := range store.DecksByValue(decks) {
-		out = append(out, container{
-			ID: d.ID, Name: d.Name, Kind: store.KindDeck,
-			Copies: d.TotalCopies, Value: d.Value,
-			meta: store.DeckMeta{
-				Name: d.Name, Source: d.Source, SourceID: d.SourceID,
-				SourceURL: d.SourceURL, Format: d.Format,
-			},
-		})
+	for _, d := range decks {
 		out[0].Copies += d.TotalCopies
 		out[0].Value += d.Value
 	}
+	out = append(out, deckTree(folders, decks)...)
 	m.containers = out
 	m.clampCursor(paneContainers)
 	return nil
+}
+
+func deckContainer(d store.DeckSummary) container {
+	return container{
+		ID: d.ID, Name: d.Name, Kind: store.KindDeck,
+		Copies: d.TotalCopies, Value: d.Value, parentID: d.ParentID,
+		meta: store.DeckMeta{
+			Name: d.Name, Source: d.Source, SourceID: d.SourceID,
+			SourceURL: d.SourceURL, Format: d.Format,
+		},
+	}
+}
+
+func deckTree(folders, decks []store.DeckSummary) []container {
+	known := make(map[int64]bool, len(folders))
+	for _, f := range folders {
+		known[f.ID] = true
+	}
+	var top []container
+	children := map[int64][]container{}
+	for _, d := range store.DecksByValue(decks) {
+		c := deckContainer(d)
+		if !known[d.ParentID] {
+			c.parentID = 0
+			top = append(top, c)
+			continue
+		}
+		c.depth = 1
+		children[d.ParentID] = append(children[d.ParentID], c)
+	}
+	for _, f := range folders {
+		top = append(top, container{
+			ID: f.ID, Name: f.Name, Kind: kindFolder,
+			Copies: f.TotalCopies, Value: f.Value,
+		})
+	}
+	slices.SortFunc(top, func(a, b container) int {
+		if c := cmp.Compare(b.Value, a.Value); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	out := make([]container, 0, len(top)+len(decks))
+	for _, c := range top {
+		out = append(out, c)
+		if c.Kind == kindFolder {
+			out = append(out, children[c.ID]...)
+		}
+	}
+	return out
 }
 
 func (m *Model) loadCards() error {
@@ -369,7 +426,8 @@ func (m *Model) loadCards() error {
 	}
 
 	var out []card
-	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection || sel.Kind == kindSet {
+	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection ||
+		sel.Kind == kindSet || sel.Kind == kindFolder {
 		var rows []store.CollectionRow
 		var err error
 		switch sel.Kind {
@@ -377,6 +435,8 @@ func (m *Model) loadCards() error {
 			rows, err = m.store.AllByFinish()
 		case kindSet:
 			rows, err = m.store.SetByFinish(sel.setCode)
+		case kindFolder:
+			rows, err = m.store.FolderByFinish(sel.ID)
 		default:
 			rows, err = m.store.BinderByFinish(sel.ID)
 		}
@@ -1071,6 +1131,10 @@ func (m *Model) askRemoval() {
 			m.status, m.statusErr = "a set is how cards were printed, not where they live · remove cards from their binders", true
 			return
 		}
+		if sel.Kind == kindFolder {
+			m.status, m.statusErr = "a folder groups decks · remove it with `hoard folder rm`", true
+			return
+		}
 		if sel.Kind == store.KindCollection {
 			if sel.isDefault {
 				m.status, m.statusErr = "the default binder cannot be removed", true
@@ -1293,6 +1357,7 @@ func (m *Model) onCursorMoved() {
 	if m.focus != paneContainers {
 		return
 	}
+	m.displacedContainer = 0
 	if err := m.loadCards(); err != nil {
 		m.setError(err)
 		return
