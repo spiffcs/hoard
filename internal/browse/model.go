@@ -200,6 +200,8 @@ type Model struct {
 
 	collapsed map[int64]bool
 
+	containerNameW int
+
 	marketSortIdx [3]int
 	marketSortRev [3]bool
 	marketComps   []market.Comp
@@ -347,8 +349,10 @@ func (m *Model) loadContainers() error {
 	out := make([]container, 0, len(binders)+len(decks)+len(folders)+1)
 
 	all := container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards}
+	widest := nameWidth(all)
 	out = append(out, all)
 	for _, b := range binders {
+		widest = max(widest, ansi.StringWidth(b.Name))
 		out = append(out, container{
 			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
 			Copies: b.TotalCopies, Value: b.Value, isDefault: b.IsDefault,
@@ -364,7 +368,9 @@ func (m *Model) loadContainers() error {
 		out[0].Copies += d.TotalCopies
 		out[0].Value += d.Value
 	}
-	out = append(out, deckTree(folders, decks, m.collapsed)...)
+	tree, treeWidest := deckTree(folders, decks, m.collapsed)
+	out = append(out, tree...)
+	m.containerNameW = max(widest, treeWidest)
 	m.containers = out
 	m.clampCursor(paneContainers)
 	return nil
@@ -381,28 +387,34 @@ func deckContainer(d store.DeckSummary) container {
 	}
 }
 
-func deckTree(folders, decks []store.DeckSummary, collapsed map[int64]bool) []container {
+func deckTree(folders, decks []store.DeckSummary, collapsed map[int64]bool) ([]container, int) {
 	known := make(map[int64]bool, len(folders))
 	for _, f := range folders {
 		known[f.ID] = true
 	}
 	var top []container
+	widest := 0
 	children := map[int64][]container{}
 	for _, d := range store.DecksByValue(decks) {
 		c := deckContainer(d)
 		if !known[d.ParentID] {
 			c.parentID = 0
+			widest = max(widest, nameWidth(c))
 			top = append(top, c)
 			continue
 		}
 		c.depth = 1
+
+		widest = max(widest, nameWidth(c))
 		children[d.ParentID] = append(children[d.ParentID], c)
 	}
 	for _, f := range folders {
-		top = append(top, container{
+		c := container{
 			ID: f.ID, Name: f.Name, Kind: kindFolder,
 			Copies: f.TotalCopies, Value: f.Value,
-		})
+		}
+		widest = max(widest, nameWidth(c))
+		top = append(top, c)
 	}
 	slices.SortFunc(top, func(a, b container) int {
 		if c := cmp.Compare(b.Value, a.Value); c != 0 {
@@ -417,7 +429,11 @@ func deckTree(folders, decks []store.DeckSummary, collapsed map[int64]bool) []co
 			out = append(out, children[c.ID]...)
 		}
 	}
-	return out
+	return out, widest
+}
+
+func nameWidth(c container) int {
+	return 2*c.depth + ansi.StringWidth(c.Name)
 }
 
 func (m *Model) loadCards() error {

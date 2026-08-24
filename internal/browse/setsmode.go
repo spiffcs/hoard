@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -20,7 +21,9 @@ func (m *Model) loadSetContainers() error {
 	}
 	out := make([]container, 0, len(sets)+1)
 	out = append(out, container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards})
+	m.containerNameW = ansi.StringWidth(allCardsName)
 	for i, s := range sets {
+		m.containerNameW = max(m.containerNameW, ansi.StringWidth(s.Name))
 		out = append(out, container{
 
 			ID:   allCardsID - 1 - int64(i),

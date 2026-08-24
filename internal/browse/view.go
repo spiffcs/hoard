@@ -407,7 +407,8 @@ func (m Model) containerLines(width int) []string {
 	return m.paneLines(paneContainers, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
 			{Title: "", Align: ui.Left, Priority: 1},
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8},
+			{Title: "NAME", Align: ui.Left, Flex: true, Min: 8,
+				Width: stableNameWidth(m.containerNameW, width)},
 			{Title: "VALUE", Align: ui.Right},
 		}}
 		for i, c := range m.containers {

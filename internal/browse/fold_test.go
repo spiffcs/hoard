@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -171,5 +173,59 @@ func TestSidebarHelpAdvertisesFold(t *testing.T) {
 	m = pickContainer(t, m, "commander")
 	if help := m.helpLine(); !strings.Contains(help, "space fold") {
 		t.Errorf("sidebar help = %q, want it to advertise space", help)
+	}
+}
+
+func longNameStore() *fakeStore {
+	f := foldersStore()
+	f.decks = []store.DeckSummary{
+		inFolder(deck(201, "Cheap Deck", 100, 50), 302),
+		inFolder(deck(202, "Eldrazi Incursion Primer", 100, 500), 301),
+		deck(203, "Loose Deck", 100, 200),
+	}
+	return f
+}
+
+func valueColumnAt(t *testing.T, m Model) int {
+	t.Helper()
+	lines := m.containerLines(28)
+	if len(lines) == 0 {
+		t.Fatal("no sidebar lines")
+	}
+	at := strings.Index(lines[0], "VALUE")
+	if at < 0 {
+		t.Fatalf("no VALUE header in %q", lines[0])
+	}
+	return ansi.StringWidth(lines[0][:at])
+}
+
+func TestFoldingDoesNotMoveTheValueColumn(t *testing.T) {
+	m := newTestModel(t, longNameStore())
+	open := valueColumnAt(t, m)
+
+	m = pickContainer(t, m, "commander")
+	m = key(m, " ")
+	folded := valueColumnAt(t, m)
+
+	if folded != open {
+		t.Errorf("VALUE sits at %d folded and %d open, want it to stay put", folded, open)
+	}
+}
+
+func TestEveryRowsValueEndsAtTheSameColumn(t *testing.T) {
+	m := newTestModel(t, longNameStore())
+	right := -1
+	for i, l := range m.containerLines(28) {
+		if i == 0 {
+			continue
+		}
+		end := ansi.StringWidth(strings.TrimRight(l, " "))
+		if right == -1 {
+			right = end
+			continue
+		}
+		if end != right {
+			t.Errorf("row %d ends at %d, want every value to end at %d: %q", i, end, right, l)
+		}
 	}
 }
