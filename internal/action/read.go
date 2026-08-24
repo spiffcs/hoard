@@ -151,6 +151,7 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			ColorIdentity:   r.ColorIdentity,
 			Detail:          detailFor(details, r.ScryfallID),
 			Lang:            r.Lang,
+			ContainerID:     id,
 			Container:       name,
 			Kind:            "binder",
 
@@ -184,6 +185,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 			ColorIdentity:   e.Card.ColorIdentity,
 			Detail:          detailFor(details, e.Card.ScryfallID),
 			Lang:            e.Card.Lang,
+			ContainerID:     id,
 			Container:       name,
 			Kind:            "deck",
 			Board:           e.Board,

@@ -59,6 +59,11 @@ Prices are USD throughout. An absent price field means *unpriced*, never free.
   a movers change.
 - **1.1.2** — the `refused` kind: prices hoard declined to report because the
   asks on the card's own listing contradicted them, and what it used instead.
+- **1.1.3** — `settling` on a movers change, marking a row whose set is too new
+  for its price to average over anything.
+- **1.1.4** — `containerId` on a holdings row. A name can be renamed between a
+  document being written and being read; an id cannot. It is meaningful only in
+  the database that emitted the document.
 
 The reasoning behind each bump is in the `SchemaVersion` doc comment in
 [internal/hoardjson/hoardjson.go](../../internal/hoardjson/hoardjson.go).

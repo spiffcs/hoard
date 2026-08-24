@@ -100,7 +100,24 @@ import (
 // and have no way to see why. The rows stay in the document: they are real
 // movement, and which totals they belong in is the consumer's call to make
 // with the same fact hoard used.
-const SchemaVersion = "1.1.3"
+// 1.1.4 adds containerId to a holdings row, purely additive: a 1.1.3 consumer
+// reading a 1.1.4 document sees exactly what it saw before. Bumped rather than
+// folded into 1.1.3 for the reason given above: 1.1.3 is committed on main.
+//
+// The field closes the same gap the binders kind closed, one layer down. A
+// holdings row named its container only by the pair (container, containerKind),
+// which is enough to print and not enough to address: a binder can be renamed
+// between a document being written and being read, and two containers of
+// different kinds can share a name. So a tool could report on rows it found
+// here but could not hand them back and be sure of meaning the same holdings.
+// With the id it can, which is what makes a holdings document a work list
+// rather than only a report.
+//
+// The id belongs to the database that emitted the document and to no other.
+// hoard merge, which reads a hoard document written by a different database,
+// goes on resolving containers by name, because an id minted there names a
+// different container here or none at all.
+const SchemaVersion = "1.1.4"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -226,7 +243,17 @@ type Holding struct {
 	// merge` uses to refuse a source it has already applied.
 	Detail *CardDetail `json:"detail,omitempty"`
 
-	Count         int      `json:"count"`
+	Count int `json:"count"`
+	// ContainerID is the container's row id in the database that emitted this
+	// document, and it is what makes a row addressable: a name can be renamed
+	// between a document being written and being read, an id cannot. A tool
+	// that selects rows here can hand them back to hoard and mean exactly the
+	// holdings it saw.
+	//
+	// It is meaningful only in that database. A document read into a different
+	// hoard resolves containers by name instead, because an id minted elsewhere
+	// names a different container here, or none at all.
+	ContainerID   int64    `json:"containerId"`
 	Container     string   `json:"container"`
 	ContainerKind string   `json:"containerKind" jsonschema:"enum=binder,enum=deck"`
 	Board         string   `json:"board"`

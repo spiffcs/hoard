@@ -39,7 +39,7 @@ func TestSummaryDocument(t *testing.T) {
 				Counted: true},
 		}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "summary",
   "summary": {
     "binder": {
@@ -79,13 +79,15 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
 	// carry null, not carry zero — and an unmapped card omits mtgjsonUuid.
 	got := write(t, FromExportRows([]export.Row{
 		{Count: 1, Name: "Mystic Remora", Set: "ice", CollectorNumber: "78",
-			Finish: finish.Nonfoil, ScryfallID: "rem", Container: "Fish", Kind: "deck", Board: "main"},
+			Finish: finish.Nonfoil, ScryfallID: "rem", ContainerID: 3, Container: "Fish",
+			Kind: "deck", Board: "main"},
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol", Container: "Binder",
+			Finish: finish.Nonfoil, ScryfallID: "sol", MTGJSONUUID: "uu-sol",
+			ContainerID: 1, Container: "Binder",
 			Kind: "binder", Board: "main", PriceUSD: f(2)},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -99,6 +101,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
           "finish": "nonfoil"
         },
         "count": 2,
+        "containerId": 1,
         "container": "Binder",
         "containerKind": "binder",
         "board": "main",
@@ -113,6 +116,7 @@ func TestHoldingsDocumentSortsAndOmitsAbsentValues(t *testing.T) {
           "finish": "nonfoil"
         },
         "count": 1,
+        "containerId": 3,
         "container": "Fish",
         "containerKind": "deck",
         "board": "main"
@@ -133,7 +137,7 @@ func TestUnpricedDocument(t *testing.T) {
 		Containers: []string{"Binder", "Fish"}, HeldIn: "Binder,Fish",
 	}}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "unpriced",
   "unpriced": {
     "rows": [
@@ -178,7 +182,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 				OldAsOf: "2026-06-30T00:00:00Z"},
 		}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -228,7 +232,7 @@ func TestMoversDocumentOrdersByAbsoluteImpact(t *testing.T) {
 func TestMoversDocumentWithNoHistory(t *testing.T) {
 	got := write(t, FromMovers("2026-06-30T00:00:00Z", "", nil))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "movers",
   "movers": {
     "since": "2026-06-30T00:00:00Z",
@@ -262,7 +266,7 @@ func TestArbitrageDocumentTagsEveryQuestion(t *testing.T) {
 		Opportunities: []market.Opportunity{tomb, ring}, Compared: 2,
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "market",
   "market": {
     "comparedPrintings": 2,
@@ -357,7 +361,7 @@ func TestReportDocument(t *testing.T) {
 		Unpriced: store.SourceCount{Printings: 1, Copies: 1},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "report",
   "report": {
     "asOf": "2026-07-30T09:00:00Z",
@@ -441,7 +445,7 @@ func TestWatchDocument(t *testing.T) {
 		MTGJSONUUID: "uu-sol", PriceUSD: f(12.5),
 	}}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "watch",
   "watch": {
     "checked": 3,
@@ -471,7 +475,7 @@ func TestWatchDocument(t *testing.T) {
 func TestWatchDocumentWithNothingFired(t *testing.T) {
 	got := write(t, FromWatchCheck(2, nil))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "watch",
   "watch": {
     "checked": 2,
@@ -769,7 +773,7 @@ func str(v string) *string { return &v }
 func detailRows() []export.Row {
 	return []export.Row{
 		{Count: 1, Name: "Llanowar Elves", Set: "dom", CollectorNumber: "168",
-			Finish: finish.Nonfoil, ScryfallID: "elf", Container: "Binder",
+			Finish: finish.Nonfoil, ScryfallID: "elf", ContainerID: 1, Container: "Binder",
 			Kind: "binder", Board: "main",
 			Detail: &store.CardDetail{
 				Card:   store.Card{ManaCost: str("{G}")},
@@ -781,7 +785,7 @@ func detailRows() []export.Row {
 				TCGplayerID: i64(161475),
 			}},
 		{Count: 2, Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
-			Finish: finish.Foil, ScryfallID: "sol", Container: "Binder",
+			Finish: finish.Foil, ScryfallID: "sol", ContainerID: 1, Container: "Binder",
 			Kind: "binder", Board: "main", PriceUSD: f(2),
 			Detail: &store.CardDetail{
 				Card:   store.Card{ManaCost: str("{1}")},
@@ -801,7 +805,7 @@ func detailRows() []export.Row {
 func TestHoldingsDocumentCarriesDetail(t *testing.T) {
 	got := write(t, FromExportRows(detailRows()))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -828,6 +832,7 @@ func TestHoldingsDocumentCarriesDetail(t *testing.T) {
           "tcgplayerId": 161475
         },
         "count": 1,
+        "containerId": 1,
         "container": "Binder",
         "containerKind": "binder",
         "board": "main"
@@ -856,6 +861,7 @@ func TestHoldingsDocumentCarriesDetail(t *testing.T) {
           "tcgplayerId": 235854
         },
         "count": 2,
+        "containerId": 1,
         "container": "Binder",
         "containerKind": "binder",
         "board": "main",
@@ -1185,7 +1191,7 @@ func TestBindersDocumentCarriesIDs(t *testing.T) {
 			DistinctCards: 12, TotalCopies: 30, Value: 61.5},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "binders",
   "binders": {
     "rows": [
@@ -1235,7 +1241,7 @@ func TestGuessedDocumentKeepsRowsWithIdenticalCards(t *testing.T) {
 			Number: "135", Finish: finish.Nonfoil, GuessedAt: "2026-08-09T18:20:00Z"},
 	}))
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "guessed",
   "guessed": {
     "rows": [

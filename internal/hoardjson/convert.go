@@ -184,6 +184,7 @@ func FromExportRows(rows []export.Row) Document {
 			},
 			Detail:        jsonDetail(r.Detail),
 			Count:         r.Count,
+			ContainerID:   r.ContainerID,
 			Container:     r.Container,
 			ContainerKind: r.Kind,
 			Board:         r.Board,

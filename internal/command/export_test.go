@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,7 +107,7 @@ func TestCmdExportJSON(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	want := `{
-  "schemaVersion": "1.1.3",
+  "schemaVersion": "1.1.4",
   "kind": "holdings",
   "holdings": {
     "rows": [
@@ -119,6 +120,7 @@ func TestCmdExportJSON(t *testing.T) {
           "finish": "nonfoil"
         },
         "count": 2,
+        "containerId": 1,
         "container": "Binder",
         "containerKind": "binder",
         "board": "main",
@@ -133,6 +135,7 @@ func TestCmdExportJSON(t *testing.T) {
           "finish": "nonfoil"
         },
         "count": 1,
+        "containerId": 3,
         "container": "Fish",
         "containerKind": "deck",
         "board": "main"
@@ -146,6 +149,7 @@ func TestCmdExportJSON(t *testing.T) {
           "finish": "foil"
         },
         "count": 1,
+        "containerId": 2,
         "container": "Trade",
         "containerKind": "binder",
         "board": "main",
@@ -305,5 +309,65 @@ func TestCmdExportJSONAgreesWithItself(t *testing.T) {
 	}
 	if spelled != bare {
 		t.Errorf("--format json --json differs from --json:\n%s\n%s", spelled, bare)
+	}
+}
+
+type holdingsDoc struct {
+	SchemaVersion string `json:"schemaVersion"`
+	Kind          string `json:"kind"`
+	Holdings      struct {
+		Rows []struct {
+			Card struct {
+				ScryfallID string `json:"scryfallId"`
+				Name       string `json:"name"`
+				Finish     string `json:"finish"`
+				Condition  string `json:"condition"`
+			} `json:"card"`
+			Count         int     `json:"count"`
+			ContainerID   int64   `json:"containerId"`
+			Container     string  `json:"container"`
+			ContainerKind string  `json:"containerKind"`
+			Board         string  `json:"board"`
+			PriceUsd      float64 `json:"priceUsd"`
+		} `json:"rows"`
+	} `json:"holdings"`
+}
+
+func readHoldings(t *testing.T, st *store.Store, args ...string) holdingsDoc {
+	t.Helper()
+	out, err := execCmd(context.Background(), st, args, true)
+	if err != nil {
+		t.Fatalf("hoard %v --json: %v", args, err)
+	}
+	var doc holdingsDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("hoard %v --json emitted invalid JSON (%v): %q", args, err, out)
+	}
+	return doc
+}
+
+func TestHoldingsRowCarriesItsContainerID(t *testing.T) {
+	st := exportStore(t)
+	doc := readHoldings(t, st, "export")
+
+	byName := map[string]int64{}
+	for _, r := range doc.Holdings.Rows {
+		if r.ContainerID == 0 {
+			t.Errorf("row %q in %q carries no containerId", r.Card.Name, r.Container)
+		}
+		if prev, seen := byName[r.Container]; seen && prev != r.ContainerID {
+			t.Errorf("container %q has two ids, %d and %d", r.Container, prev, r.ContainerID)
+		}
+		byName[r.Container] = r.ContainerID
+	}
+
+	binders, err := st.ListBinders()
+	if err != nil {
+		t.Fatalf("ListBinders: %v", err)
+	}
+	for _, b := range binders {
+		if got, ok := byName[b.Name]; ok && got != b.ID {
+			t.Errorf("binder %q is #%d in the store but #%d in the document", b.Name, b.ID, got)
+		}
 	}
 }

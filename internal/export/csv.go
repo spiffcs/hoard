@@ -27,11 +27,12 @@ type Row struct {
 
 	Condition string
 
-	Lang      string
-	Container string
-	Kind      string
-	Board     string
-	PriceUSD  *float64
+	Lang        string
+	ContainerID int64
+	Container   string
+	Kind        string
+	Board       string
+	PriceUSD    *float64
 }
 
 func WriteCanonical(w io.Writer, rows []Row) error {
