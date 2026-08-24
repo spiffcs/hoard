@@ -12,6 +12,8 @@ type app struct {
 	env   *cli.Env
 
 	dbPath string
+
+	confirmMove func(string) bool
 }
 
 const tagline = "a terminal collection tracker for Magic: The Gathering"
@@ -87,6 +89,8 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdCatalog(a),
 
 		NewCmdBinder(a),
+
+		NewCmdMove(a),
 
 		NewCmdDeck(a),
 

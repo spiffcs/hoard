@@ -55,3 +55,22 @@ func mustExec(t *testing.T, ctx context.Context, st *store.Store, args []string)
 	}
 	return out
 }
+
+func execCmdIn(ctx context.Context, st *store.Store, args []string, stdin []byte) (string, error) {
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	e := ui.Env{Width: 80}
+	a := &app{
+		store:       st,
+		env:         &cli.Env{Out: out, Err: errOut, OutEnv: e, ErrEnv: e},
+		confirmMove: func(string) bool { return false },
+	}
+
+	root, _ := buildRoot(a, pipeEnv)
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		return cli.CheckJSON(cmd, false)
+	}
+	root.SetIn(bytes.NewReader(stdin))
+	root.SetArgs(args)
+	err := root.ExecuteContext(ctx)
+	return out.String() + errOut.String(), err
+}

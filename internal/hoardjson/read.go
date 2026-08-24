@@ -66,6 +66,22 @@ func ReadHoard(r io.Reader) (*Hoard, error) {
 	return doc.Hoard, nil
 }
 
+// ReadHoldings decodes a holdings document specifically, so callers that need
+// one do not repeat the kind check.
+func ReadHoldings(r io.Reader) (*Holdings, error) {
+	doc, err := Read(r)
+	if err != nil {
+		return nil, err
+	}
+	if doc.Kind != KindHoldings {
+		return nil, fmt.Errorf("document is a %q, not a %q", doc.Kind, KindHoldings)
+	}
+	if doc.Holdings == nil {
+		return nil, fmt.Errorf("document says kind %q but carries no holdings payload", KindHoldings)
+	}
+	return doc.Holdings, nil
+}
+
 // modelOf pulls the MODEL component out of a MODEL.REVISION.ADDITION version.
 func modelOf(v string) (int, error) {
 	model, _, ok := strings.Cut(v, ".")

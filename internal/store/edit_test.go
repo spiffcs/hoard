@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/finish"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 func TestSetHoldingQuantity(t *testing.T) {
@@ -207,4 +208,111 @@ func TestMoveCardFinishMergesWithAnExistingHolding(t *testing.T) {
 func mainRef(cid int64, id string, fin finish.Finish, cond string) EntryRef {
 	return EntryRef{ContainerID: cid, ScryfallID: id, Finish: fin, Condition: cond,
 		Board: BoardMain}
+}
+
+func TestMoveEntriesMovesEveryRefInOneTransaction(t *testing.T) {
+	s := newTestStore(t)
+	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125",
+		Name: "Sol Ring", ScryfallURL: "http://x"}
+	tomb := scryfall.Card{ID: "tomb", Set: "uma", CollectorNumber: "236",
+		Name: "Ancient Tomb", ScryfallURL: "http://x"}
+	if err := s.UpsertPrintings([]scryfall.Card{sol, tomb}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := s.AddCardFinish(sol, finish.Nonfoil, 3); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.AddCardFinish(tomb, finish.Nonfoil, 1); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	binders, err := s.ListBinders()
+	if err != nil || len(binders) == 0 {
+		t.Fatalf("ListBinders: %v (%d)", err, len(binders))
+	}
+	from := binders[0].ID
+
+	bulk, err := s.CreateBinder("bulk")
+	if err != nil {
+		t.Fatalf("CreateBinder: %v", err)
+	}
+	if err := s.AddCardFinishTo(bulk, sol, finish.Nonfoil, 2); err != nil {
+		t.Fatalf("AddCardFinishTo: %v", err)
+	}
+
+	moved, err := s.MoveEntries([]EntryRef{
+		mainRef(from, "sol", finish.Nonfoil, ConditionUnknown),
+		mainRef(from, "tomb", finish.Nonfoil, ConditionUnknown),
+	}, bulk)
+	if err != nil {
+		t.Fatalf("MoveEntries: %v", err)
+	}
+	if moved != 4 {
+		t.Errorf("moved = %d, want the 3 Sol Rings and the 1 Tomb", moved)
+	}
+
+	rows, err := s.BinderByFinish(bulk)
+	if err != nil {
+		t.Fatalf("BinderByFinish: %v", err)
+	}
+	got := map[string]int{}
+	for _, r := range rows {
+		got[r.ScryfallID] = r.Quantity
+	}
+	if got["sol"] != 5 {
+		t.Errorf("bulk sol = %d, want the 3 moved added to the 2 already there", got["sol"])
+	}
+	if got["tomb"] != 1 {
+		t.Errorf("bulk tomb = %d, want the single moved copy", got["tomb"])
+	}
+
+	src, err := s.BinderByFinish(from)
+	if err != nil {
+		t.Fatalf("BinderByFinish: %v", err)
+	}
+	if len(src) != 0 {
+		t.Errorf("source binder = %+v, want emptied", src)
+	}
+}
+
+func TestMoveEntriesRollsTheWholeBatchBackOnAFailure(t *testing.T) {
+	s := newTestStore(t)
+	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125",
+		Name: "Sol Ring", ScryfallURL: "http://x"}
+	if err := s.UpsertPrintings([]scryfall.Card{sol}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := s.AddCardFinish(sol, finish.Nonfoil, 3); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	binders, err := s.ListBinders()
+	if err != nil || len(binders) == 0 {
+		t.Fatalf("ListBinders: %v (%d)", err, len(binders))
+	}
+	from := binders[0].ID
+	bulk, err := s.CreateBinder("bulk")
+	if err != nil {
+		t.Fatalf("CreateBinder: %v", err)
+	}
+
+	if _, err := s.MoveEntries([]EntryRef{
+		mainRef(from, "sol", finish.Nonfoil, ConditionUnknown),
+		mainRef(from, "nosuchcard", finish.Nonfoil, ConditionUnknown),
+	}, bulk); err == nil {
+		t.Fatal("a batch naming a missing holding must refuse")
+	}
+
+	rows, err := s.BinderByFinish(bulk)
+	if err != nil {
+		t.Fatalf("BinderByFinish: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("bulk = %+v, want nothing: the failed batch must roll back whole", rows)
+	}
+	src, err := s.BinderByFinish(from)
+	if err != nil {
+		t.Fatalf("BinderByFinish: %v", err)
+	}
+	if len(src) != 1 || src[0].Quantity != 3 {
+		t.Errorf("source = %+v, want the original 3 copies untouched", src)
+	}
 }

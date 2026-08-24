@@ -57,6 +57,16 @@ func confirm(question string) bool {
 	return err == nil && ok
 }
 
+func confirmOnTerminal(question string) bool {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return false
+	}
+	defer tty.Close()
+	ok, err := ui.Confirm(tty, os.Stderr, question)
+	return err == nil && ok
+}
+
 func isTTY(f *os.File) bool { return ui.IsTerminal(f) }
 
 func stdinIsTTY() bool { return isTTY(os.Stdin) }

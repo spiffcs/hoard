@@ -163,29 +163,26 @@ movers, watches and market screens; the browser says so when you type one.
 
 ## A wantlist
 
-There is no wantlist screen, and there does not need to be one: a binder that
-does not count toward your collection *is* a wantlist.
+There is no wantlist screen, but a user can set a binder that
+does not count toward your collection (x key or through the CLI below) as a wantlist.
 
 ```console
-$ hoard binder new Want
-Created binder #2 "Want"
-$ hoard binder exclude Want
-Binder "Want" is no longer counted toward your collection
+$ hoard binder new want
+Created binder #2 "want"
+$ hoard binder exclude want
+Binder "want" is no longer counted toward your collection
 ```
 
 Cards you are hunting go in it the same way anything else goes into a binder.
-The binder has to exist first — `--binder` names one, it does not create one.
-
 ```console
-$ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --binder Want
-✓ Added 1× Ulamog, the Infinite Gyre (uma/7) as nonfoil into Want · $36.32
-$ pbpaste | hoard add --file - --binder Want
+$ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --binder want
+✓ Added 1× Ulamog, the Infinite Gyre (uma/7) as nonfoil into want · $36.32
+$ pbpaste | hoard add --file - --binder want
 ```
 
-Excluding a binder changes the accounting, not the card. Everything in `Want`
-is still priced by `hoard update-prices`, still turns up in `hoard movers`, and
-can still carry a watch — so the list of cards you don't own yet is also the
-list hoard tells you about when one gets cheaper:
+Excluding a binder changes the accounting. Everything in our example `want`
+is still priced by `hoard update-prices` and it will still turn up in `hoard movers`.
+You can add watches to cards in excluded binders to trigger on when one hits a certain price.
 
 ```console
 $ hoard watch add "Ulamog, the Infinite Gyre" --under 30
@@ -205,19 +202,22 @@ ID  NAME    CARDS   VALUE
 * not counted toward your collection
 ```
 
-When you actually get one, move it out of `Want` and into wherever it lives.
+When you actually get a card on the list it's as easy as moving it out of `want` 
+and into which ever binder you have stored to card in.
+
 That happens in the browser: select the card, <kbd>enter</kbd> for its detail,
 <kbd>up</kbd> to drop into the row for the copy you hold, then <kbd>right</kbd>
-along that row to its last field — the binder it is in. <kbd>enter</kbd> there
+along that row to its last field which is the binder it is in. <kbd>enter</kbd> there
 asks which binder to move it to. It counts toward your collection from the
 moment it lands in a counted binder; <kbd>esc</kbd> back out to the browser and
 <kbd>u</kbd> undoes the move.
 
-Nothing is special about the name — `Want` is just a binder, so run as many as
-you sort by: a `Want` list, a `Trade` binder of things you'd part with, a
-`Maybe` pile. Decks take the same treatment with `hoard deck exclude`, which is
-how a proxied or borrowed list stays out of your total. `hoard binder include
-Want` puts any of it back.
+For one card that is the quickest way. For a lot of them at once, `hoard move`
+takes a holdings document on stdin and files every card in it into one binder:
+
+```console
+$ hoard export --binder want --json | hoard move --to Binder
+```
 
 ## Your data
 
@@ -241,6 +241,27 @@ JSON Schema it validates against, and the schema files are published under
 [`schema/json/`](schema/json/README.md) so a parser can pin a version.
 
 Commands that do not honour `--json` **refuse** it rather than ignoring it.
+
+Documents compose. `hoard export` chooses holdings and `hoard move` acts on
+them, so a bulk move is a pipe — sweep everything under a dollar into bulk:
+
+```console
+$ hoard export --binder Binder --json --filter 'price<1' | hoard move --to bulk
+Moved 412 copies of 190 printings into "bulk" · $173.94
+```
+
+`--dry-run` reports without writing, and the move asks before it writes unless
+you pass `--yes`. Because the middle of that pipe is a published document, `jq`
+narrows anything [`--filter`](#filtering) cannot:
+
+```console
+$ hoard export --binder Binder --json \
+  | jq '.holdings.rows |= map(select(.detail.artist == "Rebecca Guay"))' \
+  | hoard move --to bulk
+```
+
+Only binder cards move. Piping `hoard export --all` is safe: rows belonging to
+decks are skipped and counted, so a decklist is never touched.
 
 ## More
 

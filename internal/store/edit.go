@@ -283,3 +283,29 @@ func (s *Store) RestoreHoldings(scryfallID string, holdings []Holding) error {
 	}
 	return tx.Commit()
 }
+
+func (s *Store) MoveEntries(refs []EntryRef, toContainer int64) (moved int, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	for _, ref := range refs {
+		from := ref.normalized()
+		if from.ContainerID == toContainer {
+			continue
+		}
+		qty, err := entryQuantity(tx, from)
+		if err != nil {
+			return 0, err
+		}
+		to := from
+		to.ContainerID = toContainer
+		if _, err := moveEntryTx(tx, from, to); err != nil {
+			return 0, err
+		}
+		moved += qty
+	}
+	return moved, tx.Commit()
+}

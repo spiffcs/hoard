@@ -79,10 +79,13 @@ func NewCmdBinder(a *app) *cobra.Command {
 			"  hoard binder new Want\n" +
 			"  hoard binder exclude Want\n" +
 			"  hoard add CARD-URL --binder Want\n\n" +
-			"To move a card out of Want once you own it, open the\n" +
-			"browser: enter for the card's detail, up into the row\n" +
-			"for the copy you hold, right to its last field, then\n" +
-			"enter to name the binder it moves to.",
+			"To move one card out of Want once you own it, open\n" +
+			"the browser: enter for the card's detail, up into the\n" +
+			"row for the copy you hold, right to its last field,\n" +
+			"then enter to name the binder it moves to.\n\n" +
+			"To move a lot of them at once, pipe an export through\n" +
+			"move:\n\n" +
+			"  hoard export --binder Want --json | hoard move --to Binder",
 		Example: "hoard binder [list|new|rename|rm|exclude|include]",
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
