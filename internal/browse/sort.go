@@ -17,7 +17,7 @@ var sortColumns = [...][]string{
 	viewDip:      {"per-table"},
 }
 
-var unownedSortColumns = []string{"value", "name", "set", "price"}
+var unownedSortColumns = []string{"name", "set", "price"}
 
 func (m Model) holdingsSortColumns() []string {
 	if m.setUnowned {

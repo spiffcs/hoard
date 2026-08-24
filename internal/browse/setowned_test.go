@@ -2,6 +2,7 @@ package browse
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,5 +104,154 @@ func TestSetUnownedWidensToTheWholeSetWhenTheCatalogKnowsIt(t *testing.T) {
 	}
 	if _, totals := m.viewHeader(); !strings.Contains(totals, "2/4 unowned") {
 		t.Errorf("totals = %q, want 2/4 unowned", totals)
+	}
+}
+
+func cardNamed(t *testing.T, m Model, name string) card {
+	t.Helper()
+	for _, c := range m.filteredCards {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("%s is not in the view: %v", name, cardNames(m.filteredCards))
+	return card{}
+}
+
+func TestUnownedRowsCarryTheSameIdentityAsOwnedRows(t *testing.T) {
+	f := eoeStore()
+	gamma := f.unowned["eoe"][0]
+	gamma.ColorIdentity = []string{"B"}
+	gamma.Treatment = "surge"
+	gamma.Finish = finish.Foil
+	f.unowned["eoe"] = []store.UnownedRow{gamma}
+
+	prints := func(_ context.Context, _ string) ([]scryfall.Card, error) {
+		return []scryfall.Card{{
+			ID: "Delta-id", Name: "Delta", Set: "eoe", CollectorNumber: "4",
+			ScryfallURL:   "https://scryfall.com/card/eoe/4",
+			ColorIdentity: []string{"U", "R"},
+			PromoTypes:    []string{"galaxyfoil"},
+			Finishes:      []string{"foil"},
+			PriceUSDFoil:  price(12.50),
+		}}, nil
+	}
+
+	m := key(eoeModel(t, f, WithSetPrints(prints)), "b")
+
+	held := cardNamed(t, m, "Gamma")
+	if !slices.Equal(held.ColorIdentity, []string{"B"}) {
+		t.Errorf("Gamma's colour identity = %v, want [B] carried from the store row",
+			held.ColorIdentity)
+	}
+	if held.Treatment != "surge" || held.Finish != finish.Foil {
+		t.Errorf("Gamma = %s/%q, want a foil surge row", held.Finish, held.Treatment)
+	}
+
+	missing := cardNamed(t, m, "Delta")
+	if !slices.Equal(missing.ColorIdentity, []string{"U", "R"}) {
+		t.Errorf("Delta's colour identity = %v, want [U R] so its name and pips are coloured",
+			missing.ColorIdentity)
+	}
+	if missing.Treatment != "galaxy" {
+		t.Errorf("Delta's treatment = %q, want %q from its promo types",
+			missing.Treatment, "galaxy")
+	}
+	if missing.Finish != finish.Foil {
+		t.Errorf("Delta's finish = %s, want foil — the printing has no nonfoil", missing.Finish)
+	}
+	if missing.Price == nil || *missing.Price != 12.50 {
+		t.Errorf("Delta's price = %v, want the foil price it is actually sold at", missing.Price)
+	}
+}
+
+func TestUnownedViewShowsColourPipsNotBlanks(t *testing.T) {
+	prints := func(_ context.Context, _ string) ([]scryfall.Card, error) {
+		return []scryfall.Card{{
+			ID: "Delta-id", Name: "Delta", Set: "eoe", CollectorNumber: "4",
+			ScryfallURL:   "https://scryfall.com/card/eoe/4",
+			ColorIdentity: []string{"U", "R"},
+			PriceUSD:      price(3),
+			Finishes:      []string{"nonfoil"},
+		}}, nil
+	}
+	m := key(eoeModel(t, eoeStore(), WithSetPrints(prints)), "b")
+
+	if got := ui.Pips(cardNamed(t, m, "Delta").ColorIdentity); got != "UR" {
+		t.Errorf("Delta renders pips %q, want %q like every owned row", got, "UR")
+	}
+}
+
+func eoePrints(cards ...scryfall.Card) SetPrintsFunc {
+	return func(_ context.Context, _ string) ([]scryfall.Card, error) { return cards, nil }
+}
+
+func catalogPrint(name, num string, usd float64) scryfall.Card {
+	return scryfall.Card{
+		ID: name + "-id", Name: name, Set: "eoe", CollectorNumber: num,
+		ColorIdentity: []string{"U"}, PriceUSD: price(usd), Finishes: []string{"nonfoil"},
+	}
+}
+
+func TestUnownedRowsYouNeverHeldShowNoQuantityOrValue(t *testing.T) {
+	f := eoeStore()
+	f.unowned["eoe"] = nil
+	m := key(eoeModel(t, f, WithSetPrints(
+		eoePrints(catalogPrint("Cosmic Nexus", "4", 3.25),
+			catalogPrint("Voidwing Drake", "5", 41)))), "b")
+
+	lines := m.cardLines(96)
+	for _, gone := range []string{"QTY", "VALUE"} {
+		if strings.Contains(lines[0], gone) {
+			t.Errorf("%s column survives: %q — nothing in this table is held", gone, lines[0])
+		}
+	}
+	out := strings.Join(lines, "\n")
+	for _, pad := range []string{"×0", "$0.00"} {
+		if strings.Contains(out, pad) {
+			t.Errorf("a card you have never held is padded with %q:\n%s", pad, out)
+		}
+	}
+	if !strings.Contains(out, "$41.00") {
+		t.Errorf("the price you would pay is missing:\n%s", out)
+	}
+}
+
+func TestUnownedWantRowsKeepTheirQuantityAndValue(t *testing.T) {
+	m := key(eoeModel(t, eoeStore(), WithSetPrints(
+		eoePrints(catalogPrint("Cosmic Nexus", "4", 3.25)))), "b")
+
+	lines := m.cardLines(96)
+	for _, kept := range []string{"QTY", "VALUE"} {
+		if !strings.Contains(lines[0], kept) {
+			t.Errorf("%s column is gone: %q — Gamma is on a want list at ×3", kept, lines[0])
+		}
+	}
+	for _, line := range lines[1:] {
+		if strings.Contains(line, "Cosmic Nexus") && strings.Contains(line, "×0") {
+			t.Errorf("the never-held row still reads ×0: %q", line)
+		}
+	}
+}
+
+func TestUnownedHeaderShowsWhatFinishingTheSetWouldCost(t *testing.T) {
+	f := eoeStore()
+	f.unowned["eoe"] = []store.UnownedRow{
+		{CollectionRow: row("Gamma", "eoe", "3", finish.Nonfoil, 3, 27), Where: "Want"},
+	}
+	m := eoeModel(t, f, WithSetPrints(eoePrints(catalogPrint("Cosmic Nexus", "4", 3.25))))
+
+	if _, totals := m.viewHeader(); !strings.Contains(totals, "$55.00") {
+		t.Errorf("owned totals = %q, want the $55.00 you hold", totals)
+	}
+
+	m = key(m, "b")
+	_, totals := m.viewHeader()
+	if !strings.Contains(totals, "$12.25 to finish") {
+		t.Errorf("unowned totals = %q, want $12.25 to finish — one Gamma at $9 plus one Nexus at $3.25",
+			totals)
+	}
+	if strings.Contains(totals, "$55.00") {
+		t.Errorf("unowned totals = %q, still reporting what the set is worth to you", totals)
 	}
 }

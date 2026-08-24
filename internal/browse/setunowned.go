@@ -2,7 +2,9 @@ package browse
 
 import (
 	"fmt"
+	"slices"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -38,6 +40,12 @@ func (m *Model) setCards(setCode string) ([]card, error) {
 	}
 
 	m.setOwned, m.setTotal = len(held), len(held)+len(gaps)
+	m.setMissingCost = 0
+	for _, c := range out {
+		if c.Price != nil {
+			m.setMissingCost += *c.Price
+		}
+	}
 
 	if !m.setUnowned {
 		return collectionCards(owned), nil
@@ -78,10 +86,25 @@ func unownedCard(r store.UnownedRow) card {
 }
 
 func printingCard(p scryfall.Card) card {
+	fin, price := offeredFinish(p)
 	return card{
 		ScryfallID: p.ID, Name: p.Name, SetCode: p.Set,
-		CollectorNumber: p.CollectorNumber, Price: p.PriceUSD,
+		CollectorNumber: p.CollectorNumber, Finish: fin, Price: price,
+		ColorIdentity: p.ColorIdentity,
+		Treatment:     store.FoilTreatmentOf(p.PromoTypes),
 	}
+}
+
+func offeredFinish(p scryfall.Card) (finish.Finish, *float64) {
+	switch {
+	case slices.Contains(p.Finishes, finish.Foil.String()):
+		if !slices.Contains(p.Finishes, finish.Nonfoil.String()) {
+			return finish.Foil, p.PriceUSDFoil
+		}
+	case slices.Contains(p.Finishes, finish.Etched.String()):
+		return finish.Etched, p.PriceUSDEtched
+	}
+	return finish.Nonfoil, p.PriceUSD
 }
 
 func (m *Model) toggleSetUnowned() {

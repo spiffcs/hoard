@@ -480,6 +480,8 @@ func (m Model) cardLines(width int) []string {
 		if m.setUnowned {
 			cols = slices.Insert(cols, 5,
 				ui.Col{Title: "LIST", Align: ui.Left, Priority: 1, Style: env.Dim()})
+
+			cols[len(cols)-1].Priority = 1
 		}
 		if inDeck {
 
@@ -494,8 +496,8 @@ func (m Model) cardLines(width int) []string {
 				{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
 				ui.C(ui.Pips(c.ColorIdentity)),
 				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
-				ui.C(ui.Qty(c.Quantity)), ui.C(ui.MoneyPtr(c.Price)),
-				ui.C(ui.Money(c.Value)),
+				ui.C(heldQty(c)), ui.C(ui.MoneyPtr(c.Price)),
+				ui.C(heldValue(c)),
 			}
 
 			cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
@@ -822,4 +824,18 @@ func fit(s string, w int) string {
 		return ui.Truncate(s, w)
 	}
 	return s
+}
+
+func heldQty(c card) string {
+	if c.Quantity == 0 {
+		return ""
+	}
+	return ui.Qty(c.Quantity)
+}
+
+func heldValue(c card) string {
+	if c.Quantity == 0 {
+		return ""
+	}
+	return ui.Money(c.Value)
 }

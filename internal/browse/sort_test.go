@@ -3,7 +3,6 @@ package browse
 import (
 	"cmp"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/finish"
@@ -43,31 +42,14 @@ func TestSortBySetOrdersByCollectorNumber(t *testing.T) {
 	}
 }
 
-func TestUnownedViewOffersNoFinishOrQuantitySort(t *testing.T) {
+func TestUnownedViewOffersOnlyTheColumnsItShows(t *testing.T) {
 	m := key(eoeModel(t, eoeStore()), "b")
 
-	seen := map[string]bool{}
-	for range 10 {
-		seen[m.sortLabel()] = true
-		m = key(m, "s")
-	}
-	var labels []string
-	for k := range seen {
-		labels = append(labels, k)
-	}
-	slices.Sort(labels)
-
-	for _, gone := range []string{"finish", "qty"} {
-		if seen[gone] {
-			t.Errorf("%q is still offered in the unowned view · sorts seen: %s",
-				gone, strings.Join(labels, ", "))
-		}
-	}
-	for _, kept := range []string{"value", "name", "set", "price"} {
-		if !seen[kept] {
-			t.Errorf("%q went missing from the unowned view · sorts seen: %s",
-				kept, strings.Join(labels, ", "))
-		}
+	got := sortKeysOffered(m)
+	want := []string{"name", "set", "price"}
+	if !slices.Equal(got, want) {
+		t.Errorf("unowned view offers %v, want %v — finish, quantity and value are not headers here",
+			got, want)
 	}
 }
 

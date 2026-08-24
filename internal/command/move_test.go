@@ -298,3 +298,51 @@ func TestMoveRefusesWhenEverythingIsAlreadyThere(t *testing.T) {
 		t.Errorf("error = %q, want it to say the holdings are already there", err)
 	}
 }
+
+func TestMoveReportsTheValueMoved(t *testing.T) {
+	st := moveStore(t)
+	doc := holdingsFor(t, st, "--binder", "Binder")
+
+	dry, err := execCmdIn(context.Background(), st,
+		[]string{"move", "--to", "bulk", "--dry-run"}, doc)
+	if err != nil {
+		t.Fatalf("hoard move --dry-run: %v\n%s", err, dry)
+	}
+	if !strings.Contains(dry, "$4.50") {
+		t.Errorf("dry run did not price what it would move:\n%s", dry)
+	}
+
+	out, err := execCmdIn(context.Background(), st,
+		[]string{"move", "--to", "bulk", "--yes"}, doc)
+	if err != nil {
+		t.Fatalf("hoard move: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "$4.50") {
+		t.Errorf("move did not price what it moved:\n%s", out)
+	}
+}
+
+func TestMoveValuesAnUnpricedCardAtNothing(t *testing.T) {
+	st := moveStore(t)
+	mystery := scryfall.Card{ID: "mystery", Set: "xxx", CollectorNumber: "1",
+		Name: "Unpriced Thing", ScryfallURL: "http://x"}
+	if err := st.UpsertPrintings([]scryfall.Card{mystery}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := st.AddCardFinish(mystery, finish.Nonfoil, 3); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+
+	doc := holdingsFor(t, st, "--binder", "Binder")
+	out, err := execCmdIn(context.Background(), st,
+		[]string{"move", "--to", "bulk", "--yes"}, doc)
+	if err != nil {
+		t.Fatalf("hoard move: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "10 copies") {
+		t.Errorf("move did not count the unpriced copies:\n%s", out)
+	}
+	if !strings.Contains(out, "$4.50") {
+		t.Errorf("an unpriced card must add nothing to the value moved:\n%s", out)
+	}
+}

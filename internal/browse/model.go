@@ -234,6 +234,7 @@ type Model struct {
 	setUnowned         bool
 	lastSet            string
 	setOwned, setTotal int
+	setMissingCost     float64
 	marketResult       market.Result
 	marketRows         []market.Row
 	marketLoading      bool
@@ -462,14 +463,14 @@ func (m *Model) loadCards() error {
 	}
 
 	var out []card
-	if sel.Kind == kindSet {
+	switch sel.Kind {
+	case kindSet:
 		cards, err := m.setCards(sel.setCode)
 		if err != nil {
 			return fmt.Errorf("reading %q: %w", sel.Name, err)
 		}
 		out = cards
-	} else if sel.Kind == kindAllCards || sel.Kind == store.KindCollection ||
-		sel.Kind == kindFolder {
+	case kindAllCards, store.KindCollection, kindFolder:
 		var rows []store.CollectionRow
 		var err error
 		switch sel.Kind {
@@ -488,7 +489,7 @@ func (m *Model) loadCards() error {
 
 			out = mergeByName(out)
 		}
-	} else {
+	default:
 		entries, err := m.store.DeckEntries(sel.ID)
 		if err != nil {
 			return fmt.Errorf("reading deck %q: %w", sel.Name, err)

@@ -468,6 +468,9 @@ func (m Model) viewHeader() (title, totals string) {
 		}
 		totals := fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value))
 		if sel.Kind == kindSet {
+			if m.setUnowned {
+				totals = ui.Money(m.setMissingCost) + " to finish"
+			}
 			totals = m.setTally() + " · " + totals
 		}
 		return "CARDS · " + strings.ToUpper(sel.Name),

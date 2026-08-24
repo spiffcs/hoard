@@ -238,7 +238,11 @@ func FoilTreatment(promoTypes sql.NullString) string {
 	if !promoTypes.Valid || len(promoTypes.String) < 2 {
 		return ""
 	}
-	for _, tag := range strings.Split(strings.Trim(promoTypes.String, "[]"), ",") {
+	return FoilTreatmentOf(strings.Split(strings.Trim(promoTypes.String, "[]"), ","))
+}
+
+func FoilTreatmentOf(promoTypes []string) string {
+	for _, tag := range promoTypes {
 		tag = strings.Trim(strings.TrimSpace(tag), `"`)
 		if word := foilTreatmentOf(tag); word != "" {
 			return word
