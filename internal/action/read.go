@@ -1,6 +1,7 @@
 package action
 
 import (
+	"github.com/spiffcs/hoard/internal/cardfilter"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
@@ -118,6 +119,45 @@ func (d Deps) ExportRows(binderRef, deckRef string) ([]export.Row, error) {
 		rows = append(rows, dr...)
 	}
 	return rows, nil
+}
+
+func rowSubject(r export.Row) cardfilter.Subject {
+	var value float64
+	if r.PriceUSD != nil {
+		value = float64(r.Count) * *r.PriceUSD
+	}
+	return cardfilter.Subject{
+		ScryfallID: r.ScryfallID,
+		Name:       r.Name,
+		SetCode:    r.Set,
+		Finish:     r.Finish,
+		Board:      r.Board,
+		Quantity:   r.Count,
+		Price:      r.PriceUSD,
+		Value:      value,
+	}
+}
+
+func (d Deps) FilteredExportRows(binderRef, deckRef string, f cardfilter.Filter) ([]export.Row, error) {
+	rows, err := d.ExportRows(binderRef, deckRef)
+	if err != nil || f.Empty() {
+		return rows, err
+	}
+
+	var allowed map[string]bool
+	if f.NeedsCatalog() {
+		if allowed, err = d.Store.MatchingCardIDs(f.Traits()); err != nil {
+			return nil, err
+		}
+	}
+
+	kept := make([]export.Row, 0, len(rows))
+	for _, r := range rows {
+		if f.Matches(rowSubject(r), allowed) {
+			kept = append(kept, r)
+		}
+	}
+	return kept, nil
 }
 
 func detailFor(details map[string]store.CardDetail, scryfallID string) *store.CardDetail {

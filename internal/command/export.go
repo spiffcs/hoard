@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/action"
+	"github.com/spiffcs/hoard/internal/cardfilter"
 	"github.com/spiffcs/hoard/internal/cli"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/hoardjson"
@@ -31,8 +32,19 @@ func (s *onceString) Set(v string) error {
 	return nil
 }
 
+func warnIfCatalogIsBare(st *store.Store, env *cli.Env, q cardfilter.Filter) {
+	if !q.NeedsCatalog() {
+		return
+	}
+	enriched, _, err := st.EnrichedCount()
+	if err != nil || enriched > 0 {
+		return
+	}
+	env.Report().Warn("no card details stored yet · run update-prices before filtering on rarity, type or colour")
+}
+
 func NewCmdExport(a *app) *cobra.Command {
-	var format, outPath string
+	var format, outPath, filter string
 	var binder, deck onceString
 	var all bool
 
@@ -56,7 +68,7 @@ func NewCmdExport(a *app) *cobra.Command {
 				}
 			}
 			return runExport(a.store, a.env, format, c.Flags().Changed("format"),
-				binder.value, deck.value, outPath, all)
+				binder.value, deck.value, outPath, all, filter)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "csv",
@@ -64,13 +76,15 @@ func NewCmdExport(a *app) *cobra.Command {
 	cmd.Flags().Var(&binder, "binder", "export one binder (id, name, or unique fragment)")
 	cmd.Flags().Var(&deck, "deck", "export one deck (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&all, "all", false, "export every binder and deck (the default)")
+	cmd.Flags().StringVar(&filter, "filter", "",
+		"keep only matching holdings, e.g. 'price<1 rarity:common' (see README)")
 
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "write to FILE instead of stdout")
 	return cli.JSONCapable(cmd)
 }
 
 func runExport(st *store.Store, env *cli.Env, format string, formatSet bool,
-	binder, deck, outPath string, all bool) error {
+	binder, deck, outPath string, all bool, query string) error {
 
 	if env.JSON {
 		if formatSet && format != "json" {
@@ -93,7 +107,13 @@ func runExport(st *store.Store, env *cli.Env, format string, formatSet bool,
 		return cli.Usagef("choose one of --binder, --deck, or --all")
 	}
 
-	rows, err := action.Deps{Store: st}.ExportRows(binder, deck)
+	q, err := cardfilter.Parse(query)
+	if err != nil {
+		return cli.Usagef("%s", err)
+	}
+	warnIfCatalogIsBare(st, env, q)
+
+	rows, err := action.Deps{Store: st}.FilteredExportRows(binder, deck, q)
 	if err != nil {
 		return err
 	}

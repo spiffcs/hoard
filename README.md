@@ -120,6 +120,47 @@ importing decklists to price against it.
     <img src="docs/assets/browse.png" width="100%" alt="The browser: the sets you own cards from listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
 </p>
 
+## Filtering
+
+Press <kbd>/</kbd> in the browser to narrow what you are looking at, and give
+the same query to `hoard export --filter` to narrow an export. One vocabulary,
+both places.
+
+```console
+$ hoard export --binder Binder --filter 'price<1 rarity:common'
+```
+
+| Key | Matches | Example |
+|---|---|---|
+| *(bare word)* | card name, anywhere in it | `sol ring`, `"lion's eye"` |
+| `name` | card name, anywhere in it | `name:ulamog` |
+| `set` | set code | `set:uma` |
+| `finish` | `nonfoil`, `foil` or `etched` | `finish:foil` |
+| `board` | `main`, `side`, `commander` or `maybe` | `board:side` |
+| `qty` | copies held | `qty>=4` |
+| `price` | price per copy, USD | `price<1` |
+| `value` | copies × price, USD | `value>=20` |
+| `cmc` | mana value | `cmc<=2` |
+| `rarity` | the whole rarity | `rarity:mythic` |
+| `type`, `t` | type line | `t:creature` |
+| `artist` | artist | `artist:guay` |
+| `layout` | Scryfall layout | `layout:transform` |
+| `setname` | full set name | `setname:"modern horizons"` |
+| `color`, `c` | colour identity letters | `c:wu` |
+
+Terms are ANDed, so repeating a key makes a range: `price>=5 price<20`. The
+comparisons `>` `>=` `<` `<=` work on the numeric keys; everything else takes
+`:` or `=`. Quote anything with a space in it.
+
+Text matching ignores case and matches anywhere in the field — except `rarity`,
+`finish` and `board`, which must match whole. `c:wu` asks for a colour identity
+containing both W and U, not one that is exactly WU. An unpriced card matches no
+`price` term: absent is not free.
+
+The last seven keys read the card documents hoard stores, so they match nothing
+until `hoard update-prices` has filled the catalog. A few do not apply on the
+movers, watches and market screens; the browser says so when you type one.
+
 ## A wantlist
 
 There is no wantlist screen, and there does not need to be one: a binder that

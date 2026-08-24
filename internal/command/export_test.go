@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -312,6 +313,32 @@ func TestCmdExportJSONAgreesWithItself(t *testing.T) {
 	}
 }
 
+func filterExportStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	sol := scryfall.Card{ID: "sol", Set: "c21", CollectorNumber: "125", Name: "Sol Ring",
+		ScryfallURL: "http://x", PriceUSD: f(2),
+		Raw: []byte(`{"name":"Sol Ring","rarity":"uncommon","type_line":"Artifact"}`)}
+	forest := scryfall.Card{ID: "forest", Set: "c21", CollectorNumber: "300", Name: "Forest",
+		ScryfallURL: "http://x", PriceUSD: f(0.10),
+		Raw: []byte(`{"name":"Forest","rarity":"common","type_line":"Basic Land — Forest"}`)}
+	if err := st.UpsertPrintings([]scryfall.Card{sol, forest}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if err := st.AddCardFinish(sol, finish.Nonfoil, 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := st.AddCardFinish(forest, finish.Nonfoil, 5); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	return st
+}
+
 type holdingsDoc struct {
 	SchemaVersion string `json:"schemaVersion"`
 	Kind          string `json:"kind"`
@@ -344,6 +371,55 @@ func readHoldings(t *testing.T, st *store.Store, args ...string) holdingsDoc {
 		t.Fatalf("hoard %v --json emitted invalid JSON (%v): %q", args, err, out)
 	}
 	return doc
+}
+
+func holdingNames(doc holdingsDoc) []string {
+	var out []string
+	for _, r := range doc.Holdings.Rows {
+		out = append(out, r.Card.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestExportFilterNarrowsByPrice(t *testing.T) {
+	st := filterExportStore(t)
+	doc := readHoldings(t, st, "export", "--filter", "price<1")
+	if got := holdingNames(doc); strings.Join(got, ",") != "Forest" {
+		t.Errorf("price<1 kept %v, want only the ten-cent Forest", got)
+	}
+}
+
+func TestExportFilterNarrowsByRarity(t *testing.T) {
+	st := filterExportStore(t)
+	doc := readHoldings(t, st, "export", "--filter", "rarity:common")
+	if got := holdingNames(doc); strings.Join(got, ",") != "Forest" {
+		t.Errorf("rarity:common kept %v, want only the common", got)
+	}
+}
+
+func TestExportFilterCombinesTermsWithAnd(t *testing.T) {
+	st := filterExportStore(t)
+	doc := readHoldings(t, st, "export", "--filter", "rarity:common qty>10")
+	if got := holdingNames(doc); len(got) != 0 {
+		t.Errorf("rarity:common qty>10 kept %v, want nothing: no row satisfies both", got)
+	}
+}
+
+func TestExportFilterNarrowsTheCSVToo(t *testing.T) {
+	st := filterExportStore(t)
+	out := filepath.Join(t.TempDir(), "out.csv")
+	if _, err := execCmd(context.Background(), st,
+		[]string{"export", "--filter", "price<1", "-o", out}, false); err != nil {
+		t.Fatalf("hoard export --filter: %v", err)
+	}
+	got, _ := os.ReadFile(out)
+	if strings.Contains(string(got), "Sol Ring") {
+		t.Errorf("--filter did not narrow the CSV:\n%s", got)
+	}
+	if !strings.Contains(string(got), "Forest") {
+		t.Errorf("--filter dropped the row it should have kept:\n%s", got)
+	}
 }
 
 func TestHoldingsRowCarriesItsContainerID(t *testing.T) {
