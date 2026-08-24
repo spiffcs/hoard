@@ -186,7 +186,7 @@ func (m *Model) scrollDipIntoView() {
 }
 
 func (m Model) dipEmptyNote(s dipSection) string {
-	if !m.filter.empty() {
+	if !m.filter.Empty() {
 		return "nothing matches the filter"
 	}
 	if s == secMomentum {

@@ -262,8 +262,8 @@ func (m Model) watchesLines(width int) []string {
 }
 
 func (m Model) watchEmptyNote(s watchSection, filtered bool) string {
-	if !m.filter.empty() {
-		return "none match " + m.filter.raw
+	if !m.filter.Empty() {
+		return "none match " + m.filter.Raw()
 	}
 	if filtered {
 		return "none in this collection"
@@ -335,9 +335,9 @@ func (m Model) watchStatus() string {
 			return m.theme.Help.Render(fmt.Sprintf(
 				"nothing to watch in %s · All Cards shows every container", sel.Name))
 		}
-		if !m.filter.empty() {
+		if !m.filter.Empty() {
 			return m.theme.Help.Render(fmt.Sprintf(
-				"nothing matches %s · esc clears the filter", m.filter.raw))
+				"nothing matches %s · esc clears the filter", m.filter.Raw()))
 		}
 		return m.theme.Help.Render(
 			"no watches, and every card you own has a price · press w on a card in holdings")
@@ -351,8 +351,8 @@ func (m Model) watchStatus() string {
 		line = name + " · " + line
 	}
 	line += " · sorted by " + m.sortLabel()
-	if !m.filter.empty() {
-		line += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
+	if !m.filter.Empty() {
+		line += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.Raw())
 	}
 	if min := m.floorMin(); min > 0 {
 		line += fmt.Sprintf(" · floor %s (M cycles)", ui.Money(min))

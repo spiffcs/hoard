@@ -64,11 +64,11 @@ func TestRawOnlyCommandHidesPremiumFinishes(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(m.filter.raw, "finish:nonfoil") {
-		t.Errorf("filter.raw = %q, want it to carry finish:nonfoil", m.filter.raw)
+	if !strings.Contains(m.filter.Raw(), "finish:nonfoil") {
+		t.Errorf("filter.raw = %q, want it to carry finish:nonfoil", m.filter.Raw())
 	}
-	if m.filterText != m.filter.raw {
-		t.Errorf("filterText = %q, want it to match the live filter %q", m.filterText, m.filter.raw)
+	if m.filterText != m.filter.Raw() {
+		t.Errorf("filterText = %q, want it to match the live filter %q", m.filterText, m.filter.Raw())
 	}
 
 	m = runRawOnly(t, m)
@@ -76,8 +76,8 @@ func TestRawOnlyCommandHidesPremiumFinishes(t *testing.T) {
 	if got := cardNames(m.filteredCards); len(got) != 6 {
 		t.Errorf("rows after toggling off = %v, want all six back", got)
 	}
-	if !m.filter.empty() || m.filterText != "" {
-		t.Errorf("toggling off left filter %q / text %q, want both clear", m.filter.raw, m.filterText)
+	if !m.filter.Empty() || m.filterText != "" {
+		t.Errorf("toggling off left filter %q / text %q, want both clear", m.filter.Raw(), m.filterText)
 	}
 }
 
@@ -123,7 +123,7 @@ func TestRawOnlyCommandIsInThePalette(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if !strings.Contains(m.filter.raw, "finish:nonfoil") {
-		t.Errorf("running it from the palette left filter %q, want finish:nonfoil", m.filter.raw)
+	if !strings.Contains(m.filter.Raw(), "finish:nonfoil") {
+		t.Errorf("running it from the palette left filter %q, want finish:nonfoil", m.filter.Raw())
 	}
 }

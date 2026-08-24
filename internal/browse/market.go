@@ -139,7 +139,7 @@ func (m Model) marketLines(width int) []string {
 	if width <= 0 {
 		return nil
 	}
-	if m.marketTotalRows() == 0 && (!m.marketLoaded || (!filtered && m.filter.empty())) {
+	if m.marketTotalRows() == 0 && (!m.marketLoaded || (!filtered && m.filter.Empty())) {
 
 		return nil
 	}
@@ -201,8 +201,8 @@ func (m Model) marketEmptyNote(filtered bool) string {
 	if note := m.filterUnsupported(); note != "" {
 		return note
 	}
-	if !m.filter.empty() {
-		return "none match " + m.filter.raw
+	if !m.filter.Empty() {
+		return "none match " + m.filter.Raw()
 	}
 	if filtered {
 		return "none in this collection"
@@ -310,9 +310,9 @@ func (m Model) marketStatus() string {
 		if note := m.filterUnsupported(); note != "" {
 			return m.theme.Err.Render(note)
 		}
-		if !m.filter.empty() {
+		if !m.filter.Empty() {
 			return m.theme.Help.Render(fmt.Sprintf(
-				"nothing matches %s · esc clears the filter", m.filter.raw))
+				"nothing matches %s · esc clears the filter", m.filter.Raw()))
 		}
 		if sel := m.selectedContainer(); sel != nil && sel.Kind != kindAllCards {
 			return m.theme.Help.Render(fmt.Sprintf(
@@ -345,8 +345,8 @@ func (m Model) marketStatus() string {
 		line = name + " · " + line
 	}
 
-	if !m.filter.empty() {
-		line += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
+	if !m.filter.Empty() {
+		line += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.Raw())
 	}
 	return m.theme.Help.Render(line + " · " + suffix)
 }
@@ -443,15 +443,15 @@ func (m *Model) applyMarketRows() {
 		res = scoped
 	}
 
-	if !m.filter.empty() {
+	if !m.filter.Empty() {
 		queried := market.Result{Compared: res.Compared}
 		for _, o := range res.Opportunities {
-			if m.filter.matches(marketAsCard(o.Card), m.allowed) {
+			if m.filter.Matches(marketAsCard(o.Card).subject(), m.allowed) {
 				queried.Opportunities = append(queried.Opportunities, o)
 			}
 		}
 		for _, c := range res.Comps {
-			if m.filter.matches(marketAsCard(c.Card), m.allowed) {
+			if m.filter.Matches(marketAsCard(c.Card).subject(), m.allowed) {
 				queried.Comps = append(queried.Comps, c)
 			}
 		}

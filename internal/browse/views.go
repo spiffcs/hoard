@@ -226,7 +226,7 @@ func (m *Model) filterTrends(rows []store.TrendRow) []store.TrendRow {
 		if bySet && r.SetCode != set {
 			continue
 		}
-		if !m.filter.empty() && !m.filter.matches(trendAsCard(r), m.allowed) {
+		if !m.filter.Empty() && !m.filter.Matches(trendAsCard(r).subject(), m.allowed) {
 			continue
 		}
 		out = append(out, r)
@@ -262,7 +262,7 @@ func (m *Model) deriveView() {
 				continue
 			}
 
-			if !m.filter.empty() && !m.filter.matches(moverAsCard(c), m.allowed) {
+			if !m.filter.Empty() && !m.filter.Matches(moverAsCard(c).subject(), m.allowed) {
 				continue
 			}
 			rows = append(rows, c)
@@ -286,7 +286,7 @@ func (m *Model) deriveView() {
 			if bySet && w.SetCode != set {
 				continue
 			}
-			if !m.filter.empty() && !m.filter.matches(watchAsCard(w), m.allowed) {
+			if !m.filter.Empty() && !m.filter.Matches(watchAsCard(w).subject(), m.allowed) {
 				continue
 			}
 			watches = append(watches, w)
@@ -313,7 +313,7 @@ func (m *Model) deriveView() {
 				continue
 			}
 
-			if !m.filter.empty() && !m.filter.matches(unpricedAsCard(r), m.allowed) {
+			if !m.filter.Empty() && !m.filter.Matches(unpricedAsCard(r).subject(), m.allowed) {
 				continue
 			}
 			unpriced = append(unpriced, r)

@@ -592,9 +592,9 @@ func (m Model) statusLine() string {
 		switch m.view {
 		case viewMovers:
 
-			if !m.filter.empty() {
+			if !m.filter.Empty() {
 				return m.theme.Help.Render(fmt.Sprintf(
-					"no movers match %s · esc clears the filter", m.filter.raw))
+					"no movers match %s · esc clears the filter", m.filter.Raw()))
 			}
 			if scoped {
 				return m.theme.Help.Render(fmt.Sprintf(
@@ -611,8 +611,8 @@ func (m Model) statusLine() string {
 		pos += " · " + name
 	}
 	pos += " · sorted by " + m.sortLabel()
-	if !m.filter.empty() {
-		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.raw)
+	if !m.filter.Empty() {
+		pos += fmt.Sprintf(" · filtered by %s (esc to clear)", m.filter.Raw())
 	}
 	if min := m.floorMin(); min > 0 {
 		pos += fmt.Sprintf(" · floor %s (M cycles)", ui.Money(min))

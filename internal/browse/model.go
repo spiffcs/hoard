@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/spiffcs/hoard/internal/cardfilter"
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
@@ -132,7 +133,7 @@ type Model struct {
 
 	filtering  bool
 	filterText string
-	filter     filter
+	filter     cardfilter.Filter
 
 	emptyNote string
 	filterErr string
@@ -537,13 +538,13 @@ func mergeByName(rows []card) []card {
 }
 
 func (m *Model) applyFilter() {
-	if m.filter.empty() && m.floorMin() == 0 {
+	if m.filter.Empty() && m.floorMin() == 0 {
 
 		m.filteredCards = m.allCards
 	} else {
 		out := make([]card, 0, len(m.allCards))
 		for _, c := range m.allCards {
-			if m.filter.matches(c, m.allowed) && !m.underFloor(c.Price) {
+			if m.filter.Matches(c.subject(), m.allowed) && !m.underFloor(c.Price) {
 				out = append(out, c)
 			}
 		}
@@ -645,7 +646,7 @@ func (m *Model) refreshEmptyNote() {
 
 		rows = m.watchTotalRows()
 	}
-	if rows > 0 || m.filter.empty() || !m.filter.needsCatalog() {
+	if rows > 0 || m.filter.Empty() || !m.filter.NeedsCatalog() {
 		return
 	}
 	enriched, total, err := m.store.EnrichedCount()
@@ -664,7 +665,7 @@ func (m *Model) refreshEmptyNote() {
 }
 
 func (m *Model) setFilter(text string) {
-	f, err := parseFilter(text)
+	f, err := cardfilter.Parse(text)
 	if err != nil {
 
 		m.filterErr = err.Error()
@@ -674,8 +675,8 @@ func (m *Model) setFilter(text string) {
 	m.filter = f
 	m.allowed = nil
 
-	if f.needsCatalog() {
-		ids, err := m.store.MatchingCardIDs(f.traits)
+	if f.NeedsCatalog() {
+		ids, err := m.store.MatchingCardIDs(f.Traits())
 		if err != nil {
 			m.setError(err)
 			return
@@ -695,7 +696,7 @@ func (m *Model) clearFilter() {
 	m.filtering = false
 	m.filterText = ""
 	m.filterErr = ""
-	m.filter = filter{}
+	m.filter = cardfilter.Filter{}
 	m.allowed = nil
 	m.cardsPage, m.moversPage = 0, 0
 	m.deriveView()
@@ -1085,7 +1086,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status, m.statusErr = "cancelled", false
 			return m, nil
 		}
-		if !m.filter.empty() {
+		if !m.filter.Empty() {
 			m.clearFilter()
 			m.status = "filter cleared"
 			return m, nil
@@ -1298,14 +1299,14 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyTab:
 
 		m.filtering = false
-		if m.filter.empty() {
+		if m.filter.Empty() {
 			m.filterText = ""
 		}
 		m.focus = paneContainers
 		return m, nil
 	case tea.KeyEnter:
 		m.filtering = false
-		if m.filter.empty() {
+		if m.filter.Empty() {
 			m.filterText = ""
 		}
 
