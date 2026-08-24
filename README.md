@@ -172,5 +172,5 @@ Wizards of the Coast. ©Wizards of the Coast LLC.
 Card data courtesy of [Scryfall](https://scryfall.com), [MTGJSON](https://mtgjson.com)
 (MIT, © 2018–Present Zach Halpern) and [TCGCSV](https://tcgcsv.com). hoard is not
 affiliated with, endorsed by, or sponsored by any of them. All prices are daily
-estimates from third-party aggregators, not quotes, with absolutely no guarantee
-— see stores for final prices.
+estimates from third-party aggregators, not quotes, with absolutely no guarantee.
+Visit and support your LGS for final prices.
