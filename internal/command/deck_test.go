@@ -214,3 +214,44 @@ func TestDeckAddStdinNeedsAName(t *testing.T) {
 	}
 	assertNothingWritten(t, st, "deck add --file - with no --name")
 }
+
+func TestImportTextDeckPrefersTheTitleInTheFile(t *testing.T) {
+	dir := t.TempDir()
+	titled := filepath.Join(dir, "premodernmagic.com__Deadguy Ale__.txt")
+	body := "Deck downloaded from - http://premodernmagic.com\r\n" +
+		"------------------------------------------------\r\n" +
+		"Deadguy Ale\r\n" +
+		"------------------------------------------------\r\n" +
+		"MAIN DECK (60)\r\n\r\nCreatures: 4\r\n4\tHypnotic Specter\r\n\r\n" +
+		"SIDEBOARD (15)\r\n3\tWithered Wretch\r\n"
+	if err := os.WriteFile(titled, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := importTextDeck(titled, "", "premodernmagic")
+	if err != nil {
+		t.Fatalf("importTextDeck: %v", err)
+	}
+	if d.Name != "Deadguy Ale" {
+		t.Errorf("deck name = %q, want the title from inside the file", d.Name)
+	}
+	if d.SourceID == "" {
+		t.Error("a deck named from its title still needs a source id")
+	}
+
+	if d, err = importTextDeck(titled, "Chosen By Hand", "premodernmagic"); err != nil {
+		t.Fatalf("importTextDeck: %v", err)
+	} else if d.Name != "Chosen By Hand" {
+		t.Errorf("--name must win over the file title, got %q", d.Name)
+	}
+
+	plain := filepath.Join(dir, "My Pile.txt")
+	if err := os.WriteFile(plain, []byte("4 Hypnotic Specter\n3 Duress\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = importTextDeck(plain, "", "text"); err != nil {
+		t.Fatalf("importTextDeck: %v", err)
+	} else if d.Name != "My Pile" {
+		t.Errorf("a file with no title falls back to the filename, got %q", d.Name)
+	}
+}

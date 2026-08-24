@@ -198,11 +198,16 @@ func importTextDeck(path, name, source string) (*decksource.Deck, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if name == "" {
-		base := filepath.Base(path)
-		name = strings.TrimSuffix(base, filepath.Ext(base))
+	d, err := decksource.ParseText(name, "", "", source, f)
+	if err != nil || d.Name != "" {
+		return d, err
 	}
-	return decksource.ParseText(name, "", "", source, f)
+	base := filepath.Base(path)
+	d.Name = strings.TrimSuffix(base, filepath.Ext(base))
+	if d.SourceID == "" {
+		d.SourceID = strings.ToLower(strings.TrimSpace(d.Name))
+	}
+	return d, nil
 }
 
 func newDeckRepinCmd(a *app) *cobra.Command {

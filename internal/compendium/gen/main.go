@@ -19,6 +19,10 @@ func main() {
 	sets := flag.String("sets", "", "comma-separated set codes to include")
 	rarity := flag.String("rarity", "",
 		"comma-separated rarities to include (common, uncommon, rare, special, mythic, bonus)")
+	legal := flag.String("legal", "",
+		"only cards Scryfall marks legal in this format (premodern, legacy, modern, ...)")
+	format := flag.String("format", "",
+		"shorthand for a format's legality and its era's sets (premodern)")
 	pricedOnly := flag.Bool("priced-only", false, "skip printings Scryfall does not price")
 	days := flag.Int("days", 30, "days of price history to load (max 90)")
 
@@ -32,14 +36,20 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(flag.Arg(0), compendium.Options{
+	o, err := compendium.ApplyFormat(compendium.Options{
 		Since:      *since,
 		Sets:       split(*sets),
 		Rarities:   split(*rarity),
+		Legal:      *legal,
 		PricedOnly: *pricedOnly,
 		Days:       *days,
 		CacheDir:   pricing.DefaultCacheDir(),
-	}); err != nil {
+	}, *format)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "compendium/gen:", err)
+		os.Exit(2)
+	}
+	if err := run(flag.Arg(0), o); err != nil {
 		fmt.Fprintln(os.Stderr, "compendium/gen:", err)
 		os.Exit(1)
 	}

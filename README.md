@@ -111,6 +111,11 @@ task compendium -- -rarity mythic,rare -since 2020 mythics-rare.db
 HOARD_DB=mythics-rare.db hoard
 ```
 
+To build a whole format instead of a date range, `task compendium -- -format
+premodern premodern.db` does Premodern in one command — the [generator
+docs](internal/compendium/gen/README.md#a-format-not-a-date-range) cover that and
+importing decklists to price against it.
+
 <p align="center">
     <img src="docs/assets/browse.png" width="100%" alt="The browser: the sets you own cards from listed by value on the left, every card on the right with its set, finish, quantity and price, card names colored by color identity">
 </p>

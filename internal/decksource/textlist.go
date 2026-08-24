@@ -45,6 +45,7 @@ func splitArchidektAnnotations(line string) (rest string, categories []string, n
 }
 
 func headerKey(line string) string {
+	line = headCountRE.ReplaceAllString(strings.TrimSpace(line), "")
 	return strings.ToLower(strings.TrimRight(strings.TrimSpace(line), ":"))
 }
 
@@ -65,6 +66,8 @@ var sectionHeaders = map[string]string{
 	"deck":       BoardMain,
 	"mainboard":  BoardMain,
 	"main":       BoardMain,
+	"main deck":  BoardMain,
+	"maindeck":   BoardMain,
 	"companion":  BoardSide,
 }
 
@@ -112,14 +115,20 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 	if sourceID == "" {
 		sourceID = strings.ToLower(strings.TrimSpace(name))
 	}
-	d := &Deck{Name: name, Source: provider, SourceID: sourceID, SourceURL: sourceURL}
-
 	lines, err := readLines(r)
 	if err != nil {
 		return nil, err
 	}
-	blankStartsSideboard := !usesBoardMarkers(lines)
+	title := declaredTitle(lines)
+	if name == "" {
+		name = title
+		if sourceID == "" {
+			sourceID = strings.ToLower(strings.TrimSpace(name))
+		}
+	}
+	d := &Deck{Name: name, Source: provider, SourceID: sourceID, SourceURL: sourceURL}
 
+	blankStartsSideboard := !usesBoardMarkers(lines)
 	board := BoardMain
 	for i, raw := range lines {
 		lineNo := i + 1
@@ -145,6 +154,9 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 			continue
 		}
 		if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line == title || structuralNoise(line) {
 			continue
 		}
 

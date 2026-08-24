@@ -27,6 +27,7 @@ type imageMsg struct {
 	lines      []string
 	cols       int
 	transmit   string
+	preview    bool
 }
 
 type retransmitMsg struct{ gen int }
@@ -60,7 +61,7 @@ func (m *Model) fetchDetailImage() tea.Cmd {
 
 			return imageMsg{scryfallID: id}
 		}
-		lines, transmit, ok := renderImage(img, tier, cols, aspect)
+		lines, transmit, ok := renderImage(img, tier, cols, aspect, detailImageID)
 		if !ok {
 			return imageMsg{scryfallID: id}
 		}
@@ -81,7 +82,7 @@ func (m Model) detailImageCols() int {
 	return min(ideal, max(m.width-2, 8))
 }
 
-const kittyCellAspect = 2.8
+const kittyCellAspect = 1.9
 
 func (m Model) artAspect() float64 {
 	if m.imgTier != ui.ImageKitty {
@@ -94,20 +95,20 @@ func (m Model) artAspect() float64 {
 }
 
 func (m Model) artRows(cols int) int {
-	return max(int(float64(cols*cardAspectNum)/(float64(cardAspectDen)*m.artAspect())), 1)
+	return ui.CellRows(cols, cardAspectDen, cardAspectNum, m.artAspect())
 }
 
 func (m Model) blankArt(cols int) []string {
 	return make([]string, m.artRows(cols))
 }
 
-func renderImage(img image.Image, tier ui.ImageTier, cols int, cellAspect float64) ([]string, string, bool) {
+func renderImage(img image.Image, tier ui.ImageTier, cols int, cellAspect float64, id int) ([]string, string, bool) {
 	switch tier {
 	case ui.ImageHalfblock:
 		lines := ui.Halfblocks(img, cols)
 		return lines, "", len(lines) > 0
 	case ui.ImageKitty:
-		transmit, placeholder, err := ui.KittyImage(img, kittyImageID, cols, cellAspect)
+		transmit, placeholder, err := ui.KittyImage(img, id, cols, cellAspect)
 		if err != nil {
 			return nil, "", false
 		}
@@ -116,9 +117,15 @@ func renderImage(img image.Image, tier ui.ImageTier, cols int, cellAspect float6
 	return nil, "", false
 }
 
-const kittyImageID = 91
+const (
+	detailImageID  = 91
+	previewImageID = 92
+)
 
 func (m Model) onImage(msg imageMsg) (tea.Model, tea.Cmd) {
+	if msg.preview {
+		return m.onPreviewImage(msg)
+	}
 	if m.detail != nil && m.detail.card.ScryfallID == msg.scryfallID {
 		m.detail.image = msg.lines
 		m.detail.imagePending = false

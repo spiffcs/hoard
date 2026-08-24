@@ -1,0 +1,44 @@
+Deck downloaded from - http://premodernmagic.com
+------------------------------------------------
+Deadguy Ale
+------------------------------------------------
+MAIN DECK (60)
+
+Instants and Sorceries: 26
+4	Dark Ritual
+1	Diabolic Edict
+3	Disenchant
+4	Duress
+4	Gerrard's Verdict
+2	Rancid Earth
+3	Swords to Plowshares
+1	Unearth
+4	Vindicate
+
+Creatures: 10
+4	Hypnotic Specter
+2	Knight of Stromgald
+4	Nantuko Shade
+
+Others: 2
+2	Phyrexian Arena
+
+Lands: 22
+4	Caves of Koilos
+10	Swamp
+4	Tainted Field
+4	Wasteland
+
+
+SIDEBOARD (15)
+2	Absolute Law
+1	Diabolic Edict
+2	Engineered Plague
+2	Honorable Passage
+3	Phyrexian Negator
+2	Seal of Cleansing
+3	Withered Wretch
+
+------------------------------------------------
+Deck downloaded from - http://premodernmagic.com
+                

@@ -33,6 +33,13 @@ const listingTimeout = 10 * time.Second
 
 var knownRarities = []string{"common", "uncommon", "rare", "special", "mythic", "bonus"}
 
+var knownFormats = []string{
+	"alchemy", "brawl", "commander", "competitivebrawl", "duel", "future", "gladiator",
+	"historic", "legacy", "modern", "oathbreaker", "oldschool", "pauper", "paupercommander",
+	"penny", "pioneer", "predh", "premodern", "standard", "standardbrawl", "timeless",
+	"tlr", "vintage",
+}
+
 var httpClient = &http.Client{Transport: func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 30 * time.Second
@@ -43,6 +50,7 @@ type Options struct {
 	Since      int
 	Sets       []string
 	Rarities   []string
+	Legal      string
 	PricedOnly bool
 	Days       int
 
@@ -124,6 +132,7 @@ type bulkCard struct {
 		USDFoil   string `json:"usd_foil"`
 		USDEtched string `json:"usd_etched"`
 	} `json:"prices"`
+	Legalities map[string]string `json:"legalities"`
 }
 
 func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f filter,
@@ -242,6 +251,7 @@ func printing(c bulkCard, line []byte) store.CompendiumPrinting {
 type filter struct {
 	sets     map[string]bool
 	rarities map[string]bool
+	legal    string
 	since    int
 	priced   bool
 }
@@ -263,6 +273,14 @@ func newFilter(o Options) (filter, error) {
 		}
 		f.rarities[r] = true
 	}
+
+	if legal := strings.ToLower(strings.TrimSpace(o.Legal)); legal != "" {
+		if !slices.Contains(knownFormats, legal) {
+			return filter{}, fmt.Errorf("unknown format %q; want one of %s",
+				legal, strings.Join(knownFormats, ", "))
+		}
+		f.legal = legal
+	}
 	return f, nil
 }
 
@@ -274,6 +292,9 @@ func (f filter) keep(c bulkCard) bool {
 		return false
 	}
 	if len(f.rarities) > 0 && !f.rarities[strings.ToLower(strings.TrimSpace(c.Rarity))] {
+		return false
+	}
+	if f.legal != "" && !strings.EqualFold(c.Legalities[f.legal], "legal") {
 		return false
 	}
 	if f.since > 0 {

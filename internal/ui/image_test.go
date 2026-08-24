@@ -137,3 +137,45 @@ func TestKittyImage(t *testing.T) {
 		}
 	}
 }
+
+func TestKittyPlacementNeverLeavesHorizontalSlack(t *testing.T) {
+	card := image.NewRGBA(image.Rect(0, 0, 488, 680))
+
+	for _, aspect := range []float64{1.8, 2.0, 2.2, 2.8} {
+		for _, cols := range []int{14, 24, 30, 42} {
+			_, placeholder, err := KittyImage(card, 91, cols, aspect)
+			if err != nil {
+				t.Fatalf("KittyImage(%d cols, aspect %.1f): %v", cols, aspect, err)
+			}
+			need := float64(cols) * 680 / (488 * aspect)
+			if got := float64(len(placeholder)); got < need {
+				t.Errorf("cols %d aspect %.1f: placement is %v rows but the card needs %.2f — "+
+					"the terminal will shrink it to fit the height and float it sideways",
+					cols, aspect, got, need)
+			}
+		}
+	}
+}
+
+func TestKittyImageClearsTheOldPlacementFirst(t *testing.T) {
+	card := image.NewRGBA(image.Rect(0, 0, 488, 680))
+
+	transmit, _, err := KittyImage(card, 91, 30, 1.929)
+	if err != nil {
+		t.Fatalf("KittyImage: %v", err)
+	}
+
+	del := "\x1b_Ga=d,d=I,i=91\x1b\\"
+	if !strings.HasPrefix(transmit, del) {
+		head := transmit
+		if len(head) > 60 {
+			head = head[:60]
+		}
+		t.Errorf("transmit must open by deleting image 91 so the terminal drops the previous\n"+
+			"placement geometry; without it a re-transmit under the same id keeps the old box.\n"+
+			"want prefix %q\ngot          %q...", del, head)
+	}
+	if strings.Count(transmit, "a=d") != 1 {
+		t.Errorf("expected exactly one delete, got %d", strings.Count(transmit, "a=d"))
+	}
+}

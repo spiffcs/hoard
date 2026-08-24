@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"strings"
 
@@ -106,9 +107,10 @@ func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit str
 		cellAspect = 2
 	}
 
-	rows := max(int(float64(cols*b.Dy())/(float64(b.Dx())*cellAspect)), 1)
+	rows := CellRows(cols, b.Dx(), b.Dy(), cellAspect)
 
 	var buf strings.Builder
+	fmt.Fprintf(&buf, "\x1b_Ga=%c,d=%c,i=%d\x1b\\", kitty.Delete, 'I', id)
 	err = kitty.EncodeGraphics(&buf, img, &kitty.Options{
 		Action:           kitty.TransmitAndPut,
 		Transmission:     kitty.Direct,
@@ -124,6 +126,16 @@ func KittyImage(img image.Image, id, cols int, cellAspect float64) (transmit str
 		return "", nil, err
 	}
 	return buf.String(), kittyPlaceholder(id, cols, rows), nil
+}
+
+func CellRows(cols, w, h int, cellAspect float64) int {
+	if cols <= 0 || w <= 0 || h <= 0 {
+		return 1
+	}
+	if cellAspect <= 0 {
+		cellAspect = 2
+	}
+	return max(int(math.Ceil(float64(cols*h)/(float64(w)*cellAspect))), 1)
 }
 
 func kittyPlaceholder(id, cols, rows int) []string {
