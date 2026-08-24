@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -42,12 +41,7 @@ func SortOwned(owned []store.OwnedFinish) []store.OwnedFinish {
 	return out
 }
 
-func asOfDate(stamp string) string {
-	if t, err := time.Parse(time.RFC3339, stamp); err == nil {
-		return t.Local().Format("2 Jan 2006")
-	}
-	return stamp
-}
+func asOfDate(stamp string) string { return ui.AsOfDate(stamp) }
 
 func Valuation(env ui.Env, d ValuationData) string {
 	var b strings.Builder
