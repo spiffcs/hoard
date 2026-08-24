@@ -31,10 +31,7 @@ func execCmd(ctx context.Context, st *store.Store, args []string, jsonOut bool) 
 	root, _ := buildRoot(a, pipeEnv)
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		if err := cli.CheckJSON(cmd, jsonOut); err != nil {
-			return err
-		}
-		return refuseIfCompendium(cmd, st)
+		return cli.CheckJSON(cmd, jsonOut)
 	}
 
 	if jsonOut {
