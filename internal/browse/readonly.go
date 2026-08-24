@@ -25,7 +25,7 @@ func (readOnly) RenameBinder(int64, string) error { return errReadOnly }
 
 func (readOnly) DeleteBinder(int64) error { return errReadOnly }
 
-func (readOnly) SetHoldingQuantityIn(int64, string, finish.Finish, string, int) (int, error) {
+func (readOnly) SetEntryQuantity(store.EntryRef, int) (int, error) {
 	return 0, errReadOnly
 }
 
@@ -37,15 +37,15 @@ func (readOnly) RemoveContainer(int64) (int64, error) { return 0, errReadOnly }
 
 func (readOnly) UpsertDeck(store.DeckMeta, []store.Entry) (int64, error) { return 0, errReadOnly }
 
-func (readOnly) MoveEntry(int64, string, finish.Finish, string, int64, string) (int, error) {
+func (readOnly) MoveEntry(store.EntryRef, int64, string) (int, error) {
 	return 0, errReadOnly
 }
 
-func (readOnly) MoveEntryFinish(int64, string, finish.Finish, finish.Finish, string) (int, error) {
+func (readOnly) MoveEntryFinish(store.EntryRef, finish.Finish) (int, error) {
 	return 0, errReadOnly
 }
 
-func (readOnly) MoveEntryCondition(int64, string, finish.Finish, string, string) (int, error) {
+func (readOnly) MoveEntryCondition(store.EntryRef, string) (int, error) {
 	return 0, errReadOnly
 }
 

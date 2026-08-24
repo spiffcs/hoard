@@ -365,6 +365,9 @@ func (m *Model) loadContainers() error {
 		out[0].Value += b.Value
 	}
 	for _, d := range decks {
+		if !d.Counted {
+			continue
+		}
 		out[0].Copies += d.TotalCopies
 		out[0].Value += d.Value
 	}
@@ -380,6 +383,7 @@ func deckContainer(d store.DeckSummary) container {
 	return container{
 		ID: d.ID, Name: d.Name, Kind: store.KindDeck,
 		Copies: d.TotalCopies, Value: d.Value, parentID: d.ParentID,
+		Counted: d.Counted,
 		meta: store.DeckMeta{
 			Name: d.Name, Source: d.Source, SourceID: d.SourceID,
 			SourceURL: d.SourceURL, Format: d.Format,
@@ -1104,7 +1108,7 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleFold()
 		return m, nil
 	case "x":
-		m.toggleBinderCounted()
+		m.toggleCounted()
 	case "shift+down":
 		m.extendSelection(1)
 	case "shift+up":

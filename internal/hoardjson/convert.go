@@ -152,6 +152,9 @@ func FromSummary(binder store.CollectionTotals, decks []store.DeckSummary) Docum
 			TotalCopies:   d.TotalCopies,
 			ValueUsd:      cents(d.Value),
 		}})
+		if !d.Counted {
+			continue
+		}
 		copies += d.TotalCopies
 		value += d.Value
 	}
@@ -357,6 +360,9 @@ func FromValuation(d report.ValuationData) Document {
 	}
 	deckCopies, deckValue := 0, 0.0
 	for _, dk := range d.Decks {
+		if !dk.Counted {
+			continue
+		}
 		deckCopies += dk.TotalCopies
 		deckValue += dk.Value
 	}

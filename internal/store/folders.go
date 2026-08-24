@@ -91,6 +91,7 @@ SELECT ct.id, ct.name,
        COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
 FROM containers ct
 LEFT JOIN containers d ON d.parent_id = ct.id AND d.kind = '`+KindDeck+`'
+    AND d.counted = 1
 LEFT JOIN card_entries e ON e.container_id = d.id
 LEFT JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinEntries+`

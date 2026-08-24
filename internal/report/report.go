@@ -14,7 +14,12 @@ func Summary(env ui.Env, binder store.CollectionTotals, decks []store.DeckSummar
 
 	var deckCopies int
 	var deckValue float64
+	var uncounted bool
 	for _, d := range sorted {
+		if !d.Counted {
+			uncounted = true
+			continue
+		}
 		deckCopies += d.TotalCopies
 		deckValue += d.Value
 	}
@@ -46,8 +51,12 @@ func Summary(env ui.Env, binder store.CollectionTotals, decks []store.DeckSummar
 		t.AddSpacer()
 		for _, d := range sorted {
 
-			t.Add(ui.C("  "+d.Name), ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)),
-				ui.C(share(d.Value)))
+			name, bar := "  "+d.Name, share(d.Value)
+			if !d.Counted {
+				name, bar = name+" *", ""
+			}
+			t.Add(ui.C(name), ui.C(ui.Count(d.TotalCopies)), ui.C(ui.Money(d.Value)),
+				ui.C(bar))
 		}
 	}
 
@@ -55,7 +64,11 @@ func Summary(env ui.Env, binder store.CollectionTotals, decks []store.DeckSummar
 
 	t.AddStyled(env.Bold(), ui.C("TOTAL"), ui.C(ui.Count(binder.TotalCopies+deckCopies)),
 		ui.C(ui.Money(grand)), ui.C(""))
-	return t.Render()
+	out := t.Render()
+	if uncounted {
+		out += env.Dim()("* not counted toward your collection") + "\n"
+	}
+	return out
 }
 
 func Unpriced(env ui.Env, rows []store.UnpricedRow) string {

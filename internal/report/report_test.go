@@ -20,7 +20,7 @@ func testCollection() store.CollectionTotals {
 
 func testDecks() []store.DeckSummary {
 	mk := func(name string, copies int, value float64) store.DeckSummary {
-		d := store.DeckSummary{TotalCopies: copies, Value: value}
+		d := store.DeckSummary{TotalCopies: copies, Value: value, Counted: true}
 		d.Name = name
 		d.Kind = store.KindDeck
 		return d
@@ -66,7 +66,7 @@ func TestSummaryTableSortsByValue(t *testing.T) {
 
 func TestSummaryTableTieBreaksByName(t *testing.T) {
 	mk := func(name string) store.DeckSummary {
-		d := store.DeckSummary{TotalCopies: 1}
+		d := store.DeckSummary{TotalCopies: 1, Counted: true}
 		d.Name = name
 		return d
 	}

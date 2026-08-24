@@ -22,8 +22,8 @@ func wantsStore(t *testing.T) (s *Store, want int64) {
 	if err := s.AddCardFinishTo(want, solRing(), finish.Nonfoil, 3); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	if err := s.SetBinderCounted(want, false); err != nil {
-		t.Fatalf("SetBinderCounted: %v", err)
+	if err := s.SetContainerCounted(want, false); err != nil {
+		t.Fatalf("SetContainerCounted: %v", err)
 	}
 	return s, want
 }
@@ -42,8 +42,8 @@ func TestBinderCountedRoundTrips(t *testing.T) {
 		}
 	}
 
-	if err := s.SetBinderCounted(want, true); err != nil {
-		t.Fatalf("SetBinderCounted(true): %v", err)
+	if err := s.SetContainerCounted(want, true); err != nil {
+		t.Fatalf("SetContainerCounted(true): %v", err)
 	}
 	binders, _ = s.ListBinders()
 	for _, b := range binders {

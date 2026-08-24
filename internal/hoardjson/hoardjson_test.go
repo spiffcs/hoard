@@ -33,8 +33,10 @@ func TestSummaryDocument(t *testing.T) {
 	got := write(t, FromSummary(
 		store.CollectionTotals{DistinctCards: 2, TotalCopies: 3, Value: 14.5},
 		[]store.DeckSummary{
-			{Container: store.Container{Name: "Fish"}, DistinctCards: 1, TotalCopies: 1, Value: 0},
-			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9},
+			{Container: store.Container{Name: "Fish"}, DistinctCards: 1, TotalCopies: 1, Value: 0,
+				Counted: true},
+			{Container: store.Container{Name: "Bears"}, DistinctCards: 1, TotalCopies: 4, Value: 9,
+				Counted: true},
 		}))
 	want := `{
   "schemaVersion": "1.1.3",
@@ -342,7 +344,8 @@ func TestReportDocument(t *testing.T) {
 			{Container: store.Container{Name: "Trade"}, DistinctCards: 1, TotalCopies: 1, Value: 12.5},
 		},
 		Decks: []store.DeckSummary{
-			{Container: store.Container{Name: "Fish"}, DistinctCards: 1, TotalCopies: 1, Value: 0},
+			{Container: store.Container{Name: "Fish"}, DistinctCards: 1, TotalCopies: 1, Value: 0,
+				Counted: true},
 		},
 		Top: []store.OwnedFinish{
 			{ScryfallID: "sol", MTGJSONUUID: "uu-sol", Name: "Sol Ring", SetCode: "c21",

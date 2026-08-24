@@ -339,7 +339,7 @@ func TestMoveEntryCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prev, err := s.MoveEntryCondition(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown, ConditionLP)
+	prev, err := s.MoveEntryCondition(mainRef(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown), ConditionLP)
 	if err != nil {
 		t.Fatalf("MoveEntryCondition: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestMoveEntryCondition(t *testing.T) {
 	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatal(err)
 	}
-	prev, err = s.MoveEntryCondition(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown, ConditionLP)
+	prev, err = s.MoveEntryCondition(mainRef(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown), ConditionLP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,8 +376,8 @@ func TestMoveEntryConditionToItselfIsANoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	cid, _ := s.collectionID()
-	if _, err := s.MoveEntryCondition(cid, "ulamog-id", finish.Nonfoil,
-		ConditionUnknown, ConditionUnknown); err != nil {
+	if _, err := s.MoveEntryCondition(mainRef(cid, "ulamog-id", finish.Nonfoil,
+		ConditionUnknown), ConditionUnknown); err != nil {
 		t.Fatalf("no-op move: %v", err)
 	}
 	totals, _ := s.CollectionTotals()
@@ -392,11 +392,11 @@ func TestMoveEntryFinishKeepsTheCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 	cid, _ := s.collectionID()
-	if _, err := s.MoveEntryCondition(cid, "ulamog-id", finish.Nonfoil,
-		ConditionUnknown, ConditionMP); err != nil {
+	if _, err := s.MoveEntryCondition(mainRef(cid, "ulamog-id", finish.Nonfoil,
+		ConditionUnknown), ConditionMP); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.MoveEntryFinish(cid, "ulamog-id", finish.Nonfoil, finish.Foil, ConditionMP); err != nil {
+	if _, err := s.MoveEntryFinish(mainRef(cid, "ulamog-id", finish.Nonfoil, ConditionMP), finish.Foil); err != nil {
 		t.Fatalf("MoveEntryFinish: %v", err)
 	}
 	held, _ := s.BinderByFinish(cid)
@@ -417,7 +417,7 @@ VALUES (?, 'ulamog-id', 'nonfoil', 'lp', 'main', 1)`, cid); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.SetHoldingQuantityIn(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown, 0); err != nil {
+	if _, err := s.SetEntryQuantity(mainRef(cid, "ulamog-id", finish.Nonfoil, ConditionUnknown), 0); err != nil {
 		t.Fatal(err)
 	}
 	held, _ := s.BinderByFinish(cid)

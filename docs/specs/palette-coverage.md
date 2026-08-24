@@ -25,10 +25,10 @@ functionality have **no command entry at all** — they are `case` arms in a key
 handler, so they are neither in the palette nor in the command table that the
 palette and the help line are both built from.
 
-The single clearest gap is **`x`, include/exclude a binder from your collection
-totals**. It changes what every value in the app reports, it has a CLI
-equivalent in `hoard binder exclude|include`, and it is reachable in the TUI
-only by knowing the letter.
+The single clearest gap is **`x`, include/exclude a binder or deck from your
+collection totals**. It changes what every value in the app reports, it has a
+CLI equivalent in `hoard binder exclude|include` and `hoard deck
+exclude|include`, and it is reachable in the TUI only by knowing the letter.
 
 ---
 
@@ -81,7 +81,7 @@ anything else generated from it.
 
 | Key | What it does | Has a CLI equivalent? |
 | --- | --- | --- |
-| `x` | Include/exclude the selected binder from collection totals | **Yes** — `hoard binder exclude\|include` |
+| `x` | Include/exclude the selected binder or deck from collection totals | **Yes** — `hoard binder exclude\|include`, `hoard deck exclude\|include` |
 | `space` | Fold or open the selected folder | No |
 | `+` / `=` | Increase the selected card's quantity | No |
 | `-` / `_` | Decrease the selected card's quantity | No |
@@ -163,6 +163,7 @@ Not a palette gap so much as a TUI gap — these have no key *and* no command.
 | `hoard deck move` | Covered — key `m`, palette `deck.move` |
 | `hoard folder list` | Covered by the sidebar itself |
 | `hoard binder exclude\|include` | Key `x` only — see §2 |
+| `hoard deck exclude\|include` | Key `x` only — see §2 |
 
 **Assessment:** `merge` and `vacuum` are destructive-ish maintenance and are
 arguably right to stay CLI-only, where a `--dry-run` and a scriptable exit code

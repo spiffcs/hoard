@@ -19,21 +19,21 @@ type Editor interface {
 	CreateBinder(name string) (int64, error)
 	RenameBinder(id int64, name string) error
 	DeleteBinder(id int64) error
-	SetBinderCounted(id int64, counted bool) error
+	SetContainerCounted(id int64, counted bool) error
 	CreateFolder(name string) (int64, error)
 	MoveDeckToFolder(deckID, folderID int64) error
 	RenameFolder(id int64, name string) error
 	RenameDeck(id int64, name string) error
 
-	SetHoldingQuantityIn(containerID int64, scryfallID string, fin finish.Finish, condition string, qty int) (int, error)
+	SetEntryQuantity(ref store.EntryRef, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)
 	RestoreHoldings(scryfallID string, holdings []store.Holding) error
 	RemoveContainer(id int64) (int64, error)
 	UpsertDeck(meta store.DeckMeta, entries []store.Entry) (int64, error)
 
-	MoveEntry(fromContainer int64, scryfallID string, fin finish.Finish, condition string, toContainer int64, toScryfallID string) (int, error)
-	MoveEntryFinish(containerID int64, scryfallID string, fromFinish, toFinish finish.Finish, condition string) (int, error)
-	MoveEntryCondition(containerID int64, scryfallID string, fin finish.Finish, fromCondition, toCondition string) (int, error)
+	MoveEntry(from store.EntryRef, toContainer int64, toScryfallID string) (int, error)
+	MoveEntryFinish(from store.EntryRef, toFinish finish.Finish) (int, error)
+	MoveEntryCondition(from store.EntryRef, toCondition string) (int, error)
 	UpsertPrintings(cards []scryfall.Card) error
 }
 

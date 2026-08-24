@@ -687,7 +687,7 @@ func (m Model) helpLine() string {
 
 		if d := m.detail; len(d.holdings) > 0 {
 			h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
-			if h.ContainerKind == store.KindCollection {
+			if editableKind(h.ContainerKind) {
 				e = append(e, ui.K("+/-", "qty"), ui.K("d", "remove"))
 			}
 		}
@@ -754,8 +754,7 @@ func (m Model) helpLine() string {
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
 			e = append(e, ui.K("R", "rename"), ui.K("d", "remove"))
 		}
-		if sel := m.selectedContainer(); sel != nil &&
-			sel.Kind == store.KindCollection && sel.ID != allCardsID {
+		if sel := m.selectedContainer(); sel != nil && holdsCards(*sel) {
 
 			label := "exclude"
 			if !sel.Counted {

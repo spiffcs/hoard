@@ -178,8 +178,10 @@ func storeAdder(st *store.Store) tui.Adder {
 
 			if res.ContainerID != 0 {
 
-				_, err := st.MoveEntryFinish(res.ContainerID, res.Card.ID,
-					res.ReplacesFinish, res.Finish, store.ConditionUnknown)
+				_, err := st.MoveEntryFinish(store.EntryRef{
+					ContainerID: res.ContainerID, ScryfallID: res.Card.ID,
+					Finish: res.ReplacesFinish, Condition: store.ConditionUnknown,
+					Board: store.BoardMain}, res.Finish)
 				return err
 			}
 			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)

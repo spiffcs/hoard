@@ -2,23 +2,24 @@ package store
 
 import "fmt"
 
-func (s *Store) SetBinderCounted(id int64, counted bool) error {
+func (s *Store) SetContainerCounted(id int64, counted bool) error {
 	v := 0
 	if counted {
 		v = 1
 	}
 	res, err := s.db.Exec(
-		`UPDATE containers SET counted = ?, updated_at = ? WHERE id = ? AND kind = ?`,
-		v, now(), id, KindCollection)
+		`UPDATE containers SET counted = ?, updated_at = ?
+WHERE id = ? AND kind IN (?, ?)`,
+		v, now(), id, KindCollection, KindDeck)
 	if err != nil {
-		return fmt.Errorf("setting whether binder %d counts: %w", id, err)
+		return fmt.Errorf("setting whether container %d counts: %w", id, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("no binder with id %d", id)
+		return fmt.Errorf("no binder or deck with id %d", id)
 	}
 	return nil
 }

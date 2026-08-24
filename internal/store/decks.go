@@ -81,6 +81,7 @@ func (s *Store) ListDecks() ([]DeckSummary, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.source, COALESCE(ct.source_url,''), COALESCE(ct.format,''),
        COALESCE(ct.parent_id,0) AS parent_id,
+       ct.counted,
        -- COUNT(DISTINCT ...) rather than COUNT(...): the column means distinct
        -- printings, which is what CollectionTotals has always reported and what
        -- the JSON model documents. Counting rows instead made a card held in two
@@ -107,7 +108,7 @@ ORDER BY ct.name`, KindDeck)
 		var d DeckSummary
 		d.Kind = KindDeck
 		if err := rows.Scan(&d.ID, &d.Name, &d.Source, &d.SourceURL, &d.Format, &d.ParentID,
-			&d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
+			&d.Counted, &d.DistinctCards, &d.TotalCopies, &d.Value); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

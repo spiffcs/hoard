@@ -392,7 +392,7 @@ func TestSetRowWithOnlyDeckCopiesRefuses(t *testing.T) {
 	m = atSetCard(t, m, "uma", "Bitterblossom")
 
 	m = key(m, "+")
-	if !m.statusErr || !strings.Contains(m.status, "imported list") {
+	if !m.statusErr || !strings.Contains(m.status, "is in a deck") {
 		t.Errorf("+ status = %q err=%v, want the deck refusal", m.status, m.statusErr)
 	}
 	m.status, m.statusErr = "", false
@@ -400,7 +400,7 @@ func TestSetRowWithOnlyDeckCopiesRefuses(t *testing.T) {
 	if m.confirm != nil {
 		t.Fatalf("d staged %+v, want no question for deck-only copies", m.confirm)
 	}
-	if !m.statusErr || !strings.Contains(m.status, "imported list") {
+	if !m.statusErr || !strings.Contains(m.status, "is in a deck") {
 		t.Errorf("d status = %q err=%v, want the deck refusal", m.status, m.statusErr)
 	}
 }

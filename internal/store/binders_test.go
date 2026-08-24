@@ -165,7 +165,7 @@ func TestDeleteBinderRefusesDefaultAndNonEmpty(t *testing.T) {
 	}
 }
 
-func TestSetHoldingQuantityInIsScoped(t *testing.T) {
+func TestSetEntryQuantityIsScoped(t *testing.T) {
 	s := newTestStore(t)
 	id, _ := s.CreateBinder("Trade")
 	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 4); err != nil {
@@ -174,9 +174,9 @@ func TestSetHoldingQuantityInIsScoped(t *testing.T) {
 	if err := s.AddCardFinishTo(id, ulamog(), finish.Nonfoil, 1); err != nil {
 		t.Fatalf("AddCardFinishTo: %v", err)
 	}
-	prev, err := s.SetHoldingQuantityIn(id, "ulamog-id", finish.Nonfoil, ConditionUnknown, 5)
+	prev, err := s.SetEntryQuantity(mainRef(id, "ulamog-id", finish.Nonfoil, ConditionUnknown), 5)
 	if err != nil {
-		t.Fatalf("SetHoldingQuantityIn: %v", err)
+		t.Fatalf("SetEntryQuantity: %v", err)
 	}
 	if prev != 1 {
 		t.Errorf("previous = %d, want 1", prev)

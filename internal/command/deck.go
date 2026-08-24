@@ -30,15 +30,38 @@ func NewCmdDeck(a *app) *cobra.Command {
 			"... | hoard deck add --file - --name NAME\n" +
 			"hoard deck remove <name>\n" +
 			"hoard deck move <name> <folder>\n" +
-			"hoard deck repin <name> <set>",
+			"hoard deck repin <name> <set>\n" +
+			"hoard deck exclude <name>",
 		Args: cobra.NoArgs,
 
 		RunE: func(*cobra.Command, []string) error {
-			return cli.Usagef("deck requires a subcommand: add|remove|repin")
+			return cli.Usagef("deck requires a subcommand: add|remove|repin|exclude|include")
 		},
 	}
-	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a), newDeckMoveCmd(a), newDeckRenameCmd(a))
+	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a), newDeckMoveCmd(a),
+		newDeckRenameCmd(a), newDeckCountedCmd(a, false), newDeckCountedCmd(a, true))
 	return cmd
+}
+
+func newDeckCountedCmd(a *app, counted bool) *cobra.Command {
+	if counted {
+		return cli.Mutating(&cobra.Command{
+			Use: "include DECK", Short: "Count a deck toward your collection again",
+			Example: "hoard deck include Atraxa",
+			Args:    cobra.ExactArgs(1),
+			RunE: func(_ *cobra.Command, args []string) error {
+				return deckCounted(a.store, a.env, args, true)
+			},
+		})
+	}
+	return cli.Mutating(&cobra.Command{
+		Use: "exclude DECK", Short: "Stop a deck counting toward your collection",
+		Example: "hoard deck exclude Atraxa",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return deckCounted(a.store, a.env, args, false)
+		},
+	})
 }
 
 type deckAddOpts struct {

@@ -652,15 +652,18 @@ func TestDetailHeldEditAndRemove(t *testing.T) {
 	m = key(m, "down")
 	m.status, m.statusErr = "", false
 	m = key(m, "+")
-	if !m.statusErr || !strings.Contains(m.status, "imported list") {
-		t.Errorf("+ on a deck row: status = %q err=%v, want the refusal", m.status, m.statusErr)
+	if m.statusErr {
+		t.Errorf("+ on a deck row: status = %q, want the edit to go through", m.status)
+	}
+	if !strings.Contains(m.status, "×2 in Rich Deck") {
+		t.Errorf("status = %q, want the receipt naming the deck", m.status)
+	}
+	if !strings.Contains(m.helpLine(), "+/- qty · d remove") {
+		t.Errorf("help = %q, want the edit keys advertised on a deck row too", m.helpLine())
 	}
 	m = key(m, "d")
-	if m.confirm != nil {
-		t.Error("d on a deck row staged a removal")
-	}
-	if strings.Contains(m.helpLine(), "+/- qty") {
-		t.Errorf("help = %q, want no edit keys on a deck row", m.helpLine())
+	if m.confirm == nil || !strings.Contains(m.confirm.prompt, "from Rich Deck") {
+		t.Fatalf("confirm = %+v, want the removal staged against the deck row", m.confirm)
 	}
 }
 
