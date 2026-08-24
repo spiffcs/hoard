@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -36,16 +37,17 @@ func NewCmdDeck(a *app) *cobra.Command {
 			return cli.Usagef("deck requires a subcommand: add|remove|repin")
 		},
 	}
-	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a), newDeckMoveCmd(a))
+	cmd.AddCommand(newDeckAddCmd(a), newDeckRemoveCmd(a), newDeckRepinCmd(a), newDeckMoveCmd(a), newDeckRenameCmd(a))
 	return cmd
 }
 
 type deckAddOpts struct {
-	file    string
-	name    string
-	source  string
-	refresh bool
-	dryRun  bool
+	file             string
+	name             string
+	source           string
+	refresh          bool
+	dryRun           bool
+	renameFromSource bool
 }
 
 func newDeckAddCmd(a *app) *cobra.Command {
@@ -67,6 +69,9 @@ func newDeckAddCmd(a *app) *cobra.Command {
 		"provider label for text imports (e.g. moxfield)")
 	cmd.Flags().BoolVar(&o.refresh, "refresh", false,
 		"replace an already-imported deck without asking (discards manual edits to its cards)")
+
+	cmd.Flags().BoolVar(&o.renameFromSource, "rename-from-source", false,
+		"take the imported name back for a deck you renamed yourself")
 
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "resolve and report, but write nothing")
 	return cli.Mutating(cmd)
@@ -96,6 +101,16 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 	} else {
 		deps.Confirm = confirm
 	}
+	if o.renameFromSource && !o.dryRun {
+		if id, _, ok, err := st.DeckBySource(deck.Source, deck.SourceID); err != nil {
+			return err
+		} else if ok {
+			if err := st.UnlockDeckName(id); err != nil {
+				return err
+			}
+		}
+	}
+
 	pr := stderrPrinter()
 	res, err := action.DeckAdd(ctx, deps, pr.Fn(), deck, action.DeckAddOptions{DryRun: o.dryRun})
 	pr.Close()
@@ -109,8 +124,18 @@ func runDeckAdd(ctx context.Context, st *store.Store, env *cli.Env, args []strin
 		r.Result("Would import deck %q (%s): %s resolved.",
 			res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
 	} else {
+		name := res.Name
+		kept := ""
+		if stored, err := st.DeckByRef(strconv.FormatInt(res.ID, 10)); err == nil &&
+			stored.Name != res.Name {
+			name, kept = stored.Name, res.Name
+		}
 		r.Result("Imported deck #%d %q (%s): %s resolved.",
-			res.ID, res.Name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
+			res.ID, name, res.Source, ui.Plural(res.Resolved, "card", "cards"))
+		if kept != "" {
+			r.Detail("Kept the name you gave it; the list calls it %q. "+
+				"--rename-from-source takes that name back.", kept)
+		}
 	}
 	if res.Replaces != "" {
 		r.Detail("Would replace the imported deck %q, discarding manual edits to its cards.",

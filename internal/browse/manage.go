@@ -93,40 +93,63 @@ func (m *Model) promptNewBinder() {
 	}
 }
 
-func (m *Model) promptRenameBinder() {
+func (m *Model) promptRename() {
 	sel := m.selectedContainer()
 	switch {
 	case m.focus != paneContainers || sel == nil:
-		m.status, m.statusErr = "select a binder to rename (tab to the left pane)", true
+		m.status, m.statusErr = "select a binder, deck or folder to rename (tab to the left pane)", true
 		return
 	case sel.Kind == kindAllCards:
 		m.status, m.statusErr = allCardsName+" is every container merged; it has no name of its own", true
 		return
 	case sel.Kind == kindSet:
-		m.status, m.statusErr = "sets are named by Wizards; only binders can be renamed", true
-		return
-	case sel.Kind != store.KindCollection:
-		m.status, m.statusErr = "decks are named by their imported list", true
+		m.status, m.statusErr = "sets are named by Wizards; only binders, decks and folders can be renamed", true
 		return
 	}
-	id, was := sel.ID, sel.Name
+	id, was, kind := sel.ID, sel.Name, sel.Kind
+	noun := "binder"
+	switch kind {
+	case store.KindDeck:
+		noun = "deck"
+	case kindFolder:
+		noun = "folder"
+	}
+	help := "enter accept · esc cancel · ctrl+u wipe"
+	if kind == store.KindDeck {
+		help = "the name you choose survives a refresh · " + help
+	}
 	m.prompt = &prompt{
-		label: "rename binder",
+		label: "rename " + noun,
 		text:  was,
+		help:  help,
 		commit: func(m *Model, text string) tea.Cmd {
-			if err := m.store.RenameBinder(id, text); err != nil {
+			if err := m.renameContainer(kind, id, text); err != nil {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
 			m.undoable(undoAction{
 				desc: "name " + was,
-				undo: func(e Editor) error { return e.RenameBinder(id, was) },
+				undo: func(e Editor) error { return renameWith(e, kind, id, was) },
 			})
 			m.refresh()
-			m.status, m.statusErr = fmt.Sprintf("renamed %s to %s", was, text), false
+			m.status, m.statusErr = fmt.Sprintf("renamed %s to %s", was, strings.TrimSpace(text)), false
 			return nil
 		},
 	}
+}
+
+func (m *Model) renameContainer(kind string, id int64, name string) error {
+	return renameWith(m.store, kind, id, name)
+}
+
+func renameWith(e Editor, kind string, id int64, name string) error {
+	switch kind {
+	case store.KindDeck:
+		return e.RenameDeck(id, name)
+	case kindFolder:
+		return e.RenameFolder(id, name)
+	}
+	return e.RenameBinder(id, name)
 }
 
 func (m *Model) focusContainer(id int64) {

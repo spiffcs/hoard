@@ -198,6 +198,8 @@ type Model struct {
 
 	displacedContainer int64
 
+	collapsed map[int64]bool
+
 	marketSortIdx [3]int
 	marketSortRev [3]bool
 	marketComps   []market.Comp
@@ -282,6 +284,7 @@ func New(st Store, opts ...Option) (Model, error) {
 	}
 	m.loadPennyFilters()
 	m.loadSettlingWindow()
+	m.loadFoldState()
 	if err := m.loadContainers(); err != nil {
 		return Model{}, err
 	}
@@ -361,7 +364,7 @@ func (m *Model) loadContainers() error {
 		out[0].Copies += d.TotalCopies
 		out[0].Value += d.Value
 	}
-	out = append(out, deckTree(folders, decks)...)
+	out = append(out, deckTree(folders, decks, m.collapsed)...)
 	m.containers = out
 	m.clampCursor(paneContainers)
 	return nil
@@ -378,7 +381,7 @@ func deckContainer(d store.DeckSummary) container {
 	}
 }
 
-func deckTree(folders, decks []store.DeckSummary) []container {
+func deckTree(folders, decks []store.DeckSummary, collapsed map[int64]bool) []container {
 	known := make(map[int64]bool, len(folders))
 	for _, f := range folders {
 		known[f.ID] = true
@@ -410,7 +413,7 @@ func deckTree(folders, decks []store.DeckSummary) []container {
 	out := make([]container, 0, len(top)+len(decks))
 	for _, c := range top {
 		out = append(out, c)
-		if c.Kind == kindFolder {
+		if c.Kind == kindFolder && !collapsed[c.ID] {
 			out = append(out, children[c.ID]...)
 		}
 	}
@@ -1081,6 +1084,9 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 
+	case " ":
+		m.toggleFold()
+		return m, nil
 	case "x":
 		m.toggleBinderCounted()
 	case "shift+down":

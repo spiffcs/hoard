@@ -22,6 +22,8 @@ type Editor interface {
 	SetBinderCounted(id int64, counted bool) error
 	CreateFolder(name string) (int64, error)
 	MoveDeckToFolder(deckID, folderID int64) error
+	RenameFolder(id int64, name string) error
+	RenameDeck(id int64, name string) error
 
 	SetHoldingQuantityIn(containerID int64, scryfallID string, fin finish.Finish, condition string, qty int) (int, error)
 	RemoveFromBinder(containerID int64, scryfallID string) ([]store.Holding, error)

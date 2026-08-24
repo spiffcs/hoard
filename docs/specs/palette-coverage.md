@@ -10,9 +10,10 @@ handlers in `internal/browse/model.go` and `internal/browse/textview.go`, and
 `hoard --help`. Counts were taken by parsing the command table rather than by
 eye. Every row below was checked against the code, not recalled.
 
-**Includes deck folders**, added the same day: `deck.move` (key `m`, plus a
-palette entry) and `folder.new` (palette-only). Both are implemented and
-tested; the counts below include them.
+**Includes deck folders and folding**, added the same day: `deck.move` (key
+`m`), `folder.new` (palette-only), and `space` to fold a folder. `RenameBinder`
+became `RenameSelected` (`rename`), which now renames binders, decks and
+folders. Counts below include all of it.
 
 ---
 
@@ -81,6 +82,7 @@ anything else generated from it.
 | Key | What it does | Has a CLI equivalent? |
 | --- | --- | --- |
 | `x` | Include/exclude the selected binder from collection totals | **Yes** — `hoard binder exclude\|include` |
+| `space` | Fold or open the selected folder | No |
 | `+` / `=` | Increase the selected card's quantity | No |
 | `-` / `_` | Decrease the selected card's quantity | No |
 | `enter` | Open the card detail view (or confirm a watch pick) | No |
@@ -89,6 +91,9 @@ anything else generated from it.
 | `esc` | Clear selection, clear the filter, cancel a watch pick, cancel a market fetch | Partly — `op.cancel` covers cancelling an operation |
 
 **Assessment:** `x` is the outlier and the reason this audit was worth doing.
+`space` is deliberate — folding acts on the row under the cursor, so the same
+argument applies as below; a *fold all / open all* pair would earn palette
+entries and does not exist yet.
 The others are direct manipulations of the thing under the cursor — a palette
 entry for "increase quantity" would still need you to have selected the card
 first, so the palette adds nothing. `/` (filter) is a plausible palette
@@ -150,8 +155,10 @@ Not a palette gap so much as a TUI gap — these have no key *and* no command.
 | `hoard vacuum` | **No TUI surface.** Delete orphaned printings |
 | `hoard merge` | **No TUI surface.** Fold another hoard database in |
 | `hoard deck repin` | **No TUI surface.** Re-pin a deck to a set |
-| `hoard folder rename` | **No TUI surface** |
+| `hoard folder rename` | Covered — `R` renames binders, decks and folders |
 | `hoard folder rm` | **No TUI surface.** `d` on a folder refuses and names the CLI |
+| `hoard deck rename` | Covered — `R` on a deck |
+| `hoard deck add --rename-from-source` | **No TUI surface.** Takes an imported name back |
 | `hoard folder new` | Covered — palette-only `folder.new` |
 | `hoard deck move` | Covered — key `m`, palette `deck.move` |
 | `hoard folder list` | Covered by the sidebar itself |

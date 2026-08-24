@@ -415,6 +415,12 @@ func (m Model) containerLines(width int) []string {
 			if c.settling(now) || c.skipped() {
 				mark = settlingMark
 			}
+			if c.Kind == kindFolder {
+				mark = foldOpenMark
+				if m.collapsed[c.ID] {
+					mark = foldShutMark
+				}
+			}
 			name := strings.Repeat("  ", c.depth) + c.Name
 			if !m.containerEligible(i) || c.skipped() {
 				t.AddStyled(env.Dim(), ui.C(mark), ui.C(name), ui.C(ui.Money(c.Value)))
@@ -739,6 +745,9 @@ func (m Model) helpLine() string {
 
 		if sel := m.selectedContainer(); sel != nil && sel.Kind == store.KindDeck {
 			e = append(e, ui.K("m", "move to folder"))
+		}
+		if m.foldTarget() != nil {
+			e = append(e, ui.K("space", "fold"))
 		}
 
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {

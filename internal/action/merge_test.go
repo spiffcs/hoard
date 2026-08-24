@@ -502,12 +502,7 @@ func stampVersion(path string, v int, undo ...string) error {
 	return err
 }
 
-var newestUndo = []string{
-	`DROP TRIGGER card_entries_folder_insert`,
-	`DROP TRIGGER card_entries_folder_update`,
-	`DROP INDEX containers_parent`,
-	`ALTER TABLE containers DROP COLUMN parent_id`,
-}
+var newestUndo = []string{`ALTER TABLE containers DROP COLUMN name_locked`}
 
 func rawJSON(t *testing.T, path, scryfallID string) string {
 	t.Helper()

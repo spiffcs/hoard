@@ -74,6 +74,10 @@ func (m *Model) applyDeckMove(deckID int64, deckName string, folderID int64, fol
 		m.status, m.statusErr = err.Error(), true
 		return
 	}
+	if folderID != 0 && m.collapsed[folderID] {
+		m.setFolded(folderID, false)
+		m.persistFoldState()
+	}
 	if err := m.reread(rereadAll); err != nil {
 		m.setError(err)
 		return

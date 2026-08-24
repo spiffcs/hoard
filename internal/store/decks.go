@@ -39,7 +39,8 @@ func upsertDeckTx(tx *sql.Tx, meta DeckMeta, entries []Entry) (int64, error) {
 INSERT INTO containers (kind, name, source, source_id, source_url, format, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source, source_id) DO UPDATE SET
-    name       = excluded.name,
+    name       = CASE WHEN containers.name_locked = 1
+                      THEN containers.name ELSE excluded.name END,
     source_url = excluded.source_url,
     format     = excluded.format,
     updated_at = excluded.updated_at`,

@@ -55,10 +55,11 @@ var moversWindowDays = []int{30, 90, 7}
 const defaultPennyLimit = 0.50
 
 const (
-	setMoversPennies   = "movers.pennies"
-	setMoversPennyLine = "movers.pennyLimit"
-	setMarketPennies   = "market.pennies"
-	setMarketFloor     = "market.floor"
+	setMoversPennies    = "movers.pennies"
+	setMoversPennyLine  = "movers.pennyLimit"
+	setMarketPennies    = "market.pennies"
+	setMarketFloor      = "market.floor"
+	setSidebarCollapsed = "sidebar.collapsed"
 )
 
 func (m *Model) loadPennyFilters() {

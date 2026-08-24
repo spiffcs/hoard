@@ -333,10 +333,10 @@ func commands() []command {
 			run:  func(m *Model) tea.Cmd { m.promptNewBinder(); return nil },
 		},
 		{
-			id: "binder.rename", title: "RenameBinder", aliases: "name label",
-			desc: "Rename the selected binder.",
+			id: "rename", title: "RenameSelected", aliases: "name label title",
+			desc: "Rename the selected binder, deck or folder.",
 			key:  "R",
-			run:  func(m *Model) tea.Cmd { m.promptRenameBinder(); return nil },
+			run:  func(m *Model) tea.Cmd { m.promptRename(); return nil },
 		},
 		{
 			id: "sets.toggle", title: "BrowseBySets",

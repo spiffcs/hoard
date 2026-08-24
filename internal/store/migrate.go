@@ -47,6 +47,7 @@ var migrations = []migration{
 	{30, purgePhantomFinishSeries},
 	{31, binderCounted},
 	{32, deckFolders},
+	{33, lockedDeckNames},
 }
 
 var schemaVersion = migrations[len(migrations)-1].Version
@@ -764,6 +765,13 @@ ALTER TABLE containers ADD COLUMN counted INTEGER NOT NULL DEFAULT 1;
 // parent_id is ON DELETE SET NULL, never CASCADE: card_entries cascades from
 // containers, so a cascading parent would delete a folder's decks and every
 // card in them. Dropping a folder loses the grouping and nothing else.
+// name_locked records that a person named this deck rather than its import.
+// upsertDeckTx honours it, so refreshing a deck no longer walks over a name
+// somebody chose.
+const lockedDeckNames = `
+ALTER TABLE containers ADD COLUMN name_locked INTEGER NOT NULL DEFAULT 0;
+`
+
 const deckFolders = `
 ALTER TABLE containers ADD COLUMN parent_id INTEGER
     REFERENCES containers(id) ON DELETE SET NULL;

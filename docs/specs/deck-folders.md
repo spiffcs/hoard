@@ -68,6 +68,9 @@ These are the schema's first triggers.
 | Nested sidebar, indented | TUI | `TestSidebarNestsDecksUnderTheirFolder` |
 | Folder rolls up copies and value | TUI, `folder list` | `TestFolderRowRollsUpItsDecks`, `TestListFoldersRollsUpItsDecks` |
 | Selecting a folder shows its decks' cards | TUI | `TestSelectingAFolderShowsEveryDecksCards` |
+| Fold/open a folder, `space` | TUI | `TestSpaceFoldsAFolder`, `TestSpaceUnfoldsAgain`, `TestSpaceOnADeckFoldsItsParent` |
+| Fold state persists across launches | TUI, `settings` | `TestFoldStateSurvivesAReload` |
+| Rename a folder | `hoard folder rename`; TUI `R` | `TestRenameAFolderFromTheSidebar` |
 | Scoping movers/dips/watches to a folder | TUI | Rolled up in `rebuildEntryIndex`; no dedicated test — **see gaps** |
 
 Behavioural choices worth knowing:
@@ -116,13 +119,12 @@ REVISION — no existing field changes meaning. It needs:
 `cli.JSONCapable`. It needs the document kind from item 1, so the two should
 land together.
 
-### 3. Rename and delete a folder from the TUI
+### 3. Delete a folder from the TUI
 
-`d` on a folder refuses and points at `hoard folder rm`; there is no TUI
-rename. Deliberate — a folder needs different confirm wording than a binder
-("its 3 decks move to the top level", not "and its 200 cards"), and shipping
-misleading confirm text would be worse than shipping none. Both belong in the
-palette rather than on new keys.
+`R` renames a folder now. `d` still refuses and points at `hoard folder rm`,
+deliberately: a folder needs different confirm wording than a binder ("its 3
+decks move to the top level", not "and its 200 cards"), and shipping misleading
+confirm text would be worse than shipping none.
 
 ### 4. Fragment matching when moving a deck
 
@@ -141,7 +143,14 @@ works by rolling each deck's entries up into its parent in
 indirectly, but nothing asserts it. A folder whose decks share a card must
 count that card once per deck copy, and no test would catch a regression.
 
-### 6. Sets mode ignores folders
+### 6. No fold-all / open-all
+
+Folding is one folder at a time, on `space`. Someone with twenty folders folds
+twenty times — once, since the state persists, but still. A pair of palette
+commands would fix it and would be the right shape for the palette, unlike
+`space` itself. See `docs/specs/palette-coverage.md`.
+
+### 7. Sets mode ignores folders
 
 `B` (browse by set) replaces the sidebar with sets, where folders have no
 meaning; `m` does nothing there. Correct as it stands, noted so it is not

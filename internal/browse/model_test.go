@@ -189,6 +189,35 @@ func (f *fakeStore) CreateFolder(name string) (int64, error) {
 	return d.ID, nil
 }
 
+func (f *fakeStore) RenameFolder(id int64, name string) error {
+	if f.err != nil {
+		return f.err
+	}
+	for i := range f.folders {
+		if f.folders[i].ID == id {
+			f.folders[i].Name = name
+			return nil
+		}
+	}
+	return fmt.Errorf("no folder #%d", id)
+}
+
+func (f *fakeStore) RenameDeck(id int64, name string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("a deck needs a name")
+	}
+	for i := range f.decks {
+		if f.decks[i].ID == id {
+			f.decks[i].Name = name
+			return nil
+		}
+	}
+	return fmt.Errorf("no deck #%d", id)
+}
+
 func (f *fakeStore) MoveDeckToFolder(deckID, folderID int64) error {
 	if f.err != nil {
 		return f.err
@@ -788,7 +817,7 @@ func key(m Model, k string) Model {
 	var msg tea.KeyMsg
 	switch k {
 	case "up", "down", "tab", "left", "right", "home", "end", "pgup", "pgdown",
-		"shift+up", "shift+down", "enter", "esc":
+		"shift+up", "shift+down", "enter", "esc", "ctrl+u":
 		msg = tea.KeyMsg{Type: keyType(k)}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
@@ -825,6 +854,8 @@ func keyType(k string) tea.KeyType {
 		return tea.KeyEnter
 	case "esc":
 		return tea.KeyEsc
+	case "ctrl+u":
+		return tea.KeyCtrlU
 	}
 	return tea.KeyNull
 }

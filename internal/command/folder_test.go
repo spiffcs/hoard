@@ -131,3 +131,75 @@ func TestDeckMoveRefusesATargetThatIsNotAFolder(t *testing.T) {
 		t.Error("deck move onto a missing folder succeeded, want a refusal")
 	}
 }
+
+func TestDeckRenameFromTheCLI(t *testing.T) {
+	st := folderCmdStore(t)
+	if out := run(t, st, "deck", "rename", "Atraxa", "Atraxa — primer"); !strings.Contains(out, "primer") {
+		t.Errorf("deck rename said %q, want it to name the deck", out)
+	}
+	decks, err := st.ListDecks()
+	if err != nil {
+		t.Fatalf("ListDecks: %v", err)
+	}
+	if len(decks) != 1 || decks[0].Name != "Atraxa — primer" {
+		t.Fatalf("decks = %+v, want the renamed deck", decks)
+	}
+}
+
+func importedDeckStore(t *testing.T) (*store.Store, string) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.UpsertPrintings([]scryfall.Card{{
+		ID: "sol-id", Set: "c21", CollectorNumber: "1", Name: "Sol Ring",
+		PriceUSD: ptr(2.00), ScryfallURL: "https://scryfall.com/card/c21/1",
+	}}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	path := deckFile(t, "deck.txt", "1 Sol Ring\n")
+	run(t, st, "deck", "add", "--file", path, "--name", "Atraxa", "--source", "text")
+	return st, path
+}
+
+func deckNames(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	decks, err := st.ListDecks()
+	if err != nil {
+		t.Fatalf("ListDecks: %v", err)
+	}
+	var out []string
+	for _, d := range decks {
+		out = append(out, d.Name)
+	}
+	return out
+}
+
+func TestRefreshingARenamedDeckSaysTheNameWasKept(t *testing.T) {
+	st, path := importedDeckStore(t)
+	run(t, st, "deck", "rename", "Atraxa", "Atraxa — primer")
+
+	out := run(t, st, "deck", "add", "--file", path, "--name", "Atraxa",
+		"--source", "text", "--refresh")
+
+	if !strings.Contains(out, "Atraxa — primer") {
+		t.Errorf("refresh said %q, want it to report the name you kept", out)
+	}
+	if got := deckNames(t, st); len(got) != 1 || got[0] != "Atraxa — primer" {
+		t.Fatalf("decks = %q, want the rename kept", got)
+	}
+}
+
+func TestRenameFromSourceTakesTheImportedNameBack(t *testing.T) {
+	st, path := importedDeckStore(t)
+	run(t, st, "deck", "rename", "Atraxa", "Atraxa — primer")
+
+	run(t, st, "deck", "add", "--file", path, "--name", "Atraxa",
+		"--source", "text", "--refresh", "--rename-from-source")
+
+	if got := deckNames(t, st); len(got) != 1 || got[0] != "Atraxa" {
+		t.Fatalf("decks = %q, want the imported name back", got)
+	}
+}

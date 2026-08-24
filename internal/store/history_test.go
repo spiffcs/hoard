@@ -811,6 +811,7 @@ func TestValueSnapshotsSeededFromHistory(t *testing.T) {
 		`ALTER TABLE cards DROP COLUMN loyalty`,
 		`ALTER TABLE cards DROP COLUMN flavor_text`,
 		`ALTER TABLE cards DROP COLUMN image_uri`,
+		`ALTER TABLE containers DROP COLUMN name_locked`,
 		`DROP TRIGGER card_entries_folder_insert`,
 		`DROP TRIGGER card_entries_folder_update`,
 		`DROP INDEX containers_parent`,

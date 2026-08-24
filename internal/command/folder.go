@@ -112,6 +112,29 @@ func deckMove(st *store.Store, env *cli.Env, args []string) error {
 	return nil
 }
 
+func deckRename(st *store.Store, env *cli.Env, args []string) error {
+	d, err := st.DeckByRef(args[0])
+	if err != nil {
+		return err
+	}
+	if err := st.RenameDeck(d.ID, args[1]); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.Out, "Renamed deck %q to %q\n", d.Name, strings.TrimSpace(args[1]))
+	return nil
+}
+
+func newDeckRenameCmd(a *app) *cobra.Command {
+	return cli.Mutating(&cobra.Command{
+		Use:   "rename DECK NEW-NAME",
+		Short: "Name a deck yourself; a refresh will keep the name you chose",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return deckRename(a.store, a.env, args)
+		},
+	})
+}
+
 func newDeckMoveCmd(a *app) *cobra.Command {
 	return cli.Mutating(&cobra.Command{
 		Use:   "move DECK [FOLDER]",
