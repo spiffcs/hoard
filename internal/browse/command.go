@@ -98,6 +98,12 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.cycleFloor(); return nil },
 		},
 		{
+			id: "filter.raw", title: "ToggleRawOnly",
+			aliases: "raw nonfoil foil etched premium plain finish hide show prices",
+			desc:    "Show only raw copies, hiding every foil, etched and treated printing.",
+			run:     func(m *Model) tea.Cmd { m.toggleRawOnly(); return nil },
+		},
+		{
 			id: "reload", title: "ReloadFromDatabase", aliases: "refresh",
 			desc: "Re-read everything from disk, keeping your place.",
 			key:  "r",
