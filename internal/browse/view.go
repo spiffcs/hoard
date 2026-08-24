@@ -714,9 +714,9 @@ func (m Model) helpLine() string {
 	case m.text != nil:
 		return ui.Help(ui.K("↑/↓", "scroll"), ui.K("pgup/pgdn", "page"),
 			ui.K("g/G", "ends"), ui.K("esc", "back"), ui.K("ctrl+c", "force quit"))
-	case m.view == viewMarket && !m.marketLoaded && !m.marketLoading:
+	case m.view == viewMarket && !m.marketLoaded && !m.marketBusy():
 		return ui.Help(ui.K("F", "fetch vendor prices"), ui.K("v", "next view"), ui.K(quit, "quit"))
-	case m.view == viewMarket && m.marketLoading:
+	case m.view == viewMarket && m.marketBusy():
 		return ui.Help(ui.K("esc", "cancel"), ui.K("ctrl+c", "force quit"))
 	case m.view == viewMarket:
 		return ui.Help(tail(ui.HelpCommands, ui.K("enter", "detail"),

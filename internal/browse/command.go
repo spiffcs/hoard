@@ -681,6 +681,10 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	if v == viewMarket {
 
 		m.loadCachedMarket()
+		if m.marketPrefetch {
+
+			return m.spinner.Tick
+		}
 		if !m.marketLoaded && !m.marketLoading && m.marketFetch != nil {
 			return m.startMarketFetch()
 		}

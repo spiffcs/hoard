@@ -18,9 +18,18 @@ type MarketFunc func(ctx context.Context, p progress.Fn, min float64) (market.Re
 
 const defaultMarketFloor = 1.00
 
+const noMarketFloor = 0.0
+
 const singleTablePageSize = 59
 
 const pageSize = 50
+
+type marketPrefetchStartMsg struct{}
+
+type marketPrefetchMsg struct {
+	res market.Result
+	err error
+}
 
 type marketMsg struct {
 	gen int
@@ -58,6 +67,40 @@ func (m *Model) startMarketFetch() tea.Cmd {
 		return marketMsg{gen: gen, res: res, err: err}
 	})
 }
+
+func (m Model) prefetchMarket() tea.Cmd {
+	if !m.marketPrefetch {
+		return nil
+	}
+	ctx, fetch, cached := m.ctx, m.marketFetch, m.marketCached
+
+	return func() tea.Msg {
+		if cached != nil {
+			if res, ok := cached(noMarketFloor); ok {
+				return marketPrefetchMsg{res: res}
+			}
+		}
+		res, err := fetch(ctx, nil, noMarketFloor)
+		return marketPrefetchMsg{res: res, err: err}
+	}
+}
+
+func (m Model) onMarketPrefetch(msg marketPrefetchMsg) (tea.Model, tea.Cmd) {
+	m.marketPrefetch = false
+	if msg.err != nil || m.marketLoaded || m.marketLoading {
+		return m, nil
+	}
+	m.marketResult = msg.res
+	m.applyMarketRows()
+	m.marketLoaded = true
+	m.refreshMarketFloor()
+	if m.view == viewMarket {
+		m.clampCursor(paneCards)
+	}
+	return m, nil
+}
+
+func (m Model) marketBusy() bool { return m.marketLoading || m.marketPrefetch }
 
 func (m Model) onMarket(msg marketMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.marketGen {
@@ -289,7 +332,7 @@ func marketSectionTable(env ui.Env, kind market.Kind, rows []market.Row, lowball
 func (m Model) marketHeader() (title, totals string) {
 	name := "MARKET" + m.viewScope()
 	switch {
-	case m.marketLoading:
+	case m.marketBusy():
 		return name, "asking vendors…"
 	case !m.marketLoaded:
 		return name, "press F to fetch"
@@ -300,7 +343,7 @@ func (m Model) marketHeader() (title, totals string) {
 
 func (m Model) marketStatus() string {
 	switch {
-	case m.marketLoading:
+	case m.marketBusy():
 		return m.spinner.View() + " reading today's vendor prices (first read of the day downloads ~5 MB)"
 	case !m.marketLoaded:
 		return m.theme.Help.Render(

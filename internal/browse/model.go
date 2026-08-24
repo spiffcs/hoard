@@ -237,6 +237,7 @@ type Model struct {
 	marketResult       market.Result
 	marketRows         []market.Row
 	marketLoading      bool
+	marketPrefetch     bool
 	marketLoaded       bool
 	marketGen          int
 	marketCancel       context.CancelFunc
@@ -740,6 +741,9 @@ func (m *Model) clampCursor(p pane) {
 func (m Model) Init() tea.Cmd {
 
 	init := tea.Batch(awaitConfirm(m.ctx, m.confirmCh), livePoll())
+	if m.marketFetch != nil {
+		init = tea.Batch(init, func() tea.Msg { return marketPrefetchStartMsg{} })
+	}
 
 	if m.catalogOffer && m.opCatalogUpdate != nil {
 		return tea.Batch(init, func() tea.Msg { return catalogFirstRunMsg{} })
@@ -858,10 +862,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onLivePoll()
 	case liveQuietMsg:
 		return m.onLiveQuiet(msg)
+	case marketPrefetchStartMsg:
+		m.marketPrefetch = true
+		return m, m.prefetchMarket()
+	case marketPrefetchMsg:
+		return m.onMarketPrefetch(msg)
 	case spinner.TickMsg:
 
 		var cmds []tea.Cmd
-		if m.marketLoading || m.op != nil {
+		if m.marketBusy() || m.op != nil {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)
