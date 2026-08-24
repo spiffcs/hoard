@@ -136,23 +136,7 @@ versioned JSON out with `hoard export --format json`
 JSON Schema it validates against, and the schema files are published under
 [`schema/json/`](schema/json/README.md) so a parser can pin a version.
 
-Commands that do not honour `--json` **refuse** it rather than ignoring it —
-output that silently dropped the flag would be indistinguishable, to a parser,
-from output that respected it. `--dry-run` resolves and reports without writing.
-
-Exit codes are decided in one place and are stable:
-
-| Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | Failure — the error is on stderr |
-| 2 | Partial Add: some of the cards landed, some did not |
-| 3 | A watch fired. A result, not a failure — the alert is on stdout |
-| 130 | Interrupted (SIGINT) |
-
-```sh
-hoard update-prices && hoard watch
-```
+Commands that do not honour `--json` **refuse** it rather than ignoring it.
 
 ## More
 
