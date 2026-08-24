@@ -3,12 +3,12 @@ package command
 import (
 	"context"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 

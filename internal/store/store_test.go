@@ -2,12 +2,12 @@ package store
 
 import (
 	"database/sql"
-	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 

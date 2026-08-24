@@ -2,7 +2,6 @@ package browse
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )

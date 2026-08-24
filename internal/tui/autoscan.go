@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )

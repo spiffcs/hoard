@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )

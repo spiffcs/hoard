@@ -1,11 +1,11 @@
 package browse
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
 )
 

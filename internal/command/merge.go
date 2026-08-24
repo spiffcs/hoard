@@ -48,7 +48,7 @@ func NewCmdMerge(a *app) *cobra.Command {
 
 	cmd.Flags().StringVarP(&o.outPath, "output", "o", "",
 		"also write the interchange document to FILE")
-	return cli.Mutating(cmd)
+	return cmd
 }
 
 func runMerge(a *app, path string, o mergeOpts) error {

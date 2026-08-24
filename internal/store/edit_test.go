@@ -1,8 +1,10 @@
 package store
 
-import "github.com/spiffcs/hoard/internal/finish"
+import (
+	"testing"
 
-import "testing"
+	"github.com/spiffcs/hoard/internal/finish"
+)
 
 func TestSetHoldingQuantity(t *testing.T) {
 	s := newTestStore(t)

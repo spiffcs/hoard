@@ -1,12 +1,12 @@
 package export
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/decksource"
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func deckFixture() []Row {

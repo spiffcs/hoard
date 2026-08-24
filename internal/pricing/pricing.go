@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 )

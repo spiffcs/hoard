@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/finish"
-
 	"github.com/spiffcs/hoard/internal/store"
 )
 

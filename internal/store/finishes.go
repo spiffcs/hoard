@@ -2,8 +2,9 @@ package store
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 type FinishFix struct {

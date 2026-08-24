@@ -5,13 +5,14 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func gzipped(t *testing.T, body string) []byte {

@@ -1,8 +1,10 @@
 package store
 
-import "github.com/spiffcs/hoard/internal/finish"
+import (
+	"testing"
 
-import "testing"
+	"github.com/spiffcs/hoard/internal/finish"
+)
 
 func holdFixture(t *testing.T, s *Store, fin finish.Finish) {
 	t.Helper()

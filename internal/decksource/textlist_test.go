@@ -1,9 +1,10 @@
 package decksource
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestParseTextBasic(t *testing.T) {

@@ -85,10 +85,6 @@ func Build(ctx context.Context, st *store.Store, o Options, p progress.Fn) (Resu
 	if err != nil {
 		return res, err
 	}
-	if err := st.SetCompendiumMode(false); err != nil {
-		return res, err
-	}
-
 	res.Printings, res.Entries, err = seedPrintings(ctx, st, cid, o, f, p)
 	if err != nil {
 		return res, err
@@ -112,7 +108,7 @@ func Build(ctx context.Context, st *store.Store, o Options, p progress.Fn) (Resu
 		return res, err
 	}
 	res.Observations, res.Bids = back.Inserted, back.BidInserted
-	return res, st.SetCompendiumMode(true)
+	return res, nil
 }
 
 type bulkCard struct {

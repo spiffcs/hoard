@@ -2,10 +2,10 @@ package browse
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"

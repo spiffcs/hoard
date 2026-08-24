@@ -1,12 +1,12 @@
 package report
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )

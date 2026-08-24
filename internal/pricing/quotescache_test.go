@@ -2,9 +2,9 @@ package pricing
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 )
 

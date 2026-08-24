@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 )

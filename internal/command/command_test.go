@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )

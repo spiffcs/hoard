@@ -1,10 +1,10 @@
 package store
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 

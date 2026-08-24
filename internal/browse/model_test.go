@@ -3,7 +3,6 @@ package browse
 import (
 	"context"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"image"
 	"slices"
 	"strconv"
@@ -12,12 +11,12 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	tea "github.com/charmbracelet/bubbletea"
-
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -76,7 +75,6 @@ type fakeStore struct {
 
 	holdingsByID map[string][]store.Holding
 
-	holdings    map[string]int
 	removedCard map[string][]store.Holding
 	removedDeck int64
 

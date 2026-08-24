@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/collsource"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"

@@ -29,7 +29,7 @@ func ProbeCellAspect() float64 {
 	if err != nil {
 		return 0
 	}
-	defer term.Restore(fd, state)
+	defer func() { _ = term.Restore(fd, state) }()
 
 	if _, err := tty.WriteString("\x1b[16t\x1b[14t"); err != nil {
 		return 0

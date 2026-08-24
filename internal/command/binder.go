@@ -83,37 +83,37 @@ func NewCmdBinder(a *app) *cobra.Command {
 			Args: cobra.NoArgs,
 			RunE: func(*cobra.Command, []string) error { return binderList(a.store, a.env) },
 		}),
-		cli.Mutating(&cobra.Command{
+		&cobra.Command{
 			Use: "new NAME", Short: "Create a named binder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return binderNew(a.store, a.env, args) },
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "rename BINDER NEW-NAME", Short: "Rename a binder",
 			Args: cobra.ExactArgs(2),
 			RunE: func(_ *cobra.Command, args []string) error { return binderRename(a.store, a.env, args) },
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "rm BINDER", Short: "Remove an empty binder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return binderRemove(a.store, a.env, args) },
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "exclude BINDER", Short: "Stop a binder counting toward your collection",
 			Example: "hoard binder exclude Want",
 			Args:    cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error {
 				return binderCounted(a.store, a.env, args, false)
 			},
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "include BINDER", Short: "Count a binder toward your collection again",
 			Example: "hoard binder include Want",
 			Args:    cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error {
 				return binderCounted(a.store, a.env, args, true)
 			},
-		}),
+		},
 	)
 	return cli.JSONCapable(cmd)
 }

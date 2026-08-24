@@ -1,13 +1,13 @@
 package browse
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 )

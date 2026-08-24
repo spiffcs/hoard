@@ -2,10 +2,11 @@ package browse
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func poll(m Model) Model {

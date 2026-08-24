@@ -3,13 +3,13 @@ package pricing
 import (
 	"compress/gzip"
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/cli"
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/schema"
 )

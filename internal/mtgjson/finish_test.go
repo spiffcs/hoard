@@ -2,8 +2,9 @@ package mtgjson
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestTodayQuotesTranslateNormalOnTheWayIn(t *testing.T) {

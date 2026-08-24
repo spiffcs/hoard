@@ -15,6 +15,7 @@ import (
 	"runtime"
 
 	"github.com/invopop/jsonschema"
+
 	"github.com/spiffcs/hoard/internal/hoardjson"
 )
 

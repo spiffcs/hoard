@@ -3,9 +3,10 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 type Watch struct {

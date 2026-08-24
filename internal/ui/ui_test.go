@@ -1,12 +1,13 @@
 package ui
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"math"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestMoney(t *testing.T) {

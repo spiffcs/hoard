@@ -28,21 +28,21 @@ func NewCmdFolder(a *app) *cobra.Command {
 			Args: cobra.NoArgs,
 			RunE: func(*cobra.Command, []string) error { return folderList(a.store, a.env) },
 		},
-		cli.Mutating(&cobra.Command{
+		&cobra.Command{
 			Use: "new NAME", Short: "Create a deck folder",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return folderNew(a.store, a.env, args) },
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "rename FOLDER NEW-NAME", Short: "Rename a deck folder",
 			Args: cobra.ExactArgs(2),
 			RunE: func(_ *cobra.Command, args []string) error { return folderRename(a.store, a.env, args) },
-		}),
-		cli.Mutating(&cobra.Command{
+		},
+		&cobra.Command{
 			Use: "rm FOLDER", Short: "Remove a folder, returning its decks to the top level",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return folderRemove(a.store, a.env, args) },
-		}),
+		},
 	)
 	return cmd
 }
@@ -125,23 +125,23 @@ func deckRename(st *store.Store, env *cli.Env, args []string) error {
 }
 
 func newDeckRenameCmd(a *app) *cobra.Command {
-	return cli.Mutating(&cobra.Command{
+	return &cobra.Command{
 		Use:   "rename DECK NEW-NAME",
 		Short: "Name a deck yourself; a refresh will keep the name you chose",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return deckRename(a.store, a.env, args)
 		},
-	})
+	}
 }
 
 func newDeckMoveCmd(a *app) *cobra.Command {
-	return cli.Mutating(&cobra.Command{
+	return &cobra.Command{
 		Use:   "move DECK [FOLDER]",
 		Short: "Put a deck in a folder, or omit FOLDER to move it back out",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return deckMove(a.store, a.env, args)
 		},
-	})
+	}
 }

@@ -2,11 +2,12 @@ package export
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 var sections = []struct{ board, header string }{

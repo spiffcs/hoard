@@ -28,15 +28,11 @@ const AnnotationJSON = "hoard/json"
 
 const AnnotationNoStore = "hoard/nostore"
 
-const AnnotationMutating = "hoard/mutating"
-
 const FlagNameJSON = "json"
 
 func JSONCapable(cmd *cobra.Command) *cobra.Command { return annotate(cmd, AnnotationJSON) }
 
 func NoStore(cmd *cobra.Command) *cobra.Command { return annotate(cmd, AnnotationNoStore) }
-
-func Mutating(cmd *cobra.Command) *cobra.Command { return annotate(cmd, AnnotationMutating) }
 
 func annotate(cmd *cobra.Command, key string) *cobra.Command {
 	if cmd.Annotations == nil {

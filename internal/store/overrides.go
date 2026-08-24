@@ -2,9 +2,10 @@ package store
 
 import (
 	"database/sql"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"time"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 type PriceCandidate struct {

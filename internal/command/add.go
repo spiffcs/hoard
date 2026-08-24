@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
@@ -53,7 +53,7 @@ func NewCmdAdd(a *app) *cobra.Command {
 		"destination binder for URL and list adds (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&o.again, "again", false,
 		"add a list this hoard has already added, doubling its cards on purpose")
-	return cli.Mutating(cmd)
+	return cmd
 }
 
 func runAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o addOpts) error {

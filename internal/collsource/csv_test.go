@@ -1,11 +1,11 @@
 package collsource
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 

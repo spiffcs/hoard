@@ -5,10 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
-
-	"github.com/spiffcs/hoard/internal/cardname"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +16,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/ui"

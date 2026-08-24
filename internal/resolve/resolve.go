@@ -2,9 +2,9 @@ package resolve
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )

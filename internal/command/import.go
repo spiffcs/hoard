@@ -72,7 +72,7 @@ func NewCmdImport(a *app) *cobra.Command {
 		"recreate the file's own binders, creating any this hoard does not have, instead of using one destination")
 	cmd.Flags().BoolVar(&o.again, "again", false,
 		"import a file this hoard has already imported, adding its cards a second time")
-	return cli.Mutating(cmd)
+	return cmd
 }
 
 func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, o importOpts) error {

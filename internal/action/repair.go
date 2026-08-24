@@ -2,10 +2,10 @@ package action
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
-	"github.com/spiffcs/hoard/internal/scryfall"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
 

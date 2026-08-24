@@ -4,11 +4,11 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"strconv"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 

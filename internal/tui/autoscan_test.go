@@ -3,12 +3,12 @@ package tui
 import (
 	"context"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )

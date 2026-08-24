@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 const (
@@ -247,8 +248,7 @@ func FoilTreatment(promoTypes sql.NullString) string {
 }
 
 type Store struct {
-	db         *sql.DB
-	compendium bool
+	db *sql.DB
 }
 
 func Open(path string) (*Store, error) {
@@ -272,10 +272,6 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err := s.collectionID(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := s.loadCompendiumMode(); err != nil {
 		db.Close()
 		return nil, err
 	}

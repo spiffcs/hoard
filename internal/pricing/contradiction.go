@@ -2,9 +2,9 @@ package pricing
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tcgcsv"

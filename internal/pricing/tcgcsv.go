@@ -2,13 +2,13 @@ package pricing
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/tcgcsv"
 )

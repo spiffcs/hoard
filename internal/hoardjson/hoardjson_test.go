@@ -7,12 +7,12 @@ package hoardjson
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/spiffcs/hoard/internal/finish"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"

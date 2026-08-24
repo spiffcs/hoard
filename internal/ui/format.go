@@ -2,9 +2,10 @@ package ui
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func Bytes(n int64) string {
@@ -125,13 +126,6 @@ func Pips(colors []string) string {
 		return "C"
 	}
 	return key
-}
-
-func Estimated(s, altSource string) string {
-	if altSource == "" {
-		return s
-	}
-	return s + "*"
 }
 
 func Printing(setCode, collectorNumber string) string {

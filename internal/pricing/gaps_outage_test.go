@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestFillGapsDoesNotStampGapsWhenResolutionFails(t *testing.T) {

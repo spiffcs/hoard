@@ -3,13 +3,13 @@ package decksource
 import (
 	"bufio"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/safetext"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )

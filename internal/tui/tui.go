@@ -2,11 +2,11 @@ package tui
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/cardname"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
 )

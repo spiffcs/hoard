@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -439,8 +439,8 @@ func NewCmdWatch(a *app) *cobra.Command {
 	add.Flags().BoolVar(&fl.foil, "foil", false, "watch the foil price")
 
 	cmd.AddCommand(
-		cli.Mutating(add),
-		cli.Mutating(&cobra.Command{
+		add,
+		&cobra.Command{
 			Use: "import FILE|-", Short: "Import price watches in bulk (CSV or JSON)",
 			Example: "hoard watch import watches.csv\n" +
 				"pbpaste | hoard watch import -",
@@ -448,7 +448,7 @@ func NewCmdWatch(a *app) *cobra.Command {
 			RunE: func(c *cobra.Command, args []string) error {
 				return watchImport(c.Context(), a.store, a.env, args)
 			},
-		}),
+		},
 
 		cli.JSONCapable(&cobra.Command{
 			Use: "list", Short: "Your watches",
@@ -456,11 +456,11 @@ func NewCmdWatch(a *app) *cobra.Command {
 			Args:    cobra.NoArgs,
 			RunE:    func(*cobra.Command, []string) error { return watchList(a.store, a.env) },
 		}),
-		cli.Mutating(&cobra.Command{
+		&cobra.Command{
 			Use: "rm ID|NAME", Short: "Remove a watch",
 			Args: cobra.ExactArgs(1),
 			RunE: func(_ *cobra.Command, args []string) error { return watchRemove(a.store, a.env, args) },
-		}),
+		},
 	)
 	return cli.JSONCapable(cmd)
 }

@@ -2,12 +2,11 @@ package command
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
-
 	"time"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"

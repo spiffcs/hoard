@@ -3,20 +3,20 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/report"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func NewCmdRepairFinishes(a *app) *cobra.Command {
-	return cli.Mutating(&cobra.Command{
+	return &cobra.Command{
 		Use:     "repair-finishes",
 		GroupID: groupCollection,
 		Short:   "Fix cards stored as a finish they lack",
@@ -25,7 +25,7 @@ func NewCmdRepairFinishes(a *app) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runRepairFinishes(c.Context(), a.store, a.env)
 		},
-	})
+	}
 }
 
 func runRepairFinishes(ctx context.Context, st *store.Store, env *cli.Env) error {

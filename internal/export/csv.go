@@ -2,12 +2,12 @@ package export
 
 import (
 	"encoding/csv"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -52,10 +52,6 @@ func WriteCanonical(w io.Writer, rows []Row) error {
 var canonicalHeader = []string{
 	"Count", "Name", "Set", "Collector Number", "Finish", "Condition",
 	"Scryfall ID", "Container", "Container Kind", "Board", "Price USD",
-}
-
-func CanonicalHeader() []string {
-	return append([]string(nil), canonicalHeader...)
 }
 
 func WriteMoxfield(w io.Writer, rows []Row) error {

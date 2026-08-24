@@ -2,8 +2,8 @@ package action
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/pricing"

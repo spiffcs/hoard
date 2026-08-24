@@ -1,7 +1,6 @@
 package browse
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
@@ -9,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"

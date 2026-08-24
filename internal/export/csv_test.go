@@ -1,10 +1,11 @@
 package export
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func f(v float64) *float64 { return &v }

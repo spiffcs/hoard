@@ -3,11 +3,11 @@ package command
 import (
 	"context"
 	"errors"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"

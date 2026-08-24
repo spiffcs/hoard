@@ -2,11 +2,11 @@ package action
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"path/filepath"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/catalog"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"

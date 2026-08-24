@@ -2,7 +2,6 @@ package browse
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )

@@ -2,10 +2,10 @@ package market
 
 import (
 	"cmp"
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"

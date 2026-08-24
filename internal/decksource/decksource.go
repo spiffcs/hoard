@@ -3,10 +3,10 @@ package decksource
 import (
 	"context"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"net/url"
 	"strings"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/safetext"
 	"github.com/spiffcs/hoard/internal/scryfall"

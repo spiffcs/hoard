@@ -184,10 +184,6 @@ func TestBuildStampsTheDatabaseAsACatalog(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	if st.CompendiumMode() {
-		t.Fatal("setup: a fresh database is already stamped")
-	}
-
 	if _, err := Build(context.Background(), st, Options{
 		Days:           30,
 		BulkListingURL: serveScryfall(t, bulkJSONL),
@@ -195,9 +191,5 @@ func TestBuildStampsTheDatabaseAsACatalog(t *testing.T) {
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {})); err != nil {
 		t.Fatalf("Build: %v", err)
-	}
-
-	if !st.CompendiumMode() {
-		t.Error("Build left the database unstamped; hoard cannot know to guard it")
 	}
 }

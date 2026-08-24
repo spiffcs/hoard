@@ -100,7 +100,7 @@ With nothing imported yet, `hoard demo` shows the same browser with sample data;
 view the main command palette.
 
 The browser does not have to be pointed at cards you own. The [compendium
-generator](internal/compendium/gen/README.md) builds a read-only database from a
+generator](internal/compendium/gen/README.md) builds a database from a
 slice of Magic. The example shows every mythic and rare since 2020 but feel free to make your own
 
 A handful of sets priced and backfilled helps people browse and chart it with the same screens. 

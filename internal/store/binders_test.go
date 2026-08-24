@@ -1,9 +1,10 @@
 package store
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestListBindersStartsWithTheDefault(t *testing.T) {

@@ -2,8 +2,8 @@ package store
 
 import (
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 )
 

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"io"
 	"net/http"
 	"os"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/boundedio"
 	"github.com/spiffcs/hoard/internal/buildinfo"
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 var apiBase = "https://mtgjson.com/api/v5"

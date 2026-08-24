@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/spiffcs/hoard/internal/finish"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func card(id, name, set, num string, usd string, games ...string) string {

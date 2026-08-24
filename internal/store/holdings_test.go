@@ -1,9 +1,10 @@
 package store
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestEntryKeysDistinct(t *testing.T) {

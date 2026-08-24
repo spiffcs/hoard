@@ -2,9 +2,10 @@ package action
 
 import (
 	"encoding/json"
-	"github.com/spiffcs/hoard/internal/finish"
 	"slices"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestExportRowsCarryDetailOnlyForFetchedPrintings(t *testing.T) {

@@ -2,11 +2,12 @@ package store
 
 import (
 	"database/sql"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spiffcs/hoard/internal/finish"
 )
 
 func TestApplyImportCreatesBindersAndAddsAtomically(t *testing.T) {

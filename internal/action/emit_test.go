@@ -2,10 +2,10 @@ package action
 
 import (
 	"encoding/json"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 )
 

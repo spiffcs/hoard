@@ -2,12 +2,12 @@ package browse
 
 import (
 	"context"
-	"github.com/spiffcs/hoard/internal/finish"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
 )

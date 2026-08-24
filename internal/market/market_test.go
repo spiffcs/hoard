@@ -1,11 +1,11 @@
 package market
 
 import (
-	"github.com/spiffcs/hoard/internal/finish"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/mtgjson"
 	"github.com/spiffcs/hoard/internal/store"
 )

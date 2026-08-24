@@ -2,13 +2,14 @@ package schemagen
 
 import (
 	"bytes"
-	"github.com/spiffcs/hoard/internal/finish"
 	"os"
 	"path/filepath"
 	"testing"
 
 	santhosh "github.com/santhosh-tekuri/jsonschema/v6"
+
 	"github.com/spiffcs/hoard/internal/export"
+	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/hoardjson"
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/report"
