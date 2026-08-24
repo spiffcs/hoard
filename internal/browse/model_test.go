@@ -70,7 +70,8 @@ type fakeStore struct {
 	watchListCalls  int
 	unpricedCalls   int
 
-	bidSeries map[string][]store.PricePoint
+	bidSeries   map[string][]store.PricePoint
+	priceSeries map[string][]store.PricePoint
 
 	holdingsByName map[string][]store.Holding
 
@@ -364,7 +365,9 @@ func (f *fakeStore) HoldingsOfName(name string) ([]store.Holding, error) {
 	}
 	return out, nil
 }
-func (f *fakeStore) PriceSeries(string, finish.Finish) ([]store.PricePoint, error) { return nil, f.err }
+func (f *fakeStore) PriceSeries(id string, fin finish.Finish) ([]store.PricePoint, error) {
+	return f.priceSeries[id+"|"+fin.String()], f.err
+}
 
 func (f *fakeStore) BidSeries(id string, fin finish.Finish) ([]store.PricePoint, error) {
 	return f.bidSeries[id+"|"+fin.String()], f.err

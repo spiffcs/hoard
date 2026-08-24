@@ -450,7 +450,11 @@ func (m Model) hoardLines(d detail, width int) []string {
 				}
 				line += "  " + change
 			}
-			g = append(g, line, dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s))))
+			caption := dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s)))
+			if run := m.streakPhrase(store.Streak(s)); run != "" {
+				caption += dim(" · ") + run
+			}
+			g = append(g, line, caption)
 		}
 
 		g = append(g, m.bidLines(s, b, !d.fromArbitrage)...)
@@ -734,4 +738,21 @@ func joinNonEmpty(sep string, parts ...string) string {
 		}
 	}
 	return strings.Join(kept, sep)
+}
+
+const minStreak = 3
+
+func (m Model) streakPhrase(n int) string {
+	if n > -minStreak && n < minStreak {
+		return ""
+	}
+	run, word := n, "up"
+	if n < 0 {
+		run, word = -n, "down"
+	}
+	frac := market.StreakGrade(run)
+	if n < 0 {
+		frac = -frac
+	}
+	return m.env.Diverge(frac)(fmt.Sprintf("%d %s", run, word))
 }

@@ -224,3 +224,30 @@ ORDER BY as_of`, scryfallID, fin)
 	}
 	return out, rows.Err()
 }
+
+func Streak(s []PricePoint) int {
+	run, dir := 0, 0
+	for i := len(s) - 1; i > 0; i-- {
+		switch step := cmpPrice(s[i].Price, s[i-1].Price); {
+		case step == 0:
+			continue
+		case dir == 0:
+			dir, run = step, 1
+		case step == dir:
+			run++
+		default:
+			return dir * run
+		}
+	}
+	return dir * run
+}
+
+func cmpPrice(now, prev float64) int {
+	switch {
+	case now > prev:
+		return 1
+	case now < prev:
+		return -1
+	}
+	return 0
+}
