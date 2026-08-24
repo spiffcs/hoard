@@ -124,12 +124,13 @@ func (m Model) compsSortKey() string {
 func (m *Model) sortCompRows() {
 	key, rev := m.compsSortKey(), m.compsSortRev
 	buySide := m.compsBuySide
-	sortRows(m.marketAllComps, rev, func(a, b market.Comp) int {
-		if c := compKeyFor(key, buySide, a, b); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Card.Name, b.Card.Name)
-	})
+	sortRows(m.marketAllComps, rev,
+		func(a, b market.Comp) int { return compKeyFor(key, buySide, a, b) },
+		func(a, b market.Comp) int {
+			return breakTie(a.Card.Name, b.Card.Name,
+				a.Card.SetCode, a.Card.CollectorNumber, b.Card.SetCode, b.Card.CollectorNumber,
+				a.Card.Finish.String(), b.Card.Finish.String())
+		})
 	m.deriveMarketPages()
 }
 

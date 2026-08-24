@@ -108,3 +108,77 @@ func TestComparePrintingPutsTheSetFirst(t *testing.T) {
 		t.Error("the same printing must compare equal")
 	}
 }
+
+func printedAs(rows []card) []string {
+	out := make([]string, len(rows))
+	for i, c := range rows {
+		out[i] = c.Name + "/" + c.CollectorNumber
+	}
+	return out
+}
+
+func printing(name, num string, value float64) store.CollectionRow {
+	r := row(name, "eoe", num, finish.Nonfoil, 1, value)
+	r.ScryfallID = name + "-" + num
+	return r
+}
+
+func manyPrintings() *fakeStore {
+	return &fakeStore{collection: []store.CollectionRow{
+		printing("Ugin", "312", 50),
+		printing("Sami", "9", 5),
+		printing("Ugin", "1", 12),
+		printing("Ugin", "44", 30),
+	}}
+}
+
+func TestSortByNameBreaksTiesOnCollectorNumber(t *testing.T) {
+	m := sortBy(t, eoeModel(t, manyPrintings()), "name")
+
+	want := []string{"Sami/9", "Ugin/1", "Ugin/44", "Ugin/312"}
+	if got := printedAs(m.filteredCards); !slices.Equal(got, want) {
+		t.Errorf("by name = %v, want %v — same name, ascending collector number", got, want)
+	}
+
+	m = key(m, "S")
+	want = []string{"Ugin/1", "Ugin/44", "Ugin/312", "Sami/9"}
+	if got := printedAs(m.filteredCards); !slices.Equal(got, want) {
+		t.Errorf("by name reversed = %v, want %v — names flip, printings stay ascending", got, want)
+	}
+}
+
+func trendPrintedAs(rows []store.TrendRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Name + "/" + r.CollectorNumber
+	}
+	return out
+}
+
+func numberedDip(name, num string, high, last float64) store.TrendRow {
+	r := dipRow(name, high, last, last)
+	r.CollectorNumber = num
+	r.ScryfallID = name + num
+	return r
+}
+
+func TestDipSortByNameBreaksTiesOnCollectorNumber(t *testing.T) {
+	m := onDipRows(t, []store.TrendRow{
+		numberedDip("Ugin", "312", 100, 50),
+		numberedDip("Sami", "9", 100, 40),
+		numberedDip("Ugin", "1", 100, 70),
+		numberedDip("Ugin", "44", 100, 60),
+	}, nil)
+
+	m = sortBy(t, m, "DIP · name")
+	want := []string{"Sami/9", "Ugin/1", "Ugin/44", "Ugin/312"}
+	if got := trendPrintedAs(m.dips); !slices.Equal(got, want) {
+		t.Errorf("by name = %v, want %v", got, want)
+	}
+
+	m = key(m, "S")
+	want = []string{"Ugin/1", "Ugin/44", "Ugin/312", "Sami/9"}
+	if got := trendPrintedAs(m.dips); !slices.Equal(got, want) {
+		t.Errorf("by name reversed = %v, want %v — names flip, printings stay ascending", got, want)
+	}
+}

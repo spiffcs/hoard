@@ -205,17 +205,17 @@ func (m *Model) applySort() {
 	switch m.view {
 	case viewWatches:
 
-		sortRows(m.overs, m.watchSortRev[secOvers], watchCompare(m.watchSortKey(secOvers)))
-		sortRows(m.unders, m.watchSortRev[secUnders], watchCompare(m.watchSortKey(secUnders)))
-		sortRows(m.unpriced, m.watchSortRev[secUnpriced], unpricedCompare(m.watchSortKey(secUnpriced)))
+		sortRows(m.overs, m.watchSortRev[secOvers], watchCompare(m.watchSortKey(secOvers)), watchTiebreak)
+		sortRows(m.unders, m.watchSortRev[secUnders], watchCompare(m.watchSortKey(secUnders)), watchTiebreak)
+		sortRows(m.unpriced, m.watchSortRev[secUnpriced], unpricedCompare(m.watchSortKey(secUnpriced)), unpricedTiebreak)
 	case viewMovers:
 
-		sortRows(m.filteredMovers, rev, moverCompare(key))
+		sortRows(m.filteredMovers, rev, moverCompare(key), moverTiebreak)
 		m.deriveMoversPage()
 	case viewDip:
-		sortRows(m.filteredDips, m.dipSortRev[secDip], trendCompare(m.dipSortKey(secDip)))
+		sortRows(m.filteredDips, m.dipSortRev[secDip], trendCompare(m.dipSortKey(secDip)), trendTiebreak)
 		sortRows(m.filteredMomentum, m.dipSortRev[secMomentum],
-			trendCompare(m.dipSortKey(secMomentum)))
+			trendCompare(m.dipSortKey(secMomentum)), trendTiebreak)
 		m.deriveDipPages()
 	case viewMarket:
 		m.sortArbRows()
@@ -227,7 +227,7 @@ func (m *Model) applySort() {
 
 func (m *Model) sortHoldings() {
 	key, rev := m.holdingsSortColumns()[m.sortIdx[viewHoldings]], m.sortRev[viewHoldings]
-	sortRows(m.allCards, rev, cardCompare(key))
+	sortRows(m.allCards, rev, cardCompare(key), cardTiebreak)
 }
 
 func (m *Model) sortArbRows() {
@@ -243,12 +243,14 @@ func (m *Model) sortArbRows() {
 		if c != 0 {
 			return c
 		}
-		return strings.Compare(a.Card.Name, b.Card.Name)
+		return breakTie(a.Card.Name, b.Card.Name,
+			a.Card.SetCode, a.Card.CollectorNumber, b.Card.SetCode, b.Card.CollectorNumber,
+			a.Card.Finish.String(), b.Card.Finish.String())
 	})
 	m.deriveMarketPages()
 }
 
-func sortRows[T any](rows []T, rev bool, compare func(a, b T) int) {
+func sortRows[T any](rows []T, rev bool, compare, tiebreak func(a, b T) int) {
 	slices.SortStableFunc(rows, func(a, b T) int {
 		if c := compare(a, b); c != 0 {
 			if rev {
@@ -256,8 +258,44 @@ func sortRows[T any](rows []T, rev bool, compare func(a, b T) int) {
 			}
 			return c
 		}
-		return 0
+
+		return tiebreak(a, b)
 	})
+}
+
+func breakTie(aName, bName, aSet, aNum, bSet, bNum, aFin, bFin string) int {
+	if c := strings.Compare(aName, bName); c != 0 {
+		return c
+	}
+	if c := comparePrinting(aSet, aNum, bSet, bNum); c != 0 {
+		return c
+	}
+	return strings.Compare(aFin, bFin)
+}
+
+func cardTiebreak(a, b card) int {
+	return breakTie(a.Name, b.Name, a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber,
+		a.Finish.String(), b.Finish.String())
+}
+
+func watchTiebreak(a, b store.WatchStatus) int {
+	return breakTie(a.Name, b.Name, a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber,
+		a.Finish.String(), b.Finish.String())
+}
+
+func moverTiebreak(a, b store.PriceChange) int {
+	return breakTie(a.Name, b.Name, a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber,
+		a.Finish.String(), b.Finish.String())
+}
+
+func unpricedTiebreak(a, b store.UnpricedRow) int {
+	return breakTie(a.Name, b.Name, a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber,
+		a.Finish.String(), b.Finish.String())
+}
+
+func trendTiebreak(a, b store.TrendRow) int {
+	return breakTie(a.Name, b.Name, a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber,
+		a.Finish.String(), b.Finish.String())
 }
 
 func cardCompare(key string) func(a, b card) int {
@@ -278,13 +316,7 @@ func cardCompare(key string) func(a, b card) int {
 		default:
 			c = cmp.Compare(b.Value, a.Value)
 		}
-		if c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Name, b.Name); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Finish.String(), b.Finish.String())
+		return c
 	}
 }
 
@@ -311,13 +343,7 @@ func watchCompare(key string) func(a, b store.WatchStatus) int {
 		default:
 			c = cmp.Compare(rank(a), rank(b))
 		}
-		if c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Name, b.Name); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Finish.String(), b.Finish.String())
+		return c
 	}
 }
 
@@ -350,10 +376,7 @@ func trendCompare(key string) func(a, b store.TrendRow) int {
 
 			c = cmp.Compare(a.OffHigh(), b.OffHigh())
 		}
-		if c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
+		return c
 	}
 }
 
@@ -377,10 +400,7 @@ func moverCompare(key string) func(a, b store.PriceChange) int {
 
 			c = cmp.Compare(b.TotalDelta(), a.TotalDelta())
 		}
-		if c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
+		return c
 	}
 }
 
@@ -399,10 +419,7 @@ func unpricedCompare(key string) func(a, b store.UnpricedRow) int {
 		default:
 			c = strings.Compare(a.Name, b.Name)
 		}
-		if c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
+		return c
 	}
 }
 
