@@ -67,6 +67,7 @@ type Store interface {
 
 	SetsHeld() ([]store.SetSummary, error)
 	SetByFinish(setCode string) ([]store.CollectionRow, error)
+	SetUnowned(setCode string) ([]store.UnownedRow, error)
 
 	ListWatches() ([]store.WatchStatus, error)
 	WouldFire() ([]store.WatchStatus, error)
@@ -104,6 +105,12 @@ func WithOpenURL(f OpenURLFunc) Option {
 }
 
 type PrintSearchFunc func(ctx context.Context, exactName string) ([]scryfall.Card, error)
+
+type SetPrintsFunc func(ctx context.Context, setCode string) ([]scryfall.Card, error)
+
+func WithSetPrints(f SetPrintsFunc) Option {
+	return func(m *Model) { m.setPrints = f }
+}
 
 func WithPrintSearch(f PrintSearchFunc) Option {
 	return func(m *Model) { m.printSearch = f }

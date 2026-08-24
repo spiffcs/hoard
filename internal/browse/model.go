@@ -73,6 +73,8 @@ type card struct {
 	ColorIdentity []string
 
 	Treatment string
+
+	Where string
 }
 
 type pendingConfirm struct {
@@ -108,6 +110,8 @@ type Model struct {
 
 	dipPage      [2]int
 	dipSecOffset [2]int
+	dipSortIdx   [dipSectionCount]int
+	dipSortRev   [dipSectionCount]bool
 
 	selAnchor int
 
@@ -219,18 +223,23 @@ type Model struct {
 
 	moversDaysIdx int
 
-	marketFetch   MarketFunc
-	marketCached  MarketCachedFunc
-	cardComps     CardCompFunc
-	openURL       OpenURLFunc
-	printSearch   PrintSearchFunc
-	marketResult  market.Result
-	marketRows    []market.Row
-	marketLoading bool
-	marketLoaded  bool
-	marketGen     int
-	marketCancel  context.CancelFunc
-	spinner       spinner.Model
+	marketFetch  MarketFunc
+	marketCached MarketCachedFunc
+	cardComps    CardCompFunc
+	openURL      OpenURLFunc
+	printSearch  PrintSearchFunc
+	setPrints    SetPrintsFunc
+
+	setUnowned         bool
+	lastSet            string
+	setOwned, setTotal int
+	marketResult       market.Result
+	marketRows         []market.Row
+	marketLoading      bool
+	marketLoaded       bool
+	marketGen          int
+	marketCancel       context.CancelFunc
+	spinner            spinner.Model
 
 	ctx context.Context
 
@@ -451,15 +460,19 @@ func (m *Model) loadCards() error {
 	}
 
 	var out []card
-	if sel.Kind == kindAllCards || sel.Kind == store.KindCollection ||
-		sel.Kind == kindSet || sel.Kind == kindFolder {
+	if sel.Kind == kindSet {
+		cards, err := m.setCards(sel.setCode)
+		if err != nil {
+			return fmt.Errorf("reading %q: %w", sel.Name, err)
+		}
+		out = cards
+	} else if sel.Kind == kindAllCards || sel.Kind == store.KindCollection ||
+		sel.Kind == kindFolder {
 		var rows []store.CollectionRow
 		var err error
 		switch sel.Kind {
 		case kindAllCards:
 			rows, err = m.store.AllByFinish()
-		case kindSet:
-			rows, err = m.store.SetByFinish(sel.setCode)
 		case kindFolder:
 			rows, err = m.store.FolderByFinish(sel.ID)
 		default:
@@ -468,16 +481,7 @@ func (m *Model) loadCards() error {
 		if err != nil {
 			return fmt.Errorf("reading %q: %w", sel.Name, err)
 		}
-		for _, r := range store.CollectionByValue(rows) {
-			out = append(out, card{
-				ScryfallID: r.ScryfallID, Name: r.Name, SetCode: r.SetCode,
-				CollectorNumber: r.CollectorNumber, Finish: r.Finish,
-				Condition: r.Condition,
-				Quantity:  r.Quantity, Price: r.Price(), Value: r.Value,
-				AltSource: r.AltSource, ColorIdentity: r.ColorIdentity,
-				Treatment: r.Treatment,
-			})
-		}
+		out = collectionCards(rows)
 		if sel.Kind == kindAllCards {
 
 			out = mergeByName(out)

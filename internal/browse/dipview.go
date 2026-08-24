@@ -25,6 +25,18 @@ func (s dipSection) title() string {
 	return "DIP"
 }
 
+var (
+	dipSortColumns      = []string{"off high", "name", "set/num", "finish", "high", "low", "now"}
+	momentumSortColumns = []string{"streak", "name", "set/num", "finish", "was", "now", "change"}
+)
+
+func (s dipSection) sortColumns() []string {
+	if s == secMomentum {
+		return momentumSortColumns
+	}
+	return dipSortColumns
+}
+
 func (s dipSection) note() string {
 	if s == secMomentum {
 		return "climbing every check, never once down"

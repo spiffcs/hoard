@@ -71,7 +71,19 @@ func NewCmdBinder(a *app) *cobra.Command {
 		Use:     "binder",
 		GroupID: groupBinder,
 		Short:   "Organize the loose collection into labelled parts",
-		Example: "hoard binder [list|new|rename|rm]",
+		Long: "Organize the loose collection into labelled parts.\n\n" +
+			"An excluded binder is a wantlist. Its cards are still\n" +
+			"priced, still show up in movers, and can still carry a\n" +
+			"watch. They just do not count toward what your\n" +
+			"collection is worth:\n\n" +
+			"  hoard binder new Want\n" +
+			"  hoard binder exclude Want\n" +
+			"  hoard add CARD-URL --binder Want\n\n" +
+			"To move a card out of Want once you own it, open the\n" +
+			"browser: enter for the card's detail, up into the row\n" +
+			"for the copy you hold, right to its last field, then\n" +
+			"enter to name the binder it moves to.",
+		Example: "hoard binder [list|new|rename|rm|exclude|include]",
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return binderList(a.store, a.env)

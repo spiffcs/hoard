@@ -477,6 +477,10 @@ func (m Model) cardLines(width int) []string {
 
 		cols = slices.Insert(cols, 4,
 			ui.Col{Title: "COND", Align: ui.Left, Priority: 3, Style: env.Dim()})
+		if m.setUnowned {
+			cols = slices.Insert(cols, 5,
+				ui.Col{Title: "LIST", Align: ui.Left, Priority: 1, Style: env.Dim()})
+		}
 		if inDeck {
 
 			cols = slices.Insert(cols, 2,
@@ -495,6 +499,9 @@ func (m Model) cardLines(width int) []string {
 			}
 
 			cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
+			if m.setUnowned {
+				cells = slices.Insert(cells, 5, ui.C(c.Where))
+			}
 			if inDeck {
 				cells = slices.Insert(cells, 2, ui.C(c.Board))
 			}

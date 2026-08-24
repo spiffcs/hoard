@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/finish"
@@ -199,4 +200,221 @@ func TestTreatmentSurfacesOnRows(t *testing.T) {
 	if d.Treatment != "ripple" {
 		t.Errorf("detail treatment = %q, want ripple", d.Treatment)
 	}
+}
+
+func TestSetByFinishLeavesOutUncountedBinders(t *testing.T) {
+	s, _ := wantsStore(t)
+
+	rows, err := s.SetByFinish("c21")
+	if err != nil {
+		t.Fatalf("SetByFinish(c21): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("SetByFinish(c21) = %v, want nothing — Sol Ring is only in the uncounted Want binder",
+			collNames(rows))
+	}
+
+	rows, err = s.SetByFinish("uma")
+	if err != nil {
+		t.Fatalf("SetByFinish(uma): %v", err)
+	}
+	if len(rows) != 1 || rows[0].Name != "Ulamog, the Infinite Gyre" {
+		t.Fatalf("SetByFinish(uma) = %v, want just Ulamog", collNames(rows))
+	}
+	if rows[0].Quantity != 2 || rows[0].Value != 20 {
+		t.Errorf("Ulamog = %d copies worth %v, want 2 worth 20",
+			rows[0].Quantity, rows[0].Value)
+	}
+}
+
+func TestSetUnownedListsWantedAndNeverHeldPrintings(t *testing.T) {
+	s, _ := wantsStore(t)
+
+	missing := solRing()
+	missing.ID, missing.CollectorNumber, missing.Name = "arcane-id", "2", "Arcane Signet"
+	missing.PriceUSD = f(1)
+	if err := s.UpsertPrintings([]scryfall.Card{missing}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+
+	rows, err := s.SetUnowned("c21")
+	if err != nil {
+		t.Fatalf("SetUnowned(c21): %v", err)
+	}
+	byName := map[string]UnownedRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if len(byName) != 2 {
+		t.Fatalf("SetUnowned(c21) = %v, want Sol Ring (wanted) and Arcane Signet (never held)",
+			unownedNames(rows))
+	}
+	if got := byName["Sol Ring"].Where; got != "Want" {
+		t.Errorf("Sol Ring is waiting in %q, want %q named on the row", got, "Want")
+	}
+	if got := byName["Arcane Signet"].Where; got != "" {
+		t.Errorf("Arcane Signet names %q, want no list — hoard knows the printing, nobody listed it", got)
+	}
+	if got := byName["Sol Ring"].Quantity; got != 3 {
+		t.Errorf("Sol Ring = %d copies, want the 3 waiting in the Want binder", got)
+	}
+	if got := byName["Arcane Signet"].Quantity; got != 0 {
+		t.Errorf("Arcane Signet = %d copies, want 0 — hoard knows the printing, you hold none", got)
+	}
+
+	rows, err = s.SetUnowned("uma")
+	if err != nil {
+		t.Fatalf("SetUnowned(uma): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("SetUnowned(uma) = %v, want nothing — the only uma printing is owned",
+			unownedNames(rows))
+	}
+}
+
+func TestSetByFinishCountsDeckCardsAsOwned(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 2); err != nil {
+		t.Fatalf("AddCardFinish: %v", err)
+	}
+	if err := s.UpsertPrintings([]scryfall.Card{solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if _, err := s.UpsertDeck(
+		DeckMeta{Name: "Eldrazi", Source: "manual", SourceID: "deck:eldrazi"},
+		[]Entry{{ScryfallID: "ulamog-id", Finish: finish.Nonfoil, Board: BoardMain, Quantity: 1}},
+	); err != nil {
+		t.Fatalf("UpsertDeck(Eldrazi): %v", err)
+	}
+	borrowed, err := s.UpsertDeck(
+		DeckMeta{Name: "Borrowed", Source: "manual", SourceID: "deck:borrowed"},
+		[]Entry{{ScryfallID: "sol-id", Finish: finish.Nonfoil, Board: BoardMain, Quantity: 4}},
+	)
+	if err != nil {
+		t.Fatalf("UpsertDeck(Borrowed): %v", err)
+	}
+	if err := s.SetContainerCounted(borrowed, false); err != nil {
+		t.Fatalf("SetContainerCounted: %v", err)
+	}
+
+	rows, err := s.SetByFinish("uma")
+	if err != nil {
+		t.Fatalf("SetByFinish(uma): %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("SetByFinish(uma) = %v, want the one Ulamog printing", collNames(rows))
+	}
+	if rows[0].Quantity != 3 || rows[0].Value != 30 {
+		t.Errorf("Ulamog = %d copies worth %v, want 3 worth 30 — 2 in the binder plus 1 in the deck",
+			rows[0].Quantity, rows[0].Value)
+	}
+
+	rows, err = s.SetByFinish("c21")
+	if err != nil {
+		t.Fatalf("SetByFinish(c21): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("SetByFinish(c21) = %v, want nothing — the Borrowed deck is not counted",
+			collNames(rows))
+	}
+
+	missing, err := s.SetUnowned("c21")
+	if err != nil {
+		t.Fatalf("SetUnowned(c21): %v", err)
+	}
+	if len(missing) != 1 || missing[0].Name != "Sol Ring" {
+		t.Fatalf("SetUnowned(c21) = %v, want Sol Ring — borrowed is not owned",
+			unownedNames(missing))
+	}
+	if missing[0].Quantity != 4 {
+		t.Errorf("Sol Ring = %d copies, want the 4 sitting in the uncounted deck", missing[0].Quantity)
+	}
+	if missing[0].Where != "Borrowed" {
+		t.Errorf("Sol Ring is waiting in %q, want the deck %q named — a list is a list",
+			missing[0].Where, "Borrowed")
+	}
+
+	if missing, err = s.SetUnowned("uma"); err != nil {
+		t.Fatalf("SetUnowned(uma): %v", err)
+	} else if len(missing) != 0 {
+		t.Errorf("SetUnowned(uma) = %v, want nothing — the deck copy makes it owned",
+			unownedNames(missing))
+	}
+}
+
+func TestSetUnownedIsPerPrintingNotPerFinish(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AddCardFinish(ulamog(), finish.Foil, 1); err != nil {
+		t.Fatalf("AddCardFinish(foil): %v", err)
+	}
+	if err := s.UpsertPrintings([]scryfall.Card{solRing()}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	want, err := s.CreateBinder("Want")
+	if err != nil {
+		t.Fatalf("CreateBinder: %v", err)
+	}
+	if err := s.AddCardFinishTo(want, solRing(), finish.Nonfoil, 2); err != nil {
+		t.Fatalf("AddCardFinishTo(nonfoil): %v", err)
+	}
+	if err := s.AddCardFinishTo(want, solRing(), finish.Foil, 1); err != nil {
+		t.Fatalf("AddCardFinishTo(foil): %v", err)
+	}
+	if err := s.SetContainerCounted(want, false); err != nil {
+		t.Fatalf("SetContainerCounted: %v", err)
+	}
+	loaner, err := s.UpsertDeck(
+		DeckMeta{Name: "Loaner", Source: "manual", SourceID: "deck:loaner"},
+		[]Entry{{ScryfallID: "sol-id", Finish: finish.Nonfoil, Board: BoardMain, Quantity: 1}},
+	)
+	if err != nil {
+		t.Fatalf("UpsertDeck(Loaner): %v", err)
+	}
+	if err := s.SetContainerCounted(loaner, false); err != nil {
+		t.Fatalf("SetContainerCounted(Loaner): %v", err)
+	}
+
+	rows, err := s.SetUnowned("uma")
+	if err != nil {
+		t.Fatalf("SetUnowned(uma): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("SetUnowned(uma) = %v, want nothing — one foil copy owns the printing, "+
+			"and the missing nonfoil is tracked on the owned view", unownedNames(rows))
+	}
+
+	owned, err := s.SetByFinish("uma")
+	if err != nil {
+		t.Fatalf("SetByFinish(uma): %v", err)
+	}
+	if len(owned) != 1 || owned[0].Finish != finish.Foil || owned[0].Quantity != 1 {
+		t.Errorf("SetByFinish(uma) = %+v, want the single foil row — the owned view still splits by finish",
+			owned)
+	}
+
+	rows, err = s.SetUnowned("c21")
+	if err != nil {
+		t.Fatalf("SetUnowned(c21): %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("SetUnowned(c21) = %v, want one row for the printing, not one per finish",
+			unownedNames(rows))
+	}
+	if rows[0].Name != "Sol Ring" || rows[0].Quantity != 4 {
+		t.Errorf("Sol Ring = %d copies, want all 4 — both finishes in Want plus the Loaner deck",
+			rows[0].Quantity)
+	}
+	for _, list := range []string{"Want", "Loaner"} {
+		if !strings.Contains(rows[0].Where, list) {
+			t.Errorf("Sol Ring is waiting in %q, want %q named too", rows[0].Where, list)
+		}
+	}
+}
+
+func unownedNames(rows []UnownedRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Name
+	}
+	return out
 }

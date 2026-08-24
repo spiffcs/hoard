@@ -49,8 +49,9 @@ type fakeStore struct {
 
 	settings map[string]string
 
-	sets   []store.SetSummary
-	nextID int64
+	sets    []store.SetSummary
+	unowned map[string][]store.UnownedRow
+	nextID  int64
 
 	err error
 
@@ -3063,4 +3064,11 @@ func (f *fakeStore) setDeckEntryQuantity(ref store.EntryRef, qty int) (int, erro
 		f.decks[i].TotalCopies = total
 	}
 	return previous, nil
+}
+
+func (f *fakeStore) SetUnowned(code string) ([]store.UnownedRow, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.unowned[code], nil
 }

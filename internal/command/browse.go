@@ -13,6 +13,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/action"
 	"github.com/spiffcs/hoard/internal/browse"
+	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/export"
 	"github.com/spiffcs/hoard/internal/finish"
@@ -285,6 +286,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		}),
 		browse.WithOpenURL(openInBrowser),
 		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
+		browse.WithSetPrints(setPrints(cat)),
 
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.RefreshPrices(ctx, deps, p)
@@ -398,3 +400,10 @@ func writeSummary(st *store.Store, jsonOut bool) error {
 }
 
 func stdoutIsTTY() bool { return isTTY(os.Stdout) }
+
+func setPrints(cat *catalog.Catalog) browse.SetPrintsFunc {
+	if cat == nil || cat.CardCount() == 0 {
+		return nil
+	}
+	return cat.SetPrints
+}

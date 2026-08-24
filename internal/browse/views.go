@@ -273,7 +273,7 @@ func (m *Model) deriveView() {
 	case viewDip:
 		m.filteredDips = m.filterTrends(m.allDips)
 		m.filteredMomentum = m.filterTrends(m.allMomentum)
-		m.deriveDipPages()
+		m.applySort()
 	case viewWatches:
 		watches := make([]store.WatchStatus, 0, len(m.allWatches))
 		for _, w := range m.allWatches {
@@ -466,9 +466,12 @@ func (m Model) viewHeader() (title, totals string) {
 		if picked := m.selectionSummary(); picked != "" {
 			return "CARDS · " + strings.ToUpper(sel.Name), picked
 		}
+		totals := fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value))
+		if sel.Kind == kindSet {
+			totals = m.setTally() + " · " + totals
+		}
 		return "CARDS · " + strings.ToUpper(sel.Name),
-			fmt.Sprintf("%s · %s", ui.Count(sel.Copies), ui.Money(sel.Value)) +
-				m.tablePagePhrase(len(m.cards), m.cardsPage, len(m.filteredCards))
+			totals + m.tablePagePhrase(len(m.cards), m.cardsPage, len(m.filteredCards))
 	}
 	return "CARDS", ""
 }

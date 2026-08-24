@@ -458,6 +458,16 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
 		},
 		{
+			id: "set.unowned", title: "ShowWhatASetIsMissing",
+			aliases: "unowned missing need want gaps completion",
+			key:     "b", hidden: true,
+			where: func(m *Model) bool {
+				sel := m.selectedContainer()
+				return singleTableView(m.view) && sel != nil && sel.Kind == kindSet
+			},
+			run: func(m *Model) tea.Cmd { m.toggleSetUnowned(); return nil },
+		},
+		{
 
 			id: "market.buylist.band", aliases: "buylist lowball band good bad scam pays side",
 			key: "b", hidden: true,
@@ -521,7 +531,7 @@ func (m *Model) cycleMoversWindow() tea.Cmd {
 }
 
 func singleTableView(v viewMode) bool {
-	return v != viewMarket && v != viewWatches
+	return v != viewMarket && v != viewWatches && v != viewDip
 }
 
 func (m *Model) jumpSection(dir int) {

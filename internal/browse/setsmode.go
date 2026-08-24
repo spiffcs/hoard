@@ -119,7 +119,11 @@ func (m Model) anySettling(now time.Time) bool {
 }
 
 func (m *Model) toggleSetsMode() {
+	if m.setsMode {
+		m.rememberSet()
+	}
 	m.setsMode = !m.setsMode
+	m.setUnowned = false
 	m.cursor[paneContainers], m.offset[paneContainers] = 0, 0
 	m.displacedContainer = 0
 	if err := m.loadContainers(); err != nil {
@@ -127,6 +131,9 @@ func (m *Model) toggleSetsMode() {
 		m.setsMode = !m.setsMode
 		m.setError(err)
 		return
+	}
+	if m.setsMode {
+		m.focusSet(m.lastSet)
 	}
 	if err := m.loadCards(); err != nil {
 		m.setError(err)
@@ -137,6 +144,26 @@ func (m *Model) toggleSetsMode() {
 		m.status, m.statusErr = "browsing by set · newest first · B returns to binders and decks", false
 	} else {
 		m.status, m.statusErr = "browsing binders and decks · B returns to sets", false
+	}
+}
+
+func (m *Model) rememberSet() {
+	m.lastSet = ""
+	if sel := m.selectedContainer(); sel != nil && sel.Kind == kindSet {
+		m.lastSet = sel.setCode
+	}
+}
+
+func (m *Model) focusSet(code string) {
+	if code == "" {
+		return
+	}
+	for i, c := range m.containers {
+		if c.Kind == kindSet && c.setCode == code {
+			m.cursor[paneContainers] = i
+			m.scrollIntoView()
+			return
+		}
 	}
 }
 

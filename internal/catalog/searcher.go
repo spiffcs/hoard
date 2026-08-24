@@ -220,3 +220,28 @@ func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
 }
+
+func (c *Catalog) SetPrints(_ context.Context, setCode string) ([]scryfall.Card, error) {
+	code := strings.ToLower(strings.TrimSpace(setCode))
+	if code == "" {
+		return nil, nil
+	}
+	rows, err := c.db.Query(`
+SELECT `+cardColumns+`
+FROM cards WHERE set_code = ?
+ORDER BY collector_number`, code)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: listing printings in %q: %w", setCode, err)
+	}
+	defer rows.Close()
+
+	var out []scryfall.Card
+	for rows.Next() {
+		card, err := scanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, card)
+	}
+	return out, rows.Err()
+}

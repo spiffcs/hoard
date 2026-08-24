@@ -3,7 +3,6 @@ package browse
 import (
 	"cmp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/market"
@@ -15,7 +14,35 @@ var sortColumns = [...][]string{
 	viewMovers:   {"impact", "name", "set/num", "was", "now", "change", "qty"},
 	viewWatches:  {"per-table"},
 	viewMarket:   {"per-table"},
-	viewDip:      {"signal", "name", "set/num", "now"},
+	viewDip:      {"per-table"},
+}
+
+var unownedSortColumns = []string{"value", "name", "set", "price"}
+
+func (m Model) holdingsSortColumns() []string {
+	if m.setUnowned {
+		return unownedSortColumns
+	}
+	return sortColumns[viewHoldings]
+}
+
+func (m Model) viewSortColumns() []string {
+	if m.view == viewHoldings {
+		return m.holdingsSortColumns()
+	}
+	return sortColumns[m.view]
+}
+
+func (m *Model) keepSortKey(was []string) {
+	key := ""
+	if i := m.sortIdx[viewHoldings]; i >= 0 && i < len(was) {
+		key = was[i]
+	}
+	if i := slices.Index(m.holdingsSortColumns(), key); i >= 0 {
+		m.sortIdx[viewHoldings] = i
+		return
+	}
+	m.sortIdx[viewHoldings], m.sortRev[viewHoldings] = 0, false
 }
 
 var marketSortColumns = [...][]string{
@@ -38,6 +65,11 @@ func (m Model) firstMarketRowOfKind(k market.Kind) int {
 func (m Model) watchSortKey(s watchSection) string {
 	cols := s.sortColumns()
 	return cols[min(max(m.watchSortIdx[s], 0), len(cols)-1)]
+}
+
+func (m Model) dipSortKey(s dipSection) string {
+	cols := s.sortColumns()
+	return cols[min(max(m.dipSortIdx[s], 0), len(cols)-1)]
 }
 
 func (m Model) sortLabel() string {
@@ -65,7 +97,15 @@ func (m Model) sortLabel() string {
 		}
 		return label
 	}
-	label := sortColumns[m.view][m.sortIdx[m.view]]
+	if m.view == viewDip {
+		sec, _ := m.dipCursorPos()
+		label := dipSection(sec).title() + " · " + m.dipSortKey(dipSection(sec))
+		if m.dipSortRev[sec] {
+			label += " (reversed)"
+		}
+		return label
+	}
+	label := m.viewSortColumns()[m.sortIdx[m.view]]
 	if m.sortRev[m.view] {
 		label += " (reversed)"
 	}
@@ -104,8 +144,18 @@ func (m *Model) cycleSort() {
 		m.scrollIntoView()
 		return
 	}
+	if m.view == viewDip {
+		sec, _ := m.dipCursorPos()
+		m.dipSortIdx[sec] = (m.dipSortIdx[sec] + 1) % len(dipSection(sec).sortColumns())
+		m.dipSortRev[sec] = false
+		m.applySort()
+		m.cursor[paneCards] = m.dipSectionsInfo()[sec].curStart
+		m.dipSecOffset[sec] = 0
+		m.scrollIntoView()
+		return
+	}
 	v := m.view
-	m.sortIdx[v] = (m.sortIdx[v] + 1) % len(sortColumns[v])
+	m.sortIdx[v] = (m.sortIdx[v] + 1) % len(m.viewSortColumns())
 	m.sortRev[v] = false
 	m.applySort()
 }
@@ -137,12 +187,21 @@ func (m *Model) reverseSort() {
 		m.scrollIntoView()
 		return
 	}
+	if m.view == viewDip {
+		sec, _ := m.dipCursorPos()
+		m.dipSortRev[sec] = !m.dipSortRev[sec]
+		m.applySort()
+		m.cursor[paneCards] = m.dipSectionsInfo()[sec].curStart
+		m.dipSecOffset[sec] = 0
+		m.scrollIntoView()
+		return
+	}
 	m.sortRev[m.view] = !m.sortRev[m.view]
 	m.applySort()
 }
 
 func (m *Model) applySort() {
-	key, rev := sortColumns[m.view][m.sortIdx[m.view]], m.sortRev[m.view]
+	key, rev := m.viewSortColumns()[m.sortIdx[m.view]], m.sortRev[m.view]
 	switch m.view {
 	case viewWatches:
 
@@ -153,6 +212,11 @@ func (m *Model) applySort() {
 
 		sortRows(m.filteredMovers, rev, moverCompare(key))
 		m.deriveMoversPage()
+	case viewDip:
+		sortRows(m.filteredDips, m.dipSortRev[secDip], trendCompare(m.dipSortKey(secDip)))
+		sortRows(m.filteredMomentum, m.dipSortRev[secMomentum],
+			trendCompare(m.dipSortKey(secMomentum)))
+		m.deriveDipPages()
 	case viewMarket:
 		m.sortArbRows()
 	default:
@@ -162,7 +226,7 @@ func (m *Model) applySort() {
 }
 
 func (m *Model) sortHoldings() {
-	key, rev := sortColumns[viewHoldings][m.sortIdx[viewHoldings]], m.sortRev[viewHoldings]
+	key, rev := m.holdingsSortColumns()[m.sortIdx[viewHoldings]], m.sortRev[viewHoldings]
 	sortRows(m.allCards, rev, cardCompare(key))
 }
 
@@ -204,10 +268,7 @@ func cardCompare(key string) func(a, b card) int {
 			c = strings.Compare(a.Name, b.Name)
 		case "set":
 
-			c = strings.Compare(a.SetCode, b.SetCode)
-			if c == 0 {
-				c = cmp.Compare(b.Value, a.Value)
-			}
+			c = comparePrinting(a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber)
 		case "finish":
 			c = strings.Compare(a.Finish.String(), b.Finish.String())
 		case "qty":
@@ -257,6 +318,42 @@ func watchCompare(key string) func(a, b store.WatchStatus) int {
 			return c
 		}
 		return strings.Compare(a.Finish.String(), b.Finish.String())
+	}
+}
+
+func trendCompare(key string) func(a, b store.TrendRow) int {
+	return func(a, b store.TrendRow) int {
+		var c int
+		switch key {
+		case "name":
+			c = strings.Compare(a.Name, b.Name)
+		case "set/num":
+			c = comparePrinting(a.SetCode, a.CollectorNumber, b.SetCode, b.CollectorNumber)
+		case "finish":
+			c = strings.Compare(a.Finish.String(), b.Finish.String())
+		case "high":
+			c = cmp.Compare(b.High, a.High)
+		case "low":
+			c = cmp.Compare(b.Low, a.Low)
+		case "was":
+			c = cmp.Compare(b.First, a.First)
+		case "now":
+			c = cmp.Compare(b.Last, a.Last)
+		case "streak":
+			c = cmp.Compare(b.Ups, a.Ups)
+			if c == 0 {
+				c = cmp.Compare(b.Change(), a.Change())
+			}
+		case "change":
+			c = cmp.Compare(b.Change(), a.Change())
+		default:
+
+			c = cmp.Compare(a.OffHigh(), b.OffHigh())
+		}
+		if c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
 	}
 }
 
@@ -339,13 +436,53 @@ func comparePrinting(aSet, aNum, bSet, bNum string) int {
 	if c := strings.Compare(aSet, bSet); c != 0 {
 		return c
 	}
-	na, errA := strconv.Atoi(aNum)
-	nb, errB := strconv.Atoi(bNum)
-	if errA == nil && errB == nil {
-		return cmp.Compare(na, nb)
-	}
-	return strings.Compare(aNum, bNum)
+	return compareNatural(aNum, bNum)
 }
+
+func compareNatural(a, b string) int {
+	for a != "" && b != "" {
+		digitsA, digitsB := isDigit(a[0]), isDigit(b[0])
+		if digitsA != digitsB {
+			if digitsA {
+				return -1
+			}
+			return 1
+		}
+		var runA, runB string
+		if digitsA {
+			runA, a = splitRun(a, true)
+			runB, b = splitRun(b, true)
+			if c := compareNumeric(runA, runB); c != 0 {
+				return c
+			}
+			continue
+		}
+		runA, a = splitRun(a, false)
+		runB, b = splitRun(b, false)
+		if c := strings.Compare(runA, runB); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+func splitRun(s string, digits bool) (run, rest string) {
+	i := 0
+	for i < len(s) && isDigit(s[i]) == digits {
+		i++
+	}
+	return s[:i], s[i:]
+}
+
+func compareNumeric(a, b string) int {
+	a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+	if len(a) != len(b) {
+		return cmp.Compare(len(a), len(b))
+	}
+	return strings.Compare(a, b)
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 func priceOrder(p *float64) float64 {
 	if p == nil {

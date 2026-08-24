@@ -89,7 +89,7 @@ func TestEnterOpensDetailFromBothDipTables(t *testing.T) {
 	if m.detail == nil {
 		t.Fatal("enter on a dip row opened nothing; the help line promises a detail page")
 	}
-	if got := m.detail.card.ScryfallID; got != "Shallow Dip" {
+	if got := m.detail.card.ScryfallID; got != "Deep Dip" {
 		t.Errorf("detail opened %q, want the selected dip row", got)
 	}
 
@@ -106,7 +106,7 @@ func TestEnterOpensDetailFromBothDipTables(t *testing.T) {
 	if m.detail == nil {
 		t.Fatal("enter on a momentum row opened nothing")
 	}
-	if got := m.detail.card.ScryfallID; got != "Short Run" {
+	if got := m.detail.card.ScryfallID; got != "Long Run" {
 		t.Errorf("detail opened %q, want the selected momentum row", got)
 	}
 }
