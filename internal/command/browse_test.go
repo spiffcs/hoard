@@ -107,7 +107,7 @@ func TestBrowseDeckAddCleanDeckReportUnchanged(t *testing.T) {
 func TestBrowseUpdatePricesReportsNotFound(t *testing.T) {
 	got := browseUpdatePricesSummary(action.UpdatePricesResult{
 		Total: 120, Found: 117, NotFound: 3,
-	})
+	}, "")
 	if !strings.Contains(got, "3 could not be re-fetched") {
 		t.Errorf("summary = %q, want the 3 cards Scryfall no longer answers for", got)
 	}
@@ -116,7 +116,7 @@ func TestBrowseUpdatePricesReportsNotFound(t *testing.T) {
 func TestBrowseUpdatePricesKeepsNotFoundDistinctFromUnpriced(t *testing.T) {
 	res := action.UpdatePricesResult{Total: 120, Found: 117, NotFound: 3}
 	res.Gaps.Remaining = 8
-	got := browseUpdatePricesSummary(res)
+	got := browseUpdatePricesSummary(res, "")
 	const want = "prices updated · 117 printings · 3 could not be re-fetched · 8 still unpriced"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
@@ -124,13 +124,13 @@ func TestBrowseUpdatePricesKeepsNotFoundDistinctFromUnpriced(t *testing.T) {
 }
 
 func TestBrowseUpdatePricesCleanSummaryUnchanged(t *testing.T) {
-	got := browseUpdatePricesSummary(action.UpdatePricesResult{Total: 120, Found: 120})
+	got := browseUpdatePricesSummary(action.UpdatePricesResult{Total: 120, Found: 120}, "")
 	const want = "prices updated · 120 printings"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
 
-	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}); got != "no cards yet; nothing to update" {
+	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}, ""); got != "no cards yet; nothing to update" {
 		t.Errorf("empty-hoard summary = %q", got)
 	}
 }
@@ -175,5 +175,22 @@ func TestBrowseBackfillCleanSummaryUnchanged(t *testing.T) {
 		if got := browseBackfillSummary(tc.res); got != tc.want {
 			t.Errorf("summary = %q, want %q", got, tc.want)
 		}
+	}
+}
+
+func TestUpdatePricesSummaryNamesTheDayTheDataIsFrom(t *testing.T) {
+	res := action.UpdatePricesResult{Total: 31912, Found: 31912}
+
+	if got := browseUpdatePricesSummary(res, "2026-08-23T00:00:00Z"); !strings.Contains(got, "as of 23 Aug 2026") {
+		t.Errorf("a UTC stamp should read as its own day, not a timestamp, got %q", got)
+	}
+	if got := browseUpdatePricesSummary(res, "not a stamp"); !strings.Contains(got, "as of not a stamp") {
+		t.Errorf("an unparseable stamp should pass through, got %q", got)
+	}
+	if got := browseUpdatePricesSummary(res, ""); strings.Contains(got, "as of") {
+		t.Errorf("with no recorded prices there is no date to name, got %q", got)
+	}
+	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}, "2026-08-24"); got != "no cards yet; nothing to update" {
+		t.Errorf("an empty database keeps its own message, got %q", got)
 	}
 }

@@ -68,7 +68,7 @@ func browseDeckAdd(ctx context.Context, deps action.Deps, p progress.Fn, deck *d
 	return r, nil
 }
 
-func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
+func browseUpdatePricesSummary(res action.UpdatePricesResult, asOf string) string {
 	if res.Total == 0 {
 		return "no cards yet; nothing to update"
 	}
@@ -79,6 +79,9 @@ func browseUpdatePricesSummary(res action.UpdatePricesResult) string {
 	}
 	if res.Gaps.Remaining > 0 {
 		s += fmt.Sprintf(" · %d still unpriced", res.Gaps.Remaining)
+	}
+	if asOf != "" {
+		s += " · as of " + ui.AsOfDate(asOf)
 	}
 	return s
 }
@@ -288,7 +291,8 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			if err != nil {
 				return "", err
 			}
-			return browseUpdatePricesSummary(res), nil
+			asOf, _ := st.LatestPriceStamp()
+			return browseUpdatePricesSummary(res, asOf), nil
 		}),
 		browse.WithCorrectPrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.CorrectPrices(ctx, deps, p, action.UpdatePricesResult{})
@@ -375,7 +379,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				return tui.Child{}, derr
 			}
 			return tui.NewChild(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, "", dests), nil
-                }))
+		}))
 
 	printScanSummary(sum)
 	return err
