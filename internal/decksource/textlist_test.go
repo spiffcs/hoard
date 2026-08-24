@@ -151,3 +151,119 @@ func TestParseLooseEmpty(t *testing.T) {
 		t.Errorf("empty paste = %v, %v, %v", entries, skipped, err)
 	}
 }
+
+func boardsByName(d *Deck) map[string]string {
+	m := make(map[string]string, len(d.Entries))
+	for _, e := range d.Entries {
+		m[e.Name] = e.Board
+	}
+	return m
+}
+
+func TestParseTextBlankLineStartsSideboard(t *testing.T) {
+	in := "4 Dark Ritual\r\n" +
+		"3 Nantuko Shade\r\n" +
+		"9 Swamp\r\n" +
+		"\r\n" +
+		"\r\n" +
+		"2 Withered Wretch\r\n" +
+		"3 Engineered Plague\r\n"
+
+	d, err := ParseText("Deadguy Ale", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if len(d.Entries) != 5 || len(d.Skipped) != 0 {
+		t.Fatalf("entries = %+v (skipped %v), want all 5 cards read", d.Entries, d.Skipped)
+	}
+
+	got := boardsByName(d)
+	want := map[string]string{
+		"Dark Ritual":       BoardMain,
+		"Nantuko Shade":     BoardMain,
+		"Swamp":             BoardMain,
+		"Withered Wretch":   BoardSide,
+		"Engineered Plague": BoardSide,
+	}
+	for name, board := range want {
+		if got[name] != board {
+			t.Errorf("%s board = %q, want %q", name, got[name], board)
+		}
+	}
+
+	var main, side int
+	for _, e := range d.Entries {
+		switch e.Board {
+		case BoardMain:
+			main += e.Quantity
+		case BoardSide:
+			side += e.Quantity
+		}
+	}
+	if main != 16 || side != 5 {
+		t.Errorf("main/side totals = %d/%d, want 16/5", main, side)
+	}
+}
+
+func TestParseTextBlankLinesBeforeAnyCardAreNotASeparator(t *testing.T) {
+	in := "\n\n// Deadguy Ale\n\n4 Dark Ritual\n4 Duress\n"
+
+	d, err := ParseText("x", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	for _, e := range d.Entries {
+		if e.Board != BoardMain {
+			t.Errorf("%s board = %q, want main: blank lines before the first card do not open a sideboard", e.Name, e.Board)
+		}
+	}
+}
+
+func TestParseTextHeadersDisableBlankLineSeparator(t *testing.T) {
+	in := `Deck
+4 Dark Ritual
+
+4 Duress
+
+Sideboard
+3 Engineered Plague
+`
+	d, err := ParseText("x", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	got := boardsByName(d)
+	want := map[string]string{
+		"Dark Ritual":       BoardMain,
+		"Duress":            BoardMain,
+		"Engineered Plague": BoardSide,
+	}
+	for name, board := range want {
+		if got[name] != board {
+			t.Errorf("%s board = %q, want %q: a list with headers uses blank lines as spacing", name, got[name], board)
+		}
+	}
+}
+
+func TestParseTextSBPrefixDisablesBlankLineSeparator(t *testing.T) {
+	in := `4 Dark Ritual
+
+4 Duress
+SB: 3 Engineered Plague
+`
+	d, err := ParseText("x", "", "", "", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	got := boardsByName(d)
+	want := map[string]string{
+		"Dark Ritual":       BoardMain,
+		"Duress":            BoardMain,
+		"Engineered Plague": BoardSide,
+	}
+	for name, board := range want {
+		if got[name] != board {
+			t.Errorf("%s board = %q, want %q: a list that marks its own sideboard uses blank lines as spacing", name, got[name], board)
+		}
+	}
+}

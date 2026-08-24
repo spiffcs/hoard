@@ -14,6 +14,8 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
+var sbPrefixRE = regexp.MustCompile(`^[Ss][Bb]:\s`)
+
 var lineRE = regexp.MustCompile(`^(?:([Ss][Bb]):\s*)?(\d+)\s*[xX]?\s+(.+?)(?:\s+\(([A-Za-z0-9]+)\)(?:\s+([^\s*]\S*))?)?\s*(\*[EFef]\*)?\s*$`)
 
 var (
@@ -66,6 +68,43 @@ var sectionHeaders = map[string]string{
 	"companion":  BoardSide,
 }
 
+func readLines(r io.Reader) ([]string, error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var lines []string
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
+func usesBoardMarkers(lines []string) bool {
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if _, ok := deckstatsCategory(line); ok {
+			return true
+		}
+		if _, ok := sectionHeaders[headerKey(line)]; ok {
+			return true
+		}
+		if sbPrefixRE.MatchString(line) {
+			return true
+		}
+		if _, categories, noDeck := splitArchidektAnnotations(line); noDeck {
+			return true
+		} else if _, named := namedBoard(categories); named {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, error) {
 	if provider == "" {
 		provider = "text"
@@ -75,14 +114,20 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 	}
 	d := &Deck{Name: name, Source: provider, SourceID: sourceID, SourceURL: sourceURL}
 
+	lines, err := readLines(r)
+	if err != nil {
+		return nil, err
+	}
+	blankStartsSideboard := !usesBoardMarkers(lines)
+
 	board := BoardMain
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := strings.TrimSpace(sc.Text())
+	for i, raw := range lines {
+		lineNo := i + 1
+		line := strings.TrimSpace(raw)
 		if line == "" {
+			if blankStartsSideboard && len(d.Entries) > 0 {
+				board = BoardSide
+			}
 			continue
 		}
 
@@ -124,9 +169,6 @@ func ParseText(name, sourceID, sourceURL, provider string, r io.Reader) (*Deck, 
 			}
 		}
 		d.Entries = append(d.Entries, entry)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
 	}
 
 	d.clean()
