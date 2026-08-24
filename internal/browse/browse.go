@@ -121,7 +121,18 @@ func WithExport(f ExportFunc) Option {
 	return func(m *Model) { m.exportFn = f }
 }
 
+func WithCellAspect(a float64) Option {
+	return func(m *Model) {
+		if a > 0 {
+			m.cellAspect = a
+		}
+	}
+}
+
 func Run(ctx context.Context, st Store, opts ...Option) (tui.Summary, error) {
+	if ui.CellAspectOverride() == 0 && ui.DetectImageTier() == ui.ImageKitty {
+		opts = append(opts, WithCellAspect(ui.ProbeCellAspect()))
+	}
 	m, err := New(st, opts...)
 	if err != nil {
 		return tui.Summary{}, err
