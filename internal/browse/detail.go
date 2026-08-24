@@ -67,39 +67,7 @@ const (
 )
 
 func (m *Model) openDetail() tea.Cmd {
-	var id string
-	var fromArbitrage bool
-	switch m.view {
-	case viewHoldings:
-		if c := m.selectedCard(); c != nil {
-			id = c.ScryfallID
-		}
-	case viewWatches:
-
-		if w := m.selectedWatch(); w != nil {
-			id = w.ScryfallID
-		} else if r := m.selectedUnpricedRow(); r != nil {
-			id = r.ScryfallID
-		}
-	case viewMarket:
-
-		if c := m.selectedComp(); c != nil {
-			id = c.Card.ScryfallID
-		} else if r := m.selectedMarketRow(); r != nil {
-			id = r.Card.ScryfallID
-			fromArbitrage = r.Kind == market.KindProfit
-		}
-	case viewMovers:
-
-		if i := m.cursor[paneCards]; i >= 0 && i < len(m.movers) {
-			id = m.movers[i].ScryfallID
-		}
-	case viewDip:
-
-		if r := m.selectedTrendRow(); r != nil {
-			id = r.ScryfallID
-		}
-	}
+	id, fromArbitrage := m.selectedCardID(), m.fromArbitrageRow()
 	if id == "" {
 		return nil
 	}

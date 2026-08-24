@@ -45,13 +45,13 @@ func (m Model) View() string {
 	}
 
 	left, right := m.paneWidths()
-	leftLines := m.containerLines(left)
+	leftCol := m.leftColumn(left, m.visibleRows())
 	rightLines := m.rightLines(right)
 
 	var b strings.Builder
 	b.WriteString(m.header(left, right, maxLineWidth(rightLines)) + "\n")
 	for i := range m.visibleRows() {
-		b.WriteString(fit(lineAt(leftLines, i), left))
+		b.WriteString(leftCol[i])
 		b.WriteString(strings.Repeat(" ", paneGap))
 
 		b.WriteString(strings.TrimRight(fit(lineAt(rightLines, i), right), " "))
@@ -327,8 +327,8 @@ func sectionBudgets(counts []int, pool, cursorSec int) []int {
 }
 
 func (m *Model) scrollIntoView() {
-	rows := max(m.visibleRows()-1, 1)
 	for p := range m.offset {
+		rows := max(m.paneRows(pane(p))-1, 1)
 		if pane(p) == paneCards && m.view == viewMarket {
 
 			m.scrollMarketIntoView()
@@ -371,7 +371,11 @@ func (m Model) header(left, right, tableW int) string {
 	if m.setsMode {
 		leftTitle = "SETS"
 	}
-	return m.paneTitle(paneContainers).Render(fit(leftTitle, left)) +
+	leftHead := m.paneTitle(paneContainers).Render(leftTitle)
+	if note := m.containerScrollNote(); note != "" {
+		leftHead += m.theme.Help.Render(note)
+	}
+	return fit(leftHead, left) +
 		strings.Repeat(" ", paneGap) +
 		m.paneTitle(paneCards).Render(title) + strings.Repeat(" ", gap) + ui.Restyle(totals, m.theme.Help)
 }
@@ -504,14 +508,15 @@ func (m Model) window(lines []string, p pane, width int) []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	rows := lines[1:]
-	start := min(m.offset[p], max(len(rows)-1, 0))
-	end := min(start+m.visibleRows()-1, len(rows))
+	body := lines[1:]
+	budget := m.paneRows(p)
+	start := min(m.offset[p], max(len(body)-1, 0))
+	end := min(start+budget-1, len(body))
 
-	out := make([]string, 0, m.visibleRows())
+	out := make([]string, 0, budget)
 	out = append(out, lines[0])
 	for i := start; i < end; i++ {
-		line := fit(rows[i], width)
+		line := fit(body[i], width)
 		switch {
 		case i == m.cursor[p] && m.focus == p:
 

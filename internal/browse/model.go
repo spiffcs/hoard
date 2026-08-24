@@ -239,6 +239,9 @@ type Model struct {
 
 	detail *detail
 
+	preview    previewArt
+	previewGen int
+
 	detailComps map[string]compsResult
 
 	text *textView
@@ -789,6 +792,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return next, cmd
 	}
+	if c := n.syncPreview(); c != nil {
+		cmd = tea.Batch(cmd, c)
+	}
 	switch now := n.detail != nil; {
 	case now && !had:
 		return n, tea.Batch(cmd, tea.EnableMouseCellMotion)
@@ -840,6 +846,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onOpConfirm(msg)
 	case retransmitMsg:
 		return m.onRetransmit(msg)
+	case previewDueMsg:
+		return m.onPreviewDue(msg)
+	case previewSentMsg:
+		return m.onPreviewSent(msg)
 	case livePollMsg:
 		return m.onLivePoll()
 	case liveQuietMsg:
