@@ -83,14 +83,14 @@ func (m Model) selectionStatus() string {
 	return ""
 }
 
-func (m *Model) toggleBinderCounted() {
+func (m *Model) toggleCounted() {
 	sel := m.selectedContainer()
-	if sel == nil || sel.Kind != store.KindCollection || sel.ID == allCardsID {
-		m.status, m.statusErr = "only a binder can be left out of your collection", true
+	if sel == nil || !holdsCards(*sel) {
+		m.status, m.statusErr = "only a binder or a deck can be left out of your collection", true
 		return
 	}
 	counted := !sel.Counted
-	if err := m.store.SetBinderCounted(sel.ID, counted); err != nil {
+	if err := m.store.SetContainerCounted(sel.ID, counted); err != nil {
 		m.setError(err)
 		return
 	}
@@ -102,6 +102,10 @@ func (m *Model) toggleBinderCounted() {
 	m.status, m.statusErr = sel.Name+" is not counted toward your collection", false
 }
 
-func (c container) skipped() bool {
-	return c.Kind == store.KindCollection && c.ID != allCardsID && !c.Counted
+func editableKind(kind string) bool {
+	return kind == store.KindCollection || kind == store.KindDeck
 }
+
+func holdsCards(c container) bool { return editableKind(c.Kind) && c.ID != allCardsID }
+
+func (c container) skipped() bool { return holdsCards(c) && !c.Counted }

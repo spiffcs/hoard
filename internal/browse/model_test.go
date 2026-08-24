@@ -167,7 +167,16 @@ func (f *fakeStore) ListBinders() ([]store.DeckSummary, error) {
 	}
 	return out, nil
 }
-func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) { return f.decks, f.err }
+func (f *fakeStore) ListDecks() ([]store.DeckSummary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := append([]store.DeckSummary(nil), f.decks...)
+	for i := range out {
+		out[i].Counted = !f.uncounted[out[i].ID]
+	}
+	return out, nil
+}
 func (f *fakeStore) ListFolders() ([]store.DeckSummary, error) {
 	return f.folders, f.err
 }
@@ -499,9 +508,13 @@ func (f *fakeStore) DeleteBinder(id int64) error {
 	return nil
 }
 
-func (f *fakeStore) SetHoldingQuantityIn(cid int64, id string, fin finish.Finish, _ string, qty int) (int, error) {
+func (f *fakeStore) SetEntryQuantity(ref store.EntryRef, qty int) (int, error) {
 	if f.err != nil {
 		return 0, f.err
+	}
+	cid, id, fin := ref.ContainerID, ref.ScryfallID, ref.Finish
+	if _, isDeck := f.deckCards[cid]; isDeck {
+		return f.setDeckEntryQuantity(ref, qty)
 	}
 	rows := f.rowsIn(cid)
 	var previous int
@@ -528,18 +541,19 @@ func (f *fakeStore) SetHoldingQuantityIn(cid int64, id string, fin finish.Finish
 	return previous, nil
 }
 
-func (f *fakeStore) MoveEntryCondition(cid int64, id string, fin finish.Finish, fromCondition, toCondition string) (int, error) {
+func (f *fakeStore) MoveEntryCondition(from store.EntryRef, toCondition string) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
-	f.movedCondition = fromCondition + "→" + toCondition
+	f.movedCondition = from.Condition + "→" + toCondition
 	return 0, nil
 }
 
-func (f *fakeStore) MoveEntry(fromC int64, id string, fin finish.Finish, _ string, toC int64, toID string) (int, error) {
+func (f *fakeStore) MoveEntry(from store.EntryRef, toC int64, toID string) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
+	fromC, id, fin := from.ContainerID, from.ScryfallID, from.Finish
 	if fromC == toC && id == toID {
 		return 0, nil
 	}
@@ -592,10 +606,11 @@ func (f *fakeStore) MoveEntry(fromC int64, id string, fin finish.Finish, _ strin
 	return 0, nil
 }
 
-func (f *fakeStore) MoveEntryFinish(cid int64, id string, fromFinish, toFinish finish.Finish, _ string) (int, error) {
+func (f *fakeStore) MoveEntryFinish(from store.EntryRef, toFinish finish.Finish) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
+	cid, id, fromFinish := from.ContainerID, from.ScryfallID, from.Finish
 	if fromFinish == toFinish {
 		return 0, nil
 	}
@@ -1479,26 +1494,6 @@ func TestCollectionCannotBeRemoved(t *testing.T) {
 	}
 	if !m.statusErr {
 		t.Errorf("status = %q, want a refusal", m.status)
-	}
-}
-
-func TestDeckCardsAreReadOnly(t *testing.T) {
-	m := newTestModel(t, testStore())
-	m = key(m, "down")
-	m = key(m, "tab")
-	before := m.cards[0].Quantity
-
-	m = key(m, "+")
-	if m.cards[0].Quantity != before {
-		t.Error("a deck card's quantity was changed")
-	}
-	if !m.statusErr || !strings.Contains(m.status, "owned by the imported list") {
-		t.Errorf("status = %q, want it to explain why", m.status)
-	}
-
-	m = key(m, "d")
-	if m.confirm != nil {
-		t.Error("staged a removal of a deck card")
 	}
 }
 
@@ -3041,4 +3036,33 @@ func TestHeaderAnchorIgnoresCursorBar(t *testing.T) {
 		t.Fatalf("anchor = %d focused vs %d unfocused; the bar's padding leaked into the measure",
 			focused, unfocused)
 	}
+}
+
+func (f *fakeStore) setDeckEntryQuantity(ref store.EntryRef, qty int) (int, error) {
+	entries := f.deckCards[ref.ContainerID]
+	var previous int
+	kept := entries[:0:0]
+	for _, e := range entries {
+		if e.Card.ScryfallID == ref.ScryfallID && e.Finish == ref.Finish &&
+			e.Board == ref.Board {
+			previous = e.Quantity
+			if qty == 0 {
+				continue
+			}
+			e.Quantity = qty
+		}
+		kept = append(kept, e)
+	}
+	f.deckCards[ref.ContainerID] = kept
+	for i := range f.decks {
+		if f.decks[i].ID != ref.ContainerID {
+			continue
+		}
+		total := 0
+		for _, e := range kept {
+			total += e.Quantity
+		}
+		f.decks[i].TotalCopies = total
+	}
+	return previous, nil
 }

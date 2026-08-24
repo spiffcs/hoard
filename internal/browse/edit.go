@@ -38,8 +38,8 @@ func (m Model) editable() (bool, string) {
 	if sel.Kind == kindFolder {
 		return false, sel.Name + " groups decks · edit the card in the deck that holds it"
 	}
-	if sel.Kind != store.KindCollection {
-		return false, "deck cards are owned by the imported list; edit the binder instead"
+	if !holdsCards(*sel) {
+		return false, sel.Name + " holds no cards of its own"
 	}
 	return true, ""
 }
@@ -66,18 +66,19 @@ func (m *Model) adjustQuantity(delta int) {
 	if want == c.Quantity {
 		return
 	}
-	binderID := m.selectedContainer().ID
-	previous, err := m.store.SetHoldingQuantityIn(binderID, c.ScryfallID, c.Finish, c.Condition, want)
+	ref := store.EntryRef{ContainerID: m.selectedContainer().ID, ScryfallID: c.ScryfallID,
+		Finish: c.Finish, Condition: c.Condition, Board: c.Board}
+	previous, err := m.store.SetEntryQuantity(ref, want)
 	if err != nil {
 		m.setError(err)
 		return
 	}
 
-	id, finish, cond, name := c.ScryfallID, c.Finish, c.Condition, c.Name
+	finish, name := c.Finish, c.Name
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(binderID, id, finish, cond, previous)
+			_, err := st.SetEntryQuantity(ref, previous)
 			return err
 		},
 	})
@@ -125,8 +126,8 @@ func (m *Model) heldEditable() (store.Holding, bool) {
 		return store.Holding{}, false
 	}
 	h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
-	if h.ContainerKind != store.KindCollection {
-		m.status, m.statusErr = "deck cards are owned by the imported list; edit the binder instead", true
+	if !editableKind(h.ContainerKind) {
+		m.status, m.statusErr = h.ContainerName+" holds no cards of its own", true
 		return store.Holding{}, false
 	}
 	return h, true
@@ -189,16 +190,16 @@ func (m *Model) setHeldQuantity(h store.Holding, want int, name string) tea.Cmd 
 	if want == h.Quantity {
 		return nil
 	}
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, want)
+	ref := h.Ref()
+	previous, err := m.store.SetEntryQuantity(ref, want)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
+			_, err := st.SetEntryQuantity(ref, previous)
 			return err
 		},
 	})
@@ -255,19 +256,22 @@ func (m *Model) moveHeldFinish(h store.Holding, name string, want finish.Finish)
 		m.status, m.statusErr = "already "+ui.Finish(h.Finish), false
 		return nil
 	}
-	prevTarget, err := m.store.MoveEntryFinish(h.ContainerID, h.ScryfallID, h.Finish, want, h.Condition)
+	ref := h.Ref()
+	prevTarget, err := m.store.MoveEntryFinish(ref, want)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	cid, id, from, qty, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
+	moved := ref
+	moved.Finish = want
+	cid, id, from, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s %s", name, ui.Finish(from)),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(cid, id, want, cond, prevTarget); err != nil {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(cid, id, from, cond, qty)
+			_, err := st.SetEntryQuantity(ref, qty)
 			return err
 		},
 	})
@@ -344,19 +348,23 @@ func (m *Model) moveHeldCondition(h store.Holding, name, want string) tea.Cmd {
 		m.status, m.statusErr = "already "+ui.Condition(from), false
 		return nil
 	}
-	prevTarget, err := m.store.MoveEntryCondition(h.ContainerID, h.ScryfallID, h.Finish, from, want)
+	ref := h.Ref()
+	ref.Condition = from
+	prevTarget, err := m.store.MoveEntryCondition(ref, want)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
+	moved := ref
+	moved.Condition = want
 	cid, id, finish, qty := h.ContainerID, h.ScryfallID, h.Finish, h.Quantity
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s %s", name, ui.Condition(from)),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(cid, id, finish, want, prevTarget); err != nil {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, from, qty)
+			_, err := st.SetEntryQuantity(ref, qty)
 			return err
 		},
 	})
@@ -421,19 +429,22 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 		m.setError(err)
 		return nil
 	}
-	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, h.ContainerID, pick.ID)
+	ref := h.Ref()
+	prevTarget, err := m.store.MoveEntry(ref, ref.ContainerID, pick.ID)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	cid, fromID, toID, finish, qty, cond := h.ContainerID, h.ScryfallID, pick.ID, h.Finish, h.Quantity, h.Condition
+	moved := ref
+	moved.ScryfallID = pick.ID
+	cid, toID, finish, qty := h.ContainerID, pick.ID, h.Finish, h.Quantity
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s → %s", name, strings.ToUpper(code)),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(cid, toID, finish, cond, prevTarget); err != nil {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(cid, fromID, finish, cond, qty)
+			_, err := st.SetEntryQuantity(ref, qty)
 			return err
 		},
 	})
@@ -500,6 +511,10 @@ func (m *Model) promptHeldLocation() {
 	if !ok {
 		return
 	}
+	if h.ContainerKind == store.KindDeck {
+		m.status, m.statusErr = "a deck card moves with its list · change its quantity here instead", true
+		return
+	}
 	name := m.detail.card.Name
 	m.prompt = &prompt{
 		label: fmt.Sprintf("%s · move to which binder", name),
@@ -546,19 +561,22 @@ func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {
 		m.status, m.statusErr = fmt.Sprintf("no binder named %q", want), true
 		return nil
 	}
-	prevTarget, err := m.store.MoveEntry(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, target.ID, h.ScryfallID)
+	ref := h.Ref()
+	prevTarget, err := m.store.MoveEntry(ref, target.ID, ref.ScryfallID)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	fromC, toC, sid, finish, qty, cond := h.ContainerID, target.ID, h.ScryfallID, h.Finish, h.Quantity, h.Condition
+	moved := ref
+	moved.ContainerID = target.ID
+	finish, qty := h.Finish, h.Quantity
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s → %s", name, target.Name),
 		undo: func(st Editor) error {
-			if _, err := st.SetHoldingQuantityIn(toC, sid, finish, cond, prevTarget); err != nil {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
 				return err
 			}
-			_, err := st.SetHoldingQuantityIn(fromC, sid, finish, cond, qty)
+			_, err := st.SetEntryQuantity(ref, qty)
 			return err
 		},
 	})
@@ -583,16 +601,16 @@ func (m *Model) askHeldRemoval() {
 }
 
 func (m *Model) removeHeld(h store.Holding, name string) tea.Cmd {
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, h.ScryfallID, h.Finish, h.Condition, 0)
+	ref := h.Ref()
+	previous, err := m.store.SetEntryQuantity(ref, 0)
 	if err != nil {
 		m.setError(err)
 		return nil
 	}
-	cid, id, finish, cond := h.ContainerID, h.ScryfallID, h.Finish, h.Condition
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
+			_, err := st.SetEntryQuantity(ref, previous)
 			return err
 		},
 	})

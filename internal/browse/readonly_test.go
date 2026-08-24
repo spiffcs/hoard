@@ -31,8 +31,8 @@ func TestReadOnlyRefusesEveryEdit(t *testing.T) {
 	if _, err := ro.CreateBinder("x"); err == nil {
 		t.Error("CreateBinder succeeded on a read-only store")
 	}
-	if _, err := ro.SetHoldingQuantityIn(1, "id", finish.Nonfoil, "unknown", 3); err == nil {
-		t.Error("SetHoldingQuantityIn succeeded on a read-only store")
+	if _, err := ro.SetEntryQuantity(store.EntryRef{ContainerID: 1, ScryfallID: "id", Finish: finish.Nonfoil, Condition: "unknown"}, 3); err == nil {
+		t.Error("SetEntryQuantity succeeded on a read-only store")
 	}
 	if _, err := ro.RemoveFromBinder(1, "id"); err == nil {
 		t.Error("RemoveFromBinder succeeded on a read-only store")
@@ -43,13 +43,13 @@ func TestReadOnlyRefusesEveryEdit(t *testing.T) {
 	if _, err := ro.UpsertDeck(store.DeckMeta{Name: "d"}, nil); err == nil {
 		t.Error("UpsertDeck succeeded on a read-only store")
 	}
-	if _, err := ro.MoveEntry(1, "id", finish.Nonfoil, "unknown", 2, "id"); err == nil {
+	if _, err := ro.MoveEntry(store.EntryRef{ContainerID: 1, ScryfallID: "id", Finish: finish.Nonfoil, Condition: "unknown"}, 2, "id"); err == nil {
 		t.Error("MoveEntry succeeded on a read-only store")
 	}
-	if _, err := ro.MoveEntryFinish(1, "id", finish.Nonfoil, finish.Foil, "unknown"); err == nil {
+	if _, err := ro.MoveEntryFinish(store.EntryRef{ContainerID: 1, ScryfallID: "id", Finish: finish.Nonfoil, Condition: "unknown"}, finish.Foil); err == nil {
 		t.Error("MoveEntryFinish succeeded on a read-only store")
 	}
-	if _, err := ro.MoveEntryCondition(1, "id", finish.Nonfoil, "unknown", "nm"); err == nil {
+	if _, err := ro.MoveEntryCondition(store.EntryRef{ContainerID: 1, ScryfallID: "id", Finish: finish.Nonfoil, Condition: "unknown"}, "nm"); err == nil {
 		t.Error("MoveEntryCondition succeeded on a read-only store")
 	}
 }

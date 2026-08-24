@@ -40,8 +40,8 @@ func TestUncountedBinderIsFadedAndMarked(t *testing.T) {
 	m := binderPaneModel(t)
 	before := containerLineFor(t, m, "Want")
 
-	if err := m.store.SetBinderCounted(77, false); err != nil {
-		t.Fatalf("SetBinderCounted: %v", err)
+	if err := m.store.SetContainerCounted(77, false); err != nil {
+		t.Fatalf("SetContainerCounted: %v", err)
 	}
 	m.reload()
 
@@ -76,8 +76,8 @@ func TestGutterOffersTheCountToggleOnABinderOnly(t *testing.T) {
 		t.Errorf("a counted binder does not offer to exclude it:\n%s", help)
 	}
 
-	if err := m.store.SetBinderCounted(defaultBinderID, false); err != nil {
-		t.Fatalf("SetBinderCounted: %v", err)
+	if err := m.store.SetContainerCounted(defaultBinderID, false); err != nil {
+		t.Fatalf("SetContainerCounted: %v", err)
 	}
 	m.reload()
 	m.cursor[paneContainers] = 1

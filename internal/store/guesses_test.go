@@ -124,7 +124,7 @@ func TestMoveEntryFinishClearsTheGuess(t *testing.T) {
 		t.Fatalf("RecordFinishGuess: %v", err)
 	}
 
-	if _, err := s.MoveEntryFinish(cid, card.ID, finish.Nonfoil, finish.Foil, ConditionUnknown); err != nil {
+	if _, err := s.MoveEntryFinish(mainRef(cid, card.ID, finish.Nonfoil, ConditionUnknown), finish.Foil); err != nil {
 		t.Fatalf("MoveEntryFinish: %v", err)
 	}
 	rows, err := s.GuessedFinishes()

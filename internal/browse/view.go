@@ -422,12 +422,16 @@ func (m Model) containerLines(width int) []string {
 					mark = foldShutMark
 				}
 			}
-			name := strings.Repeat("  ", c.depth) + c.Name
+			gutter, indent := mark, strings.Repeat("  ", c.depth)
+			if c.depth > 0 && mark != "" {
+				gutter, indent = "", strings.Repeat("  ", c.depth-1)+mark+" "
+			}
+			name := indent + c.Name
 			if !m.containerEligible(i) || c.skipped() {
-				t.AddStyled(env.Dim(), ui.C(mark), ui.C(name), ui.C(ui.Money(c.Value)))
+				t.AddStyled(env.Dim(), ui.C(gutter), ui.C(name), ui.C(ui.Money(c.Value)))
 				continue
 			}
-			t.Add(ui.C(mark), ui.C(name), ui.C(ui.Money(c.Value)))
+			t.Add(ui.C(gutter), ui.C(name), ui.C(ui.Money(c.Value)))
 		}
 		return t
 	})
@@ -687,7 +691,7 @@ func (m Model) helpLine() string {
 
 		if d := m.detail; len(d.holdings) > 0 {
 			h := d.holdings[min(max(d.heldCursor, 0), len(d.holdings)-1)]
-			if h.ContainerKind == store.KindCollection {
+			if editableKind(h.ContainerKind) {
 				e = append(e, ui.K("+/-", "qty"), ui.K("d", "remove"))
 			}
 		}
@@ -754,8 +758,7 @@ func (m Model) helpLine() string {
 		if sel := m.selectedContainer(); sel == nil || sel.Kind != kindAllCards {
 			e = append(e, ui.K("R", "rename"), ui.K("d", "remove"))
 		}
-		if sel := m.selectedContainer(); sel != nil &&
-			sel.Kind == store.KindCollection && sel.ID != allCardsID {
+		if sel := m.selectedContainer(); sel != nil && holdsCards(*sel) {
 
 			label := "exclude"
 			if !sel.Counted {

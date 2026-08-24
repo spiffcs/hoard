@@ -251,7 +251,7 @@ func TestTogglingABinderOutOfTheCollection(t *testing.T) {
 	}
 }
 
-func (f *fakeStore) SetBinderCounted(id int64, counted bool) error {
+func (f *fakeStore) SetContainerCounted(id int64, counted bool) error {
 	if f.err != nil {
 		return f.err
 	}

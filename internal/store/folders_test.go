@@ -149,7 +149,7 @@ func TestAFolderHoldsNoCards(t *testing.T) {
 	if err := s.AddCardFinishTo(fid, solRing(), finish.Nonfoil, 1); err == nil {
 		t.Error("adding a card to a folder succeeded, want a refusal")
 	}
-	if _, err := s.SetHoldingQuantityIn(fid, "sol-id", finish.Nonfoil, "unknown", 3); err == nil {
+	if _, err := s.SetEntryQuantity(mainRef(fid, "sol-id", finish.Nonfoil, "unknown"), 3); err == nil {
 		t.Error("setting a holding in a folder succeeded, want a refusal")
 	}
 }

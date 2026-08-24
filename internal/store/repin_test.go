@@ -93,7 +93,7 @@ func TestMoveEntry(t *testing.T) {
 	}
 	collectionID := binders[0].ID
 
-	prev, err := s.MoveEntry(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown, collectionID, "k-md1")
+	prev, err := s.MoveEntry(mainRef(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown), collectionID, "k-md1")
 	if err != nil {
 		t.Fatalf("MoveEntry: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestMoveEntry(t *testing.T) {
 		t.Errorf("collection mb2 = %v, want gone", held)
 	}
 
-	prev, err = s.MoveEntry(collectionID, "k-md1", finish.Nonfoil, ConditionUnknown, binder, "k-md1")
+	prev, err = s.MoveEntry(mainRef(collectionID, "k-md1", finish.Nonfoil, ConditionUnknown), binder, "k-md1")
 	if err != nil {
 		t.Fatalf("MoveEntry to binder: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestMoveEntry(t *testing.T) {
 		t.Fatalf("binder rows = %+v, want one merged row of 5", rows)
 	}
 
-	if _, err := s.MoveEntry(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown, binder, "k-md1"); err == nil {
+	if _, err := s.MoveEntry(mainRef(collectionID, "k-mb2", finish.Nonfoil, ConditionUnknown), binder, "k-md1"); err == nil {
 		t.Error("moving a missing holding must refuse")
 	}
 }
@@ -177,7 +177,7 @@ func TestMoveEntryFinish(t *testing.T) {
 	}
 	cid := binders[0].ID
 
-	prev, err := s.MoveEntryFinish(cid, "bb-uma", finish.Nonfoil, finish.Foil, ConditionUnknown)
+	prev, err := s.MoveEntryFinish(mainRef(cid, "bb-uma", finish.Nonfoil, ConditionUnknown), finish.Foil)
 	if err != nil {
 		t.Fatalf("MoveEntryFinish: %v", err)
 	}
@@ -189,14 +189,14 @@ func TestMoveEntryFinish(t *testing.T) {
 		t.Errorf("held = %v, want 5 foil and no nonfoil", held)
 	}
 
-	if _, err := s.MoveEntryFinish(cid, "bb-uma", finish.Foil, finish.Etched, ConditionUnknown); err != nil {
+	if _, err := s.MoveEntryFinish(mainRef(cid, "bb-uma", finish.Foil, ConditionUnknown), finish.Etched); err != nil {
 		t.Fatalf("MoveEntryFinish to etched: %v", err)
 	}
 	if held := heldByFinish(t, s, "bb-uma"); held["etched"] != 5 {
 		t.Errorf("held = %v, want 5 etched", held)
 	}
 
-	if _, err := s.MoveEntryFinish(cid, "bb-uma", finish.Nonfoil, finish.Foil, ConditionUnknown); err == nil {
+	if _, err := s.MoveEntryFinish(mainRef(cid, "bb-uma", finish.Nonfoil, ConditionUnknown), finish.Foil); err == nil {
 		t.Error("moving a missing finish row succeeded")
 	}
 }

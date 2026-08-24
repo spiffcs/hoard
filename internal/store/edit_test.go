@@ -201,3 +201,8 @@ func TestMoveCardFinishMergesWithAnExistingHolding(t *testing.T) {
 		t.Errorf("foil = %d, want 3", held["foil"])
 	}
 }
+
+func mainRef(cid int64, id string, fin finish.Finish, cond string) EntryRef {
+	return EntryRef{ContainerID: cid, ScryfallID: id, Finish: fin, Condition: cond,
+		Board: BoardMain}
+}

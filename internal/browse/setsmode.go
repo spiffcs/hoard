@@ -165,7 +165,7 @@ func (m *Model) setRowHoldings(c *card) (binders []store.Holding, refusal string
 	case len(binders) > 0:
 		return binders, "", false
 	case deckCopies:
-		return nil, "every copy of " + c.Name + " is in a deck · deck cards are owned by the imported list", false
+		return nil, "every copy of " + c.Name + " is in a deck · enter opens the card to edit it there", false
 	default:
 		return nil, "no binder holds " + c.Name + " (" + c.Finish.String() + ") · r reloads", false
 	}
@@ -196,16 +196,18 @@ func (m *Model) adjustSetQuantity(delta int) {
 	if want == h.Quantity {
 		return
 	}
-	previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, c.ScryfallID, c.Finish, h.Condition, want)
+	ref := store.EntryRef{ContainerID: h.ContainerID, ScryfallID: c.ScryfallID,
+		Finish: c.Finish, Condition: h.Condition, Board: h.Board}
+	previous, err := m.store.SetEntryQuantity(ref, want)
 	if err != nil {
 		m.setError(err)
 		return
 	}
-	cid, id, finish, cond, name := h.ContainerID, c.ScryfallID, c.Finish, h.Condition, c.Name
+	finish, name := c.Finish, c.Name
 	m.undoable(undoAction{
 		desc: fmt.Sprintf("%s ×%d", name, previous),
 		undo: func(st Editor) error {
-			_, err := st.SetHoldingQuantityIn(cid, id, finish, cond, previous)
+			_, err := st.SetEntryQuantity(ref, previous)
 			return err
 		},
 	})
@@ -257,7 +259,8 @@ func (m *Model) removeSetRow(name, id string, fin finish.Finish, binders []store
 		})
 	}
 	for _, h := range binders {
-		previous, err := m.store.SetHoldingQuantityIn(h.ContainerID, id, fin, h.Condition, 0)
+		previous, err := m.store.SetEntryQuantity(store.EntryRef{ContainerID: h.ContainerID,
+			ScryfallID: id, Finish: fin, Condition: h.Condition, Board: h.Board}, 0)
 		if err != nil {
 
 			record()
@@ -268,7 +271,7 @@ func (m *Model) removeSetRow(name, id string, fin finish.Finish, binders []store
 		removed = append(removed, store.Holding{
 			ContainerID: h.ContainerID, ContainerName: h.ContainerName,
 			ContainerKind: store.KindCollection, Finish: fin,
-			Condition: h.Condition, Board: "main", Quantity: previous,
+			Condition: h.Condition, Board: store.BoardMain, Quantity: previous,
 		})
 	}
 	record()
