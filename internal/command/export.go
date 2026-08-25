@@ -77,7 +77,7 @@ func NewCmdExport(a *app) *cobra.Command {
 	cmd.Flags().Var(&deck, "deck", "export one deck (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&all, "all", false, "export every binder and deck (the default)")
 	cmd.Flags().StringVar(&filter, "filter", "",
-		"keep only matching holdings, e.g. 'price<1 rarity:common' (see README)")
+		"keep only matching holdings, e.g. 'price<1 rarity:common' (see docs/filtering.md)")
 
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "write to FILE instead of stdout")
 	return cli.JSONCapable(cmd)
