@@ -1,9 +1,12 @@
 package command
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
 	"github.com/spiffcs/hoard/internal/cli"
+	"github.com/spiffcs/hoard/internal/compendium"
 	"github.com/spiffcs/hoard/internal/store"
 )
 
@@ -13,7 +16,8 @@ type app struct {
 
 	dbPath string
 
-	confirmMove func(string) bool
+	confirmMove     func(string) bool
+	buildCompendium func(context.Context, string, compendium.Options) error
 }
 
 const tagline = "a terminal collection tracker for Magic: The Gathering"
@@ -103,6 +107,8 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdMerge(a),
 
 		NewCmdDemo(a),
+
+		NewCmdCompendium(a),
 
 		NewCmdSchema(a),
 

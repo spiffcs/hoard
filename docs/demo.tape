@@ -3,7 +3,7 @@ Output docs/assets/demo.gif
 Set Shell "bash"
 Set FontSize 14
 Set Width 1200
-Set Height 720
+Set Height 680
 Set Padding 20
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 40ms
@@ -12,14 +12,16 @@ Set Framerate 24
 Hide
 Type `make build >/dev/null 2>&1`
 Enter
+Sleep 5s
 Type `export PATH="$PWD:$PATH"`
 Enter
 Type `export HOARD_CARD_IMAGES=off`
 Enter
-Type `export HOARD_DB="$(mktemp -d)/demo.db"`
+Type `export HOARD_DB="$HOME/Library/Caches/hoard/demo.db"`
 Enter
-Type `cp "$HOME/Library/Application Support/hoard/hoard.db" "$HOARD_DB"`
+Type `hoard demo --reset >/dev/null 2>&1 </dev/null`
 Enter
+Sleep 3s
 Type "clear"
 Enter
 Sleep 2s
@@ -27,29 +29,50 @@ Show
 
 Type "hoard"
 Enter
-Sleep 3s
-Down@400ms 7
-Sleep 700ms
+Sleep 4s
 
+Tab
+Sleep 1s
+Down@400ms 4
+Sleep 1500ms
 Enter
-Sleep 4s
-Enter
-Sleep 4s
-PageDown 2
-Sleep 3s
+Sleep 6s
 Escape
 Sleep 1s
+Tab
+Sleep 1500ms
 
-Type v
+Down@500ms 1
 Sleep 3s
-Type v
-Sleep 3s
-Type v
-Sleep 3s
-Type v
-Sleep 1000ms
+Type "b"
+Sleep 5s
+Type "b"
+Sleep 2s
 
-Escape
-Sleep 500ms
+Type "B"
+Sleep 3500ms
+Type "B"
+Sleep 1500ms
+Up@500ms 1
+Sleep 2s
+
+Type ":"
+Sleep 1s
+Type "toggleraw"
+Sleep 1500ms
+Enter
+Sleep 3500ms
+Type ":"
+Sleep 800ms
+Type "toggleraw"
+Sleep 1s
+Enter
+Sleep 1500ms
+
+Type "v"
+Sleep 4500ms
+Type "v"
+Sleep 4500ms
+
 Type "q"
-Sleep 500ms
+Sleep 1s

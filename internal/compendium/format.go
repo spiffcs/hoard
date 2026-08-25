@@ -2,50 +2,61 @@ package compendium
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
 
-type formatPreset struct {
-	legal string
-	sets  []string
+type era struct {
+	sets   []string
+	before string
 }
 
-var formatPresets = map[string]formatPreset{
-	"premodern": {
-		legal: "premodern",
-		sets: []string{
-			"4ed", "ice", "chr", "hml", "all", "mir", "vis", "5ed", "wth", "tmp",
-			"sth", "exo", "usg", "ulg", "6ed", "uds", "mmq", "nem", "pcy", "inv",
-			"pls", "7ed", "apc", "ody", "tor", "jud", "ons", "lgn", "scg",
-		},
-	},
+var formatEras = map[string]era{
+	"premodern": {sets: []string{
+		"4ed", "ice", "chr", "hml", "all", "mir", "vis", "5ed", "wth", "tmp",
+		"sth", "exo", "usg", "ulg", "6ed", "uds", "mmq", "nem", "pcy", "inv",
+		"pls", "7ed", "apc", "ody", "tor", "jud", "ons", "lgn", "scg",
+	}},
+	"predh": {before: "2011-06-17"},
 }
 
-func ApplyFormat(o Options, name string) (Options, error) {
+func ApplyFormat(o Options, name string, era bool) (Options, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
+		if era {
+			return Options{}, fmt.Errorf(
+				"--era takes its bound from --format, so it needs one; the formats with "+
+					"an era are %s — or name the sets yourself with --sets",
+				strings.Join(eraFormats(), ", "))
+		}
 		return o, nil
 	}
-	preset, ok := formatPresets[name]
-	if !ok {
+	if !slices.Contains(knownFormats, name) {
 		return Options{}, fmt.Errorf("unknown format %q; want one of %s",
-			name, strings.Join(formatNames(), ", "))
+			name, strings.Join(knownFormats, ", "))
 	}
-	if o.Legal == "" {
-		o.Legal = preset.legal
+	o.Legal = name
+
+	if !era {
+		return o, nil
 	}
-	if len(o.Sets) == 0 {
-		o.Sets = slices.Clone(preset.sets)
+	e, ok := formatEras[name]
+	if !ok {
+		return Options{}, fmt.Errorf(
+			"%s has no era here; hoard carries one for %s — drop --era to take every "+
+				"printing %s allows, or name the sets yourself with --sets",
+			name, strings.Join(eraFormats(), ", "), name)
+	}
+	if len(e.sets) > 0 && len(o.Sets) == 0 {
+		o.Sets = slices.Clone(e.sets)
+	}
+	if e.before != "" && o.Before == "" {
+		o.Before = e.before
 	}
 	return o, nil
 }
 
-func formatNames() []string {
-	names := make([]string, 0, len(formatPresets))
-	for name := range formatPresets {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
+func eraFormats() []string {
+	return slices.Sorted(maps.Keys(formatEras))
 }

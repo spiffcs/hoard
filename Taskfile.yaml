@@ -254,8 +254,8 @@ tasks:
     cmd: go run ./internal/demo/gen internal/demo/history.json
 
   compendium:
-    desc: Build a read-only compendium database with 30 days of price history
-    cmd: go run ./internal/compendium/gen {{ .CLI_ARGS }}
+    desc: Build a compendium database with 30 days of price history
+    cmd: go run ./cmd/hoard compendium {{ .CLI_ARGS }}
 
   unreleased:
     desc: Show unreleased changes since the latest tag

@@ -51,6 +51,7 @@ type Options struct {
 	Sets       []string
 	Rarities   []string
 	Legal      string
+	Before     string
 	PricedOnly bool
 	Days       int
 
@@ -249,11 +250,13 @@ type filter struct {
 	rarities map[string]bool
 	legal    string
 	since    int
+	before   string
 	priced   bool
 }
 
 func newFilter(o Options) (filter, error) {
-	f := filter{sets: lowered(o.Sets), since: o.Since, priced: o.PricedOnly}
+	f := filter{sets: lowered(o.Sets), since: o.Since,
+		before: strings.TrimSpace(o.Before), priced: o.PricedOnly}
 
 	for _, r := range o.Rarities {
 		r = strings.ToLower(strings.TrimSpace(r))
@@ -291,6 +294,9 @@ func (f filter) keep(c bulkCard) bool {
 		return false
 	}
 	if f.legal != "" && !strings.EqualFold(c.Legalities[f.legal], "legal") {
+		return false
+	}
+	if f.before != "" && (c.ReleasedAt == "" || c.ReleasedAt >= f.before) {
 		return false
 	}
 	if f.since > 0 {
