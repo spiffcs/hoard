@@ -8,6 +8,7 @@
 [![Release](https://img.shields.io/github/v/release/spiffcs/hoard?sort=semver)](https://github.com/spiffcs/hoard/releases)
 [![License](https://img.shields.io/github/license/spiffcs/hoard)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/spiffcs/hoard/badge)](https://scorecard.dev/viewer/?uri=github.com/spiffcs/hoard)
+[![Buy Me A Coffee](https://img.shields.io/badge/support-buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/spiffcs)
 
 A collection tracker for Magic: The Gathering on the command line.
 
@@ -227,6 +228,10 @@ Only binder cards move. Piping `hoard export --all` is safe: rows belonging to d
 - [RELEASE.md](RELEASE.md)
 - [SECURITY.md](SECURITY.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+## Support
+
+hoard is free and MIT licensed, and it stays that way. If it saved you a spreadsheet, you can [buy me a coffee](https://buymeacoffee.com/spiffcs) — it keeps the macOS builds signed and notarized and the install script hosted.
 
 ## License and Legal
 
