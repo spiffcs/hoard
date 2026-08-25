@@ -2359,7 +2359,7 @@ func (m model) confirmSummary() string {
 		m.qtyValue(), c.Name, strings.ToUpper(c.Set), c.CollectorNumber, c.SetName,
 		finish, price)
 
-	if len(m.dests) > 1 {
+	if m.dest.Name != "" {
 		out += "\nadd to: " + m.dest.Name
 	}
 	return out

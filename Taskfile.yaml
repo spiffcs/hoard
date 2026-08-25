@@ -13,6 +13,7 @@ tasks:
     cmds:
       - task: check-go-mod-tidy
       - task: lint
+      - task: vuln
 
   test:
     desc: Run all levels of test
@@ -124,6 +125,11 @@ tasks:
         silent: true
       - "GOOS=darwin {{ .TOOL_DIR }}/golangci-lint run --tests=false"
       - "GOOS=linux {{ .TOOL_DIR }}/golangci-lint run --tests=false"
+
+  vuln:
+    desc: Check for known vulnerabilities in the code and its dependencies
+    deps: [tools]
+    cmd: "{{ .TOOL_DIR }}/govulncheck ./..."
 
   check-go-mod-tidy:
     cmds:

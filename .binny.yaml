@@ -48,6 +48,14 @@ tools:
     with:
       repo: rinchsan/gosimports
 
+  - name: govulncheck
+    version:
+      want: v1.1.4
+    method: go-install
+    with:
+      module: golang.org/x/vuln
+      entrypoint: cmd/govulncheck
+
   - name: chronicle
     version:
       want: v0.8.0

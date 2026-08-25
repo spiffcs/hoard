@@ -310,6 +310,58 @@ func TestConfirmAddsAndLoopsBack(t *testing.T) {
 	}
 }
 
+func confirmScreen(t *testing.T, dests []Destination) string {
+	t.Helper()
+	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
+		SetName: "Ultimate Masters", Finishes: []string{"nonfoil"}, PriceUSD: fp(37.20)}
+
+	m := newModel(context.Background(), fakeSearcher{}, noopAdder, nil, "Ulamog", dests)
+	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
+	got := mm.(model)
+	if got.state == stateDestPick {
+		mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		got = mm.(model)
+	}
+	if got.state == stateQty {
+		got.qtyInput.SetValue("1")
+		mm, _ = got.submitQty()
+		got = mm.(model)
+	}
+	if got.state != stateConfirm {
+		t.Fatalf("state = %v, want stateConfirm", got.state)
+	}
+	return got.confirmSummary()
+}
+
+func TestConfirmNamesTheBinderWhenThereIsOnlyOne(t *testing.T) {
+	out := confirmScreen(t, []Destination{{ID: 1, Name: "Binder", Kind: "binder"}})
+
+	if !strings.Contains(out, "Binder") {
+		t.Errorf("the confirm screen must say where the card is going even when there is "+
+			"only one binder to choose from — a reader cannot tell otherwise;\ngot:\n%s", out)
+	}
+}
+
+func TestConfirmNamesTheBinderWhenThereAreSeveral(t *testing.T) {
+	out := confirmScreen(t, []Destination{
+		{ID: 1, Name: "Binder", Kind: "binder"},
+		{ID: 2, Name: "Trade", Kind: "binder"},
+	})
+
+	if !strings.Contains(out, "Binder") {
+		t.Errorf("the chosen binder must still be named when there are several;\ngot:\n%s", out)
+	}
+}
+
+func TestConfirmOmitsTheBinderLineWhenThereIsNoDestination(t *testing.T) {
+	out := confirmScreen(t, nil)
+
+	if strings.Contains(out, "add to:") {
+		t.Errorf("with no destination there is no name to print, and a dangling "+
+			"\"add to:\" is worse than no line;\ngot:\n%s", out)
+	}
+}
+
 func TestAdderErrorKeepsSession(t *testing.T) {
 	card := scryfall.Card{ID: "u1", Name: "Ulamog", Set: "uma", CollectorNumber: "7",
 		Finishes: []string{"nonfoil"}}

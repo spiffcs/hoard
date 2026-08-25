@@ -82,7 +82,9 @@ $ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre
 
 `--dry-run` works on all three: resolve and report, write nothing. On an import, `--preserve-binders` recreates the file's own binders instead of putting everything in one.
 
-Loose cards also have a full add flow in the TUI. For more information on using the iphone helper or adding cards via the TUI see `<PLACEHOLDERADDFLOWDOC>`.
+Loose cards also have a full add flow in the TUI. [Adding cards](docs/adding-cards.md) walks through typing a card in, and through building, pairing and scanning with the iPhone helper.
+
+NOTE: the iPhone helper is experimental and needs more attention and effort before I try to publish it to the App Store.
 
 ## Try It
 
@@ -198,16 +200,17 @@ It is ordinary SQLite: read it with [any tool](schema/sqlite/README.md), or take
 
 Commands that do not honour `--json` **refuse** it rather than ignoring it.
 
-Documents compose. `hoard export` chooses holdings and `hoard move` acts on them, so a bulk move is a pipe — sweep everything under a dollar into bulk:
+Documents compose. `hoard export` chooses holdings and `hoard move` acts on them, so a bulk move is a pipe. Filter terms are ANDed, so `set:` cannot name two sets at once — export each one and splice the rows together to sweep both into bulk in a single move (fish syntax; in bash the `begin`/`end` pair is `{ ...; }`):
 
 ```fish
-fish
 begin
     hoard export --binder Binder --json --filter 'price<1 set:cmd'
     hoard export --binder Binder --json --filter 'price<1 set:isd'
 end | jq -s '.[0].holdings.rows = ([.[].holdings.rows] | add) | .[0]' \
     | hoard move --to Bulk --dry-run
+```
 
+```
 Would move 250 copies of 250 printings into "Bulk" · $87.77
 ```
 

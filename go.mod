@@ -2,6 +2,8 @@ module github.com/spiffcs/hoard
 
 go 1.26
 
+toolchain go1.26.7
+
 require (
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/charmbracelet/bubbles v1.0.0
