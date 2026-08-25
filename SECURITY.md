@@ -4,16 +4,18 @@
 
 Do not report security issues through public GitHub issues.
 
-Use GitHub's private vulnerability reporting: open the
-[Security tab](../../security), click **Report a vulnerability**, and describe
-the issue.
+Use GitHub's private vulnerability reporting:
+<https://github.com/spiffcs/hoard/security/advisories/new>. From the repository
+you can also open the [Security tab](../../security) and click **Report a
+vulnerability**.
 
-Include whatever you have — the affected file paths and the commit or tag,
+Include whatever you have about the affected file paths and the commit or tag,
 steps to reproduce, any configuration needed, proof-of-concept code, and what
 an attacker gains.
 
 I acknowledge reports on receipt and aim to reply in detail within 10 business
-days.
+days. If a report is valid I will confirm it and share a fix timeline; if I
+disagree that it is a vulnerability I will say so and why.
 
 ## Supported versions
 

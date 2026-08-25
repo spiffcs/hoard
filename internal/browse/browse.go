@@ -116,6 +116,18 @@ func WithPrintSearch(f PrintSearchFunc) Option {
 	return func(m *Model) { m.printSearch = f }
 }
 
+type CardDocumentFunc func(ctx context.Context, scryfallID string) (scryfall.Card, error)
+
+func WithCardDocument(f CardDocumentFunc) Option {
+	return func(m *Model) { m.cardDocument = f }
+}
+
+type HistoryBackfillFunc func(ctx context.Context, scryfallID, setCode string) (int, error)
+
+func WithHistoryBackfill(f HistoryBackfillFunc) Option {
+	return func(m *Model) { m.historyBackfill = f }
+}
+
 type ReportFunc func(top, width int) ([]string, error)
 
 func WithReport(f ReportFunc) Option {

@@ -229,7 +229,10 @@ type Model struct {
 	cardComps    CardCompFunc
 	openURL      OpenURLFunc
 	printSearch  PrintSearchFunc
-	setPrints    SetPrintsFunc
+	cardDocument CardDocumentFunc
+
+	historyBackfill HistoryBackfillFunc
+	setPrints       SetPrintsFunc
 
 	setUnowned         bool
 	lastSet            string
@@ -844,6 +847,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onImage(msg)
 	case detailCompsMsg:
 		return m.onDetailComps(msg)
+	case cardDocumentMsg:
+		return m.onCardDocument(msg)
+	case historyMsg:
+		return m.onHistory(msg)
 	case catalogFirstRunMsg:
 		return m, m.startOp("updating the catalog", m.opCatalogUpdate)
 	case opProgressMsg:

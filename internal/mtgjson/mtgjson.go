@@ -440,6 +440,18 @@ const (
 	archiveFile = "AllPrices.json.gz"
 )
 
+func HavePriceHistory(cacheDir string) bool {
+	if cacheDir == "" {
+		return false
+	}
+	f, err := os.Open(filepath.Join(cacheDir, today()+"-"+archiveFile))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return gzipMagic(f)
+}
+
 func PrefetchPriceHistory(ctx context.Context, o Options) error {
 	if o.CacheDir == "" {
 		return nil

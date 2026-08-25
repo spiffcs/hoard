@@ -1,6 +1,9 @@
 package browse
 
 import (
+	"context"
+	"encoding/json"
+	"image"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
@@ -188,5 +192,190 @@ func TestHeldEditCarriesTheCompsRefetch(t *testing.T) {
 	if m.detail.compsPending || !m.detail.compsOK {
 		t.Errorf("pending %v ok %v after the read landed, want the sheet answered",
 			m.detail.compsPending, m.detail.compsOK)
+	}
+}
+
+func TestHeldSetChangeShowsTheNewPrintingsImage(t *testing.T) {
+	const oldID, newID = "Wasteland-id", "wasteland-tmp-id"
+
+	st := testStore()
+	st.collection = []store.CollectionRow{
+		row("Wasteland", "exp", "1", finish.Nonfoil, 1, 100),
+	}
+	st.holdingsByName = map[string][]store.Holding{
+		"Wasteland": {
+			{ContainerID: defaultBinderID, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: finish.Nonfoil, Condition: store.ConditionUnknown, Quantity: 1,
+				ScryfallID: oldID, SetCode: "exp", CollectorNumber: "1"},
+		},
+	}
+	st.undocumented = map[string]bool{newID: true}
+
+	m := newTestModel(t, st)
+	m.ctx = context.Background()
+	m.imgTier = ui.ImageHalfblock
+
+	var asked []string
+	m.imageFetch = func(_ context.Context, _, url string) (image.Image, error) {
+		asked = append(asked, url)
+		return image.NewRGBA(image.Rect(0, 0, 2, 4)), nil
+	}
+	m.cardDocument = func(_ context.Context, id string) (scryfall.Card, error) {
+		return scryfall.Card{
+			ID: id, Name: "Wasteland", Set: "tmp", CollectorNumber: "330",
+			Raw: json.RawMessage(`{"image_uris":{"normal":"http://img.test/` + id + `"}}`),
+		}, nil
+	}
+	m.printSearch = func(context.Context, string) ([]scryfall.Card, error) {
+		return []scryfall.Card{{
+			ID: newID, Name: "Wasteland", Set: "tmp", CollectorNumber: "330",
+			ScryfallURL: "https://scryfall.com/card/tmp/330/wasteland",
+		}}, nil
+	}
+
+	m = key(m, "tab")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = pump(t, next.(Model), cmd)
+	if m.detail == nil {
+		t.Fatal("setup: detail did not open")
+	}
+	if len(m.detail.image) == 0 {
+		t.Fatal("setup: the original printing showed no image")
+	}
+
+	m = key(m, "up")
+	m = key(m, "right")
+	if m.detail.heldField != fieldSet {
+		t.Fatalf("setup: field = %d, want the set field", m.detail.heldField)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil {
+		t.Fatal("setup: enter on the set field opened no prompt")
+	}
+	m.prompt.text = "tmp"
+	asked = nil
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = pump(t, next.(Model), cmd)
+
+	if m.detail == nil {
+		t.Fatal("the detail closed on a set change")
+	}
+	if m.detail.card.ScryfallID != newID {
+		t.Fatalf("detail is pinned to %q, want the new printing %q",
+			m.detail.card.ScryfallID, newID)
+	}
+	if len(m.detail.image) == 0 {
+		t.Error("the card image vanished after the set change")
+	}
+	want := "http://img.test/" + newID
+	if len(asked) == 0 || asked[len(asked)-1] != want {
+		t.Errorf("image fetched from %v, want the new printing's art at %q", asked, want)
+	}
+}
+
+func TestShallowHistoryIsCaptionedHonestly(t *testing.T) {
+	m := newTestModel(t, testStore())
+
+	fresh := detail{
+		card: store.CardDetail{
+			Card:     store.Card{Name: "Wasteland", SetCode: "tmp", CollectorNumber: "330"},
+			TypeLine: "Land", Rarity: "rare", Enriched: true,
+		},
+		series: map[finish.Finish][]store.PricePoint{
+			finish.Nonfoil: {{AsOf: "2026-08-25T03:53:26Z", Price: 49.78, Source: "scryfall"}},
+		},
+	}
+	got := strings.Join(m.detailLines(fresh, 80), "\n")
+
+	if strings.Contains(got, "1 checks") {
+		t.Errorf("a single observation renders as %q:\n%s", "1 checks", got)
+	}
+	if strings.Contains(got, "$49.78–$49.78") {
+		t.Errorf("a single observation renders a range against itself:\n%s", got)
+	}
+	if !strings.Contains(got, "backfill") {
+		t.Errorf("a card with no history does not say how to get some:\n%s", got)
+	}
+
+	deep := fresh
+	deep.series = map[finish.Finish][]store.PricePoint{finish.Nonfoil: {
+		{AsOf: "2026-08-21T00:00:00Z", Price: 48.00},
+		{AsOf: "2026-08-22T00:00:00Z", Price: 48.50},
+		{AsOf: "2026-08-23T00:00:00Z", Price: 49.10},
+		{AsOf: "2026-08-24T00:00:00Z", Price: 49.78},
+	}}
+	if got := strings.Join(m.detailLines(deep, 80), "\n"); strings.Contains(got, "backfill") {
+		t.Errorf("a card that already has history is nagged about backfill:\n%s", got)
+	}
+}
+
+func TestHeldSetChangeBackfillsTheNewPrintingsHistory(t *testing.T) {
+	const oldID, newID = "Wasteland-id", "wasteland-tmp-id"
+
+	st := testStore()
+	st.collection = []store.CollectionRow{
+		row("Wasteland", "exp", "1", finish.Nonfoil, 1, 100),
+	}
+	st.holdingsByName = map[string][]store.Holding{
+		"Wasteland": {
+			{ContainerID: defaultBinderID, ContainerName: "Binder", ContainerKind: store.KindCollection,
+				Finish: finish.Nonfoil, Condition: store.ConditionUnknown, Quantity: 1,
+				ScryfallID: oldID, SetCode: "exp", CollectorNumber: "1"},
+		},
+	}
+	st.priceSeries = map[string][]store.PricePoint{
+		oldID + "|nonfoil": {
+			{AsOf: "2026-08-23T00:00:00Z", Price: 28.00},
+			{AsOf: "2026-08-24T00:00:00Z", Price: 28.78},
+		},
+	}
+
+	m := newTestModel(t, st)
+	m.ctx = context.Background()
+
+	var asked [][2]string
+	m.historyBackfill = func(_ context.Context, id, set string) (int, error) {
+		asked = append(asked, [2]string{id, set})
+		st.priceSeries[id+"|nonfoil"] = []store.PricePoint{
+			{AsOf: "2026-08-22T00:00:00Z", Price: 49.00},
+			{AsOf: "2026-08-23T00:00:00Z", Price: 49.40},
+			{AsOf: "2026-08-24T00:00:00Z", Price: 49.78},
+		}
+		return 3, nil
+	}
+	m.printSearch = func(context.Context, string) ([]scryfall.Card, error) {
+		return []scryfall.Card{{ID: newID, Name: "Wasteland", Set: "tmp",
+			CollectorNumber: "330", ScryfallURL: "http://x"}}, nil
+	}
+
+	m = key(m, "tab")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = pump(t, next.(Model), cmd)
+	if m.detail == nil {
+		t.Fatal("setup: detail did not open")
+	}
+	m = key(m, "up")
+	m = key(m, "right")
+	if m.detail.heldField != fieldSet {
+		t.Fatalf("setup: field = %d, want the set field", m.detail.heldField)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.prompt == nil {
+		t.Fatal("setup: no prompt on the set field")
+	}
+	m.prompt.text = "tmp"
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = pump(t, next.(Model), cmd)
+
+	if len(asked) != 1 || asked[0] != [2]string{newID, "tmp"} {
+		t.Fatalf("backfill asked %v, want one call for the new printing in tmp", asked)
+	}
+	if got := m.detail.series[finish.Nonfoil]; len(got) != 3 {
+		t.Errorf("detail shows %d price points after the set change, want the backfilled 3", len(got))
 	}
 }

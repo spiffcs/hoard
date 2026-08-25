@@ -75,6 +75,8 @@ type fakeStore struct {
 
 	holdingsByName map[string][]store.Holding
 
+	undocumented map[string]bool
+
 	holdingsByID map[string][]store.Holding
 
 	removedCard map[string][]store.Holding
@@ -313,6 +315,10 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 	d.SetCode = "uma"
 	d.CollectorNumber = "85"
 	d.ImageURI = "http://img.test/" + id
+	d.Enriched = !f.undocumented[id]
+	if f.undocumented[id] {
+		d.ImageURI = ""
+	}
 	tcg := int64(12345)
 	d.TCGplayerID = &tcg
 	d.CKURL = "https://mtgjson.com/links/plain"
@@ -663,6 +669,11 @@ func (f *fakeStore) UpsertPrintings(cards []scryfall.Card) error {
 		return f.err
 	}
 	f.upserted = append(f.upserted, cards...)
+	for _, c := range cards {
+		if len(c.Raw) > 0 {
+			delete(f.undocumented, c.ID)
+		}
+	}
 	return nil
 }
 

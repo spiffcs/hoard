@@ -22,6 +22,7 @@ import (
 	"github.com/spiffcs/hoard/internal/pricing"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/report"
+	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/tui"
 	"github.com/spiffcs/hoard/internal/ui"
@@ -287,6 +288,20 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		browse.WithOpenURL(openInBrowser),
 		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
 		browse.WithSetPrints(setPrints(cat)),
+		browse.WithHistoryBackfill(func(ctx context.Context, id, setCode string) (int, error) {
+			return action.BackfillPrintings(ctx, deps,
+				[]pricing.Ref{{ScryfallID: id, SetCode: setCode}}, 90)
+		}),
+		browse.WithCardDocument(func(ctx context.Context, id string) (scryfall.Card, error) {
+			found, _, _, err := action.RefreshCards(ctx, deps, nil, []string{id})
+			if err != nil {
+				return scryfall.Card{}, err
+			}
+			if len(found) == 0 {
+				return scryfall.Card{}, fmt.Errorf("scryfall has no card %s", id)
+			}
+			return found[0], nil
+		}),
 
 		browse.WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.RefreshPrices(ctx, deps, p)

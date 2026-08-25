@@ -469,6 +469,12 @@ func (m *Model) repointHeldSet(h store.Holding, name, text string) tea.Cmd {
 	if m.loadPrinting(d, toID) {
 		m.refreshLinks(d)
 		cmds = append(cmds, m.fetchDetailComps(toID))
+		if !d.card.Enriched {
+			cmds = append(cmds, m.fetchCardDocument(toID))
+		}
+		if d.thinHistory() {
+			cmds = append(cmds, m.fetchHistory(toID, code))
+		}
 		if cmd := m.fetchDetailImage(); cmd != nil {
 			cmds = append(cmds, cmd)
 		} else {

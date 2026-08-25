@@ -451,6 +451,10 @@ func (m Model) hoardLines(d detail, width int) []string {
 				line += "  " + change
 			}
 			caption := dim(fmt.Sprintf("  %-9s %s", "", seriesRange(s)))
+			if len(s) < 2 {
+				caption = dim(fmt.Sprintf("  %-9s first seen %s · run backfill for 90 days",
+					"", seriesSince(s)))
+			}
 			if run := m.streakPhrase(store.Streak(s)); run != "" {
 				caption += dim(" · ") + run
 			}
@@ -653,18 +657,21 @@ func clipToWindow(s []store.PricePoint, start, end string) []store.PricePoint {
 	return out
 }
 
+func seriesSince(s []store.PricePoint) string {
+	if t, err := time.Parse(time.RFC3339, s[0].AsOf); err == nil {
+		return t.Local().Format("2 Jan")
+	}
+	return s[0].AsOf
+}
+
 func seriesRange(s []store.PricePoint) string {
 	lo, hi := s[0].Price, s[0].Price
 	for _, p := range s {
 		lo = min(lo, p.Price)
 		hi = max(hi, p.Price)
 	}
-	since := s[0].AsOf
-	if t, err := time.Parse(time.RFC3339, s[0].AsOf); err == nil {
-		since = t.Local().Format("2 Jan")
-	}
 	return fmt.Sprintf("%s–%s · %d checks since %s",
-		ui.Money(lo), ui.Money(hi), len(s), since)
+		ui.Money(lo), ui.Money(hi), len(s), seriesSince(s))
 }
 
 func safeFrac(delta, base float64) float64 {

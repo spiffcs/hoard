@@ -232,7 +232,7 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 	if cat != nil {
 		defer cat.Close()
 	}
-	res, err := action.RepinDeck(ctx, st, newSearcher(cat), deckRef, setCode)
+	res, err := action.RepinDeck(ctx, action.Deps{Store: st, Catalog: cat}, newSearcher(cat), deckRef, setCode)
 	if err != nil {
 		return err
 	}
@@ -246,8 +246,9 @@ func runDeckRepin(ctx context.Context, st *store.Store, env *cli.Env, deckRef, s
 	}
 	r.Result("Re-pinned deck #%d %q to %s: %d of %d printings moved, %d already there.",
 		res.DeckID, res.Deck, strings.ToUpper(res.SetCode), res.Repinned, res.Total, res.Already)
-	if res.Repinned > 0 {
-		r.Detail("Run `hoard update-prices` to price the corrected printings.")
+	if res.Undocumented > 0 {
+		r.Detail("%s still without card details; run `hoard update-prices` to fetch them.",
+			ui.Plural(res.Undocumented, "printing is", "printings are"))
 	}
 	if len(res.Missing) > 0 {
 

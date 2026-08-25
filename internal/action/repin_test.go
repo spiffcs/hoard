@@ -2,11 +2,13 @@ package action
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/finish"
+	"github.com/spiffcs/hoard/internal/resolve"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
 )
@@ -62,7 +64,13 @@ func TestRepinDeck(t *testing.T) {
 		},
 	}}
 
-	res, err := RepinDeck(context.Background(), st, prints, "Guided by Nature", "CMA")
+	offline := Deps{Store: st, Resolver: &resolve.Resolver{
+		Fetch: func(_ context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
+			return nil, ids, nil
+		},
+	}}
+
+	res, err := RepinDeck(context.Background(), offline, prints, "Guided by Nature", "CMA")
 	if err != nil {
 		t.Fatalf("RepinDeck: %v", err)
 	}
@@ -91,11 +99,90 @@ func TestRepinDeck(t *testing.T) {
 		}
 	}
 
-	res, err = RepinDeck(context.Background(), st, prints, "Guided by Nature", "cma")
+	res, err = RepinDeck(context.Background(), offline, prints, "Guided by Nature", "cma")
 	if err != nil {
 		t.Fatalf("second RepinDeck: %v", err)
 	}
 	if res.Repinned != 0 || res.Already != 3 {
 		t.Errorf("second run = %+v, want nothing to move", res)
+	}
+}
+
+func TestRepinDeckDocumentsTheNewPrintings(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "hoard.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	document := func(id string) json.RawMessage {
+		return json.RawMessage(`{"id":"` + id + `","type_line":"Creature — Elf",` +
+			`"image_uris":{"normal":"https://img.test/` + id + `.jpg"}}`)
+	}
+
+	elvesHOB := scryfall.Card{ID: "we-hob", Set: "hob", CollectorNumber: "142",
+		Name: "Wood Elves", ScryfallURL: "http://x", Raw: document("we-hob")}
+	birdsHOB := scryfall.Card{ID: "bop-hob", Set: "hob", CollectorNumber: "1",
+		Name: "Birds of Paradise", ScryfallURL: "http://x", Raw: document("bop-hob")}
+	if err := st.UpsertPrintings([]scryfall.Card{elvesHOB, birdsHOB}); err != nil {
+		t.Fatalf("UpsertPrintings: %v", err)
+	}
+	if _, err := st.UpsertDeck(
+		store.DeckMeta{Name: "Guided by Nature", Source: "text", SourceID: "gbn"},
+		[]store.Entry{
+			{ScryfallID: "we-hob", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
+			{ScryfallID: "bop-hob", Finish: finish.Nonfoil, Board: "main", Quantity: 1},
+		}); err != nil {
+		t.Fatalf("UpsertDeck: %v", err)
+	}
+
+	prints := fakePrints{prints: map[string][]scryfall.Card{
+		"Wood Elves": {elvesHOB,
+			{ID: "we-cma", Set: "cma", CollectorNumber: "154",
+				Name: "Wood Elves", ScryfallURL: "http://x"}},
+		"Birds of Paradise": {birdsHOB,
+			{ID: "bop-cma", Set: "cma", CollectorNumber: "2",
+				Name: "Birds of Paradise", ScryfallURL: "http://x"}},
+	}}
+
+	var batches [][]string
+	deps := Deps{Store: st, Resolver: &resolve.Resolver{
+		Fetch: func(_ context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {
+			var asked []string
+			var out []scryfall.Card
+			for _, i := range ids {
+				asked = append(asked, i.ID)
+				out = append(out, scryfall.Card{ID: i.ID, Set: "cma", Name: "Repinned",
+					CollectorNumber: "1", ScryfallURL: "http://x", Raw: document(i.ID)})
+			}
+			batches = append(batches, asked)
+			return out, nil, nil
+		},
+	}}
+
+	if _, err := RepinDeck(context.Background(), deps, prints, "Guided by Nature", "CMA"); err != nil {
+		t.Fatalf("RepinDeck: %v", err)
+	}
+
+	for _, id := range []string{"we-cma", "bop-cma"} {
+		d, err := st.CardDetail(id)
+		if err != nil {
+			t.Fatalf("CardDetail(%s): %v", id, err)
+		}
+		if !d.Enriched {
+			t.Errorf("%s was re-pinned to an undocumented printing", id)
+		}
+		if d.ImageURI == "" {
+			t.Errorf("%s has no image to show", id)
+		}
+	}
+
+	if len(batches) != 1 {
+		t.Fatalf("scryfall called %d times for 2 cards, want one batched call: %v",
+			len(batches), batches)
+	}
+	slices.Sort(batches[0])
+	if !slices.Equal(batches[0], []string{"bop-cma", "we-cma"}) {
+		t.Errorf("batch = %v, want exactly the two new printings", batches[0])
 	}
 }

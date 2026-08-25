@@ -132,6 +132,42 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	return res, err
 }
 
+func BackfillPrintings(ctx context.Context, d Deps, refs []pricing.Ref, days int) (int, error) {
+	if len(refs) == 0 || !mtgjson.HavePriceHistory(d.CacheDir) {
+		return 0, nil
+	}
+	if days <= 0 || days > 90 {
+		days = 90
+	}
+	byCard, _, err := d.pricer().History(ctx, refs, days)
+	if err != nil {
+		return 0, err
+	}
+	retail := make(map[string][]mtgjson.Observation, len(byCard))
+	bids := make(map[string][]mtgjson.Observation, len(byCard))
+	for id, h := range byCard {
+		if len(h.Retail) > 0 {
+			retail[id] = h.Retail
+		}
+		if len(h.Bids) > 0 {
+			bids[id] = h.Bids
+		}
+	}
+	if days < 90 {
+		cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+		clipWindow(retail, cutoff)
+		clipWindow(bids, cutoff)
+	}
+	inserted, _, err := d.Store.BackfillPrices(retail)
+	if err != nil {
+		return inserted, err
+	}
+	if _, _, err := d.Store.BackfillBids(bids); err != nil {
+		return inserted, err
+	}
+	return inserted, nil
+}
+
 func clipWindow(byCard map[string][]mtgjson.Observation, cutoff string) {
 	for id, obs := range byCard {
 		kept := obs[:0]

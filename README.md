@@ -12,7 +12,7 @@
 
 A collection tracker for Magic: The Gathering on the command line.
 
-Your cards and decks live in a single SQLite file on your machine. The cards are priced daily from [MTGJSON](https://mtgjson.com/) and [TCGCSV](https://tcgcsv.com/).
+Data is stored as a single SQLite file on your machine. The cards are priced daily from [MTGJSON](https://mtgjson.com/) and [TCGCSV](https://tcgcsv.com/).
 
 Metadata and card information come from [Scryfall](https://scryfall.com/).
 

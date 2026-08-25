@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/spiffcs/hoard/internal/scryfall"
-	"github.com/spiffcs/hoard/internal/store"
 )
 
 type PrintSearcher interface {
@@ -25,21 +24,23 @@ type RepinResult struct {
 	Repinned int
 	Moved    int
 
+	Undocumented int
+
 	Missing []string
 }
 
-func RepinDeck(ctx context.Context, st *store.Store, prints PrintSearcher, deckRef, setCode string) (RepinResult, error) {
+func RepinDeck(ctx context.Context, d Deps, prints PrintSearcher, deckRef, setCode string) (RepinResult, error) {
 	var res RepinResult
 	setCode = strings.ToLower(strings.TrimSpace(setCode))
 	if setCode == "" {
 		return res, fmt.Errorf("say which set to re-pin to, like cma")
 	}
-	deck, err := st.DeckByRef(deckRef)
+	deck, err := d.Store.DeckByRef(deckRef)
 	if err != nil {
 		return res, err
 	}
 	res.DeckID, res.Deck, res.SetCode = deck.ID, deck.Name, setCode
-	entries, err := st.DeckEntries(deck.ID)
+	entries, err := d.Store.DeckEntries(deck.ID)
 	if err != nil {
 		return res, err
 	}
@@ -78,15 +79,42 @@ func RepinDeck(ctx context.Context, st *store.Store, prints PrintSearcher, deckR
 		return res, nil
 	}
 
-	if err := st.UpsertPrintings(targets); err != nil {
+	if err := d.Store.UpsertPrintings(targets); err != nil {
 		return res, err
 	}
-	moved, err := st.RepointDeckPrintings(deck.ID, mapping)
+	moved, err := d.Store.RepointDeckPrintings(deck.ID, mapping)
 	if err != nil {
 		return res, err
 	}
 	res.Repinned, res.Moved = len(mapping), moved
+	res.Undocumented = documentPrintings(ctx, d, targets)
 	return res, nil
+}
+
+func documentPrintings(ctx context.Context, d Deps, targets []scryfall.Card) int {
+	var need []string
+	for _, c := range targets {
+		if len(c.Raw) == 0 {
+			need = append(need, c.ID)
+		}
+	}
+	if len(need) == 0 {
+		return 0
+	}
+	found, _, _, err := RefreshCards(ctx, d, nil, need)
+	if err != nil {
+		return len(need)
+	}
+	var documented []scryfall.Card
+	for _, c := range found {
+		if len(c.Raw) > 0 {
+			documented = append(documented, c)
+		}
+	}
+	if err := d.Store.UpsertPrintings(documented); err != nil {
+		return len(need)
+	}
+	return len(need) - len(documented)
 }
 
 func lowestInSet(prints []scryfall.Card, setCode string) (scryfall.Card, bool) {
