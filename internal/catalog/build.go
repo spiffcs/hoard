@@ -18,6 +18,7 @@ import (
 	"github.com/spiffcs/hoard/internal/buildinfo"
 	"github.com/spiffcs/hoard/internal/cardname"
 	"github.com/spiffcs/hoard/internal/progress"
+	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
 var listingURL = "https://api.scryfall.com/bulk-data"
@@ -100,6 +101,9 @@ func fetchListing(ctx context.Context) (bundle, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, listingTimeout)
 	defer cancel()
+	if err := scryfall.Pace(ctx, listingURL); err != nil {
+		return zero, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listingURL, nil)
 	if err != nil {
 		return zero, err

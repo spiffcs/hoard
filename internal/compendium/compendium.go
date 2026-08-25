@@ -393,6 +393,9 @@ func listing(ctx context.Context, o Options) (bundle, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, listingTimeout)
 	defer cancel()
+	if err := scryfall.Pace(ctx, url); err != nil {
+		return zero, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return zero, err

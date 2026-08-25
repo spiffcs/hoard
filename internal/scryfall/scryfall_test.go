@@ -435,19 +435,25 @@ func TestRetryAfterHeader(t *testing.T) {
 	}
 	fallback := 30 * time.Second
 	for _, tc := range []struct {
-		header string
-		want   time.Duration
+		header         string
+		want           time.Duration
+		wantInstructed bool
 	}{
-		{"5", 5 * time.Second},
-		{" 12 ", 12 * time.Second},
-		{"", fallback},
-		{"not-a-number", fallback},
-		{"0", fallback},
+		{"5", 5 * time.Second, true},
+		{" 12 ", 12 * time.Second, true},
+		{"", fallback, false},
+		{"not-a-number", fallback, false},
+		{"0", fallback, false},
 
-		{"86400", 90 * time.Second},
+		{"86400", 90 * time.Second, true},
 	} {
-		if got := retryAfter(mk(tc.header), fallback); got != tc.want {
+		got, instructed := retryAfter(mk(tc.header), fallback)
+		if got != tc.want {
 			t.Errorf("retryAfter(%q) = %v, want %v", tc.header, got, tc.want)
+		}
+		if instructed != tc.wantInstructed {
+			t.Errorf("retryAfter(%q) reported instructed=%v, want %v",
+				tc.header, instructed, tc.wantInstructed)
 		}
 	}
 }

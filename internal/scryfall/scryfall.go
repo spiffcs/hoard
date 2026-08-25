@@ -118,6 +118,7 @@ func endpointClass(endpoint string) (string, time.Duration) {
 type pacer struct {
 	mu   sync.Mutex
 	next map[string]time.Time
+	all  time.Time
 }
 
 var apiPacer = pacer{next: map[string]time.Time{}}
@@ -126,16 +127,24 @@ func (p *pacer) wait(ctx context.Context, endpoint string) error {
 	class, gap := endpointClass(endpoint)
 	p.mu.Lock()
 	now := time.Now()
-	at := p.next[class]
-	if at.Before(now) {
-		at = now
+	at := now
+	if c := p.next[class]; c.After(at) {
+		at = c
+	}
+	if p.all.After(at) {
+		at = p.all
 	}
 	p.next[class] = at.Add(gap)
+	p.all = at.Add(defaultGap)
 	p.mu.Unlock()
 	if d := at.Sub(now); d > 0 {
 		return sleepCtx(ctx, d)
 	}
 	return nil
+}
+
+func Pace(ctx context.Context, endpoint string) error {
+	return apiPacer.wait(ctx, endpoint)
 }
 
 type apiResponse struct {
@@ -239,9 +248,15 @@ func FetchCollectionProgress(ctx context.Context, ids []Identifier,
 
 const rateLimitRetries = 3
 
-var transientPause = 2 * time.Second
+var (
+	transientPause = 2 * time.Second
+	rateLimitBase  = 5 * time.Second
+)
 
-type errRateLimited struct{ retryAfter time.Duration }
+type errRateLimited struct {
+	retryAfter time.Duration
+	instructed bool
+}
 
 func (e errRateLimited) Error() string {
 	return fmt.Sprintf("scryfall rate-limited the request (retry after %s)", e.retryAfter)
@@ -264,6 +279,9 @@ func fetchCollectionChunkRetrying(ctx context.Context, ids []Identifier,
 		switch {
 		case errors.As(err, &limited):
 			wait = limited.retryAfter
+			if !limited.instructed {
+				wait <<= attempt
+			}
 			reason = "rate limited"
 		case errors.As(err, &transient):
 			wait = transientPause * time.Duration(attempt+1)
@@ -296,14 +314,14 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func retryAfter(h http.Header, fallback time.Duration) time.Duration {
+func retryAfter(h http.Header, fallback time.Duration) (time.Duration, bool) {
 	const maxWait = 90 * time.Second
 	if v := h.Get("Retry-After"); v != "" {
 		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
-			return min(time.Duration(secs)*time.Second, maxWait)
+			return min(time.Duration(secs)*time.Second, maxWait), true
 		}
 	}
-	return fallback
+	return fallback, false
 }
 
 func fetchCollectionChunk(ctx context.Context, ids []Identifier) ([]Card, []Identifier, error) {
@@ -322,7 +340,8 @@ func fetchCollectionChunk(ctx context.Context, ids []Identifier) ([]Card, []Iden
 	}
 
 	if r.status == http.StatusTooManyRequests {
-		return nil, nil, errRateLimited{retryAfter: retryAfter(r.header, 60*time.Second)}
+		wait, instructed := retryAfter(r.header, rateLimitBase)
+		return nil, nil, errRateLimited{retryAfter: wait, instructed: instructed}
 	}
 	if r.status >= http.StatusInternalServerError {
 		return nil, nil, errTransient{statusErr(r, "collection")}
