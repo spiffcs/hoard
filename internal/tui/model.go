@@ -747,6 +747,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.leaveNow()
 		}
 
+		m.leaving = false
 		m.state = m.leaveFrom
 		if m.leaveFrom == stateName {
 			return m, textinput.Blink
@@ -2329,7 +2330,11 @@ func (m model) viewContent() string {
 		if n := len(m.review) + m.resolving; n > 0 {
 			prompt = fmt.Sprintf("quit add session? %d unsaved scans will be dropped", n)
 		}
-		return saved + "\n" + m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
+		out := saved + "\n" + m.theme.Err.Render(prompt) + m.theme.Help.Render("  y/n")
+		if m.leaving {
+			out += "\n" + m.theme.Help.Render(m.drainingStatus())
+		}
+		return out
 	case stateAbandonConfirm:
 		n := len(m.review) + m.resolving + 1
 		return m.theme.Err.Render(fmt.Sprintf(

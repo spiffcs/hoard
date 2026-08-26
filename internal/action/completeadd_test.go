@@ -34,8 +34,6 @@ func solDocumentCard() scryfall.Card {
 	}
 }
 
-// What the local bulk catalog hands the add session: identity and a price, but
-// no Scryfall document behind it.
 func solFromCatalog() scryfall.Card {
 	return scryfall.Card{
 		ID: "sol-id-1", Name: "Sol Ring", Set: "c21", CollectorNumber: "125",
@@ -77,7 +75,6 @@ func newAddFixture(t *testing.T, doc *scryfall.Card, docErr error) *addFixture {
 	return fx
 }
 
-// The add session's own write, before anything is completed.
 func (fx *addFixture) confirm(t *testing.T, c scryfall.Card, fin finish.Finish) {
 	t.Helper()
 	if err := fx.store.AddCardFinish(c, fin, 1); err != nil {

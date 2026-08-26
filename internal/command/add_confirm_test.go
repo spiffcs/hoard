@@ -39,7 +39,6 @@ func stubCardRoute(t *testing.T, card *scryfall.Card, err error) *int {
 	return calls
 }
 
-// The printing the local bulk catalog hands the add session: no document.
 func catalogSolRing() scryfall.Card {
 	return scryfall.Card{ID: "sol-id-1", Name: "Sol Ring", Set: "c21",
 		CollectorNumber: "125", Lang: "en", PriceUSD: fp(1.50),
