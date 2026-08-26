@@ -34,7 +34,7 @@ const listingTimeout = 10 * time.Second
 var knownRarities = []string{"common", "uncommon", "rare", "special", "mythic", "bonus"}
 
 var knownFormats = []string{
-	"alchemy", "brawl", "commander", "competitivebrawl", "duel", "future", "gladiator",
+	"aaa", "alchemy", "brawl", "commander", "competitivebrawl", "duel", "future", "gladiator",
 	"historic", "legacy", "modern", "oathbreaker", "oldschool", "pauper", "paupercommander",
 	"penny", "pioneer", "predh", "premodern", "standard", "standardbrawl", "timeless",
 	"tlr", "vintage",
@@ -52,6 +52,8 @@ type Options struct {
 	Rarities   []string
 	Legal      string
 	Before     string
+	Only       map[string][]string
+	Except     []string
 	PricedOnly bool
 	Days       int
 
@@ -247,6 +249,8 @@ func printing(c bulkCard, line []byte) store.CompendiumPrinting {
 
 type filter struct {
 	sets     map[string]bool
+	only     map[string]map[string]bool
+	except   map[string]bool
 	rarities map[string]bool
 	legal    string
 	since    int
@@ -256,7 +260,20 @@ type filter struct {
 
 func newFilter(o Options) (filter, error) {
 	f := filter{sets: lowered(o.Sets), since: o.Since,
-		before: strings.TrimSpace(o.Before), priced: o.PricedOnly}
+		before: strings.TrimSpace(o.Before), priced: o.PricedOnly,
+		except: lowered(o.Except)}
+
+	for set, names := range o.Only {
+		set = strings.ToLower(strings.TrimSpace(set))
+		allowed := lowered(names)
+		if set == "" || len(allowed) == 0 {
+			continue
+		}
+		if f.only == nil {
+			f.only = map[string]map[string]bool{}
+		}
+		f.only[set] = allowed
+	}
 
 	for _, r := range o.Rarities {
 		r = strings.ToLower(strings.TrimSpace(r))
@@ -287,7 +304,13 @@ func (f filter) keep(c bulkCard) bool {
 	if c.ID == "" || !hasGame(c.Games, "paper") || len(c.Finishes) == 0 {
 		return false
 	}
-	if len(f.sets) > 0 && !f.sets[strings.ToLower(c.Set)] {
+	if len(f.sets) > 0 || len(f.only) > 0 {
+		set := strings.ToLower(c.Set)
+		if !f.sets[set] && !f.only[set][strings.ToLower(strings.TrimSpace(c.Name))] {
+			return false
+		}
+	}
+	if f.except[strings.ToLower(strings.TrimSpace(c.Name))] {
 		return false
 	}
 	if len(f.rarities) > 0 && !f.rarities[strings.ToLower(strings.TrimSpace(c.Rarity))] {

@@ -22,6 +22,9 @@ func TestFormatSuppliesLegalityAndNothingElse(t *testing.T) {
 
 func TestNoFormatPinsSetsWithoutTheEraFlag(t *testing.T) {
 	for _, name := range knownFormats {
+		if formatEras[name].eraOnly {
+			continue
+		}
 		o, err := ApplyFormat(Options{}, name, false)
 		if err != nil {
 			t.Errorf("ApplyFormat(%q): %v", name, err)
@@ -32,6 +35,34 @@ func TestNoFormatPinsSetsWithoutTheEraFlag(t *testing.T) {
 		}
 		if len(o.Sets) != 0 {
 			t.Errorf("--format %s should filter on legality alone, got sets %v", name, o.Sets)
+		}
+	}
+}
+
+func TestEveryEraOnlyFormatIsRefusedWithoutTheEraFlag(t *testing.T) {
+	for name, e := range formatEras {
+		if !e.eraOnly {
+			continue
+		}
+		if !slices.Contains(knownFormats, name) {
+			t.Errorf("%q has an era but is not a format anyone can name", name)
+		}
+		if _, err := ApplyFormat(Options{}, name, false); err == nil {
+			t.Errorf("--format %s alone must be refused: Scryfall records no legality "+
+				"for it, so the build would filter on nothing at all", name)
+		}
+		o, err := ApplyFormat(Options{}, name, true)
+		if err != nil {
+			t.Errorf("ApplyFormat(%q, era): %v", name, err)
+			continue
+		}
+		if o.Legal != "" {
+			t.Errorf("--format %s --era gave Legal = %q, want empty; there is no "+
+				"legality key to filter on", name, o.Legal)
+		}
+		if len(o.Sets) == 0 && o.Before == "" {
+			t.Errorf("--format %s --era bounds nothing, so it would build every paper "+
+				"printing", name)
 		}
 	}
 }

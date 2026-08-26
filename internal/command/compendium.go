@@ -43,13 +43,14 @@ func NewCmdCompendium(a *app) *cobra.Command {
 			"means. Scryfall records legality per card rather than\n" +
 			"per printing, so --format keeps every printing of every\n" +
 			"legal card, later reprints included. Add --era to narrow\n" +
-			"a format to its own era instead; premodern and predh\n" +
-			"have one.\n\n" +
+			"a format to its own era instead; premodern, predh and\n" +
+			"aaa have one, and aaa needs it.\n\n" +
 			"Pass at least one filter. Without one this builds every\n" +
 			"paper printing, which is many gigabytes; --all says you\n" +
 			"mean it.",
 		Example: "hoard compendium --format premodern premodern.db\n" +
 			"hoard compendium --format premodern --era premodern-era.db\n" +
+			"hoard compendium --format aaa --era ebon-ante.db\n" +
 			"hoard compendium --rarity mythic,rare --since 2020 m.db",
 
 		Args: func(_ *cobra.Command, args []string) error {
