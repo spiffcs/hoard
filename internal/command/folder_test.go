@@ -18,10 +18,13 @@ func folderCmdStore(t *testing.T) *store.Store {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.UpsertPrintings([]scryfall.Card{{
+	sol := scryfall.Card{
 		ID: "sol-id", Set: "c21", CollectorNumber: "1", Name: "Sol Ring",
 		PriceUSD: ptr(2.00), ScryfallURL: "https://scryfall.com/card/c21/1",
-	}}); err != nil {
+		Finishes: []string{"nonfoil", "foil"},
+	}
+	stubFetch(t, sol)
+	if err := st.UpsertPrintings([]scryfall.Card{sol}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	if _, err := st.UpsertDeck(
@@ -153,10 +156,13 @@ func importedDeckStore(t *testing.T) (*store.Store, string) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.UpsertPrintings([]scryfall.Card{{
+	sol := scryfall.Card{
 		ID: "sol-id", Set: "c21", CollectorNumber: "1", Name: "Sol Ring",
 		PriceUSD: ptr(2.00), ScryfallURL: "https://scryfall.com/card/c21/1",
-	}}); err != nil {
+		Finishes: []string{"nonfoil", "foil"},
+	}
+	stubFetch(t, sol)
+	if err := st.UpsertPrintings([]scryfall.Card{sol}); err != nil {
 		t.Fatalf("UpsertPrintings: %v", err)
 	}
 	path := deckFile(t, "deck.txt", "1 Sol Ring\n")

@@ -82,8 +82,19 @@ func TestResolvableUsesStoredIDsWithoutFetching(t *testing.T) {
 	if err := s.SaveCardKingdomLinks(map[string]store.CKLinks{"ripple-id": {}}); err != nil {
 		t.Fatalf("SaveCardKingdomLinks: %v", err)
 	}
+	if err := s.SaveTCGAltProducts(map[string]string{"ripple-id": ""}, nil); err != nil {
+		t.Fatalf("SaveTCGAltProducts: %v", err)
+	}
+	if err := s.SaveVendorProductIDs(map[string]store.VendorProductIDs{"ripple-id": {}}); err != nil {
+		t.Fatalf("SaveVendorProductIDs: %v", err)
+	}
 
-	f := New(s, filepath.Join(t.TempDir(), "nope"))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("fetched %s despite every id already being stored", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	f := New(s, filepath.Join(t.TempDir(), "nope")).WithBaseURL(srv.URL)
 	refs := []Ref{{ScryfallID: "ripple-id", SetCode: "m3c", MTGJSONUUID: "known-uuid"}}
 	uuids, err := f.resolve(context.Background(), refs)
 	if err != nil {
