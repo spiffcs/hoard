@@ -130,8 +130,10 @@ func addByURL(ctx context.Context, st *store.Store, env *cli.Env, url string, fo
 	return nil
 }
 
+var priceCacheDir = pricing.DefaultCacheDir
+
 func addDeps(st *store.Store) action.Deps {
-	return action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver}
+	return action.Deps{Store: st, CacheDir: priceCacheDir(), Resolver: cardResolver}
 }
 
 func addFromList(ctx context.Context, st *store.Store, env *cli.Env, path, binderRef string, again bool) error {
@@ -172,36 +174,44 @@ func addList(ctx context.Context, st *store.Store, env *cli.Env, data []byte, di
 }
 
 func storeAdder(st *store.Store) tui.Adder {
+	return func(res tui.Result) error { return recordAdd(st, res) }
+}
+
+func storeCompleter(ctx context.Context, st *store.Store) tui.Completer {
 	return func(res tui.Result) error {
-
-		if res.ReplacesFinish != (finish.Finish{}) && res.ReplacesFinish != res.Finish {
-
-			if res.ContainerID != 0 {
-
-				_, err := st.MoveEntryFinish(store.EntryRef{
-					ContainerID: res.ContainerID, ScryfallID: res.Card.ID,
-					Finish: res.ReplacesFinish, Condition: store.ConditionUnknown,
-					Board: store.BoardMain}, res.Finish)
-				return err
-			}
-			_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)
-			return err
-		}
-		add := func() error {
-			if res.ContainerID != 0 {
-				return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
-			}
-			return st.AddCardFinish(res.Card, res.Finish, res.Qty)
-		}
-		if err := add(); err != nil {
-			return err
-		}
-
-		if res.FinishGuessed {
-			return st.RecordFinishGuess(res.ContainerID, res.Card.ID, res.Finish)
-		}
-		return nil
+		return action.CompleteAdd(ctx, addDeps(st), res.Card, res.Finish)
 	}
+}
+
+func recordAdd(st *store.Store, res tui.Result) error {
+
+	if res.ReplacesFinish != (finish.Finish{}) && res.ReplacesFinish != res.Finish {
+
+		if res.ContainerID != 0 {
+
+			_, err := st.MoveEntryFinish(store.EntryRef{
+				ContainerID: res.ContainerID, ScryfallID: res.Card.ID,
+				Finish: res.ReplacesFinish, Condition: store.ConditionUnknown,
+				Board: store.BoardMain}, res.Finish)
+			return err
+		}
+		_, err := st.MoveCardFinish(res.Card.ID, res.ReplacesFinish, res.Finish)
+		return err
+	}
+	add := func() error {
+		if res.ContainerID != 0 {
+			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+		}
+		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
+	}
+	if err := add(); err != nil {
+		return err
+	}
+
+	if res.FinishGuessed {
+		return st.RecordFinishGuess(res.ContainerID, res.Card.ID, res.Finish)
+	}
+	return nil
 }
 
 func addByName(ctx context.Context, st *store.Store, name string) error {
@@ -218,7 +228,8 @@ func addByName(ctx context.Context, st *store.Store, name string) error {
 	if cat != nil {
 		defer cat.Close()
 	}
-	sum, err := tui.Run(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, name, dests)
+	sum, err := tui.Run(ctx, newSearcher(cat), storeAdder(st), linkScanner{}, name, dests,
+		tui.WithCompleter(storeCompleter(ctx, st)))
 	if err != nil {
 		return err
 	}
@@ -250,6 +261,16 @@ func printScanSummary(sum tui.Summary) {
 		line += fmt.Sprintf(", %d unreadable", sum.Ignored)
 	}
 	r.Result("%s", line)
+
+	var incomplete []string
+	for _, e := range sum.Entries {
+		if e.Kind == "incomplete" {
+			incomplete = append(incomplete, e.Line)
+		}
+	}
+	if note := incompleteAddsLine(incomplete); note != "" {
+		r.Detail("%s", note)
+	}
 
 	for _, e := range sum.Entries {
 		switch e.Kind {
@@ -284,4 +305,12 @@ func destinations(st *store.Store) ([]tui.Destination, error) {
 		out = append(out, tui.Destination{ID: d.ID, Name: d.Name, Kind: "deck"})
 	}
 	return out, nil
+}
+
+func incompleteAddsLine(cards []string) string {
+	if len(cards) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s stored but not filled in: %s. Run hoard update-prices to finish them off.",
+		ui.Plural(len(cards), "card", "cards"), strings.Join(cards, ", "))
 }

@@ -138,6 +138,11 @@ type model struct {
 	adder    Adder
 	scanner  Scanner
 
+	completer  Completer
+	completing int
+
+	leaving bool
+
 	theme ui.Theme
 
 	state state
@@ -253,7 +258,8 @@ type model struct {
 	err        error
 }
 
-func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) model {
+func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string,
+	dests []Destination, opts ...Option) model {
 	ni := textinput.New()
 	ni.Placeholder = "Card name, e.g. Ulamog, the Infinite Gyre"
 	ni.Focus()
@@ -309,6 +315,9 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		m.state = stateLoading
 	} else {
 		m.state = stateName
+	}
+	for _, opt := range opts {
+		opt(&m)
 	}
 	return m
 }
@@ -420,9 +429,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 
-			m.done = true
-			m.closeSession()
-			return m, tea.Quit
+			return m, m.leaveNow()
 		}
 		return m.handleKey(msg)
 
@@ -442,6 +449,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionEventMsg:
 		return m.onSessionEvent(msg)
+
+	case completedMsg:
+		return m.onCompleted(msg)
 
 	case resolveDoneMsg:
 		return settleAfterResolve(m.onResolveDone(msg))
@@ -734,9 +744,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startReview(*m.current)
 	case stateLeaveConfirm:
 		if msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "y") {
-			m.done = true
-			m.closeSession()
-			return m, tea.Quit
+			return m, m.leaveNow()
 		}
 
 		m.state = m.leaveFrom
@@ -1327,6 +1335,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 			next, cmd := m.reviewChanged()
 			return next, tea.Batch(cmd, nudge)
 		}
+		complete := m.dispatchCompletion(res)
 
 		chosen := ""
 		if read := it.raw.SetCode; read != "" && !strings.EqualFold(read, card.Set) {
@@ -1367,7 +1376,7 @@ func (m model) onResolveDone(msg resolveDoneMsg) (tea.Model, tea.Cmd) {
 		m.recordTally(line)
 		m.summary.add("auto", line)
 
-		return m, m.scheduleNudge()
+		return m, tea.Batch(m.scheduleNudge(), complete)
 	}
 
 	if !it.dup && !replacedQueued && it.canonical != "" {
@@ -1508,6 +1517,7 @@ func (m model) suppressRepeat(it queueItem, fin finish.Finish, prior recentCommi
 				m.note("outcome %q dropped: %s (fin correction failed: %v)",
 					it.canonical, why, err)
 			} else {
+				correction := m.dispatchCompletion(res)
 				m.note("outcome %q corrected: %s/%s %s → %s, %s", it.canonical,
 					strings.ToUpper(card.Set), card.CollectorNumber,
 					prior.finish, fin, why)
@@ -1520,7 +1530,7 @@ func (m model) suppressRepeat(it queueItem, fin finish.Finish, prior recentCommi
 				m.summary.add("auto", line)
 				m.status = fmt.Sprintf("Corrected %s to %s", it.canonical, fin)
 				m.statusErr = false
-				return m, m.scheduleNudge()
+				return m, tea.Batch(m.scheduleNudge(), correction)
 			}
 		}
 	}
@@ -1573,6 +1583,7 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 		next, cmd := m.reviewChanged()
 		return next, cmd
 	}
+	complete := m.dispatchCompletion(res)
 	m.note("outcome %q committed: %s/%s %s (promoted by hand)", card.Name,
 		strings.ToUpper(card.Set), card.CollectorNumber, p.finish)
 
@@ -1590,7 +1601,7 @@ func (m model) promotePending() (tea.Model, tea.Cmd) {
 	m.summary.add("duplicate-confirmed", line)
 	m.status = "✓ Added a second copy of " + card.Name
 	m.statusErr = false
-	return m, nil
+	return m, complete
 }
 
 func (m model) chime() {
@@ -1865,6 +1876,7 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 	if err := m.adder(res); err != nil {
 		return m.failToName(err.Error())
 	}
+	complete := m.dispatchCompletion(res)
 	m.addedCount++
 	m.addedValue += float64(res.Qty) * priceValue(res.Card, res.Finish)
 	if m.reviewing() {
@@ -1896,7 +1908,8 @@ func (m model) confirmAdd() (tea.Model, tea.Cmd) {
 			res.Qty, res.Card.Name, strings.ToUpper(res.Card.Set),
 			res.Card.CollectorNumber, res.Finish))
 	}
-	return m.afterCard()
+	next, cmd := m.afterCard()
+	return next, tea.Batch(cmd, complete)
 }
 
 func (m model) cancelToName() (tea.Model, tea.Cmd) {
@@ -2422,4 +2435,55 @@ func priceStr(p *float64) string {
 		return "—"
 	}
 	return strconv.FormatFloat(*p, 'f', 2, 64)
+}
+
+type completedMsg struct {
+	card scryfall.Card
+	err  error
+}
+
+func (m *model) dispatchCompletion(res Result) tea.Cmd {
+	if m.completer == nil {
+		return nil
+	}
+	complete := m.completer
+	m.completing++
+	return func() tea.Msg {
+		return completedMsg{card: res.Card, err: complete(res)}
+	}
+}
+
+func (m model) onCompleted(msg completedMsg) (tea.Model, tea.Cmd) {
+	if m.completing > 0 {
+		m.completing--
+	}
+	if msg.err != nil {
+		m.summary.add("incomplete", fmt.Sprintf("%s (%s/%s) · %v", msg.card.Name,
+			strings.ToUpper(msg.card.Set), msg.card.CollectorNumber, msg.err))
+		m.note("completion for %q failed: %v", msg.card.Name, msg.err)
+	}
+	if m.leaving && m.completing == 0 {
+		m.done = true
+		return m, tea.Quit
+	}
+	if m.leaving {
+		m.status = m.drainingStatus()
+	}
+	return m, nil
+}
+
+func (m model) drainingStatus() string {
+	return fmt.Sprintf("Finishing %s · ctrl-c leaves without waiting",
+		ui.Plural(m.completing, "card", "cards"))
+}
+
+func (m *model) leaveNow() tea.Cmd {
+	m.closeSession()
+	if m.completing > 0 && !m.leaving {
+		m.leaving = true
+		m.status, m.statusErr = m.drainingStatus(), false
+		return nil
+	}
+	m.done = true
+	return tea.Quit
 }

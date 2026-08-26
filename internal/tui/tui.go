@@ -67,6 +67,14 @@ type Result struct {
 
 type Adder func(Result) error
 
+type Completer func(Result) error
+
+type Option func(*model)
+
+func WithCompleter(c Completer) Option {
+	return func(m *model) { m.completer = c }
+}
+
 type SummaryEntry struct {
 	Kind string
 	Line string
@@ -92,8 +100,9 @@ func (s *Summary) add(kind, line string) {
 	s.Entries = append(s.Entries, SummaryEntry{Kind: kind, Line: line})
 }
 
-func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string, dests []Destination) (Summary, error) {
-	m := newModel(ctx, s, add, sc, initialName, dests)
+func Run(ctx context.Context, s Searcher, add Adder, sc Scanner, initialName string,
+	dests []Destination, opts ...Option) (Summary, error) {
+	m := newModel(ctx, s, add, sc, initialName, dests, opts...)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 

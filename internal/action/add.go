@@ -103,6 +103,9 @@ func AddList(ctx context.Context, d Deps, p progress.Fn, o AddListOptions) (AddL
 		if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
 			return res, err
 		}
+		if _, err := d.Store.RecordPrices(); err != nil {
+			return res, err
+		}
 	}
 	if n := len(res.Skipped) + len(res.Unresolved); n > 0 {
 		return res, fmt.Errorf("%s skipped: %w", ui.Plural(n, "line was", "lines were"), ErrPartial)
@@ -126,7 +129,7 @@ type AddCardByURLResult struct {
 
 func AddCardByURL(ctx context.Context, d Deps, p progress.Fn, o AddCardByURLOptions) (AddCardByURLResult, error) {
 	var res AddCardByURLResult
-	set, number, err := scryfall.ParseCardURL(o.URL)
+	set, number, lang, err := scryfall.ParseCardURL(o.URL)
 	if err != nil {
 		return res, err
 	}
@@ -137,7 +140,7 @@ func AddCardByURL(ctx context.Context, d Deps, p progress.Fn, o AddCardByURLOpti
 	res.Binder = targetName
 
 	p.Emit(progress.Event{Step: "fetching card"})
-	card, err := scryfall.FetchCard(ctx, set, number)
+	card, err := d.Resolver.FetchCard(ctx, set, number, lang)
 	if err != nil {
 		return res, err
 	}
@@ -149,7 +152,7 @@ func AddCardByURL(ctx context.Context, d Deps, p progress.Fn, o AddCardByURLOpti
 	if err := d.Store.AddCardFinishTo(target, *card, res.Finish, o.Qty); err != nil {
 		return res, err
 	}
-	return res, nil
+	return res, CompleteAdd(ctx, d, *card, res.Finish)
 }
 
 type DeckAddOptions struct {
@@ -234,6 +237,9 @@ func DeckAdd(ctx context.Context, d Deps, p progress.Fn, deck *decksource.Deck, 
 	}
 
 	if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
+		return res, err
+	}
+	if _, err := d.Store.RecordPrices(); err != nil {
 		return res, err
 	}
 

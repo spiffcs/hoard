@@ -43,6 +43,15 @@ type Result struct {
 
 type Resolver struct {
 	Fetch func(context.Context, []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error)
+
+	Card func(ctx context.Context, set, number, lang string) (*scryfall.Card, error)
+}
+
+func (r *Resolver) FetchCard(ctx context.Context, set, number, lang string) (*scryfall.Card, error) {
+	if r != nil && r.Card != nil {
+		return r.Card(ctx, set, number, lang)
+	}
+	return scryfall.FetchCardLang(ctx, set, number, lang)
 }
 
 func (r *Resolver) fetch(ctx context.Context, ids []scryfall.Identifier) ([]scryfall.Card, []scryfall.Identifier, error) {

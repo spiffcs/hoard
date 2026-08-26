@@ -198,6 +198,9 @@ func ImportCollection(ctx context.Context, d Deps, p progress.Fn, o ImportOption
 	if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
 		return res, err
 	}
+	if _, err := d.Store.RecordPrices(); err != nil {
+		return res, err
+	}
 	if n := len(res.Unresolved); n > 0 {
 		return res, fmt.Errorf("%d rows were skipped: %w", n, ErrPartial)
 	}

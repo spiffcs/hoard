@@ -159,8 +159,7 @@ func (m model) finishAdding() (tea.Model, tea.Cmd) {
 	if dropped > 0 {
 		m.summary.add("discarded", fmt.Sprintf("%d scanned cards discarded unprocessed", dropped))
 	}
-	m.done = true
-	return m, tea.Quit
+	return m, m.leaveNow()
 }
 
 func (m model) addPaletteView() string {

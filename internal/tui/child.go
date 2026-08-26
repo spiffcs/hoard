@@ -12,8 +12,8 @@ type Child struct {
 }
 
 func NewChild(ctx context.Context, s Searcher, add Adder, sc Scanner,
-	initialName string, dests []Destination) Child {
-	m := newModel(ctx, s, add, sc, initialName, dests)
+	initialName string, dests []Destination, opts ...Option) Child {
+	m := newModel(ctx, s, add, sc, initialName, dests, opts...)
 	m.embedded = true
 	return Child{m: m}
 }

@@ -17,8 +17,36 @@ func TestParseCardURL(t *testing.T) {
 		raw        string
 		wantSet    string
 		wantNumber string
+		wantLang   string
 		wantErr    bool
 	}{
+		{
+			name:       "language segment before the slug",
+			raw:        "https://scryfall.com/card/war/162/ja/nicol-bolas-dragon-god",
+			wantSet:    "war",
+			wantNumber: "162",
+			wantLang:   "ja",
+		},
+		{
+			name:       "language segment without a slug",
+			raw:        "https://scryfall.com/card/war/162/ja",
+			wantSet:    "war",
+			wantNumber: "162",
+			wantLang:   "ja",
+		},
+		{
+			name:       "three letter language code",
+			raw:        "https://scryfall.com/card/war/162/zhs/nicol-bolas",
+			wantSet:    "war",
+			wantNumber: "162",
+			wantLang:   "zhs",
+		},
+		{
+			name:       "a slug is not a language",
+			raw:        "https://scryfall.com/card/war/162/nicol-bolas-dragon-god",
+			wantSet:    "war",
+			wantNumber: "162",
+		},
 		{
 			name:       "canonical with slug",
 			raw:        "https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre",
@@ -68,12 +96,15 @@ func TestParseCardURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			set, number, err := ParseCardURL(tt.raw)
+			set, number, lang, err := ParseCardURL(tt.raw)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got set=%q number=%q", set, number)
 				}
 				return
+			}
+			if lang != tt.wantLang {
+				t.Errorf("lang = %q, want %q", lang, tt.wantLang)
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

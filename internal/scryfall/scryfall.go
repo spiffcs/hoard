@@ -47,24 +47,35 @@ type Card struct {
 	Raw json.RawMessage
 }
 
-func ParseCardURL(raw string) (set, number string, err error) {
+var cardLangs = map[string]bool{
+	"en": true, "es": true, "fr": true, "de": true, "it": true, "pt": true,
+	"ja": true, "ko": true, "ru": true, "zhs": true, "zht": true, "he": true,
+	"la": true, "grc": true, "ar": true, "sa": true, "ph": true, "qya": true,
+}
+
+func ParseCardURL(raw string) (set, number, lang string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", "", fmt.Errorf("invalid URL %q: %w", raw, err)
+		return "", "", "", fmt.Errorf("invalid URL %q: %w", raw, err)
 	}
 	if u.Host != "scryfall.com" && u.Host != "www.scryfall.com" {
-		return "", "", fmt.Errorf("not a scryfall.com URL: %q", raw)
+		return "", "", "", fmt.Errorf("not a scryfall.com URL: %q", raw)
 	}
 
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 3 || parts[0] != "card" {
-		return "", "", fmt.Errorf("unexpected Scryfall URL path %q; expected a /card/{set}/{number}/ prefix", u.Path)
+		return "", "", "", fmt.Errorf("unexpected Scryfall URL path %q; expected a /card/{set}/{number}/ prefix", u.Path)
 	}
 	set, number = parts[1], parts[2]
 	if set == "" || number == "" {
-		return "", "", fmt.Errorf("could not extract set and collector number from %q", raw)
+		return "", "", "", fmt.Errorf("could not extract set and collector number from %q", raw)
 	}
-	return set, number, nil
+	if len(parts) > 3 {
+		if code := strings.ToLower(parts[3]); cardLangs[code] {
+			lang = code
+		}
+	}
+	return set, number, lang, nil
 }
 
 type apiCard struct {
@@ -194,8 +205,16 @@ func statusErr(r apiResponse, what string) error {
 }
 
 func FetchCard(ctx context.Context, set, number string) (*Card, error) {
+	return FetchCardLang(ctx, set, number, "")
+}
+
+func FetchCardLang(ctx context.Context, set, number, lang string) (*Card, error) {
 	endpoint := fmt.Sprintf("%s/cards/%s/%s", apiBase, url.PathEscape(set), url.PathEscape(number))
 	what := fmt.Sprintf("card %s/%s", set, number)
+	if lang != "" && !strings.EqualFold(lang, "en") {
+		endpoint += "/" + url.PathEscape(strings.ToLower(lang))
+		what += " in " + strings.ToLower(lang)
+	}
 	r, err := apiDo(ctx, http.MethodGet, endpoint, nil, what)
 	if err != nil {
 		return nil, err

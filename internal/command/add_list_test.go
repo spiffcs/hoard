@@ -86,6 +86,8 @@ func mustBinder(t *testing.T, st *store.Store, name string) int64 {
 
 func TestStoreAdderKeepsTheGuessAudit(t *testing.T) {
 	st := exportStore(t)
+	stubPriceCache(t)
+	stubCardRoute(t, nil, errors.New("offline"))
 	add := storeAdder(st)
 	card := scryfall.Card{ID: "brainsurge-id", Set: "mh3", CollectorNumber: "399",
 		Name: "Brainsurge", ScryfallURL: "http://x"}
