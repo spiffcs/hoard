@@ -6,12 +6,12 @@ The per-release notes on the [releases page](https://github.com/spiffcs/hoard/re
 are the canonical record and carry the full commit list plus the signature
 verification block. This file is the readable history.
 
-The root `CHANGELOG.md` is a build artifact — `task changelog` regenerates it
+The root `CHANGELOG.md` is a build artifact: `task changelog` regenerates it
 for goreleaser on every release and it is gitignored. This is the tracked one.
 
-## v0.3.0 — 2026-08-25
+## v0.3.0 (2026-08-25)
 
-Databases carry over untouched — the schema is still v33, so there is no
+Databases carry over untouched: the schema is still v33, so there is no
 migration and no backup on first launch. `--json` documents move to schema
 1.1.4, which adds the container id to holdings rows.
 
@@ -19,8 +19,8 @@ migration and no backup on first launch. `--json` documents move to schema
 
 * `hoard compendium --legal` is removed fully. Use `--format`, which took the same
   format names. Scryfall records legality per card rather than per printing, so
-  `--format` now keeps every printing of a legal card, later reprints included —
-  those are legal to play and are frequently the cheapest copy. Pass `--era` for
+  `--format` now keeps every printing of a legal card, later reprints included,
+  since those are legal to play and are frequently the cheapest copy. Pass `--era` for
   the period-correct set list instead.
 
 ### Added
@@ -69,7 +69,7 @@ migration and no backup on first launch. `--json` documents move to schema
 ### Fixed
 
 * Browse: a sort tie breaks on the printing rather than only the name.
-* Browse: the card detail refreshes when a set view resets — the printing's
+* Browse: the card detail refreshes when a set view resets: the printing's
   document is refetched and a thin price history is backfilled rather than the
   previous card's detail being left on screen.
 * Deck list imports keep their sideboard rows.
@@ -78,7 +78,7 @@ migration and no backup on first launch. `--json` documents move to schema
   Scryfall asks.
 * `hoard report` names a price stamp's own day.
 
-## v0.2.0 — 2026-08-23
+## v0.2.0 (2026-08-23)
 
 Databases upgrade from schema v30 to v33 on first launch; the old file is backed
 up beside it before migrating.
@@ -87,7 +87,7 @@ up beside it before migrating.
 
 * Dip & Momentum joins the view cycle (`v`): printings sitting at the floor of
   their recent range, and printings climbing without a down day.
-* Deck folders — group decks one level deep, nested in the sidebar with copies
+* Deck folders: group decks one level deep, nested in the sidebar with copies
   and value rolled up. `hoard folder new|list|rename|rm` and `hoard deck move`.
 * Fold a folder away with `space`; the sidebar remembers what you folded between
   launches.
@@ -118,7 +118,7 @@ up beside it before migrating.
 * Finishes are a compiler-checked type and constrained in the schema with
   `CHECK`, so an unknown finish cannot reach the database from any path.
 
-## v0.1.1 — 2026-08-13
+## v0.1.1 (2026-08-13)
 
 ### Fixed
 
@@ -129,7 +129,7 @@ up beside it before migrating.
 
 * gosec and CodeQL added to CI.
 
-## v0.1.0 — 2026-08-13
+## v0.1.0 (2026-08-13)
 
 The first release. Roughly 190 changes went into it; the
 [release notes](https://github.com/spiffcs/hoard/releases/tag/v0.1.0) carry the

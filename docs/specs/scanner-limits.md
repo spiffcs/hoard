@@ -1,7 +1,7 @@
 # What the scanner can and cannot read
 
-The honest source for any accuracy claim — App Store copy, README, release
-notes. Every number below was measured on the date given, with the command
+The honest source for any accuracy claim, whether App Store copy, README or
+release notes. Every number below was measured on the date given, with the command
 given, against a labelled corpus that is in this repo. Where a limit is a
 claim nobody has measured, it says so and is marked unverified. Nothing here
 is quoted from another document; the leads came from `docs/specs/scanner-tuning.md`
@@ -26,12 +26,12 @@ and it never claims a finish it did not see printed.
 Three things it genuinely cannot do, all confirmed by measurement today:
 
 1. **Foreign-language cards do not resolve.** Two independent walls, either
-   of which alone is fatal — see §3.
+   of which alone is fatal. See §3.
 2. **Planes and other oversized cards are read wrong, not refused.** 0 of 8
    in the corpus, and each one emitted a card entry carrying a fragment of its
-   rules text as the title — see §4.
+   rules text as the title. See §4.
 3. **Foil is detected between 23% and 69% of the time depending on the
-   capture rig**, and every miss silently records the card as nonfoil — see
+   capture rig**, and every miss silently records the card as nonfoil. See
    §6. This is the largest single source of quiet error in the product.
 
 The compensating property, and it is a real one: **when the scanner speaks it
@@ -51,7 +51,7 @@ easiest way to publish a number that is not true.
 | --- | --- | --- | --- |
 | corpus | `./bin/cardkit-probe --score scan/corpus/manifest.tsv` | 231 clean digital scans, stratified by frame era × border | trigger, glare, focus, perspective, the camera |
 | foil | `python3 scan/foil-corpus/eval-finish.py` | 50 clean captures + 74 real hand-held stills from two live sessions | everything outside the sparkle marker |
-| fixtures | `./scan/fixtures/sweep.sh` | 28 real photographs, diffed against goldens | accuracy — it pins *decisions*, not correctness |
+| fixtures | `./scan/fixtures/sweep.sh` | 28 real photographs, diffed against goldens | accuracy: it pins *decisions*, not correctness |
 
 The corpus caveat is the important one and `scan/corpus/README.md` states it
 plainly: these are clean digital scans, so the card fills the frame and the
@@ -103,7 +103,7 @@ non-English printings scored apart. Median read 115 ms.
 Two rows differ sharply from the 2026-08-03 baseline recorded in
 `scan/corpus/README.md` (which was 135 images at 8 per stratum, against
 today's 231): **2015+ gold has gone 62% → 0%** and borderless 14% → 50%. The
-gold collapse is not a regression — that stratum is now entirely planar-layout
+gold collapse is not a regression: that stratum is now entirely planar-layout
 cards (§4). Treat the README table as historical and this one as current.
 
 Border reader, same run: **asked 216, answered 53 (24%), correct 48/53 (90%).**
@@ -117,7 +117,7 @@ five cards in six, and never wrong on this corpus.
 
 ---
 
-## 3. Foreign-language cards — confirmed, with the mechanism refined
+## 3. Foreign-language cards: confirmed, with the mechanism refined
 
 The claim in `docs/app-store-release.md` is true. It is also more interesting
 than "OCR fails", because on Latin-script cards **the OCR succeeds**. I probed
@@ -137,23 +137,23 @@ zhs  Forest                -> © 1997 Wizards of the Coast, Inc. All Rights rese
 
 There are two independent walls, and either one alone is fatal.
 
-**Wall 1 — the recognizer is English-only, unconditionally.**
+**Wall 1: the recognizer is English-only, unconditionally.**
 `scan/hoard-scan/Sources/CardKit/Read.swift:486` sets
 `request.recognitionLanguages = [Locale.Language(identifier: "en-US")]` on
 every OCR call in the package; there is no locale plumb-through and no
 `customWords` anywhere in `Sources/`. Latin-script languages survive this
-because the glyphs are shared — Spanish, French and Italian names read
+because the glyphs are shared: Spanish, French and Italian names read
 essentially perfectly above. **Japanese and Chinese do not read at all**: one
 returned nothing, one returned `MY DAD`, and the Chinese Forest returned the
 copyright line as its title.
 
-**Wall 2 — the catalog is keyed on English names and holds no others.** The
+**Wall 2: the catalog is keyed on English names and holds no others.** The
 bulk ingest is `default_cards` (`internal/catalog/build.go:33`, with the
 reason stated at `:29-32`: "all_cards would add every language for no gain").
 The fuzzy index is built from `bc.Name` alone (`:435`, `:448`). The
 `bulkCard` struct has no `printed_name` field, and a repo-wide grep for
 `flavor_name`/`FlavorName` in Go returns **zero hits**. So `Miniera a Cielo
-Aperto` — a perfect read — matches nothing, and cannot: the string is not in
+Aperto`, a perfect read, matches nothing, and cannot: the string is not in
 the database.
 
 Applying the corpus scorer's own lenient test to those 17 reads, **3 pass, and
@@ -168,7 +168,7 @@ a two-letter language code, read as a closed-vocabulary token
 `Wire.swift:185-193`), which the Go side can combine with set + number via
 `PrintBySetNumberLang` (`internal/catalog/searcher.go:116-156`). That path
 needs a modern frame, a legible set row, and a legible number. **Every one of
-the 17 foreign printings in the corpus returned an empty language code** —
+the 17 foreign printings in the corpus returned an empty language code**:
 they are all pre-M15 frames, which print no set row at all. Note also that a
 foreign printing of a card that *also* has an English printing is not a
 separate catalog row, so it can only ever be recorded as the English printing.
@@ -180,7 +180,7 @@ separate catalog row, so it can only ever be recorded as the English printing.
 Confirmed, and worse than the claim: **they are not refused, they are read
 wrong.**
 
-The 2015+ gold stratum turned out to be eight planar-layout cards — `punk`
+The 2015+ gold stratum turned out to be eight planar-layout cards: `punk`
 (Black Lotus Unknown Planechase) and `pssc` (Secret Lair Showcase Planes),
 both confirmed `layout: planar` via Scryfall. **0 of 8 names correct.** Every
 one returned a fragment of the rules box:
@@ -195,7 +195,7 @@ Stroopwafel Cafe   -> "library at any"
 Probing `The Command Zone` in full shows exactly what crosses the wire: a card
 entry with `"name": "who controls"`, candidates `["who controls", "ayers may
 put", "ne onto the"]`, and `"confidence": 0`. The `bottomLines` array contains
-`"The C"`, `"Plane -"` — the title is *there*, horizontally clipped.
+`"The C"`, `"Plane -"`. The title is *there*, horizontally clipped.
 
 The mechanism, from the code:
 
@@ -206,7 +206,7 @@ The mechanism, from the code:
   downstream is then applied to geometry that was never fitted for it.
 - The title crop is a fixed top 30% of that assumed geometry
   (`Read.swift:387`).
-- `chooseTitle` always returns something — `return lines.first ?? ""`
+- `chooseTitle` always returns something: `return lines.first ?? ""`
   (`scan/hoard-scan/Sources/CardKit/Title.swift:34`).
 - The type line cannot rescue it: `plausibleTitle` rejects any line whose
   first word is `plane`, `scheme`, `phenomenon`, `vanguard`, `conspiracy`,
@@ -215,7 +215,7 @@ The mechanism, from the code:
 
 **There is no MTG layout list anywhere in the recognition path**, Swift or Go.
 The only frame taxonomy is a four-entry footer-geometry table keyed on
-copyright year — `CardLayout.leftU`
+copyright year, `CardLayout.leftU`
 (`scan/hoard-scan/Sources/BorderKit/CardLayout.swift:75-130`), covering
 pre-1998, 1998-2002, 8th Edition and M15. Anything it has not measured returns
 `nil` and the dependent readers go silent, which is the correct behaviour and
@@ -226,14 +226,14 @@ never for recognition.
 What saves this in practice is not the reader but the resolver: `who controls`
 does not fuzzy-match any card at the 0.88 auto-commit bar
 (`internal/cardname/cardname.go:58`), so it queues or drops. Note that the OCR
-confidence gate does **not** help here — it is written `c > 0 && c <
+confidence gate does **not** help here: it is written `c > 0 && c <
 autoCommitOCRConfidence` (`internal/tui/autoscan.go:1013`), and a
 zero-confidence read is treated as unknown rather than failing
 (`:881-883`). The name gate carries the entire load.
 
 ---
 
-## 5. Flavor names — a limit nobody had written down
+## 5. Flavor names: a limit nobody had written down
 
 `Bolas's Citadel` (set `fca` #7) read as **`Kefka's Tower`**. That is not a
 misread: Scryfall gives that printing `"flavor_name": "Kefka's Tower"`. The
@@ -242,7 +242,7 @@ card's name.
 
 `flavor_name` is never ingested (zero Go references), so there is no route
 from the printed string to the catalog row. **624 printings on Scryfall
-currently carry a `flavor_name`** — every Universes Beyond reskin. The
+currently carry a `flavor_name`**: every Universes Beyond reskin. The
 collector number saves the read when the band is legible; when it is not, the
 card is unresolvable by any path the scanner has.
 
@@ -263,20 +263,20 @@ stills from two live sessions.
 "Commit accuracy" is the number that matters commercially, because **an
 abstention commits as nonfoil.** Derived from the same run:
 
-- **Foil recall — the rate at which a genuinely foil card is recorded as
-  foil — is 66% (corpus), 69% (s5), and 23% (s9). Overall 48 of 91 = 53%.**
+- **Foil recall, the rate at which a genuinely foil card is recorded as
+  foil, is 66% (corpus), 69% (s5), and 23% (s9). Overall 48 of 91 = 53%.**
 - **Precision when it speaks: 51 of 52 correct (98%).** One false-foil across
   all three rigs.
 - **Nonfoil cards are recorded correctly 32 times in 33 (97%).**
 
 Project memory carried a figure of "roughly 20%" from a live all-foil pile.
-That is **s9, and it is still true of s9 today at 23%** — but it is the worst
+That is **s9, and it is still true of s9 today at 23%**, but it is the worst
 of three rigs and quoting it alone is as misleading as quoting 69% alone. The
 spread between 23% and 69% on identical code is the real finding: **foil
 detection is dominated by capture conditions, not by the algorithm.**
 
 The asymmetry is deliberate and is worth understanding before writing copy
-about it. The reader can say *foil* three ways — a printed separator glyph on
+about it. The reader can say *foil* three ways: a printed separator glyph on
 an M15 set row
 (`scan/hoard-scan/Sources/CardKit/Collector.swift:236-241`), a luma template
 correlation ≥ 0.52 with contrast ≥ 0.02, or a chroma contrast ≥ 0.08 with luma
@@ -296,7 +296,7 @@ func finishFromEvidence(card scryfall.Card, hint string) (finish string, evidenc
 ```
 `internal/tui/autoscan.go:1047-1056`. The comment immediately above it is the
 honest statement of the limit: old frames "carry no set/language line, so no
-marker ever reaches here and **every old foil records as nonfoil — silently,
+marker ever reaches here and **every old foil records as nonfoil, silently,
 and foil is worth a multiple**."
 
 The guess is remembered: the `evidenced` flag survives as
@@ -305,7 +305,7 @@ The guess is remembered: the `evidenced` flag survives as
 command is the mitigation, and any claim about foil accuracy should mention
 it.**
 
-There is no CoreML model in the shipping path — grep for
+There is no CoreML model in the shipping path; grep for
 `CoreML|mlmodel|VNCoreML|CreateML` across the Swift package returns zero. A
 CreateML classifier exists only as an eval-time experiment outside the package
 (`scan/foil-corpus/train-foil.swift`). Both acceptance bars are pinned by
@@ -321,20 +321,20 @@ below the weakest true foil… Widen the corpus before trusting it further").
 distribution is what a claim needs. Of 62 failing corpus rows:
 
 - **36 read no number at all.** Silence, and on pre-1998 cards silence is
-  *correct* — those cards print no collector number
+  *correct*, since those cards print no collector number
   (`Collector.swift:19-22`, and the scorer counts empty as correct for that
   era at `main.swift:287-288`). pre-1998 scores 97-100% on number for exactly
   this reason; that era's difficulty is not reading the card, it is that the
   card carries nothing to say *which printing* it is.
 - **19 stripped a prefix or a variant marker**, keeping the right numeric
   core. World Championship decks print player-prefixed numbers (`kb310`,
-  `shh347`, `mb62sb`) and every one lost its prefix — which is why both gold
+  `shh347`, `mb62sb`) and every one lost its prefix, which is why both gold
   rows score 0% on number. Variant markers vanish likewise: `18★ → 18`,
   `130p → 130`, `12f → 12`, `113d → 113`, `82a → 82`. **The scanner cannot
   distinguish a printing whose only distinguishing mark is a suffix.** This is
   a real money limit: `war/97` and `war/97★` are $8.06 and $113.45
   (`internal/catalog/searcher.go:103-105`).
-- **5 read a confidently wrong number** — `Skittering Skirge` 4 → 312,
+- **5 read a confidently wrong number**: `Skittering Skirge` 4 → 312,
   `Mox Ruby` 2008 → 819, `Elemental` 7 → 73, `Goblin Mime` 78★ → 2120,
   `Pearled Unicorn` 31 → 212. **That is 5 in 214, or 2.3%**, and it is the
   only category here that can attach a card to the wrong printing without any
@@ -343,7 +343,7 @@ distribution is what a claim needs. Of 62 failing corpus rows:
 Old-frame vs M15: the modern frame is the easier read on *numbers* but the
 corpus does not show a clean modern advantage on *names*, because the modern
 strata contain the hard layouts (planes, borderless, Un-sets). pre-1998 name
-misses are character-level OCR errors on the old typeface —
+misses are character-level OCR errors on the old typeface:
 `Frenetic Efreet → Frenetic Chee`, `Vesuvan → Yesuvan`,
 `Prismatic Boon → Prismatic Door`, `Samite Healer → Samnite healer`. Note that
 `Prismatic Door` is a plausible-looking string that is not a real card; the
@@ -354,14 +354,14 @@ Character repair is deliberately conservative: `digitLookalikes`
 positions the grammar has already decided are numeric**, guarded by
 `dropped <= 1 && real * 2 >= considered` (`:67`). The measured reason is in the
 source: without that guard, "cards that print no collector number at all
-acquire one — measured, on 18% of the corpus's pre-1998 gold-bordered
+acquire one, measured, on 18% of the corpus's pre-1998 gold-bordered
 stratum." A lost *leading* digit is repaired (`numberTailMatches`,
 `internal/tui/autoscan.go:1370-1387`); substitutions and insertions are
 deliberately not, and those cards queue.
 
 ---
 
-## 8. Condition and grading — assessed nowhere
+## 8. Condition and grading: assessed nowhere
 
 **The scanner does not assess a card's condition. It does not assess wear,
 edges, centering, surface, or damage, and it assigns no grade.** This is not a
@@ -394,7 +394,7 @@ user-facing copy, and never imply the scanner produces either.
 The scanner has real capture gates, but **none of them is a glare or blur
 metric on the still.** What exists:
 
-- **Focus and motion freeze the trigger** rather than degrade it —
+- **Focus and motion freeze the trigger** rather than degrade it:
   `focusSettled` and `rigMoving` halt the stability machine
   (`CardKit/Trigger/Trigger.swift:507`, `:614-619`). The comment at `:60-61`
   records why: "with no focus state, so a hunting lens fed blur into the streak
@@ -403,7 +403,7 @@ metric on the still.** What exists:
   the shutter on a bare desk.
 - **Aspect and size gates** reject a bad flatten (`Find.swift:73-74`, `:94`).
   When they trip, the reader falls back to OCR on the raw frame with
-  `located = false` and does **no** positional work — no band, no border, no
+  `located = false` and does **no** positional work: no band, no border, no
   sparkle (`Read.swift:103-113`).
 - **The border reader has nine named abstention gates**, including
   `minCardHeightPx = 500` and `maxThetaDegrees = 25`
@@ -412,8 +412,8 @@ metric on the still.** What exists:
 - **Clipping is measured but never gates.** `clipHigh`/`clipLow`
   (`BorderKit/BorderSampling.swift:130-131`) are the nearest thing to a glare
   check in the tree and they are telemetry only. There is a one-shot −2EV
-  retake verb on the wire (`ScanWire/ScanCommand.swift:42-45`) — remediation,
-  not a gate.
+  retake verb on the wire (`ScanWire/ScanCommand.swift:42-45`), remediation
+  rather than a gate.
 - **Sparkle has a capture-quality floor**: `acceptLumaContrast = 0.02`,
   described in source as "the capture-quality floor below which the patch is
   washed out" (`BorderReading.swift:222-224`).
@@ -439,7 +439,7 @@ met a photograph, where a *white* border under warm light reads 0.40."
 | **Borderless DFC** | Measured failure. Both borderless DFCs in the corpus (`Mondo Gecko // Mondo Gecko`, `Rhystic Study // Rhystic Study`) returned an **empty** title. | corpus run, 2026-08-08 |
 | **Tokens** | Not handled. `token` and `emblem` are title *rejection* words, so a token whose top line is its type loses its title and `chooseTitle` falls through to whatever line is first. | `Title.swift:17-22`, `:34` |
 | **Oversized (planes, schemes, Vanguard)** | Read wrong, not refused. See §4. | corpus: 0/8 |
-| **Un-sets / silver border** | 88% name across eras — the layouts break the usual assumptions on purpose. `B.F.M.` returned an empty title; `B.O.B. (Bevy of Beebles)` read `Bery of Beebles)`. | corpus run |
+| **Un-sets / silver border** | 88% name across eras, since the layouts break the usual assumptions on purpose. `B.F.M.` returned an empty title; `B.O.B. (Bevy of Beebles)` read `Bery of Beebles)`. | corpus run |
 | **World Championship (gold border)** | Names read 100%, numbers 0%, every era. | corpus run |
 
 The one guard that keeps junk off the wire is `cardEntry`
@@ -455,7 +455,7 @@ The short answer for copy: **most misses are silent drops, uncertain reads go
 to a review queue, and a small deliberate set auto-commits a guess.** All three
 happen, under conditions worth knowing.
 
-**Silent drops** are the most common outcome — eight distinct drop paths in
+**Silent drops** are the most common outcome: eight distinct drop paths in
 `onResolveDone` (`internal/tui/model.go:1601-2236`), each writing only a
 terminal status line. Notably a capture that named nothing is killed even when
 the footer read a set code (`:2132-2138`); it buys a receipt line, not a queue
@@ -463,7 +463,7 @@ slot.
 
 **Review** is the queue append at `model.go:2193`. During a hands-free session
 the *flash to the phone* is deliberately deferred and expires after
-`decisionCeiling` = 1000 ms (`:2186-2205`) — so a review is not always a
+`decisionCeiling` = 1000 ms (`:2186-2205`), so a review is not always a
 prompt the operator sees in the moment.
 
 **Auto-commit of a guess** happens in three named places, each documented as a
@@ -472,11 +472,11 @@ printing (`autoscan.go:938-964`, "a deliberate trade… on the operator's
 preference for false positives over false negatives"); an unread finish
 commits the nonfoil default (`:1017-1035`); and an exact name on a
 sole-printing card commits in spite of a collector number that matched nothing
-(`:791-817`, `:858-861`). Both guesses are flagged — `FinishGuessed` and
-`PrintingGuessed` — and surfaced by `hoard guessed`.
+(`:791-817`, `:858-861`). Both guesses are flagged (`FinishGuessed` and
+`PrintingGuessed`) and surfaced by `hoard guessed`.
 
-**The title-steal bug is fixed.** Live on 2026-08-07, `"Gliding"` — debris of a
-*Glowrider* sliding past the lens — resolved to the real card *Gliding Licid*
+**The title-steal bug is fixed.** Live on 2026-08-07, `"Gliding"`, debris of a
+*Glowrider* sliding past the lens, resolved to the real card *Gliding Licid*
 and that stolen name keyed every downstream dedupe. The fix landed in
 `ae10fb3` ("fix: pre-launch red list"), and the working tree matches HEAD for
 those files. `Plausible` no longer accepts a prefix as an identity
@@ -493,8 +493,8 @@ residual paths, all narrow:
 1. A confirmed nomination will still commit if debris from card A nominates a
    card whose printing happens to match digits read from card B's sliver
    (`autoscan.go:725-737`).
-2. The reverse-prefix allowance — `len(c) >= 8 && strings.HasPrefix(o, c)`
-   (`cardname.go:127`) — accepts an OCR line that *begins with* a full card
+2. The reverse-prefix allowance, `len(c) >= 8 && strings.HasPrefix(o, c)`
+   (`cardname.go:127`), accepts an OCR line that *begins with* a full card
    name, bypassing both the length-ratio veto and the similarity floor.
 3. A sub-0.88 fragment that carries a collector number skips the slide-window
    drop (which requires `CollectorNumber == ""`, `model.go:2071-2073`), and if
@@ -512,9 +512,9 @@ sentence as written; the qualifiers are load-bearing.
   *(median read 115 ms, §2)*
 - "On a labelled corpus of 214 English printings spanning every frame era,
   the reader identified the card name on 87% and the exact collector number on
-  78%." *(§2 — always state the corpus and that these are clean scans)*
+  78%." *(§2: always state the corpus and that these are clean scans)*
 - "Recognises cards from every frame era, from 1993 originals to current
-  sets." *(§2 — no era scores below 72% on name)*
+  sets." *(§2: no era scores below 72% on name)*
 - "When the scanner is unsure it asks rather than guesses: uncertain reads go
   to a review queue instead of into your collection." *(§11)*
 - "The foil detector is conservative by design: across three test rigs it was
@@ -522,9 +522,9 @@ sentence as written; the qualifiers are load-bearing.
 - "Cards it records on a guess are flagged, and `hoard guessed` lists every
   one." *(§6, `add.go:197-198`)*
 - "It never invents a collector number for a card that does not print one."
-  *(§7 — pre-1998 scores 97-100% on number precisely because silence is the
+  *(§7: pre-1998 scores 97-100% on number precisely because silence is the
   right answer, and the guard is measured)*
-- "Everything runs on device — no card image leaves your phone and your Mac."
+- "Everything runs on device: no card image leaves your phone and your Mac."
   *(orthogonal to accuracy, but true; see `docs/data-licensing.md`)*
 
 ## 13. Claims to avoid
@@ -565,7 +565,7 @@ product.
 | Sleeve behaviour (any kind) | **Unverified.** Nothing in the tree references sleeves; no labelled captures. | Add a sleeved stratum to `scan/foil-corpus/stills-labels.tsv` and re-run `foil-eval` |
 | Glare tolerance | **Unmeasured as a variable.** `clipHigh`/`clipLow` are computed and thrown away. | Gate or bucket by clip fraction and re-score |
 | What separates rig `s5` (69% foil recall) from `s9` (23%) | **Unknown.** The 3× spread is the largest unexplained effect in this document. | The rigs' capture conditions are not recorded in `stills-labels.tsv`; they would have to be reconstructed from session telemetry |
-| Borderless cards in the wild | **Corpus is not valid for this.** The 50% figure in §2 is a full-bleed-scan artifact — a borderless scan has no card-against-desk edge. `docs/specs/scanner-tuning.md` reports a live borderless session reading names fine. Not re-verified today. | A live borderless pile with telemetry |
+| Borderless cards in the wild | **Corpus is not valid for this.** The 50% figure in §2 is a full-bleed-scan artifact: a borderless scan has no card-against-desk edge. `docs/specs/scanner-tuning.md` reports a live borderless session reading names fine. Not re-verified today. | A live borderless pile with telemetry |
 | Real-world (non-corpus) name accuracy | **No end-to-end labelled measurement exists.** The 28 fixtures pin decisions, not correctness. | A labelled live pile scored against ground truth |
 | Japanese/Chinese OCR | **Refuted rather than unverified**, but on n=4. | A larger non-Latin stratum, if it ever matters |
 
@@ -582,5 +582,5 @@ task scan-check                    # the 28-fixture regression sweep
 
 `task` is not on the default PATH here; the binary lives at `.tool/task` after
 `task tools`, or run the underlying commands from `Taskfile.yaml:201-256`
-directly. All three are read-only — do **not** pass `--update` to
+directly. All three are read-only, so do **not** pass `--update` to
 `scan/fixtures/sweep.sh`, which regenerates goldens.

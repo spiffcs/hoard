@@ -1,6 +1,6 @@
 # hoard SQLite schema
 
-`hoard.db` is plain SQLite — no extensions, no custom functions, no encryption.
+`hoard.db` is plain SQLite: no extensions, no custom functions, no encryption.
 Anything that opens a SQLite file can read a hoard: `sqlite3`, Python's
 `sqlite3`, DBeaver, `datasette`, a Go or Rust driver.
 
@@ -15,7 +15,7 @@ $ sqlite3 ~/Library/Application\ Support/hoard/hoard.db \
 1213157956
 ```
 
-`user_version` is the schema version. `application_id` is `0x484F5244` — ASCII
+`user_version` is the schema version. `application_id` is `0x484F5244`, ASCII
 for `HORD`, which tells you a stray `.db` is hoard's before you open it.
 
 ## Reading a hoard from another tool
@@ -55,6 +55,6 @@ Only `hoard.db` is covered by those rules.
 | on a schema change | migrated, backed up first | deleted and rebuilt |
 | if you lose it | price history is gone for good | one download |
 
-`catalog.db` is a cache — no migrations, no published schema, discarded on a
+`catalog.db` is a cache: no migrations, no published schema, discarded on a
 version bump. Read `hoard.db`, or use `hoard export` and the
 [`--json` documents](../json/README.md).

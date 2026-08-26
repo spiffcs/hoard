@@ -5,7 +5,7 @@ beats a long one with five padded ones.
 
 ## What changes
 
-<!-- What the code does now that it did not do before. Not a diff summary —
+<!-- What the code does now that it did not do before. Not a diff summary;
      the reader can see the diff. -->
 
 ## Why
@@ -22,7 +22,6 @@ beats a long one with five padded ones.
      or the camera did. -->
 ---
 
-- [ ] `make static-analysis` and `make test` pass locally — the same gates CI runs
+- [ ] `make static-analysis` and `make test` pass locally
 - [ ] Behavior changes are covered by a test that fails without this change
 - [ ] User-facing output, flags, or the on-disk schema changed → docs updated to match
-- [ ] Card imagery added under `scan/`? It is Fan Content, not MIT — see [NOTICE](../NOTICE)

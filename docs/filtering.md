@@ -39,5 +39,5 @@ Text matching ignores case and matches anywhere in the field. An exception is
 identity containing both W and U, not one that is exactly WU.
 
 Because terms are ANDed, `set:` cannot name two sets at once. To sweep several
-sets in one pass, export each and splice the documents together — see
+sets in one pass, export each and splice the documents together. See
 [Scripting](scripting.md).

@@ -9,7 +9,7 @@ Commands that do not honour `--json` **refuse** it rather than ignoring it.
 ## Documents compose
 
 `hoard export` chooses holdings and `hoard move` acts on them, so a bulk move is
-a pipe. Filter terms are ANDed, so `set:` cannot name two sets at once — export
+a pipe. Filter terms are ANDed, so `set:` cannot name two sets at once. Export
 each one and splice the rows together to sweep both into bulk in a single move
 (fish syntax; in bash the `begin`/`end` pair is `{ ...; }`):
 

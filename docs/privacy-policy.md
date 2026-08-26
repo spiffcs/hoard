@@ -20,7 +20,7 @@ frame is read and discarded.
 
 ## What leaves your iPhone
 
-One thing, and only when you have paired a Mac: the text of a read — the
+One thing, and only when you have paired a Mac: the text of a read: the
 card's name, set code and collector number.
 
 That connection is encrypted and goes only to a Mac you approved with a
@@ -31,7 +31,7 @@ an advertising service, because no such thing exists in it.
 
 ## What is stored on your iPhone
 
-- **Your settings** — the price tiers and which sound each one plays — in the
+- **Your settings** (the price tiers and which sound each one plays), in the
   app's own preferences.
 - **The pairing code and this device's identity key**, in the iOS Keychain.
 
@@ -51,7 +51,7 @@ hoard runs on your own Mac and keeps your collection in a database file on
 that Mac.
 
 To identify cards and show prices it fetches public card data from third-party
-services — Scryfall, MTGJSON and TCGCSV, and Archidekt if you import a deck by
+services: Scryfall, MTGJSON and TCGCSV, and Archidekt if you import a deck by
 URL. Those requests come from your Mac, and those services see your Mac's IP
 address the way any website you visit does. hoard sends them no account
 information, because it has none to send.

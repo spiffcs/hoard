@@ -24,7 +24,7 @@ The latest release. Fixes land there rather than being backported.
 ## For users
 
 - Run the latest version.
-- Verify release artifacts against `checksums.txt` and its Sigstore bundle —
+- Verify release artifacts against `checksums.txt` and its Sigstore bundle;
   see [RELEASE.md](RELEASE.md). `install.sh -v` does it for you when `cosign`
   is installed.
 - Your collection is a local SQLite file, in the location the

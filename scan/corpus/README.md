@@ -16,7 +16,7 @@ for `1998-2002` and `2003-2014`.
 Sampling is stratified by **frame era × border colour**, not per set: most sets
 in an era share one frame, so a few hundred images cover every distinct layout
 where two or three from each of ~900 sets would be mostly redundant. Eras cut
-at frame changes, not set boundaries — `pre1998` (no collector number printed
+at frame changes, not set boundaries: `pre1998` (no collector number printed
 at all), `1998-2002` (numbers arrive, old frame), `2003-2014` (the 8th Edition
 frame), `2015+` (the M15 frame). Each stratum draws from a seed derived from
 the stratum itself, so `fetch.sh` reproduces the same corpus and downloads only
@@ -24,8 +24,8 @@ what is missing.
 
 ## What it does and does not test
 
-These are clean digital scans. They exercise the parser — layout assumptions,
-the collector band, the copyright line, title selection — and nothing else.
+These are clean digital scans. They exercise the parser (layout assumptions,
+the collector band, the copyright line, title selection) and nothing else.
 They do not test the trigger, rectangle detection, the perspective crop, glare,
 focus, or the camera's resolution ceiling. A card that parses perfectly here
 can still fail on a desk, and one that fails here is broken in a way no
@@ -39,7 +39,7 @@ confirm against [scan/fixtures](../fixtures/README.md), which are photographs.
 
 ## Layout
 
-    images/       the pixels. Gitignored — third-party, fetched not authored.
+    images/       the pixels. Gitignored: third-party, fetched not authored.
     manifest.tsv  one row per image with the known answer. Tracked.
 
 Do not commit the images; they belong to their rightsholders, and the manifest

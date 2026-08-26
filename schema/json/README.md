@@ -26,8 +26,8 @@ $ hoard schema | head -3
   reshapes compatibly but changes what you should conclude; ADDITION is purely
   additive.
 - **MODEL is a compatibility kill switch, not a release size.** It is the only
-  component enforced at read time — `hoardjson.Read` refuses a document whose
-  MODEL exceeds the build's — so bumping it locks every installed hoard out of
+  component enforced at read time (`hoardjson.Read` refuses a document whose
+  MODEL exceeds the build's), so bumping it locks every installed hoard out of
   documents it would otherwise read correctly.
 
 ## Joining against other tools
@@ -48,20 +48,20 @@ Prices are USD throughout. An absent price field means *unpriced*, never free.
 
 ## Versions
 
-- **1.0.0** — the first released schema: the `summary`, `holdings`, `unpriced`,
+- **1.0.0**: the first released schema: the `summary`, `holdings`, `unpriced`,
   `movers`, `market`, `report`, `watch` and `hoard` kinds, and the sixteen card
   characteristics under `holdings.rows[].detail`.
-- **1.0.1** — percent watches: a watch can name a movement rather than a price.
-- **1.1.0** — `oldAsOf` on a movers change. A REVISION, because `oldUsd` changed
+- **1.0.1**: percent watches: a watch can name a movement rather than a price.
+- **1.1.0**: `oldAsOf` on a movers change. A REVISION, because `oldUsd` changed
   meaning underneath it: a movers window became a range to measure across
   rather than a bar a printing has to clear.
-- **1.1.1** — the `watches`, `binders` and `guessed` kinds, plus `pctChange` on
+- **1.1.1**: the `watches`, `binders` and `guessed` kinds, plus `pctChange` on
   a movers change.
-- **1.1.2** — the `refused` kind: prices hoard declined to report because the
+- **1.1.2**: the `refused` kind: prices hoard declined to report because the
   asks on the card's own listing contradicted them, and what it used instead.
-- **1.1.3** — `settling` on a movers change, marking a row whose set is too new
+- **1.1.3**: `settling` on a movers change, marking a row whose set is too new
   for its price to average over anything.
-- **1.1.4** — `containerId` on a holdings row. A name can be renamed between a
+- **1.1.4**: `containerId` on a holdings row. A name can be renamed between a
   document being written and being read; an id cannot. It is meaningful only in
   the database that emitted the document.
 

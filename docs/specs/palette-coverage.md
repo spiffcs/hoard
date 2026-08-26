@@ -2,7 +2,7 @@
 
 An audit of hoard's TUI command palette (`:` / `ctrl+p`): which functionality it
 can run, which it cannot, and which of those gaps look deliberate. **For
-review** — nothing here is a decision, and no code changes on its account.
+review**: nothing here is a decision, and no code changes on its account.
 
 **Derived: 2026-08-23**, by reading `internal/browse/command.go` (the command
 table), `internal/browse/palette.go` (what the palette filters), the key
@@ -21,7 +21,7 @@ folders. Counts below include all of it.
 
 The command table holds **43 commands. 32 reach the palette; 11 are hidden from
 it** and exist only as key bindings. Separately, a dozen pieces of real
-functionality have **no command entry at all** — they are `case` arms in a key
+functionality have **no command entry at all**: they are `case` arms in a key
 handler, so they are neither in the palette nor in the command table that the
 palette and the help line are both built from.
 
@@ -37,7 +37,7 @@ exclude|include`, and it is reachable in the TUI only by knowing the letter.
 A command reaches the palette when it is in `commands()` and is not marked
 `hidden: true`, subject to its `where`/`hide` predicates. Anything handled
 directly in `handleBrowseKey`, `handleDetailKey`, or the modal handlers is
-invisible to the palette by construction — the palette can only run entries in
+invisible to the palette by construction; the palette can only run entries in
 the command table.
 
 Pure navigation (arrows, `tab`, `pgup`/`pgdown`, `home`/`end`, focus movement)
@@ -46,7 +46,7 @@ would be noise, and no judgement is being asked about it.
 
 ---
 
-## 1. Hidden commands — a key, but no palette entry
+## 1. Hidden commands: a key, but no palette entry
 
 These are in the command table with `hidden: true`. They are discoverable only
 through the help line or by being told.
@@ -66,7 +66,7 @@ through the help line or by being told.
 | `market.comps.side` | `b` | Toggle which side comps are shown from |
 
 **Assessment (a judgement, not a measurement):** most of these are *repeat-press
-cycles* — you press `s` four times to reach the column you want. A palette
+cycles*: you press `s` four times to reach the column you want. A palette
 entry that runs one step of a cycle is a poor fit, so hiding them is defensible.
 The two that read least like cycles are `movers.window` and `floor.cycle`, both
 of which set a value the user may want to reach by name.
@@ -81,20 +81,20 @@ anything else generated from it.
 
 | Key | What it does | Has a CLI equivalent? |
 | --- | --- | --- |
-| `x` | Include/exclude the selected binder or deck from collection totals | **Yes** — `hoard binder exclude\|include`, `hoard deck exclude\|include` |
+| `x` | Include/exclude the selected binder or deck from collection totals | **Yes**: `hoard binder exclude\|include`, `hoard deck exclude\|include` |
 | `space` | Fold or open the selected folder | No |
 | `+` / `=` | Increase the selected card's quantity | No |
 | `-` / `_` | Decrease the selected card's quantity | No |
 | `enter` | Open the card detail view (or confirm a watch pick) | No |
 | `/` | Open the filter | No |
 | `shift+↑` / `shift+↓` | Extend the multi-row selection | No |
-| `esc` | Clear selection, clear the filter, cancel a watch pick, cancel a market fetch | Partly — `op.cancel` covers cancelling an operation |
+| `esc` | Clear selection, clear the filter, cancel a watch pick, cancel a market fetch | Partly: `op.cancel` covers cancelling an operation |
 
 **Assessment:** `x` is the outlier and the reason this audit was worth doing.
-`space` is deliberate — folding acts on the row under the cursor, so the same
+`space` is deliberate: folding acts on the row under the cursor, so the same
 argument applies as below; a *fold all / open all* pair would earn palette
 entries and does not exist yet.
-The others are direct manipulations of the thing under the cursor — a palette
+The others are direct manipulations of the thing under the cursor. A palette
 entry for "increase quantity" would still need you to have selected the card
 first, so the palette adds nothing. `/` (filter) is a plausible palette
 candidate on discoverability grounds.
@@ -118,7 +118,7 @@ Everything else the detail view can do is key-only and has no palette route:
 | `tab` / `shift+tab` | Move between the holdings zone and the links zone |
 | `←` / `→` | Move between fields, or between links |
 
-**Assessment:** the narrowing is deliberate — the whitelist is exactly the
+**Assessment:** the narrowing is deliberate: the whitelist is exactly the
 long-running operations that make sense while looking at a card. The key-only
 detail actions all act on the highlighted row, so the same argument as §2
 applies.
@@ -134,10 +134,10 @@ applies.
 | Browse | Yes |
 | Detail | Yes, narrowed to six commands (§3) |
 | Text view (e.g. the valuation report) | Yes |
-| Prompt | **No** — `:` is typed into the field, which is correct |
-| Filter | **No** — same |
-| Confirm (y/n) | **No** — any key that is not `y` cancels |
-| Add cascade (`a`) | **No** — keys are forwarded to the child model |
+| Prompt | **No**: `:` is typed into the field, which is correct |
+| Filter | **No**: same |
+| Confirm (y/n) | **No**: any key that is not `y` cancels |
+| Add cascade (`a`) | **No**: keys are forwarded to the child model |
 
 **Assessment:** all four "no" rows are correct as they stand. A modal prompt
 that swallowed `:` as a command would be a bug, not a feature.
@@ -146,7 +146,7 @@ that swallowed `:` as a command would be a bug, not a feature.
 
 ## 5. CLI functionality with no TUI route at all
 
-Not a palette gap so much as a TUI gap — these have no key *and* no command.
+Not a palette gap so much as a TUI gap: these have no key *and* no command.
 
 | CLI | TUI status |
 | --- | --- |
@@ -155,20 +155,20 @@ Not a palette gap so much as a TUI gap — these have no key *and* no command.
 | `hoard vacuum` | **No TUI surface.** Delete orphaned printings |
 | `hoard merge` | **No TUI surface.** Fold another hoard database in |
 | `hoard deck repin` | **No TUI surface.** Re-pin a deck to a set |
-| `hoard folder rename` | Covered — `R` renames binders, decks and folders |
+| `hoard folder rename` | Covered: `R` renames binders, decks and folders |
 | `hoard folder rm` | **No TUI surface.** `d` on a folder refuses and names the CLI |
-| `hoard deck rename` | Covered — `R` on a deck |
+| `hoard deck rename` | Covered: `R` on a deck |
 | `hoard deck add --rename-from-source` | **No TUI surface.** Takes an imported name back |
-| `hoard folder new` | Covered — palette-only `folder.new` |
-| `hoard deck move` | Covered — key `m`, palette `deck.move` |
+| `hoard folder new` | Covered: palette-only `folder.new` |
+| `hoard deck move` | Covered: key `m`, palette `deck.move` |
 | `hoard folder list` | Covered by the sidebar itself |
-| `hoard binder exclude\|include` | Key `x` only — see §2 |
-| `hoard deck exclude\|include` | Key `x` only — see §2 |
+| `hoard binder exclude\|include` | Key `x` only, see §2 |
+| `hoard deck exclude\|include` | Key `x` only, see §2 |
 
 **Assessment:** `merge` and `vacuum` are destructive-ish maintenance and are
 arguably right to stay CLI-only, where a `--dry-run` and a scriptable exit code
-mean something. `guessed` and `refused` are *review queues* — lists of things
-hoard was unsure about — and a review queue with no home in the browser is the
+mean something. `guessed` and `refused` are *review queues* (lists of things
+hoard was unsure about) and a review queue with no home in the browser is the
 kind of gap that leaves data quietly unreviewed. Those two look like the most
 substantive omissions in this table.
 

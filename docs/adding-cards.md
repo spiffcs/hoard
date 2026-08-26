@@ -41,7 +41,7 @@ walks you through the available choices. Each one is a list you can move through
 printings hoard thinks you mean; <kbd>ctrl+a</kbd> widens it to every printing
 of that card.
 
-**3. Which finish.** Nonfoil, foil, or etched — only the finishes that printing
+**3. Which finish.** Nonfoil, foil, or etched: only the finishes that printing
 was actually made in.
 
 **4. Which binder.** Skipped when you only have one, so a fresh collection never
@@ -74,7 +74,7 @@ enter to add · esc cancel
 tally, ready for the next card. When you are done, <kbd>ctrl+d</kbd> returns you
 to the browser.
 
-Nothing is held back until the end — each card is saved as you confirm it. If
+Nothing is held back until the end. Each card is saved as you confirm it. If
 you quit halfway through, everything you already confirmed is in your
 collection.
 
@@ -113,7 +113,7 @@ That generates the Xcode project, builds the app, finds the attached phone and
 installs it. To build without installing, use `task scan-ios`.
 
 The first run writes `scan/hoard-scan-ios/Signing.xcconfig` with your team ID,
-guessed from your keychain. It is gitignored — a team identifier is account
+guessed from your keychain. It is gitignored: a team identifier is account
 data, not project configuration. If no signing identity was found, the script
 stops and tells you to fill that file in yourself.
 

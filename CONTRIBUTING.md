@@ -38,68 +38,46 @@ Every PR runs [validations.yaml](.github/workflows/validations.yaml), which is
 make static-analysis   # golangci-lint + gofmt + a go mod tidy check
 make test              # go test ./...   (no network needed)
 ```
-That is the automated gate. The rest of this list is checked at review.
-[Before you ask for a review](#before-you-ask-for-a-review).
-
 **Style is whatever the linter says.** gofmt, plus the golangci-lint set in
 [.golangci.yaml](.golangci.yaml). We use errcheck, gosec, govet, ineffassign,
-staticcheck, unused. There is no prose style guide to read; the config is the
-standard. Lint runs `--tests=false` and over **both** `GOOS=darwin` and
-`GOOS=linux`, so a bare `golangci-lint run` reports findings CI does not and
-misses ones it does. Use the make target.
+staticcheck, unused. 
 
 Personally I like to follow the [google style guide](https://google.github.io/styleguide/go/) for Golang but ymmv.
 
 **`go mod tidy` leaves the module files unchanged.** CI checks this separately.
 
 **A behaviour change comes with a test that failed first.** New features and bug
-fixes alike. If you did not write a test, revert your change, keep the test, and 
-watch it go red before you send it. A test that passes against the bug is a claim 
-of coverage rather than real coverage. It is worse than none because it can mislead 
-the next person who comes looking.
+fixes alike. 
 
-**Commit messages use conventional-ish prefixes** — `feat:`, `fix:`, `docs:`,
-`chore:` — which the existing history follows and which
+**Commit messages use conventional-ish prefixes** (`feat:`, `fix:`, `docs:`,
+`chore:`) which the existing history follows and which
 [chronicle](https://github.com/anchore/chronicle) keys off for changelogs. Say
 *why*, since the diff already says what; the history is the reference.
 
 **You have the right to submit it.** Contributions are accepted under the
 [MIT license](LICENSE) covering the rest of the code. Card imagery is the
-exception — it is Fan Content belonging to Wizards of the Coast, carved out in
+exception: it is Fan Content belonging to Wizards of the Coast, carved out in
 [NOTICE](NOTICE), so adding any means updating that file. This applies to
 generated code too: if it reproduces someone else's licensed work, it is their
 work, whatever produced it.
 
 Participation is under the [Code of Conduct](CODE_OF_CONDUCT.md). Further
-repository-specific traps — the generated images that go stale silently, the
-Swift scanner's local-only gate — are collected in [AGENTS.md](AGENTS.md);
+repository-specific traps (the generated images that go stale silently, the
+Swift scanner's local-only gate) are collected in [AGENTS.md](AGENTS.md);
 it is addressed to coding agents but accurate for humans.
 
 ## The Swift scanner
 
-The card scanner is a macOS helper and an iPhone app, both under `scan/` — needs
+The card scanner is a macOS helper and an iPhone app, both under `scan/`, which needs
 macOS and Xcode. Its Taskfile tasks carry `platforms: [darwin]` and skip
 silently on Linux, so a green CI run proves nothing about the Swift side.
 
-I don't want to pay for mac runners at the moment.
-
-Its workflow, [scan.yml](.github/workflows/scan.yml), is **switched off** behind
-an `if: false` guard: macOS runners bill at 10x. Leave it off. The gate is
-local:
-
-```sh
-make scan-test scan-check
-```
-
 `scan-check` replays 28 camera frames through the reader and diffs the result
-against checked-in goldens. It needs `oras` (`brew install oras`) to fetch them —
-deliberately not in the pinned toolchain, because that is bootstrapped by every
-CI job including the release, and this is a darwin-only check CI never runs.
+against checked-in goldens. It needs `oras` (`brew install oras`) to fetch them.
 
 **The frames are not in git** and they are ~58MB.
-Charging every contributor for them on clone was unfair when the check needs
-macOS, Xcode and a Swift build and CI never runs it. `make scan-fixtures`
-downloads them once (it is a dependency of `scan-check`, so you rarely call it
+Charging every contributor for them on clone was unfair
+`make scan-fixtures` downloads them once (it is a dependency of `scan-check`, so you rarely call it
 yourself) and verifies the archive against the tracked
 [`scan/fixtures/frames.oci`](scan/fixtures/frames.oci) before extracting.
 
@@ -126,12 +104,6 @@ make test
 **Prove the new tests fail without your change.** Revert the fix, keep the test, and
 watch it go red. 
 
-**Exercise what no test sees.** A change to the browser or the card scanner needs
-a real run. No unit test knows what the screen or the camera did. A change to a
-command's flags or help needs `hoard <cmd> --help` read once, because help text
-is capped at 60 columns and prose is copied verbatim. A change to any tracked
-image needs `make asset-review`.
-
 **Re-read your own diff before anyone else does.** Most of what a reviewer would
 catch first is visible on a second pass: the debug print, the commented-out line,
 the file you did not mean to touch, the comment that describes the previous
@@ -157,7 +129,7 @@ set expectations of what contributors can expect from the process.
 
 ## AI-assisted contributions
 
-Welcome. hoard has its share of AI tooling influences and it would be dishonest
+They are welcome. hoard has its share of AI tooling influences and it would be dishonest
 to hold contributors to a different standard.
 
 Three small conditions:
@@ -166,7 +138,7 @@ Three small conditions:
    it" is not an answer to "why does this work?". If you cannot explain a change,
    you cannot maintain it, and neither can anyone else.
 2. **The tests are real.** Break your own change and watch the test fail before
-   you send it. A test that passes against the bug is worse than no test — it is
+   you send it. A test that passes against the bug is worse than no test. It is
    a claim of coverage that is not there.
 3. **You have the right to submit it.** The same requirement as any other
    contribution. Generated code that reproduces someone else's licensed work is

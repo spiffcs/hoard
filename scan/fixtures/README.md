@@ -12,7 +12,7 @@ ok       two-card-pile
 ...
 ```
 
-Every frame is here because it pinned a decision the reader once got wrong — a
+Every frame is here because it pinned a decision the reader once got wrong: a
 flavor credit becoming a card, a copyright line's tail digits turning out to be
 the collector number, a paintbrush artist credit outranking the real title. The
 filename says which.
@@ -36,7 +36,7 @@ Capture a session with `HOARD_SCAN_DEBUG_DIR`, copy the problem frame's
 `capture-N-ocr.png` here under a name that says what it pins, then `--update`
 and commit the frame and its golden together.
 
-These are photographs of a real desk — crop or choose deliberately before
+These are photographs of a real desk, so crop or choose deliberately before
 committing. Whole tuning sessions stay out of the repo (`scan-fixtures/` is
 gitignored); only distilled regressions live here.
 
