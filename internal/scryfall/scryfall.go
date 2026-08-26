@@ -134,10 +134,10 @@ type pacer struct {
 
 var apiPacer = pacer{next: map[string]time.Time{}}
 
-func (p *pacer) wait(ctx context.Context, endpoint string) error {
+func (p *pacer) schedule(now time.Time, endpoint string) time.Time {
 	class, gap := endpointClass(endpoint)
 	p.mu.Lock()
-	now := time.Now()
+	defer p.mu.Unlock()
 	at := now
 	if c := p.next[class]; c.After(at) {
 		at = c
@@ -147,7 +147,12 @@ func (p *pacer) wait(ctx context.Context, endpoint string) error {
 	}
 	p.next[class] = at.Add(gap)
 	p.all = at.Add(defaultGap)
-	p.mu.Unlock()
+	return at
+}
+
+func (p *pacer) wait(ctx context.Context, endpoint string) error {
+	now := time.Now()
+	at := p.schedule(now, endpoint)
 	if d := at.Sub(now); d > 0 {
 		return sleepCtx(ctx, d)
 	}

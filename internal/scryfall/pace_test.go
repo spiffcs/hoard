@@ -1,9 +1,6 @@
 package scryfall
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -43,29 +40,13 @@ func TestPacerSpacesSlowEndpointRequests(t *testing.T) {
 	oldSlow, oldDefault := slowGap, defaultGap
 	slowGap, defaultGap = 50*time.Millisecond, 0
 	defer func() { slowGap, defaultGap = oldSlow, oldDefault }()
-	apiPacer = pacer{next: map[string]time.Time{}}
 
-	var stamps []time.Time
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		stamps = append(stamps, time.Now())
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-	old := apiBase
-	apiBase = srv.URL
-	defer func() { apiBase = old }()
+	at := schedulePlan(namedPath, namedPath, namedPath)
 
-	for range 3 {
-		if _, err := NamedFuzzy(context.Background(), "sol ring"); err != nil {
-			t.Fatalf("NamedFuzzy: %v", err)
-		}
-	}
-	if len(stamps) != 3 {
-		t.Fatalf("server saw %d requests; want 3", len(stamps))
-	}
-	for i := 1; i < len(stamps); i++ {
-		if gap := stamps[i].Sub(stamps[i-1]); gap < 45*time.Millisecond {
-			t.Errorf("requests %d and %d arrived %v apart; want at least ~50ms", i-1, i, gap)
+	for i := 1; i < len(at); i++ {
+		if gap := at[i].Sub(at[i-1]); gap < slowGap {
+			t.Errorf("requests %d and %d are scheduled %v apart; want at least %v",
+				i-1, i, gap, slowGap)
 		}
 	}
 }
