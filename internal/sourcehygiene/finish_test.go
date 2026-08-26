@@ -1,9 +1,6 @@
 package sourcehygiene
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,41 +19,16 @@ func TestNormalIsSpokenOnlyWhereMTGJSONIsDecoded(t *testing.T) {
 		"internal/sourcehygiene/finish_test.go": true,
 	}
 
-	root := repoRoot(t)
 	var problems []string
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "vendor", "node_modules", "dist", "bin":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		switch filepath.Ext(path) {
-		case ".go", ".sql":
-		default:
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			rel = path
-		}
-		rel = filepath.ToSlash(rel)
+	for _, src := range moduleSources(t, ".go", ".sql") {
+		rel := src.Rel
 		if vocabularyTests[rel] || wireFixtures[rel] {
-			return nil
+			continue
 		}
 		if strings.HasPrefix(rel, "schema/sqlite/schema-v") {
-			return nil
+			continue
 		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for n, line := range strings.Split(string(src), "\n") {
+		for n, line := range strings.Split(src.Text, "\n") {
 			if strings.Contains(line, "image_uris") || strings.Contains(line, "ayout") {
 				continue
 			}
@@ -70,10 +42,6 @@ func TestNormalIsSpokenOnlyWhereMTGJSONIsDecoded(t *testing.T) {
 				problems = append(problems, rel+":"+strconv.Itoa(n+1)+": "+strings.TrimSpace(line))
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking %s: %v", root, err)
 	}
 	if len(problems) > 0 {
 		t.Errorf("MTGJSON spells nonfoil \"normal\"; hoard does not. The only place that word "+
