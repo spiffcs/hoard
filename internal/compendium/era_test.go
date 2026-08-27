@@ -31,6 +31,7 @@ func buildEra(t *testing.T, o Options) *store.Store {
 	o.Days = 30
 	o.BulkListingURL = serveScryfall(t, predhJSONL)
 	o.PriceBaseURL = serveMTGJSON(t, prices)
+	o.TCGCSVBaseURL = offlineTCGCSV
 	o.CacheDir = t.TempDir()
 	if _, err := Build(context.Background(), st, o, progress.Fn(func(progress.Event) {})); err != nil {
 		t.Fatalf("Build: %v", err)

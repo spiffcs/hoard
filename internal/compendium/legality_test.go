@@ -74,6 +74,7 @@ func TestLegalFilterKeepsOnlyCardsLegalInTheFormat(t *testing.T) {
 				Sets:           tc.sets,
 				BulkListingURL: serveScryfall(t, legalityJSONL),
 				PriceBaseURL:   serveMTGJSON(t, prices),
+				TCGCSVBaseURL:  offlineTCGCSV,
 				CacheDir:       t.TempDir(),
 			}, progress.Fn(func(progress.Event) {}))
 			if err != nil {
@@ -104,6 +105,7 @@ func TestLegalFilterRejectsAnUnknownFormat(t *testing.T) {
 		Legal:          "premoderrn",
 		BulkListingURL: serveScryfall(t, legalityJSONL),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {}))
 

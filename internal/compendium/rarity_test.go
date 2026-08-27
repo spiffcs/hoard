@@ -74,6 +74,7 @@ func TestRarityFilterKeepsOnlyTheWantedRarities(t *testing.T) {
 				Rarities:       tc.rarities,
 				BulkListingURL: serveScryfall(t, rarityJSONL),
 				PriceBaseURL:   serveMTGJSON(t, prices),
+				TCGCSVBaseURL:  offlineTCGCSV,
 				CacheDir:       t.TempDir(),
 			}, progress.Fn(func(progress.Event) {}))
 			if err != nil {
@@ -104,6 +105,7 @@ func TestRarityFilterRejectsAnUnknownRarity(t *testing.T) {
 		Rarities:       []string{"mythic", "legendary"},
 		BulkListingURL: serveScryfall(t, rarityJSONL),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {}))
 

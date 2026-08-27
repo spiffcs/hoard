@@ -42,6 +42,7 @@ func TestBuildNeverSeedsTokensEmblemsOrArtCards(t *testing.T) {
 			o.Days = 30
 			o.BulkListingURL = serveScryfall(t, tokenJSONL)
 			o.PriceBaseURL = serveMTGJSON(t, prices)
+			o.TCGCSVBaseURL = offlineTCGCSV
 			o.CacheDir = t.TempDir()
 
 			res, err := Build(context.Background(), st, o, progress.Fn(func(progress.Event) {}))
@@ -73,6 +74,7 @@ func TestBuildKeepsARarityFilterWorkingOnRealCards(t *testing.T) {
 		Rarities:       []string{"uncommon"},
 		BulkListingURL: serveScryfall(t, tokenJSONL),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {})); err != nil {
 		t.Fatalf("Build: %v", err)

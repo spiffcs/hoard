@@ -118,6 +118,7 @@ func TestBuildsABrowsableCatalog(t *testing.T) {
 		Days:           30,
 		BulkListingURL: serveScryfall(t, bulkJSONL),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {}))
 	if err != nil {
@@ -188,6 +189,7 @@ func TestBuildStampsTheDatabaseAsACatalog(t *testing.T) {
 		Days:           30,
 		BulkListingURL: serveScryfall(t, bulkJSONL),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, progress.Fn(func(progress.Event) {})); err != nil {
 		t.Fatalf("Build: %v", err)
