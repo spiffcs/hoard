@@ -21,7 +21,9 @@ import (
 	"github.com/spiffcs/hoard/internal/scryfall"
 )
 
-var listingURL = "https://api.scryfall.com/bulk-data"
+// ListingURL is where the catalog asks Scryfall which bulk file to fetch.
+// It is a variable so a test can point the catalog at a local server.
+var ListingURL = "https://api.scryfall.com/bulk-data"
 
 const bulkType = "default_cards"
 
@@ -101,10 +103,10 @@ func fetchListing(ctx context.Context) (bundle, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, listingTimeout)
 	defer cancel()
-	if err := scryfall.Pace(ctx, listingURL); err != nil {
+	if err := scryfall.Pace(ctx, ListingURL); err != nil {
 		return zero, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listingURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ListingURL, nil)
 	if err != nil {
 		return zero, err
 	}

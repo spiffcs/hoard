@@ -55,9 +55,9 @@ func serveBundle(t *testing.T, updatedAt string, lines []string) *httptest.Serve
 	}))
 	t.Cleanup(srv.Close)
 
-	old := listingURL
-	listingURL = srv.URL + "/bulk-data"
-	t.Cleanup(func() { listingURL = old })
+	old := ListingURL
+	ListingURL = srv.URL + "/bulk-data"
+	t.Cleanup(func() { ListingURL = old })
 	return srv
 }
 
@@ -255,9 +255,9 @@ func TestFailedBuildLeavesThePreviousCatalog(t *testing.T) {
 		  "jsonl_download_uri":%q,"compressed_size":1}]}`, srv.URL+"/bundle")
 	}))
 	defer srv.Close()
-	old := listingURL
-	listingURL = srv.URL + "/bulk-data"
-	defer func() { listingURL = old }()
+	old := ListingURL
+	ListingURL = srv.URL + "/bulk-data"
+	defer func() { ListingURL = old }()
 
 	if err := c.Update(context.Background(), nil); err == nil {
 		t.Fatal("a failed download reported success")
@@ -310,9 +310,9 @@ func TestStatusHonoursTheCheckInterval(t *testing.T) {
 		  "jsonl_download_uri":"http://example.invalid/x","compressed_size":1}]}`)
 	}))
 	defer srv.Close()
-	old := listingURL
-	listingURL = srv.URL
-	defer func() { listingURL = old }()
+	old := ListingURL
+	ListingURL = srv.URL
+	defer func() { ListingURL = old }()
 
 	c := openTemp(t)
 	for range 5 {
@@ -324,9 +324,9 @@ func TestStatusHonoursTheCheckInterval(t *testing.T) {
 }
 
 func TestStatusIsSilentWhenOffline(t *testing.T) {
-	old := listingURL
-	listingURL = "http://127.0.0.1:1/bulk-data"
-	defer func() { listingURL = old }()
+	old := ListingURL
+	ListingURL = "http://127.0.0.1:1/bulk-data"
+	defer func() { ListingURL = old }()
 
 	c := openTemp(t)
 	s := c.CheckStatus(context.Background())

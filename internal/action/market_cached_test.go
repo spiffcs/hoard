@@ -98,7 +98,8 @@ func TestMarketRecordsBidQuotes(t *testing.T) {
 		zw.Close()
 	}))
 	defer srv.Close()
-	d := Deps{Store: st, CacheDir: t.TempDir(), PriceBaseURL: srv.URL}
+	d := Deps{Store: st, CacheDir: t.TempDir(), PriceBaseURL: srv.URL,
+		TCGCSVBaseURL: offlineTCGCSV}
 
 	if _, err := Market(context.Background(), d, nil, 0); err != nil {
 		t.Fatalf("Market: %v", err)

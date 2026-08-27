@@ -19,10 +19,14 @@ type Deps struct {
 	Resolver *resolve.Resolver
 
 	PriceBaseURL string
+
+	TCGCSVBaseURL string
 }
 
 func (d Deps) pricer() *pricing.Fetcher {
-	return pricing.New(d.Store, d.CacheDir).WithBaseURL(d.PriceBaseURL)
+	return pricing.New(d.Store, d.CacheDir).
+		WithBaseURL(d.PriceBaseURL).
+		WithTCGCSVBaseURL(d.TCGCSVBaseURL)
 }
 
 func (d Deps) confirm(question string) bool {

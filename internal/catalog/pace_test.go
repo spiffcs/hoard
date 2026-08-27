@@ -25,9 +25,9 @@ func TestListingFetchGoesThroughTheSharedPacer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	old := listingURL
-	listingURL = srv.URL
-	defer func() { listingURL = old }()
+	old := ListingURL
+	ListingURL = srv.URL
+	defer func() { ListingURL = old }()
 
 	ctx := context.Background()
 	for range 2 {
