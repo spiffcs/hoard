@@ -191,11 +191,8 @@ type Model struct {
 	moversCacheGen int
 	dataGen        int
 
-	moversPennies    bool
-	moversPennyLimit float64
-
-	marketPennies bool
-	marketFloor   float64
+        showPennies bool
+        pennyLimit  float64
 
 	entryIndex   map[int64]map[string]int
 	viewEligible map[int64]bool
@@ -296,9 +293,9 @@ func New(st Store, opts ...Option) (Model, error) {
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		cellAspect: ui.CellAspectOverride(), setsMode: true,
-		commands: commands(), moversPennyLimit: defaultPennyLimit,
-		marketFloor: defaultMarketFloor, helpRowsMemo: map[helpRowsKey]int{},
-		selAnchor: noSelection}
+                commands: commands(), pennyLimit: defaultPennyLimit,
+                helpRowsMemo: map[helpRowsKey]int{},
+                selAnchor:    noSelection}
 	for _, opt := range opts {
 		opt(&m)
 	}

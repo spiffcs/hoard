@@ -627,8 +627,8 @@ func (m Model) statusLine() string {
 		pos += fmt.Sprintf(" · floor %s (M cycles)", ui.Money(min))
 	}
 
-	if m.view == viewMovers && !m.moversPennies {
-		pos += fmt.Sprintf(" · penny filter ≤ %s (: toggles)", ui.Money(m.moversPennyLimit))
+	if pennyView(m.view) && !m.showPennies {
+		pos += " · " + m.pennyPhrase() + " (: toggles)"
 	}
 	return m.theme.Help.Render(pos)
 }

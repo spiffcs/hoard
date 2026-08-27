@@ -11,7 +11,6 @@ import (
 	"github.com/spiffcs/hoard/internal/market"
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/store"
-	"github.com/spiffcs/hoard/internal/ui"
 )
 
 type command struct {
@@ -359,30 +358,19 @@ func commands() []command {
 			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
 		},
 		{
-			id: "movers.pennies", title: "TogglePennyFilter",
-			aliases: "pennies cheap bulk noise show hide",
-			desc:    "Show or hide movers priced at or under the penny limit. Hidden by default.",
-			where:   func(m *Model) bool { return m.view == viewMovers },
-			rank:    onView(viewMovers, 1),
-			run: func(m *Model) tea.Cmd {
-				m.moversPennies = !m.moversPennies
-				m.deriveView()
-				state := "on"
-				if m.moversPennies {
-					state = "off"
-				}
-				m.status, m.statusErr = fmt.Sprintf("penny filter ≤ %s %s",
-					ui.Money(m.moversPennyLimit), state), false
-				m.persistPennyFilters()
-				return nil
-			},
+			id: "pennies.toggle", title: "TogglePennyFilter",
+			aliases: "pennies cheap bulk noise floor show hide",
+			desc:    "Show or hide rows priced at or under the penny limit. Hidden by default.",
+			where:   func(m *Model) bool { return pennyView(m.view) },
+			rank:    onPennyView(1),
+			run:     func(m *Model) tea.Cmd { m.togglePennyFilter(); return nil },
 		},
 		{
-			id: "movers.pennies.limit", title: "SetPennyFilter",
-			aliases: "penny limit threshold ceiling default set filter line",
-			desc:    "Move the penny filter's line. Movers at or under it hide.",
-			where:   func(m *Model) bool { return m.view == viewMovers },
-			rank:    onView(viewMovers, 1),
+			id: "pennies.limit", title: "SetPennyFilter",
+			aliases: "penny limit threshold ceiling floor default set filter line",
+			desc:    "Move the penny filter's line. Rows at or under it hide.",
+			where:   func(m *Model) bool { return pennyView(m.view) },
+			rank:    onPennyView(1),
 			run:     func(m *Model) tea.Cmd { m.promptSetPennyLimit(); return nil },
 		},
 		{
@@ -393,34 +381,6 @@ func commands() []command {
 			where:   func(m *Model) bool { return m.view == viewMovers || m.setsMode },
 			rank:    onView(viewMovers, 1),
 			run:     func(m *Model) tea.Cmd { m.promptSetSettlingWindow(); return nil },
-		},
-		{
-			id: "market.pennies", title: "TogglePennyFilter",
-			aliases: "pennies cheap bulk noise floor show hide",
-			desc:    "Show or hide market rows whose low ask sits under the floor. Hidden by default.",
-			where:   func(m *Model) bool { return m.view == viewMarket },
-			rank:    onView(viewMarket, 1),
-			run: func(m *Model) tea.Cmd {
-				m.marketPennies = !m.marketPennies
-				state := "on"
-				if m.marketPennies {
-					state = "off"
-				}
-				m.status, m.statusErr = fmt.Sprintf("penny filter < %s %s",
-					ui.Money(m.marketFloor), state), false
-
-				m.refreshMarketFloor()
-				m.persistPennyFilters()
-				return nil
-			},
-		},
-		{
-			id: "market.pennies.limit", title: "SetPennyFilter",
-			aliases: "penny limit threshold ceiling floor default set filter line",
-			desc:    "Move the market floor. Rows whose low ask sits under it hide.",
-			where:   func(m *Model) bool { return m.view == viewMarket },
-			rank:    onView(viewMarket, 1),
-			run:     func(m *Model) tea.Cmd { m.promptSetMarketFloor(); return nil },
 		},
 		{
 
@@ -549,6 +509,19 @@ func (m *Model) jumpSection(dir int) {
 	}
 }
 
+func pennyView(v viewMode) bool {
+	return v == viewMovers || v == viewMarket || v == viewDip
+}
+
+func onPennyView(n int) func(*Model) int {
+	return func(m *Model) int {
+		if pennyView(m.view) {
+			return n
+		}
+		return 0
+	}
+}
+
 func onView(v viewMode, n int) func(*Model) int {
 	return func(m *Model) int {
 		if m.view == v {
@@ -670,11 +643,8 @@ func (m *Model) showView(v viewMode) tea.Cmd {
 	if v != viewMarket {
 		m.status += " · sorted by " + m.sortLabel()
 	}
-	if v == viewMovers && !m.moversPennies {
-		m.status += " · penny filter ≤ " + ui.Money(m.moversPennyLimit)
-	}
-	if v == viewMarket && !m.marketPennies {
-		m.status += " · penny filter < " + ui.Money(m.marketFloor)
+	if pennyView(v) && !m.showPennies {
+		m.status += " · " + m.pennyPhrase()
 	}
 	m.statusErr = false
 

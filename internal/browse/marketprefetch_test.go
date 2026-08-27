@@ -91,7 +91,7 @@ func TestStartupFetchIgnoresThePennyFilter(t *testing.T) {
 		mins = append(mins, min)
 		return vendorQuotes(), nil
 	})
-	m.marketPennies, m.marketFloor = false, 5
+	m.showPennies, m.pennyLimit = false, 5
 
 	m = pump(t, m, m.Init())
 
@@ -115,7 +115,7 @@ func TestStartupFetchStillHonoursTheFloorOnScreen(t *testing.T) {
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 20})
 	m = next.(Model)
-	m.marketPennies, m.marketFloor = false, 5
+	m.showPennies, m.pennyLimit = false, 5
 
 	m = pump(t, m, m.Init())
 

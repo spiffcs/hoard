@@ -75,74 +75,83 @@ func (m Model) moversLookbackHelp() string {
 	return "lookback 7/30/90 days"
 }
 
-const defaultPennyLimit = 0.50
+const defaultPennyLimit = 1.00
+
+const oldMoversPennyLimit = 0.50
 
 const (
+        setShowPennies      = "pennies.show"
+        setPennyLimit       = "pennies.limit"
 	setMoversPennies    = "movers.pennies"
 	setMoversPennyLine  = "movers.pennyLimit"
-	setMarketPennies    = "market.pennies"
-	setMarketFloor      = "market.floor"
 	setSidebarCollapsed = "sidebar.collapsed"
 )
+
+func settingFloat(s map[string]string, key string) (float64, bool) {
+        n, err := strconv.ParseFloat(s[key], 64)
+        if err != nil || n < 0 || n > 100 {
+                return 0, false
+        }
+        return n, true
+}
 
 func (m *Model) loadPennyFilters() {
 	s, err := m.store.Settings()
 	if err != nil {
 		return
 	}
-	if v, err := strconv.ParseBool(s[setMoversPennies]); err == nil {
-		m.moversPennies = v
+        if n, ok := settingFloat(s, setPennyLimit); ok {
+                m.pennyLimit = n
+        } else if n, ok := settingFloat(s, setMoversPennyLine); ok && n != oldMoversPennyLimit {
+                m.pennyLimit = n
 	}
-	if n, err := strconv.ParseFloat(s[setMoversPennyLine], 64); err == nil && n >= 0 && n <= 100 {
-		m.moversPennyLimit = n
-	}
-	if v, err := strconv.ParseBool(s[setMarketPennies]); err == nil {
-		m.marketPennies = v
-	}
-	if n, err := strconv.ParseFloat(s[setMarketFloor], 64); err == nil && n >= 0 && n <= 100 {
-		m.marketFloor = n
+        for _, key := range []string{setShowPennies, setMoversPennies} {
+                if v, err := strconv.ParseBool(s[key]); err == nil {
+                        m.showPennies = v
+                        break
+                }
 	}
 }
 
 func (m *Model) persistPennyFilters() {
 	err := m.store.SaveSettings(map[string]string{
-		setMoversPennies:   strconv.FormatBool(m.moversPennies),
-		setMoversPennyLine: strconv.FormatFloat(m.moversPennyLimit, 'f', -1, 64),
-		setMarketPennies:   strconv.FormatBool(m.marketPennies),
-		setMarketFloor:     strconv.FormatFloat(m.marketFloor, 'f', -1, 64),
+                setShowPennies: strconv.FormatBool(m.showPennies),
+                setPennyLimit:  strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
 	})
 	if err != nil {
 		m.status, m.statusErr = "saving filter setting: "+err.Error(), true
 	}
 }
 
-func (m *Model) promptSetPennyLimit() {
-	m.prompt = &prompt{
-		label:    "hide movers at or under",
-		text:     strconv.FormatFloat(m.moversPennyLimit, 'f', -1, 64),
-		help:     "a dollar amount, like 0.20 (0 turns the gate off) · enter accept · esc cancel",
-		validate: func(text string) error { _, err := parsePennyLimit(text); return err },
-		commit: func(m *Model, text string) tea.Cmd {
-			n, err := parsePennyLimit(text)
-			if err != nil {
-				m.status, m.statusErr = err.Error(), true
-				return nil
-			}
-			m.moversPennyLimit = n
-			m.moversPennies = false
-			m.deriveView()
-			m.status, m.statusErr = "penny filter ≤ "+ui.Money(n)+" on", false
-			m.persistPennyFilters()
-			return nil
-		},
-	}
+func (m Model) pennyPhrase() string {
+        return "penny filter ≤ " + ui.Money(m.pennyLimit)
 }
 
-func (m *Model) promptSetMarketFloor() {
+func (m Model) pennyGated(price float64) bool {
+        return !m.showPennies && price <= m.pennyLimit
+}
+
+func (m *Model) applyPennyFilter() {
+        m.deriveView()
+        m.refreshMarketFloor()
+        m.persistPennyFilters()
+}
+
+func (m *Model) togglePennyFilter() {
+        m.showPennies = !m.showPennies
+        state := "on"
+        if m.showPennies {
+                state = "off"
+	}
+        m.status, m.statusErr = m.pennyPhrase()+" "+state, false
+        m.applyPennyFilter()
+}
+
+func (m *Model) promptSetPennyLimit() {
 	m.prompt = &prompt{
-		label:    "hide market rows under",
-		text:     strconv.FormatFloat(m.marketFloor, 'f', -1, 64),
-		help:     "a dollar amount, like 1.00 (0 turns the gate off) · enter accept · esc cancel",
+                label:    "hide rows at or under",
+                text:     strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
+                help:     "a dollar amount, like 0.20 (0 turns the gate off) · enter accept · esc cancel",
 		validate: func(text string) error { _, err := parsePennyLimit(text); return err },
 		commit: func(m *Model, text string) tea.Cmd {
 			n, err := parsePennyLimit(text)
@@ -150,12 +159,10 @@ func (m *Model) promptSetMarketFloor() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-			m.marketFloor = n
-			m.marketPennies = false
-			m.status, m.statusErr = "penny filter < "+ui.Money(n)+" on", false
-
-			m.refreshMarketFloor()
-			m.persistPennyFilters()
+                        m.pennyLimit = n
+                        m.showPennies = false
+                        m.status, m.statusErr = m.pennyPhrase()+" on", false
+                        m.applyPennyFilter()
 			return nil
 		},
 	}
@@ -245,7 +252,7 @@ func (m *Model) filterTrends(rows []store.TrendRow) []store.TrendRow {
 	out := make([]store.TrendRow, 0, len(rows))
 	for _, r := range rows {
 		last := r.Last
-		if m.underFloor(&last) {
+                if m.underFloor(&last) || m.pennyGated(last) {
 			continue
 		}
 		if filtered {
@@ -279,7 +286,7 @@ func (m *Model) deriveView() {
 				continue
 			}
 
-			if !m.moversPennies && c.New <= m.moversPennyLimit {
+                        if m.pennyGated(c.New) {
 				continue
 			}
 			if filtered {

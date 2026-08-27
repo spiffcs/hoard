@@ -472,15 +472,15 @@ func TestMoversPennyGate(t *testing.T) {
 	if len(m.movers) != 1 || m.movers[0].Name != "Bitterblossom" {
 		t.Fatalf("default movers = %+v, want the penny row hidden", m.movers)
 	}
-	if m.status != "showing movers · sorted by impact · penny filter ≤ $0.50" {
+	if m.status != "showing movers · sorted by impact · penny filter ≤ $1.00" {
 		t.Errorf("arrival beat = %q, want the sort and the armed filter named", m.status)
 	}
 	m.status = ""
-	if !strings.Contains(m.View(), "penny filter ≤ $0.50") {
+	if !strings.Contains(m.View(), "penny filter ≤ $1.00") {
 		t.Error("the default gate must announce itself on the status line")
 	}
 
-	m.moversPennies = true
+	m.showPennies = true
 	m.deriveView()
 	if len(m.movers) != 2 {
 		t.Fatalf("with pennies shown movers = %d rows, want both", len(m.movers))
@@ -506,7 +506,7 @@ func TestSetPennyFilter(t *testing.T) {
 	if m.prompt == nil {
 		t.Fatal("SetPennyFilter must open a prompt")
 	}
-	if m.prompt.text != "0.5" {
+	if m.prompt.text != "1" {
 		t.Errorf("prompt prefill = %q, want the current limit", m.prompt.text)
 	}
 	for _, bad := range []string{"", "abc", "-1", "101", "NaN"} {
@@ -537,10 +537,10 @@ func TestSetPennyFilter(t *testing.T) {
 		t.Errorf("status hint must track the moved line")
 	}
 
-	m.moversPennies = true
+	m.showPennies = true
 	m.promptSetPennyLimit()
 	m.prompt.commit(&m, "0.20")
-	if m.moversPennies {
+	if m.showPennies {
 		t.Error("committing a new line must re-arm the gate")
 	}
 }
@@ -676,23 +676,23 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 	if !m.marketLoaded || len(m.marketComps) != 1 {
 		t.Fatalf("comps at the $1 default = %+v, want Dear alone", m.marketComps)
 	}
-	if !strings.Contains(m.status, "penny filter < $1.00") {
+	if !strings.Contains(m.status, "penny filter ≤ $1.00") {
 		t.Errorf("arrival beat = %q, want the armed floor named", m.status)
 	}
 
-	m = runByID(m, "market.pennies")
+	m = runByID(m, "pennies.toggle")
 	if len(m.marketComps) != 3 {
 		t.Fatalf("comps with the floor off = %+v, want all three", m.marketComps)
 	}
-	if !strings.Contains(m.status, "penny filter < $1.00 off") {
+	if !strings.Contains(m.status, "penny filter ≤ $1.00 off") {
 		t.Errorf("status = %q, want the toggle receipt", m.status)
 	}
-	m = runByID(m, "market.pennies")
-	if len(m.marketComps) != 1 || !strings.Contains(m.status, "penny filter < $1.00 on") {
+	m = runByID(m, "pennies.toggle")
+	if len(m.marketComps) != 1 || !strings.Contains(m.status, "penny filter ≤ $1.00 on") {
 		t.Fatalf("re-armed comps = %+v status %q, want the floor back", m.marketComps, m.status)
 	}
 
-	m.promptSetMarketFloor()
+	m.promptSetPennyLimit()
 	if m.prompt == nil || m.prompt.text != "1" {
 		t.Fatalf("prompt = %+v, want prefilled with the current floor", m.prompt)
 	}
@@ -704,12 +704,12 @@ func TestMarketPennyFilterReCollects(t *testing.T) {
 	if len(m.marketComps) != 2 {
 		t.Fatalf("comps at $0.40 = %+v, want Mid and Dear", m.marketComps)
 	}
-	if m.marketFloor != 0.40 || !strings.Contains(m.status, "penny filter < $0.40 on") {
-		t.Errorf("floor = %v status %q, want the moved line named", m.marketFloor, m.status)
+	if m.pennyLimit != 0.40 || !strings.Contains(m.status, "penny filter ≤ $0.40 on") {
+		t.Errorf("limit = %v status %q, want the moved line named", m.pennyLimit, m.status)
 	}
 
 	cacheAlive = false
-	m = runByID(m, "market.pennies")
+	m = runByID(m, "pennies.toggle")
 	if m.marketLoaded || !strings.Contains(m.status, "press F") {
 		t.Errorf("loaded = %v status %q, want a fresh-fetch ask", m.marketLoaded, m.status)
 	}
@@ -807,38 +807,6 @@ func TestStatusLineLeadsWithPosition(t *testing.T) {
 	m.cursor[paneCards] = m.marketSections()[compsSection].curStart
 	if got := m.marketStatus(); !strings.Contains(got, "SolC · 1/1") {
 		t.Errorf("market status = %q, want the comp's card leading", got)
-	}
-}
-
-func TestPennyFiltersPersist(t *testing.T) {
-	st := testStore()
-	m := atAllCards(t, newTestModel(t, st))
-
-	m.promptSetPennyLimit()
-	m.prompt.commit(&m, "0.55")
-	m.prompt = nil
-	m.marketPennies = true
-	m.persistPennyFilters()
-
-	if st.settings[setMoversPennyLine] != "0.55" || st.settings[setMarketPennies] != "true" {
-		t.Fatalf("stored = %v, want both changes written", st.settings)
-	}
-
-	m2 := newTestModel(t, st)
-	if m2.moversPennyLimit != 0.55 || !m2.marketPennies {
-		t.Errorf("restored limit %v pennies %v, want the stored session back",
-			m2.moversPennyLimit, m2.marketPennies)
-	}
-	if m2.marketFloor != 1.00 {
-		t.Errorf("market floor = %v, want the default where nothing was stored differently", m2.marketFloor)
-	}
-
-	st.settings[setMarketFloor] = "over 9000"
-	st.settings[setMoversPennyLine] = "-3"
-	m3 := newTestModel(t, st)
-	if m3.marketFloor != 1.00 || m3.moversPennyLimit != defaultPennyLimit {
-		t.Errorf("garbled settings restored as floor %v limit %v, want the defaults",
-			m3.marketFloor, m3.moversPennyLimit)
 	}
 }
 

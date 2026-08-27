@@ -16,8 +16,6 @@ import (
 
 type MarketFunc func(ctx context.Context, p progress.Fn, min float64) (market.Result, error)
 
-const defaultMarketFloor = 1.00
-
 const noMarketFloor = 0.0
 
 const singleTablePageSize = 59
@@ -150,16 +148,16 @@ func (m *Model) loadCachedMarket() {
 	m.marketLoaded = true
 	m.status, m.statusErr = "vendor quotes from earlier today · F refetches", false
 
-	if !m.marketPennies {
-		m.status += " · penny filter < " + ui.Money(m.marketFloor)
+	if !m.showPennies {
+		m.status += " · " + m.pennyPhrase()
 	}
 }
 
 func (m Model) activeMarketFloor() float64 {
-	if m.marketPennies {
+	if m.showPennies {
 		return 0
 	}
-	return m.marketFloor
+	return m.pennyLimit
 }
 
 func (m *Model) refreshMarketFloor() {
