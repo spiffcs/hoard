@@ -738,7 +738,7 @@ func (m Model) helpLine() string {
 			ui.K("enter", "detail"), ui.K("M", "floor"), ui.K("/", "filter"),
 			ui.K("tab", "collections"), ui.K("v", "next view"), ui.K("↑/↓", "move"))...)
 	case m.view == viewMovers:
-		return ui.Help(tail(ui.HelpCommands, ui.K("W", "lookback 7/30/90 days"),
+		return ui.Help(tail(ui.HelpCommands, ui.K("W", m.moversLookbackHelp()),
 			ui.K("F", "update prices + history"), ui.K("enter", "detail"),
 			ui.K(">/<", "page"), ui.K("M", "floor"), ui.K("tab", "collections"),
 			ui.K("v", "next view"), ui.K("↑/↓", "move"), ui.K("s", "sort"))...)

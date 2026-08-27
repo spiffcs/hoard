@@ -52,6 +52,29 @@ func (v viewMode) next() viewMode {
 
 var moversWindowDays = []int{30, 90, 7}
 
+const moversCostBasis = -1
+
+func (m Model) moversStops() []int {
+	if !m.hasCostBasis {
+		return moversWindowDays
+	}
+	return append(append([]int(nil), moversWindowDays...), moversCostBasis)
+}
+
+func (m Model) moversStop() int {
+	stops := m.moversStops()
+	return stops[m.moversDaysIdx%len(stops)]
+}
+
+func (m Model) onCostBasis() bool { return m.moversStop() == moversCostBasis }
+
+func (m Model) moversLookbackHelp() string {
+	if m.hasCostBasis {
+		return "lookback 7/30/90 days or cost basis"
+	}
+	return "lookback 7/30/90 days"
+}
+
 const defaultPennyLimit = 0.50
 
 const (
@@ -148,9 +171,9 @@ func parsePennyLimit(text string) (float64, error) {
 }
 
 func (m Model) moversWindow() time.Duration {
-	days := moversWindowDays[0]
-	if m.moversDaysIdx > 0 {
-		days = moversWindowDays[m.moversDaysIdx%len(moversWindowDays)]
+	days := m.moversStop()
+	if days == moversCostBasis {
+		days = moversWindowDays[0]
 	}
 	return time.Duration(days) * 24 * time.Hour
 }
@@ -167,10 +190,19 @@ func (m *Model) loadView() error {
 				break
 			}
 		}
-		since := m.moversCutoff().UTC().Format(time.RFC3339)
-		changes, err := m.store.Movers(since)
-		if err != nil {
-			return fmt.Errorf("reading movers: %w", err)
+		var changes []store.PriceChange
+		var err error
+		if m.onCostBasis() {
+			changes, err = m.store.CostBasisMovers()
+			if err != nil {
+				return fmt.Errorf("reading cost basis: %w", err)
+			}
+		} else {
+			since := m.moversCutoff().UTC().Format(time.RFC3339)
+			changes, err = m.store.Movers(since)
+			if err != nil {
+				return fmt.Errorf("reading movers: %w", err)
+			}
 		}
 		m.allMovers = store.MoversByImpact(changes)
 		if m.moversCacheGen != m.dataGen || m.moversCache == nil {
@@ -452,8 +484,11 @@ func (m Model) viewHeader() (title, totals string) {
 			summary += " · " + ui.PluralCount(heldOut,
 				"settling set held out", "settling sets held out")
 		}
-		since := m.moversCutoff().Local().Format("2 Jan")
-		return "MOVERS · SINCE " + since + m.viewScope(),
+		heading := "MOVERS · SINCE " + m.moversCutoff().Local().Format("2 Jan")
+		if m.onCostBasis() {
+			heading = "MOVERS · AGAINST WHAT YOU PAID"
+		}
+		return heading + m.viewScope(),
 			joinPhrases(m.tablePagePhrase(len(m.movers), m.moversPage, len(m.filteredMovers)), summary)
 	case viewMarket:
 		return m.marketHeader()

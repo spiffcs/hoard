@@ -518,14 +518,18 @@ func commands() []command {
 }
 
 func (m *Model) cycleMoversWindow() tea.Cmd {
-	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(moversWindowDays)
+	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(m.moversStops())
 	m.moversPage = 0
 	if err := m.loadView(); err != nil {
 		m.setError(err)
 		return nil
 	}
 	m.cursor[paneCards], m.offset[paneCards] = 0, 0
-	m.status = fmt.Sprintf("movers · last %d days", moversWindowDays[m.moversDaysIdx])
+	if m.onCostBasis() {
+		m.status = "movers · cost basis"
+	} else {
+		m.status = fmt.Sprintf("movers · last %d days", m.moversStop())
+	}
 	m.statusErr = false
 	return nil
 }
