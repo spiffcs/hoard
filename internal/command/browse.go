@@ -241,6 +241,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				"csv":       export.WriteCanonical,
 				"json":      writeHoldingsJSON,
 				"moxfield":  export.WriteMoxfield,
+				"manabox":   export.WriteManabox,
 				"archidekt": export.WriteArchidekt,
 			}[format]
 			if write == nil {

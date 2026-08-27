@@ -141,7 +141,7 @@ func TestPerCommandHelpCarriesTheForms(t *testing.T) {
 			"hoard import FILE [--binder B | --preserve-binders]",
 		}},
 		{[]string{"export"}, []string{
-			"[--format csv|json|text|moxfield|archidekt]",
+			"[--format csv|json|text|moxfield|archidekt|manabox]",
 		}},
 
 		{[]string{"movers"}, []string{"--since", "--limit", "how far back to compare"}},

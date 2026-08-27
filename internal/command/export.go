@@ -53,7 +53,7 @@ func NewCmdExport(a *app) *cobra.Command {
 		GroupID: groupInterop,
 		Short:   "Holdings as CSV or JSON, in hoard's format or theirs",
 		Example: "hoard export [--binder B | --deck D | --all] [-o FILE]\n" +
-			"       [--format csv|json|text|moxfield|archidekt]",
+			"       [--format csv|json|text|moxfield|archidekt|manabox]",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 
@@ -72,7 +72,7 @@ func NewCmdExport(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "csv",
-		"output format: csv (canonical), json, text (a decklist 'deck add --file' reads), moxfield, or archidekt")
+		"output format: csv (canonical), json, text (a decklist 'deck add --file' reads), moxfield, archidekt, or manabox")
 	cmd.Flags().Var(&binder, "binder", "export one binder (id, name, or unique fragment)")
 	cmd.Flags().Var(&deck, "deck", "export one deck (id, name, or unique fragment)")
 	cmd.Flags().BoolVar(&all, "all", false, "export every binder and deck (the default)")
@@ -98,10 +98,11 @@ func runExport(st *store.Store, env *cli.Env, format string, formatSet bool,
 		"json":      writeHoldingsJSON,
 		"text":      export.WriteText,
 		"moxfield":  export.WriteMoxfield,
+		"manabox":   export.WriteManabox,
 		"archidekt": export.WriteArchidekt,
 	}[format]
 	if write == nil {
-		return cli.Usagef("unknown format %q (want csv, json, text, moxfield, or archidekt)", format)
+		return cli.Usagef("unknown format %q (want csv, json, text, moxfield, archidekt, or manabox)", format)
 	}
 	if (binder != "" && deck != "") || (all && (binder != "" || deck != "")) {
 		return cli.Usagef("choose one of --binder, --deck, or --all")

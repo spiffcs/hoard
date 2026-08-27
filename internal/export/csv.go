@@ -124,6 +124,89 @@ func moxfieldLanguage(lang string) string {
 	}
 }
 
+var manaboxFinishWords = map[string]finish.Finish{
+	"normal": finish.Nonfoil,
+	"foil":   finish.Foil,
+	"etched": finish.Etched,
+}
+
+var manaboxFinishOf = invertFinishWords(manaboxFinishWords)
+
+func invertFinishWords(m map[string]finish.Finish) map[finish.Finish]string {
+	out := make(map[finish.Finish]string, len(m))
+	for word, fin := range m {
+		out[fin] = word
+	}
+	return out
+}
+
+var manaboxGrade = map[string]string{
+	"nm":  "near_mint",
+	"lp":  "good",
+	"mp":  "light_played",
+	"hp":  "played",
+	"dmg": "poor",
+}
+
+var manaboxHeader = []string{
+	"Binder Name", "Binder Type", "Name", "Set code", "Set name", "Collector number",
+	"Foil", "Rarity", "Quantity", "ManaBox ID", "Scryfall ID", "Purchase price",
+	"Misprint", "Altered", "Condition", "Language", "Purchase price currency",
+}
+
+func WriteManabox(w io.Writer, rows []Row) error {
+	rows = Sorted(rows)
+	cw := csv.NewWriter(w)
+	cw.Write(manaboxHeader)
+	for _, r := range rows {
+		foil := manaboxFinishOf[r.Finish]
+		if foil == "" {
+			foil = r.Finish.String()
+		}
+		currency := ""
+		if r.PurchasePrice != nil {
+			currency = "USD"
+		}
+		cw.Write([]string{
+			r.Container, manaboxKind(r.Kind), r.Name, strings.ToUpper(r.Set),
+			manaboxSetName(r), r.CollectorNumber, foil, manaboxRarity(r),
+			strconv.Itoa(r.Count), "", r.ScryfallID, price(r.PurchasePrice),
+			"false", "false", manaboxGrade[r.Condition], manaboxLanguage(r.Lang),
+			currency,
+		})
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+func manaboxKind(kind string) string {
+	if kind == "deck" {
+		return "deck"
+	}
+	return "binder"
+}
+
+func manaboxSetName(r Row) string {
+	if r.Detail != nil {
+		return r.Detail.SetName
+	}
+	return ""
+}
+
+func manaboxRarity(r Row) string {
+	if r.Detail != nil {
+		return strings.ToLower(r.Detail.Rarity)
+	}
+	return ""
+}
+
+func manaboxLanguage(lang string) string {
+	if lang == "" {
+		return "en"
+	}
+	return strings.ToLower(lang)
+}
+
 func WriteArchidekt(w io.Writer, rows []Row) error {
 	rows = Sorted(aggregated(rows))
 	cw := csv.NewWriter(w)
