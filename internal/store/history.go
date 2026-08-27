@@ -192,6 +192,61 @@ const newestObservation = `MAX(as_of)`
 
 const windowBaseline = `COALESCE(MAX(CASE WHEN as_of <= ? THEN as_of END), MIN(as_of))`
 
+const paidByPriceFinish = `
+    SELECT e.scryfall_id AS sid,
+           CASE WHEN e.finish = 'etched' AND c.price_usd_etched IS NOT NULL
+                     THEN 'etched'
+                WHEN e.finish IN ('foil','etched') THEN 'foil'
+                WHEN e.finish = 'nonfoil' THEN 'nonfoil' END AS pfinish,
+           SUM(` + countedQuantity + `) AS copies,
+           SUM(e.purchase_price * ` + countedQuantity + `) AS spent
+    FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+    JOIN containers ctc ON ctc.id = e.container_id
+    WHERE e.purchase_price IS NOT NULL
+    GROUP BY sid, pfinish
+    HAVING copies > 0`
+
+func (s *Store) HasCostBasis() (bool, error) {
+	var found int
+	err := s.db.QueryRow(`
+SELECT EXISTS(SELECT 1 FROM card_entries WHERE purchase_price IS NOT NULL)`).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("looking for a cost basis: %w", err)
+	}
+	return found == 1, nil
+}
+
+func (s *Store) CostBasisMovers() ([]PriceChange, error) {
+	rows, err := s.db.Query(`
+WITH paid AS (` + paidByPriceFinish + `),
+     cur AS (` + fmt.Sprintf(pricesAt, newestObservation) + `)
+SELECT c.scryfall_id, cur.pfinish, c.name, c.set_code, c.collector_number,
+       p.copies, p.spent / p.copies, cur.price, cur.source, c.color_identity,
+       c.promo_types, COALESCE(c.lang, ''), COALESCE(c.released_at, '')
+FROM paid p
+JOIN cur ON cur.sid = p.sid AND cur.pfinish = p.pfinish
+JOIN cards c ON c.scryfall_id = p.sid`)
+	if err != nil {
+		return nil, fmt.Errorf("reading cost basis: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PriceChange
+	for rows.Next() {
+		var p PriceChange
+		var colors, promos sql.NullString
+		if err := rows.Scan(&p.ScryfallID, &p.Finish, &p.Name, &p.SetCode,
+			&p.CollectorNumber, &p.Copies, &p.Old, &p.New, &p.Source, &colors,
+			&promos, &p.Lang, &p.ReleasedAt); err != nil {
+			return nil, err
+		}
+		p.ColorIdentity = parseColorIdentity(colors)
+		p.Treatment = FoilTreatment(promos)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RecordPrices() ([]PriceChange, error) {
 	rows, err := s.db.Query(`
 WITH eff AS (` + effectivePrices + `),

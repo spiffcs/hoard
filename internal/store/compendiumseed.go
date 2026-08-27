@@ -35,7 +35,7 @@ func (s *Store) SeedCompendiumPrintings(containerID int64, ps []CompendiumPrinti
 	stmt, err := tx.Prepare(`
 INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
 VALUES (?, ?, ?, 'unknown', 'main', 1)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board) DO NOTHING`)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1)) DO NOTHING`)
 	if err != nil {
 		return 0, 0, err
 	}

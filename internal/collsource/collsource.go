@@ -14,6 +14,8 @@ type Row struct {
 
 	Condition string
 
+	PurchasePrice *float64
+
 	Binder string
 
 	Kind string

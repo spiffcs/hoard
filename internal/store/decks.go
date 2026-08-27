@@ -64,7 +64,7 @@ ON CONFLICT(source, source_id) DO UPDATE SET
 	defer stmt.Close()
 	for _, e := range entries {
 		if _, err := stmt.Exec(id, e.ScryfallID, e.Finish, orUnknown(e.Condition),
-			e.Board, e.Quantity); err != nil {
+			e.Board, e.PurchasePrice, e.Quantity); err != nil {
 			return 0, fmt.Errorf("inserting deck entry: %w", err)
 		}
 	}
@@ -203,7 +203,7 @@ func escapeLike(s string) string {
 func (s *Store) DeckEntries(containerID int64) ([]EntryView, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish, e.condition, e.board, e.quantity
+       e.finish, e.condition, e.board, e.quantity, e.purchase_price
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
@@ -221,7 +221,7 @@ ORDER BY
 		var v EntryView
 		var aux cardAux
 		if err := rows.Scan(append(cardScanDest(&v.Card, &aux),
-			&v.Finish, &v.Condition, &v.Board, &v.Quantity)...); err != nil {
+			&v.Finish, &v.Condition, &v.Board, &v.Quantity, &v.PurchasePrice)...); err != nil {
 			return nil, err
 		}
 		aux.apply(&v.Card)

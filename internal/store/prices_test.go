@@ -120,7 +120,7 @@ func TestConditionSplitsTheBucket(t *testing.T) {
 	if _, err := s.db.Exec(`
 INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
 VALUES (?, 'ulamog-id', 'nonfoil', 'lp', 'main', 1)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`, cid); err != nil {
 		t.Fatalf("insert played copy: %v", err)
 	}

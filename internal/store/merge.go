@@ -98,7 +98,7 @@ func (s *Store) ApplyMerge(receipt *ImportReceipt, p MergePlan) (MergeResult, er
 		}
 
 		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, orUnknown(a.Condition),
-			"main", a.Quantity); err != nil {
+			"main", a.PurchasePrice, a.Quantity); err != nil {
 			return res, fmt.Errorf("merging %s: %w", a.Card.Name, err)
 		}
 		res.Copies += a.Quantity

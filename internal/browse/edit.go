@@ -149,6 +149,8 @@ func (m *Model) editHeldField() {
 		m.promptHeldFinish()
 	case fieldCondition:
 		m.promptHeldCondition()
+	case fieldPaid:
+		m.promptHeldPaid()
 	case fieldWhere:
 		m.promptHeldLocation()
 	default:
@@ -311,6 +313,90 @@ func (m *Model) promptHeldCondition() {
 			return m.moveHeldCondition(h, name, want)
 		},
 	}
+}
+
+func (m *Model) promptHeldPaid() {
+	h, ok := m.heldEditable()
+	if !ok {
+		return
+	}
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label:    fmt.Sprintf("%s in %s · purchase price", name, h.ContainerName),
+		text:     paidInput(h.PurchasePrice),
+		help:     "what you paid, in USD · - to forget · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parsePaid(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			want, err := parsePaid(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			return m.moveHeldPaid(h, name, want)
+		},
+	}
+}
+
+func paidInput(paid *float64) string {
+	if paid == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*paid, 'f', 2, 64)
+}
+
+func parsePaid(text string) (*float64, error) {
+	switch t := strings.TrimSpace(text); t {
+	case "-", "", "?":
+		return nil, nil
+	default:
+		v, err := strconv.ParseFloat(strings.TrimPrefix(t, "$"), 64)
+		if err != nil {
+			return nil, fmt.Errorf("a purchase price is a number of US dollars, or - to forget it")
+		}
+		if v < 0 {
+			return nil, fmt.Errorf("a purchase price cannot be negative")
+		}
+		return &v, nil
+	}
+}
+
+func (m *Model) moveHeldPaid(h store.Holding, name string, want *float64) tea.Cmd {
+	from := h.PurchasePrice
+	if samePaid(from, want) {
+		m.status, m.statusErr = "already "+ui.MoneyPtr(from), false
+		return nil
+	}
+	ref := h.Ref()
+	prevTarget, err := m.store.MoveEntryPurchasePrice(ref, want)
+	if err != nil {
+		m.setError(err)
+		return nil
+	}
+	moved := ref
+	moved.PurchasePrice = want
+	qty := h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s %s", name, ui.MoneyPtr(from)),
+		undo: func(st Editor) error {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetEntryQuantity(ref, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("%s (%s → %s) in %s",
+		name, ui.MoneyPtr(from), ui.MoneyPtr(want), h.ContainerName)
+	m.statusErr = false
+	m.refresh()
+	return m.reloadDetail()
+}
+
+func samePaid(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func conditionInput(condition string) string {

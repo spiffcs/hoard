@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,6 +26,8 @@ type addOpts struct {
 	file      string
 	binderRef string
 	again     bool
+	paid      string
+	paidSet   bool
 }
 
 func NewCmdAdd(a *app) *cobra.Command {
@@ -42,11 +45,14 @@ func NewCmdAdd(a *app) *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			o.qtySet = c.Flags().Changed("qty")
 			o.foilSet = c.Flags().Changed("foil")
+			o.paidSet = c.Flags().Changed("paid")
 			return runAdd(c.Context(), a.store, a.env, args, o)
 		},
 	}
 	cmd.Flags().BoolVar(&o.foil, "foil", false, "add the card as foil (URL form only)")
 	cmd.Flags().IntVar(&o.qty, "qty", 1, "quantity to add (URL form only)")
+	cmd.Flags().StringVar(&o.paid, "paid", "",
+		"what you paid per copy in USD, e.g. 12.50 (URL form only)")
 	cmd.Flags().StringVar(&o.file, "file", "",
 		"add a pasted/exported card list (a path, or - for stdin)")
 	cmd.Flags().StringVar(&o.binderRef, "binder", "",
@@ -77,7 +83,11 @@ func runAdd(ctx context.Context, st *store.Store, env *cli.Env, args []string, o
 	}
 
 	if len(args) == 1 && looksLikeURL(args[0]) {
-		return addByURL(ctx, st, env, args[0], o.foil, o.qty, o.binderRef)
+		paid, err := parsePaidFlag(o.paid)
+		if err != nil {
+			return err
+		}
+		return addByURL(ctx, st, env, args[0], o.foil, o.qty, o.binderRef, paid)
 	}
 	if o.binderRef != "" {
 
@@ -100,6 +110,9 @@ func refusePerCopyFlags(o addOpts, because string) error {
 	if o.foilSet {
 		named = append(named, "--foil")
 	}
+	if o.paidSet {
+		named = append(named, "--paid")
+	}
 	if len(named) == 0 {
 		return nil
 	}
@@ -116,10 +129,22 @@ func looksLikeURL(arg string) bool {
 	return strings.Contains(arg, "://") || strings.Contains(arg, "scryfall.com")
 }
 
-func addByURL(ctx context.Context, st *store.Store, env *cli.Env, url string, foil bool, qty int, binderRef string) error {
+func parsePaidFlag(raw string) (*float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(strings.TrimPrefix(raw, "$"), 64)
+	if err != nil || v < 0 {
+		return nil, cli.Usagef("--paid takes a number of US dollars, like 12.50")
+	}
+	return &v, nil
+}
+
+func addByURL(ctx context.Context, st *store.Store, env *cli.Env, url string, foil bool, qty int, binderRef string, paid *float64) error {
 	pr := stderrPrinter()
 	res, err := action.AddCardByURL(ctx, addDeps(st), pr.Fn(),
-		action.AddCardByURLOptions{URL: url, Foil: foil, Qty: qty, BinderRef: binderRef})
+		action.AddCardByURLOptions{URL: url, Foil: foil, Qty: qty, BinderRef: binderRef, Paid: paid})
 	pr.Close()
 	if err != nil {
 		return err
@@ -200,7 +225,8 @@ func recordAdd(st *store.Store, res tui.Result) error {
 	}
 	add := func() error {
 		if res.ContainerID != 0 {
-			return st.AddCardFinishTo(res.ContainerID, res.Card, res.Finish, res.Qty)
+			return st.AddCardFinishPaidTo(res.ContainerID, res.Card, res.Finish, res.Qty,
+				res.PurchasePrice)
 		}
 		return st.AddCardFinish(res.Card, res.Finish, res.Qty)
 	}

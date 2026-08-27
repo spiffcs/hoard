@@ -66,6 +66,8 @@ type Entry struct {
 	Condition  string
 	Board      string
 	Quantity   int
+
+	PurchasePrice *float64
 }
 
 type Container struct {
@@ -93,6 +95,8 @@ type EntryView struct {
 	Condition string
 	Board     string
 	Quantity  int
+
+	PurchasePrice *float64
 }
 
 func (e EntryView) Price() *float64 {

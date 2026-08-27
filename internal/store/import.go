@@ -17,12 +17,14 @@ type CardAdd struct {
 
 	Condition string
 	Quantity  int
+
+	PurchasePrice *float64
 }
 
 const entryAccumulateSQL = `
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, purchase_price, quantity)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`
 
 type ImportReceipt struct {
@@ -115,7 +117,7 @@ func (s *Store) ApplyImport(receipt *ImportReceipt, newBinders []string, adds []
 		}
 
 		if _, err := stmt.Exec(cid, a.Card.ID, a.Finish, orUnknown(a.Condition),
-			"main", a.Quantity); err != nil {
+			"main", a.PurchasePrice, a.Quantity); err != nil {
 			return nil, fmt.Errorf("adding %s: %w", a.Card.Name, err)
 		}
 	}

@@ -157,7 +157,7 @@ func (s *Store) containerKind(id int64) (string, error) {
 func (s *Store) FolderByFinish(folderID int64) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish, e.condition,
+       e.finish, e.condition, NULL AS purchase_price,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
 FROM card_entries e

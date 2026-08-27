@@ -33,6 +33,8 @@ type Row struct {
 	Kind        string
 	Board       string
 	PriceUSD    *float64
+
+	PurchasePrice *float64
 }
 
 func WriteCanonical(w io.Writer, rows []Row) error {

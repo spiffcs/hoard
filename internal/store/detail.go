@@ -122,6 +122,8 @@ type Holding struct {
 	Board     string
 	Quantity  int
 
+	PurchasePrice *float64
+
 	ScryfallID      string
 	SetCode         string
 	CollectorNumber string
@@ -134,6 +136,7 @@ type Holding struct {
 func (s *Store) HoldingsOf(scryfallID string) ([]Holding, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity,
+       e.purchase_price,
        EXISTS(SELECT 1 FROM finish_guesses g
               WHERE g.container_id = e.container_id
                 AND g.scryfall_id = e.scryfall_id
@@ -155,7 +158,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 	for rows.Next() {
 		var h Holding
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
-			&h.Finish, &h.Condition, &h.Board, &h.Quantity, &h.Guessed); err != nil {
+			&h.Finish, &h.Condition, &h.Board, &h.Quantity, &h.PurchasePrice, &h.Guessed); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
@@ -166,6 +169,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 func (s *Store) HoldingsOfName(name string) ([]Holding, error) {
 	rows, err := s.db.Query(`
 SELECT ct.id, ct.name, ct.kind, e.finish, e.condition, e.board, e.quantity,
+       e.purchase_price,
        c.scryfall_id, c.set_code, c.collector_number, c.promo_types,
        EXISTS(SELECT 1 FROM finish_guesses g
               WHERE g.container_id = e.container_id
@@ -187,7 +191,7 @@ ORDER BY CASE ct.kind WHEN '`+KindCollection+`' THEN 0 ELSE 1 END,
 		var h Holding
 		var promos sql.NullString
 		if err := rows.Scan(&h.ContainerID, &h.ContainerName, &h.ContainerKind,
-			&h.Finish, &h.Condition, &h.Board, &h.Quantity,
+			&h.Finish, &h.Condition, &h.Board, &h.Quantity, &h.PurchasePrice,
 			&h.ScryfallID, &h.SetCode, &h.CollectorNumber, &promos, &h.Guessed); err != nil {
 			return nil, err
 		}

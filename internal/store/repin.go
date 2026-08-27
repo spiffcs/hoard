@@ -37,7 +37,7 @@ WHERE container_id = ? AND scryfall_id = ?`, containerID, from)
 			if _, err := tx.Exec(`
 INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
 VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`,
 				containerID, to, r.finish, r.condition, r.board, r.qty); err != nil {
 				return 0, fmt.Errorf("re-pointing %s to %s: %w", from, to, err)

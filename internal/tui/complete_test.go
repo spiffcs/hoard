@@ -25,7 +25,7 @@ func confirmOne(t *testing.T, m model) (model, tea.Cmd) {
 		t.Fatalf("state = %v, want stateQty", got.state)
 	}
 	got.qtyInput.SetValue("1")
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	got = mm.(model)
 	if got.state != stateConfirm {
 		t.Fatalf("state = %v, want stateConfirm", got.state)

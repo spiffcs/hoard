@@ -62,6 +62,7 @@ const (
 	fieldSet
 	fieldFinish
 	fieldCondition
+	fieldPaid
 	fieldWhere
 	heldFieldCount
 )
@@ -385,12 +386,13 @@ func (m Model) hoardLines(d detail, width int) []string {
 		}
 		return s
 	}
-	var qtyW, setW, finW, condW int
+	var qtyW, setW, finW, condW, paidW int
 	for _, h := range d.holdings {
 		qtyW = max(qtyW, ansi.StringWidth(ui.Qty(h.Quantity)))
 		setW = max(setW, ansi.StringWidth(ui.Printing(h.SetCode, h.CollectorNumber)))
 		condW = max(condW, ansi.StringWidth(ui.Condition(h.Condition)))
 		finW = max(finW, ansi.StringWidth(finishCell(h)))
+		paidW = max(paidW, ansi.StringWidth(paidCell(h)))
 	}
 	pad := func(s string, w int, left bool) string {
 		fill := strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
@@ -408,6 +410,7 @@ func (m Model) hoardLines(d detail, width int) []string {
 		set := pad(ui.Printing(h.SetCode, h.CollectorNumber), setW, false)
 		fin := pad(finishCell(h), finW, false)
 		cond := pad(ui.Condition(h.Condition), condW, false)
+		paid := pad(paidCell(h), paidW, true)
 
 		if i == d.heldCursor && d.zone == zoneHeld {
 			mark := func(s string, f int) string {
@@ -418,11 +421,11 @@ func (m Model) hoardLines(d detail, width int) []string {
 			}
 			parts := []string{mark(qty, fieldQty), mark(set, fieldSet),
 				mark(fin, fieldFinish), mark(cond, fieldCondition),
-				mark(where, fieldWhere)}
+				mark(paid, fieldPaid), mark(where, fieldWhere)}
 			out = append(out, ui.Truncate("▸ "+strings.Join(parts, " · "), width))
 			continue
 		}
-		line := ui.Truncate("  "+strings.Join([]string{qty, set, fin, cond, where}, " · "), width)
+		line := ui.Truncate("  "+strings.Join([]string{qty, set, fin, cond, paid, where}, " · "), width)
 
 		if i == d.heldCursor && len(d.holdings) > 1 {
 			line = ui.Restyle(fit(line, min(width, frameWidth)), m.theme.Inactive)
@@ -762,4 +765,11 @@ func (m Model) streakPhrase(n int) string {
 		frac = -frac
 	}
 	return m.env.Diverge(frac)(fmt.Sprintf("%d %s", run, word))
+}
+
+func paidCell(h store.Holding) string {
+	if h.PurchasePrice == nil {
+		return "—"
+	}
+	return ui.Money(*h.PurchasePrice)
 }

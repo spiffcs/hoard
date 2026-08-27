@@ -25,6 +25,20 @@ type spec struct {
 	kind     string
 
 	condition, language, price string
+
+	currency string
+
+	grades map[string]string
+}
+
+var sixGradeLadder = map[string]string{
+	"mint":         "nm",
+	"near mint":    "nm",
+	"excellent":    "nm",
+	"good":         "lp",
+	"light played": "mp",
+	"played":       "hp",
+	"poor":         "dmg",
 }
 
 var specs = []spec{
@@ -41,6 +55,7 @@ var specs = []spec{
 		qty:   "Quantity", cardName: "Name", set: "Set code", number: "Collector number",
 		finish: "Foil", scryfall: "Scryfall ID", binder: "Binder Name",
 		condition: "Condition", language: "Language", price: "Purchase price",
+		currency: "Purchase price currency", grades: sixGradeLadder,
 	},
 	{
 		name:  "moxfield",
@@ -127,24 +142,27 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 			return nil, fmt.Errorf("line %d (%s): %v", line, name, err)
 		}
 
+		paid, err := parsePaid(get(rec, sp.price), get(rec, sp.currency))
+		if err != nil {
+			return nil, fmt.Errorf("line %d (%s): %v", line, name, err)
+		}
+
 		out.Rows = append(out.Rows, Row{
-			Quantity:  qty,
-			Name:      name,
-			Finish:    normFinish(get(rec, sp.finish)),
-			Condition: normCondition(get(rec, sp.condition)),
-			Binder:    get(rec, sp.binder),
-			Kind:      strings.ToLower(get(rec, sp.kind)),
-			Ident:     identFor(get(rec, sp.scryfall), get(rec, sp.set), get(rec, sp.number), name),
+			Quantity:      qty,
+			Name:          name,
+			Finish:        normFinish(get(rec, sp.finish)),
+			Condition:     sp.gradeOf(get(rec, sp.condition)),
+			PurchasePrice: paid,
+			Binder:        get(rec, sp.binder),
+			Kind:          strings.ToLower(get(rec, sp.kind)),
+			Ident:         identFor(get(rec, sp.scryfall), get(rec, sp.set), get(rec, sp.number), name),
 		})
 
-		if unplaceableCondition(get(rec, sp.condition)) {
+		if sp.unplaceableCondition(get(rec, sp.condition)) {
 			out.Dropped["condition"]++
 		}
 		if informativeLanguage(get(rec, sp.language)) {
 			out.Dropped["language"]++
-		}
-		if informativePrice(get(rec, sp.price)) {
-			out.Dropped["purchase price"]++
 		}
 	}
 	if len(out.Rows) == 0 {
@@ -215,6 +233,40 @@ func normFinish(s string) finish.Finish {
 	}
 }
 
+func (sp spec) gradeOf(s string) string {
+	if sp.grades != nil {
+		if g, ok := sp.grades[strings.ReplaceAll(
+			strings.ToLower(strings.TrimSpace(s)), "_", " ")]; ok {
+			return g
+		}
+		if strings.TrimSpace(s) == "" {
+			return "unknown"
+		}
+	}
+	return normCondition(s)
+}
+
+func (sp spec) unplaceableCondition(c string) bool {
+	return strings.TrimSpace(c) != "" && sp.gradeOf(c) == "unknown"
+}
+
+func parsePaid(amount, currency string) (*float64, error) {
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(strings.TrimPrefix(amount, "$"), 64)
+	if err != nil || v <= 0 {
+		return nil, nil
+	}
+	if cur := strings.ToUpper(strings.TrimSpace(currency)); cur != "" && cur != "USD" {
+		return nil, fmt.Errorf(
+			"purchase price is in %s; hoard stores USD only, so importing this "+
+				"file would misreport what you paid", cur)
+	}
+	return &v, nil
+}
+
 func normCondition(s string) string {
 	switch strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", " ") {
 	case "":
@@ -243,19 +295,10 @@ func normCondition(s string) string {
 	}
 }
 
-func unplaceableCondition(c string) bool {
-	return strings.TrimSpace(c) != "" && normCondition(c) == "unknown"
-}
-
 func informativeLanguage(l string) bool {
 	switch strings.ToLower(l) {
 	case "", "en", "english":
 		return false
 	}
 	return true
-}
-
-func informativePrice(p string) bool {
-	v, err := strconv.ParseFloat(strings.TrimPrefix(p, "$"), 64)
-	return err == nil && v > 0
 }

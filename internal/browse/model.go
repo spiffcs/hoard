@@ -69,6 +69,7 @@ type card struct {
 	Quantity  int
 	Price     *float64
 	Value     float64
+	Paid      *float64
 	AltSource string
 
 	ColorIdentity []string
@@ -223,6 +224,7 @@ type Model struct {
 	liquidLowball bool
 
 	moversDaysIdx int
+	hasCostBasis  bool
 
 	marketFetch  MarketFunc
 	marketCached MarketCachedFunc
@@ -347,6 +349,13 @@ func pricePoints(s []store.PricePoint) []ui.TimePoint {
 }
 
 func (m *Model) loadContainers() error {
+	held, err := m.store.HasCostBasis()
+	if err != nil {
+		return fmt.Errorf("looking for a cost basis: %w", err)
+	}
+	if m.hasCostBasis = held; !held {
+		m.moversDaysIdx %= len(moversWindowDays)
+	}
 	if m.setsMode {
 		return m.loadSetContainers()
 	}

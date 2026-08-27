@@ -279,7 +279,7 @@ func TestConfirmAddsAndLoopsBack(t *testing.T) {
 	}
 
 	got.qtyInput.SetValue("3")
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	got = mm.(model)
 	if got.state != stateConfirm {
 		t.Fatalf("expected stateConfirm, got %v", got.state)
@@ -324,7 +324,7 @@ func confirmScreen(t *testing.T, dests []Destination) string {
 	}
 	if got.state == stateQty {
 		got.qtyInput.SetValue("1")
-		mm, _ = got.submitQty()
+		mm, _ = submitQtyPastPaid(got)
 		got = mm.(model)
 	}
 	if got.state != stateConfirm {
@@ -369,7 +369,7 @@ func TestAdderErrorKeepsSession(t *testing.T) {
 	m := newModel(context.Background(), fakeSearcher{}, ra.add, nil, "Ulamog", nil)
 	mm, _ := m.Update(printsMsg{name: "Ulamog", cards: []scryfall.Card{card}})
 	got := mm.(model)
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	got = mm.(model)
 	mm2, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm2.(model)
@@ -1229,7 +1229,7 @@ func TestDestinationPickerAsksHandsOffAndRemembers(t *testing.T) {
 	if got.state != stateQty || got.dest.ID != 2 {
 		t.Fatalf("state=%v dest=%+v, want stateQty with Trade chosen", got.state, got.dest)
 	}
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
@@ -1259,7 +1259,7 @@ func TestSingleDestinationSkipsThePicker(t *testing.T) {
 	if got.state != stateQty {
 		t.Fatalf("state = %v, want stateQty — one destination must not ask", got.state)
 	}
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	got = mm.(model)
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
@@ -3325,7 +3325,7 @@ func TestReviewItemReentersCascadeFromPrints(t *testing.T) {
 	if len(got.review) != 0 {
 		t.Errorf("the item under review should leave the queue, %d remain", len(got.review))
 	}
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if len(ra.got) != 1 {
@@ -3376,7 +3376,7 @@ func TestCloseKeyWithQueuePrompts(t *testing.T) {
 	}
 	mm, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
-	mm, _ = got.submitQty()
+	mm, _ = submitQtyPastPaid(got)
 	mm, _ = mm.(model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = mm.(model)
 	if len(ra.got) != 1 {
@@ -4695,4 +4695,9 @@ func TestOnlyTheNotPairedSentinelReachesTheCodeScreen(t *testing.T) {
 			}
 		})
 	}
+}
+
+func submitQtyPastPaid(m model) (tea.Model, tea.Cmd) {
+	mm, _ := m.submitQty()
+	return mm.(model).submitPaid()
 }

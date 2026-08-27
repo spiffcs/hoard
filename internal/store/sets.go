@@ -44,7 +44,7 @@ ORDER BY MAX(c.released_at) DESC, c.set_code`)
 func (s *Store) SetByFinish(setCode string) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish, e.condition,
+       e.finish, e.condition, NULL AS purchase_price,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
 FROM card_entries e

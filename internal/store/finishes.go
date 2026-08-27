@@ -107,7 +107,7 @@ ORDER BY c.name`)
 		if _, err := tx.Exec(`
 INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
 VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`,
 			t.containerID, t.scryfallID, t.to, t.condition, t.board, t.quantity); err != nil {
 			return nil, nil, fmt.Errorf("moving entry to %s: %w", t.to, err)

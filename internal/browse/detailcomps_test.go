@@ -815,6 +815,10 @@ func TestDetailHeldFieldEdit(t *testing.T) {
 		t.Fatalf("field = %d, want condition next", m.detail.heldField)
 	}
 	m = key(m, "right")
+	if m.detail.heldField != fieldPaid {
+		t.Fatalf("field = %d, want purchase price next", m.detail.heldField)
+	}
+	m = key(m, "right")
 	if m.detail.heldField != fieldWhere {
 		t.Fatalf("field = %d, want location", m.detail.heldField)
 	}
@@ -1386,10 +1390,10 @@ func TestDetailHeldFinishAlwaysRenders(t *testing.T) {
 	}}
 	out := strings.Join(m.hoardLines(d, 140), "\n")
 
-	if !strings.Contains(out, "mh3/300 · -      · — · Binder") {
+	if !strings.Contains(out, "mh3/300 · -      · — · — · Binder") {
 		t.Errorf("plain nonfoil should render a padded dash in its finish slot:\n%s", out)
 	}
-	if !strings.Contains(out, "mh3/301 · ripple · — · Binder") {
+	if !strings.Contains(out, "mh3/301 · ripple · — · — · Binder") {
 		t.Errorf("treated foil should keep its treatment word:\n%s", out)
 	}
 

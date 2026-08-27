@@ -46,6 +46,10 @@ func (s *Store) AddCardFinish(c scryfall.Card, fin finish.Finish, qty int) error
 }
 
 func (s *Store) AddCardFinishTo(containerID int64, c scryfall.Card, fin finish.Finish, qty int) error {
+	return s.AddCardFinishPaidTo(containerID, c, fin, qty, nil)
+}
+
+func (s *Store) AddCardFinishPaidTo(containerID int64, c scryfall.Card, fin finish.Finish, qty int, paid *float64) error {
 	if err := validFinish(fin); err != nil {
 		return err
 	}
@@ -60,11 +64,11 @@ func (s *Store) AddCardFinishTo(containerID int64, c scryfall.Card, fin finish.F
 		return err
 	}
 	if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, 'unknown', 'main', ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, purchase_price, quantity)
+VALUES (?, ?, ?, 'unknown', 'main', ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`,
-		cid, c.ID, fin, qty); err != nil {
+		cid, c.ID, fin, paid, qty); err != nil {
 		return fmt.Errorf("adding %s to collection: %w", c.Name, err)
 	}
 	return tx.Commit()
@@ -77,6 +81,8 @@ type CollectionRow struct {
 	Condition string
 	Quantity  int
 	Value     float64
+
+	PurchasePrice *float64
 }
 
 func (r CollectionRow) Price() *float64 {
@@ -94,14 +100,14 @@ func (s *Store) ListCollectionByFinish() ([]CollectionRow, error) {
 func (s *Store) BinderByFinish(containerID int64) ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT `+cardCols(altSourceForEntry)+`,
-       e.finish, e.condition,
+       e.finish, e.condition, e.purchase_price,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * `+entryValue+`) AS value
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
 `+altJoinCards+`
 WHERE e.container_id = ?
-GROUP BY c.scryfall_id, e.finish, e.condition
+GROUP BY c.scryfall_id, e.finish, e.condition, e.purchase_price
 ORDER BY value DESC, c.name`, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("listing collection: %w", err)
@@ -112,13 +118,13 @@ ORDER BY value DESC, c.name`, containerID)
 func (s *Store) AllByFinish() ([]CollectionRow, error) {
 	rows, err := s.db.Query(`
 SELECT ` + cardCols(altSourceForEntry) + `,
-       e.finish, e.condition,
+       e.finish, e.condition, e.purchase_price,
        SUM(e.quantity) AS quantity,
        SUM(e.quantity * ` + entryValue + `) AS value
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id` + countedEntries + `
 ` + altJoinCards + `
-GROUP BY c.scryfall_id, e.finish, e.condition
+GROUP BY c.scryfall_id, e.finish, e.condition, e.purchase_price
 ORDER BY value DESC, c.name`)
 	if err != nil {
 		return nil, fmt.Errorf("listing all holdings: %w", err)
@@ -133,7 +139,7 @@ func scanCollectionRows(rows *sql.Rows) ([]CollectionRow, error) {
 		var r CollectionRow
 		var aux cardAux
 		if err := rows.Scan(append(cardScanDest(&r.Card, &aux),
-			&r.Finish, &r.Condition, &r.Quantity, &r.Value)...); err != nil {
+			&r.Finish, &r.Condition, &r.PurchasePrice, &r.Quantity, &r.Value)...); err != nil {
 			return nil, err
 		}
 		aux.apply(&r.Card)
@@ -230,6 +236,7 @@ type CollectionTotals struct {
 	DistinctCards int
 	TotalCopies   int
 	Value         float64
+	Spent         float64
 }
 
 func (s *Store) CollectionTotals() (CollectionTotals, error) {
@@ -240,12 +247,13 @@ func (s *Store) CollectionTotals() (CollectionTotals, error) {
 	err := s.db.QueryRow(`
 SELECT COUNT(DISTINCT e.scryfall_id) AS distinct_cards,
        COALESCE(SUM(e.quantity), 0) AS total_copies,
-       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value
+       COALESCE(SUM(e.quantity * `+entryValue+`), 0) AS value,
+       COALESCE(SUM(e.quantity * e.purchase_price), 0) AS spent
 FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
 JOIN containers ct ON ct.id = e.container_id
 `+altJoinEntries+`
 WHERE ct.kind = ? AND ct.counted = 1`, KindCollection).Scan(
-		&t.DistinctCards, &t.TotalCopies, &t.Value)
+		&t.DistinctCards, &t.TotalCopies, &t.Value, &t.Spent)
 	if err != nil {
 		return CollectionTotals{}, fmt.Errorf("collection totals: %w", err)
 	}

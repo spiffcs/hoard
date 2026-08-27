@@ -34,6 +34,7 @@ type Editor interface {
 	MoveEntry(from store.EntryRef, toContainer int64, toScryfallID string) (int, error)
 	MoveEntryFinish(from store.EntryRef, toFinish finish.Finish) (int, error)
 	MoveEntryCondition(from store.EntryRef, toCondition string) (int, error)
+	MoveEntryPurchasePrice(from store.EntryRef, toPaid *float64) (int, error)
 	UpsertPrintings(cards []scryfall.Card) error
 }
 
@@ -51,6 +52,8 @@ type Store interface {
 	EnrichedCount() (enriched, total int, err error)
 
 	Movers(since string) ([]store.PriceChange, error)
+	HasCostBasis() (bool, error)
+	CostBasisMovers() ([]store.PriceChange, error)
 	Dips(o store.TrendOptions) ([]store.TrendRow, error)
 	Momentum(o store.TrendOptions) ([]store.TrendRow, error)
 	Unpriced() ([]store.UnpricedRow, error)

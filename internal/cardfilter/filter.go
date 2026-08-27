@@ -30,6 +30,7 @@ type Subject struct {
 	Quantity   int
 	Price      *float64
 	Value      float64
+	Paid       *float64
 }
 
 func (f Filter) Raw() string { return f.raw }
@@ -50,7 +51,7 @@ func (f Filter) Uses(key string) bool {
 		return len(f.finishes) > 0
 	case "board":
 		return len(f.boards) > 0
-	case "qty", "price", "value":
+	case "qty", "price", "value", "paid":
 		return len(f.nums[key]) > 0
 	case "cmc":
 		return len(f.traits.CMC) > 0
@@ -70,16 +71,16 @@ func (f Filter) Uses(key string) bool {
 	return false
 }
 
-var numericKeys = map[string]bool{"qty": true, "price": true, "value": true, "cmc": true}
+var numericKeys = map[string]bool{"qty": true, "price": true, "value": true, "cmc": true, "paid": true}
 
 var knownKeys = map[string]bool{
 	"name": true, "set": true, "finish": true, "board": true,
-	"qty": true, "price": true, "value": true, "cmc": true,
+	"qty": true, "price": true, "value": true, "cmc": true, "paid": true,
 	"rarity": true, "type": true, "t": true, "artist": true,
 	"layout": true, "setname": true, "color": true, "c": true,
 }
 
-const KeyHelp = "name set finish board qty price value rarity type artist layout setname color"
+const KeyHelp = "name set finish board qty price value paid rarity type artist layout setname color"
 
 func Parse(s string) (Filter, error) {
 	f := Filter{raw: strings.TrimSpace(s), nums: map[string][]store.NumCond{}}
@@ -218,6 +219,12 @@ func (f Filter) Matches(s Subject, allowed map[string]bool) bool {
 			have = *s.Price
 		case "value":
 			have = s.Value
+		case "paid":
+
+			if s.Paid == nil {
+				return false
+			}
+			have = *s.Paid
 		}
 		for _, cond := range conds {
 			if !Compare(have, cond) {

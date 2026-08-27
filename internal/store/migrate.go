@@ -48,6 +48,7 @@ var migrations = []migration{
 	{31, binderCounted},
 	{32, deckFolders},
 	{33, lockedDeckNames},
+	{34, entryPurchasePrice},
 }
 
 var schemaVersion = migrations[len(migrations)-1].Version
@@ -287,6 +288,46 @@ FROM card_entries_pre_v23;
 DROP TABLE card_entries_pre_v23;
 
 CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);`
+
+const entryPurchasePrice = `
+ALTER TABLE card_entries RENAME TO card_entries_pre_v34;
+
+CREATE TABLE card_entries (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_id   INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    scryfall_id    TEXT NOT NULL REFERENCES cards(scryfall_id),
+    finish         TEXT NOT NULL CHECK (finish IN ('nonfoil', 'foil', 'etched')),
+    condition      TEXT NOT NULL DEFAULT 'unknown',
+    board          TEXT NOT NULL DEFAULT 'main',
+    purchase_price REAL,
+    quantity       INTEGER NOT NULL
+);
+
+INSERT INTO card_entries
+    (container_id, scryfall_id, finish, condition, board, purchase_price, quantity)
+SELECT container_id, scryfall_id, finish, condition, board, NULL, quantity
+FROM card_entries_pre_v34;
+
+DROP TABLE card_entries_pre_v34;
+
+CREATE UNIQUE INDEX card_entries_holding ON card_entries(
+    container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1));
+
+CREATE INDEX IF NOT EXISTS card_entries_card_id ON card_entries(scryfall_id);
+
+CREATE TRIGGER card_entries_folder_insert
+BEFORE INSERT ON card_entries
+WHEN (SELECT kind FROM containers WHERE id = NEW.container_id) = 'folder'
+BEGIN
+    SELECT RAISE(ABORT, 'a folder holds decks, not cards');
+END;
+
+CREATE TRIGGER card_entries_folder_update
+BEFORE UPDATE OF container_id ON card_entries
+WHEN (SELECT kind FROM containers WHERE id = NEW.container_id) = 'folder'
+BEGIN
+    SELECT RAISE(ABORT, 'a folder holds decks, not cards');
+END;`
 
 const finishGuesses = `
 CREATE TABLE finish_guesses (

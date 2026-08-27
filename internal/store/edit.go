@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/spiffcs/hoard/internal/finish"
@@ -15,11 +16,14 @@ type EntryRef struct {
 	Finish      finish.Finish
 	Condition   string
 	Board       string
+
+	PurchasePrice *float64
 }
 
 func (h Holding) Ref() EntryRef {
 	return EntryRef{ContainerID: h.ContainerID, ScryfallID: h.ScryfallID,
-		Finish: h.Finish, Condition: h.Condition, Board: h.Board}
+		Finish: h.Finish, Condition: h.Condition, Board: h.Board,
+		PurchasePrice: h.PurchasePrice}
 }
 
 func (r EntryRef) normalized() EntryRef {
@@ -38,27 +42,28 @@ func (r EntryRef) with(fin finish.Finish, condition string) EntryRef {
 const selectEntryQuantity = `
 SELECT quantity FROM card_entries
 WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
-  AND board = ?`
+  AND board = ? AND COALESCE(purchase_price, -1) = COALESCE(?, -1)`
 
 const deleteEntry = `
 DELETE FROM card_entries
 WHERE container_id = ? AND scryfall_id = ? AND finish = ? AND condition = ?
-  AND board = ?`
+  AND board = ? AND COALESCE(purchase_price, -1) = COALESCE(?, -1)`
 
 const insertEntryReplacing = `
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, purchase_price, quantity)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = excluded.quantity`
 
 const insertEntryAdding = `
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board)
+INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, purchase_price, quantity)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
 DO UPDATE SET quantity = quantity + excluded.quantity`
 
 func (r EntryRef) args() []any {
-	return []any{r.ContainerID, r.ScryfallID, r.Finish, r.Condition, r.Board}
+	return []any{r.ContainerID, r.ScryfallID, r.Finish, r.Condition, r.Board,
+		r.PurchasePrice}
 }
 
 func entryQuantity(tx *sql.Tx, r EntryRef) (int, error) {
@@ -210,6 +215,36 @@ func (s *Store) MoveEntryCondition(from EntryRef, toCondition string) (prevTarge
 	return prevTarget, tx.Commit()
 }
 
+func (s *Store) MoveEntryPurchasePrice(from EntryRef, toPaid *float64) (prevTarget int, err error) {
+	from = from.normalized()
+	if samePaid(from.PurchasePrice, toPaid) {
+		return 0, nil
+	}
+	if toPaid != nil && *toPaid < 0 {
+		return 0, errors.New("a purchase price cannot be negative")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	to := from
+	to.PurchasePrice = toPaid
+	if prevTarget, err = moveEntryTx(tx, from, to); err != nil {
+		return 0, err
+	}
+	return prevTarget, tx.Commit()
+}
+
+func samePaid(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (s *Store) RemoveFromCollection(scryfallID string) ([]Holding, error) {
 	cid, err := s.collectionID()
 	if err != nil {
@@ -277,7 +312,7 @@ func (s *Store) RestoreHoldings(scryfallID string, holdings []Holding) error {
 
 	for _, h := range holdings {
 		if _, err := stmt.Exec(h.ContainerID, scryfallID, h.Finish, h.Condition,
-			h.Board, h.Quantity); err != nil {
+			h.Board, h.PurchasePrice, h.Quantity); err != nil {
 			return fmt.Errorf("restoring %s (%s): %w", scryfallID, h.Finish, err)
 		}
 	}

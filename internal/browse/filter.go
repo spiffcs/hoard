@@ -15,6 +15,7 @@ func (c card) subject() cardfilter.Subject {
 		Quantity:   c.Quantity,
 		Price:      c.Price,
 		Value:      c.Value,
+		Paid:       c.Paid,
 	}
 }
 

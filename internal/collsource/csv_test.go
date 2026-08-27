@@ -46,10 +46,10 @@ func TestManaBoxIsSniffedAndKeepsBinders(t *testing.T) {
 		t.Errorf("remora binder = %q, want empty (default)", c.Rows[2].Binder)
 	}
 
-	if c.Rows[1].Condition != "lp" {
-		t.Errorf("bolt condition = %q, want excellent folded onto lp", c.Rows[1].Condition)
+	if c.Rows[1].Condition != "nm" {
+		t.Errorf("bolt condition = %q, want excellent folded onto nm", c.Rows[1].Condition)
 	}
-	if c.Dropped["condition"] != 0 || c.Dropped["language"] != 1 || c.Dropped["purchase price"] != 1 {
+	if c.Dropped["condition"] != 0 || c.Dropped["language"] != 1 || c.Dropped["purchase price"] != 0 {
 		t.Errorf("dropped = %v", c.Dropped)
 	}
 }
@@ -71,7 +71,7 @@ func TestMoxfieldFallsBackToSetAndNumber(t *testing.T) {
 		t.Errorf("quoted name = %q", got)
 	}
 
-	if c.Dropped["condition"] != 0 || c.Dropped["purchase price"] != 1 || c.Dropped["language"] != 0 {
+	if c.Dropped["condition"] != 0 || c.Dropped["purchase price"] != 0 || c.Dropped["language"] != 0 {
 		t.Errorf("dropped = %v", c.Dropped)
 	}
 }
@@ -293,13 +293,13 @@ func TestUnplaceableConditionReportsOnlyWhatWasLost(t *testing.T) {
 		"", "  ", "Near Mint", "near_mint", "NM", "mint",
 		"Lightly Played", "excellent", "good", "played", "poor",
 	} {
-		if unplaceableCondition(carried) {
+		if (spec{}).unplaceableCondition(carried) {
 			t.Errorf("unplaceableCondition(%q) = true, but it is stored", carried)
 		}
 	}
 
 	for _, lost := range []string{"Pristine", "BGS 10", "PSA 9", "graded 9.5"} {
-		if !unplaceableCondition(lost) {
+		if !(spec{}).unplaceableCondition(lost) {
 			t.Errorf("unplaceableCondition(%q) = false, want it reported", lost)
 		}
 	}
@@ -316,7 +316,7 @@ func TestParseCarriesTheCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	want := []string{"nm", "lp", "unknown", "unknown"}
+	want := []string{"nm", "nm", "unknown", "unknown"}
 	for i, w := range want {
 		if c.Rows[i].Condition != w {
 			t.Errorf("row %d condition = %q, want %q", i, c.Rows[i].Condition, w)

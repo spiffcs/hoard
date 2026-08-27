@@ -44,6 +44,7 @@ const (
 	stateFinishPick
 	stateDestPick
 	stateQty
+	statePaid
 	stateConfirm
 
 	stateQueueReview
@@ -151,6 +152,8 @@ type model struct {
 
 	nameInput textinput.Model
 	qtyInput  textinput.Model
+	paidInput textinput.Model
+	paidErr   string
 	codeInput textinput.Model
 
 	addPalette *addPalette
@@ -271,13 +274,18 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 	qi.CharLimit = 6
 	qi.Width = 10
 
+	pi := textinput.New()
+	pi.Placeholder = "skip"
+	pi.CharLimit = 12
+	pi.Width = 12
+
 	ci := textinput.New()
 	ci.Placeholder = "123456"
 	ci.CharLimit = 7
 	ci.Width = 12
 
 	th := ui.DefaultTheme()
-	for _, in := range []*textinput.Model{&ni, &qi} {
+	for _, in := range []*textinput.Model{&ni, &qi, &pi} {
 		in.PromptStyle = th.Prompt
 		in.Cursor.Style = th.Accent
 	}
@@ -300,6 +308,7 @@ func newModel(ctx context.Context, s Searcher, add Adder, sc Scanner, initialNam
 		dests:     dests,
 		nameInput: ni,
 		qtyInput:  qi,
+		paidInput: pi,
 		codeInput: ci,
 		spinner:   sp,
 		list:      l,
@@ -845,6 +854,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEnter {
 			return m.submitQty()
 		}
+	case statePaid:
+		if msg.Type == tea.KeyEsc {
+			return m.cancelToName()
+		}
+		if msg.Type == tea.KeyEnter {
+			return m.submitPaid()
+		}
 	case stateConfirm:
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -863,6 +879,8 @@ func (m model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	case stateQty:
 		m.qtyInput, cmd = m.qtyInput.Update(msg)
+	case statePaid:
+		m.paidInput, cmd = m.paidInput.Update(msg)
 	case statePairCode:
 		m.codeInput, cmd = m.codeInput.Update(msg)
 	case stateNamePick, statePrintPick, stateFinishPick, stateDestPick, stateCameraPick, stateQueueReview:
@@ -1873,7 +1891,8 @@ func (m model) toDest() (tea.Model, tea.Cmd) {
 }
 
 func (m model) confirmAdd() (tea.Model, tea.Cmd) {
-	res := Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue(), ContainerID: m.dest.ID}
+	res := Result{Card: *m.chosen, Finish: m.finish, Qty: m.qtyValue(),
+		ContainerID: m.dest.ID, PurchasePrice: m.paidValue()}
 	if err := m.adder(res); err != nil {
 		return m.failToName(err.Error())
 	}
@@ -2047,8 +2066,41 @@ func (m model) submitQty() (tea.Model, tea.Cmd) {
 	}
 	m.qtyErr = ""
 	m.qtyInput.SetValue(strconv.Itoa(n))
+	m.paidErr = ""
+	m.paidInput.SetValue("")
+	m.paidInput.Focus()
+	m.state = statePaid
+	return m, textinput.Blink
+}
+
+func (m model) submitPaid() (tea.Model, tea.Cmd) {
+	if _, err := parsePaidEntry(m.paidInput.Value()); err != nil {
+		m.paidErr = err.Error()
+		return m, nil
+	}
+	m.paidErr = ""
 	m.state = stateConfirm
 	return m, nil
+}
+
+func parsePaidEntry(raw string) (*float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "-" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(strings.TrimPrefix(raw, "$"), 64)
+	if err != nil || v < 0 {
+		return nil, errors.New("enter US dollars like 12.50, or leave it empty to skip")
+	}
+	return &v, nil
+}
+
+func (m model) paidValue() *float64 {
+	v, err := parsePaidEntry(m.paidInput.Value())
+	if err != nil {
+		return nil
+	}
+	return v
 }
 
 func (m model) qtyValue() int {
@@ -2362,6 +2414,15 @@ func (m model) viewContent() string {
 			out += "\n" + m.theme.Err.Render(m.qtyErr)
 		}
 		return out + "\n\n" + m.help(m.batchHelp("enter to continue · esc cancel · ctrl+c force quit"))
+	case statePaid:
+		out := m.scanHeader() +
+			m.theme.Prompt.Render("What you paid per copy for "+m.chosen.Name+" (optional)") +
+			"\n\n" + m.paidInput.View()
+		if m.paidErr != "" {
+			out += "\n" + m.theme.Err.Render(m.paidErr)
+		}
+		return out + "\n\n" + m.help(m.batchHelp(
+			"enter to skip · type a USD amount then enter · esc cancel · ctrl+c force quit"))
 	case stateConfirm:
 		return m.scanHeader() + m.theme.Title.Render("Confirm") + "\n\n" + m.confirmSummary() + "\n\n" +
 			m.help(m.batchHelp("enter to add · esc cancel · ctrl+c force quit"))

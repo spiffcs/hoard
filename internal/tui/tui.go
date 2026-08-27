@@ -58,6 +58,8 @@ type Result struct {
 	Qty         int
 	ContainerID int64
 
+	PurchasePrice *float64
+
 	ReplacesFinish finish.Finish
 
 	FinishGuessed bool

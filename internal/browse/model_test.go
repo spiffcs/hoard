@@ -26,7 +26,9 @@ import (
 )
 
 type fakeStore struct {
-	movedCondition string
+	movedCondition   string
+	setPurchasePrice string
+	costBasis        []store.PriceChange
 
 	totals     store.CollectionTotals
 	decks      []store.DeckSummary
@@ -110,6 +112,14 @@ func (f *fakeStore) MatchingCardIDs(tf store.TraitFilter) (map[string]bool, erro
 
 func (f *fakeStore) Movers(since string) ([]store.PriceChange, error) {
 	return f.movers, f.err
+}
+
+func (f *fakeStore) HasCostBasis() (bool, error) {
+	return len(f.costBasis) > 0, f.err
+}
+
+func (f *fakeStore) CostBasisMovers() ([]store.PriceChange, error) {
+	return f.costBasis, f.err
 }
 func (f *fakeStore) Unpriced() ([]store.UnpricedRow, error) {
 	f.unpricedCalls++
@@ -3085,4 +3095,13 @@ func (f *fakeStore) SetUnowned(code string) ([]store.UnownedRow, error) {
 		return nil, f.err
 	}
 	return f.unowned[code], nil
+}
+
+func (f *fakeStore) MoveEntryPurchasePrice(from store.EntryRef, toPaid *float64) (int, error) {
+	amount := "-"
+	if toPaid != nil {
+		amount = strconv.FormatFloat(*toPaid, 'f', 2, 64)
+	}
+	f.setPurchasePrice = from.ScryfallID + "→" + amount
+	return 0, nil
 }

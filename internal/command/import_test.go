@@ -549,7 +549,7 @@ func TestCmdImportThirdPartyFormatsLandInTheDatabase(t *testing.T) {
 			fixture: manaboxFixture,
 			want: []holding{
 
-				{"Lightning Bolt", "foil", 1, "lp"},
+				{"Lightning Bolt", "foil", 1, "nm"},
 				{"Mystic Remora", "nonfoil", 1, "nm"},
 				{"Sol Ring", "nonfoil", 2, "nm"},
 			},

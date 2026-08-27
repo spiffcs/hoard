@@ -135,6 +135,7 @@ func rowSubject(r export.Row) cardfilter.Subject {
 		Quantity:   r.Count,
 		Price:      r.PriceUSD,
 		Value:      value,
+		Paid:       r.PurchasePrice,
 	}
 }
 
@@ -195,8 +196,9 @@ func (d Deps) binderRows(id int64, name string) ([]export.Row, error) {
 			Container:       name,
 			Kind:            "binder",
 
-			Board:    "main",
-			PriceUSD: r.Price(),
+			Board:         "main",
+			PriceUSD:      r.Price(),
+			PurchasePrice: r.PurchasePrice,
 		}
 	}
 	return rows, nil
@@ -230,6 +232,7 @@ func (d Deps) deckRows(id int64, name string) ([]export.Row, error) {
 			Kind:            "deck",
 			Board:           e.Board,
 			PriceUSD:        e.Price(),
+			PurchasePrice:   e.PurchasePrice,
 		}
 	}
 	return rows, nil

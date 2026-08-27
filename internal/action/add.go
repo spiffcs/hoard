@@ -118,6 +118,7 @@ type AddCardByURLOptions struct {
 	Foil      bool
 	Qty       int
 	BinderRef string
+	Paid      *float64
 }
 
 type AddCardByURLResult struct {
@@ -149,7 +150,7 @@ func AddCardByURL(ctx context.Context, d Deps, p progress.Fn, o AddCardByURLOpti
 	if o.Foil {
 		res.Finish, res.PriceUSD = finish.Foil, card.PriceUSDFoil
 	}
-	if err := d.Store.AddCardFinishTo(target, *card, res.Finish, o.Qty); err != nil {
+	if err := d.Store.AddCardFinishPaidTo(target, *card, res.Finish, o.Qty, o.Paid); err != nil {
 		return res, err
 	}
 	return res, CompleteAdd(ctx, d, *card, res.Finish)
