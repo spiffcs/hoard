@@ -189,6 +189,7 @@ func FromExportRows(rows []export.Row) Document {
 			ContainerKind: r.Kind,
 			Board:         r.Board,
 			PriceUsd:      centsPtr(r.PriceUSD),
+			Paid:          centsPtr(r.PurchasePrice),
 		})
 	}
 	doc := envelope(KindHoldings)

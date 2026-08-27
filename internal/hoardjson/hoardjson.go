@@ -117,7 +117,7 @@ import (
 // hoard merge, which reads a hoard document written by a different database,
 // goes on resolving containers by name, because an id minted there names a
 // different container here or none at all.
-const SchemaVersion = "1.1.4"
+const SchemaVersion = "1.2.0"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -258,6 +258,12 @@ type Holding struct {
 	ContainerKind string   `json:"containerKind" jsonschema:"enum=binder,enum=deck"`
 	Board         string   `json:"board"`
 	PriceUsd      *float64 `json:"priceUsd,omitempty"`
+	// Paid is what the holder recorded paying per copy, in USD, absent when
+	// nobody recorded it — which is most holdings, and absent is not free.
+	// Like Condition it describes the copies rather than the printing, so two
+	// entries of one printing can differ by it, and hoard keeps them as
+	// separate rows rather than averaging them away.
+	Paid *float64 `json:"paid,omitempty"`
 }
 
 // CardDetail is one printing's card characteristics, every one of them derived

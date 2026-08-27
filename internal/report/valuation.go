@@ -52,6 +52,29 @@ func Valuation(env ui.Env, d ValuationData) string {
 	b.WriteString(env.Bold()(title) + "\n\n")
 	b.WriteString(Summary(env, d.Binder, d.Decks))
 
+	if d.Binder.Spent > 0 {
+		gain := d.Binder.Value - d.Binder.Spent
+		sign := 0
+		if gain > 0 {
+			sign = 1
+		} else if gain < 0 {
+			sign = -1
+		}
+		b.WriteString("\n" + env.Bold()("COST BASIS") + "\n")
+		t := ui.Table{
+			Env:    env,
+			Header: true,
+			Cols: []ui.Col{
+				{Title: "SPENT", Align: ui.Right},
+				{Title: "WORTH", Align: ui.Right},
+				{Title: "CHANGE", Align: ui.Right},
+			},
+		}
+		t.Add(ui.C(ui.Money(d.Binder.Spent)), ui.C(ui.Money(d.Binder.Value)),
+			ui.Cell{Text: ui.SignedMoney(gain), Style: env.Diverge(float64(sign))})
+		b.WriteString(t.Render())
+	}
+
 	if len(d.Binders) > 1 {
 		b.WriteString("\n" + env.Bold()("BINDERS") + "\n")
 		t := ui.Table{
