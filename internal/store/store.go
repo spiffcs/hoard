@@ -256,8 +256,19 @@ func FoilTreatmentOf(promoTypes []string) string {
 }
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	reader *sql.DB
 }
+
+const (
+	writerPragmas = "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)" +
+		"&_pragma=cache_size(-65536)&_pragma=temp_store(2)" +
+		"&_pragma=mmap_size(268435456)&_txlock=immediate"
+
+	readerPragmas = "?_pragma=query_only(1)&_pragma=busy_timeout(5000)" +
+		"&_pragma=cache_size(-65536)&_pragma=temp_store(2)" +
+		"&_pragma=mmap_size(268435456)"
+)
 
 func Open(path string) (*Store, error) {
 
@@ -267,7 +278,7 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=cache_size(-65536)&_pragma=temp_store(2)&_pragma=mmap_size(268435456)&_txlock=immediate")
+	db, err := sql.Open("sqlite", path+writerPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}
@@ -283,10 +294,43 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+
+	reader, err := openReaders(path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.reader = reader
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+const backgroundReaders = 4
+
+func openReaders(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path+readerPragmas)
+	if err != nil {
+		return nil, fmt.Errorf("opening database %q for reading: %w", path, err)
+	}
+	db.SetMaxOpenConns(backgroundReaders)
+	return db, nil
+}
+
+func (s *Store) reads() *sql.DB {
+	if s.reader != nil {
+		return s.reader
+	}
+	return s.db
+}
+
+func (s *Store) Close() error {
+	err := s.db.Close()
+	if s.reader != nil {
+		if rerr := s.reader.Close(); err == nil {
+			err = rerr
+		}
+	}
+	return err
+}
 
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
 

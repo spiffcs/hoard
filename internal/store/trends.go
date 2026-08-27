@@ -101,7 +101,7 @@ func (s *Store) trends(o TrendOptions, tail, what string) ([]TrendRow, error) {
 	if checks < 2 {
 		checks = 2
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.reads().Query(`
 WITH owned AS (`+ownedByPriceFinish+`),`+trendWindow+trendSelect+tail,
 		o.Since, checks, o.MinPrice, o.SettledBefore, o.SettledBefore)
 	if err != nil {
