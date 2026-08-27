@@ -7,6 +7,7 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func (d Deps) fetchCollection(ctx context.Context, ids []scryfall.Identifier,
@@ -118,6 +119,12 @@ func RefreshPrices(ctx context.Context, d Deps, p progress.Fn) (UpdatePricesResu
 		return res, err
 	}
 
+	return recordPrices(ctx, d, p, res)
+}
+
+func recordPrices(ctx context.Context, d Deps, p progress.Fn,
+	res UpdatePricesResult) (UpdatePricesResult, error) {
+	var err error
 	if res.Gaps, err = FillGaps(ctx, d, p); err != nil {
 		return res, err
 	}
@@ -125,6 +132,26 @@ func RefreshPrices(ctx context.Context, d Deps, p progress.Fn) (UpdatePricesResu
 	p.Emit(progress.Event{Step: "recording history"})
 	res.Changes, err = d.Store.RecordPrices()
 	return res, err
+}
+
+func SettlePrices(ctx context.Context, d Deps, p progress.Fn) (UpdatePricesResult, error) {
+	var res UpdatePricesResult
+	ids, err := d.Store.ActivePrintingIDs()
+	if err != nil {
+		return res, err
+	}
+	res.Total = len(ids)
+	if res.Total == 0 {
+		return res, nil
+	}
+
+	p.Emit(progress.Event{Step: "settling prices",
+		Detail: "recording today's prices for " +
+			ui.PluralCount(res.Total, "printing", "printings")})
+	if res, err = recordPrices(ctx, d, p, res); err != nil {
+		return res, err
+	}
+	return CorrectPrices(ctx, d, p, res)
 }
 
 func CorrectPrices(ctx context.Context, d Deps, p progress.Fn,

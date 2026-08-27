@@ -112,14 +112,31 @@ func Build(ctx context.Context, st *store.Store, o Options, p progress.Fn) (Resu
 	if days <= 0 {
 		days = 30
 	}
-	back, err := action.BackfillPrices(ctx, action.Deps{
-		Store: st, CacheDir: o.CacheDir, PriceBaseURL: o.PriceBaseURL,
-	}, p, days)
+	deps := action.Deps{Store: st, CacheDir: o.CacheDir,
+		PriceBaseURL: o.PriceBaseURL, TCGCSVBaseURL: o.TCGCSVBaseURL}
+
+	back, err := action.BackfillPrices(ctx, deps, p, days)
 	if err != nil {
 		return res, err
 	}
 	res.Observations, res.Bids = back.Inserted, back.BidInserted
+
+	settled, err := action.SettlePrices(ctx, deps, under("settling prices", p))
+	if err != nil {
+		return res, err
+	}
+	res.Priced = settled.Total
 	return res, nil
+}
+
+func under(step string, p progress.Fn) progress.Fn {
+	return func(ev progress.Event) {
+		if ev.Step != "" && ev.Step != step {
+			ev.Detail = ev.Step
+		}
+		ev.Step = step
+		p.Emit(ev)
+	}
 }
 
 type bulkCard struct {

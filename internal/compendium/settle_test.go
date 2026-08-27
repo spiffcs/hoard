@@ -24,7 +24,7 @@ func stalePrices(t *testing.T) string {
 	t.Helper()
 	ragavan := map[string]float64{}
 	solring := map[string]float64{}
-	now := time.Now()
+	now := time.Now().UTC()
 	for i := 30; i >= 1; i-- {
 		d := now.AddDate(0, 0, -i).Format("2006-01-02")
 		ragavan[d] = 100.0 + float64(i)
@@ -38,7 +38,25 @@ func stalePrices(t *testing.T) string {
  }}`, now.AddDate(0, 0, -1).Format("2006-01-02"), rag, sol)
 }
 
-func buildSettled(t *testing.T) (*store.Store, Result, []progress.Event) {
+type settled struct {
+	store  *store.Store
+	result Result
+	events []progress.Event
+	days   []string
+}
+
+func (s settled) recordedOnBuildDay(t *testing.T, what, asOf string) {
+	t.Helper()
+	if len(asOf) < 10 {
+		t.Fatalf("%s has as-of %q, which carries no date", what, asOf)
+	}
+	if !slices.Contains(s.days, asOf[:10]) {
+		t.Errorf("%s is dated %s, want the day the build ran (%s) — the build left prices "+
+			"for the user to fetch themselves", what, asOf[:10], strings.Join(s.days, " or "))
+	}
+}
+
+func buildSettled(t *testing.T) settled {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "catalog.db"))
 	if err != nil {
@@ -47,6 +65,7 @@ func buildSettled(t *testing.T) (*store.Store, Result, []progress.Event) {
 	t.Cleanup(func() { st.Close() })
 
 	var events []progress.Event
+	opened := time.Now().UTC().Format("2006-01-02")
 	res, err := Build(context.Background(), st, Options{
 		Days:           30,
 		BulkListingURL: serveScryfall(t, settleJSONL),
@@ -57,13 +76,17 @@ func buildSettled(t *testing.T) (*store.Store, Result, []progress.Event) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	return st, res, events
+	days := []string{opened}
+	if closed := time.Now().UTC().Format("2006-01-02"); closed != opened {
+		days = append(days, closed)
+	}
+	return settled{store: st, result: res, events: events, days: days}
 }
 
 func TestBuildRecordsTodaysPriceOnTopOfTheArchive(t *testing.T) {
-	st, _, _ := buildSettled(t)
+	b := buildSettled(t)
 
-	series, err := st.PriceSeries("scry-1", finish.Nonfoil)
+	series, err := b.store.PriceSeries("scry-1", finish.Nonfoil)
 	if err != nil {
 		t.Fatalf("PriceSeries: %v", err)
 	}
@@ -75,11 +98,7 @@ func TestBuildRecordsTodaysPriceOnTopOfTheArchive(t *testing.T) {
 	}
 
 	last := series[len(series)-1]
-	today := time.Now().Format("2006-01-02")
-	if got := last.AsOf[:10]; got != today {
-		t.Errorf("newest point is dated %s, want today (%s) — the build left prices for "+
-			"the user to fetch themselves", got, today)
-	}
+	b.recordedOnBuildDay(t, "the newest point", last.AsOf)
 	if last.Source != "scryfall" {
 		t.Errorf("newest point source = %q, want scryfall (the price the build just seeded)",
 			last.Source)
@@ -90,9 +109,9 @@ func TestBuildRecordsTodaysPriceOnTopOfTheArchive(t *testing.T) {
 }
 
 func TestBuildRecordsPricesTheArchiveNeverCarried(t *testing.T) {
-	st, _, _ := buildSettled(t)
+	b := buildSettled(t)
 
-	series, err := st.PriceSeries("scry-unmapped", finish.Nonfoil)
+	series, err := b.store.PriceSeries("scry-unmapped", finish.Nonfoil)
 	if err != nil {
 		t.Fatalf("PriceSeries: %v", err)
 	}
@@ -100,19 +119,16 @@ func TestBuildRecordsPricesTheArchiveNeverCarried(t *testing.T) {
 		t.Fatalf("PriceSeries returned %d points, want exactly one — MTGJSON has no history "+
 			"for this printing, so only the build's own recording can price it", len(series))
 	}
-	today := time.Now().Format("2006-01-02")
-	if got := series[0].AsOf[:10]; got != today {
-		t.Errorf("point is dated %s, want today (%s)", got, today)
-	}
+	b.recordedOnBuildDay(t, "the only point", series[0].AsOf)
 	if series[0].Price != 7.50 {
 		t.Errorf("price = %v, want the seeded 7.50", series[0].Price)
 	}
 }
 
 func TestBuildLeavesNothingForTheFirstUpdatePricesRun(t *testing.T) {
-	st, _, _ := buildSettled(t)
+	b := buildSettled(t)
 
-	changes, err := st.RecordPrices()
+	changes, err := b.store.RecordPrices()
 	if err != nil {
 		t.Fatalf("RecordPrices: %v", err)
 	}
@@ -123,9 +139,9 @@ func TestBuildLeavesNothingForTheFirstUpdatePricesRun(t *testing.T) {
 }
 
 func TestBuildValuesTheCompendiumOnce(t *testing.T) {
-	st, _, _ := buildSettled(t)
+	b := buildSettled(t)
 
-	points, err := st.ValueSnapshots()
+	points, err := b.store.ValueSnapshots()
 	if err != nil {
 		t.Fatalf("ValueSnapshots: %v", err)
 	}
@@ -138,23 +154,32 @@ func TestBuildValuesTheCompendiumOnce(t *testing.T) {
 }
 
 func TestBuildReportsTheSettledPricesInProgressAndResult(t *testing.T) {
-	_, res, events := buildSettled(t)
+	b := buildSettled(t)
 
-	if res.Priced != res.Printings {
+	if b.result.Priced != b.result.Printings {
 		t.Errorf("Result.Priced = %d, want every one of the %d seeded printings",
-			res.Priced, res.Printings)
+			b.result.Priced, b.result.Printings)
 	}
 
 	var steps []string
-	for _, e := range events {
+	for _, e := range b.events {
 		if e.Step != "" && !slices.Contains(steps, e.Step) {
 			steps = append(steps, e.Step)
 		}
 	}
-	for _, want := range []string{"settling prices", "checking prices against asks"} {
-		if !slices.Contains(steps, want) {
-			t.Errorf("progress steps were %v, want %q shown to the user as the build does it",
-				steps, want)
+	if !slices.Contains(steps, "settling prices") {
+		t.Errorf("progress steps were %v, want the settling shown to the user as the build does it",
+			steps)
+	}
+	var settling bool
+	for _, e := range b.events {
+		if e.Step == "settling prices" {
+			settling = true
+			continue
+		}
+		if settling && e.Step != "" {
+			t.Fatalf("step %q was reported after settling began; the settling must stay on "+
+				"one line or the build outgrows its window", e.Step)
 		}
 	}
 }

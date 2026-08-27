@@ -100,14 +100,15 @@ func TestAFullBuildFitsInOneWindow(t *testing.T) {
 		Days:           30,
 		BulkListingURL: serveScryfall(t, manyCards(6000)),
 		PriceBaseURL:   serveMTGJSON(t, prices),
+		TCGCSVBaseURL:  offlineTCGCSV,
 		CacheDir:       t.TempDir(),
 	}, pr.Fn()); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	pr.Close()
 
-	if got := rowsUsed(sb.String()); got > 6 {
-		t.Errorf("a full build used %d terminal rows, want at most 6 — "+
+	if got := rowsUsed(sb.String()); got > 7 {
+		t.Errorf("a full build used %d terminal rows, want at most 7 — "+
 			"the whole run must stay in one window", got)
 	}
 }

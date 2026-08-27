@@ -68,6 +68,11 @@ Both numbers grow as you widen the filter and as you raise `--days`.
 | `--days` | Days of price history to backfill. Default 30, clamped to 90. |
 | `--all` | Build every paper printing. Only needed when you pass no filter at all. |
 
+A build finishes with a full price recording of its own — gaps filled, today's
+prices written to the history, contradicted prices refused. So a fresh
+compendium opens with its charts and its total value already populated, and
+`hoard update-prices` has nothing left to do on the first launch.
+
 Tokens, emblems and art-series cards are dropped from every build, filtered or
 not. Scryfall's bulk file carries them as ordinary rows — priced, rarity-tagged
 and paper-legal — so they would otherwise pass `--since`, `--rarity` and `--all`

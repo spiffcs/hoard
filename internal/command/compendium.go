@@ -36,7 +36,8 @@ func NewCmdCompendium(a *app) *cobra.Command {
 		Long: "Builds a hoard-shaped database from a filter over every\n" +
 			"paper printing, one copy of each, priced and backfilled.\n" +
 			"Tokens, emblems and art cards are never seeded, whatever\n" +
-			"the filter.\n" +
+			"the filter. Prices are recorded as part of the build, so\n" +
+			"there is no update-prices to run first.\n" +
 			"Browse it with hoard --db FILE to price and build decks\n" +
 			"in a format before you own any of it.\n\n" +
 			"Your own hoard is never opened, read or written.\n\n" +
@@ -171,6 +172,8 @@ func buildCompendium(ctx context.Context, env *cli.Env, path string, o compendiu
 	}
 	rep.Result("Backfilled %s observations and %s bids.",
 		ui.Count(res.Observations), ui.Count(res.Bids))
+	rep.Detail("Recorded today's prices for %s printings; update-prices has nothing left to do.",
+		ui.Count(res.Priced))
 	rep.Hint("Browse it: hoard --db %s", path)
 	return nil
 }
