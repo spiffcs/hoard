@@ -80,19 +80,19 @@ const defaultPennyLimit = 1.00
 const oldMoversPennyLimit = 0.50
 
 const (
-        setShowPennies      = "pennies.show"
-        setPennyLimit       = "pennies.limit"
+	setShowPennies      = "pennies.show"
+	setPennyLimit       = "pennies.limit"
 	setMoversPennies    = "movers.pennies"
 	setMoversPennyLine  = "movers.pennyLimit"
 	setSidebarCollapsed = "sidebar.collapsed"
 )
 
 func settingFloat(s map[string]string, key string) (float64, bool) {
-        n, err := strconv.ParseFloat(s[key], 64)
-        if err != nil || n < 0 || n > 100 {
-                return 0, false
-        }
-        return n, true
+	n, err := strconv.ParseFloat(s[key], 64)
+	if err != nil || n < 0 || n > 100 {
+		return 0, false
+	}
+	return n, true
 }
 
 func (m *Model) loadPennyFilters() {
@@ -100,23 +100,23 @@ func (m *Model) loadPennyFilters() {
 	if err != nil {
 		return
 	}
-        if n, ok := settingFloat(s, setPennyLimit); ok {
-                m.pennyLimit = n
-        } else if n, ok := settingFloat(s, setMoversPennyLine); ok && n != oldMoversPennyLimit {
-                m.pennyLimit = n
+	if n, ok := settingFloat(s, setPennyLimit); ok {
+		m.pennyLimit = n
+	} else if n, ok := settingFloat(s, setMoversPennyLine); ok && n != oldMoversPennyLimit {
+		m.pennyLimit = n
 	}
-        for _, key := range []string{setShowPennies, setMoversPennies} {
-                if v, err := strconv.ParseBool(s[key]); err == nil {
-                        m.showPennies = v
-                        break
-                }
+	for _, key := range []string{setShowPennies, setMoversPennies} {
+		if v, err := strconv.ParseBool(s[key]); err == nil {
+			m.showPennies = v
+			break
+		}
 	}
 }
 
 func (m *Model) persistPennyFilters() {
 	err := m.store.SaveSettings(map[string]string{
-                setShowPennies: strconv.FormatBool(m.showPennies),
-                setPennyLimit:  strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
+		setShowPennies: strconv.FormatBool(m.showPennies),
+		setPennyLimit:  strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
 	})
 	if err != nil {
 		m.status, m.statusErr = "saving filter setting: "+err.Error(), true
@@ -124,34 +124,34 @@ func (m *Model) persistPennyFilters() {
 }
 
 func (m Model) pennyPhrase() string {
-        return "penny filter ≤ " + ui.Money(m.pennyLimit)
+	return "penny filter ≤ " + ui.Money(m.pennyLimit)
 }
 
 func (m Model) pennyGated(price float64) bool {
-        return !m.showPennies && price <= m.pennyLimit
+	return !m.showPennies && price <= m.pennyLimit
 }
 
 func (m *Model) applyPennyFilter() {
-        m.deriveView()
-        m.refreshMarketFloor()
-        m.persistPennyFilters()
+	m.deriveView()
+	m.refreshMarketFloor()
+	m.persistPennyFilters()
 }
 
 func (m *Model) togglePennyFilter() {
-        m.showPennies = !m.showPennies
-        state := "on"
-        if m.showPennies {
-                state = "off"
+	m.showPennies = !m.showPennies
+	state := "on"
+	if m.showPennies {
+		state = "off"
 	}
-        m.status, m.statusErr = m.pennyPhrase()+" "+state, false
-        m.applyPennyFilter()
+	m.status, m.statusErr = m.pennyPhrase()+" "+state, false
+	m.applyPennyFilter()
 }
 
 func (m *Model) promptSetPennyLimit() {
 	m.prompt = &prompt{
-                label:    "hide rows at or under",
-                text:     strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
-                help:     "a dollar amount, like 0.20 (0 turns the gate off) · enter accept · esc cancel",
+		label:    "hide rows at or under",
+		text:     strconv.FormatFloat(m.pennyLimit, 'f', -1, 64),
+		help:     "a dollar amount, like 0.20 (0 turns the gate off) · enter accept · esc cancel",
 		validate: func(text string) error { _, err := parsePennyLimit(text); return err },
 		commit: func(m *Model, text string) tea.Cmd {
 			n, err := parsePennyLimit(text)
@@ -159,10 +159,10 @@ func (m *Model) promptSetPennyLimit() {
 				m.status, m.statusErr = err.Error(), true
 				return nil
 			}
-                        m.pennyLimit = n
-                        m.showPennies = false
-                        m.status, m.statusErr = m.pennyPhrase()+" on", false
-                        m.applyPennyFilter()
+			m.pennyLimit = n
+			m.showPennies = false
+			m.status, m.statusErr = m.pennyPhrase()+" on", false
+			m.applyPennyFilter()
 			return nil
 		},
 	}
@@ -230,16 +230,17 @@ func (m *Model) loadView() error {
 		m.allWatches, m.allUnpriced = watches, unpriced
 	case viewDip:
 
-		o := m.trendOptions()
-		dips, err := m.store.Dips(o)
-		if err != nil {
-			return fmt.Errorf("reading dips: %w", err)
+		k := m.trendKey()
+		pair, ok := m.cachedTrends(k)
+		if !ok {
+			read, err := m.readTrends()
+			if err != nil {
+				return err
+			}
+			m.cacheTrends(k, m.dataGen, read)
+			pair = read
 		}
-		momentum, err := m.store.Momentum(o)
-		if err != nil {
-			return fmt.Errorf("reading momentum: %w", err)
-		}
-		m.allDips, m.allMomentum = dips, momentum
+		m.allDips, m.allMomentum = pair.dips, pair.momentum
 	}
 	m.deriveView()
 	return nil
@@ -252,7 +253,7 @@ func (m *Model) filterTrends(rows []store.TrendRow) []store.TrendRow {
 	out := make([]store.TrendRow, 0, len(rows))
 	for _, r := range rows {
 		last := r.Last
-                if m.underFloor(&last) || m.pennyGated(last) {
+		if m.underFloor(&last) || m.pennyGated(last) {
 			continue
 		}
 		if filtered {
@@ -286,7 +287,7 @@ func (m *Model) deriveView() {
 				continue
 			}
 
-                        if m.pennyGated(c.New) {
+			if m.pennyGated(c.New) {
 				continue
 			}
 			if filtered {

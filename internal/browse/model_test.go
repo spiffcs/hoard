@@ -71,6 +71,8 @@ type fakeStore struct {
 	binderListCalls int
 	watchListCalls  int
 	unpricedCalls   int
+	dipCalls        int
+	momentumCalls   int
 
 	bidSeries   map[string][]store.PricePoint
 	priceSeries map[string][]store.PricePoint

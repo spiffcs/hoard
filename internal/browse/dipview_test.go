@@ -80,8 +80,12 @@ func TestDipViewSaysWhenASectionIsEmpty(t *testing.T) {
 	}
 }
 
-func (f *fakeStore) Dips(store.TrendOptions) ([]store.TrendRow, error) { return f.dips, f.err }
+func (f *fakeStore) Dips(store.TrendOptions) ([]store.TrendRow, error) {
+	f.dipCalls++
+	return f.dips, f.err
+}
 
 func (f *fakeStore) Momentum(store.TrendOptions) ([]store.TrendRow, error) {
+	f.momentumCalls++
 	return f.momentum, f.err
 }

@@ -189,10 +189,12 @@ type Model struct {
 
 	moversCache    map[int][]store.PriceChange
 	moversCacheGen int
+	trendCache     map[trendKey]trendPair
+	trendCacheGen  int
 	dataGen        int
 
-        showPennies bool
-        pennyLimit  float64
+	showPennies bool
+	pennyLimit  float64
 
 	entryIndex   map[int64]map[string]int
 	viewEligible map[int64]bool
@@ -293,9 +295,9 @@ func New(st Store, opts ...Option) (Model, error) {
 	m := Model{store: st, focus: paneContainers, spinner: sp, ctx: context.Background(),
 		env: ui.Detect(os.Stdout), theme: ui.DefaultTheme(), imgTier: ui.DetectImageTier(),
 		cellAspect: ui.CellAspectOverride(), setsMode: true,
-                commands: commands(), pennyLimit: defaultPennyLimit,
-                helpRowsMemo: map[helpRowsKey]int{},
-                selAnchor:    noSelection}
+		commands: commands(), pennyLimit: defaultPennyLimit,
+		helpRowsMemo: map[helpRowsKey]int{},
+		selAnchor:    noSelection}
 	for _, opt := range opts {
 		opt(&m)
 	}
@@ -749,7 +751,8 @@ func (m *Model) clampCursor(p pane) {
 
 func (m Model) Init() tea.Cmd {
 
-	init := tea.Batch(awaitConfirm(m.ctx, m.confirmCh), livePoll())
+	init := tea.Batch(awaitConfirm(m.ctx, m.confirmCh), livePoll(),
+		func() tea.Msg { return trendPrefetchStartMsg{} })
 	if m.marketFetch != nil {
 		init = tea.Batch(init, func() tea.Msg { return marketPrefetchStartMsg{} })
 	}
@@ -880,6 +883,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.prefetchMarket()
 	case marketPrefetchMsg:
 		return m.onMarketPrefetch(msg)
+	case trendPrefetchStartMsg:
+		return m, m.prefetchTrends()
+	case trendPrefetchMsg:
+		return m.onTrendPrefetch(msg)
 	case spinner.TickMsg:
 
 		var cmds []tea.Cmd
