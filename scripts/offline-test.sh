@@ -4,6 +4,9 @@ set -euo pipefail
 # Runs the test suite with every outbound request pointed at a local blackhole,
 # then fails if anything tried to leave the machine. A test that needs a remote
 # response must serve it from an httptest server instead.
+#
+# -count=1 is not optional: a cached package never runs, so it never gets the
+# chance to make a request, and the guard would report green without looking.
 
 tmp="$(mktemp -d)"
 trap 'kill "${proxy_pid:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
@@ -44,7 +47,7 @@ env http_proxy="http://$addr" https_proxy="http://$addr" \
     HTTP_PROXY="http://$addr" HTTPS_PROXY="http://$addr" \
     ALL_PROXY="http://$addr" all_proxy="http://$addr" \
     NO_PROXY="" no_proxy="" \
-    go test "$@" ./... || status=$?
+    go test -count=1 "$@" ./... || status=$?
 
 if [ -s "$tmp/hits" ]; then
 	echo

@@ -142,7 +142,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 	}
 
 	confirmCh := make(chan browse.ConfirmRequest, 1)
-	deps := action.Deps{
+	deps := priced(action.Deps{
 		Store: st, Catalog: cat, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver,
 		Confirm: func(q string) bool {
 			reply := make(chan bool, 1)
@@ -158,7 +158,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 				return false
 			}
 		},
-	}
+	})
 
 	compsCache := action.NewCompsCache(deps)
 

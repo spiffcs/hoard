@@ -157,8 +157,19 @@ func addByURL(ctx context.Context, st *store.Store, env *cli.Env, url string, fo
 
 var priceCacheDir = pricing.DefaultCacheDir
 
+var (
+	priceBaseURL  string
+	tcgcsvBaseURL string
+)
+
+func priced(d action.Deps) action.Deps {
+	d.PriceBaseURL = priceBaseURL
+	d.TCGCSVBaseURL = tcgcsvBaseURL
+	return d
+}
+
 func addDeps(st *store.Store) action.Deps {
-	return action.Deps{Store: st, CacheDir: priceCacheDir(), Resolver: cardResolver}
+	return priced(action.Deps{Store: st, CacheDir: priceCacheDir(), Resolver: cardResolver})
 }
 
 func addFromList(ctx context.Context, st *store.Store, env *cli.Env, path, binderRef string, again bool) error {

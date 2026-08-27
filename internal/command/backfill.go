@@ -30,7 +30,7 @@ func NewCmdBackfillPrices(a *app) *cobra.Command {
 func runBackfillPrices(ctx context.Context, st *store.Store, env *cli.Env) error {
 	pr := stderrPrinter()
 	res, err := action.BackfillPrices(ctx,
-		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}, pr.Fn(), 90)
+		priced(action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}), pr.Fn(), 90)
 	pr.Close()
 	if err != nil {
 		return err

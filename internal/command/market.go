@@ -37,7 +37,7 @@ func NewCmdMarket(a *app) *cobra.Command {
 
 func runMarket(ctx context.Context, st *store.Store, env *cli.Env, minValue float64, limit int) error {
 	pr := stderrPrinter()
-	res, err := action.Market(ctx, action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()},
+	res, err := action.Market(ctx, priced(action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir()}),
 		pr.Fn(), minValue)
 	pr.Close()
 	if err != nil {

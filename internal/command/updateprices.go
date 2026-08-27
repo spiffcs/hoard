@@ -27,10 +27,10 @@ func NewCmdUpdatePrices(a *app) *cobra.Command {
 			if cat != nil {
 				defer cat.Close()
 			}
-			deps := action.Deps{
+			deps := priced(action.Deps{
 				Store: a.store, Catalog: cat, CacheDir: pricing.DefaultCacheDir(),
 				Confirm: confirm, Resolver: cardResolver,
-			}
+			})
 			return runUpdatePrices(c.Context(), deps, a.env, limit)
 		},
 	}

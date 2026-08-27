@@ -90,7 +90,8 @@ func runImport(ctx context.Context, st *store.Store, env *cli.Env, path string, 
 	}
 	pr := stderrPrinter()
 	res, err := action.ImportCollection(ctx,
-		action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver}, pr.Fn(),
+		priced(action.Deps{Store: st, CacheDir: pricing.DefaultCacheDir(), Resolver: cardResolver}),
+		pr.Fn(),
 		action.ImportOptions{
 			Data: data, Display: display, Format: o.format,
 			BinderRef: o.binderRef, Preserve: o.preserve, DryRun: o.dryRun, Again: o.again,
