@@ -57,8 +57,17 @@ func recordBidQuotes(st *store.Store, quotes map[string][]mtgjson.Quote) error {
 
 func CardComps(d Deps, scryfallID string) (map[finish.Finish]market.Comp, bool, error) {
 	owned, err := d.Store.OwnedByFinish()
-	if err != nil || len(owned) == 0 {
+	if err != nil {
 		return nil, false, err
+	}
+	return CardCompsWith(d, owned, scryfallID)
+}
+
+func CardCompsWith(d Deps, owned []store.OwnedFinish, scryfallID string) (
+	map[finish.Finish]market.Comp, bool, error) {
+
+	if len(owned) == 0 {
+		return nil, false, nil
 	}
 
 	refs := make([]pricing.Ref, len(owned))

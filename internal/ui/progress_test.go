@@ -55,7 +55,7 @@ func TestPrinterPipedNoteOnStepTransition(t *testing.T) {
 
 func TestPrinterTTY(t *testing.T) {
 	var sb strings.Builder
-	p := NewPrinter(&sb, true)
+	p := NewPrinterSize(&sb, true, 100, 40)
 	p.interval = 0
 	fn := p.Fn()
 
@@ -64,18 +64,23 @@ func TestPrinterTTY(t *testing.T) {
 	p.Close()
 
 	out := sb.String()
-	if !strings.Contains(out, "\r\x1b[2K  refreshing cards ") {
-		t.Errorf("no in-place redraw of the step line: %q", out)
-	}
-	if !strings.Contains(out, "150/300 cards") {
-		t.Errorf("no counts on the line: %q", out)
-	}
-	if !strings.Contains(out, "█") || !strings.Contains(out, "░") {
-		t.Errorf("no bar with track: %q", out)
+	if !strings.Contains(out, "\r\x1b[2K") || !strings.Contains(out, "\x1b[") {
+		t.Errorf("no in-place redraw of the block: %q", out)
 	}
 
-	if got := strings.Count(out, "\n"); got != 2 {
-		t.Errorf("%d newlines, want 2 (one per finalized step): %q", got, out)
+	scr := render(out)
+	if scr.rows() != 2 {
+		t.Errorf("the run used %d rows, want 2 (one per step): %q", scr.rows(), out)
+	}
+	if !strings.Contains(scr.text(), "150/300 cards") {
+		t.Errorf("no counts on the line: %s", scr.text())
+	}
+	if !strings.Contains(scr.text(), "█") || !strings.Contains(scr.text(), "░") {
+		t.Errorf("no bar with track: %s", scr.text())
+	}
+	if !strings.Contains(scr.text(), "refreshing cards") ||
+		!strings.Contains(scr.text(), "saving") {
+		t.Errorf("a finished step left the screen: %s", scr.text())
 	}
 }
 
@@ -90,5 +95,18 @@ func TestPrinterThrottlesCountEvents(t *testing.T) {
 	p.Close()
 	if got := strings.Count(sb.String(), "rows"); got != 1 {
 		t.Errorf("%d count lines, want 1 (the step-transition event):\n%s", got, sb.String())
+	}
+}
+
+func TestPrinterPipedCarriesTheDetail(t *testing.T) {
+	var sb strings.Builder
+	p := NewPrinter(&sb, false)
+	p.interval = 0
+	fn := p.Fn()
+	fn(progress.Event{Step: "downloading catalog", Done: 12 << 20, Total: 77 << 20,
+		Unit: progress.UnitBytes, Detail: "5,000 cards"})
+	p.Close()
+	if !strings.Contains(sb.String(), "5,000 cards") {
+		t.Errorf("piped output %q lost the running tally", sb.String())
 	}
 }

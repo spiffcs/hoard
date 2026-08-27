@@ -1,4 +1,4 @@
--- hoard.db schema, version 36.
+-- hoard.db schema, version 35.
 
 CREATE TABLE card_bid_history (
     scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
@@ -69,15 +69,15 @@ CREATE TABLE cards (
     mtgjson_uuid TEXT,
     raw_json TEXT,
     rarity TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.rarity')) VIRTUAL,
-    set_name TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.set_name')) STORED,
+    set_name TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.set_name')) VIRTUAL,
     cmc REAL GENERATED ALWAYS AS (json_extract(raw_json,'$.cmc')) VIRTUAL,
     artist TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.artist')) VIRTUAL,
-    released_at TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.released_at')) STORED,
+    released_at TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.released_at')) VIRTUAL,
     layout TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.layout')) VIRTUAL,
     type_line TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.type_line'), json_extract(raw_json,'$.card_faces[0].type_line'))) VIRTUAL,
-    mana_cost TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.mana_cost'), json_extract(raw_json,'$.card_faces[0].mana_cost'))) STORED,
+    mana_cost TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.mana_cost'), json_extract(raw_json,'$.card_faces[0].mana_cost'))) VIRTUAL,
     oracle_text TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.oracle_text'), json_extract(raw_json,'$.card_faces[0].oracle_text'))) VIRTUAL,
-    color_identity TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.color_identity')) STORED,
+    color_identity TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.color_identity')) VIRTUAL,
     power TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.power'), json_extract(raw_json,'$.card_faces[0].power'))) VIRTUAL,
     toughness TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.toughness'), json_extract(raw_json,'$.card_faces[0].toughness'))) VIRTUAL,
     loyalty TEXT GENERATED ALWAYS AS (COALESCE(json_extract(raw_json,'$.loyalty'), json_extract(raw_json,'$.card_faces[0].loyalty'))) VIRTUAL,
@@ -86,14 +86,14 @@ CREATE TABLE cards (
     tcgplayer_id INTEGER GENERATED ALWAYS AS (json_extract(raw_json,'$.tcgplayer_id')) VIRTUAL,
     ck_url TEXT,
     ck_foil_url TEXT,
-    promo_types TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.promo_types')) STORED,
+    promo_types TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.promo_types')) VIRTUAL,
     tcg_alt_product_id TEXT,
     ck_foil_id TEXT,
     ck_etched_id TEXT,
     tcg_product_id TEXT,
     price_usd_etched REAL,
     tcg_etched_product_id TEXT,
-    lang TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.lang')) STORED,
+    lang TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.lang')) VIRTUAL,
     printed_name TEXT GENERATED ALWAYS AS (json_extract(raw_json,'$.printed_name')) VIRTUAL
 );
 

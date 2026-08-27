@@ -49,6 +49,12 @@ var migrations = []migration{
 	{32, deckFolders},
 	{33, lockedDeckNames},
 	{34, entryPurchasePrice},
+	{35, setCodeIndex},
+	{36, storeListColumns},
+}
+
+var rebuilds = map[int]func(*Store) error{
+	36: (*Store).rebuildCardsStored,
 }
 
 var schemaVersion = migrations[len(migrations)-1].Version
@@ -371,6 +377,11 @@ const traitFilterIndex = `
 CREATE INDEX IF NOT EXISTS cards_trait_filter ON cards(
     type_line, artist, layout, set_name, rarity, cmc, color_identity, scryfall_id);`
 
+const storeListColumns = `-- cards is rebuilt in Go; see rebuildCardsStored.`
+
+const setCodeIndex = `
+CREATE INDEX IF NOT EXISTS cards_set_code ON cards(set_code);`
+
 const percentWatches = `
 ALTER TABLE watches ADD COLUMN pct           REAL    NOT NULL DEFAULT 0;
 ALTER TABLE watches ADD COLUMN min_move      REAL    NOT NULL DEFAULT 0;
@@ -485,6 +496,11 @@ SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cards')`)
 	for _, m := range migrations {
 		if m.Version <= v {
 			continue
+		}
+		if rebuild, ok := rebuilds[m.Version]; ok {
+			if err := rebuild(s); err != nil {
+				return fmt.Errorf("migrating to schema v%d: %w", m.Version, err)
+			}
 		}
 		if err := s.apply(m); err != nil {
 			return fmt.Errorf("migrating to schema v%d: %w", m.Version, err)

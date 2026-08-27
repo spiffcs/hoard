@@ -35,6 +35,8 @@ func NewCmdCompendium(a *app) *cobra.Command {
 
 		Long: "Builds a hoard-shaped database from a filter over every\n" +
 			"paper printing, one copy of each, priced and backfilled.\n" +
+			"Tokens, emblems and art cards are never seeded, whatever\n" +
+			"the filter.\n" +
 			"Browse it with hoard --db FILE to price and build decks\n" +
 			"in a format before you own any of it.\n\n" +
 			"Your own hoard is never opened, read or written.\n\n" +

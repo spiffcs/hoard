@@ -160,6 +160,8 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 		},
 	}
 
+	compsCache := action.NewCompsCache(deps)
+
 	sum, err := browse.Run(ctx, st,
 		browse.WithConfirm(confirmCh),
 		browse.WithCardImage(fetchCardImage),
@@ -283,7 +285,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			return res, ok && err == nil
 		}),
 		browse.WithCardComps(func(id string) (map[finish.Finish]market.Comp, bool) {
-			comps, ok, err := action.CardComps(deps, id)
+			comps, ok, err := compsCache.Comps(id)
 			return comps, ok && err == nil
 		}),
 		browse.WithOpenURL(openInBrowser),

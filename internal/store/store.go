@@ -267,7 +267,7 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate")
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=cache_size(-65536)&_pragma=temp_store(2)&_pragma=mmap_size(268435456)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}

@@ -55,7 +55,11 @@ func (m *Model) fetchDetailImage() tea.Cmd {
 	ctx, id, url := m.ctx, d.card.ScryfallID, d.card.ImageURI
 	d.imagePending = true
 
+	key := imageKey{id: id, cols: cols, tier: tier, imgID: detailImageID, aspect: aspect}
 	return func() tea.Msg {
+		if e, hit := renders.get(key); hit {
+			return imageMsg{scryfallID: id, lines: e.lines, cols: cols, transmit: e.transmit}
+		}
 		img, err := fetch(ctx, id, url)
 		if err != nil {
 
@@ -65,6 +69,7 @@ func (m *Model) fetchDetailImage() tea.Cmd {
 		if !ok {
 			return imageMsg{scryfallID: id}
 		}
+		renders.put(key, imageEntry{lines: lines, transmit: transmit})
 		return imageMsg{scryfallID: id, lines: lines, cols: cols, transmit: transmit}
 	}
 }

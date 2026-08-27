@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/market"
@@ -360,7 +359,7 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 
 	if stat := statBox(c); stat != "" {
 		styled := m.theme.Title.Render(stat)
-		out = append(out, strings.Repeat(" ", max(cardW-ansi.StringWidth(stat), 0))+styled)
+		out = append(out, strings.Repeat(" ", max(cardW-ui.Width(stat), 0))+styled)
 	}
 
 	footer := joinNonEmpty(" · ",
@@ -388,14 +387,14 @@ func (m Model) hoardLines(d detail, width int) []string {
 	}
 	var qtyW, setW, finW, condW, paidW int
 	for _, h := range d.holdings {
-		qtyW = max(qtyW, ansi.StringWidth(ui.Qty(h.Quantity)))
-		setW = max(setW, ansi.StringWidth(ui.Printing(h.SetCode, h.CollectorNumber)))
-		condW = max(condW, ansi.StringWidth(ui.Condition(h.Condition)))
-		finW = max(finW, ansi.StringWidth(finishCell(h)))
-		paidW = max(paidW, ansi.StringWidth(paidCell(h)))
+		qtyW = max(qtyW, ui.Width(ui.Qty(h.Quantity)))
+		setW = max(setW, ui.Width(ui.Printing(h.SetCode, h.CollectorNumber)))
+		condW = max(condW, ui.Width(ui.Condition(h.Condition)))
+		finW = max(finW, ui.Width(finishCell(h)))
+		paidW = max(paidW, ui.Width(paidCell(h)))
 	}
 	pad := func(s string, w int, left bool) string {
-		fill := strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
+		fill := strings.Repeat(" ", max(w-ui.Width(s), 0))
 		if left {
 			return fill + s
 		}
@@ -699,7 +698,7 @@ func wrapHang(s string, width int) []string {
 	if !strings.HasPrefix(s, marker) {
 		return wrap(s, width)
 	}
-	w := ansi.StringWidth(marker)
+	w := ui.Width(marker)
 	inner := wrap(strings.TrimPrefix(s, marker), max(width-w, 1))
 	out := make([]string, len(inner))
 	for i, l := range inner {
@@ -723,7 +722,7 @@ func wrap(s string, width int) []string {
 	var out []string
 	line := words[0]
 	for _, w := range words[1:] {
-		if ansi.StringWidth(line)+1+ansi.StringWidth(w) > width {
+		if ui.Width(line)+1+ui.Width(w) > width {
 			out = append(out, line)
 			line = w
 			continue

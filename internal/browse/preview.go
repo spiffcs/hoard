@@ -151,7 +151,12 @@ func (m *Model) fetchPreviewImage() tea.Cmd {
 	ctx, url := m.ctx, d.ImageURI
 	m.preview.pending = true
 
+	key := imageKey{id: id, cols: cols, tier: tier, imgID: previewImageID, aspect: aspect}
 	return func() tea.Msg {
+		if e, hit := renders.get(key); hit {
+			return imageMsg{scryfallID: id, lines: e.lines, cols: cols,
+				transmit: e.transmit, preview: true}
+		}
 		img, ferr := fetch(ctx, id, url)
 		if ferr != nil {
 			return imageMsg{scryfallID: id, preview: true}
@@ -160,6 +165,7 @@ func (m *Model) fetchPreviewImage() tea.Cmd {
 		if !ok {
 			return imageMsg{scryfallID: id, preview: true}
 		}
+		renders.put(key, imageEntry{lines: lines, transmit: transmit})
 		return imageMsg{scryfallID: id, lines: lines, cols: cols,
 			transmit: transmit, preview: true}
 	}

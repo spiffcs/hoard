@@ -35,6 +35,8 @@ type Fetcher struct {
 
 	progress func(string)
 
+	warning func(msg, group string)
+
 	bytes func(done, total int64)
 
 	baseURL string
@@ -48,6 +50,11 @@ func New(st *store.Store, cacheDir string) *Fetcher {
 
 func (f *Fetcher) WithProgress(fn func(string)) *Fetcher {
 	f.progress = fn
+	return f
+}
+
+func (f *Fetcher) WithWarning(fn func(msg, group string)) *Fetcher {
+	f.warning = fn
 	return f
 }
 
@@ -73,6 +80,12 @@ func (f *Fetcher) WithTCGCSVBaseURL(u string) *Fetcher {
 func (f *Fetcher) say(format string, args ...any) {
 	if f.progress != nil {
 		f.progress(fmt.Sprintf(format, args...))
+	}
+}
+
+func (f *Fetcher) warn(group, format string, args ...any) {
+	if f.warning != nil {
+		f.warning(fmt.Sprintf(format, args...), group)
 	}
 }
 
@@ -209,11 +222,12 @@ func (f *Fetcher) resolve(ctx context.Context, refs []Ref) (map[string]string, e
 	n := 0
 	for setCode, sids := range bySet {
 		n++
-		f.say("resolving card ids · set %d/%d (%s) · once only", n, len(bySet), setCode)
+		f.say("resolving card ids · set %d/%d (%s)", n, len(bySet), setCode)
 		ids, err := mtgjson.SetIdentifiers(ctx, quiet, setCode)
 		if errors.Is(err, mtgjson.ErrNoSuchSet) {
 
-			f.say("skipping set %s: mtgjson has no such set", setCode)
+			f.warn("sets are not in MTGJSON, so their printings are unpriced",
+				"skipping set %s: mtgjson has no such set", setCode)
 			continue
 		}
 		if err != nil {

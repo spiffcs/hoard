@@ -99,7 +99,7 @@ func (t Table) natural() []int {
 	w := make([]int, len(t.Cols))
 	for i, c := range t.Cols {
 		if t.Header {
-			w[i] = ansi.StringWidth(c.Title)
+			w[i] = Width(c.Title)
 		}
 	}
 	for _, r := range t.Rows {
@@ -110,7 +110,7 @@ func (t Table) natural() []int {
 			if i >= len(w) {
 				break
 			}
-			if n := ansi.StringWidth(cell.Text); n > w[i] {
+			if n := Width(cell.Text); n > w[i] {
 				w[i] = n
 			}
 		}
@@ -120,7 +120,7 @@ func (t Table) natural() []int {
 
 			w[i] = c.Width
 			if t.Header {
-				w[i] = max(w[i], ansi.StringWidth(c.Title))
+				w[i] = max(w[i], Width(c.Title))
 			}
 		}
 		if c.Max > 0 && w[i] > c.Max {
@@ -237,13 +237,18 @@ func (t Table) Render() string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func (t Table) Lines() []string {
+func (t Table) Lines() []string { return t.WindowLines(0, len(t.Rows)) }
+
+func (t Table) WindowLines(start, count int) []string {
 	if len(t.Cols) == 0 {
 		return nil
 	}
 	widths, keep := fitColumns(t.Cols, t.natural(), t.gutter(), t.Env, t.blankColumns())
 
-	out := make([]string, 0, len(t.Rows)+1)
+	start = min(max(start, 0), len(t.Rows))
+	end := min(start+max(count, 0), len(t.Rows))
+
+	out := make([]string, 0, end-start+1)
 	if t.Header {
 		titles := make([]Cell, len(t.Cols))
 		for i, c := range t.Cols {
@@ -251,7 +256,7 @@ func (t Table) Lines() []string {
 		}
 		out = append(out, t.line(Row{Cells: titles, Style: t.Env.Dim()}, widths, keep))
 	}
-	for _, r := range t.Rows {
+	for _, r := range t.Rows[start:end] {
 		out = append(out, t.line(r, widths, keep))
 	}
 	return out
@@ -281,7 +286,7 @@ func (t Table) line(r Row, widths []int, keep []bool) string {
 		}
 
 		text := cell.Text
-		if w := widths[i]; t.Env.Clamp && ansi.StringWidth(text) > w {
+		if w := widths[i]; t.Env.Clamp && Width(text) > w {
 			text = Truncate(text, w)
 		}
 
@@ -296,7 +301,7 @@ func (t Table) line(r Row, widths []int, keep []bool) string {
 			style = plain
 		}
 
-		pad := max(widths[i]-ansi.StringWidth(text), 0)
+		pad := max(widths[i]-Width(text), 0)
 		if col.Align == Right {
 			b.WriteString(strings.Repeat(" ", pad))
 			b.WriteString(style(text))
@@ -313,7 +318,7 @@ func Truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if ansi.StringWidth(s) <= w {
+	if Width(s) <= w {
 		return s
 	}
 	if w == 1 {

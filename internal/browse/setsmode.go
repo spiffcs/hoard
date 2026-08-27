@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/store"
@@ -21,9 +20,9 @@ func (m *Model) loadSetContainers() error {
 	}
 	out := make([]container, 0, len(sets)+1)
 	out = append(out, container{ID: allCardsID, Name: allCardsName, Kind: kindAllCards})
-	m.containerNameW = ansi.StringWidth(allCardsName)
+	m.containerNameW = ui.Width(allCardsName)
 	for i, s := range sets {
-		m.containerNameW = max(m.containerNameW, ansi.StringWidth(s.Name))
+		m.containerNameW = max(m.containerNameW, ui.Width(s.Name))
 		out = append(out, container{
 
 			ID:   allCardsID - 1 - int64(i),
@@ -106,12 +105,17 @@ func parseSettlingDays(text string) (int, error) {
 }
 
 func (c container) settling(now time.Time) bool {
-	return c.Kind == kindSet && store.Settling(c.releasedAt, now)
+	return c.settlingAt(store.SettlingCutoff(now))
+}
+
+func (c container) settlingAt(cutoff string) bool {
+	return c.Kind == kindSet && store.SettlingAt(c.releasedAt, cutoff)
 }
 
 func (m Model) anySettling(now time.Time) bool {
+	cutoff := store.SettlingCutoff(now)
 	for _, c := range m.containers {
-		if c.settling(now) {
+		if c.settlingAt(cutoff) {
 			return true
 		}
 	}

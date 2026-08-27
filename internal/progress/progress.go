@@ -20,7 +20,10 @@ type Event struct {
 	Done, Total int64
 	Unit        Unit
 
-	Note string
+	Detail string
+
+	Note      string
+	NoteGroup string
 }
 
 type Fn func(Event)

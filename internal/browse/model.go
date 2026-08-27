@@ -11,7 +11,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spiffcs/hoard/internal/cardfilter"
 	"github.com/spiffcs/hoard/internal/finish"
@@ -378,7 +377,7 @@ func (m *Model) loadContainers() error {
 	widest := nameWidth(all)
 	out = append(out, all)
 	for _, b := range binders {
-		widest = max(widest, ansi.StringWidth(b.Name))
+		widest = max(widest, ui.Width(b.Name))
 		out = append(out, container{
 			ID: b.ID, Name: b.Name, Kind: store.KindCollection,
 			Copies: b.TotalCopies, Value: b.Value, isDefault: b.IsDefault,
@@ -463,7 +462,7 @@ func deckTree(folders, decks []store.DeckSummary, collapsed map[int64]bool) ([]c
 }
 
 func nameWidth(c container) int {
-	return 2*c.depth + ansi.StringWidth(c.Name)
+	return 2*c.depth + ui.Width(c.Name)
 }
 
 func (m *Model) loadCards() error {
@@ -587,12 +586,12 @@ type moverColWidths struct{ name, set, fin, from, was, now, change, qty, impact 
 func measureCardCols(rows []card) cardColWidths {
 	var w cardColWidths
 	for _, c := range rows {
-		w.name = max(w.name, ansi.StringWidth(c.Name))
-		w.set = max(w.set, ansi.StringWidth(ui.Printing(c.SetCode, c.CollectorNumber)))
-		w.fin = max(w.fin, ansi.StringWidth(ui.FinishTreated(c.Finish, c.Treatment)))
-		w.qty = max(w.qty, ansi.StringWidth(ui.Qty(c.Quantity)))
-		w.price = max(w.price, ansi.StringWidth(ui.MoneyPtr(c.Price)))
-		w.value = max(w.value, ansi.StringWidth(ui.Money(c.Value)))
+		w.name = max(w.name, ui.Width(c.Name))
+		w.set = max(w.set, ui.Width(ui.Printing(c.SetCode, c.CollectorNumber)))
+		w.fin = max(w.fin, ui.Width(ui.FinishTreated(c.Finish, c.Treatment)))
+		w.qty = max(w.qty, ui.Width(ui.Qty(c.Quantity)))
+		w.price = max(w.price, ui.Width(ui.MoneyPtr(c.Price)))
+		w.value = max(w.value, ui.Width(ui.Money(c.Value)))
 	}
 	return w
 }
@@ -600,15 +599,15 @@ func measureCardCols(rows []card) cardColWidths {
 func measureMoverCols(rows []store.PriceChange, cutoff time.Time) moverColWidths {
 	var w moverColWidths
 	for _, c := range rows {
-		w.name = max(w.name, ansi.StringWidth(c.Name))
-		w.set = max(w.set, ansi.StringWidth(ui.Printing(c.SetCode, c.CollectorNumber)))
-		w.fin = max(w.fin, ansi.StringWidth(ui.FinishTreated(c.Finish, c.Treatment)))
-		w.from = max(w.from, ansi.StringWidth(c.BaselineFrom(cutoff)))
-		w.was = max(w.was, ansi.StringWidth(ui.Money(c.Old)))
-		w.now = max(w.now, ansi.StringWidth(ui.Money(c.New)))
-		w.change = max(w.change, ansi.StringWidth(ui.SignedPercent(c.Pct())))
-		w.qty = max(w.qty, ansi.StringWidth(ui.Qty(c.Copies)))
-		w.impact = max(w.impact, ansi.StringWidth(ui.SignedMoney(c.TotalDelta())))
+		w.name = max(w.name, ui.Width(c.Name))
+		w.set = max(w.set, ui.Width(ui.Printing(c.SetCode, c.CollectorNumber)))
+		w.fin = max(w.fin, ui.Width(ui.FinishTreated(c.Finish, c.Treatment)))
+		w.from = max(w.from, ui.Width(c.BaselineFrom(cutoff)))
+		w.was = max(w.was, ui.Width(ui.Money(c.Old)))
+		w.now = max(w.now, ui.Width(ui.Money(c.New)))
+		w.change = max(w.change, ui.Width(ui.SignedPercent(c.Pct())))
+		w.qty = max(w.qty, ui.Width(ui.Qty(c.Copies)))
+		w.impact = max(w.impact, ui.Width(ui.SignedMoney(c.TotalDelta())))
 	}
 	return w
 }

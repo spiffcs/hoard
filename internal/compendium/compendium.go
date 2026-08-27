@@ -21,6 +21,7 @@ import (
 	"github.com/spiffcs/hoard/internal/progress"
 	"github.com/spiffcs/hoard/internal/scryfall"
 	"github.com/spiffcs/hoard/internal/store"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 const defaultListingURL = "https://api.scryfall.com/bulk-data"
@@ -30,6 +31,10 @@ const bulkType = "default_cards"
 const batchSize = 5000
 
 const listingTimeout = 10 * time.Second
+
+var notCardLayouts = map[string]bool{
+	"token": true, "double_faced_token": true, "art_series": true, "emblem": true,
+}
 
 var knownRarities = []string{"common", "uncommon", "rare", "special", "mythic", "bonus"}
 
@@ -59,6 +64,7 @@ type Options struct {
 
 	BulkListingURL string
 	PriceBaseURL   string
+	TCGCSVBaseURL  string
 	CacheDir       string
 }
 
@@ -69,6 +75,8 @@ type Result struct {
 
 	Observations int
 	Bids         int
+
+	Priced int
 }
 
 func (o Options) Validate() error {
@@ -123,6 +131,8 @@ type bulkCard struct {
 	ScryfallURI     string   `json:"scryfall_uri"`
 	ReleasedAt      string   `json:"released_at"`
 	Rarity          string   `json:"rarity"`
+	Layout          string   `json:"layout"`
+	SetType         string   `json:"set_type"`
 	Lang            string   `json:"lang"`
 	Finishes        []string `json:"finishes"`
 	Games           []string `json:"games"`
@@ -170,6 +180,11 @@ func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f
 	sc.Buffer(make([]byte, 0, 256*1024), 4*1024*1024)
 
 	batch := make([]store.CompendiumPrinting, 0, batchSize)
+	tick := func() {
+		p.Emit(progress.Event{Step: "downloading catalog",
+			Done: cr.n, Total: entry.CompressedSize, Unit: progress.UnitBytes,
+			Detail: ui.Count(printings) + " cards"})
+	}
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -181,8 +196,7 @@ func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f
 		printings += n
 		entries += e
 		batch = batch[:0]
-		p.Emit(progress.Event{Step: "seeding printings",
-			Done: int64(printings), Unit: progress.UnitCards})
+		tick()
 		return nil
 	}
 
@@ -192,8 +206,7 @@ func seedPrintings(ctx context.Context, st *store.Store, cid int64, o Options, f
 			if err := ctx.Err(); err != nil {
 				return printings, entries, err
 			}
-			p.Emit(progress.Event{Step: "downloading catalog",
-				Done: cr.n, Total: entry.CompressedSize, Unit: progress.UnitBytes})
+			tick()
 		}
 		seen++
 
@@ -304,6 +317,9 @@ func (f filter) keep(c bulkCard) bool {
 	if c.ID == "" || !hasGame(c.Games, "paper") || len(c.Finishes) == 0 {
 		return false
 	}
+	if notACard(c) {
+		return false
+	}
 	if len(f.sets) > 0 || len(f.only) > 0 {
 		set := strings.ToLower(c.Set)
 		if !f.sets[set] && !f.only[set][strings.ToLower(strings.TrimSpace(c.Name))] {
@@ -340,7 +356,7 @@ func (f filter) keep(c bulkCard) bool {
 
 func mapIdentifiers(ctx context.Context, st *store.Store, o Options, p progress.Fn) (int, error) {
 	p.Emit(progress.Event{Step: "mapping card ids",
-		Note: "fetching every set's identifiers from MTGJSON in one file"})
+		Detail: "fetching every set's identifiers from MTGJSON in one file"})
 
 	ids, err := mtgjson.AllIdentifiers(ctx, mtgjson.Options{
 		CacheDir: o.CacheDir,
@@ -471,6 +487,11 @@ func lowered(sets []string) map[string]bool {
 		}
 	}
 	return out
+}
+
+func notACard(c bulkCard) bool {
+	return notCardLayouts[strings.ToLower(strings.TrimSpace(c.Layout))] ||
+		strings.EqualFold(strings.TrimSpace(c.SetType), "token")
 }
 
 func hasGame(games []string, want string) bool {

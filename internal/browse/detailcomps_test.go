@@ -1057,14 +1057,20 @@ func TestDetailImageRerendersOnResize(t *testing.T) {
 	}
 
 	stale := imageMsg{scryfallID: m.detail.card.ScryfallID, lines: []string{"x"}, cols: artColsMax}
-	before := fetches
 	next, cmd = m.Update(stale)
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("a stale-size landing must re-render")
 	}
-	if _, ok := cmd().(imageMsg); !ok || fetches != before+1 {
-		t.Errorf("stale landing: fetches %d → %d, want one corrective fetch", before, fetches)
+	corrective, ok := cmd().(imageMsg)
+	if !ok {
+		t.Fatalf("stale landing produced %T, want a corrective imageMsg", cmd())
+	}
+	if want := m.detailImageCols(); corrective.cols != want {
+		t.Errorf("corrective render is %d cols, want %d", corrective.cols, want)
+	}
+	if len(corrective.lines) == 0 {
+		t.Error("corrective render carried no image")
 	}
 }
 

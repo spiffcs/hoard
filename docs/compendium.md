@@ -24,21 +24,25 @@ Name a filter and an output file. Every mythic and rare printed since 2020:
 
 ```console
 $ hoard compendium --rarity mythic,rare --since 2020 mythics-rare.db
-  downloading catalog: 74.0/74.0 MB
-  seeding printings: 31,980 cards
-  mapping card ids: 31,929/31,980 cards
-  downloading price history...
-  recording history...
-  compacting the database...
+  ✓ downloading catalog ████████████ 74.0/74.0 MB · 31,980 cards
+  ✓ mapping card ids ███████████▉ 31,929/31,980 cards
+  ✓ downloading price history ████████████ 143.6/143.6 MB · resolving card ids · set 334/334
+  ✓ recording history
+  ✓ compacting the database
+  ! 178 sets are not in MTGJSON, so their printings are unpriced.
 ✓ Seeded 31,980 printings, 48,148 entries.
   ! 51 have no MTGJSON id, so they are unpriced.
 Backfilled 473,667 observations and 226,074 bids.
 Browse it: hoard --db mythics-rare.db
 ```
 
-That warning is normal on a wide build. Prices are attached through MTGJSON
+Both warnings are normal on a wide build. Prices are attached through MTGJSON
 identifiers and a few printings have none, mostly Secret Lair drops and promos,
-so they are seeded and browsable but carry no price history.
+so they are seeded and browsable but carry no price history. The skipped sets
+are almost all token sets, which MTGJSON does not carry.
+
+The five step lines redraw in place, so the whole build stays in one screen no
+matter how long it runs. Piped to a file it falls back to plain appended lines.
 
 Then browse it like any other hoard:
 
@@ -63,6 +67,11 @@ Both numbers grow as you widen the filter and as you raise `--days`.
 | `--priced-only` | Drop printings Scryfall has no USD price for at all. |
 | `--days` | Days of price history to backfill. Default 30, clamped to 90. |
 | `--all` | Build every paper printing. Only needed when you pass no filter at all. |
+
+Tokens, emblems and art-series cards are dropped from every build, filtered or
+not. Scryfall's bulk file carries them as ordinary rows — priced, rarity-tagged
+and paper-legal — so they would otherwise pass `--since`, `--rarity` and `--all`
+alike. Nothing you can play with is affected.
 
 Filters combine, so `--rarity rare --sets mh2` gives you the rares in Modern
 Horizons 2 and nothing else.

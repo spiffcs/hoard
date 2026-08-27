@@ -77,3 +77,10 @@ func (e Env) Dim() Style {
 	}
 	return func(s string) string { return lgFaint.Render(s) }
 }
+
+func terminalHeight(f *os.File) int {
+	if _, h, err := term.GetSize(f.Fd()); err == nil && h > 0 {
+		return h
+	}
+	return 24
+}

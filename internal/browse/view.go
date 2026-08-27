@@ -403,11 +403,13 @@ func (m Model) paneLines(p pane, width int, build func(env ui.Env) ui.Table) []s
 	t := build(env)
 	t.Env = env
 	t.Header = true
-	return m.window(t.Lines(), p, width)
+
+	start, count := m.windowBounds(p, len(t.Rows))
+	return m.window(t.WindowLines(start, count), start, p, width)
 }
 
 func (m Model) containerLines(width int) []string {
-	now := m.now()
+	cutoff := store.SettlingCutoff(m.now())
 	return m.paneLines(paneContainers, width, func(env ui.Env) ui.Table {
 		t := ui.Table{Cols: []ui.Col{
 			{Title: "", Align: ui.Left, Priority: 1},
@@ -417,7 +419,7 @@ func (m Model) containerLines(width int) []string {
 		}}
 		for i, c := range m.containers {
 			mark := ""
-			if c.settling(now) || c.skipped() {
+			if c.settlingAt(cutoff) || c.skipped() {
 				mark = settlingMark
 			}
 			if c.Kind == kindFolder {
@@ -513,19 +515,24 @@ func (m Model) cardLines(width int) []string {
 	})
 }
 
-func (m Model) window(lines []string, p pane, width int) []string {
+func (m Model) windowBounds(p pane, rows int) (start, count int) {
+	budget := m.paneRows(p)
+	start = min(m.offset[p], max(rows-1, 0))
+	end := min(start+budget-1, rows)
+	return start, max(end-start, 0)
+}
+
+func (m Model) window(lines []string, start int, p pane, width int) []string {
 	if len(lines) == 0 {
 		return nil
 	}
 	body := lines[1:]
-	budget := m.paneRows(p)
-	start := min(m.offset[p], max(len(body)-1, 0))
-	end := min(start+budget-1, len(body))
 
-	out := make([]string, 0, budget)
+	out := make([]string, 0, len(lines))
 	out = append(out, lines[0])
-	for i := start; i < end; i++ {
-		line := fit(body[i], width)
+	for j := range body {
+		i := start + j
+		line := fit(body[j], width)
 		switch {
 		case i == m.cursor[p] && m.focus == p:
 

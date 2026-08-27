@@ -93,14 +93,19 @@ func SetSettlingDays(days int) {
 func (p PriceChange) Settling(now time.Time) bool { return Settling(p.ReleasedAt, now) }
 
 func Settling(releasedAt string, now time.Time) bool {
-	return settlingWithin(releasedAt, now, SettlingDays())
+	return SettlingAt(releasedAt, SettlingCutoff(now))
 }
 
-func settlingWithin(releasedAt string, now time.Time, days int) bool {
-	if releasedAt == "" || days <= 0 {
-		return false
+func SettlingCutoff(now time.Time) string {
+	days := SettlingDays()
+	if days <= 0 {
+		return ""
 	}
-	return releasedAt > now.AddDate(0, 0, -days).Format(time.DateOnly)
+	return now.AddDate(0, 0, -days).Format(time.DateOnly)
+}
+
+func SettlingAt(releasedAt, cutoff string) bool {
+	return cutoff != "" && releasedAt != "" && releasedAt > cutoff
 }
 
 func NetMoved(rows []PriceChange, now time.Time) (net float64, heldOutSets int) {

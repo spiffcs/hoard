@@ -75,11 +75,15 @@ func BackfillPrices(ctx context.Context, d Deps, p progress.Fn, days int) (Backf
 	res.Printings = len(printings)
 
 	p.Emit(progress.Event{Step: "downloading price history",
-		Note: fmt.Sprintf("fetching %d days of prices for %s printings from MTGJSON (a large download)",
-			days, ui.Count(len(printings)))})
+		Detail: fmt.Sprintf("fetching %d days of prices for %s",
+			days, ui.PluralCount(len(printings), "printing", "printings"))})
 	f := d.pricer().
 		WithProgress(func(msg string) {
-			p.Emit(progress.Event{Step: "downloading price history", Note: msg})
+			p.Emit(progress.Event{Step: "downloading price history", Detail: msg})
+		}).
+		WithWarning(func(msg, group string) {
+			p.Emit(progress.Event{Step: "downloading price history",
+				Note: msg, NoteGroup: group})
 		}).
 		WithBytes(func(done, total int64) {
 			p.Emit(progress.Event{Step: "downloading price history",
