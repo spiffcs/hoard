@@ -1161,11 +1161,11 @@ func (m Model) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "pgup":
-		m.move(-m.visibleRows())
+		m.page(-1)
 		m.status = ""
 		return m, nil
 	case "pgdown":
-		m.move(m.visibleRows())
+		m.page(1)
 		m.status = ""
 		return m, nil
 	case "home", "g":
@@ -1381,6 +1381,17 @@ func (m *Model) move(delta int) {
 		m.cursor[m.focus] = min(max(m.cursor[m.focus]+delta, 0), n-1)
 	}
 	m.onCursorMoved()
+}
+
+func (m *Model) page(dir int) {
+	n := m.rowCount(m.focus)
+	if n == 0 {
+		return
+	}
+	rows := max(m.paneRows(m.focus)-1, 1)
+	step := dir * max(rows-1, 1)
+	m.offset[m.focus] = min(max(m.offset[m.focus]+step, 0), max(n-rows, 0))
+	m.move(step)
 }
 
 func (m *Model) moveTo(target int) {
