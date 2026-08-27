@@ -122,3 +122,37 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+func TestDipHeaderCountsEveryRowNotJustThePage(t *testing.T) {
+	m := onDip(t, 120, 70)
+
+	_, totals := m.dipHeader()
+	if !strings.Contains(totals, "120 at the floor") {
+		t.Errorf("header = %q, want all 120 dips counted, not the 50 on screen", totals)
+	}
+	if !strings.Contains(totals, "70 climbing") {
+		t.Errorf("header = %q, want all 70 momentum rows counted, not the 50 on screen", totals)
+	}
+
+	m.turnDipPage(1)
+	_, paged := m.dipHeader()
+	if paged != totals {
+		t.Errorf("turning a page changed the header from %q to %q; the totals are not per-page",
+			totals, paged)
+	}
+}
+
+func TestDipHeaderFollowsTheFilter(t *testing.T) {
+	m := onDip(t, 120, 70)
+
+	m.pennyLimit = 60
+	m.deriveView()
+
+	_, totals := m.dipHeader()
+	if !strings.Contains(totals, "109 at the floor") {
+		t.Errorf("header = %q, want the 11 gated dips dropped from the count", totals)
+	}
+	if !strings.Contains(totals, "29 climbing") {
+		t.Errorf("header = %q, want the 41 gated momentum rows dropped from the count", totals)
+	}
+}

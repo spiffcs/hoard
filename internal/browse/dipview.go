@@ -292,9 +292,10 @@ func dipSectionTable(env ui.Env, sec dipSection, rows []store.TrendRow,
 
 func (m Model) dipHeader() (title, totals string) {
 	since := m.moversCutoff().Local().Format("2 Jan")
+	counts := m.dipSectionTotals()
 	return "DIP & MOMENTUM · SINCE " + since + m.viewScope(),
 		fmt.Sprintf("%s at the floor · %s climbing",
-			ui.Count(len(m.dips)), ui.Count(len(m.momentum)))
+			ui.Count(counts[secDip]), ui.Count(counts[secMomentum]))
 }
 
 func (m Model) dipCursorPos() (sec, idx int) {
