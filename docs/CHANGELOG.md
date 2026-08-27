@@ -1,13 +1,61 @@
 # Changelog
 
-Notable changes to hoard, newest first.
-
 The per-release notes on the [releases page](https://github.com/spiffcs/hoard/releases)
 are the canonical record and carry the full commit list plus the signature
 verification block. This file is the readable history.
 
 The root `CHANGELOG.md` is a build artifact: `task changelog` regenerates it
 for goreleaser on every release and it is gitignored. This is the tracked one.
+
+## v0.4.0 (2026-08-27)
+
+The schema moves v33 → v36, so a database is backed up and migrated on first
+launch. v36 rebuilds the `cards` table to store the columns it used to derive
+from raw JSON on every read, which makes that one launch slower and the file
+larger, and every list, sort and filter over card characteristics faster after
+it. `--json` documents move to schema 1.2.0, which adds `paid` to holdings rows.
+
+### Added
+
+* Record what you paid for a card. The add flow asks, per copy, and
+  `hoard add URL --paid 12.50` takes it on the command line. Copies of one
+  printing bought at different prices stay separate rows rather than being
+  averaged together.
+* Browse: the movers window cycles to a cost basis view alongside its 7, 30 and
+  90 day lookbacks if there is something to compare against.
+* `hoard export --format manabox` closes the ManaBox round trip: purchase price,
+  condition and language survive going out and coming back in. Conditions are different
+  from our model so they are still lossy.
+* `hoard compendium --format aaa --era` builds Ebon Ante: Alpha through
+  Alliances, plus the five Apocalypse painlands.
+* A compendium is priced as it is built, so there is no `hoard update-prices`
+  to run before browsing one.
+* `hoard add` reads the language out of a Scryfall URL, so a `/ja/` link adds
+  the Japanese printing rather than the English one.
+* [Filtering](filtering.md) documents the filter language in one table,
+  [Scripting](scripting.md) covers `--json` and splicing documents through a
+  pipe, and [Recipes](recipes.md) builds a wantlist out of an excluded binder.
+
+### Changed
+
+* The penny filter is one setting shared by movers, market and dips rather than
+  a separate one per view, and its line starts at $1.00 rather than $0.50.
+* Compendium builds never seed tokens, emblems or art cards
+* Set codes are indexed and card characteristics are read rather than recomputed per row
+* Price trends read on their own connection, a background price read no
+  longer queues behind whatever the browser is doing.
+* Browse: dips and momentum are loaded at startup with the rest of the price
+  data, so opening the view no longer pauses to compute it.
+* Browse: a printing's comps and its rendered art are kept for the session, so
+  coming back to a card does not fetch or redraw it again.
+* Progress on a terminal redraws in place with a spinner and fits its detail to
+  the width, rather than appending a line per step. Redirected output is
+  unchanged.
+
+### Fixed
+
+* Declining the confirm at the end of an add ends that card, not the session.
+* Page up and page down step by the height of the pane you are looking at.
 
 ## v0.3.0 (2026-08-25)
 
