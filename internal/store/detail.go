@@ -8,8 +8,23 @@ import (
 	"github.com/spiffcs/hoard/internal/finish"
 )
 
+type CardFace struct {
+	Name       string
+	ManaCost   string
+	TypeLine   string
+	OracleText string
+	FlavorText string
+	Power      string
+	Toughness  string
+	Loyalty    string
+	Artist     string
+	ImageURI   string
+}
+
 type CardDetail struct {
 	Card
+
+	Back *CardFace
 
 	Rarity     string
 	SetName    string
@@ -50,28 +65,55 @@ SELECT ` + cardCols(altSourceExpr) + `,
        COALESCE(c.image_uri, ''),
        c.tcgplayer_id, COALESCE(c.ck_url, ''), COALESCE(c.ck_foil_url, ''),
        COALESCE(c.printed_name, ''),
+       ` + backFaceCols + `,
        ` + enrichedExpr + `
 FROM cards c ` + altJoinCards
 
-func cardDetailScanDest(d *CardDetail, aux *cardAux) []any {
-	return append(cardScanDest(&d.Card, aux),
+const backFaceCols = `json_extract(c.raw_json,'$.card_faces[1].image_uris.normal'),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].name'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].mana_cost'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].type_line'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].oracle_text'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].flavor_text'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].power'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].toughness'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].loyalty'), ''),
+       COALESCE(json_extract(c.raw_json,'$.card_faces[1].artist'), '')`
+
+type detailAux struct {
+	cardAux
+
+	backImage sql.NullString
+	back      CardFace
+}
+
+func cardDetailScanDest(d *CardDetail, aux *detailAux) []any {
+	b := &aux.back
+	return append(cardScanDest(&d.Card, &aux.cardAux),
 		&d.Rarity, &d.SetName, &d.TypeLine, &d.OracleText,
 		&d.Artist, &d.ReleasedAt, &d.Layout, &d.CMC,
 		&d.Power, &d.Toughness, &d.Loyalty, &d.FlavorText, &d.ImageURI,
 		&d.TCGplayerID, &d.CKURL, &d.CKFoilURL, &d.PrintedName,
+		&aux.backImage, &b.Name, &b.ManaCost, &b.TypeLine, &b.OracleText,
+		&b.FlavorText, &b.Power, &b.Toughness, &b.Loyalty, &b.Artist,
 		&d.Enriched)
 }
 
-func (a cardAux) applyDetail(d *CardDetail) {
+func (a detailAux) applyDetail(d *CardDetail) {
 	a.apply(&d.Card)
 	d.PromoTypes = parsePromoTypes(a.promoTypes)
+	if a.backImage.Valid && a.backImage.String != "" {
+		back := a.back
+		back.ImageURI = a.backImage.String
+		d.Back = &back
+	}
 }
 
 func (s *Store) CardDetail(scryfallID string) (CardDetail, error) {
 	row := s.db.QueryRow(cardDetailCols+` WHERE c.scryfall_id = ?`, scryfallID)
 
 	var d CardDetail
-	var aux cardAux
+	var aux detailAux
 	if err := row.Scan(cardDetailScanDest(&d, &aux)...); err != nil {
 		return CardDetail{}, fmt.Errorf("reading card %s: %w", scryfallID, err)
 	}
@@ -91,7 +133,7 @@ WHERE c.scryfall_id IN (SELECT e.scryfall_id FROM card_entries e WHERE e.contain
 	out := make(map[string]CardDetail)
 	for rows.Next() {
 		var d CardDetail
-		var aux cardAux
+		var aux detailAux
 		if err := rows.Scan(cardDetailScanDest(&d, &aux)...); err != nil {
 			return nil, fmt.Errorf("reading card details: %w", err)
 		}

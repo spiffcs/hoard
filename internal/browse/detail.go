@@ -41,6 +41,8 @@ type detail struct {
 
 	heldField int
 
+	showBack bool
+
 	imagePending bool
 
 	imageColsDrawn int
@@ -49,6 +51,35 @@ type detail struct {
 	transmitSent  bool
 
 	image []string
+}
+
+const backFaceSuffix = "-back"
+
+func (d detail) flippable() bool { return d.card.Back != nil }
+
+func (d detail) imageIdentity() string {
+	if d.showBack && d.card.Back != nil {
+		return d.card.ScryfallID + backFaceSuffix
+	}
+	return d.card.ScryfallID
+}
+
+func (d detail) shownCard() store.CardDetail {
+	c := d.card
+	b := c.Back
+	if !d.showBack || b == nil {
+		return c
+	}
+	c.Name = b.Name
+	c.ManaCost = nil
+	if b.ManaCost != "" {
+		cost := b.ManaCost
+		c.ManaCost = &cost
+	}
+	c.TypeLine, c.OracleText, c.FlavorText = b.TypeLine, b.OracleText, b.FlavorText
+	c.Power, c.Toughness, c.Loyalty = b.Power, b.Toughness, b.Loyalty
+	c.Artist, c.ImageURI = b.Artist, b.ImageURI
+	return c
 }
 
 const (
@@ -150,6 +181,9 @@ func heldFoil(d *detail) bool {
 }
 
 func (m *Model) loadPrinting(d *detail, id string) bool {
+	if d.card.ScryfallID != id {
+		d.showBack = false
+	}
 	d.series = map[finish.Finish][]store.PricePoint{}
 	d.bids = map[finish.Finish][]store.PricePoint{}
 
@@ -325,7 +359,7 @@ func (m Model) cardFrameLines(d detail, width int) []string {
 	dim := m.theme.Help.Render
 	var out []string
 
-	c := d.card
+	c := d.shownCard()
 	cardW := min(width, frameWidth)
 
 	name := m.theme.Identity(c.ColorIdentity).Bold(true).Render(ui.Truncate(c.Name, width))

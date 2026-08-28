@@ -34,6 +34,7 @@ const listingTimeout = 10 * time.Second
 
 var notCardLayouts = map[string]bool{
 	"token": true, "double_faced_token": true, "art_series": true, "emblem": true,
+	"front_card": true,
 }
 
 var knownRarities = []string{"common", "uncommon", "rare", "special", "mythic", "bonus"}

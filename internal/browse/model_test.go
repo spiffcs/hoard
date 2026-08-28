@@ -66,7 +66,9 @@ type fakeStore struct {
 
 	dataVersion      int64
 	dataVersionReads int
-	slowRead         time.Duration
+
+	detailPatch func(*store.CardDetail)
+	slowRead    time.Duration
 
 	binderListCalls int
 	watchListCalls  int
@@ -335,6 +337,9 @@ func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
 	d.TCGplayerID = &tcg
 	d.CKURL = "https://mtgjson.com/links/plain"
 	d.CKFoilURL = "https://mtgjson.com/links/foil"
+	if f.detailPatch != nil {
+		f.detailPatch(&d)
+	}
 	return d, f.err
 }
 

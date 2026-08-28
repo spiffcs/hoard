@@ -45,14 +45,17 @@ func (m *Model) transmitSettle() tea.Cmd {
 
 func (m *Model) fetchDetailImage() tea.Cmd {
 	d := m.detail
-	if m.imgTier == ui.ImageNone || m.imageFetch == nil ||
-		d == nil || d.card.ImageURI == "" {
+	if m.imgTier == ui.ImageNone || m.imageFetch == nil || d == nil {
+		return nil
+	}
+	face := d.shownCard()
+	if face.ImageURI == "" {
 		return nil
 	}
 
 	cols, aspect := m.detailImageCols(), m.artAspect()
 	fetch, tier := m.imageFetch, m.imgTier
-	ctx, id, url := m.ctx, d.card.ScryfallID, d.card.ImageURI
+	ctx, id, url := m.ctx, d.imageIdentity(), face.ImageURI
 	d.imagePending = true
 
 	key := imageKey{id: id, cols: cols, tier: tier, imgID: detailImageID, aspect: aspect}
@@ -131,7 +134,7 @@ func (m Model) onImage(msg imageMsg) (tea.Model, tea.Cmd) {
 	if msg.preview {
 		return m.onPreviewImage(msg)
 	}
-	if m.detail != nil && m.detail.card.ScryfallID == msg.scryfallID {
+	if m.detail != nil && m.detail.imageIdentity() == msg.scryfallID {
 		m.detail.image = msg.lines
 		m.detail.imagePending = false
 		m.detail.imageColsDrawn = msg.cols

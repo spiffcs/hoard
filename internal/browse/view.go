@@ -701,13 +701,20 @@ func (m Model) helpLine() string {
 	case m.detail != nil:
 
 		if m.detail.zone == zoneHeld {
-			return ui.Help(ui.K("↑/↓", "held rows"), ui.K("←/→", "field"),
+			held := []ui.HelpEntry{ui.K("↑/↓", "held rows"), ui.K("←/→", "field"),
 				ui.K("enter", "edit"), ui.K("+/-", "qty"), ui.K("d", "remove"),
-				ui.K("tab", "next field"), ui.K("esc", "back"), ui.K(quit, "quit"))
+				ui.K("tab", "next field")}
+			if m.detail.flippable() {
+				held = append(held, ui.K("f", "flip"))
+			}
+			return ui.Help(append(held, ui.K("esc", "back"), ui.K(quit, "quit"))...)
 		}
 		var e []ui.HelpEntry
 		if len(m.detail.holdings) > 0 {
 			e = append(e, ui.K("tab", "held list"))
+		}
+		if m.detail.flippable() {
+			e = append(e, ui.K("f", "flip"))
 		}
 
 		if d := m.detail; len(d.holdings) > 0 {

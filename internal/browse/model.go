@@ -1044,6 +1044,15 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.adjustHeldQuantity(-1)
 	case "d":
 		m.askHeldRemoval()
+	case "f":
+
+		if !m.detail.flippable() {
+			return m, nil
+		}
+		m.detail.showBack = !m.detail.showBack
+		m.detail.image = nil
+		m.detail.imageTransmit = ""
+		return m, m.fetchDetailImage()
 	case "pgup":
 
 		m.detail.scroll = max(m.detail.scroll-max(m.visibleRows()-1, 1), 0)
