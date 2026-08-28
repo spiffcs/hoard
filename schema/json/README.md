@@ -64,6 +64,12 @@ Prices are USD throughout. An absent price field means *unpriced*, never free.
 - **1.1.4**: `containerId` on a holdings row. A name can be renamed between a
   document being written and being read; an id cannot. It is meaningful only in
   the database that emitted the document.
+- **1.2.0**: `paid` on a holdings row: what the holder recorded paying per copy.
+  A REVISION rather than an ADDITION, because absent means *unrecorded* and not
+  *free*, so anything summing the field has to know the difference.
+- **1.2.1**: the `version` kind: the build behind a hoard, and the release it
+  knows about. `version.update` is absent when the build is current, when no
+  check has been made, and on a build hoard cannot advise on.
 
 The reasoning behind each bump is in the `SchemaVersion` doc comment in
 [internal/hoardjson/hoardjson.go](../../internal/hoardjson/hoardjson.go).

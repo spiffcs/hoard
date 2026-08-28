@@ -46,6 +46,12 @@ func commands() []command {
 			run: func(m *Model) tea.Cmd { return m.openAddCascade() },
 		},
 		{
+			id: "update", title: "UpdateHoard", aliases: "upgrade release version new",
+			desc: "Check for a newer hoard release and show how to upgrade.",
+
+			run: func(m *Model) tea.Cmd { return m.requestUpdateCheck() },
+		},
+		{
 			id: "remove", title: "RemoveSelected", aliases: "delete card deck",
 			desc: "Remove the selected card or deck, after a y/n confirm.",
 			key:  "d",

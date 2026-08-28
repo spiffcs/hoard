@@ -50,7 +50,7 @@ func rootCommand(a *app) *cobra.Command {
 
 		RunE: func(c *cobra.Command, _ []string) error {
 			if versionFlag {
-				printVersion(a.env.Out, a.env.OutEnv)
+				printVersion(a.env.Out, a.env.OutEnv, cachedStatus(c.Context()))
 				return nil
 			}
 			return cmdBrowse(c.Context(), a.store, a.env.JSON)
@@ -113,6 +113,8 @@ func rootCommand(a *app) *cobra.Command {
 		NewCmdSchema(a),
 
 		NewCmdVersion(a),
+
+		NewCmdUpdate(a),
 	)
 
 	return root

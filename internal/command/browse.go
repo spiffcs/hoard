@@ -289,6 +289,7 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			return comps, ok && err == nil
 		}),
 		browse.WithOpenURL(openInBrowser),
+		browse.WithUpdateCheck(updateChecker(ctx)),
 		browse.WithPrintSearch(newSearcher(cat).SearchPrints),
 		browse.WithSetPrints(setPrints(cat)),
 		browse.WithHistoryBackfill(func(ctx context.Context, id, setCode string) (int, error) {
@@ -425,4 +426,16 @@ func setPrints(cat *catalog.Catalog) browse.SetPrintsFunc {
 		return nil
 	}
 	return cat.SetPrints
+}
+
+// updateChecker answers with a tag only when it is newer than this build, so
+// the browser never has to know how versions compare.
+func updateChecker(ctx context.Context) browse.UpdateCheckFunc {
+	return func() (string, error) {
+		st := cachedStatus(ctx)
+		if !st.Available() {
+			return "", nil
+		}
+		return st.Latest, nil
+	}
 }

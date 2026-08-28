@@ -75,6 +75,7 @@ func TestUsagePipedListsEveryCommand(t *testing.T) {
 		"add", "update-prices", "movers", "backfill-prices", "unpriced", "guessed",
 		"repair-finishes", "vacuum", "market", "report", "watch", "catalog",
 		"binder", "deck", "export", "import", "merge", "compendium", "schema", "version",
+		"update",
 		"completion",
 	} {
 		if !strings.Contains(out, want) {

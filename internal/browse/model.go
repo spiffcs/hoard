@@ -228,6 +228,7 @@ type Model struct {
 	marketCached MarketCachedFunc
 	cardComps    CardCompFunc
 	openURL      OpenURLFunc
+	updateCheck  UpdateCheckFunc
 	printSearch  PrintSearchFunc
 	cardDocument CardDocumentFunc
 
@@ -757,6 +758,10 @@ func (m Model) Init() tea.Cmd {
 		init = tea.Batch(init, func() tea.Msg { return marketPrefetchStartMsg{} })
 	}
 
+	if m.updateCheck != nil {
+		init = tea.Batch(init, func() tea.Msg { return updateCheckStartMsg{} })
+	}
+
 	if m.catalogOffer && m.opCatalogUpdate != nil {
 		return tea.Batch(init, func() tea.Msg { return catalogFirstRunMsg{} })
 	}
@@ -859,6 +864,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCardDocument(msg)
 	case historyMsg:
 		return m.onHistory(msg)
+	case updateCheckStartMsg:
+		return m, m.checkForUpdate()
+	case updateCheckMsg:
+		return m.onUpdateCheck(msg)
 	case catalogFirstRunMsg:
 		return m, m.startOp("updating the catalog", m.opCatalogUpdate)
 	case opProgressMsg:

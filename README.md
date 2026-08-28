@@ -168,6 +168,7 @@ It is ordinary SQLite: read it with [any tool](schema/sqlite/README.md), or take
 - [Scripting](docs/scripting.md): `--json` documents, and piping them through `jq`
 - [Adding cards](docs/adding-cards.md): the TUI add flow and the iPhone scanner
 - [Compendiums](docs/compendium.md): building a database of Magic you don't own
+- [Updating](docs/updating.md): how hoard tells you about a new release
 - [CHANGELOG](docs/CHANGELOG.md)
 
 Project documents: [CONTRIBUTING](CONTRIBUTING.md) · [AGENTS](AGENTS.md) · [RELEASE](RELEASE.md) · [SECURITY](SECURITY.md) · [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md)

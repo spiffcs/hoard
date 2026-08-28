@@ -117,7 +117,7 @@ import (
 // hoard merge, which reads a hoard document written by a different database,
 // goes on resolving containers by name, because an id minted there names a
 // different container here or none at all.
-const SchemaVersion = "1.2.0"
+const SchemaVersion = "1.2.1"
 
 // Kind names which payload a document carries; exactly the one field of the
 // same name is present.
@@ -136,13 +136,14 @@ const (
 	KindBinders  Kind = "binders"
 	KindGuessed  Kind = "guessed"
 	KindRefused  Kind = "refused"
+	KindVersion  Kind = "version"
 )
 
 // Document is the envelope every hoard JSON emission shares: a schema version,
 // a kind, and the one payload the kind names.
 type Document struct {
 	SchemaVersion string `json:"schemaVersion"`
-	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard,enum=watches,enum=binders,enum=guessed,enum=refused"`
+	Kind          Kind   `json:"kind" jsonschema:"enum=summary,enum=holdings,enum=unpriced,enum=movers,enum=market,enum=report,enum=watch,enum=hoard,enum=watches,enum=binders,enum=guessed,enum=refused,enum=version"`
 
 	Summary  *Summary    `json:"summary,omitempty"`
 	Holdings *Holdings   `json:"holdings,omitempty"`
@@ -156,6 +157,25 @@ type Document struct {
 	Binders  *Binders    `json:"binders,omitempty"`
 	Guessed  *Guessed    `json:"guessed,omitempty"`
 	Refused  *Refused    `json:"refused,omitempty"`
+	Version  *Version    `json:"version,omitempty"`
+}
+
+// Version is the build behind this hoard, and what it knows about newer
+// releases. Update is absent when no check has been made, when the build is
+// current, or when the build is one hoard cannot advise on.
+type Version struct {
+	Version  string  `json:"version"`
+	Commit   string  `json:"commit"`
+	Built    string  `json:"built"`
+	Go       string  `json:"go"`
+	Platform string  `json:"platform"`
+	Update   *Update `json:"update,omitempty"`
+}
+
+// Update names a release newer than the running build.
+type Update struct {
+	Latest string `json:"latest"`
+	URL    string `json:"url"`
 }
 
 // Card identifies one printing in one finish. ScryfallID is always present;
