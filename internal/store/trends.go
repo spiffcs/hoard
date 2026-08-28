@@ -124,33 +124,56 @@ WITH owned AS (` + ownedByPriceFinish + `)` + fmt.Sprintf(trendRowSelect, source
 
 func (s *Store) historyFingerprint() (string, error) {
 	var newest sql.NullInt64
-	var rows int64
+	var schema int
 	if err := s.reads().QueryRow(
-		`SELECT MAX(rowid), COUNT(*) FROM card_price_history`).Scan(&newest, &rows); err != nil {
+		`SELECT (SELECT MAX(rowid) FROM card_price_history),
+                (SELECT user_version FROM pragma_user_version)`).Scan(&newest, &schema); err != nil {
 		return "", fmt.Errorf("fingerprinting the price history: %w", err)
 	}
-	return fmt.Sprintf("%d|%d", newest.Int64, rows), nil
+	return fmt.Sprintf("%d|%d", newest.Int64, schema), nil
 }
 
-func (s *Store) trendStatsWarm(since, fingerprint string) (bool, error) {
+func (s *Store) storedTrendFingerprint() (string, error) {
 	var stored sql.NullString
 	err := s.reads().QueryRow(
 		`SELECT value FROM settings WHERE key = ?`, trendFingerprintKey).Scan(&stored)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("reading the trend fingerprint: %w", err)
+		return "", fmt.Errorf("reading the trend fingerprint: %w", err)
 	}
-	if stored.String != fingerprint {
-		return false, nil
-	}
+	return stored.String, nil
+}
+
+func (s *Store) cachedTrendRows(since string) (int, error) {
 	var n int
 	if err := s.reads().QueryRow(
 		`SELECT COUNT(*) FROM card_trend_stats WHERE since = ?`, since).Scan(&n); err != nil {
-		return false, fmt.Errorf("checking the trend stats: %w", err)
+		return 0, fmt.Errorf("checking the trend stats: %w", err)
 	}
-	return n > 0, nil
+	return n, nil
 }
 
-func (s *Store) buildTrendStats(since, fingerprint string) error {
+func (s *Store) trendStatsReady(since string) bool {
+	fingerprint, err := s.historyFingerprint()
+	if err != nil {
+		return false
+	}
+	stored, err := s.storedTrendFingerprint()
+	if err != nil {
+		return false
+	}
+	if stored == fingerprint {
+		cached, err := s.cachedTrendRows(since)
+		if err != nil {
+			return false
+		}
+		if cached > 0 {
+			return true
+		}
+	}
+	return s.buildTrendStats(since, fingerprint, stored != fingerprint) == nil
+}
+
+func (s *Store) buildTrendStats(since, fingerprint string, superseded bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), trendWriterWait)
 	conn, err := s.db.Conn(ctx)
 	cancel()
@@ -166,11 +189,15 @@ func (s *Store) buildTrendStats(since, fingerprint string) error {
 	defer tx.Rollback()
 
 	day := now()[:len("2006-01-02")]
+	prune, pruneArgs := `DELETE FROM card_trend_stats WHERE built_day <> ?`, []any{day}
+	if superseded {
+		prune, pruneArgs = `DELETE FROM card_trend_stats`, nil
+	}
 	for _, stmt := range []struct {
 		sql  string
 		args []any
 	}{
-		{`DELETE FROM card_trend_stats WHERE built_day <> ?`, []any{day}},
+		{prune, pruneArgs},
 		{fillTrendStats, []any{since, day, since}},
 		{`INSERT INTO settings (key, value) VALUES (?, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -196,14 +223,8 @@ func (s *Store) Trends(o TrendOptions) (dips, momentum []TrendRow, err error) {
 		checks = 2
 	}
 	source := trendLiveSource
-	if fingerprint, err := s.historyFingerprint(); err == nil {
-		warm, err := s.trendStatsWarm(o.Since, fingerprint)
-		if err == nil && !warm {
-			warm = s.buildTrendStats(o.Since, fingerprint) == nil
-		}
-		if warm {
-			source = trendStatsSource
-		}
+	if s.trendStatsReady(o.Since) {
+		source = trendStatsSource
 	}
 
 	rows, err := s.reads().Query(trendQuery(source),
