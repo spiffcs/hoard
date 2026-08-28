@@ -59,10 +59,12 @@ type fakeStore struct {
 
 	matchCalls int
 
-	movers   []store.PriceChange
-	unpriced []store.UnpricedRow
-	dips     []store.TrendRow
-	momentum []store.TrendRow
+	movers    []store.PriceChange
+	unpriced  []store.UnpricedRow
+	dips      []store.TrendRow
+	momentum  []store.TrendRow
+	trendOpts []store.TrendOptions
+	trendsFor func(store.TrendOptions) ([]store.TrendRow, []store.TrendRow)
 
 	dataVersion      int64
 	dataVersionReads int

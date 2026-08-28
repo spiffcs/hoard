@@ -86,7 +86,7 @@ func TestReloadingRefreshesThePreloadedTrends(t *testing.T) {
 	}
 
 	f.dips = append(f.dips, dipRow("Mana Crypt", 200, 150, 150))
-	m = key(m, "r")
+	m = pumpKey(t, m, "r")
 
 	if len(m.dips) != 2 {
 		t.Errorf("after a reload dips = %d rows, want the stale preload dropped", len(m.dips))

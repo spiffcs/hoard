@@ -17,7 +17,7 @@ func onDipRows(t *testing.T, dips, momentum []store.TrendRow) Model {
 	m := atAllCards(t, newTestModel(t, f))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
 	m = next.(Model)
-	(&m).showView(viewDip)
+	m = showDipView(t, m)
 	if m.view != viewDip {
 		t.Fatalf("view = %v, want dip", m.view)
 	}

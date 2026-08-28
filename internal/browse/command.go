@@ -360,8 +360,8 @@ func commands() []command {
 		{
 			id: "movers.window", aliases: "since days window",
 			key: "W", hidden: true,
-			where: func(m *Model) bool { return m.view == viewMovers },
-			run:   func(m *Model) tea.Cmd { return m.cycleMoversWindow() },
+			where: func(m *Model) bool { return m.view == viewMovers || m.view == viewDip },
+			run:   func(m *Model) tea.Cmd { return m.cycleLookback() },
 		},
 		{
 			id: "pennies.toggle", title: "TogglePennyFilter",
@@ -483,8 +483,36 @@ func commands() []command {
 	}
 }
 
-func (m *Model) cycleMoversWindow() tea.Cmd {
+func (m *Model) cycleLookback() tea.Cmd {
+	if m.view == viewDip {
+		return m.cycleDipLookback()
+	}
+	return m.cycleMoversWindow()
+}
+
+func (m *Model) advanceLookback() {
 	m.moversDaysIdx = (m.moversDaysIdx + 1) % len(m.moversStops())
+}
+
+func (m *Model) cycleDipLookback() tea.Cmd {
+	m.advanceLookback()
+	if m.onCostBasis() {
+		m.advanceLookback()
+	}
+	if err := m.loadView(); err != nil {
+		m.setError(err)
+		return nil
+	}
+	m.dipSecOffset = [dipSectionCount]int{}
+	m.offset[paneCards] = 0
+	m.cursor[paneCards] = m.firstDipCursor()
+	m.status = fmt.Sprintf("dip · last %d days", m.moversStop())
+	m.statusErr = false
+	return nil
+}
+
+func (m *Model) cycleMoversWindow() tea.Cmd {
+	m.advanceLookback()
 	m.moversPage = 0
 	if err := m.loadView(); err != nil {
 		m.setError(err)

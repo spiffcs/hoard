@@ -175,12 +175,14 @@ var effectivePrices = `
 
 const ownedByPriceFinish = `
     SELECT e.scryfall_id AS sid,
-           CASE WHEN e.finish = 'etched' AND c.price_usd_etched IS NOT NULL
+           CASE WHEN e.finish = 'etched'
+                     AND (SELECT price_usd_etched FROM cards
+                          WHERE scryfall_id = e.scryfall_id) IS NOT NULL
                      THEN 'etched'
                 WHEN e.finish IN ('foil','etched') THEN 'foil'
                 WHEN e.finish = 'nonfoil' THEN 'nonfoil' END AS pfinish,
            SUM(` + countedQuantity + `) AS copies
-    FROM card_entries e JOIN cards c ON c.scryfall_id = e.scryfall_id
+    FROM card_entries e
     JOIN containers ctc ON ctc.id = e.container_id
     GROUP BY sid, pfinish`
 

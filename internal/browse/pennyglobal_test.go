@@ -57,7 +57,7 @@ func toView(t *testing.T, m Model, v viewMode) Model {
 		if i > len(viewCycle) {
 			t.Fatalf("never reached the %v view", v)
 		}
-		m = key(m, "v")
+		m = pumpKey(t, m, "v")
 	}
 	return m
 }

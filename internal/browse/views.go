@@ -230,17 +230,9 @@ func (m *Model) loadView() error {
 		m.allWatches, m.allUnpriced = watches, unpriced
 	case viewDip:
 
-		k := m.trendKey()
-		pair, ok := m.cachedTrends(k)
-		if !ok {
-			read, err := m.readTrends()
-			if err != nil {
-				return err
-			}
-			m.cacheTrends(k, m.dataGen, read)
-			pair = read
+		if pair, ok := m.cachedTrends(m.trendKey()); ok {
+			m.allDips, m.allMomentum = pair.dips, pair.momentum
 		}
-		m.allDips, m.allMomentum = pair.dips, pair.momentum
 	}
 	m.deriveView()
 	return nil

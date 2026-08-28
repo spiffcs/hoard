@@ -48,6 +48,9 @@ WHERE e.price IS NOT NULL AND (prev.price IS NULL OR prev.price <> e.price)`, ts
 	if err := snapshotValue(tx, ts); err != nil {
 		return nil, 0, err
 	}
+	if err := s.clearTrendStats(tx); err != nil {
+		return nil, 0, err
+	}
 	if moved, err = changesAt(tx, ts); err != nil {
 		return nil, 0, err
 	}

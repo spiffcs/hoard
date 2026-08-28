@@ -43,10 +43,7 @@ func TestDipViewRendersBothTables(t *testing.T) {
 	f.momentum = []store.TrendRow{momentumRow("Command Tower", 28.28, 82.76, 19)}
 
 	m := atAllCards(t, newTestModel(t, f))
-	m.view = viewDip
-	if err := m.loadView(); err != nil {
-		t.Fatalf("loadView: %v", err)
-	}
+	m = showDipView(t, m)
 
 	body := strings.Join(m.dipLines(100), "\n")
 
@@ -66,10 +63,7 @@ func TestDipViewSaysWhenASectionIsEmpty(t *testing.T) {
 	f.momentum = []store.TrendRow{momentumRow("Command Tower", 28.28, 82.76, 19)}
 
 	m := atAllCards(t, newTestModel(t, f))
-	m.view = viewDip
-	if err := m.loadView(); err != nil {
-		t.Fatalf("loadView: %v", err)
-	}
+	m = showDipView(t, m)
 
 	body := strings.Join(m.dipLines(100), "\n")
 	if !strings.Contains(body, "DIP") || !strings.Contains(body, "MOMENTUM") {
@@ -80,12 +74,31 @@ func TestDipViewSaysWhenASectionIsEmpty(t *testing.T) {
 	}
 }
 
-func (f *fakeStore) Dips(store.TrendOptions) ([]store.TrendRow, error) {
+func (f *fakeStore) Trends(o store.TrendOptions) (dips, momentum []store.TrendRow, err error) {
+	if dips, err = f.Dips(o); err != nil {
+		return nil, nil, err
+	}
+	if momentum, err = f.Momentum(o); err != nil {
+		return nil, nil, err
+	}
+	return dips, momentum, nil
+}
+
+func (f *fakeStore) Dips(o store.TrendOptions) ([]store.TrendRow, error) {
 	f.dipCalls++
+	f.trendOpts = append(f.trendOpts, o)
+	if f.trendsFor != nil {
+		dips, _ := f.trendsFor(o)
+		return dips, f.err
+	}
 	return f.dips, f.err
 }
 
-func (f *fakeStore) Momentum(store.TrendOptions) ([]store.TrendRow, error) {
+func (f *fakeStore) Momentum(o store.TrendOptions) ([]store.TrendRow, error) {
 	f.momentumCalls++
+	if f.trendsFor != nil {
+		_, momentum := f.trendsFor(o)
+		return momentum, f.err
+	}
 	return f.momentum, f.err
 }

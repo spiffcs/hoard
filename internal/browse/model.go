@@ -191,6 +191,8 @@ type Model struct {
 	moversCacheGen int
 	trendCache     map[trendKey]trendPair
 	trendCacheGen  int
+	trendReading   trendAttempt
+	trendFailed    trendAttempt
 	dataGen        int
 
 	showPennies bool
@@ -821,6 +823,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if c := n.syncPreview(); c != nil {
 		cmd = tea.Batch(cmd, c)
 	}
+	if c := n.syncTrends(); c != nil {
+		cmd = tea.Batch(cmd, c)
+	}
 	switch now := n.detail != nil; {
 	case now && !had:
 		return n, tea.Batch(cmd, tea.EnableMouseCellMotion)
@@ -900,7 +905,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 
 		var cmds []tea.Cmd
-		if m.marketBusy() || m.op != nil {
+		if m.marketBusy() || m.op != nil || m.trendBusy() {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)

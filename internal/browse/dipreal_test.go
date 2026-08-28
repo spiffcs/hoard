@@ -14,7 +14,7 @@ func TestDipPagingWithMomentumSizedLikeTheRealCatalog(t *testing.T) {
 	m := atAllCards(t, newTestModel(t, f))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
 	m = next.(Model)
-	(&m).showView(viewDip)
+	m = showDipView(t, m)
 
 	if len(m.dips) != 35 {
 		t.Errorf("dip table paged %d rows, want all 35 (under one page)", len(m.dips))

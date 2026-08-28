@@ -56,6 +56,7 @@ type Store interface {
 	CostBasisMovers() ([]store.PriceChange, error)
 	Dips(o store.TrendOptions) ([]store.TrendRow, error)
 	Momentum(o store.TrendOptions) ([]store.TrendRow, error)
+	Trends(o store.TrendOptions) (dips, momentum []store.TrendRow, err error)
 	Unpriced() ([]store.UnpricedRow, error)
 
 	EntryKeys() ([]store.EntryKey, error)

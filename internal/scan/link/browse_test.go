@@ -174,12 +174,12 @@ func fakeDNSSD(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-dns-sd")
 	var b strings.Builder
-	b.WriteString("#!/bin/sh\n")
+	b.WriteString("#!/bin/sh\nprintf '%s\\n'")
 	for _, line := range lines {
 
-		fmt.Fprintf(&b, "printf '%%s\\n' '%s'\n", strings.ReplaceAll(line, "'", `'\''`))
+		fmt.Fprintf(&b, " '%s'", strings.ReplaceAll(line, "'", `'\''`))
 	}
-	b.WriteString("while :; do sleep 30; done\n")
+	b.WriteString("\nwhile :; do sleep 30; done\n")
 	if err := os.WriteFile(path, []byte(b.String()), 0o700); err != nil {
 		t.Fatal(err)
 	}

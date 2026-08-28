@@ -47,7 +47,7 @@ func (s dipSection) note() string {
 func (m Model) trendOptions() store.TrendOptions {
 	settled := m.now().AddDate(0, 0, -store.SettlingDays()).Format("2006-01-02")
 	return store.TrendOptions{
-		Since:         m.moversCutoff().UTC().Format(time.RFC3339),
+		Since:         m.moversCutoff().UTC().Truncate(24 * time.Hour).Format(time.RFC3339),
 		SettledBefore: settled,
 		MinPrice:      m.floorMin(),
 		MinChecks:     4,
@@ -292,10 +292,13 @@ func dipSectionTable(env ui.Env, sec dipSection, rows []store.TrendRow,
 
 func (m Model) dipHeader() (title, totals string) {
 	since := m.moversCutoff().Local().Format("2 Jan")
+	title = "DIP & MOMENTUM · SINCE " + since + m.viewScope()
+	if m.trendBusy() {
+		return title, m.spinner.View() + " reading the last " + fmt.Sprint(m.moversStop()) + " days…"
+	}
 	counts := m.dipSectionTotals()
-	return "DIP & MOMENTUM · SINCE " + since + m.viewScope(),
-		fmt.Sprintf("%s at the floor · %s climbing",
-			ui.Count(counts[secDip]), ui.Count(counts[secMomentum]))
+	return title, fmt.Sprintf("%s at the floor · %s climbing",
+		ui.Count(counts[secDip]), ui.Count(counts[secMomentum]))
 }
 
 func (m Model) dipCursorPos() (sec, idx int) {

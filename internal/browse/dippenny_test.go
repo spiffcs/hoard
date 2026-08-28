@@ -18,11 +18,7 @@ func pennyDipModel(t *testing.T) Model {
 		momentumRow("Command Tower", 28.28, 82.76, 19),
 		momentumRow("Evolving Wilds", 0.10, 0.35, 5),
 	}
-	m := atAllCards(t, newTestModel(t, f))
-	for m.view != viewDip {
-		m = key(m, "v")
-	}
-	return m
+	return showDipView(t, atAllCards(t, newTestModel(t, f)))
 }
 
 func runByID(t *testing.T, m Model, id string) Model {

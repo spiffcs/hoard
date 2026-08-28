@@ -29,9 +29,9 @@ func colouredDipModel(t *testing.T) Model {
 		momentumRow("Long Run", 10, 30, 18),
 	}
 	m := atAllCards(t, newTestModel(t, f))
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = next.(Model)
-	(&m).showView(viewDip)
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = pump(t, next.(Model), cmd)
+	m = showDipView(t, m)
 	return m
 }
 

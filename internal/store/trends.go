@@ -1,9 +1,14 @@
 package store
 
 import (
+	"cmp"
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"time"
 
 	"github.com/spiffcs/hoard/internal/finish"
 )
@@ -34,6 +39,14 @@ type TrendRow struct {
 	ReleasedAt    string
 }
 
+func (r TrendRow) dipping() bool {
+	return r.Last <= r.Low*dipFloorBand && r.Last < r.High*dipDrawdown
+}
+
+func (r TrendRow) climbing() bool {
+	return r.Downs == 0 && r.Moves > 0 && r.Last > r.First
+}
+
 func (r TrendRow) OffHigh() float64 {
 	if r.High <= 0 {
 		return 0
@@ -52,77 +65,201 @@ const dipFloorBand = 1.03
 
 const dipDrawdown = 0.85
 
-const trendWindow = `
-    seq AS (
-      SELECT h.scryfall_id AS sid, h.finish AS fin, h.as_of, h.price_usd AS px,
-             LAG(h.price_usd) OVER (PARTITION BY h.scryfall_id, h.finish
-                                    ORDER BY h.as_of) AS prev
-      FROM card_price_history h
-      WHERE h.as_of >= ?),
-    agg AS (
+const trendAggregate = `
       SELECT sid, fin, COUNT(*) AS n, MIN(px) AS lo, MAX(px) AS hi,
-             MIN(as_of) AS fa, MAX(as_of) AS la,
+             MIN(first_px) AS first_px, MIN(last_px) AS last_px,
              SUM(CASE WHEN prev IS NOT NULL AND px > prev THEN 1 ELSE 0 END) AS ups,
              SUM(CASE WHEN prev IS NOT NULL AND px < prev THEN 1 ELSE 0 END) AS downs,
              SUM(CASE WHEN prev IS NOT NULL THEN 1 ELSE 0 END) AS moves
-      FROM seq GROUP BY sid, fin),
-    ends AS (
-      SELECT a.sid, a.fin, a.n, a.lo, a.hi, a.ups, a.downs, a.moves,
-             fp.px AS first_px, lp.px AS last_px
-      FROM agg a
-      JOIN seq fp ON fp.sid = a.sid AND fp.fin = a.fin AND fp.as_of = a.fa
-      JOIN seq lp ON lp.sid = a.sid AND lp.fin = a.fin AND lp.as_of = a.la)`
+      FROM (SELECT h.scryfall_id AS sid, h.finish AS fin, h.price_usd AS px,
+                   LAG(h.price_usd) OVER w AS prev,
+                   FIRST_VALUE(h.price_usd) OVER wf AS first_px,
+                   LAST_VALUE(h.price_usd) OVER wf AS last_px
+            FROM card_price_history h
+            WHERE h.as_of >= ?
+            WINDOW w AS (PARTITION BY h.scryfall_id, h.finish ORDER BY h.as_of),
+                   wf AS (PARTITION BY h.scryfall_id, h.finish ORDER BY h.as_of
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))
+      GROUP BY sid, fin`
 
-const trendSelect = `
+const fillTrendStats = `
+INSERT OR REPLACE INTO card_trend_stats
+  (since, built_day, scryfall_id, finish, n, lo, hi, first_px, last_px, ups, downs, moves)
+SELECT ?, ?, sid, fin, n, lo, hi, first_px, last_px, ups, downs, moves
+FROM (` + trendAggregate + `)`
+
+const trendFingerprintKey = "trends.fingerprint"
+
+const trendWriterWait = 250 * time.Millisecond
+
+var dipTest = `last_px <= lo * ` + fmt.Sprint(dipFloorBand) +
+	` AND last_px < hi * ` + fmt.Sprint(dipDrawdown)
+
+var momentumTest = `downs = 0 AND moves > 0 AND last_px > first_px`
+
+var trendKeep = ` AND n >= ? AND last_px >= ?` +
+	` AND ((` + dipTest + `) OR (` + momentumTest + `))`
+
+var trendStatsSource = `
+      SELECT scryfall_id AS sid, finish AS fin, n, lo, hi, first_px, last_px, ups, downs, moves
+      FROM card_trend_stats WHERE since = ?` + trendKeep
+
+var trendLiveSource = `
+      SELECT sid, fin, n, lo, hi, first_px, last_px, ups, downs, moves
+      FROM (` + trendAggregate + `) WHERE 1 = 1` + trendKeep
+
+var trendRowSelect = `
 SELECT c.scryfall_id, c.name, c.set_code, c.collector_number, e.fin, o.copies,
        e.first_px, e.last_px, e.lo, e.hi, e.ups, e.downs, e.moves,
        c.color_identity, c.promo_types, COALESCE(c.lang, ''), COALESCE(c.released_at, '')
-FROM ends e
+FROM (%s) e
 JOIN owned o ON o.sid = e.sid AND o.pfinish = e.fin
 JOIN cards c ON c.scryfall_id = e.sid
-WHERE e.n >= ? AND e.last_px >= ?
-  AND (? = '' OR COALESCE(c.released_at, '') < ?)`
+WHERE ? = '' OR COALESCE(c.released_at, '') < ?`
 
-func (s *Store) Dips(o TrendOptions) ([]TrendRow, error) {
-	return s.trends(o, `
-      AND e.last_px <= e.lo * `+fmt.Sprint(dipFloorBand)+`
-      AND e.last_px < e.hi * `+fmt.Sprint(dipDrawdown)+`
-ORDER BY e.last_px / e.hi ASC, c.name`, "dips")
+func trendQuery(source string) string {
+	return `
+WITH owned AS (` + ownedByPriceFinish + `)` + fmt.Sprintf(trendRowSelect, source)
 }
 
-func (s *Store) Momentum(o TrendOptions) ([]TrendRow, error) {
-	return s.trends(o, `
-      AND e.downs = 0 AND e.moves > 0 AND e.last_px > e.first_px
-ORDER BY e.moves DESC, e.last_px / e.first_px DESC, c.name`, "momentum")
+func (s *Store) historyFingerprint() (string, error) {
+	var newest sql.NullInt64
+	var rows int64
+	if err := s.reads().QueryRow(
+		`SELECT MAX(rowid), COUNT(*) FROM card_price_history`).Scan(&newest, &rows); err != nil {
+		return "", fmt.Errorf("fingerprinting the price history: %w", err)
+	}
+	return fmt.Sprintf("%d|%d", newest.Int64, rows), nil
 }
 
-func (s *Store) trends(o TrendOptions, tail, what string) ([]TrendRow, error) {
+func (s *Store) trendStatsWarm(since, fingerprint string) (bool, error) {
+	var stored sql.NullString
+	err := s.reads().QueryRow(
+		`SELECT value FROM settings WHERE key = ?`, trendFingerprintKey).Scan(&stored)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("reading the trend fingerprint: %w", err)
+	}
+	if stored.String != fingerprint {
+		return false, nil
+	}
+	var n int
+	if err := s.reads().QueryRow(
+		`SELECT COUNT(*) FROM card_trend_stats WHERE since = ?`, since).Scan(&n); err != nil {
+		return false, fmt.Errorf("checking the trend stats: %w", err)
+	}
+	return n > 0, nil
+}
+
+func (s *Store) buildTrendStats(since, fingerprint string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), trendWriterWait)
+	conn, err := s.db.Conn(ctx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("waiting for the writer: %w", err)
+	}
+	defer conn.Close()
+
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	day := now()[:len("2006-01-02")]
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM card_trend_stats WHERE built_day <> ?`, []any{day}},
+		{fillTrendStats, []any{since, day, since}},
+		{`INSERT INTO settings (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			[]any{trendFingerprintKey, fingerprint}},
+	} {
+		if _, err := tx.Exec(stmt.sql, stmt.args...); err != nil {
+			return fmt.Errorf("building trend stats: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) clearTrendStats(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DELETE FROM card_trend_stats`); err != nil {
+		return fmt.Errorf("clearing trend stats: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Trends(o TrendOptions) (dips, momentum []TrendRow, err error) {
 	checks := o.MinChecks
 	if checks < 2 {
 		checks = 2
 	}
-	rows, err := s.reads().Query(`
-WITH owned AS (`+ownedByPriceFinish+`),`+trendWindow+trendSelect+tail,
+	source := trendLiveSource
+	if fingerprint, err := s.historyFingerprint(); err == nil {
+		warm, err := s.trendStatsWarm(o.Since, fingerprint)
+		if err == nil && !warm {
+			warm = s.buildTrendStats(o.Since, fingerprint) == nil
+		}
+		if warm {
+			source = trendStatsSource
+		}
+	}
+
+	rows, err := s.reads().Query(trendQuery(source),
 		o.Since, checks, o.MinPrice, o.SettledBefore, o.SettledBefore)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", what, err)
+		return nil, nil, fmt.Errorf("reading price trends: %w", err)
 	}
 	defer rows.Close()
 
-	var out []TrendRow
 	for rows.Next() {
 		var r TrendRow
 		var colors, promos sql.NullString
 		if err := rows.Scan(&r.ScryfallID, &r.Name, &r.SetCode, &r.CollectorNumber,
 			&r.Finish, &r.Copies, &r.First, &r.Last, &r.Low, &r.High,
 			&r.Ups, &r.Downs, &r.Moves, &colors, &promos, &r.Lang, &r.ReleasedAt); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		r.ColorIdentity = parseColorIdentity(colors)
 		r.Treatment = FoilTreatment(promos)
-		out = append(out, r)
+		if r.dipping() {
+			dips = append(dips, r)
+		}
+		if r.climbing() {
+			momentum = append(momentum, r)
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	slices.SortStableFunc(dips, func(a, b TrendRow) int {
+		if c := cmp.Compare(a.OffHigh(), b.OffHigh()); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
+	slices.SortStableFunc(momentum, func(a, b TrendRow) int {
+		if c := cmp.Compare(b.Moves, a.Moves); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(b.Change(), a.Change()); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return dips, momentum, nil
+}
+
+func (s *Store) Dips(o TrendOptions) ([]TrendRow, error) {
+	dips, _, err := s.Trends(o)
+	return dips, err
+}
+
+func (s *Store) Momentum(o TrendOptions) ([]TrendRow, error) {
+	_, momentum, err := s.Trends(o)
+	return momentum, err
 }
 
 func TrendExtent(rows []TrendRow) float64 {

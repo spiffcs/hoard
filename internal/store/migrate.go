@@ -51,6 +51,7 @@ var migrations = []migration{
 	{34, entryPurchasePrice},
 	{35, setCodeIndex},
 	{36, storeListColumns},
+	{37, trendStatsCache},
 }
 
 var rebuilds = map[int]func(*Store) error{
@@ -378,6 +379,23 @@ CREATE INDEX IF NOT EXISTS cards_trait_filter ON cards(
     type_line, artist, layout, set_name, rarity, cmc, color_identity, scryfall_id);`
 
 const storeListColumns = `-- cards is rebuilt in Go; see rebuildCardsStored.`
+
+const trendStatsCache = `
+CREATE TABLE IF NOT EXISTS card_trend_stats (
+    since       TEXT NOT NULL,
+    built_day   TEXT NOT NULL,
+    scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id) ON DELETE CASCADE,
+    finish      TEXT NOT NULL,
+    n           INTEGER NOT NULL,
+    lo          REAL    NOT NULL,
+    hi          REAL    NOT NULL,
+    first_px    REAL    NOT NULL,
+    last_px     REAL    NOT NULL,
+    ups         INTEGER NOT NULL,
+    downs       INTEGER NOT NULL,
+    moves       INTEGER NOT NULL,
+    PRIMARY KEY (since, scryfall_id, finish)
+);`
 
 const setCodeIndex = `
 CREATE INDEX IF NOT EXISTS cards_set_code ON cards(set_code);`
