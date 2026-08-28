@@ -57,5 +57,8 @@ ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purcha
 			entries += int(n)
 		}
 	}
-	return len(ps), entries, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("seeding %d printings into %s: %w", len(ps), s.name(), err)
+	}
+	return len(ps), entries, nil
 }

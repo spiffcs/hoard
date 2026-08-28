@@ -66,6 +66,7 @@ type fakeStore struct {
 
 	dataVersion      int64
 	dataVersionReads int
+	dataVersionErr   error
 
 	detailPatch func(*store.CardDetail)
 	slowRead    time.Duration
@@ -132,7 +133,7 @@ func (f *fakeStore) Unpriced() ([]store.UnpricedRow, error) {
 
 func (f *fakeStore) DataVersion() (int64, error) {
 	f.dataVersionReads++
-	return f.dataVersion, nil
+	return f.dataVersion, f.dataVersionErr
 }
 
 func (f *fakeStore) EnrichedCount() (int, int, error) {

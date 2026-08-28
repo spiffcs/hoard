@@ -151,7 +151,7 @@ func refuseExistingDatabase(path string) error {
 }
 
 func buildCompendium(ctx context.Context, env *cli.Env, path string, o compendium.Options) error {
-	st, err := store.Open(path)
+	st, err := store.OpenExclusive(path)
 	if err != nil {
 		return err
 	}

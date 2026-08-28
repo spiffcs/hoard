@@ -280,6 +280,7 @@ type Model struct {
 	liveGen     int
 	livePending bool
 	liveOff     bool
+	liveGone    bool
 	liveMissed  int
 
 	rowGone bool

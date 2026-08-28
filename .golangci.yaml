@@ -77,7 +77,7 @@ linters:
         linters: [gosec]
         text: "G306"
 
-      - path: internal/(ui/(theme|image)|scan/link/(frame|browse))\.go
+      - path: internal/(ui/(theme|image)|scan/link/(frame|browse)|store/buildlock)\.go
         linters: [gosec]
         text: "G115"
 

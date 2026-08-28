@@ -258,6 +258,10 @@ func FoilTreatmentOf(promoTypes []string) string {
 type Store struct {
 	db     *sql.DB
 	reader *sql.DB
+
+	path string
+	file os.FileInfo
+	lock *buildLock
 }
 
 const (
@@ -270,7 +274,11 @@ const (
 		"&_pragma=mmap_size(268435456)"
 )
 
-func Open(path string) (*Store, error) {
+func Open(path string) (*Store, error) { return open(path, false) }
+
+func OpenExclusive(path string) (*Store, error) { return open(path, true) }
+
+func open(path string, exclusive bool) (*Store, error) {
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -278,29 +286,43 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
+	lock, err := lockDatabase(path, exclusive)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("sqlite", path+writerPragmas)
 	if err != nil {
+		_ = lock.release()
 		return nil, fmt.Errorf("opening database %q: %w", path, err)
 	}
 
 	db.SetMaxOpenConns(1)
 
-	s := &Store{db: db}
+	s := &Store{db: db, path: path, lock: lock}
 	if err := s.migrate(path); err != nil {
 		db.Close()
+		_ = lock.release()
 		return nil, err
 	}
 	if _, err := s.collectionID(); err != nil {
 		db.Close()
+		_ = lock.release()
 		return nil, err
 	}
 
 	reader, err := openReaders(path)
 	if err != nil {
 		db.Close()
+		_ = lock.release()
 		return nil, err
 	}
 	s.reader = reader
+	if lockable(path) {
+		if info, err := os.Stat(path); err == nil {
+			s.file = info
+		}
+	}
 	return s, nil
 }
 
@@ -328,6 +350,9 @@ func (s *Store) Close() error {
 		if rerr := s.reader.Close(); err == nil {
 			err = rerr
 		}
+	}
+	if rerr := s.lock.release(); err == nil {
+		err = rerr
 	}
 	return err
 }

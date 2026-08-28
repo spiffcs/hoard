@@ -1,11 +1,13 @@
 package browse
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/spiffcs/hoard/internal/store"
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
@@ -36,6 +38,10 @@ func (m *Model) armLive() tea.Cmd {
 func (m Model) onLivePoll() (tea.Model, tea.Cmd) {
 	next := livePoll()
 
+	if m.liveGone {
+		return m, nil
+	}
+
 	if m.op != nil {
 		return m, next
 	}
@@ -46,7 +52,12 @@ func (m Model) onLivePoll() (tea.Model, tea.Cmd) {
 	}
 	v, err := m.store.DataVersion()
 	if err != nil {
-
+		if errors.Is(err, store.ErrDatabaseReplaced) {
+			m.liveGone, m.liveOff = true, true
+			m.status = "the database this hoard opened was replaced · restart hoard to follow it"
+			m.statusErr = true
+			return m, nil
+		}
 		return m, next
 	}
 	if !m.liveKnown {
