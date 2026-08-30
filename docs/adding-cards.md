@@ -44,8 +44,19 @@ of that card.
 **3. Which finish.** Nonfoil, foil, or etched: only the finishes that printing
 was actually made in.
 
-**4. Which binder.** Skipped when you only have one, so a fresh collection never
-asks.
+**4. Which binder.** The card, the printing you picked and what that copy is
+worth are shown above the list. This lets you put an expensive card somewhere
+different from a bulk one:
+
+```
+Lightning Bolt · M11 #146 · foil  $18.99
+
+  Binder  binder
+  Trade  binder
+  Fish Deck  deck · adds to the mainboard
+```
+
+Skipped when you only have one binder.
 
 Then it asks for a quantity:
 

@@ -2130,8 +2130,8 @@ func showPicker[T any](m *model, title string, xs []T, st state, item func(int, 
 	for i, x := range xs {
 		items[i] = item(i, x)
 	}
-	m.setListItems(title, items)
 	m.state = st
+	m.setListItems(title, items)
 }
 
 func (m *model) setListItems(title string, items []list.Item) {
@@ -2152,6 +2152,9 @@ func (m model) cameraLabel() string {
 func (m model) listHeight() int {
 	chrome := 4
 	if m.scanned != "" {
+		chrome += 2
+	}
+	if m.destHeader() != "" {
 		chrome += 2
 	}
 	return max(m.height-chrome, 4)
@@ -2407,7 +2410,7 @@ func (m model) viewContent() string {
 		if m.state == statePrintPick && m.printsAll != nil {
 			keys = "↑/↓ move · / filter · enter select · ctrl+a all printings · esc cancel"
 		}
-		return m.scanHeader() + m.list.View() + "\n" + m.help(m.batchHelp(keys))
+		return m.scanHeader() + m.destHeader() + m.list.View() + "\n" + m.help(m.batchHelp(keys))
 	case stateQty:
 		out := m.scanHeader() + m.theme.Prompt.Render("Quantity for "+m.chosen.Name) + "\n\n" + m.qtyInput.View()
 		if m.qtyErr != "" {
@@ -2462,6 +2465,17 @@ func printMarkers(c scryfall.Card) string {
 	parts = append(parts, c.FrameEffects...)
 	parts = append(parts, c.PromoTypes...)
 	return strings.Join(parts, "/")
+}
+
+func (m model) destHeader() string {
+	if m.state != stateDestPick || m.chosen == nil {
+		return ""
+	}
+	c := m.chosen
+	where := fmt.Sprintf("%s · %s #%s · %s", c.Name,
+		strings.ToUpper(c.Set), c.CollectorNumber, m.finish)
+	return m.theme.Help.Render(where) + "  " +
+		m.theme.Accent.Render(priceForFinish(*c, m.finish)) + "\n\n"
 }
 
 func priceLabel(c scryfall.Card) string {
