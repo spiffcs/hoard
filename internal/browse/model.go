@@ -76,6 +76,10 @@ type card struct {
 	Treatment string
 
 	Where string
+
+	HeldIn string
+
+	ImageURI string
 }
 
 type pendingConfirm struct {
@@ -502,6 +506,9 @@ func (m *Model) loadCards() error {
 		if sel.Kind == kindAllCards {
 
 			out = mergeByName(out)
+			if err := m.labelHeldIn(out); err != nil {
+				return fmt.Errorf("reading where %q is held: %w", sel.Name, err)
+			}
 		}
 	default:
 		entries, err := m.store.DeckEntries(sel.ID)
@@ -533,7 +540,7 @@ func mergeByName(rows []card) []card {
 	idx := map[string]int{}
 	var out []card
 	for _, c := range rows {
-		key := c.Name + "|" + c.Finish.String()
+		key := nameFinishKey(c.Name, c.Finish)
 		i, seen := idx[key]
 		if !seen {
 			idx[key] = len(out)
@@ -582,7 +589,7 @@ func (m *Model) deriveMoversPage() {
 	m.movers = m.filteredMovers[lo:hi]
 }
 
-type cardColWidths struct{ name, set, fin, qty, price, value int }
+type cardColWidths struct{ name, set, fin, qty, price, value, where int }
 
 type moverColWidths struct{ name, set, fin, from, was, now, change, qty, impact int }
 
@@ -595,6 +602,7 @@ func measureCardCols(rows []card) cardColWidths {
 		w.qty = max(w.qty, ui.Width(ui.Qty(c.Quantity)))
 		w.price = max(w.price, ui.Width(ui.MoneyPtr(c.Price)))
 		w.value = max(w.value, ui.Width(ui.Money(c.Value)))
+		w.where = max(w.where, ui.Width(c.HeldIn))
 	}
 	return w
 }

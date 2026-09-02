@@ -459,9 +459,10 @@ func (m Model) rightLines(width int) []string {
 
 func (m Model) cardLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
-		inDeck := false
+		inDeck, inAllCards := false, false
 		if sel := m.selectedContainer(); sel != nil {
 			inDeck = sel.Kind == store.KindDeck
+			inAllCards = sel.Kind == kindAllCards
 		}
 
 		w := m.cardsColW
@@ -490,6 +491,11 @@ func (m Model) cardLines(width int) []string {
 			cols = slices.Insert(cols, 2,
 				ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
 		}
+		if inAllCards {
+			cols = append(cols,
+				ui.Col{Title: "WHERE", Align: ui.Left, Priority: 4, Style: env.Dim(),
+					Width: w.where})
+		}
 		t := ui.Table{Cols: cols}
 
 		for _, c := range m.cards {
@@ -508,6 +514,9 @@ func (m Model) cardLines(width int) []string {
 			}
 			if inDeck {
 				cells = slices.Insert(cells, 2, ui.C(c.Board))
+			}
+			if inAllCards {
+				cells = append(cells, ui.C(c.HeldIn))
 			}
 			t.Add(cells...)
 		}

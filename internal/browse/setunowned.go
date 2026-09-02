@@ -92,6 +92,7 @@ func printingCard(p scryfall.Card) card {
 		CollectorNumber: p.CollectorNumber, Finish: fin, Price: price,
 		ColorIdentity: p.ColorIdentity,
 		Treatment:     store.FoilTreatmentOf(p.PromoTypes),
+		ImageURI:      p.ImageURI,
 	}
 }
 

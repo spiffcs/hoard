@@ -71,7 +71,9 @@ type fakeStore struct {
 	dataVersionErr   error
 
 	detailPatch func(*store.CardDetail)
-	slowRead    time.Duration
+
+	absent   map[string]bool
+	slowRead time.Duration
 
 	binderListCalls int
 	watchListCalls  int
@@ -326,6 +328,9 @@ func (f *fakeStore) SaveSettings(kv map[string]string) error {
 }
 
 func (f *fakeStore) CardDetail(id string) (store.CardDetail, error) {
+	if f.absent[id] {
+		return store.CardDetail{}, fmt.Errorf("reading card %s: no such row", id)
+	}
 	var d store.CardDetail
 	d.ScryfallID = id
 	d.Name = strings.TrimSuffix(id, "-id")
@@ -413,6 +418,44 @@ func (f *fakeStore) AllByFinish() ([]store.CollectionRow, error) {
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) WhereHeld() ([]store.HeldPlace, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var binders, decks []store.HeldPlace
+	place := func(name string, fin finish.Finish, container string) store.HeldPlace {
+		return store.HeldPlace{Name: name, Finish: fin, ContainerName: container}
+	}
+	addBinder := func(id int64, name string, rows []store.CollectionRow) {
+		if f.uncounted[id] {
+			return
+		}
+		for _, r := range rows {
+			binders = append(binders, place(r.Name, r.Finish, name))
+		}
+	}
+	addBinder(defaultBinderID, store.LooseName, f.collection)
+	for id, name := range f.binders {
+		if rows, ok := f.binderRows[id]; ok {
+			addBinder(id, name, rows)
+			continue
+		}
+		addBinder(id, name, f.collection)
+	}
+	for _, d := range f.decks {
+		if f.uncounted[d.ID] {
+			continue
+		}
+		for _, e := range f.deckCards[d.ID] {
+			decks = append(decks, place(e.Card.Name, e.Finish, d.Name))
+		}
+	}
+	byName := func(a, b store.HeldPlace) int { return strings.Compare(a.ContainerName, b.ContainerName) }
+	slices.SortStableFunc(binders, byName)
+	slices.SortStableFunc(decks, byName)
+	return append(binders, decks...), nil
 }
 
 func (f *fakeStore) SetsHeld() ([]store.SetSummary, error) {

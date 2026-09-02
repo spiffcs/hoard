@@ -52,18 +52,18 @@ type rowScanner interface{ Scan(...any) error }
 const cardColumns = `scryfall_id, name, set_code, collector_number, set_name,
        released_at, lang, finishes, promo_types, frame_effects, frame, border_color,
        colors, color_identity,
-       price_usd, price_usd_foil, price_usd_etched, scryfall_url`
+       price_usd, price_usd_foil, price_usd_etched, scryfall_url, image_uri`
 
 func scanCard(r rowScanner) (scryfall.Card, error) {
 	var c scryfall.Card
 	var setName, released, lang, finishes, promos, frames, frame, border *string
-	var colors, identity *string
+	var colors, identity, imageURI *string
 	var usd, foil, etched *float64
 
 	if err := r.Scan(&c.ID, &c.Name, &c.Set, &c.CollectorNumber, &setName,
 		&released, &lang, &finishes, &promos, &frames, &frame, &border,
 		&colors, &identity,
-		&usd, &foil, &etched, &c.ScryfallURL); err != nil {
+		&usd, &foil, &etched, &c.ScryfallURL, &imageURI); err != nil {
 		return scryfall.Card{}, fmt.Errorf("catalog: scanning a card: %w", err)
 	}
 
@@ -72,6 +72,7 @@ func scanCard(r rowScanner) (scryfall.Card, error) {
 	c.Lang = deref(lang)
 	c.Frame = deref(frame)
 	c.BorderColor = deref(border)
+	c.ImageURI = deref(imageURI)
 	c.Finishes = decodeArray(finishes)
 	c.PromoTypes = decodeArray(promos)
 	c.FrameEffects = decodeArray(frames)

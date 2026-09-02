@@ -165,6 +165,24 @@ type bulkCard struct {
 		USDFoil   string `json:"usd_foil"`
 		USDEtched string `json:"usd_etched"`
 	} `json:"prices"`
+	ImageURIs bulkImages `json:"image_uris"`
+	CardFaces []struct {
+		ImageURIs bulkImages `json:"image_uris"`
+	} `json:"card_faces"`
+}
+
+type bulkImages struct {
+	Normal string
+}
+
+func (c bulkCard) frontImage() string {
+	if c.ImageURIs.Normal != "" {
+		return c.ImageURIs.Normal
+	}
+	if len(c.CardFaces) > 0 {
+		return c.CardFaces[0].ImageURIs.Normal
+	}
+	return ""
 }
 
 func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
@@ -297,8 +315,8 @@ INSERT OR REPLACE INTO cards (scryfall_id, name, name_norm, set_code, collector_
     set_name, released_at, rarity, lang, finishes, promo_types, frame_effects, frame,
     border_color,
     colors, color_identity,
-    price_usd, price_usd_foil, price_usd_etched, scryfall_url)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    price_usd, price_usd_foil, price_usd_etched, scryfall_url, image_uri)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -346,7 +364,8 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 			nullable(bc.BorderColor),
 			jsonArrayKeepEmpty(bc.Colors), jsonArrayKeepEmpty(bc.ColorIdentity),
 			parsePrice(bc.Prices.USD), parsePrice(bc.Prices.USDFoil),
-			parsePrice(bc.Prices.USDEtched), bc.ScryfallURI); err != nil {
+			parsePrice(bc.Prices.USDEtched), bc.ScryfallURI,
+			nullable(bc.frontImage())); err != nil {
 			return 0, fmt.Errorf("storing %s: %w", bc.Name, err)
 		}
 		if norm != "" {

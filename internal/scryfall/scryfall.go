@@ -44,6 +44,8 @@ type Card struct {
 	Colors        []string
 	ColorIdentity []string
 
+	ImageURI string
+
 	Raw json.RawMessage
 }
 

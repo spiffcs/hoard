@@ -68,6 +68,7 @@ type Store interface {
 	BidSeries(scryfallID string, fin finish.Finish) ([]store.PricePoint, error)
 
 	AllByFinish() ([]store.CollectionRow, error)
+	WhereHeld() ([]store.HeldPlace, error)
 
 	SetsHeld() ([]store.SetSummary, error)
 	SetByFinish(setCode string) ([]store.CollectionRow, error)

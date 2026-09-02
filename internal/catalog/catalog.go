@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 const fileName = "catalog.db"
 
@@ -46,7 +46,8 @@ CREATE TABLE cards (
     price_usd        REAL,
     price_usd_foil   REAL,
     price_usd_etched REAL,
-    scryfall_url     TEXT NOT NULL
+    scryfall_url     TEXT NOT NULL,
+    image_uri        TEXT
 );
 CREATE INDEX cards_name_norm ON cards(name_norm);
 CREATE INDEX cards_set_num   ON cards(set_code, collector_number);

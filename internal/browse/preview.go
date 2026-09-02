@@ -142,13 +142,13 @@ func (m *Model) fetchPreviewImage() tea.Cmd {
 	if id == "" || m.imageFetch == nil || m.imgTier == ui.ImageNone {
 		return nil
 	}
-	d, err := m.store.CardDetail(id)
-	if err != nil || d.ImageURI == "" {
+	url := m.previewImageURL(id)
+	if url == "" {
 		return nil
 	}
 	cols, aspect := m.preview.cols, m.artAspect()
 	fetch, tier := m.imageFetch, m.imgTier
-	ctx, url := m.ctx, d.ImageURI
+	ctx := m.ctx
 	m.preview.pending = true
 
 	key := imageKey{id: id, cols: cols, tier: tier, imgID: previewImageID, aspect: aspect}
@@ -169,6 +169,17 @@ func (m *Model) fetchPreviewImage() tea.Cmd {
 		return imageMsg{scryfallID: id, lines: lines, cols: cols,
 			transmit: transmit, preview: true}
 	}
+}
+
+func (m Model) previewImageURL(id string) string {
+	if c := m.selectedCard(); c != nil && c.ScryfallID == id && c.ImageURI != "" {
+		return c.ImageURI
+	}
+	d, err := m.store.CardDetail(id)
+	if err != nil {
+		return ""
+	}
+	return d.ImageURI
 }
 
 func (m Model) onPreviewImage(msg imageMsg) (tea.Model, tea.Cmd) {
