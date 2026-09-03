@@ -39,9 +39,9 @@ func (s dipSection) sortColumns() []string {
 
 func (s dipSection) note() string {
 	if s == secMomentum {
-		return "climbing every check, never once down"
+		return "climbing every check"
 	}
-	return "at the floor of the window, well off the high"
+	return "at the floor of the window"
 }
 
 func (m Model) trendOptions() store.TrendOptions {

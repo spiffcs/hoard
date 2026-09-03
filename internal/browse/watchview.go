@@ -32,7 +32,7 @@ func (s watchSection) note() string {
 	case secUnders:
 		return "waiting for a price to fall"
 	case secUnpriced:
-		return "held, and nothing can price them"
+		return ""
 	}
 	return "waiting for a price to rise"
 }
