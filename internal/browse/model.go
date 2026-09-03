@@ -589,7 +589,7 @@ func (m *Model) deriveMoversPage() {
 	m.movers = m.filteredMovers[lo:hi]
 }
 
-type cardColWidths struct{ name, set, fin, qty, price, value, where int }
+type cardColWidths struct{ name, set, fin, qty, price, value int }
 
 type moverColWidths struct{ name, set, fin, from, was, now, change, qty, impact int }
 
@@ -602,7 +602,6 @@ func measureCardCols(rows []card) cardColWidths {
 		w.qty = max(w.qty, ui.Width(ui.Qty(c.Quantity)))
 		w.price = max(w.price, ui.Width(ui.MoneyPtr(c.Price)))
 		w.value = max(w.value, ui.Width(ui.Money(c.Value)))
-		w.where = max(w.where, ui.Width(c.HeldIn))
 	}
 	return w
 }

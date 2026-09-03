@@ -14,6 +14,7 @@ import (
 
 const (
 	containerPaneWidth = 30
+	whereColWidth      = 11
 	paneGap            = 2
 	minCardPaneWidth   = 24
 
@@ -494,8 +495,8 @@ func (m Model) cardLines(width int) []string {
 		}
 		if inAllCards {
 			cols = append(cols,
-				ui.Col{Title: "WHERE", Align: ui.Left, Priority: 4, Style: env.Dim(),
-					Width: w.where})
+				ui.Col{Title: "WHERE", Align: ui.Left, Flex: true, Min: 8, Max: whereColWidth,
+					Priority: 4, Style: env.Dim()})
 		}
 		t := ui.Table{Cols: cols}
 		split, group := m.boardSplit(), 0

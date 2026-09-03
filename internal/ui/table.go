@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -130,6 +132,17 @@ func (t Table) natural() []int {
 	return w
 }
 
+func shrinkOrder(cols []Col) []int {
+	order := make([]int, len(cols))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		return cmp.Compare(cols[b].Priority, cols[a].Priority)
+	})
+	return order
+}
+
 func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (widths []int, keep []bool) {
 	widths = append([]int(nil), natural...)
 	keep = make([]bool, len(cols))
@@ -160,7 +173,8 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 		return widths, keep
 	}
 
-	for i, c := range cols {
+	for _, i := range shrinkOrder(cols) {
+		c := cols[i]
 		if !c.Flex {
 			continue
 		}

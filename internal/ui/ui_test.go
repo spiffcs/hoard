@@ -529,3 +529,32 @@ func TestUndroppableColumnSurvivesBlank(t *testing.T) {
 		t.Errorf("VALUE is not droppable and must survive:\n%s", out)
 	}
 }
+
+func heldInCols() []Col {
+	return []Col{
+		{Title: "NAME", Align: Left, Flex: true, Min: 10},
+		{Title: "QTY", Align: Right, Priority: 2},
+		{Title: "HELD IN", Align: Left, Flex: true, Min: 10, Priority: 5},
+	}
+}
+
+var heldInNatural = []int{20, 4, 30}
+
+func TestFitColumnsShrinksTheLeastImportantFlexColumnFirst(t *testing.T) {
+	env := Env{Width: 50, Clamp: true}
+	widths, keep := fitColumns(heldInCols(), heldInNatural, DefaultGutter, env, nil)
+
+	for i, k := range keep {
+		if !k {
+			t.Fatalf("col %d dropped, want all three kept at width 50", i)
+		}
+	}
+	if widths[0] != heldInNatural[0] {
+		t.Errorf("NAME = %d, want %d: a Priority 0 column must keep its width while a "+
+			"droppable flex column still has room to give", widths[0], heldInNatural[0])
+	}
+	if widths[2] >= heldInNatural[2] {
+		t.Errorf("HELD IN = %d, want less than %d: it should absorb the overflow",
+			widths[2], heldInNatural[2])
+	}
+}
