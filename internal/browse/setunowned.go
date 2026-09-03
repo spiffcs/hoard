@@ -2,7 +2,6 @@ package browse
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scryfall"
@@ -10,36 +9,63 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
+type printingFinish struct {
+	id  string
+	fin finish.Finish
+}
+
 func (m *Model) setCards(setCode string) ([]card, error) {
 	owned, err := m.store.SetByFinish(setCode)
 	if err != nil {
 		return nil, err
 	}
-	missing, err := m.store.SetUnowned(setCode)
+	shelved, err := m.store.SetShelvedByFinish(setCode)
+	if err != nil {
+		return nil, err
+	}
+	unlisted, err := m.store.SetUnowned(setCode)
 	if err != nil {
 		return nil, err
 	}
 
-	held := map[string]bool{}
+	slots := map[printingFinish]bool{}
+	held := map[printingFinish]bool{}
 	for _, r := range owned {
-		held[r.ScryfallID] = true
+		held[printingFinish{r.ScryfallID, r.Finish}] = true
+		slots[printingFinish{r.ScryfallID, r.Finish}] = true
+	}
+	waiting := map[printingFinish]store.UnownedRow{}
+	for _, r := range shelved {
+		waiting[printingFinish{r.ScryfallID, r.Finish}] = r
 	}
 
-	gaps := map[string]bool{}
-	out := make([]card, 0, len(missing))
-	for _, r := range missing {
-		gaps[r.ScryfallID] = true
-		out = append(out, unownedCard(r))
-	}
+	out := make([]card, 0, len(unlisted))
+	catalogued := map[string]bool{}
 	for _, p := range m.catalogPrintings(setCode) {
-		if held[p.ID] || gaps[p.ID] {
+		catalogued[p.ID] = true
+		for _, fin := range sellableFinishes(p) {
+			slot := printingFinish{p.ID, fin}
+			slots[slot] = true
+			if held[slot] {
+				continue
+			}
+			if r, ok := waiting[slot]; ok {
+				out = append(out, unownedCard(r))
+				continue
+			}
+			out = append(out, printingCard(p, fin))
+		}
+	}
+
+	for _, r := range unlisted {
+		if catalogued[r.ScryfallID] {
 			continue
 		}
-		gaps[p.ID] = true
-		out = append(out, printingCard(p))
+		slots[printingFinish{r.ScryfallID, r.Finish}] = true
+		out = append(out, unownedCard(r))
 	}
 
-	m.setOwned, m.setTotal = len(held), len(held)+len(gaps)
+	m.setOwned, m.setTotal = len(held), len(slots)
 	m.setMissingCost = 0
 	for _, c := range out {
 		if c.Price != nil {
@@ -85,27 +111,22 @@ func unownedCard(r store.UnownedRow) card {
 	return c
 }
 
-func printingCard(p scryfall.Card) card {
-	fin, price := offeredFinish(p)
+func printingCard(p scryfall.Card, fin finish.Finish) card {
 	return card{
 		ScryfallID: p.ID, Name: p.Name, SetCode: p.Set,
-		CollectorNumber: p.CollectorNumber, Finish: fin, Price: price,
+		CollectorNumber: p.CollectorNumber, Finish: fin,
+		Price:         fin.EffectivePrice(p.PriceUSD, p.PriceUSDFoil, p.PriceUSDEtched),
 		ColorIdentity: p.ColorIdentity,
 		Treatment:     store.FoilTreatmentOf(p.PromoTypes),
 		ImageURI:      p.ImageURI,
 	}
 }
 
-func offeredFinish(p scryfall.Card) (finish.Finish, *float64) {
-	switch {
-	case slices.Contains(p.Finishes, finish.Foil.String()):
-		if !slices.Contains(p.Finishes, finish.Nonfoil.String()) {
-			return finish.Foil, p.PriceUSDFoil
-		}
-	case slices.Contains(p.Finishes, finish.Etched.String()):
-		return finish.Etched, p.PriceUSDEtched
+func sellableFinishes(p scryfall.Card) []finish.Finish {
+	if fins := scryfall.Finishes(p); len(fins) > 0 {
+		return fins
 	}
-	return finish.Nonfoil, p.PriceUSD
+	return []finish.Finish{finish.Nonfoil}
 }
 
 func (m *Model) toggleSetUnowned() {

@@ -118,7 +118,7 @@ func TestADeckCardIsEditableFromTheCardDetail(t *testing.T) {
 	}
 }
 
-func TestMovingADeckCardToABinderIsStillRefused(t *testing.T) {
+func TestADeckCardIsRepointedByBoardNotByBinder(t *testing.T) {
 	m, _ := deckEditModel(t)
 	m.detail = &detail{holdings: []store.Holding{{
 		ContainerID: 201, ContainerName: "Cheap Deck", ContainerKind: store.KindDeck,
@@ -128,10 +128,14 @@ func TestMovingADeckCardToABinderIsStillRefused(t *testing.T) {
 
 	m.promptHeldLocation()
 
-	if m.prompt != nil {
-		t.Fatal("the detail view offered to move a deck card into a binder")
+	if m.prompt == nil {
+		t.Fatalf("the detail view offered a deck card nothing to edit: %q", m.status)
 	}
-	if !m.statusErr || !strings.Contains(m.status, "deck") {
-		t.Errorf("status = %q, want it to say why a deck card cannot be moved here", m.status)
+	if strings.Contains(m.prompt.label, "binder") || strings.Contains(m.prompt.help, "binder") {
+		t.Errorf("prompt %q / %q offered to move a deck card into a binder",
+			m.prompt.label, m.prompt.help)
+	}
+	if !strings.Contains(m.prompt.label, "board") {
+		t.Errorf("prompt label = %q, want the board of the deck card", m.prompt.label)
 	}
 }

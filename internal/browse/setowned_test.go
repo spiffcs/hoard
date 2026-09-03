@@ -41,15 +41,17 @@ func eoeModel(t *testing.T, f *fakeStore, opts ...Option) Model {
 	return m
 }
 
-func TestSetCardsHeaderCountsOwnedPrintings(t *testing.T) {
+func TestSetCardsHeaderCountsOwnedFinishes(t *testing.T) {
 	m := eoeModel(t, eoeStore())
 
 	if got := cardNames(m.filteredCards); len(got) != 3 {
 		t.Errorf("cards = %v, want all three rows — Alpha in two finishes, plus Beta", got)
 	}
 	_, totals := m.viewHeader()
-	if !strings.Contains(totals, "2/3 owned") {
-		t.Errorf("totals = %q, want it to say 2/3 owned", totals)
+	if !strings.Contains(totals, "3/4 owned") {
+		t.Errorf("totals = %q, want it to say 3/4 owned — Alpha counts twice because "+
+			"its nonfoil and its foil are separate things to own, and Gamma is the "+
+			"fourth", totals)
 	}
 }
 
@@ -64,16 +66,16 @@ func TestBFlipsSetCardsToTheOnesYouDoNotOwn(t *testing.T) {
 		t.Errorf("header title = %q, want it unchanged by the flip", title)
 	}
 	_, totals := m.viewHeader()
-	if !strings.Contains(totals, "1/3 unowned") {
-		t.Errorf("totals = %q, want it to say 1/3 unowned", totals)
+	if !strings.Contains(totals, "1/4 unowned") {
+		t.Errorf("totals = %q, want it to say 1/4 unowned", totals)
 	}
 
 	back := key(m, "b")
 	if got := cardNames(back.filteredCards); len(got) != 3 {
 		t.Errorf("after flipping back, cards = %v, want the three owned rows", got)
 	}
-	if _, totals := back.viewHeader(); !strings.Contains(totals, "2/3 owned") {
-		t.Errorf("after flipping back, totals = %q, want 2/3 owned", totals)
+	if _, totals := back.viewHeader(); !strings.Contains(totals, "3/4 owned") {
+		t.Errorf("after flipping back, totals = %q, want 3/4 owned", totals)
 	}
 }
 
@@ -83,9 +85,17 @@ func TestSetUnownedWidensToTheWholeSetWhenTheCatalogKnowsIt(t *testing.T) {
 			return nil, nil
 		}
 		out := make([]scryfall.Card, 0, 4)
-		for _, p := range [][2]string{{"Alpha", "1"}, {"Beta", "2"}, {"Gamma", "3"}, {"Delta", "4"}} {
+		for _, p := range [][3]string{
+			{"Alpha", "1", "both"}, {"Beta", "2", ""},
+			{"Gamma", "3", ""}, {"Delta", "4", ""},
+		} {
+			fins := []string{"nonfoil"}
+			if p[2] == "both" {
+				fins = []string{"nonfoil", "foil"}
+			}
 			out = append(out, scryfall.Card{
 				ID: p[0] + "-id", Name: p[0], Set: "eoe", CollectorNumber: p[1],
+				Finishes:    fins,
 				ScryfallURL: "https://scryfall.com/card/eoe/" + p[1],
 			})
 		}
@@ -93,8 +103,9 @@ func TestSetUnownedWidensToTheWholeSetWhenTheCatalogKnowsIt(t *testing.T) {
 	}
 
 	m := eoeModel(t, eoeStore(), WithSetPrints(prints))
-	if _, totals := m.viewHeader(); !strings.Contains(totals, "2/4 owned") {
-		t.Errorf("totals = %q, want 2/4 owned — the catalog knows a fourth printing", totals)
+	if _, totals := m.viewHeader(); !strings.Contains(totals, "3/5 owned") {
+		t.Errorf("totals = %q, want 3/5 owned — the catalog knows a fourth printing, "+
+			"and Alpha sells in two finishes you both hold", totals)
 	}
 
 	m = key(m, "b")
@@ -102,8 +113,8 @@ func TestSetUnownedWidensToTheWholeSetWhenTheCatalogKnowsIt(t *testing.T) {
 	if len(got) != 2 || !strings.Contains(strings.Join(got, " "), "Delta") {
 		t.Fatalf("cards = %v, want Gamma (wanted) and Delta (never held)", got)
 	}
-	if _, totals := m.viewHeader(); !strings.Contains(totals, "2/4 unowned") {
-		t.Errorf("totals = %q, want 2/4 unowned", totals)
+	if _, totals := m.viewHeader(); !strings.Contains(totals, "2/5 unowned") {
+		t.Errorf("totals = %q, want 2/5 unowned", totals)
 	}
 }
 

@@ -34,6 +34,7 @@ type Editor interface {
 	MoveEntry(from store.EntryRef, toContainer int64, toScryfallID string) (int, error)
 	MoveEntryFinish(from store.EntryRef, toFinish finish.Finish) (int, error)
 	MoveEntryCondition(from store.EntryRef, toCondition string) (int, error)
+	MoveEntryBoard(from store.EntryRef, toBoard string, copies int) (int, error)
 	MoveEntryPurchasePrice(from store.EntryRef, toPaid *float64) (int, error)
 	UpsertPrintings(cards []scryfall.Card) error
 }
@@ -73,6 +74,7 @@ type Store interface {
 	SetsHeld() ([]store.SetSummary, error)
 	SetByFinish(setCode string) ([]store.CollectionRow, error)
 	SetUnowned(setCode string) ([]store.UnownedRow, error)
+	SetShelvedByFinish(setCode string) ([]store.UnownedRow, error)
 
 	ListWatches() ([]store.WatchStatus, error)
 	WouldFire() ([]store.WatchStatus, error)

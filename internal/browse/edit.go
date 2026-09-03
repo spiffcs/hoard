@@ -604,7 +604,7 @@ func (m *Model) promptHeldLocation() {
 		return
 	}
 	if h.ContainerKind == store.KindDeck {
-		m.status, m.statusErr = "a deck card moves with its list · change its quantity here instead", true
+		m.promptHeldBoard(h)
 		return
 	}
 	name := m.detail.card.Name
@@ -620,6 +620,96 @@ func (m *Model) promptHeldLocation() {
 		},
 		commit: func(m *Model, text string) tea.Cmd { return m.moveHeldTo(h, name, text) },
 	}
+}
+
+func (m *Model) cycleCardBoard() tea.Cmd {
+	sel, cur := m.selectedContainer(), m.selectedCard()
+	if sel == nil || cur == nil {
+		return nil
+	}
+	c := *cur
+	if boardKey(c.Board) == store.BoardCommander {
+		m.status, m.statusErr = "a commander stays put · press enter and edit its board there", true
+		return nil
+	}
+	moved := c
+	moved.Board = nextBoard(c.Board)
+
+	from := boardKey(c.Board)
+	start, within := m.boardPlace(from)
+
+	cmd := m.moveHeldBoard(store.Holding{
+		ContainerID: sel.ID, ContainerName: sel.Name, ContainerKind: sel.Kind,
+		ScryfallID: c.ScryfallID, Finish: c.Finish, Condition: c.Condition,
+		Board: boardKey(c.Board), Quantity: c.Quantity,
+	}, c.Name, moved.Board, 1)
+
+	// A stack with copies left keeps the cursor on the row being peeled. Once
+	// the last copy goes the row leaves the board, and the cursor holds the
+	// board rather than chasing the card to wherever it landed.
+	if c.Quantity > 1 {
+		if m.seekCard(m.cardKey(c)) {
+			m.scrollIntoView()
+		}
+		return cmd
+	}
+	m.focusCardAt(m.boardTarget(from, start, within))
+	return cmd
+}
+
+func (m *Model) promptHeldBoard(h store.Holding) {
+	name := m.detail.card.Name
+	m.prompt = &prompt{
+		label:    fmt.Sprintf("%s in %s · board", name, h.ContainerName),
+		text:     boardKey(h.Board),
+		help:     "main · commander · side · maybe · enter accept · esc cancel",
+		validate: func(text string) error { _, err := parseBoard(text); return err },
+		commit: func(m *Model, text string) tea.Cmd {
+			want, err := parseBoard(text)
+			if err != nil {
+				m.status, m.statusErr = err.Error(), true
+				return nil
+			}
+			return m.moveHeldBoard(h, name, want, h.Quantity)
+		},
+	}
+}
+
+func (m *Model) moveHeldBoard(h store.Holding, name, want string, copies int) tea.Cmd {
+	from := boardKey(h.Board)
+	if want == from {
+		m.status, m.statusErr = "already on the "+boardWord(from), false
+		return nil
+	}
+	ref := h.Ref()
+	ref.Board = from
+	copies = min(copies, h.Quantity)
+	prevTarget, err := m.store.MoveEntryBoard(ref, want, copies)
+	if err != nil {
+		m.setError(err)
+		return nil
+	}
+	moved := ref
+	moved.Board = want
+	qty := h.Quantity
+	m.undoable(undoAction{
+		desc: fmt.Sprintf("%s on the %s", name, boardWord(from)),
+		undo: func(st Editor) error {
+			if _, err := st.SetEntryQuantity(moved, prevTarget); err != nil {
+				return err
+			}
+			_, err := st.SetEntryQuantity(ref, qty)
+			return err
+		},
+	})
+	m.status = fmt.Sprintf("%s (%s) ×%d → %s of %s",
+		name, h.Finish, copies, boardWord(want), h.ContainerName)
+	if left := qty - copies; left > 0 {
+		m.status += fmt.Sprintf(" · ×%d still on the %s", left, boardWord(from))
+	}
+	m.statusErr = false
+	m.refresh()
+	return m.reloadDetail()
 }
 
 func (m *Model) moveHeldTo(h store.Holding, name, text string) tea.Cmd {

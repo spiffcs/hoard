@@ -50,6 +50,19 @@ func (m *Model) seekCard(key string) bool {
 	return false
 }
 
+// focusCardAt puts the cursor on a row of the filtered card list, turning to
+// its page the way seekCard does when it finds a card by key.
+func (m *Model) focusCardAt(i int) {
+	if len(m.filteredCards) == 0 {
+		return
+	}
+	i = min(max(i, 0), len(m.filteredCards)-1)
+	m.cardsPage = i / singleTablePageSize
+	m.deriveCardsPage()
+	m.cursor[paneCards] = i - m.cardsPage*singleTablePageSize
+	m.scrollIntoView()
+}
+
 func (m *Model) reread(scope rereadScope) error {
 
 	m.dataGen++

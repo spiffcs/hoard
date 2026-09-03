@@ -344,11 +344,18 @@ func (m *Model) scrollIntoView() {
 			m.scrollDipIntoView()
 			continue
 		}
-		if m.cursor[p] < m.offset[p] {
-			m.offset[p] = m.cursor[p]
+		cur := m.cursor[p]
+		if pane(p) == paneCards {
+			cur = m.cardRow(cur)
 		}
-		if m.cursor[p] >= m.offset[p]+rows {
-			m.offset[p] = m.cursor[p] - rows + 1
+		if cur < m.offset[p] {
+			m.offset[p] = cur
+		}
+		if cur >= m.offset[p]+rows {
+			m.offset[p] = cur - rows + 1
+		}
+		if pane(p) == paneCards && m.headedRow(cur) && m.offset[p] > cur-1 {
+			m.offset[p] = cur - 1
 		}
 		m.offset[p] = max(m.offset[p], 0)
 	}
@@ -459,16 +466,15 @@ func (m Model) rightLines(width int) []string {
 
 func (m Model) cardLines(width int) []string {
 	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
-		inDeck, inAllCards := false, false
+		inAllCards := false
 		if sel := m.selectedContainer(); sel != nil {
-			inDeck = sel.Kind == store.KindDeck
 			inAllCards = sel.Kind == kindAllCards
 		}
 
 		w := m.cardsColW
 		cols := []ui.Col{
 			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10,
-				Width: stableNameWidth(w.name, width)},
+				Width: stableNameWidth(max(w.name, m.boardHeaderWidth()), width)},
 
 			{Title: "ID", Align: ui.Left, Priority: 8, Style: env.PipsStyle()},
 			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim(), Width: w.set},
@@ -486,19 +492,23 @@ func (m Model) cardLines(width int) []string {
 
 			cols[len(cols)-1].Priority = 1
 		}
-		if inDeck {
-
-			cols = slices.Insert(cols, 2,
-				ui.Col{Title: "BOARD", Align: ui.Left, Priority: 7, Style: env.Dim()})
-		}
 		if inAllCards {
 			cols = append(cols,
 				ui.Col{Title: "WHERE", Align: ui.Left, Priority: 4, Style: env.Dim(),
 					Width: w.where})
 		}
 		t := ui.Table{Cols: cols}
+		split, group := m.boardSplit(), 0
 
-		for _, c := range m.cards {
+		for i, c := range m.cards {
+			if split && (i == 0 || boardKey(m.cards[i-1].Board) != boardKey(c.Board)) {
+				if group > 0 {
+					t.AddSpacer()
+				}
+				t.AddStyled(env.Bold(),
+					boardHeaderCells(cols, c.Board, m.boardCopies(i))...)
+				group++
+			}
 			finish := ui.FinishTreated(c.Finish, c.Treatment)
 			cells := []ui.Cell{
 				{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
@@ -511,9 +521,6 @@ func (m Model) cardLines(width int) []string {
 			cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
 			if m.setUnowned {
 				cells = slices.Insert(cells, 5, ui.C(c.Where))
-			}
-			if inDeck {
-				cells = slices.Insert(cells, 2, ui.C(c.Board))
 			}
 			if inAllCards {
 				cells = append(cells, ui.C(c.HeldIn))
@@ -537,19 +544,26 @@ func (m Model) window(lines []string, start int, p pane, width int) []string {
 	}
 	body := lines[1:]
 
+	var heads []int
+	cursorRow := m.cursor[p]
+	if p == paneCards {
+		heads = m.boardHeads()
+		cursorRow = cardRowAt(heads, cursorRow)
+	}
+
 	out := make([]string, 0, len(lines))
 	out = append(out, lines[0])
 	for j := range body {
 		i := start + j
 		line := fit(body[j], width)
 		switch {
-		case i == m.cursor[p] && m.focus == p:
+		case i == cursorRow && m.focus == p:
 
 			line = ui.Restyle(line, m.theme.Cursor)
-		case p == paneCards && m.selectedRow(i):
+		case p == paneCards && m.selectedRow(rowCardAt(heads, i)):
 
 			line = ui.Restyle(line, m.theme.Cursor)
-		case i == m.cursor[p] && (p == paneContainers || (m.view == viewHoldings && i > 0)):
+		case i == cursorRow && (p == paneContainers || (m.view == viewHoldings && i > 0)):
 
 			line = ui.Restyle(line, m.theme.Inactive)
 		}
@@ -822,6 +836,12 @@ func (m Model) helpLine() string {
 		ui.K("s", "sort"), ui.K("S", "reverse"), ui.K("F", "refresh prices"),
 		ui.K("v", "views"), ui.K("a", "add")}
 
+	if m.inDeck() {
+		e = append(e, ui.K("b", "board"))
+		if m.boardSplit() {
+			e = append(e, ui.K("]/[", "next/prev board"))
+		}
+	}
 	if sel == nil || sel.Kind != kindAllCards {
 		e = append(e, ui.K("+/-", "qty"), ui.K("d", "remove"), ui.K("u", "undo"))
 	}

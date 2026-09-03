@@ -8,7 +8,12 @@ import (
 	"github.com/spiffcs/hoard/internal/finish"
 )
 
-const BoardMain = "main"
+const (
+	BoardMain      = "main"
+	BoardCommander = "commander"
+	BoardSide      = "side"
+	BoardMaybe     = "maybe"
+)
 
 type EntryRef struct {
 	ContainerID int64
@@ -137,6 +142,30 @@ func moveEntryTx(tx *sql.Tx, from, to EntryRef) (prevTarget int, err error) {
 	return prevTarget, nil
 }
 
+func moveEntryCopiesTx(tx *sql.Tx, from, to EntryRef, copies int) (prevTarget int, err error) {
+	var qty int
+	err = tx.QueryRow(selectEntryQuantity, from.args()...).Scan(&qty)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("no such holding to move")
+	}
+	if err != nil {
+		return 0, err
+	}
+	moved := min(copies, qty)
+	if prevTarget, err = entryQuantity(tx, to); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(insertEntryAdding, append(to.args(), moved)...); err != nil {
+		return 0, err
+	}
+	if left := qty - moved; left > 0 {
+		_, err := tx.Exec(insertEntryReplacing, append(from.args(), left)...)
+		return prevTarget, err
+	}
+	_, err = tx.Exec(deleteEntry, from.args()...)
+	return prevTarget, err
+}
+
 func (s *Store) MoveEntry(from EntryRef, toContainer int64, toScryfallID string) (prevTarget int, err error) {
 	from = from.normalized()
 	if from.ContainerID == toContainer && from.ScryfallID == toScryfallID {
@@ -210,6 +239,29 @@ func (s *Store) MoveEntryCondition(from EntryRef, toCondition string) (prevTarge
 	defer tx.Rollback()
 
 	if prevTarget, err = moveEntryTx(tx, from, from.with(from.Finish, toCondition)); err != nil {
+		return 0, err
+	}
+	return prevTarget, tx.Commit()
+}
+
+func (s *Store) MoveEntryBoard(from EntryRef, toBoard string, copies int) (prevTarget int, err error) {
+	from = from.normalized()
+	if toBoard == "" {
+		toBoard = BoardMain
+	}
+	if from.Board == toBoard || copies <= 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	to := from
+	to.Board = toBoard
+	if prevTarget, err = moveEntryCopiesTx(tx, from, to, copies); err != nil {
 		return 0, err
 	}
 	return prevTarget, tx.Commit()

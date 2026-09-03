@@ -422,10 +422,15 @@ func writeSummary(st *store.Store, jsonOut bool) error {
 func stdoutIsTTY() bool { return isTTY(os.Stdout) }
 
 func setPrints(cat *catalog.Catalog) browse.SetPrintsFunc {
-	if cat == nil || cat.CardCount() == 0 {
+	if cat == nil {
 		return nil
 	}
-	return cat.SetPrints
+	return func(ctx context.Context, setCode string) ([]scryfall.Card, error) {
+		if cat.CardCount() == 0 {
+			return nil, nil
+		}
+		return cat.SetPrints(ctx, setCode)
+	}
 }
 
 // updateChecker answers with a tag only when it is newer than this build, so

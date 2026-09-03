@@ -393,7 +393,8 @@ func commands() []command {
 			id: "table.next", aliases: "next table section",
 			key: "]", hidden: true,
 			where: func(m *Model) bool {
-				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip
+				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip ||
+					(m.view == viewHoldings && m.inDeck())
 			},
 			run: func(m *Model) tea.Cmd { m.jumpSection(1); return nil },
 		},
@@ -401,7 +402,8 @@ func commands() []command {
 			id: "table.prev", aliases: "previous table section",
 			key: "[", hidden: true,
 			where: func(m *Model) bool {
-				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip
+				return m.view == viewMarket || m.view == viewWatches || m.view == viewDip ||
+					(m.view == viewHoldings && m.inDeck())
 			},
 			run: func(m *Model) tea.Cmd { m.jumpSection(-1); return nil },
 		},
@@ -422,6 +424,16 @@ func commands() []command {
 					m.view == viewHoldings || m.view == viewDip
 			},
 			run: func(m *Model) tea.Cmd { m.turnTablePage(-1); return nil },
+		},
+		{
+			id: "deck.board", title: "MoveCardToTheNextBoard",
+			aliases: "board sideboard maybeboard side maybe main move",
+			desc:    "Move the selected deck card on to the next board: main, side, maybe.",
+			key:     "b",
+			where: func(m *Model) bool {
+				return m.view == viewHoldings && m.focus == paneCards && m.inDeck()
+			},
+			run: func(m *Model) tea.Cmd { return m.cycleCardBoard() },
 		},
 		{
 			id: "set.unowned", title: "ShowWhatASetIsMissing",
@@ -538,6 +550,8 @@ func (m *Model) jumpSection(dir int) {
 		m.jumpWatchSection(dir)
 	case viewDip:
 		m.jumpDipSection(dir)
+	case viewHoldings:
+		m.jumpBoardSection(dir)
 	default:
 		m.jumpMarketSection(dir)
 	}

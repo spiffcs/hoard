@@ -2,10 +2,15 @@ package command
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/spiffcs/hoard/internal/action"
+	"github.com/spiffcs/hoard/internal/catalog"
 	"github.com/spiffcs/hoard/internal/decksource"
 	"github.com/spiffcs/hoard/internal/pricing"
 )
@@ -192,5 +197,73 @@ func TestUpdatePricesSummaryNamesTheDayTheDataIsFrom(t *testing.T) {
 	}
 	if got := browseUpdatePricesSummary(action.UpdatePricesResult{}, "2026-08-24"); got != "no cards yet; nothing to update" {
 		t.Errorf("an empty database keeps its own message, got %q", got)
+	}
+}
+
+func bundleCard(id, name, set, num string) string {
+	b, _ := json.Marshal(map[string]any{
+		"id": id, "name": name, "set": set, "collector_number": num,
+		"set_name": "Edge of Eternities: Stellar Sights", "released_at": "2025-08-01",
+		"rarity": "rare", "finishes": []string{"nonfoil", "foil"}, "border_color": "black",
+		"scryfall_uri": "https://scryfall.com/card/" + set + "/" + num,
+		"games":        []string{"paper"},
+		"prices":       map[string]any{"usd": "1.00", "usd_foil": "2.00", "usd_etched": nil},
+	})
+	return string(b)
+}
+
+func serveCatalogBundle(t *testing.T, lines ...string) {
+	t.Helper()
+	body := gz(strings.Join(lines, "\n") + "\n")
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bundle" {
+			w.Write(body)
+			return
+		}
+		const updated = "2026-09-01T00:00:00Z"
+		fmt.Fprintf(w, `{"data":[
+		  {"type":"oracle_cards","updated_at":%q,"jsonl_download_uri":%q,"compressed_size":1},
+		  {"type":"default_cards","updated_at":%q,"jsonl_download_uri":%q,"compressed_size":%d}]}`,
+			updated, srv.URL+"/bundle", updated, srv.URL+"/bundle", len(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	old := catalog.ListingURL
+	catalog.ListingURL = srv.URL + "/bulk-data"
+	t.Cleanup(func() { catalog.ListingURL = old })
+}
+
+func TestSetPrintsAnswersOnceTheCatalogIsBuiltMidSession(t *testing.T) {
+	serveCatalogBundle(t,
+		bundleCard("a", "Ancient Tomb", "eos", "1"),
+		bundleCard("b", "Blast Zone", "eos", "2"),
+		bundleCard("c", "Blinkmoth Nexus", "eos", "3"))
+
+	cat, err := catalog.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer cat.Close()
+
+	prints := setPrints(cat)
+
+	if err := cat.Update(context.Background(), nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if cat.CardCount() != 3 {
+		t.Fatalf("catalog holds %d cards after the build, want 3", cat.CardCount())
+	}
+
+	if prints == nil {
+		t.Fatal("the browser has no way to read the catalog it just built, so a set view can never widen past the printings already in the collection")
+	}
+	got, err := prints(context.Background(), "eos")
+	if err != nil {
+		t.Fatalf("set prints: %v", err)
+	}
+	if len(got) != 3 {
+		t.Errorf("set prints = %d printings, want the 3 the freshly built catalog knows", len(got))
 	}
 }

@@ -228,6 +228,11 @@ func (m *Model) applySort() {
 func (m *Model) sortHoldings() {
 	key, rev := m.holdingsSortColumns()[m.sortIdx[viewHoldings]], m.sortRev[viewHoldings]
 	sortRows(m.allCards, rev, cardCompare(key), cardTiebreak)
+	if m.inDeck() {
+		slices.SortStableFunc(m.allCards, func(a, b card) int {
+			return boardCompare(a.Board, b.Board)
+		})
+	}
 }
 
 func (m *Model) sortArbRows() {

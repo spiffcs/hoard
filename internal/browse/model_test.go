@@ -53,6 +53,7 @@ type fakeStore struct {
 
 	sets    []store.SetSummary
 	unowned map[string][]store.UnownedRow
+	shelved map[string][]store.UnownedRow
 	nextID  int64
 
 	err error
@@ -981,8 +982,9 @@ func TestMovingContainerCursorLoadsThatContainersCards(t *testing.T) {
 	if len(m.cards) != 2 {
 		t.Fatalf("cards = %v, want Rich Deck's two", names(m.cards))
 	}
-	if m.cards[0].Name != "Force of Will" {
-		t.Errorf("cards = %v, want the 2x$90 foil first by value", names(m.cards))
+	if m.cards[0].Name != "Solitude" {
+		t.Errorf("cards = %v, want the main deck above the 2x$90 sideboard foil",
+			names(m.cards))
 	}
 	m = key(m, "down")
 	if len(m.cards) != 1 || m.cards[0].Name != "Llanowar Elves" {
@@ -1084,8 +1086,9 @@ func TestSortPersistsAcrossContainers(t *testing.T) {
 	if m.sortLabel() != "name" {
 		t.Fatalf("sort reset to %v", m.sortLabel())
 	}
-	if m.cards[0].Name != "Force of Will" {
-		t.Errorf("deck cards = %v, want name order", names(m.cards))
+	if m.cards[0].Name != "Solitude" {
+		t.Errorf("deck cards = %v, want the main deck first, sorted by name within it",
+			names(m.cards))
 	}
 }
 
@@ -1195,19 +1198,22 @@ func TestScrollingKeepsTheCursorVisible(t *testing.T) {
 	}
 }
 
-func TestBoardColumnOnlyAppearsForDecks(t *testing.T) {
+func TestBoardHeadersOnlyAppearForDecks(t *testing.T) {
 	m := newTestModel(t, testStore())
 	if strings.Contains(m.View(), "BOARD") {
-		t.Error("BOARD shown for the loose collection")
+		t.Error("a board header shown for the loose collection")
 	}
 	m = key(m, "down")
 	view := m.View()
-	if !strings.Contains(view, "BOARD") {
-		t.Error("BOARD missing for a deck")
+	if !strings.Contains(view, "MAINBOARD") || !strings.Contains(view, "SIDEBOARD") {
+		t.Errorf("a deck on two boards announced neither:\n%s", view)
 	}
 
-	if name, board := strings.Index(view, "NAME"), strings.Index(view, "BOARD"); name > board {
-		t.Error("BOARD column renders before NAME")
+	for line := range strings.SplitSeq(view, "\n") {
+		if strings.Contains(line, "NAME") && strings.Contains(line, "VALUE") &&
+			strings.Contains(line, "BOARD") {
+			t.Errorf("the board column survived the split: %q", line)
+		}
 	}
 }
 
@@ -3117,15 +3123,29 @@ func TestHeaderAnchorIgnoresCursorBar(t *testing.T) {
 func (f *fakeStore) setDeckEntryQuantity(ref store.EntryRef, qty int) (int, error) {
 	entries := f.deckCards[ref.ContainerID]
 	var previous int
+	var found bool
 	kept := entries[:0:0]
 	for _, e := range entries {
 		if e.Card.ScryfallID == ref.ScryfallID && e.Finish == ref.Finish &&
 			e.Board == ref.Board {
-			previous = e.Quantity
+			previous, found = e.Quantity, true
 			if qty == 0 {
 				continue
 			}
 			e.Quantity = qty
+		}
+		kept = append(kept, e)
+	}
+	if !found && qty > 0 {
+		e := store.EntryView{Finish: ref.Finish, Condition: ref.Condition,
+			Board: ref.Board, Quantity: qty}
+		e.Card.ScryfallID = ref.ScryfallID
+		e.Card.Name = strings.TrimSuffix(ref.ScryfallID, "-id")
+		for _, cand := range entries {
+			if cand.Card.ScryfallID == ref.ScryfallID {
+				e.Card = cand.Card
+				break
+			}
 		}
 		kept = append(kept, e)
 	}
@@ -3148,6 +3168,13 @@ func (f *fakeStore) SetUnowned(code string) ([]store.UnownedRow, error) {
 		return nil, f.err
 	}
 	return f.unowned[code], nil
+}
+
+func (f *fakeStore) SetShelvedByFinish(code string) ([]store.UnownedRow, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.shelved[code], nil
 }
 
 func (f *fakeStore) MoveEntryPurchasePrice(from store.EntryRef, toPaid *float64) (int, error) {

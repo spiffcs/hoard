@@ -102,6 +102,42 @@ ORDER BY value DESC, c.name`, setCode)
 	return out, rows.Err()
 }
 
+func (s *Store) SetShelvedByFinish(setCode string) ([]UnownedRow, error) {
+	rows, err := s.db.Query(`
+SELECT `+cardCols(altSourceForEntry)+`,
+       e.finish, '' AS condition, NULL AS purchase_price,
+       SUM(e.quantity) AS quantity,
+       SUM(e.quantity * `+entryValue+`) AS value,
+       COALESCE(GROUP_CONCAT(DISTINCT ct.name), '') AS shelves
+FROM card_entries e
+JOIN cards c ON c.scryfall_id = e.scryfall_id
+JOIN containers ct ON ct.id = e.container_id AND ct.counted = 0
+`+altJoinCards+`
+WHERE c.set_code = ? AND e.quantity > 0
+GROUP BY c.scryfall_id, e.finish
+ORDER BY value DESC, c.name`, setCode)
+	if err != nil {
+		return nil, fmt.Errorf("listing what set %s is waiting on: %w", setCode, err)
+	}
+	defer rows.Close()
+
+	var out []UnownedRow
+	for rows.Next() {
+		var r UnownedRow
+		var aux cardAux
+		var shelves string
+		if err := rows.Scan(append(cardScanDest(&r.Card, &aux),
+			&r.Finish, &r.Condition, &r.PurchasePrice,
+			&r.Quantity, &r.Value, &shelves)...); err != nil {
+			return nil, err
+		}
+		aux.apply(&r.Card)
+		r.Where = tidyShelves(shelves)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 const shelved = `ct.counted = 0 AND e.quantity > 0`
 
 const shelvedQuantity = `CASE WHEN ` + shelved + ` THEN e.quantity ELSE 0 END`
