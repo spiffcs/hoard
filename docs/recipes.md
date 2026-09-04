@@ -1,16 +1,15 @@
 # Recipes
 
-Workflows that fall out of features hoard already has, rather than screens of
-their own.
+These are workflows you can build out of features in hoard.
 
 - [A wantlist](#a-wantlist)
 - [Moving cards in bulk](#moving-cards-in-bulk)
 
 ## A wantlist
 
-There is no wantlist screen, but a user can set a binder that does not count
-toward your collection (using the <kbd>x</kbd> key in the TUI or through the CLI
-below) as a wantlist.
+There is no wantlist screen. Use a binder that does not count toward your
+collection instead. Press <kbd>x</kbd> on a binder in the TUI to exclude it, or
+do it from the CLI:
 
 ```console
 $ hoard binder new want
@@ -27,20 +26,18 @@ $ hoard add https://scryfall.com/card/uma/7/ulamog-the-infinite-gyre --binder wa
 $ pbpaste | hoard add --file - --binder want
 ```
 
-Excluding a binder changes the accounting. Everything in our example `want` is
-still priced by `hoard update-prices` and it will still turn up in
-`hoard movers`. You can add watches to cards in excluded binders as well to
-trigger on when one hits a certain price.
+Excluding a binder only changes the accounting. Cards in `want` are still
+priced by `hoard update-prices`, and they still turn up in `hoard movers`. You
+can watch them too, so hoard tells you when one hits your price:
 
 ```console
 $ hoard watch add "Ulamog, the Infinite Gyre" --under 30
 Watching Ulamog, the Infinite Gyre (uma/7) nonfoil: under $30.00.
 ```
 
-What exclusion gives you is that none of it counts as yours. `hoard report`
-leaves the binder out of the total, so a wantlist can never inflate what your
-collection is worth, while `hoard binder list` still totals it up so you can see
-what finishing the list would cost:
+`hoard report` leaves the binder out of the total.
+`hoard binder list` still totals it up, so you can see what finishing the
+list would cost:
 
 ```console
 $ hoard binder list
@@ -52,21 +49,22 @@ ID  NAME    CARDS   VALUE
 
 ### Getting a card off the list
 
-When you actually get a card on the list it's as easy as moving it out of `want`
-and into which ever binder you have stored to card in.
+When you get a card on the list, move it out of `want` and into the binder you
+keep it in.
 
-That happens in the browser: select the card, <kbd>enter</kbd> for its detail,
-<kbd>up</kbd> to drop into the row for the copy you hold, then <kbd>right</kbd>
-along that row to its last field which is the binder it is in. <kbd>enter</kbd>
-there asks which binder to move it to. It counts toward your collection from the
-moment it lands in a counted binder; <kbd>esc</kbd> back out to the browser and
-<kbd>u</kbd> undoes the move.
+That happens in the browser. Select the card and press <kbd>enter</kbd> for its
+detail. <kbd>up</kbd> drops you into the row for the copy you hold, and
+<kbd>right</kbd> walks along that row to its last field, the binder.
+<kbd>enter</kbd> there asks which binder to move it to.
+
+The card counts toward your collection as soon as it lands in a counted binder.
+<kbd>esc</kbd> backs out to the browser, and <kbd>u</kbd> undoes the move.
 
 ## Moving cards in bulk
 
-For one card the above is the quickest way to move it. For a lot of them at
-once, `hoard move` takes a holdings document on stdin and files every card in it
-into one binder:
+For one card, the above is the quickest way. For a lot of them at once,
+`hoard move` takes a holdings document on stdin and files every card in it into
+one binder:
 
 ```console
 $ hoard export --binder want --json | hoard move --to Binder

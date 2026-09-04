@@ -1,8 +1,7 @@
 # Filtering
 
-Press <kbd>/</kbd> in the browser to narrow what you are looking at. That
-command line gives you the same query as `hoard export --filter`, so anything
-you work out interactively can be pasted straight into a script.
+Press <kbd>/</kbd> in the browser to narrow what you are looking at. The
+command line takes the same query as `hoard export --filter`.
 
 ```console
 $ hoard export --binder Binder --filter 'price<1 rarity:common'
@@ -31,13 +30,13 @@ $ hoard export --binder Binder --filter 'price<1 rarity:common'
 ## How terms combine
 
 Terms are ANDed, so repeating a key makes a range: `price>=5 price<20`. The
-comparisons `>` `>=` `<` `<=` work on the numeric keys; everything else takes
+comparisons `>` `>=` `<` `<=` work on the numeric keys. Everything else takes
 `:` or `=`. Quote anything with a space in it.
 
-Text matching ignores case and matches anywhere in the field. An exception is
-`rarity`, `finish` and `board`, which must match whole. `c:wu` asks for a colour
-identity containing both W and U, not one that is exactly WU.
+Text matching ignores case and matches anywhere in the field. The exceptions
+are `rarity`, `finish` and `board`, which must match in full. `c:wu` asks for a
+colour identity containing both W and U, not one that is exactly WU.
 
-Because terms are ANDed, `set:` cannot name two sets at once. To sweep several
-sets in one pass, export each and splice the documents together. See
-[Scripting](scripting.md).
+For the same reason, `set:` cannot name two sets at once. To sweep several sets
+in one pass, export each and splice the documents together.
+[Scripting](scripting.md) shows how.

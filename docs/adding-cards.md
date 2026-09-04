@@ -1,9 +1,9 @@
 # Adding cards
 
-There are two ways into the same add flow. You can type a card's name, or you can
-point an iPhone at the card and let it read it. Both land in the same place, so
-you can start typing, switch to the camera, and go back again without leaving
-the screen.
+There are two ways into the same add flow. Type a card's name, or point an
+iPhone at the card and let it read it. Both land in the same place. You can
+start typing, switch to the camera, and go back again without leaving the
+screen.
 
 Everything here happens inside `hoard`. Press <kbd>a</kbd> anywhere in the
 browser to open the add flow.
@@ -31,9 +31,9 @@ Add cards to your collection
 ```
 
 Type any part of a name and press <kbd>enter</kbd>. hoard searches Scryfall and
-walks you through the available choices. Each one is a list you can move through with
-<kbd>↑</kbd>/<kbd>↓</kbd>, narrow by pressing <kbd>/</kbd>, and pick with
-<kbd>enter</kbd>. <kbd>esc</kbd> steps back.
+walks you through the choices. Each step is a list: <kbd>↑</kbd>/<kbd>↓</kbd>
+moves, <kbd>/</kbd> narrows, <kbd>enter</kbd> picks, and <kbd>esc</kbd> steps
+back.
 
 **1. Which card.** Only asked when the name matched more than one card.
 
@@ -85,10 +85,6 @@ enter to add · esc cancel
 tally, ready for the next card. When you are done, <kbd>ctrl+d</kbd> returns you
 to the browser.
 
-Nothing is held back until the end. Each card is saved as you confirm it. If
-you quit halfway through, everything you already confirmed is in your
-collection.
-
 ## Scanning with an iPhone
 
 The phone app is called **Hoardling**. It is a camera head: it reads the card
@@ -124,13 +120,16 @@ That generates the Xcode project, builds the app, finds the attached phone and
 installs it. To build without installing, use `task scan-ios`.
 
 The first run writes `scan/hoard-scan-ios/Signing.xcconfig` with your team ID,
-guessed from your keychain. It is gitignored: a team identifier is account
-data, not project configuration. If no signing identity was found, the script
-stops and tells you to fill that file in yourself.
+guessed from your keychain. The file is gitignored. If no signing identity was
+found, the script stops and tells you to fill it in yourself.
 
-If the build fails with **"No profiles were found"** read the error line above it; the script prints the four causes it has actually seen, which are an Xcode account that is not signed in, an
-unaccepted Program License Agreement, a phone whose UDID is not registered to
-the team, or a missing iOS platform payload.
+If the build fails with **"No profiles were found"**, read the error line above
+it. The script prints the four causes it has actually seen:
+
+- Xcode is not signed in to your developer account.
+- The Program License Agreement has not been accepted.
+- The phone's UDID is not registered to the team.
+- The iOS platform payload is missing.
 
 To check the code still compiles while you sort signing out:
 
@@ -140,7 +139,7 @@ xcodebuild -project scan/hoard-scan-ios/HoardScan.xcodeproj -scheme HoardScan \
 ```
 
 On the phone, the app appears as **Hoardling**. Open it once and allow camera
-access and local network access since it needs both
+access and local network access. It needs both.
 
 ### 3. Pair the phone
 
@@ -164,8 +163,8 @@ Enter your six digit code
 press enter to pair · esc back
 ```
 
-That is it. The phone is remembered, so you do not do this again unless the 
-code rotates, in which case press <kbd>ctrl+p</kbd> and repeat.
+That is it. The phone is remembered, so you do not do this again unless the
+code rotates. If it does, press <kbd>ctrl+p</kbd> and repeat.
 
 ### 4. Scan
 
@@ -200,15 +199,15 @@ When a scan is ambiguous, hoard does not guess. The card waits, and the counter
 on the camera screen shows how many are waiting.
 
 Press <kbd>tab</kbd> to work through them. Each one drops you into the same
-picker sequence as typing. 
+picker sequence as typing a name.
 
-The queue is **not saved**. If you end the session with cards still in it, they
+The queue is **not saved**. If you end the session with cards still in it they
 are discarded, and hoard tells you the count before it lets you go. Anything
-already added is safe; it is only the unreviewed scans that go.
+already added is safe. Only the unreviewed scans go.
 
 ## Where the pairing lives
 
-Two files, next to your database:
+Two files next to your database:
 
 | File | What it is |
 |---|---|

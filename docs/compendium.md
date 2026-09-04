@@ -1,13 +1,11 @@
 # Compendiums
 
 `hoard` normally opens the cards you own. `hoard compendium` builds a database
-of cards you **don't**: every printing that matches a filter, one copy of each,
-priced and backfilled with history.
+of cards you **don't** own but want to browse.
 
-Point the browser at it and you can read a slice of Magic exactly the way you
-read your own collection: the same screens, the same <kbd>/</kbd>
-[filters](filtering.md), the same sparklines and movers. `compendium` is the thing to
-reach for when you want to price a format before buying into it, browse a set as
+Point the browser at the new DB and you can read a slice of Magic exactly the way you read your own collection.
+
+`compendium` is good for when you want to price a format before buying into it, browse a set as
 a whole, or just look a card up without waiting on a website.
 
 - [Build one](#build-one)
@@ -20,7 +18,7 @@ a whole, or just look a card up without waiting on a website.
 
 ## Build one
 
-Name a filter and an output file. Every mythic and rare printed since 2020:
+Name a filter and an output file. This example is every mythic and rare printed since 2020:
 
 ```console
 $ hoard compendium --rarity mythic,rare --since 2020 mythics-rare.db
@@ -36,14 +34,6 @@ Backfilled 473,667 observations and 226,074 bids.
 Browse it: hoard --db mythics-rare.db
 ```
 
-Both warnings are normal on a wide build. Prices are attached through MTGJSON
-identifiers and a few printings have none, mostly Secret Lair drops and promos,
-so they are seeded and browsable but carry no price history. The skipped sets
-are almost all token sets, which MTGJSON does not carry.
-
-The five step lines redraw in place, so the whole build stays in one screen no
-matter how long it runs. Piped to a file it falls back to plain appended lines.
-
 Then browse it like any other hoard:
 
 ```sh
@@ -51,9 +41,8 @@ hoard --db mythics-rare.db
 # or
 HOARD_DB=mythics-rare.db hoard
 ```
-
 That build takes about 40 seconds on a fast connection and lands around 300 MB.
-Both numbers grow as you widen the filter and as you raise `--days`.
+Both numbers will grow as you widen the filter and as you raise `--days`.
 
 ## Choosing a slice
 
@@ -68,18 +57,10 @@ Both numbers grow as you widen the filter and as you raise `--days`.
 | `--days` | Days of price history to backfill. Default 30, clamped to 90. |
 | `--all` | Build every paper printing. Only needed when you pass no filter at all. |
 
-A build finishes with a full price recording of its own — gaps filled, today's
-prices written to the history, contradicted prices refused. So a fresh
-compendium opens with its charts and its total value already populated, and
-`hoard update-prices` has nothing left to do on the first launch.
+A build finishes with a full price recording of cards and the gaps filled. It also includes
+today's prices written to the history. A fresh compendium opens with charts and values already populated.
 
-Tokens, emblems and art-series cards are dropped from every build, filtered or
-not. Scryfall's bulk file carries them as ordinary rows — priced, rarity-tagged
-and paper-legal — so they would otherwise pass `--since`, `--rarity` and `--all`
-alike. Nothing you can play with is affected.
-
-Filters combine, so `--rarity rare --sets mh2` gives you the rares in Modern
-Horizons 2 and nothing else.
+Filters combine, so `--rarity rare --sets mh2` gives you the rares in Modern Horizons 2.
 
 **Pass at least one of `--rarity`, `--sets`, `--since` or `--format`.** Without
 one, the build is every paper printing in Magic (many gigabytes), so hoard
@@ -107,9 +88,8 @@ It accepts any format Scryfall records legality for:
 `pauper`, `paupercommander`, `penny`, `pioneer`, `predh`, `premodern`,
 `standard`, `standardbrawl`, `timeless`, `tlr`, `vintage`.
 
-Plus `aaa`, which Scryfall records no legality for and which lives here as an
-era alone; see [Ebon Ante](#ebon-ante-aaa). An unknown name is rejected before
-anything downloads.
+I also added `aaa`, which Scryfall records no legality for and which lives here as an
+era alone; see [Ebon Ante](#ebon-ante-aaa).
 
 Note this is a *play* format, not the CSV dialect that `import --format` means.
 
@@ -122,7 +102,7 @@ Lightning Bolt reports `modern: legal`.[^1]
 
 That is usually what you want. Every one of these formats lets you play any
 printing of a legal card, so a Secret Lair Swords to Plowshares is as legal in
-Premodern as the Ice Age one, and finding the copy that fits your budget is the
+Premodern as the Ice Age one. Finding the copy that fits your budget is the
 whole point of pricing a format before you buy into it.
 
 [^1]: `oldschool` is the exception: Scryfall varies it by printing, so the Alpha
@@ -152,10 +132,8 @@ Three formats carry an era today, bounded three different ways:
 | `predh` | everything before Commander 2011 | printings released before `2011-06-17` |
 | `aaa` | Alpha through Alliances, plus five Apocalypse lands | 13 set codes, a five-card allowance, and one ban |
 
-Other formats are era-bound in the real world and simply have no bound here yet:
 Modern starts at Eighth Edition, Pioneer at Return to Ravnica, and Standard
-rotates. `--era` on those is an **error** rather than a silent no-op, so a typo
-cannot quietly widen your build.
+rotates so `--era` is not used for those.
 
 An explicit `--sets` wins over an era's set list, so you can pin a subset of an
 era by hand.
@@ -238,4 +216,4 @@ act on it like any other file.
 
 **This is not `hoard catalog`.** `hoard catalog status` / `hoard catalog update`
 manage the card-name search index in your cache directory, the thing that
-autocompletes names as you type. Separate concept, separate storage.
+autocompletes names as you type.
