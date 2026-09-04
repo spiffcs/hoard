@@ -7,6 +7,53 @@ verification block. This file is the readable history.
 The root `CHANGELOG.md` is a build artifact: `task changelog` regenerates it
 for goreleaser on every release and it is gitignored. This is the tracked one.
 
+## v0.5.0 (2026-09-03)
+
+The schema moves v36 → v37, so a database is backed up and migrated on first
+launch. v37 only adds a cache table for price trends, so unlike v36 nothing is
+rebuilt. `--json` documents move to schema 1.2.1, which adds the `version` kind.
+
+### Added
+
+* Deck boards. A deck's cards are grouped into mainboard, commander, sideboard
+  and maybeboard, and a held copy moves between them from the card detail. The
+  status line says what moved and what stayed behind, and <kbd>u</kbd> undoes
+  the move.
+* A mana curve beside the card list when you are looking at a deck. Lands and
+  cards with no mana value are counted apart from the spell buckets. It sits
+  next to the table when the pane is wide enough and below it when it is not.
+* <kbd>f</kbd> flips a double-faced card in the detail view, art included.
+* `hoard update` checks for a newer release and prints the command that
+  upgrades this build. The browser asks once at startup, `:UpdateHoard` checks
+  on demand, and `hoard version` carries an `update:` line when there is
+  something to say. `HOARD_NO_UPDATE_CHECK=1` turns all of it off. See
+  [Updating](updating.md).
+* A `where` column in the all-cards view, naming the binder or deck a copy is
+  in. A card held in more than one place shows the first and a count of the
+  rest.
+* Cards you do not own yet have their art in the set view.
+* The add flow shows the card, printing, finish and price above the binder
+  list, so an expensive copy can be filed somewhere different from a bulk one.
+
+### Changed
+
+* One hoard at a time writes to a database path. `hoard compendium` takes the
+  file exclusively and refuses to build into a database the browser has open,
+  rather than the two interleaving.
+* Price trends are cached in the database rather than recomputed per view, and
+  the cache is keyed to the schema version as well as the price history, so an
+  upgrade rebuilds it once instead of reusing an older build's numbers.
+* <kbd>w</kbd> cycles the dips lookback without blocking, even on a window that
+  has not been computed yet.
+* Dips and momentum load with the rest of the price data at startup.
+
+### Fixed
+
+* A second dips lookback is never served from the stats of the first.
+* The browser notices when the database file it opened has been replaced
+  underneath it.
+* Titles on the dips and watches views.
+
 ## v0.4.0 (2026-08-27)
 
 The schema moves v33 → v36, so a database is backed up and migrated on first

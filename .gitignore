@@ -8,6 +8,7 @@
 *.test
 
 *.out
+*.lock
 
 go.work
 go.work.sum
