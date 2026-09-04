@@ -596,7 +596,7 @@ func pagePhrase(off, visible, count, page, tot, size int) string {
 }
 
 func (m Model) tablePagePhrase(count, page, tot int) string {
-	return pagePhrase(m.offset[paneCards], max(m.visibleRows()-1, 0), count, page, tot,
+	return pagePhrase(m.offset[paneCards], max(m.paneRows(paneCards)-1, 0), count, page, tot,
 		singleTablePageSize)
 }
 

@@ -48,6 +48,7 @@ type Store interface {
 	FolderByFinish(folderID int64) ([]store.CollectionRow, error)
 	BinderByFinish(containerID int64) ([]store.CollectionRow, error)
 	DeckEntries(containerID int64) ([]store.EntryView, error)
+	DeckCurve(containerID int64, board string) (store.Curve, error)
 
 	MatchingCardIDs(f store.TraitFilter) (map[string]bool, error)
 	EnrichedCount() (enriched, total int, err error)

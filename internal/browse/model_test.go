@@ -34,6 +34,8 @@ type fakeStore struct {
 	decks      []store.DeckSummary
 	collection []store.CollectionRow
 	deckCards  map[int64][]store.EntryView
+	mana       map[string]int
+	lands      map[string]bool
 
 	traits    map[string][]string
 	enriched  int
@@ -307,6 +309,32 @@ func (f *fakeStore) EntryKeys() ([]store.EntryKey, error) {
 }
 func (f *fakeStore) DeckEntries(id int64) ([]store.EntryView, error) {
 	return f.deckCards[id], f.err
+}
+
+func (f *fakeStore) DeckCurve(id int64, board string) (store.Curve, error) {
+	if f.err != nil {
+		return store.Curve{}, f.err
+	}
+	var c store.Curve
+	byMana := map[int]int{}
+	for _, e := range f.deckCards[id] {
+		if e.Board != board {
+			continue
+		}
+		switch mana, known := f.mana[e.Card.ScryfallID]; {
+		case f.lands[e.Card.ScryfallID]:
+			c.Lands += e.Quantity
+		case !known:
+			c.Unknown += e.Quantity
+		default:
+			byMana[mana] += e.Quantity
+		}
+	}
+	for mana, copies := range byMana {
+		c.Rows = append(c.Rows, store.CurveRow{Mana: mana, Copies: copies})
+	}
+	slices.SortFunc(c.Rows, func(a, b store.CurveRow) int { return a.Mana - b.Mana })
+	return c, nil
 }
 
 func (f *fakeStore) Settings() (map[string]string, error) {

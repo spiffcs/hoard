@@ -63,11 +63,19 @@ func (m Model) containerListRows() int {
 	return max(min(containerPaneRows, total-art-previewGap), minContainerRows)
 }
 
+func (m Model) cardListRows() int {
+	total := m.visibleRows()
+	if rows := m.curveBelowRows(); rows > 0 {
+		return max(total-rows, minCardListRows)
+	}
+	return total
+}
+
 func (m Model) paneRows(p pane) int {
 	if p == paneContainers {
 		return m.containerListRows()
 	}
-	return m.visibleRows()
+	return m.cardListRows()
 }
 
 func (m Model) selectedCardID() string {

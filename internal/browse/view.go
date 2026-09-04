@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	minCardListRows = 6
+
 	containerPaneWidth = 30
 	whereColWidth      = 11
 	paneGap            = 2
@@ -47,7 +49,7 @@ func (m Model) View() string {
 
 	left, right := m.paneWidths()
 	leftCol := m.leftColumn(left, m.visibleRows())
-	rightLines := m.rightLines(right)
+	rightLines := m.rightWithCurve(right)
 
 	var b strings.Builder
 	b.WriteString(m.header(left, right, maxLineWidth(rightLines)) + "\n")
@@ -110,7 +112,7 @@ func (m Model) detailView() string {
 
 		textW := m.width - artW - 2
 		heldBase = len(m.cardFrameLines(*m.detail, textW))
-		lines = besideImage(img, m.detailLines(*m.detail, textW), textW)
+		lines = beside(img, m.detailLines(*m.detail, textW), textW)
 	case len(img) > 0 && m.width >= artW:
 
 		lines = append(m.cardFrameLines(*m.detail, m.width), "")
@@ -181,18 +183,18 @@ func (m Model) detailView() string {
 	return b.String()
 }
 
-func besideImage(img, text []string, textW int) []string {
-	out := make([]string, 0, max(len(img), len(text)))
-	for i := range max(len(img), len(text)) {
-		var left string
-		if i < len(text) {
-			left = text[i]
+func beside(right, left []string, leftW int) []string {
+	out := make([]string, 0, max(len(right), len(left)))
+	for i := range max(len(right), len(left)) {
+		var l string
+		if i < len(left) {
+			l = left[i]
 		}
-		if i >= len(img) {
-			out = append(out, left)
+		if i >= len(right) {
+			out = append(out, l)
 			continue
 		}
-		out = append(out, fit(left, textW)+"  "+img[i])
+		out = append(out, fit(l, leftW)+"  "+right[i])
 	}
 	return out
 }
@@ -451,6 +453,20 @@ func (m Model) containerLines(width int) []string {
 	})
 }
 
+func (m Model) rightWithCurve(right int) []string {
+	if !m.curveShown() {
+		return m.rightLines(right)
+	}
+	if cards := m.cardsWidth(); cards < right {
+		return beside(m.curveLines(curveWidth), m.cardLinesAt(cards, right), cards)
+	}
+	lines := m.rightLines(right)
+	if m.curveBelowRows() == 0 {
+		return lines
+	}
+	return append(append(lines, ""), m.curveLines(min(right, curveWidth))...)
+}
+
 func (m Model) rightLines(width int) []string {
 	switch m.view {
 	case viewWatches:
@@ -465,71 +481,87 @@ func (m Model) rightLines(width int) []string {
 	return m.cardLines(width)
 }
 
-func (m Model) cardLines(width int) []string {
-	return m.paneLines(paneCards, width, func(env ui.Env) ui.Table {
-		inAllCards := false
-		if sel := m.selectedContainer(); sel != nil {
-			inAllCards = sel.Kind == kindAllCards
+func (m Model) cardLines(width int) []string { return m.cardLinesAt(width, width) }
+
+// cardLinesAt sizes the columns for a pane colW wide but draws into envW, so
+// the table can be measured against the whole pane and then rendered at its
+// own width with the columns it would have had.
+func (m Model) cardLinesAt(envW, colW int) []string {
+	return m.paneLines(paneCards, envW, func(env ui.Env) ui.Table {
+		return m.cardTable(env, colW)
+	})
+}
+
+func (m Model) cardTableWidth(colW int) int {
+	env := ui.Env{Width: colW, Color: m.env.Color, Clamp: true}
+	t := m.cardTable(env, colW)
+	t.Env, t.Header = env, true
+	return t.Width()
+}
+
+func (m Model) cardTable(env ui.Env, width int) ui.Table {
+	inAllCards := false
+	if sel := m.selectedContainer(); sel != nil {
+		inAllCards = sel.Kind == kindAllCards
+	}
+
+	w := m.cardsColW
+	cols := []ui.Col{
+		{Title: "NAME", Align: ui.Left, Flex: true, Min: 10,
+			Width: stableNameWidth(max(w.name, m.boardHeaderWidth()), width)},
+
+		{Title: "ID", Align: ui.Left, Priority: 8, Style: env.PipsStyle()},
+		{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim(), Width: w.set},
+		{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.fin},
+		{Title: "QTY", Align: ui.Right, Priority: 2, Width: w.qty},
+		{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim(), Width: w.price},
+		{Title: "VALUE", Align: ui.Right, Width: w.value},
+	}
+
+	cols = slices.Insert(cols, 4,
+		ui.Col{Title: "COND", Align: ui.Left, Priority: 3, Style: env.Dim()})
+	if m.setUnowned {
+		cols = slices.Insert(cols, 5,
+			ui.Col{Title: "LIST", Align: ui.Left, Priority: 1, Style: env.Dim()})
+
+		cols[len(cols)-1].Priority = 1
+	}
+	if inAllCards {
+		cols = append(cols,
+			ui.Col{Title: "WHERE", Align: ui.Left, Flex: true, Min: 8, Max: whereColWidth,
+				Priority: 4, Style: env.Dim()})
+	}
+	t := ui.Table{Cols: cols}
+	split, group := m.boardSplit(), 0
+
+	for i, c := range m.cards {
+		if split && (i == 0 || boardKey(m.cards[i-1].Board) != boardKey(c.Board)) {
+			if group > 0 {
+				t.AddSpacer()
+			}
+			t.AddStyled(env.Bold(),
+				boardHeaderCells(cols, c.Board, m.boardCopies(i))...)
+			group++
+		}
+		finish := ui.FinishTreated(c.Finish, c.Treatment)
+		cells := []ui.Cell{
+			{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
+			ui.C(ui.Pips(c.ColorIdentity)),
+			ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
+			ui.C(heldQty(c)), ui.C(ui.MoneyPtr(c.Price)),
+			ui.C(heldValue(c)),
 		}
 
-		w := m.cardsColW
-		cols := []ui.Col{
-			{Title: "NAME", Align: ui.Left, Flex: true, Min: 10,
-				Width: stableNameWidth(max(w.name, m.boardHeaderWidth()), width)},
-
-			{Title: "ID", Align: ui.Left, Priority: 8, Style: env.PipsStyle()},
-			{Title: "SET/NUM", Align: ui.Left, Priority: 4, Style: env.Dim(), Width: w.set},
-			{Title: "FINISH", Align: ui.Left, Priority: 5, Style: env.Dim(), Width: w.fin},
-			{Title: "QTY", Align: ui.Right, Priority: 2, Width: w.qty},
-			{Title: "PRICE", Align: ui.Right, Priority: 6, Style: env.Dim(), Width: w.price},
-			{Title: "VALUE", Align: ui.Right, Width: w.value},
-		}
-
-		cols = slices.Insert(cols, 4,
-			ui.Col{Title: "COND", Align: ui.Left, Priority: 3, Style: env.Dim()})
+		cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
 		if m.setUnowned {
-			cols = slices.Insert(cols, 5,
-				ui.Col{Title: "LIST", Align: ui.Left, Priority: 1, Style: env.Dim()})
-
-			cols[len(cols)-1].Priority = 1
+			cells = slices.Insert(cells, 5, ui.C(c.Where))
 		}
 		if inAllCards {
-			cols = append(cols,
-				ui.Col{Title: "WHERE", Align: ui.Left, Flex: true, Min: 8, Max: whereColWidth,
-					Priority: 4, Style: env.Dim()})
+			cells = append(cells, ui.C(c.HeldIn))
 		}
-		t := ui.Table{Cols: cols}
-		split, group := m.boardSplit(), 0
-
-		for i, c := range m.cards {
-			if split && (i == 0 || boardKey(m.cards[i-1].Board) != boardKey(c.Board)) {
-				if group > 0 {
-					t.AddSpacer()
-				}
-				t.AddStyled(env.Bold(),
-					boardHeaderCells(cols, c.Board, m.boardCopies(i))...)
-				group++
-			}
-			finish := ui.FinishTreated(c.Finish, c.Treatment)
-			cells := []ui.Cell{
-				{Text: c.Name, Style: env.Identity(c.ColorIdentity)},
-				ui.C(ui.Pips(c.ColorIdentity)),
-				ui.C(ui.Printing(c.SetCode, c.CollectorNumber)), ui.C(finish),
-				ui.C(heldQty(c)), ui.C(ui.MoneyPtr(c.Price)),
-				ui.C(heldValue(c)),
-			}
-
-			cells = slices.Insert(cells, 4, ui.C(ui.Condition(c.Condition)))
-			if m.setUnowned {
-				cells = slices.Insert(cells, 5, ui.C(c.Where))
-			}
-			if inAllCards {
-				cells = append(cells, ui.C(c.HeldIn))
-			}
-			t.Add(cells...)
-		}
-		return t
-	})
+		t.Add(cells...)
+	}
+	return t
 }
 
 func (m Model) windowBounds(p pane, rows int) (start, count int) {

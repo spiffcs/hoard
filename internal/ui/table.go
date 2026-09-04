@@ -243,6 +243,22 @@ func fitColumns(cols []Col, natural []int, gutter int, env Env, drop []bool) (wi
 	return widths, keep
 }
 
+func (t Table) Width() int {
+	widths, keep := fitColumns(t.Cols, t.natural(), t.gutter(), t.Env, t.blankColumns())
+	total, shown := 0, 0
+	for i := range t.Cols {
+		if !keep[i] {
+			continue
+		}
+		total += widths[i]
+		shown++
+	}
+	if shown > 1 {
+		total += (shown - 1) * t.gutter()
+	}
+	return total
+}
+
 func (t Table) Render() string {
 	lines := t.Lines()
 	if len(lines) == 0 {

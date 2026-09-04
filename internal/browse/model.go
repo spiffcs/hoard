@@ -241,8 +241,10 @@ type Model struct {
 	historyBackfill HistoryBackfillFunc
 	setPrints       SetPrintsFunc
 
-	setUnowned         bool
-	lastSet            string
+	setUnowned bool
+	lastSet    string
+	curve      store.Curve
+
 	setOwned, setTotal int
 	setMissingCost     float64
 	marketResult       market.Result
@@ -480,6 +482,8 @@ func (m *Model) loadCards() error {
 		return nil
 	}
 
+	m.curve = store.Curve{}
+
 	var out []card
 	switch sel.Kind {
 	case kindSet:
@@ -514,6 +518,9 @@ func (m *Model) loadCards() error {
 		entries, err := m.store.DeckEntries(sel.ID)
 		if err != nil {
 			return fmt.Errorf("reading deck %q: %w", sel.Name, err)
+		}
+		if m.curve, err = m.store.DeckCurve(sel.ID, store.BoardMain); err != nil {
+			return fmt.Errorf("reading the curve of %q: %w", sel.Name, err)
 		}
 		for _, e := range store.EntriesByValue(entries) {
 			out = append(out, card{
