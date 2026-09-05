@@ -2,6 +2,8 @@ package browse
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -177,5 +179,12 @@ func Run(ctx context.Context, st Store, opts ...Option) (tui.Summary, error) {
 	}
 
 	fm.teardownAddChild()
+	if fm.op != nil {
+		fmt.Fprintf(os.Stderr, "Waiting for %s to finish before closing the database…\n", fm.op.title)
+		if !fm.awaitOp(opQuitGrace) {
+			fmt.Fprintf(os.Stderr, "%s did not stop in %s; closing anyway.\n",
+				fm.op.title, opQuitGrace)
+		}
+	}
 	return fm.addSummary, fm.err
 }

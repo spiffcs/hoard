@@ -322,22 +322,6 @@ func cmdBrowse(ctx context.Context, st *store.Store, jsonOut bool) error {
 			}
 			return browseCorrectPricesSummary(res), nil
 		}),
-		browse.WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
-			res, err := action.RepairFinishes(ctx, deps, p)
-			if err != nil {
-				return "", err
-			}
-			switch {
-			case res.Total == 0:
-				return "no cards yet; nothing to repair", nil
-			case len(res.Fixed) == 0 && len(res.Ambiguous) == 0:
-				return "every finish already correct", nil
-			case len(res.Ambiguous) > 0:
-				return fmt.Sprintf("finishes repaired · %d fixed · %d ambiguous (see hoard repair-finishes)",
-					len(res.Fixed), len(res.Ambiguous)), nil
-			}
-			return fmt.Sprintf("finishes repaired · %d fixed", len(res.Fixed)), nil
-		}),
 		browse.WithCatalogUpdate(func(ctx context.Context, p progress.Fn) (string, error) {
 			res, err := action.CatalogUpdate(ctx, deps, p)
 			if err != nil {

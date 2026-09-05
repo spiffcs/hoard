@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,23 +27,23 @@ func (c *Catalog) Cards(ids []string) (map[string]scryfall.Card, error) {
 		q := `SELECT ` + cardColumns + `
 		      FROM cards WHERE scryfall_id IN (?` + strings.Repeat(",?", len(batch)-1) + `)`
 
-		rows, err := c.db.Query(q, args...)
-		if err != nil {
-			return nil, fmt.Errorf("catalog: reading cards: %w", err)
-		}
-		for rows.Next() {
-			card, err := scanCard(rows)
+		if err := c.read(func(db *sql.DB) error {
+			rows, err := db.Query(q, args...)
 			if err != nil {
-				rows.Close()
-				return nil, err
+				return fmt.Errorf("catalog: reading cards: %w", err)
 			}
-			out[card.ID] = card
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+			defer rows.Close()
+			for rows.Next() {
+				card, err := scanCard(rows)
+				if err != nil {
+					return err
+				}
+				out[card.ID] = card
+			}
+			return rows.Err()
+		}); err != nil {
 			return nil, err
 		}
-		rows.Close()
 	}
 	return out, nil
 }

@@ -35,17 +35,11 @@ func CorrectFinish(fin finish.Finish, available []finish.Finish) (finish.Finish,
 	return available[0], true
 }
 
-func (s *Store) RepairFinishes(available map[string][]finish.Finish) (fixed, ambiguous []FinishFix, err error) {
+func (s *Store) MisfinishedEntries(available map[string][]finish.Finish) (
+	fixable, ambiguous []FinishFix, err error) {
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.Query(`
-SELECT e.id, e.container_id, ct.name, e.scryfall_id, e.finish, e.condition,
-       e.board, e.quantity,
+	rows, err := s.db.Query(`
+SELECT ct.name, e.scryfall_id, e.finish, e.board, e.quantity,
        c.name, c.set_code, c.collector_number
 FROM card_entries e
 JOIN cards c ON c.scryfall_id = e.scryfall_id
@@ -56,69 +50,31 @@ ORDER BY c.name`)
 	}
 	defer rows.Close()
 
-	type target struct {
-		id          int64
-		containerID int64
-		scryfallID  string
-		condition   string
-		board       string
-		from, to    finish.Finish
-		quantity    int
-	}
-	var todo []target
 	for rows.Next() {
-		var t target
 		var f FinishFix
-		if err := rows.Scan(&t.id, &t.containerID, &f.Container, &t.scryfallID, &t.from,
-			&t.condition, &t.board, &t.quantity,
+		var scryfallID string
+		if err := rows.Scan(&f.Container, &scryfallID, &f.From, &f.Board, &f.Quantity,
 			&f.Name, &f.SetCode, &f.CollectorNumber); err != nil {
 			return nil, nil, err
 		}
-		finishes, known := available[t.scryfallID]
+		finishes, known := available[scryfallID]
 		if !known || len(finishes) == 0 {
 			continue
 		}
-		if FinishIsAvailable(t.from, finishes) {
+		if FinishIsAvailable(f.From, finishes) {
 			continue
 		}
-
-		f.Board, f.From, f.Quantity = t.board, t.from, t.quantity
-		to, ok := CorrectFinish(t.from, finishes)
+		to, ok := CorrectFinish(f.From, finishes)
 		if !ok {
 			f.Available = finishes
 			ambiguous = append(ambiguous, f)
 			continue
 		}
-		t.to, f.To = to, to
-		fixed = append(fixed, f)
-		todo = append(todo, t)
+		f.To = to
+		fixable = append(fixable, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-
-	rows.Close()
-	if len(todo) == 0 {
-		return nil, ambiguous, nil
-	}
-
-	for _, t := range todo {
-
-		if _, err := tx.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(container_id, scryfall_id, finish, condition, board, COALESCE(purchase_price, -1))
-DO UPDATE SET quantity = quantity + excluded.quantity`,
-			t.containerID, t.scryfallID, t.to, t.condition, t.board, t.quantity); err != nil {
-			return nil, nil, fmt.Errorf("moving entry to %s: %w", t.to, err)
-		}
-
-		if _, err := tx.Exec(`DELETE FROM card_entries WHERE id = ?`, t.id); err != nil {
-			return nil, nil, fmt.Errorf("removing old %s entry: %w", t.from, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, nil, err
-	}
-	return fixed, ambiguous, nil
+	return fixable, ambiguous, nil
 }

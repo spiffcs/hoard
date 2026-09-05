@@ -110,7 +110,7 @@ func Unpriced(env ui.Env, rows []store.UnpricedRow) string {
 }
 
 func UnpricedAdvice(env ui.Env) string {
-	return env.Dim()("Try: hoard repair-finishes, then hoard update-prices") + "\n"
+	return env.Dim()("Try: hoard misfinished, then hoard update-prices") + "\n"
 }
 
 func Refused(env ui.Env, rows []store.PriceOverrideRow) string {

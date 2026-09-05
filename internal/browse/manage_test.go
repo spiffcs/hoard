@@ -518,17 +518,13 @@ func TestWatchEditPrefillsThreshold(t *testing.T) {
 	}
 }
 
-func TestPopulateUnpricedComposes(t *testing.T) {
+func TestPopulateUnpricedRunsTheUpdate(t *testing.T) {
 	st := testStore()
 	var order []string
 	m, err := New(st,
 		WithUpdatePrices(func(ctx context.Context, p progress.Fn) (string, error) {
 			order = append(order, "prices")
 			return "prices updated", nil
-		}),
-		WithRepairFinishes(func(ctx context.Context, p progress.Fn) (string, error) {
-			order = append(order, "repair")
-			return "every finish already correct", nil
 		}),
 	)
 	if err != nil {
@@ -544,10 +540,10 @@ func TestPopulateUnpricedComposes(t *testing.T) {
 		t.Fatal("F did not start the watches screen's pipeline")
 	}
 	msg := findOpDone(t, cmd)
-	if msg.outcome.summary != "prices updated · every finish already correct" {
+	if msg.outcome.summary != "prices updated" {
 		t.Errorf("summary = %q", msg.outcome.summary)
 	}
-	if strings.Join(order, ",") != "prices,repair" {
+	if strings.Join(order, ",") != "prices" {
 		t.Errorf("pipeline order = %v", order)
 	}
 }

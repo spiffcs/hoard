@@ -9,15 +9,15 @@ import (
 	"github.com/spiffcs/hoard/internal/store"
 )
 
-type RepairResult struct {
-	Total int
-	Fixed []store.FinishFix
+type MisfinishedResult struct {
+	Total   int
+	Fixable []store.FinishFix
 
 	Ambiguous []store.FinishFix
 }
 
-func RepairFinishes(ctx context.Context, d Deps, p progress.Fn) (RepairResult, error) {
-	var res RepairResult
+func Misfinished(ctx context.Context, d Deps, p progress.Fn) (MisfinishedResult, error) {
+	var res MisfinishedResult
 	ids, err := d.Store.ActivePrintingIDs()
 	if err != nil {
 		return res, err
@@ -36,6 +36,6 @@ func RepairFinishes(ctx context.Context, d Deps, p progress.Fn) (RepairResult, e
 		available[c.ID] = scryfall.Finishes(c)
 	}
 
-	res.Fixed, res.Ambiguous, err = d.Store.RepairFinishes(available)
+	res.Fixable, res.Ambiguous, err = d.Store.MisfinishedEntries(available)
 	return res, err
 }

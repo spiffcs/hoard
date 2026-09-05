@@ -466,6 +466,8 @@ func (m Model) hoardLines(d detail, width int) []string {
 		out = append(out, line)
 	}
 
+	out = append(out, m.costBasisLines(d.holdings)...)
+
 	out = append(out, "", m.theme.Title.Render("PRICE"))
 
 	var groups [][]string

@@ -156,10 +156,12 @@ const (
                  WHEN c.price_usd IS NULL THEN a.source_usd END
     END, '')`
 
-	entryValue = `COALESCE(CASE
+	entryUnitPrice = `CASE
         WHEN e.finish = 'etched' THEN ` + effPriceEtched + `
         WHEN e.finish = 'foil'    THEN ` + effPriceFoil + `
-        WHEN e.finish = 'nonfoil' THEN ` + effPriceUSD + ` END, 0)`
+        WHEN e.finish = 'nonfoil' THEN ` + effPriceUSD + ` END`
+
+	entryValue = `COALESCE(` + entryUnitPrice + `, 0)`
 
 	unpricedPredicate = `(e.finish = 'etched'
          AND o.price_usd_etched IS NULL AND c.price_usd_etched IS NULL

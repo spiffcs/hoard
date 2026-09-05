@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spiffcs/hoard/internal/tui"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func WithAddCascade(newChild func() (tui.Child, error)) Option {
@@ -94,6 +95,7 @@ func (m Model) handleAddChildKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				help:   "y quit · any other key stays",
 				onYes: func(m *Model) tea.Cmd {
 					m.teardownAddChild()
+					m.declineDeferredAsk()
 					m.cancelOp()
 					return tea.Quit
 				},
@@ -112,7 +114,7 @@ func addReceiptLine(added int, value float64, s tui.Summary) string {
 	}
 	line := fmt.Sprintf("added %d", added)
 	if value > 0 {
-		line += fmt.Sprintf(" ($%.2f)", value)
+		line += " (" + ui.Money(value) + ")"
 	}
 	var parts []string
 	if n := s.Count("auto"); n > 0 {

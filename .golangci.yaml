@@ -52,18 +52,6 @@ linters:
       - path: internal/tui/autoscan\.go
         linters: [unused]
         text: "hasCollectorBlock is unused"
-      - path: catalog\.go
-        linters: [unused]
-        text: "ensureCatalog is unused"
-      - path: internal/scan/scan\.go
-        linters: [unused]
-        text: "func parseEvent is unused"
-      - path: internal/scan/scan\.go
-        linters: [unused]
-        text: "func parseDevices is unused"
-      - path: internal/scan/scan\.go
-        linters: [unused]
-        text: "type deviceList is unused"
 
       - path: internal/browse/(comps|market)\.go
         linters: [gosec]

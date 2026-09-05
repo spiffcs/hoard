@@ -560,15 +560,10 @@ func (m Model) marketSectionTotals() [3]int {
 func (m *Model) deriveMarketPages() {
 	totals := m.marketSectionTotals()
 	for i, tot := range totals {
-		maxPage := 0
-		if tot > 0 {
-			maxPage = (tot - 1) / pageSize
-		}
-		m.marketPage[i] = min(max(m.marketPage[i], 0), maxPage)
+		m.marketPage[i] = pager{page: m.marketPage[i], size: pageSize, total: tot}.clamped()
 	}
 	page := func(pg, tot int) (lo, hi int) {
-		lo = min(pg*pageSize, tot)
-		return lo, min(lo+pageSize, tot)
+		return pager{page: pg, size: pageSize, total: tot}.bounds()
 	}
 	rows := make([]market.Row, 0, min(len(m.marketAllRows), 2*pageSize))
 	start := 0
@@ -614,19 +609,10 @@ func (m *Model) turnTablePage(dir int) {
 }
 
 func (m *Model) turnOnePage(dir int, page *int, tot int, derive func()) {
-	maxPage := 0
-	if tot > 0 {
-		maxPage = (tot - 1) / singleTablePageSize
-	}
-	next := min(max(*page+dir, 0), maxPage)
-	if next == *page {
-		if maxPage == 0 {
-			m.status, m.statusErr = "one page here", false
-		} else if dir > 0 {
-			m.status, m.statusErr = "last page", false
-		} else {
-			m.status, m.statusErr = "first page", false
-		}
+	pg := pager{page: *page, size: singleTablePageSize, total: tot}
+	next, edge := pg.turn(dir)
+	if edge != "" {
+		m.status, m.statusErr = edge, false
 		return
 	}
 	*page = next
@@ -634,27 +620,16 @@ func (m *Model) turnOnePage(dir int, page *int, tot int, derive func()) {
 	m.cursor[paneCards] = 0
 	m.offset[paneCards] = 0
 
-	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d · sorted by %s",
-		next+1, maxPage+1, next*singleTablePageSize+1,
-		min((next+1)*singleTablePageSize, tot), tot, m.sortLabel()), false
+	pg.page = next
+	m.status, m.statusErr = pg.rangePhrase()+" · sorted by "+m.sortLabel(), false
 }
 
 func (m *Model) turnMarketPage(dir int) {
 	sec, _ := m.marketCursorPos()
-	tot := m.marketSectionTotals()[sec]
-	maxPage := 0
-	if tot > 0 {
-		maxPage = (tot - 1) / pageSize
-	}
-	next := min(max(m.marketPage[sec]+dir, 0), maxPage)
-	if next == m.marketPage[sec] {
-		if maxPage == 0 {
-			m.status, m.statusErr = "one page here", false
-		} else if dir > 0 {
-			m.status, m.statusErr = "last page", false
-		} else {
-			m.status, m.statusErr = "first page", false
-		}
+	pg := pager{page: m.marketPage[sec], size: pageSize, total: m.marketSectionTotals()[sec]}
+	next, edge := pg.turn(dir)
+	if edge != "" {
+		m.status, m.statusErr = edge, false
 		return
 	}
 	m.marketPage[sec] = next
@@ -662,54 +637,28 @@ func (m *Model) turnMarketPage(dir int) {
 	m.marketSecOffset[sec] = 0
 	m.cursor[paneCards] = m.marketSections()[sec].curStart
 	m.scrollIntoView()
-	m.status, m.statusErr = fmt.Sprintf("page %d/%d · rows %d–%d of %d · sorted by %s",
-		next+1, maxPage+1, next*pageSize+1, min((next+1)*pageSize, tot), tot,
-		m.sortLabel()), false
+
+	pg.page = next
+	m.status, m.statusErr = pg.rangePhrase()+" · sorted by "+m.sortLabel(), false
 }
 
 func (m Model) marketSectionBudgets() [3]int {
-	secs := m.marketSections()
-	counts := make([]int, len(secs))
-	for i, s := range secs {
-		counts[i] = s.count
-	}
-
 	pool := max(m.visibleRows()-(2+3*2), 0)
 	sec, _ := m.marketCursorPos()
 	var budget [3]int
-	copy(budget[:], sectionBudgets(counts, pool, sec))
+	copy(budget[:], m.marketSections().budgets(pool, sec))
 	return budget
 }
 
 func (m *Model) jumpMarketSection(dir int) {
-	secs := m.marketSections()
-	cur, _ := m.marketCursorPos()
-	for i := cur + dir; i >= 0 && i < len(secs); i += dir {
-
-		m.cursor[paneCards] = secs[i].curStart
-
+	if next, ok := m.marketSections().jump(m.cursor[paneCards], dir); ok {
+		m.cursor[paneCards] = next
 		m.focus = paneCards
 		m.scrollIntoView()
-		return
 	}
 }
 
 func (m *Model) scrollMarketIntoView() {
-	secs := m.marketSections()
 	budgets := m.marketSectionBudgets()
-	if m.marketTotalRows() > 0 {
-		sec, idx := m.marketCursorPos()
-		if b := budgets[sec]; b > 0 {
-			if idx < m.marketSecOffset[sec] {
-				m.marketSecOffset[sec] = idx
-			}
-			if idx >= m.marketSecOffset[sec]+b {
-				m.marketSecOffset[sec] = idx - b + 1
-			}
-		}
-	}
-	for i := range m.marketSecOffset {
-		m.marketSecOffset[i] = min(max(m.marketSecOffset[i], 0),
-			max(secs[i].count-budgets[i], 0))
-	}
+	m.marketSections().scrollIntoView(m.marketSecOffset[:], budgets[:], m.cursor[paneCards])
 }

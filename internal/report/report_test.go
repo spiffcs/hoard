@@ -455,7 +455,7 @@ func TestValuationCSV(t *testing.T) {
 	want := strings.Join([]string{
 		"Name,Set,Collector Number,Finish,Copies,Unit Price USD,Value USD,As Of",
 		"Ancient Tomb,uma,236,nonfoil,2,30.00,60.00,30 Jul 2026",
-		"Mystic Remora,ice,78,nonfoil,1,0.00,0.00,30 Jul 2026",
+		"Mystic Remora,ice,78,nonfoil,1,,,30 Jul 2026",
 		"",
 	}, "\n")
 	if sb.String() != want {

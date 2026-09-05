@@ -32,12 +32,11 @@ func (m *Model) openPalette() {
 }
 
 var detailPaletteIDs = map[string]bool{
-	"op.update-prices":   true,
-	"op.backfill":        true,
-	"op.backfill.90":     true,
-	"op.repair-finishes": true,
-	"market.fetch":       true,
-	"op.cancel":          true,
+	"op.update-prices": true,
+	"op.backfill":      true,
+	"op.backfill.90":   true,
+	"market.fetch":     true,
+	"op.cancel":        true,
 }
 
 func (m *Model) refreshPalette() {

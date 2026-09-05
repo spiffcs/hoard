@@ -158,19 +158,18 @@ type Model struct {
 	commands []command
 	palette  *palette
 
-	opUpdatePrices   OpFunc
-	opCorrectPrices  OpFunc
-	opRepairFinishes OpFunc
-	opCatalogUpdate  OpFunc
-	catalogOffer     bool
-	opBackfill       BackfillFunc
-	opWatchAdd       WatchAddFunc
-	opWatchImport    WatchImportFunc
-	opDeckAdd        DeckAddFunc
-	opDeckAddFile    DeckAddFileFunc
-	opImport         ImportFunc
-	op               *opState
-	opGen            int
+	opUpdatePrices  OpFunc
+	opCorrectPrices OpFunc
+	opCatalogUpdate OpFunc
+	catalogOffer    bool
+	opBackfill      BackfillFunc
+	opWatchAdd      WatchAddFunc
+	opWatchImport   WatchImportFunc
+	opDeckAdd       DeckAddFunc
+	opDeckAddFile   DeckAddFileFunc
+	opImport        ImportFunc
+	op              *opState
+	opGen           int
 
 	undoStack *undoAction
 
@@ -634,13 +633,10 @@ func stableNameWidth(measured, paneWidth int) int {
 }
 
 func pageBounds(page *int, tot int) (lo, hi int) {
-	maxPage := 0
-	if tot > 0 {
-		maxPage = (tot - 1) / singleTablePageSize
-	}
-	*page = min(max(*page, 0), maxPage)
-	lo = min(*page*singleTablePageSize, tot)
-	return lo, min(lo+singleTablePageSize, tot)
+	pg := pager{page: *page, size: singleTablePageSize, total: tot}
+	*page = pg.clamped()
+	pg.page = *page
+	return pg.bounds()
 }
 
 var floorLevels = []float64{0, 5, 10, 25, 50, 100}

@@ -65,62 +65,30 @@ func (m Model) dipSectionTotals() [2]int {
 	return [2]int{len(m.filteredDips), len(m.filteredMomentum)}
 }
 
-type dipSectionInfo struct {
-	count    int
-	curStart int
-	span     int
+func (m Model) dipSectionsInfo() sectionList {
+	return newSectionList(len(m.dips), len(m.momentum))
 }
 
-func (m Model) dipSectionsInfo() [2]dipSectionInfo {
-	dips, mom := len(m.dips), len(m.momentum)
-	return [2]dipSectionInfo{
-		{count: dips, curStart: 0, span: max(dips, 1)},
-		{count: mom, curStart: max(dips, 1), span: max(mom, 1)},
-	}
-}
+func (m Model) dipCursorSlots() int { return m.dipSectionsInfo().cursorSlots() }
 
-func (m Model) dipCursorSlots() int {
-	var n int
-	for _, s := range m.dipSectionsInfo() {
-		n += s.span
-	}
-	return n
-}
-
-func (m Model) firstDipCursor() int {
-	for _, s := range m.dipSectionsInfo() {
-		if s.count > 0 {
-			return s.curStart
-		}
-	}
-	return 0
-}
+func (m Model) firstDipCursor() int { return m.dipSectionsInfo().firstCursor() }
 
 func (m Model) dipSectionBudgets() [2]int {
-	secs := m.dipSectionsInfo()
-	counts := make([]int, dipSectionCount)
-	for i := range counts {
-		counts[i] = secs[i].count
-	}
 	pool := max(m.visibleRows()-(2+dipSectionCount*2), 0)
 	sec, _ := m.dipCursorPos()
 	var budget [2]int
-	copy(budget[:], sectionBudgets(counts, pool, sec))
+	copy(budget[:], m.dipSectionsInfo().budgets(pool, sec))
 	return budget
 }
 
 func (m *Model) deriveDipPages() {
 	totals := m.dipSectionTotals()
 	for i, tot := range totals {
-		maxPage := 0
-		if tot > 0 {
-			maxPage = (tot - 1) / pageSize
-		}
-		m.dipPage[i] = min(max(m.dipPage[i], 0), maxPage)
+		m.dipPage[i] = pager{page: m.dipPage[i], size: pageSize, total: tot}.clamped()
 	}
 	slice := func(rows []store.TrendRow, pg int) []store.TrendRow {
-		lo := min(pg*pageSize, len(rows))
-		return rows[lo:min(lo+pageSize, len(rows))]
+		lo, hi := pager{page: pg, size: pageSize, total: len(rows)}.bounds()
+		return rows[lo:hi]
 	}
 	m.dips = slice(m.filteredDips, m.dipPage[secDip])
 	m.momentum = slice(m.filteredMomentum, m.dipPage[secMomentum])
@@ -128,20 +96,10 @@ func (m *Model) deriveDipPages() {
 
 func (m *Model) turnDipPage(dir int) {
 	sec, _ := m.dipCursorPos()
-	tot := m.dipSectionTotals()[sec]
-	maxPage := 0
-	if tot > 0 {
-		maxPage = (tot - 1) / pageSize
-	}
-	next := min(max(m.dipPage[sec]+dir, 0), maxPage)
-	if next == m.dipPage[sec] {
-		if maxPage == 0 {
-			m.status, m.statusErr = "one page here", false
-		} else if dir > 0 {
-			m.status, m.statusErr = "last page", false
-		} else {
-			m.status, m.statusErr = "first page", false
-		}
+	pg := pager{page: m.dipPage[sec], size: pageSize, total: m.dipSectionTotals()[sec]}
+	next, edge := pg.turn(dir)
+	if edge != "" {
+		m.status, m.statusErr = edge, false
 		return
 	}
 	m.dipPage[sec] = next
@@ -149,40 +107,22 @@ func (m *Model) turnDipPage(dir int) {
 	m.dipSecOffset[sec] = 0
 	m.cursor[paneCards] = m.dipSectionsInfo()[sec].curStart
 	m.scrollIntoView()
-	m.status, m.statusErr = fmt.Sprintf("%s · page %d/%d · rows %d–%d of %d",
-		dipSection(sec).title(), next+1, maxPage+1, next*pageSize+1,
-		min((next+1)*pageSize, tot), tot), false
+
+	pg.page = next
+	m.status, m.statusErr = dipSection(sec).title()+" · "+pg.rangePhrase(), false
 }
 
 func (m *Model) jumpDipSection(dir int) {
-	secs := m.dipSectionsInfo()
-	cur, _ := m.dipCursorPos()
-	for i := cur + dir; i >= 0 && i < len(secs); i += dir {
-		m.cursor[paneCards] = secs[i].curStart
+	if next, ok := m.dipSectionsInfo().jump(m.cursor[paneCards], dir); ok {
+		m.cursor[paneCards] = next
 		m.focus = paneCards
 		m.scrollIntoView()
-		return
 	}
 }
 
 func (m *Model) scrollDipIntoView() {
-	secs := m.dipSectionsInfo()
 	budgets := m.dipSectionBudgets()
-	if len(m.dips)+len(m.momentum) > 0 {
-		sec, idx := m.dipCursorPos()
-		if b := budgets[sec]; b > 0 {
-			if idx < m.dipSecOffset[sec] {
-				m.dipSecOffset[sec] = idx
-			}
-			if idx >= m.dipSecOffset[sec]+b {
-				m.dipSecOffset[sec] = idx - b + 1
-			}
-		}
-	}
-	m.dipSecOffset[secDip] = clampOffset(m.dipSecOffset[secDip],
-		secs[secDip].count, budgets[secDip])
-	m.dipSecOffset[secMomentum] = clampOffset(m.dipSecOffset[secMomentum],
-		secs[secMomentum].count, budgets[secMomentum])
+	m.dipSectionsInfo().scrollIntoView(m.dipSecOffset[:], budgets[:], m.cursor[paneCards])
 }
 
 func (m Model) dipEmptyNote(s dipSection) string {
@@ -302,18 +242,7 @@ func (m Model) dipHeader() (title, totals string) {
 }
 
 func (m Model) dipCursorPos() (sec, idx int) {
-	cur := min(max(m.cursor[paneCards], 0), max(m.dipCursorSlots()-1, 0))
-	secs := m.dipSectionsInfo()
-	for i := len(secs) - 1; i >= 0; i-- {
-		if cur >= secs[i].curStart {
-			return i, min(cur-secs[i].curStart, max(secs[i].count-1, 0))
-		}
-	}
-	return 0, 0
-}
-
-func clampOffset(off, count, budget int) int {
-	return min(max(off, 0), max(count-budget, 0))
+	return m.dipSectionsInfo().cursorPos(m.cursor[paneCards])
 }
 
 func (m Model) selectedTrendRow() *store.TrendRow {

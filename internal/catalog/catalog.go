@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -76,6 +77,7 @@ const (
 )
 
 type Catalog struct {
+	mu   sync.RWMutex
 	db   *sql.DB
 	dir  string
 	path string
@@ -145,7 +147,17 @@ func openAt(dir, path string) (*Catalog, error) {
 	return c, nil
 }
 
-func (c *Catalog) Close() error { return c.db.Close() }
+func (c *Catalog) read(fn func(*sql.DB) error) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return fn(c.db)
+}
+
+func (c *Catalog) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.db.Close()
+}
 
 func (c *Catalog) Path() string { return c.path }
 
@@ -167,9 +179,12 @@ func (c *Catalog) Bytes() int64 {
 }
 
 func (c *Catalog) setMeta(key, value string) error {
-	_, err := c.db.Exec(
-		`INSERT INTO meta (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	err := c.read(func(db *sql.DB) error {
+		_, err := db.Exec(
+			`INSERT INTO meta (key, value) VALUES (?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("catalog: writing %s: %w", key, err)
 	}
@@ -178,7 +193,9 @@ func (c *Catalog) setMeta(key, value string) error {
 
 func (c *Catalog) meta(key string) string {
 	var v string
-	if err := c.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v); err != nil {
+	if err := c.read(func(db *sql.DB) error {
+		return db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	}); err != nil {
 		return ""
 	}
 	return v

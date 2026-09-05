@@ -218,7 +218,6 @@ func TestMoversPaletteRanking(t *testing.T) {
 	st := testStore()
 	st.movers = []store.PriceChange{mover("Bitterblossom-id", finish.Nonfoil, 4, 30, 34)}
 	m := atAllCards(t, newTestModel(t, st))
-	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
 	m = key(m, "v")
 	m.openPalette()
 	watchAt, addAt := -1, -1
@@ -228,8 +227,6 @@ func TestMoversPaletteRanking(t *testing.T) {
 			watchAt = i
 		case "add":
 			addAt = i
-		case "op.repair-finishes":
-			t.Error("RepairFinishes offered on movers")
 		}
 	}
 	if watchAt == -1 || addAt == -1 || watchAt > addAt {
@@ -246,7 +243,6 @@ func TestWatchesPaletteRanking(t *testing.T) {
 	m.opWatchAdd = func(ctx context.Context, p progress.Fn, name, op string, threshold float64) (string, error) {
 		return "", nil
 	}
-	m.opRepairFinishes = func(ctx context.Context, p progress.Fn) (string, error) { return "", nil }
 	for range 4 {
 		m = key(m, "v")
 	}
@@ -254,22 +250,16 @@ func TestWatchesPaletteRanking(t *testing.T) {
 		t.Fatalf("view = %v, want watches", m.view)
 	}
 	m.openPalette()
-	pickAt, byNameAt, repairAt := -1, -1, -1
+	pickAt, byNameAt := -1, -1
 	for i, match := range m.palette.matches {
 		switch m.commands[match.index].id {
 		case "watch.pick":
 			pickAt = i
 		case "watch.add-by-name":
 			byNameAt = i
-		case "op.repair-finishes":
-			repairAt = i
 		case "remove", "undo":
 			t.Errorf("%s offered on watches", m.commands[match.index].id)
 		}
-	}
-
-	if repairAt == -1 {
-		t.Error("RepairFinishes must be offered where the unpriced table lives")
 	}
 	if pickAt == -1 || byNameAt == -1 || byNameAt != pickAt+1 {
 		t.Errorf("AddWatchFromCollection at %d, AddWatchForAnyCard at %d — want them adjacent, picker first",

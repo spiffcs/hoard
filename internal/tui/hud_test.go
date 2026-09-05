@@ -8,6 +8,7 @@ import (
 	"github.com/spiffcs/hoard/internal/finish"
 	"github.com/spiffcs/hoard/internal/scan"
 	"github.com/spiffcs/hoard/internal/scryfall"
+	"github.com/spiffcs/hoard/internal/ui"
 )
 
 func TestTierFor(t *testing.T) {
@@ -26,7 +27,7 @@ func TestTierFor(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := tierFor(c.price); got != c.want {
-			t.Errorf("tierFor(%v) = %q, want %q", priceStr(c.price), got, c.want)
+			t.Errorf("tierFor(%v) = %q, want %q", ui.MoneyPtr(c.price), got, c.want)
 		}
 	}
 }
@@ -108,7 +109,7 @@ func TestAutoCommitCelebratesWithTotal(t *testing.T) {
 		t.Errorf("result = %+v, want a $3.25 win", r)
 	}
 	if r.Total == nil || *r.Total != 3.25 {
-		t.Errorf("total = %v, want the post-commit 3.25", priceStr(r.Total))
+		t.Errorf("total = %v, want the post-commit 3.25", ui.MoneyPtr(r.Total))
 	}
 }
 
@@ -206,7 +207,7 @@ func TestConfirmAddSyncsHudTotal(t *testing.T) {
 		t.Errorf("confirm result = %+v, want total-only (the card already celebrated)", r)
 	}
 	if r.Total == nil || *r.Total != 6.00 {
-		t.Errorf("total = %v, want 6.00", priceStr(r.Total))
+		t.Errorf("total = %v, want 6.00", ui.MoneyPtr(r.Total))
 	}
 }
 
@@ -232,7 +233,7 @@ func TestReviewConfirmCelebratesAmount(t *testing.T) {
 		t.Errorf("result = %+v, want the landed $24.00 as a jackpot", r)
 	}
 	if r.Total == nil || *r.Total != 24.00 {
-		t.Errorf("total = %v, want 24.00", priceStr(r.Total))
+		t.Errorf("total = %v, want 24.00", ui.MoneyPtr(r.Total))
 	}
 }
 

@@ -15,51 +15,53 @@ import (
 	"github.com/spiffcs/hoard/internal/ui"
 )
 
-func NewCmdRepairFinishes(a *app) *cobra.Command {
+func NewCmdMisfinished(a *app) *cobra.Command {
 	return &cobra.Command{
-		Use:     "repair-finishes",
+		Use:     "misfinished",
 		GroupID: groupCollection,
-		Short:   "Fix cards stored as a finish they lack",
-		Example: "hoard repair-finishes",
+		Short:   "Cards stored as a finish their printing lacks",
+		Example: "hoard misfinished",
 		Args:    cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runRepairFinishes(c.Context(), a.store, a.env)
+			return runMisfinished(c.Context(), a.store, a.env)
 		},
 	}
 }
 
-func runRepairFinishes(ctx context.Context, st *store.Store, env *cli.Env) error {
+func runMisfinished(ctx context.Context, st *store.Store, env *cli.Env) error {
 	cat := openCatalog()
 	if cat != nil {
 		defer cat.Close()
 	}
 	pr := stderrPrinter()
-	res, err := action.RepairFinishes(ctx,
+	res, err := action.Misfinished(ctx,
 		action.Deps{Store: st, Catalog: cat, Resolver: cardResolver}, pr.Fn())
 	pr.Close()
 	if err != nil {
 		return err
 	}
 	if res.Total == 0 {
-		fmt.Fprintln(env.Out, "No cards yet; nothing to repair.")
+		fmt.Fprintln(env.Out, "No cards yet; nothing to check.")
 		return nil
 	}
-	fixed, ambiguous := res.Fixed, res.Ambiguous
+	fixable, ambiguous := res.Fixable, res.Ambiguous
 
 	dim := env.OutEnv.Dim()
-	if len(fixed) == 0 && len(ambiguous) == 0 {
+	if len(fixable) == 0 && len(ambiguous) == 0 {
 		fmt.Fprintln(env.Out, dim("Every card is recorded in a finish it actually comes in."))
 		return nil
 	}
 
-	if len(fixed) > 0 {
-		fmt.Fprint(env.Out, report.FinishRepairs(env.OutEnv, fixed))
+	if len(fixable) > 0 {
+		fmt.Fprint(env.Out, report.Misfinished(env.OutEnv, fixable))
 		fmt.Fprintln(env.Out, dim(fmt.Sprintf(
-			"\nCorrected %s entries. Run hoard update-prices to value them.", ui.Count(len(fixed)))))
+			"\n%s recorded in a finish the printing does not come in. "+
+				"Change the finish from the card detail in hoard browse.",
+			ui.Plural(len(fixable), "entry is", "entries are"))))
 	}
 	for _, a := range ambiguous {
 		fmt.Fprintln(env.Out, dim(fmt.Sprintf(
-			"  left alone: %s (%s/%s) is recorded as %s but comes in %s",
+			"  %s (%s/%s) is recorded as %s but comes in %s",
 			a.Name, a.SetCode, a.CollectorNumber, a.From, strings.Join(finishNames(a.Available), "|"))))
 	}
 	return nil

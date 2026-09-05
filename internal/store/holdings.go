@@ -157,7 +157,8 @@ type OwnedFinish struct {
 	Finish          finish.Finish
 	Copies          int
 
-	Value float64
+	Value     float64
+	UnitPrice *float64
 
 	ColorIdentity []string
 
@@ -177,6 +178,7 @@ SELECT c.scryfall_id, COALESCE(c.mtgjson_uuid, ''), c.name, c.set_code,
        c.collector_number, e.finish,
        SUM(` + countedQuantity + `) AS copies,
        SUM(` + countedQuantity + ` * ` + entryValue + `) AS value,
+       MAX(` + entryUnitPrice + `) AS unit_price,
        c.color_identity, c.promo_types,
        COALESCE(c.tcg_alt_product_id, ''), COALESCE(c.ck_foil_id, ''),
        c.ck_foil_id IS NOT NULL, COALESCE(c.lang, '')
@@ -195,7 +197,7 @@ ORDER BY value DESC, c.name`)
 		var o OwnedFinish
 		var colors, promos sql.NullString
 		if err := rows.Scan(&o.ScryfallID, &o.MTGJSONUUID, &o.Name, &o.SetCode,
-			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &colors, &promos,
+			&o.CollectorNumber, &o.Finish, &o.Copies, &o.Value, &o.UnitPrice, &colors, &promos,
 			&o.TCGAltProductID, &o.CKFoilID, &o.VendorIDsKnown, &o.Lang); err != nil {
 			return nil, err
 		}
@@ -205,6 +207,8 @@ ORDER BY value DESC, c.name`)
 	}
 	return out, rows.Err()
 }
+
+func (o OwnedFinish) Unpriced() bool { return o.UnitPrice == nil && o.Value == 0 }
 
 type EntryKey struct {
 	ContainerID int64

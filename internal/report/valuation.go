@@ -141,6 +141,9 @@ func Valuation(env ui.Env, d ValuationData) string {
 }
 
 func unitPrice(o store.OwnedFinish) float64 {
+	if o.UnitPrice != nil {
+		return *o.UnitPrice
+	}
 	if o.Copies == 0 {
 		return 0
 	}
@@ -156,12 +159,14 @@ func ValuationCSV(w io.Writer, asOf string, owned []store.OwnedFinish) error {
 		date = ""
 	}
 	for _, o := range SortOwned(owned) {
+		each, value := "", ""
+		if !o.Unpriced() {
+			each = strconv.FormatFloat(unitPrice(o), 'f', 2, 64)
+			value = strconv.FormatFloat(o.Value, 'f', 2, 64)
+		}
 		cw.Write([]string{
 			o.Name, o.SetCode, o.CollectorNumber, o.Finish.String(),
-			strconv.Itoa(o.Copies),
-			strconv.FormatFloat(unitPrice(o), 'f', 2, 64),
-			strconv.FormatFloat(o.Value, 'f', 2, 64),
-			date,
+			strconv.Itoa(o.Copies), each, value, date,
 		})
 	}
 	cw.Flush()

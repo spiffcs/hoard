@@ -13,13 +13,7 @@ func (m Model) marketTotalRows() int {
 	return len(m.marketRows) + len(m.marketComps)
 }
 
-func (m Model) marketCursorSlots() int {
-	var n int
-	for _, s := range m.marketSections() {
-		n += s.span
-	}
-	return n
-}
+func (m Model) marketCursorSlots() int { return m.marketSections().cursorSlots() }
 
 func (m Model) selectedComp() *market.Comp {
 	sec, idx := m.marketCursorPos()
@@ -29,52 +23,25 @@ func (m Model) selectedComp() *market.Comp {
 	return &m.marketComps[idx]
 }
 
-type marketSection struct {
-	rowStart, count int
-	curStart, span  int
-}
-
 const compsSection = 2
 
-func (m Model) marketSections() [3]marketSection {
-	var s [3]marketSection
+func (m Model) marketSections() sectionList {
+	counts := make([]int, compsSection+1)
 	for _, r := range m.marketRows {
-
 		if r.Kind < 0 || int(r.Kind) >= compsSection {
 			continue
 		}
-		s[r.Kind].count++
+		counts[r.Kind]++
 	}
-	s[compsSection].count = len(m.marketComps)
-	row, cur := 0, 0
-	for i := range s {
-		s[i].rowStart, s[i].curStart = row, cur
-		s[i].span = max(s[i].count, 1)
-		row += s[i].count
-		cur += s[i].span
-	}
-	return s
+	counts[compsSection] = len(m.marketComps)
+	return newSectionList(counts...)
 }
 
 func (m Model) marketCursorPos() (sec, idx int) {
-	cur := min(max(m.cursor[paneCards], 0), max(m.marketCursorSlots()-1, 0))
-	secs := m.marketSections()
-	for i := len(secs) - 1; i >= 0; i-- {
-		if cur >= secs[i].curStart {
-			return i, min(cur-secs[i].curStart, max(secs[i].count-1, 0))
-		}
-	}
-	return 0, 0
+	return m.marketSections().cursorPos(m.cursor[paneCards])
 }
 
-func (m Model) firstMarketCursor() int {
-	for _, s := range m.marketSections() {
-		if s.count > 0 {
-			return s.curStart
-		}
-	}
-	return 0
-}
+func (m Model) firstMarketCursor() int { return m.marketSections().firstCursor() }
 
 func (m Model) selectedMarketRow() *market.Row {
 	sec, idx := m.marketCursorPos()

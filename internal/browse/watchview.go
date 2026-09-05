@@ -61,13 +61,6 @@ var (
 
 func wantsUnder(w store.WatchStatus) bool { return w.Op == "under" }
 
-type watchRegion struct {
-	sec      watchSection
-	count    int
-	curStart int
-	span     int
-}
-
 func (m Model) watchCount(s watchSection) int {
 	switch s {
 	case secOvers:
@@ -80,49 +73,26 @@ func (m Model) watchCount(s watchSection) int {
 	return 0
 }
 
-func (m Model) watchRegions() []watchRegion {
-	out := make([]watchRegion, 0, watchSectionCount)
-	cur := 0
+func (m Model) watchRegions() sectionList {
+	counts := make([]int, 0, watchSectionCount)
 	for s := range watchSectionCount {
-		r := watchRegion{sec: s, count: m.watchCount(s), curStart: cur}
-		r.span = max(r.count, 1)
-		out = append(out, r)
-		cur += r.span
+		counts = append(counts, m.watchCount(s))
 	}
-	return out
+	return newSectionList(counts...)
 }
 
 func (m Model) watchTotalRows() int {
 	return len(m.overs) + len(m.unders) + len(m.unpriced)
 }
 
-func (m Model) watchCursorSlots() int {
-	n := 0
-	for _, r := range m.watchRegions() {
-		n += r.span
-	}
-	return n
-}
+func (m Model) watchCursorSlots() int { return m.watchRegions().cursorSlots() }
 
 func (m Model) watchCursorPos() (watchSection, int) {
-	regions := m.watchRegions()
-	cur := min(max(m.cursor[paneCards], 0), max(m.watchCursorSlots()-1, 0))
-	for i := len(regions) - 1; i >= 0; i-- {
-		if cur >= regions[i].curStart {
-			return regions[i].sec, min(cur-regions[i].curStart, max(regions[i].count-1, 0))
-		}
-	}
-	return secOvers, 0
+	sec, idx := m.watchRegions().cursorPos(m.cursor[paneCards])
+	return watchSection(sec), idx
 }
 
-func (m Model) firstWatchCursor() int {
-	for _, r := range m.watchRegions() {
-		if r.count > 0 {
-			return r.curStart
-		}
-	}
-	return 0
-}
+func (m Model) firstWatchCursor() int { return m.watchRegions().firstCursor() }
 
 func (m Model) selectedWatch() *store.WatchStatus {
 	if m.view != viewWatches {
@@ -163,42 +133,19 @@ func (m Model) selectedWatchName() string {
 }
 
 func (m Model) watchSectionBudgets() []int {
-	regions := m.watchRegions()
-	counts := make([]int, len(regions))
-	for i, r := range regions {
-		counts[i] = r.count
-	}
-
 	pool := max(m.visibleRows()-(2+3*2), 0)
 	sec, _ := m.watchCursorPos()
-	return sectionBudgets(counts, pool, int(sec))
+	return m.watchRegions().budgets(pool, int(sec))
 }
 
 func (m *Model) scrollWatchesIntoView() {
-	regions := m.watchRegions()
-	budgets := m.watchSectionBudgets()
-	if m.watchTotalRows() > 0 {
-		sec, idx := m.watchCursorPos()
-		if b := budgets[int(sec)]; b > 0 {
-			if idx < m.watchSecOffset[sec] {
-				m.watchSecOffset[sec] = idx
-			}
-			if idx >= m.watchSecOffset[sec]+b {
-				m.watchSecOffset[sec] = idx - b + 1
-			}
-		}
-	}
-	for i, r := range regions {
-		m.watchSecOffset[r.sec] = min(max(m.watchSecOffset[r.sec], 0),
-			max(r.count-budgets[i], 0))
-	}
+	m.watchRegions().scrollIntoView(
+		m.watchSecOffset[:], m.watchSectionBudgets(), m.cursor[paneCards])
 }
 
 func (m *Model) jumpWatchSection(dir int) {
-	regions := m.watchRegions()
-	cur, _ := m.watchCursorPos()
-	if i := int(cur) + dir; i >= 0 && i < len(regions) {
-		m.cursor[paneCards] = regions[i].curStart
+	if next, ok := m.watchRegions().jump(m.cursor[paneCards], dir); ok {
+		m.cursor[paneCards] = next
 		m.focus = paneCards
 		m.scrollIntoView()
 	}
@@ -218,26 +165,27 @@ func (m Model) watchesLines(width int) []string {
 
 	var out []string
 	for i, r := range regions {
+		sec := watchSection(i)
 		if i > 0 {
 			out = append(out, "")
 		}
-		head := m.theme.Title.Render(r.sec.title()) + "  " + m.theme.Help.Render(r.sec.note())
+		head := m.theme.Title.Render(sec.title()) + "  " + m.theme.Help.Render(sec.note())
 
-		if frag := pagePhrase(m.watchSecOffset[r.sec], budgets[i], r.count, 0, 0, 0); frag != "" {
+		if frag := pagePhrase(m.watchSecOffset[sec], budgets[i], r.count, 0, 0, 0); frag != "" {
 			head += m.theme.Help.Render(frag)
 		}
 		if r.count == 0 {
 
-			if hasCursor && r.sec == cursorSec {
+			if hasCursor && sec == cursorSec {
 				head = ui.Restyle(fit(head, width), m.theme.Cursor)
 			}
-			out = append(out, head, m.theme.Help.Render(m.watchEmptyNote(r.sec, filtered)))
+			out = append(out, head, m.theme.Help.Render(m.watchEmptyNote(sec, filtered)))
 			continue
 		}
 		out = append(out, head)
 
 		var t ui.Table
-		switch r.sec {
+		switch sec {
 		case secUnpriced:
 			t = unpricedSectionTable(env, m.unpriced)
 		case secUnders:
@@ -248,10 +196,10 @@ func (m Model) watchesLines(width int) []string {
 		t.Env, t.Header = env, true
 		lines := t.Lines()
 		out = append(out, lines[0])
-		off := m.watchSecOffset[r.sec]
+		off := m.watchSecOffset[sec]
 		for k := off; k < min(off+budgets[i], r.count); k++ {
 			line := lines[1+k]
-			if hasCursor && r.sec == cursorSec && k == cursorIdx {
+			if hasCursor && sec == cursorSec && k == cursorIdx {
 
 				line = ui.Restyle(fit(line, width), m.theme.Cursor)
 			}

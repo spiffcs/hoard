@@ -1533,24 +1533,32 @@ func (m model) suppressRepeat(it queueItem, fin finish.Finish, prior recentCommi
 			res := Result{Card: card, Finish: fin, Qty: 1,
 				ContainerID: m.dest.ID, ReplacesFinish: prior.finish}
 			if err := m.adder(res); err != nil {
-				m.note("outcome %q dropped: %s (fin correction failed: %v)",
-					it.canonical, why, err)
-			} else {
-				correction := m.dispatchCompletion(res)
-				m.note("outcome %q corrected: %s/%s %s → %s, %s", it.canonical,
-					strings.ToUpper(card.Set), card.CollectorNumber,
-					prior.finish, fin, why)
-				m.recent = rekeyCommit(m.recent, card.ID, prior.finish, fin, now)
-				m.recentNames = recordName(m.recentNames, it.canonical, now)
-				m.addedValue += priceValue(card, fin) - priceValue(card, prior.finish)
-				line := fmt.Sprintf("%s (%s/%s) %s · corrected from %s", card.Name,
-					strings.ToUpper(card.Set), card.CollectorNumber, fin, prior.finish)
-				m.recordTally(line)
-				m.summary.add("auto", line)
-				m.status = fmt.Sprintf("Corrected %s to %s", it.canonical, fin)
-				m.statusErr = false
-				return m, tea.Batch(m.scheduleNudge(), correction)
+				m.note("outcome %q queued: fin correction failed: %v", it.canonical, err)
+				m.reviewFlash()
+				nudge := m.scheduleNudge()
+				it.note = "finish correction failed: " + err.Error()
+				it.queuedAt = now
+				m.review = append(m.review, it)
+				m.status = fmt.Sprintf("Could not correct %s to %s — queued for review",
+					it.canonical, fin)
+				m.statusErr = true
+				next, cmd := m.reviewChanged()
+				return next, tea.Batch(cmd, nudge)
 			}
+			correction := m.dispatchCompletion(res)
+			m.note("outcome %q corrected: %s/%s %s → %s, %s", it.canonical,
+				strings.ToUpper(card.Set), card.CollectorNumber,
+				prior.finish, fin, why)
+			m.recent = rekeyCommit(m.recent, card.ID, prior.finish, fin, now)
+			m.recentNames = recordName(m.recentNames, it.canonical, now)
+			m.addedValue += priceValue(card, fin) - priceValue(card, prior.finish)
+			line := fmt.Sprintf("%s (%s/%s) %s · corrected from %s", card.Name,
+				strings.ToUpper(card.Set), card.CollectorNumber, fin, prior.finish)
+			m.recordTally(line)
+			m.summary.add("auto", line)
+			m.status = fmt.Sprintf("Corrected %s to %s", it.canonical, fin)
+			m.statusErr = false
+			return m, tea.Batch(m.scheduleNudge(), correction)
 		}
 	}
 	m.note("outcome %q dropped: %s", it.canonical, why)
@@ -2324,16 +2332,7 @@ func (m model) viewContent() string {
 			}
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
-			counter := fmt.Sprintf("%d auto-added", len(m.tally))
-
-			if m.addedValue > 0 {
-				counter += fmt.Sprintf(" ($%.2f)", m.addedValue)
-			}
-			counter += fmt.Sprintf(" · %d need review", len(m.review))
-			if m.resolving > 0 {
-				counter += fmt.Sprintf(" · %d resolving", m.resolving)
-			}
-			b.WriteString(m.help(counter) + "\n")
+			b.WriteString(m.help(m.autoAddedCounter()) + "\n")
 		}
 		if len(m.tally) > 0 || len(m.review) > 0 || m.resolving > 0 {
 			b.WriteString("\n")
@@ -2479,13 +2478,25 @@ func (m model) destHeader() string {
 }
 
 func priceLabel(c scryfall.Card) string {
-	return "$" + priceStr(c.PriceUSD) + " / $" + priceStr(c.PriceUSDFoil) + "f"
+	return ui.MoneyPtr(c.PriceUSD) + " / " + ui.MoneyPtr(c.PriceUSDFoil) + "f"
+}
+
+func (m model) autoAddedCounter() string {
+	counter := fmt.Sprintf("%d auto-added", len(m.tally))
+	if m.addedValue > 0 {
+		counter += " (" + ui.Money(m.addedValue) + ")"
+	}
+	counter += fmt.Sprintf(" · %d need review", len(m.review))
+	if m.resolving > 0 {
+		counter += fmt.Sprintf(" · %d resolving", m.resolving)
+	}
+	return counter
 }
 
 func (m model) sessionTally() string {
 	t := fmt.Sprintf("%d added this session", m.addedCount)
 	if m.addedValue > 0 {
-		t += fmt.Sprintf(" ($%.2f)", m.addedValue)
+		t += " (" + ui.Money(m.addedValue) + ")"
 	}
 	return t
 }
@@ -2499,22 +2510,11 @@ func priceValue(c scryfall.Card, finish finish.Finish) float64 {
 }
 
 func priceForFinish(c scryfall.Card, finish finish.Finish) string {
-	p := finishPrice(c, finish)
-	if p == nil {
-		return "—"
-	}
-	return "$" + priceStr(p)
+	return ui.MoneyPtr(finishPrice(c, finish))
 }
 
 func finishPrice(c scryfall.Card, fin finish.Finish) *float64 {
 	return fin.EffectivePrice(c.PriceUSD, c.PriceUSDFoil, c.PriceUSDEtched)
-}
-
-func priceStr(p *float64) string {
-	if p == nil {
-		return "—"
-	}
-	return strconv.FormatFloat(*p, 'f', 2, 64)
 }
 
 type completedMsg struct {

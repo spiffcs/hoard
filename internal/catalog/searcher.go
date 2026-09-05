@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strconv"
@@ -14,6 +15,9 @@ import (
 const autocompleteLimit = 20
 
 func (c *Catalog) Autocomplete(_ context.Context, q string) ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	norm := cardname.Normalize(q)
 	if norm == "" {
 		return nil, nil
@@ -41,6 +45,9 @@ LIMIT ?`, "%"+escapeLike(norm)+"%", escapeLike(norm)+"%", autocompleteLimit)
 }
 
 func (c *Catalog) SearchPrints(_ context.Context, exactName string) ([]scryfall.Card, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	norm := cardname.Normalize(exactName)
 	if norm == "" {
 		return nil, nil
@@ -104,6 +111,9 @@ func (c *Catalog) PrintBySetNumberLang(_ context.Context, set, number, lang stri
 }
 
 func (c *Catalog) printsMatching(limit int, where string, args ...any) ([]scryfall.Card, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	rows, err := c.db.Query(`
 SELECT `+cardColumns+`
 FROM cards WHERE `+where+`
@@ -134,7 +144,9 @@ func (c *Catalog) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, 
 	}
 
 	var name string
-	err := c.db.QueryRow(`SELECT name FROM names WHERE name_norm = ?`, norm).Scan(&name)
+	err := c.read(func(db *sql.DB) error {
+		return db.QueryRow(`SELECT name FROM names WHERE name_norm = ?`, norm).Scan(&name)
+	})
 	if err == nil {
 		card, err := c.newestPrinting(ctx, name)
 		return card, cardname.Match{Exact: true, Similarity: 1}, err
@@ -157,6 +169,9 @@ func (c *Catalog) NamedFuzzy(ctx context.Context, text string) (*scryfall.Card, 
 }
 
 func (c *Catalog) bestNameFor(norm string) (string, float64, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	tris := cardname.Trigrams(norm)
 	if len(tris) == 0 {
 		return "", 0, nil
@@ -222,6 +237,9 @@ func escapeLike(s string) string {
 }
 
 func (c *Catalog) SetPrints(_ context.Context, setCode string) ([]scryfall.Card, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	code := strings.ToLower(strings.TrimSpace(setCode))
 	if code == "" {
 		return nil, nil

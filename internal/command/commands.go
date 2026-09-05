@@ -80,7 +80,7 @@ func rootCommand(a *app) *cobra.Command {
 
 		NewCmdGuessed(a),
 
-		NewCmdRepairFinishes(a),
+		NewCmdMisfinished(a),
 
 		NewCmdVacuum(a),
 

@@ -143,7 +143,10 @@ func Parse(r io.Reader, format string) (*Collection, error) {
 		}
 
 		paid, err := parsePaid(get(rec, sp.price), get(rec, sp.currency))
-		if err != nil {
+		switch {
+		case errors.Is(err, errUnreadablePrice):
+			out.Dropped["purchase price"]++
+		case err != nil:
 			return nil, fmt.Errorf("line %d (%s): %v", line, name, err)
 		}
 
@@ -250,13 +253,50 @@ func (sp spec) unplaceableCondition(c string) bool {
 	return strings.TrimSpace(c) != "" && sp.gradeOf(c) == "unknown"
 }
 
+var errUnreadablePrice = errors.New("purchase price is not a number hoard can read")
+
+func groupedInThousands(intPart string) bool {
+	parts := strings.Split(intPart, ",")
+	if len(parts) < 2 || parts[0] == "" || len(parts[0]) > 3 {
+		return false
+	}
+	for _, p := range parts[1:] {
+		if len(p) != 3 {
+			return false
+		}
+	}
+	return true
+}
+
+func withoutThousands(amount string) (string, bool) {
+	intPart, frac, hasFrac := strings.Cut(amount, ".")
+	if !strings.Contains(intPart, ",") {
+		return amount, true
+	}
+	if !groupedInThousands(intPart) {
+		return "", false
+	}
+	intPart = strings.ReplaceAll(intPart, ",", "")
+	if hasFrac {
+		return intPart + "." + frac, true
+	}
+	return intPart, true
+}
+
 func parsePaid(amount, currency string) (*float64, error) {
 	amount = strings.TrimSpace(amount)
 	if amount == "" {
 		return nil, nil
 	}
-	v, err := strconv.ParseFloat(strings.TrimPrefix(amount, "$"), 64)
-	if err != nil || v <= 0 {
+	digits, ok := withoutThousands(strings.TrimPrefix(amount, "$"))
+	if !ok {
+		return nil, errUnreadablePrice
+	}
+	v, err := strconv.ParseFloat(digits, 64)
+	if err != nil {
+		return nil, errUnreadablePrice
+	}
+	if v <= 0 {
 		return nil, nil
 	}
 	if cur := strings.ToUpper(strings.TrimSpace(currency)); cur != "" && cur != "USD" {

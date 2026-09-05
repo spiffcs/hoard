@@ -231,15 +231,20 @@ func (c *Catalog) Update(ctx context.Context, p progress.Fn) error {
 		return err
 	}
 
-	if err := c.db.Close(); err != nil {
-		return err
+	c.mu.Lock()
+	closeErr := c.db.Close()
+	if closeErr != nil {
+		c.mu.Unlock()
+		return closeErr
 	}
 	renameErr := os.Rename(tmpPath, c.path)
 	reopened, err := openAt(c.dir, c.path)
 	if err != nil {
+		c.mu.Unlock()
 		return fmt.Errorf("catalog: reopening after rebuild: %w", err)
 	}
 	c.db = reopened.db
+	c.mu.Unlock()
 	if renameErr != nil {
 		return fmt.Errorf("catalog: replacing the catalog: %w", renameErr)
 	}
@@ -304,7 +309,9 @@ func (c *Catalog) build(ctx context.Context, url string, size int64, p progress.
 
 	bundle := boundedio.LimitRatio(zr, bc, "the card bundle")
 
+	c.mu.RLock()
 	tx, err := c.db.Begin()
+	c.mu.RUnlock()
 	if err != nil {
 		return 0, err
 	}

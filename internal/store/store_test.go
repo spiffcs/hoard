@@ -217,7 +217,7 @@ func TestCorrectFinish(t *testing.T) {
 	}
 }
 
-func TestRepairFinishes(t *testing.T) {
+func TestMisfinishedNamesTheFixAndItsQuantity(t *testing.T) {
 	s := newTestStore(t)
 
 	if err := s.AddCardFinish(unpricedFoil(), finish.Nonfoil, 3); err != nil {
@@ -232,64 +232,31 @@ func TestRepairFinishes(t *testing.T) {
 		"ripple-id": {finish.Foil},
 		"ulamog-id": {finish.Nonfoil, finish.Foil},
 	}
-	fixed, ambiguous, err := s.RepairFinishes(available)
+	fixable, ambiguous, err := s.MisfinishedEntries(available)
 	if err != nil {
-		t.Fatalf("RepairFinishes: %v", err)
+		t.Fatalf("MisfinishedEntries: %v", err)
 	}
 	if len(ambiguous) != 0 {
 		t.Errorf("ambiguous = %+v, want none", ambiguous)
 	}
-	if len(fixed) != 1 {
-		t.Fatalf("fixed = %+v, want just the foil-only card", fixed)
+	if len(fixable) != 1 {
+		t.Fatalf("fixable = %+v, want just the foil-only card", fixable)
 	}
-	if fixed[0].From != finish.Nonfoil || fixed[0].To != finish.Foil || fixed[0].Quantity != 3 {
-		t.Errorf("fix = %+v, want normal->foil x3", fixed[0])
-	}
-
-	held := heldByFinish(t, s, "ripple-id")
-	if held["nonfoil"] != 0 || held["foil"] != 3 {
-		t.Errorf("after repair: %d normal / %d foil, want 0/3", held["nonfoil"], held["foil"])
-	}
-
-	fixed, _, err = s.RepairFinishes(available)
-	if err != nil || len(fixed) != 0 {
-		t.Errorf("second pass fixed %+v (err %v), want nothing", fixed, err)
+	if fixable[0].From != finish.Nonfoil || fixable[0].To != finish.Foil || fixable[0].Quantity != 3 {
+		t.Errorf("fix = %+v, want normal->foil x3", fixable[0])
 	}
 }
 
-func TestRepairFinishesMergesWithExistingEntry(t *testing.T) {
-	s := newTestStore(t)
-	if err := s.AddCardFinish(unpricedFoil(), finish.Nonfoil, 2); err != nil {
-		t.Fatalf("AddCardFinish normal: %v", err)
-	}
-	if err := s.AddCardFinish(unpricedFoil(), finish.Foil, 1); err != nil {
-		t.Fatalf("AddCardFinish foil: %v", err)
-	}
-
-	fixed, _, err := s.RepairFinishes(map[string][]finish.Finish{"ripple-id": {finish.Foil}})
-	if err != nil {
-		t.Fatalf("RepairFinishes: %v", err)
-	}
-	if len(fixed) != 1 {
-		t.Fatalf("fixed = %+v, want the normal entry moved", fixed)
-	}
-
-	held := heldByFinish(t, s, "ripple-id")
-	if held["nonfoil"] != 0 || held["foil"] != 3 {
-		t.Errorf("merged to %d normal / %d foil, want 0/3", held["nonfoil"], held["foil"])
-	}
-}
-
-func TestRepairFinishesLeavesAmbiguousAlone(t *testing.T) {
+func TestMisfinishedLeavesAmbiguousAlone(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.AddCardFinish(unpricedFoil(), finish.Etched, 1); err != nil {
 		t.Fatalf("AddCardFinish: %v", err)
 	}
-	fixed, ambiguous, err := s.RepairFinishes(map[string][]finish.Finish{
+	fixed, ambiguous, err := s.MisfinishedEntries(map[string][]finish.Finish{
 		"ripple-id": {finish.Nonfoil, finish.Foil},
 	})
 	if err != nil {
-		t.Fatalf("RepairFinishes: %v", err)
+		t.Fatalf("MisfinishedEntries: %v", err)
 	}
 	if len(fixed) != 0 {
 		t.Errorf("fixed = %+v, want nothing changed", fixed)

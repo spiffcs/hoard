@@ -16,6 +16,8 @@ import (
 
 const dialTimeout = 10 * time.Second
 
+var writeTimeout = 5 * time.Second
+
 type Session struct {
 	ID string
 
@@ -44,6 +46,9 @@ type conn struct {
 func (c *conn) send(f Frame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := c.tls.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return err
+	}
 	return WriteFrame(c.tls, f)
 }
 

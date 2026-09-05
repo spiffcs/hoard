@@ -17,8 +17,6 @@ func WithUpdatePrices(f OpFunc) Option { return func(m *Model) { m.opUpdatePrice
 
 func WithCorrectPrices(f OpFunc) Option { return func(m *Model) { m.opCorrectPrices = f } }
 
-func WithRepairFinishes(f OpFunc) Option { return func(m *Model) { m.opRepairFinishes = f } }
-
 func WithCatalogUpdate(f OpFunc) Option { return func(m *Model) { m.opCatalogUpdate = f } }
 
 func WithCatalogOffer(empty bool) Option { return func(m *Model) { m.catalogOffer = empty } }
@@ -68,6 +66,7 @@ type followUp struct {
 }
 
 type opState struct {
+	done    chan struct{}
 	title   string
 	gen     int
 	cancel  context.CancelFunc
@@ -131,13 +130,15 @@ func (m *Model) startOpReport(title string, fn func(context.Context, progress.Fn
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.opGen++
 	mail := progress.NewMailbox()
+	done := make(chan struct{})
 	m.op = &opState{
-		title: title, gen: m.opGen, cancel: cancel, mail: mail, started: m.now(),
+		done: done, title: title, gen: m.opGen, cancel: cancel, mail: mail, started: m.now(),
 	}
 	m.status, m.statusErr = "", false
 
 	gen := m.opGen
 	run := func() tea.Msg {
+		defer close(done)
 		outcome, err := fn(ctx, mail.Fn())
 		mail.Close()
 		return opDoneMsg{gen: gen, outcome: outcome, err: err}
@@ -261,4 +262,18 @@ func (m Model) opBadge() string {
 		return ""
 	}
 	return " · " + m.spinner.View() + " " + m.op.title
+}
+
+const opQuitGrace = 5 * time.Second
+
+func (m Model) awaitOp(grace time.Duration) bool {
+	if m.op == nil || m.op.done == nil {
+		return true
+	}
+	select {
+	case <-m.op.done:
+		return true
+	case <-time.After(grace):
+		return false
+	}
 }

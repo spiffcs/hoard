@@ -162,16 +162,6 @@ func commands() []command {
 			run:     func(m *Model) tea.Cmd { return m.startBackfill(90) },
 		},
 		{
-			id: "op.repair-finishes", title: "RepairFinishes", aliases: "fix foil unpriced zero",
-			desc:  "Move cards stored in a finish their printing lacks onto one it has.",
-			key:   "f",
-			where: func(m *Model) bool { return m.opRepairFinishes != nil },
-
-			hide: func(m *Model) bool { return m.detail == nil && m.view == viewMovers },
-			rank: onView(viewWatches, 4),
-			run:  func(m *Model) tea.Cmd { return m.startOp("repairing finishes", m.opRepairFinishes) },
-		},
-		{
 			id: "op.catalog-update", title: "UpdateCardCatalog", aliases: "download bundle scryfall rebuild",
 			desc:  "Download Scryfall's card bundle so lookups answer instantly and offline.",
 			where: func(m *Model) bool { return m.opCatalogUpdate != nil },
@@ -624,28 +614,13 @@ func (m *Model) populateMovers() tea.Cmd {
 }
 
 func (m *Model) populateWatches() tea.Cmd {
-	up, rf := m.opUpdatePrices, m.opRepairFinishes
-	if up == nil && rf == nil {
+	up := m.opUpdatePrices
+	if up == nil {
 		m.status, m.statusErr = "price operations are unavailable in this build", true
 		return nil
 	}
 	return m.startPriceOp("populating prices", func(ctx context.Context, p progress.Fn) (string, error) {
-		var parts []string
-		if up != nil {
-			s, err := up(ctx, p)
-			if err != nil {
-				return "", err
-			}
-			parts = append(parts, s)
-		}
-		if rf != nil {
-			s, err := rf(ctx, p)
-			if err != nil {
-				return "", err
-			}
-			parts = append(parts, s)
-		}
-		return strings.Join(parts, " · "), nil
+		return up(ctx, p)
 	})
 }
 

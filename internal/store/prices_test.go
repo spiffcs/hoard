@@ -284,51 +284,6 @@ VALUES (?, 'ulamog-id', 'nonfoil', 'lp', 'main', 1)`, cid); err != nil {
 	}
 }
 
-func TestRepairFinishesPreservesOtherConditions(t *testing.T) {
-	s := newTestStore(t)
-
-	c := ulamog()
-	c.Finishes = []string{"nonfoil"}
-	if err := s.AddCardFinish(c, finish.Foil, 2); err != nil {
-		t.Fatal(err)
-	}
-	cid, err := s.collectionID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`
-INSERT INTO card_entries (container_id, scryfall_id, finish, condition, board, quantity)
-VALUES (?, 'ulamog-id', 'foil', 'lp', 'main', 1)`, cid); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, err := s.RepairFinishes(map[string][]finish.Finish{"ulamog-id": {finish.Nonfoil}}); err != nil {
-		t.Fatalf("RepairFinishes: %v", err)
-	}
-
-	rows, err := s.db.Query(
-		`SELECT finish, condition, quantity FROM card_entries ORDER BY condition`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	got := map[string]int{}
-	for rows.Next() {
-		var f, cond string
-		var q int
-		if err := rows.Scan(&f, &cond, &q); err != nil {
-			t.Fatal(err)
-		}
-		if f != "nonfoil" {
-			t.Errorf("finish = %q, want every row repaired to nonfoil", f)
-		}
-		got[cond] = q
-	}
-	if got["unknown"] != 2 || got["lp"] != 1 {
-		t.Errorf("after repair = %v, want both conditions kept (2 unassessed, 1 lp)", got)
-	}
-}
-
 func TestMoveEntryCondition(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.AddCardFinish(ulamog(), finish.Nonfoil, 3); err != nil {
